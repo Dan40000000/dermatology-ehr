@@ -1,0 +1,15 @@
+node_modules
+npm-debug.log
+.env
+.env.*
+!.env.example
+dist
+*.md
+.git
+.gitignore
+uploads/*
+!uploads/.gitkeep
+data
+*.log
+coverage
+.DS_Store

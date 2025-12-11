@@ -1,0 +1,68 @@
+name: Automated Database Backup
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  backup:
+    name: Backup Production Database
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Run backup script
+        run: |
+          chmod +x ./scripts/backup.sh
+          ./scripts/backup.sh
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_BUCKET: ${{ secrets.BACKUP_BUCKET }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          BACKUP_RETENTION_DAYS: 90
+          BACKUP_KEEP_LOCAL: false
+
+      - name: Verify backup
+        run: |
+          LATEST_BACKUP=$(aws s3 ls s3://${{ secrets.BACKUP_BUCKET }}/backups/ --recursive | sort | tail -n 1 | awk '{print $4}')
+          echo "Latest backup: $LATEST_BACKUP"
+
+          BACKUP_SIZE=$(aws s3 ls s3://${{ secrets.BACKUP_BUCKET }}/$LATEST_BACKUP | awk '{print $3}')
+          echo "Backup size: $BACKUP_SIZE bytes"
+
+          if [ "$BACKUP_SIZE" -lt 1000 ]; then
+            echo "Error: Backup file is too small, may be corrupt"
+            exit 1
+          fi
+
+      - name: Notify on failure
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: 'Database backup failed!'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+      - name: Notify on success
+        if: success()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          text: 'Database backup completed successfully'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}

@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: derm_user
+      POSTGRES_PASSWORD: derm_pass
+      POSTGRES_DB: derm_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - derm-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U derm_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  clamav:
+    image: clamav/clamav:stable
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 3310"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  derm-pg-data:

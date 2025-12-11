@@ -1,0 +1,40 @@
+CPT Code,Description,Fee
+99201,Office visit - new patient - minimal,75.00
+99202,Office visit - new patient - low complexity,110.00
+99203,Office visit - new patient - moderate complexity,150.00
+99204,Office visit - new patient - high complexity,210.00
+99205,Office visit - new patient - comprehensive,280.00
+99211,Office visit - established patient - minimal,45.00
+99212,Office visit - established patient - low complexity,75.00
+99213,Office visit - established patient - moderate complexity,110.00
+99214,Office visit - established patient - high complexity,165.00
+99215,Office visit - established patient - comprehensive,220.00
+11100,Biopsy of skin - single lesion,125.00
+11101,Biopsy of skin - each additional lesion,85.00
+11102,Tangential biopsy - single lesion,175.00
+11103,Tangential biopsy - each additional lesion,95.00
+11200,Removal of skin tags - up to 15,95.00
+11201,Removal of skin tags - each additional 10,45.00
+11400,Excision benign lesion - trunk/arms/legs 0.5cm or less,175.00
+11401,Excision benign lesion - trunk/arms/legs 0.6-1.0cm,210.00
+11402,Excision benign lesion - trunk/arms/legs 1.1-2.0cm,265.00
+11403,Excision benign lesion - trunk/arms/legs 2.1-3.0cm,325.00
+11404,Excision benign lesion - trunk/arms/legs 3.1-4.0cm,425.00
+11600,Excision malignant lesion - trunk/arms/legs 0.5cm or less,245.00
+11601,Excision malignant lesion - trunk/arms/legs 0.6-1.0cm,315.00
+11602,Excision malignant lesion - trunk/arms/legs 1.1-2.0cm,425.00
+11603,Excision malignant lesion - trunk/arms/legs 2.1-3.0cm,575.00
+11604,Excision malignant lesion - trunk/arms/legs 3.1-4.0cm,725.00
+17000,Destruction benign/premalignant lesion - first,125.00
+17003,Destruction benign/premalignant lesion - 2-14 lesions,45.00
+17004,Destruction benign/premalignant lesion - 15 or more,95.00
+17110,Destruction flat warts - up to 14,125.00
+17111,Destruction flat warts - 15 or more,175.00
+96372,Therapeutic injection - subcutaneous/intramuscular,45.00
+96374,Therapeutic injection - intravenous push,85.00
+88305,Tissue examination by pathologist - level IV,185.00
+88307,Tissue examination by pathologist - level V,265.00
+36415,Venipuncture - routine,25.00
+80053,Comprehensive metabolic panel,45.00
+85025,Complete blood count - automated,35.00
+85027,Complete blood count - automated with differential,45.00

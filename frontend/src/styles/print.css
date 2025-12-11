@@ -1,0 +1,533 @@
+/**
+ * Print Styles
+ * Professional print layouts for all pages
+ */
+
+@media print {
+  /* Hide non-essential elements */
+  .no-print,
+  .sidebar,
+  .ema-sidebar,
+  nav,
+  .navigation,
+  .header-actions,
+  .action-buttons,
+  button:not(.print-visible),
+  .export-controls,
+  .filter-controls,
+  .search-bar,
+  .modal-overlay,
+  .toast-container,
+  .floating-action-button {
+    display: none !important;
+  }
+
+  /* Reset body */
+  body {
+    margin: 0;
+    padding: 0;
+    background: white !important;
+    color: black !important;
+    font-family: 'Helvetica', 'Arial', sans-serif;
+    font-size: 12pt;
+    line-height: 1.5;
+  }
+
+  /* Page setup */
+  @page {
+    size: letter;
+    margin: 0.75in;
+  }
+
+  /* Main content */
+  main,
+  .main-content,
+  .page-content {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    page-break-inside: auto;
+    margin: 20px 0;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tfoot {
+    display: table-footer-group;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  th,
+  td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+    font-size: 10pt;
+  }
+
+  th {
+    background-color: #f5f5f5 !important;
+    font-weight: bold;
+    color: black !important;
+  }
+
+  /* Headers */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    page-break-after: avoid;
+    color: black !important;
+  }
+
+  h1 {
+    font-size: 18pt;
+    margin-top: 0;
+  }
+
+  h2 {
+    font-size: 16pt;
+  }
+
+  h3 {
+    font-size: 14pt;
+  }
+
+  /* Links */
+  a {
+    color: black !important;
+    text-decoration: none !important;
+  }
+
+  a[href]:after {
+    content: ' (' attr(href) ')';
+    font-size: 90%;
+    color: #666;
+  }
+
+  /* Avoid breaking inside these elements */
+  .patient-card,
+  .appointment-card,
+  .task-card,
+  .encounter-section,
+  .invoice-item,
+  .claim-item {
+    page-break-inside: avoid;
+  }
+
+  /* Print header */
+  .print-header {
+    display: block !important;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #333;
+  }
+
+  .print-header h1 {
+    margin: 0;
+    font-size: 20pt;
+  }
+
+  .print-header .metadata {
+    font-size: 9pt;
+    color: #666;
+    margin-top: 5px;
+  }
+
+  /* Practice header */
+  .practice-header {
+    text-align: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #ccc;
+  }
+
+  .practice-header h2 {
+    margin: 0;
+    font-size: 16pt;
+  }
+
+  .practice-header .contact-info {
+    font-size: 9pt;
+    color: #666;
+  }
+
+  /* Patient banner in print */
+  .patient-banner {
+    background: #f9f9f9 !important;
+    border: 1px solid #ddd !important;
+    padding: 10px !important;
+    margin-bottom: 15px;
+    page-break-inside: avoid;
+  }
+
+  /* Status badges */
+  .status-badge,
+  .priority-badge,
+  .badge {
+    border: 1px solid #333 !important;
+    background: white !important;
+    color: black !important;
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+
+  /* Cards */
+  .card {
+    border: 1px solid #ddd !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+  }
+
+  /* Remove shadows and backgrounds */
+  * {
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  /* Restore specific backgrounds */
+  table th,
+  .patient-banner,
+  .print-header {
+    background: #f9f9f9 !important;
+  }
+
+  /* Page breaks */
+  .page-break {
+    page-break-before: always;
+  }
+
+  .page-break-after {
+    page-break-after: always;
+  }
+
+  .avoid-break {
+    page-break-inside: avoid;
+  }
+
+  /* Footer for each page */
+  .print-footer {
+    display: block !important;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 8pt;
+    color: #666;
+    padding: 10px 0;
+    border-top: 1px solid #ccc;
+  }
+
+  /* Confidentiality notice */
+  .confidential-notice {
+    display: block !important;
+    text-align: center;
+    font-size: 8pt;
+    font-style: italic;
+    color: #999;
+    margin-top: 20px;
+    page-break-inside: avoid;
+  }
+
+  /* Schedule specific */
+  .schedule-grid,
+  .calendar-view {
+    width: 100%;
+  }
+
+  .time-slot {
+    border: 1px solid #ddd;
+    min-height: 30px;
+  }
+
+  /* Encounter note specific */
+  .encounter-section {
+    margin-bottom: 15px;
+    padding: 10px;
+    border: 1px solid #ddd;
+  }
+
+  .encounter-section h3 {
+    margin-top: 0;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 5px;
+  }
+
+  /* Vitals */
+  .vitals-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+
+  /* Diagnosis and procedures */
+  .diagnosis-list,
+  .procedure-list {
+    list-style: none;
+    padding: 0;
+  }
+
+  .diagnosis-list li,
+  .procedure-list li {
+    padding: 5px 0;
+    border-bottom: 1px solid #eee;
+  }
+
+  /* Financial tables */
+  .financial-summary {
+    margin-top: 20px;
+  }
+
+  .financial-summary table {
+    margin-top: 10px;
+  }
+
+  .total-row {
+    font-weight: bold;
+    border-top: 2px solid #333 !important;
+  }
+
+  /* Charts and graphs - hide or convert */
+  canvas,
+  .chart-container {
+    display: none !important;
+  }
+
+  /* Images */
+  img {
+    max-width: 100% !important;
+    height: auto !important;
+    page-break-inside: avoid;
+  }
+
+  /* QR codes and barcodes */
+  .qr-code,
+  .barcode {
+    display: block;
+    max-width: 2in;
+    margin: 10px 0;
+  }
+
+  /* Signatures */
+  .signature-block {
+    margin-top: 40px;
+    page-break-inside: avoid;
+  }
+
+  .signature-line {
+    border-top: 1px solid #333;
+    margin-top: 40px;
+    padding-top: 5px;
+    width: 3in;
+  }
+
+  /* Multi-column layouts collapse to single column */
+  .multi-column,
+  .grid-layout {
+    display: block !important;
+  }
+
+  .multi-column > *,
+  .grid-layout > * {
+    width: 100% !important;
+    float: none !important;
+  }
+
+  /* Prescription pad */
+  .prescription {
+    border: 2px solid #333;
+    padding: 15px;
+    margin: 20px 0;
+    page-break-inside: avoid;
+  }
+
+  /* Lab results */
+  .lab-result {
+    border-left: 3px solid #333;
+    padding-left: 10px;
+    margin: 10px 0;
+  }
+
+  .lab-result.abnormal {
+    border-left-color: #dc2626;
+  }
+
+  .lab-result.abnormal strong {
+    color: #dc2626;
+  }
+
+  /* Task lists */
+  .task-list {
+    list-style: none;
+    padding: 0;
+  }
+
+  .task-list li {
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+  }
+
+  .task-list input[type='checkbox'] {
+    margin-right: 10px;
+  }
+
+  /* Message threads */
+  .message-thread {
+    border: 1px solid #ddd;
+    padding: 10px;
+    margin: 10px 0;
+  }
+
+  .message {
+    margin: 10px 0;
+    padding: 8px;
+    border-left: 3px solid #ccc;
+  }
+
+  /* Document metadata */
+  .document-info {
+    font-size: 9pt;
+    color: #666;
+    margin: 5px 0;
+  }
+
+  /* Claims */
+  .claim-detail {
+    border: 1px solid #ddd;
+    padding: 10px;
+    margin: 15px 0;
+    page-break-inside: avoid;
+  }
+
+  .claim-header {
+    background: #f9f9f9 !important;
+    padding: 8px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #ccc;
+  }
+
+  /* Watermark for draft documents */
+  .draft-watermark {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-45deg);
+    font-size: 72pt;
+    color: rgba(0, 0, 0, 0.1);
+    z-index: -1;
+    font-weight: bold;
+  }
+
+  /* Utility classes */
+  .print-only {
+    display: block !important;
+  }
+
+  .screen-only {
+    display: none !important;
+  }
+
+  .print-center {
+    text-align: center !important;
+  }
+
+  .print-bold {
+    font-weight: bold !important;
+  }
+
+  /* Ensure black text */
+  body,
+  p,
+  li,
+  td,
+  th,
+  div,
+  span {
+    color: black !important;
+  }
+
+  /* Clean margins */
+  ul,
+  ol {
+    margin: 10px 0;
+    padding-left: 20px;
+  }
+
+  /* Section spacing */
+  section {
+    margin-bottom: 20px;
+  }
+
+  /* Responsive tables for narrow prints */
+  @media print and (max-width: 600px) {
+    table {
+      font-size: 8pt;
+    }
+
+    th,
+    td {
+      padding: 4px;
+    }
+  }
+}
+
+/* Print-specific helper classes (active in both screen and print) */
+.print-visible {
+  /* Will be visible in print mode */
+}
+
+.print-page-break-before {
+  page-break-before: always;
+}
+
+.print-page-break-after {
+  page-break-after: always;
+}
+
+.print-avoid-break {
+  page-break-inside: avoid;
+}
+
+/* Print button styling for screen view */
+@media screen {
+  .print-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #333;
+    transition: all 0.2s;
+  }
+
+  .print-button:hover {
+    background: #f9f9f9;
+    border-color: #6B46C1;
+    color: #6B46C1;
+  }
+
+  .print-button:active {
+    transform: translateY(1px);
+  }
+}

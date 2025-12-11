@@ -1,0 +1,153 @@
+/**
+ * Sample HL7 v2.x Messages for Testing
+ * These are real-world examples of HL7 messages that can be used for testing
+ */
+
+/**
+ * ADT^A04 - Register Patient
+ * Used to register a new patient in the system
+ */
+export const ADT_A04_REGISTER_PATIENT = `MSH|^~\\&|LAB_SYSTEM|GENERAL_HOSPITAL|DERM_EHR|DERM_CLINIC|20250108143000||ADT^A04|MSG0001|P|2.5
+PID|1||PAT12345^^^MRN||DOE^JOHN^MICHAEL^JR^DR||19800515|M|||123 MAIN ST^^SPRINGFIELD^IL^62701^USA||555-123-4567|555-987-6543|EN|M|CHRISTIAN||987-65-4321|||HISPANIC
+PV1|1|O|DERM^101^01^CLINIC||||12345^SMITH^JAMES^A^DR^MD||67890^JONES^MARY^B^DR^MD||||DERM||||ADM123|INSURANCE||||||||||||||||||||||||20250108140000`;
+
+/**
+ * ADT^A08 - Update Patient Information
+ * Used to update existing patient demographics
+ */
+export const ADT_A08_UPDATE_PATIENT = `MSH|^~\\&|LAB_SYSTEM|GENERAL_HOSPITAL|DERM_EHR|DERM_CLINIC|20250108143000||ADT^A08|MSG0002|P|2.5
+PID|1||PAT12345^^^MRN||DOE^JOHN^MICHAEL^JR^DR||19800515|M|||456 ELM STREET^APT 2B^SPRINGFIELD^IL^62702^USA||555-123-9999|555-987-6543|EN|M|CHRISTIAN||987-65-4321|||HISPANIC
+PV1|1|O|DERM^101^01^CLINIC||||12345^SMITH^JAMES^A^DR^MD`;
+
+/**
+ * SIU^S12 - New Appointment Notification
+ * Notifies the EHR of a new appointment scheduled in an external system
+ */
+export const SIU_S12_NEW_APPOINTMENT = `MSH|^~\\&|SCHEDULING_SYSTEM|GENERAL_HOSPITAL|DERM_EHR|DERM_CLINIC|20250108143000||SIU^S12|MSG0003|P|2.5
+SCH|APT123456|APT123456||||ROUTINE^Routine Appointment^HL70276|FOLLOW_UP^Follow-up visit|DERM^Dermatology consultation|30|MIN|^^30^20250115100000||||||||SMITH^JAMES^A^DR||||12345|BOOKED^Booked^HL70278
+PID|1||PAT12345^^^MRN||DOE^JOHN^MICHAEL^JR^DR||19800515|M|||123 MAIN ST^^SPRINGFIELD^IL^62701^USA||555-123-4567
+PV1|1|O|DERM^101^01^CLINIC||||12345^SMITH^JAMES^A^DR^MD
+AIL|1|ADD|CLINIC_ROOM_101^Exam Room 101^HL70305||DERM|||20250115100000
+AIP|1|ADD|12345^SMITH^JAMES^A|ATTENDING^Attending Physician^HL70443||20250115100000`;
+
+/**
+ * SIU^S13 - Reschedule Appointment
+ * Notifies the EHR of an appointment that has been rescheduled
+ */
+export const SIU_S13_RESCHEDULE_APPOINTMENT = `MSH|^~\\&|SCHEDULING_SYSTEM|GENERAL_HOSPITAL|DERM_EHR|DERM_CLINIC|20250108143000||SIU^S13|MSG0004|P|2.5
+SCH|APT123456|APT123456||||ROUTINE^Routine Appointment^HL70276|FOLLOW_UP^Rescheduled - patient request|DERM^Dermatology consultation|30|MIN|^^30^20250116140000||||||||SMITH^JAMES^A^DR||||12345|BOOKED^Booked^HL70278
+PID|1||PAT12345^^^MRN||DOE^JOHN^MICHAEL^JR^DR||19800515|M
+AIL|1|ADD|CLINIC_ROOM_102^Exam Room 102^HL70305||DERM|||20250116140000
+AIP|1|ADD|12345^SMITH^JAMES^A|ATTENDING^Attending Physician^HL70443||20250116140000`;
+
+/**
+ * SIU^S15 - Cancel Appointment
+ * Notifies the EHR that an appointment has been cancelled
+ */
+export const SIU_S15_CANCEL_APPOINTMENT = `MSH|^~\\&|SCHEDULING_SYSTEM|GENERAL_HOSPITAL|DERM_EHR|DERM_CLINIC|20250108143000||SIU^S15|MSG0005|P|2.5
+SCH|APT123456|APT123456||||ROUTINE^Routine Appointment^HL70276|PATIENT_CANCELLED^Patient requested cancellation|DERM^Dermatology consultation|30|MIN|^^30^20250115100000||||||||SMITH^JAMES^A^DR||||12345|CANCELLED^Cancelled^HL70278
+PID|1||PAT12345^^^MRN||DOE^JOHN^MICHAEL^JR^DR||19800515|M`;
+
+/**
+ * ORU^R01 - Lab Results (Simple)
+ * Observation results for basic lab tests
+ */
+export const ORU_R01_LAB_RESULTS_BASIC = `MSH|^~\\&|LAB_SYSTEM|GENERAL_HOSPITAL|DERM_EHR|DERM_CLINIC|20250108143000||ORU^R01|MSG0006|P|2.5
+PID|1||PAT12345^^^MRN||DOE^JOHN^MICHAEL^JR^DR||19800515|M|||123 MAIN ST^^SPRINGFIELD^IL^62701^USA||555-123-4567
+OBR|1|LAB987654|LAB987654|1558-6^FASTING GLUCOSE^LN|||20250108080000|20250108080000
+OBX|1|NM|1558-6^Fasting Glucose^LN||95|mg/dL|70-100|N|||F|||20250108100000
+OBX|2|NM|2093-3^Cholesterol Total^LN||185|mg/dL|<200|N|||F|||20250108100000
+OBX|3|NM|2085-9^HDL Cholesterol^LN||55|mg/dL|>40|N|||F|||20250108100000
+OBX|4|NM|2089-1^LDL Cholesterol^LN||110|mg/dL|<130|N|||F|||20250108100000`;
+
+/**
+ * ORU^R01 - Lab Results (Dermatology Specific)
+ * Observation results for dermatology-specific tests
+ */
+export const ORU_R01_LAB_RESULTS_DERM = `MSH|^~\\&|LAB_SYSTEM|GENERAL_HOSPITAL|DERM_EHR|DERM_CLINIC|20250108143000||ORU^R01|MSG0007|P|2.5
+PID|1||PAT12345^^^MRN||DOE^JOHN^MICHAEL^JR^DR||19800515|M|||123 MAIN ST^^SPRINGFIELD^IL^62701^USA||555-123-4567
+OBR|1|BIOPSY123|BIOPSY123|8251-1^SKIN BIOPSY^LN|||20250105140000|20250108120000
+OBX|1|TX|8251-1^Skin Biopsy^LN||SPECIMEN: Left forearm skin biopsy|||||||F|||20250108120000
+OBX|2|TX|22636-3^Pathology Report^LN||DIAGNOSIS: Basal cell carcinoma, nodular type|||||||F|||20250108120000
+OBX|3|TX|22637-1^Microscopic Observation^LN||Islands and nests of basaloid cells with peripheral palisading. No perineural invasion identified.|||||||F|||20250108120000
+OBX|4|TX|22638-9^Recommendation^LN||Complete excision recommended with clear margins|||||||F|||20250108120000`;
+
+/**
+ * ORU^R01 - Lab Results with Abnormal Flags
+ * Results showing abnormal values
+ */
+export const ORU_R01_LAB_RESULTS_ABNORMAL = `MSH|^~\\&|LAB_SYSTEM|GENERAL_HOSPITAL|DERM_EHR|DERM_CLINIC|20250108143000||ORU^R01|MSG0008|P|2.5
+PID|1||PAT54321^^^MRN||SMITH^JANE^ELIZABETH||19750823|F|||789 OAK AVE^^CHICAGO^IL^60601^USA||555-456-7890
+OBR|1|LAB555666|LAB555666|24323-8^COMPREHENSIVE METABOLIC PANEL^LN|||20250108070000|20250108070000
+OBX|1|NM|2345-7^Glucose^LN||145|mg/dL|70-100|H|||F|||20250108090000
+OBX|2|NM|3094-0^BUN^LN||8|mg/dL|7-20|N|||F|||20250108090000
+OBX|3|NM|2160-0^Creatinine^LN||0.9|mg/dL|0.6-1.2|N|||F|||20250108090000
+OBX|4|NM|2951-2^Sodium^LN||138|mmol/L|136-145|N|||F|||20250108090000
+OBX|5|NM|2823-3^Potassium^LN||5.8|mmol/L|3.5-5.1|H|||F|||20250108090000
+OBX|6|NM|2075-0^Chloride^LN||102|mmol/L|98-107|N|||F|||20250108090000`;
+
+/**
+ * Multiple Message Types in Sequence
+ * Simulates a complete patient workflow
+ */
+export const WORKFLOW_COMPLETE = [
+  ADT_A04_REGISTER_PATIENT,
+  SIU_S12_NEW_APPOINTMENT,
+  ORU_R01_LAB_RESULTS_DERM,
+  ADT_A08_UPDATE_PATIENT,
+];
+
+/**
+ * Invalid HL7 Message Examples (for testing error handling)
+ */
+export const INVALID_MISSING_MSH = `PID|1||PAT12345^^^MRN||DOE^JOHN^MICHAEL||19800515|M`;
+
+export const INVALID_MALFORMED = `MSH|^~\\&|LAB|HOSPITAL|||||||
+This is not a valid HL7 message`;
+
+export const INVALID_MISSING_REQUIRED_SEGMENT = `MSH|^~\\&|LAB_SYSTEM|GENERAL_HOSPITAL|DERM_EHR|DERM_CLINIC|20250108143000||ADT^A04|MSG0009|P|2.5
+EVN|A04|20250108143000`;
+
+/**
+ * Helper function to get sample messages by type
+ */
+export function getSampleMessageByType(messageType: string): string | null {
+  const samples: { [key: string]: string } = {
+    "ADT^A04": ADT_A04_REGISTER_PATIENT,
+    "ADT^A08": ADT_A08_UPDATE_PATIENT,
+    "SIU^S12": SIU_S12_NEW_APPOINTMENT,
+    "SIU^S13": SIU_S13_RESCHEDULE_APPOINTMENT,
+    "SIU^S15": SIU_S15_CANCEL_APPOINTMENT,
+    "ORU^R01": ORU_R01_LAB_RESULTS_BASIC,
+  };
+
+  return samples[messageType] || null;
+}
+
+/**
+ * Get all valid sample messages
+ */
+export function getAllSampleMessages(): string[] {
+  return [
+    ADT_A04_REGISTER_PATIENT,
+    ADT_A08_UPDATE_PATIENT,
+    SIU_S12_NEW_APPOINTMENT,
+    SIU_S13_RESCHEDULE_APPOINTMENT,
+    SIU_S15_CANCEL_APPOINTMENT,
+    ORU_R01_LAB_RESULTS_BASIC,
+    ORU_R01_LAB_RESULTS_DERM,
+    ORU_R01_LAB_RESULTS_ABNORMAL,
+  ];
+}
+
+/**
+ * Expected ACK Message Format
+ */
+export const EXPECTED_ACK_FORMAT = `MSH|^~\\&|DERM_EHR|DERM_CLINIC|LAB_SYSTEM|GENERAL_HOSPITAL|<timestamp>||ACK^<msgType>|<controlId>|P|2.5
+MSA|AA|<originalControlId>`;
+
+/**
+ * Expected NACK Message Format
+ */
+export const EXPECTED_NACK_FORMAT = `MSH|^~\\&|DERM_EHR|DERM_CLINIC|LAB_SYSTEM|GENERAL_HOSPITAL|<timestamp>||ACK^<msgType>|<controlId>|P|2.5
+MSA|AE|<originalControlId>|<errorMessage>`;

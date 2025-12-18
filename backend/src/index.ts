@@ -61,6 +61,11 @@ import priorAuthRouter from "./routes/priorAuth";
 import timeBlocksRouter from "./routes/timeBlocks";
 import waitlistRouter from "./routes/waitlist";
 import handoutsRouter from "./routes/handouts";
+import aiAnalysisRouter from "./routes/aiAnalysis";
+import lesionsRouter from "./routes/lesions";
+import aiNoteDraftingRouter from "./routes/aiNoteDrafting";
+import voiceTranscriptionRouter from "./routes/voiceTranscription";
+import cdsRouter from "./routes/cds";
 import path from "path";
 import fs from "fs";
 
@@ -157,6 +162,11 @@ app.use("/api/patient-portal/scheduling", portalLimiter, patientSchedulingRouter
 app.use("/api/scheduling", apiLimiter, providerSchedulingRouter);
 app.use("/api/body-diagram", bodyDiagramRouter);
 app.use("/api/sms", smsRouter);
+app.use("/api/ai-analysis", aiAnalysisRouter);
+app.use("/api/lesions", lesionsRouter);
+app.use("/api/ai-notes", aiNoteDraftingRouter);
+app.use("/api/voice", voiceTranscriptionRouter);
+app.use("/api/cds", cdsRouter);
 
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {

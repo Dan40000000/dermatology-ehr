@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { z } from "zod";
+import crypto from "crypto";
 import { pool } from "../db/pool";
 import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientPortalAuth";
 import path from "path";
@@ -8,6 +10,197 @@ export const patientPortalDataRouter = Router();
 
 // All routes require patient authentication
 patientPortalDataRouter.use(requirePatientAuth);
+
+const checkinStartSchema = z.object({
+  appointmentId: z.string().uuid().optional(),
+});
+
+const checkinDemographicsSchema = z.object({
+  phone: z.string().optional(),
+  address: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().max(2).optional(),
+  zip: z.string().optional(),
+  emergencyContactName: z.string().optional(),
+  emergencyContactRelationship: z.string().optional(),
+  emergencyContactPhone: z.string().optional(),
+});
+
+/**
+ * POST /api/patient-portal-data/checkin/start
+ * Allow patient to start pre-check-in for an upcoming appointment
+ */
+patientPortalDataRouter.post("/checkin/start", async (req: PatientPortalRequest, res) => {
+  try {
+    const parsed = checkinStartSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { appointmentId } = parsed.data;
+    const patientId = req.patient!.patientId;
+    const tenantId = req.patient!.tenantId;
+
+    // Validate appointment (if provided) belongs to patient and is upcoming
+    if (appointmentId) {
+      const apptCheck = await pool.query(
+        `SELECT id FROM appointments
+         WHERE id = $1 AND patient_id = $2 AND tenant_id = $3
+           AND appointment_date >= CURRENT_DATE`,
+        [appointmentId, patientId, tenantId]
+      );
+
+      if (apptCheck.rows.length === 0) {
+        return res.status(404).json({ error: "Appointment not found or not eligible for pre-check-in" });
+      }
+    }
+
+    const sessionId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO checkin_sessions (
+        id, tenant_id, patient_id, appointment_id, status,
+        verification_method, verification_value, verified_at,
+        ip_address, user_agent
+      ) VALUES ($1, $2, $3, $4, 'started', $5, $6, CURRENT_TIMESTAMP, $7, $8)`,
+      [
+        sessionId,
+        tenantId,
+        patientId,
+        appointmentId || null,
+        "portal",
+        req.patient!.email,
+        req.ip,
+        req.get("user-agent") || "",
+      ]
+    );
+
+    return res.status(201).json({ sessionId, appointmentId });
+  } catch (error) {
+    console.error("Start portal check-in error:", error);
+    return res.status(500).json({ error: "Failed to start check-in" });
+  }
+});
+
+/**
+ * PUT /api/patient-portal-data/checkin/:sessionId/demographics
+ * Update demographics during pre-check-in
+ */
+patientPortalDataRouter.put("/checkin/:sessionId/demographics", async (req: PatientPortalRequest, res) => {
+  try {
+    const { sessionId } = req.params;
+    const parsed = checkinDemographicsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const patientId = req.patient!.patientId;
+    const tenantId = req.patient!.tenantId;
+
+    const session = await pool.query(
+      `SELECT id FROM checkin_sessions
+       WHERE id = $1 AND tenant_id = $2 AND patient_id = $3`,
+      [sessionId, tenantId, patientId]
+    );
+
+    if (session.rows.length === 0) {
+      return res.status(404).json({ error: "Check-in session not found" });
+    }
+
+    const {
+      phone,
+      address,
+      city,
+      state,
+      zip,
+      emergencyContactName,
+      emergencyContactRelationship,
+      emergencyContactPhone,
+    } = parsed.data;
+
+    await pool.query(
+      `UPDATE patients
+       SET phone = COALESCE($1, phone),
+           address = COALESCE($2, address),
+           city = COALESCE($3, city),
+           state = COALESCE($4, state),
+           zip = COALESCE($5, zip),
+           emergency_contact_name = COALESCE($6, emergency_contact_name),
+           emergency_contact_relationship = COALESCE($7, emergency_contact_relationship),
+           emergency_contact_phone = COALESCE($8, emergency_contact_phone),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $9 AND tenant_id = $10`,
+      [
+        phone || null,
+        address || null,
+        city || null,
+        state || null,
+        zip || null,
+        emergencyContactName || null,
+        emergencyContactRelationship || null,
+        emergencyContactPhone || null,
+        patientId,
+        tenantId,
+      ]
+    );
+
+    await pool.query(
+      `UPDATE checkin_sessions
+       SET demographics_updated = true, status = 'demographics', updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [sessionId]
+    );
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error("Portal demographics update error:", error);
+    return res.status(500).json({ error: "Failed to update demographics" });
+  }
+});
+
+/**
+ * PUT /api/patient-portal-data/checkin/:sessionId/complete
+ * Complete pre-check-in
+ */
+patientPortalDataRouter.put("/checkin/:sessionId/complete", async (req: PatientPortalRequest, res) => {
+  try {
+    const { sessionId } = req.params;
+    const patientId = req.patient!.patientId;
+    const tenantId = req.patient!.tenantId;
+
+    const session = await pool.query(
+      `SELECT id, appointment_id FROM checkin_sessions
+       WHERE id = $1 AND tenant_id = $2 AND patient_id = $3`,
+      [sessionId, tenantId, patientId]
+    );
+
+    if (session.rows.length === 0) {
+      return res.status(404).json({ error: "Check-in session not found" });
+    }
+
+    await pool.query(
+      `UPDATE checkin_sessions
+       SET status = 'completed', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [sessionId]
+    );
+
+    // If appointment exists, mark confirmed
+    const appointmentId = session.rows[0].appointment_id;
+    if (appointmentId) {
+      await pool.query(
+        `UPDATE appointments
+         SET status = 'confirmed'
+         WHERE id = $1 AND tenant_id = $2`,
+        [appointmentId, tenantId]
+      );
+    }
+
+    return res.json({ success: true, appointmentId });
+  } catch (error) {
+    console.error("Complete portal check-in error:", error);
+    return res.status(500).json({ error: "Failed to complete check-in" });
+  }
+});
 
 /**
  * GET /api/patient-portal-data/appointments

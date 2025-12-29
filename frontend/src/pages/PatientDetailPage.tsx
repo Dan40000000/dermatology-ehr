@@ -32,6 +32,7 @@ export function PatientDetailPage() {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [bodyMapView, setBodyMapView] = useState<'anterior' | 'posterior'>('anterior');
+  const [showFaceSheet, setShowFaceSheet] = useState(false);
 
   // Modal states
   const [editDemographicsOpen, setEditDemographicsOpen] = useState(false);
@@ -105,6 +106,10 @@ export function PatientDetailPage() {
       setLoading(false);
     }
   }, [session, patientId, showError, navigate]);
+
+  const nextAppointment = appointments
+    .filter((a) => a.status !== 'cancelled')
+    .sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime())[0];
 
   useEffect(() => {
     loadPatientData();
@@ -187,9 +192,9 @@ export function PatientDetailPage() {
           <span className="icon">📅</span>
           Schedule Appt
         </button>
-        <button type="button" className="ema-action-btn">
-          <span className="icon">📝</span>
-          Add Note
+        <button type="button" className="ema-action-btn" onClick={() => setShowFaceSheet(true)}>
+          <span className="icon">📄</span>
+          Face Sheet
         </button>
         <button type="button" className="ema-action-btn">
           <span className="icon">💊</span>
@@ -674,6 +679,69 @@ export function PatientDetailPage() {
           />
         )}
       </div>
+
+      <Modal
+        isOpen={showFaceSheet}
+        onClose={() => setShowFaceSheet(false)}
+        title="Face Sheet"
+        size="lg"
+      >
+        {patient ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0 }}>{patient.lastName}, {patient.firstName}</h3>
+                <p style={{ margin: '0.25rem 0', color: '#4b5563' }}>{patient.dob ? new Date(patient.dob).toLocaleDateString() : 'DOB: N/A'} • {patient.sex || 'Sex: N/A'}</p>
+                <p style={{ margin: '0.25rem 0', color: '#6b7280' }}>{patient.phone || 'No phone'} • {patient.email || 'No email'}</p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button type="button" className="btn secondary" onClick={() => setShowFaceSheet(false)}>Close</button>
+                <button type="button" className="btn primary" onClick={() => window.print()}>Print</button>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+              <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
+                <h4 style={{ margin: '0 0 0.5rem 0' }}>Address</h4>
+                <p style={{ margin: 0 }}>{patient.address || 'N/A'}</p>
+                <p style={{ margin: 0 }}>{[patient.city, patient.state, patient.zip].filter(Boolean).join(', ')}</p>
+              </div>
+              <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
+                <h4 style={{ margin: '0 0 0.5rem 0' }}>Insurance</h4>
+                {patient.insurance ? (
+                  <>
+                    <p style={{ margin: 0 }}>{patient.insurance.planName}</p>
+                    <p style={{ margin: 0 }}>Member: {patient.insurance.memberId}</p>
+                    {patient.insurance.groupNumber && <p style={{ margin: 0 }}>Group: {patient.insurance.groupNumber}</p>}
+                  </>
+                ) : (
+                  <p style={{ margin: 0 }}>No insurance on file</p>
+                )}
+              </div>
+              <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
+                <h4 style={{ margin: '0 0 0.5rem 0' }}>Allergies</h4>
+                <p style={{ margin: 0 }}>{patient.allergies?.length ? patient.allergies.join(', ') : 'None reported'}</p>
+              </div>
+              <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
+                <h4 style={{ margin: '0 0 0.5rem 0' }}>Medications</h4>
+                <p style={{ margin: 0 }}>{patient.medications || 'None on file'}</p>
+              </div>
+            </div>
+            <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
+              <h4 style={{ margin: '0 0 0.5rem 0' }}>Next Appointment</h4>
+              {nextAppointment ? (
+                <p style={{ margin: 0 }}>
+                  {new Date(nextAppointment.scheduledStart).toLocaleString()} with {nextAppointment.providerName || 'Provider'}
+                  {nextAppointment.locationName ? ` @ ${nextAppointment.locationName}` : ''}
+                </p>
+              ) : (
+                <p style={{ margin: 0 }}>No upcoming appointment.</p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p>Loading...</p>
+        )}
+      </Modal>
 
       {/* Edit Modals */}
       <EditDemographicsModal

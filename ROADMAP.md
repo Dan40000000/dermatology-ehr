@@ -8,9 +8,9 @@ Legend: ✅ done, 🚧 in progress, ⏳ planned, 🔴 missing
 High Priority (Build Now)
 -------------------------
 - ✅ Patient portal pre-check-in (start/complete check-in before arrival)
+- ✅ Face sheets (printable patient summary from schedule/encounter)
 - 🔴 ePA (electronic prior auth) for prescriptions
 - 🔴 Fax management (send/receive; queue UI)
-- 🔴 Face sheets (printable patient summary from schedule/encounter)
 - 🔴 Time blocks on schedule (non-patient slots; provider/location aware)
 - 🔴 Waitlist with auto-fill/cancel handling and notifications
 

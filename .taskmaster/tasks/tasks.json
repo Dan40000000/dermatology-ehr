@@ -1,0 +1,1024 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Database Schema for Time Blocks",
+        "description": "Create database tables and indexes for provider/location time blocks with conflict detection support.",
+        "details": "Add `time_blocks` table with fields: id, provider_id, location_id, start_time, end_time, recurrence_pattern (JSON for weekly/daily), color_code, description, is_active. Add indexes on provider_id+start_time+end_time composite and location_id. Implement check constraints to prevent invalid overlaps at DB level. Use Rails migration or equivalent SQL: `CREATE TABLE time_blocks (...); CREATE INDEX idx_time_blocks_provider_time ON time_blocks(provider_id, start_time, end_time);`. Ensure no PHI storage.",
+        "testStrategy": "Unit tests: validate migration creates tables/indexes correctly; test overlap detection query returns expected conflicts; integration test: insert block and verify index usage with EXPLAIN.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create time_blocks table migration",
+            "description": "Generate Rails migration to create time_blocks table with all specified fields including id, provider_id, location_id, start_time, end_time, recurrence_pattern as JSON, color_code, description, is_active, plus timestamps and ensure no PHI fields.",
+            "dependencies": [],
+            "details": "Use create_table with t.bigint :provider_id, t.bigint :location_id, t.datetime :start_time, t.datetime :end_time, t.json :recurrence_pattern, t.string :color_code, t.text :description, t.boolean :is_active, default: true. Add foreign key constraints if applicable. Verify schema follows best practices.",
+            "status": "pending",
+            "testStrategy": "Run migration and verify table structure with db:schema:dump; check JSON column support and no PHI fields present."
+          },
+          {
+            "id": 2,
+            "title": "Add indexes and overlap check constraints",
+            "description": "Implement composite indexes on provider_id+start_time+end_time and location_id; add database-level check constraints or partial unique indexes to prevent time overlaps per provider/location.",
+            "dependencies": [
+              1
+            ],
+            "details": "Use add_index :time_blocks, [:provider_id, :start_time, :end_time], name: 'idx_time_blocks_provider_time', using: :btree. Add location_id index. Implement overlap prevention via exclusion constraint (PostgreSQL) or unique index with range types. Include test insert queries to validate.",
+            "status": "pending",
+            "testStrategy": "Test queries: attempt overlapping inserts to verify constraint errors; use EXPLAIN ANALYZE on conflict detection queries to confirm index usage."
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Time Blocks CRUD APIs",
+        "description": "Implement RESTful APIs for creating, reading, updating, deleting time blocks with recurrence and cancellation logic.",
+        "details": "Build endpoints: POST /api/time_blocks (create with optional recurrence), GET /api/time_blocks?provider_id=X&date=Y (list with expansions), PATCH /api/time_blocks/:id (update/cancel), DELETE /api/time_blocks/:id. Use service layer for recurrence expansion (e.g., 6 months ahead). Integrate conflict check against existing blocks/appointments. Return 409 on overlaps. Use JSON recurrence like {pattern: 'weekly', days: [1,3], until: '2026-06-01'}.",
+        "testStrategy": "API tests: happy path CRUD; recurrence expansion matches expected instances; conflict detection blocks overlapping create/update; cancellation removes future instances; edge cases like same-minute overlaps.",
+        "priority": "high",
+        "dependencies": [
+          1
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement POST /api/time_blocks Create Endpoint",
+            "description": "Build the create endpoint with recurrence pattern parsing, validation, initial conflict check, and service layer integration for generating instances.",
+            "dependencies": [],
+            "details": "Parse JSON recurrence (e.g., {pattern: 'weekly', days: [1,3], until: '2026-06-01'}); validate inputs; call service to expand up to 6 months; check overlaps against existing blocks/appointments; return 409 on conflicts; use transactions.",
+            "status": "pending",
+            "testStrategy": "Test happy path create; recurrence parsing/expansion; conflict 409 response; invalid JSON handling."
+          },
+          {
+            "id": 2,
+            "title": "Implement GET /api/time_blocks List Endpoint",
+            "description": "Develop the list endpoint filtering by provider_id and date, with on-demand recurrence expansion and support for expansions.",
+            "dependencies": [],
+            "details": "Query time_blocks by provider_id and date range; use service layer to expand recurrences visible on that date (6 months logic); include expansions in response; add pagination if needed; optimize with indexes.",
+            "status": "pending",
+            "testStrategy": "Test listing with/without recurrence; expansion matches expected instances; performance with large date ranges."
+          },
+          {
+            "id": 3,
+            "title": "Implement PATCH /api/time_blocks/:id Update/Cancel",
+            "description": "Create update and cancel logic for single instances or series, including conflict checks on updates and future instance handling.",
+            "dependencies": [],
+            "details": "Support partial updates via PATCH; handle cancel (set is_active=false or delete future instances); re-check conflicts on updates; optimistic concurrency if possible; integrate service for series updates.",
+            "status": "pending",
+            "testStrategy": "Test update happy path; cancel single vs series; conflict 409 on overlapping updates; concurrent edit rejection."
+          },
+          {
+            "id": 4,
+            "title": "Implement DELETE /api/time_blocks/:id and Integrations",
+            "description": "Build delete endpoint with confirmation of no dependencies, full CRUD integration, error handling, and 409 responses for conflicts.",
+            "dependencies": [],
+            "details": "Soft/hard delete logic; ensure no active appointments overlap; integrate conflict checks across all endpoints; add auth/RBAC; consistent error responses; transaction safety for all operations.",
+            "status": "pending",
+            "testStrategy": "Test delete success/failure; end-to-end CRUD flow; 409 on all overlap scenarios; edge cases like same-minute overlaps."
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Scheduler UI for Time Blocks",
+        "description": "Update scheduler frontend to display time blocks with color coding, tooltips, and block booking conflicts.",
+        "details": "In React/Vue scheduler component: fetch blocks via API, render as colored overlays on calendar grid, tooltips show details/recurrence. Disable drag-drop/book on blocked times. Use CSS classes for colors from block data. Add create/edit modals calling CRUD APIs. Ensure responsive for desktop/mobile.",
+        "testStrategy": "E2E tests: view blocks in scheduler, create block, verify visual overlap blocking, tooltip content, mobile rendering; unit tests for component rendering with mock data.",
+        "priority": "high",
+        "dependencies": [
+          2
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "API Integration and Calendar Overlay Rendering",
+            "description": "Fetch time blocks via API and render as colored overlays on the scheduler calendar grid using CSS classes from block data.",
+            "dependencies": [],
+            "details": "Integrate with Task 2 APIs (GET /api/time_blocks). Use React scheduler library (e.g., Kendo/Syncfusion) to display blocks as events/overlays. Apply dynamic CSS classes based on color_code field for visual distinction.",
+            "status": "pending",
+            "testStrategy": "Unit tests: mock API response renders correct colored blocks; visual regression tests for overlay positioning."
+          },
+          {
+            "id": 2,
+            "title": "Tooltips, Drag-Drop Disable, and Responsive Design",
+            "description": "Implement tooltips showing block details/recurrence, disable drag-drop/booking on blocked times, and ensure responsive layout for desktop/mobile.",
+            "dependencies": [
+              1
+            ],
+            "details": "Add custom tooltips via scheduler event templates (details, recurrence_pattern). Configure scheduler editable=false or custom validation for blocked slots. Use media queries/CSS flex for mobile responsiveness across views (day/week/month).",
+            "status": "pending",
+            "testStrategy": "E2E tests: tooltip content on hover, prevent booking on overlap, responsive rendering on mobile viewport."
+          },
+          {
+            "id": 3,
+            "title": "Create/Edit Modals with Form Validation and CRUD APIs",
+            "description": "Add modals for creating/editing time blocks with form validation, calling CRUD APIs for provider/location blocks.",
+            "dependencies": [
+              1
+            ],
+            "details": "Build React modals triggered from scheduler UI. Forms validate start/end times, recurrence JSON, conflicts. Call POST/PATCH/DELETE to Task 2 APIs, refresh calendar on success. Include color_code/description fields.",
+            "status": "pending",
+            "testStrategy": "Unit tests: form validation errors, API integration mocks; E2E: create block appears on calendar, edit updates correctly."
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Waitlist Auto-Fill Worker Service",
+        "description": "Implement background worker to scan cancellations/open slots and match waitlist entries.",
+        "details": "Use Sidekiq/Resque worker: cron every 5min or trigger on cancellation. Query open slots (availability minus blocks/appointments). Match waitlist by provider/location/type/preferred_days/priority score (e.g., weighted SQL ORDER BY). Create hold slot, transition status to 'matched'. Configurable hold_window (24h). Log audits without PHI.",
+        "testStrategy": "Unit tests: matching logic scores correctly; integration: simulate cancellation triggers scan, matches entry; test hold expiration auto-cancels.",
+        "priority": "medium",
+        "dependencies": [
+          1,
+          2
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Set up Sidekiq WaitlistAutoFillWorker",
+            "description": "Create the Sidekiq worker class with cron scheduling every 5 minutes and triggered enqueueing on cancellations.",
+            "dependencies": [],
+            "details": "Generate worker using `rails generate sidekiq:job waitlist_auto_fill`; include Sidekiq::Worker; add sidekiq_cron for 5min schedule; implement perform method skeleton; configure retry: 3, queue: 'waitlist'.",
+            "status": "pending",
+            "testStrategy": "Unit test: verify worker enqueues on cancellation event; test cron schedule triggers perform."
+          },
+          {
+            "id": 2,
+            "title": "Implement open slots query logic",
+            "description": "Develop SQL query to find available slots by subtracting time blocks and existing appointments from provider/location availability.",
+            "dependencies": [
+              1
+            ],
+            "details": "Write service method: JOIN providers_availability with time_blocks and appointments on provider_id/location_id/time ranges; use date ranges for current day/week; apply WHERE not overlapping blocks/appointments; limit to configurable look-ahead window.",
+            "status": "pending",
+            "testStrategy": "Unit tests: mock data verifies slots correctly exclude blocks/appointments; test edge cases like partial overlaps."
+          },
+          {
+            "id": 3,
+            "title": "Build priority matching and scoring",
+            "description": "Create matching logic using weighted SQL ORDER BY on provider/location/service_type/preferred_days/priority_score for waitlist entries.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Query waitlist entries with pending status; compute score: (provider_match*0.4 + location_match*0.3 + type_match*0.2 + days_match*0.1); ORDER BY score DESC LIMIT slots_count; handle one-to-one matching.",
+            "status": "pending",
+            "testStrategy": "Unit tests: verify scoring weights produce correct match order; test various match combinations."
+          },
+          {
+            "id": 4,
+            "title": "Handle hold creation, status transition, and audits",
+            "description": "Create hold records, update waitlist to 'matched', schedule expiration after hold_window, log audits without PHI.",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Use transactions for atomicity; create holds table with slot_id/waitlist_id/hold_until; enqueue expiration job; update status; audit log: {waitlist_id, slot_id, matched_at, provider_id} excluding PHI; race condition: advisory locks on slots.",
+            "status": "pending",
+            "testStrategy": "Integration tests: simulate full flow from slots to match/hold; verify expiration cancels holds; test concurrent matching doesn't double-book."
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Waitlist Notifications and UI",
+        "description": "Add notification delivery for matches and manual fill UI with status transitions.",
+        "details": "SMS/Email/Portal via Twilio/SendGrid: template 'Slot available for Dr. X on DATE - reply YES'. Hold confirmation via link/SMS reply. UI: waitlist table shows matches, 'Fill' button calls API to schedule/mark resolved. Audit log: status changes.",
+        "testStrategy": "E2E: trigger match, verify notification sent, accept schedules appointment, marks resolved; test rate limiting doesn't throttle.",
+        "priority": "medium",
+        "dependencies": [
+          4
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement Notification Delivery System",
+            "description": "Develop SMS and Email notification delivery using Twilio and SendGrid with PHI-redacted templates for waitlist matches.",
+            "dependencies": [],
+            "details": "Create service for sending 'Slot available for Dr. X on DATE - reply YES' via Twilio SMS (HIPAA-eligible) and SendGrid Email (non-PHI). Add rate limiting, audit logging without PHI, and portal notifications. Use dynamic templates.",
+            "status": "pending",
+            "testStrategy": "Unit tests for template rendering and sending; integration tests verify delivery to Twilio/SendGrid APIs; mock PHI redaction."
+          },
+          {
+            "id": 2,
+            "title": "Build Confirmation Handling Logic",
+            "description": "Handle patient confirmations via SMS reply parsing and confirmation links to create holds and transition statuses.",
+            "dependencies": [
+              1
+            ],
+            "details": "Set up Twilio webhook for SMS replies ('YES'), parse and call API to create hold slot (24h window), update waitlist to 'confirmed'. Implement secure links in emails/SMS for portal confirmation. Ensure audit trails for all actions.",
+            "status": "pending",
+            "testStrategy": "E2E: simulate match notification, send reply/link click, verify hold created and status 'confirmed'; test invalid replies ignored."
+          },
+          {
+            "id": 3,
+            "title": "Develop Waitlist UI Table and Manual Fill",
+            "description": "Build frontend waitlist table displaying matches with 'Fill' buttons, status transitions, and API integration.",
+            "dependencies": [
+              1
+            ],
+            "details": "React table showing waitlist entries, matches highlighted, 'Fill' button triggers API to schedule appointment/mark resolved. Include status badges, audit log viewer. Handle loading/error states, responsive design.",
+            "status": "pending",
+            "testStrategy": "E2E: view table post-match, click 'Fill', verify appointment scheduled and status 'resolved'; unit tests for component state updates."
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "ePA Database and Adapter Interface",
+        "description": "Create prior_auth_requests table and pluggable mock adapter for ePA MVP.",
+        "details": "DB migration: `prior_auth_requests` (id, rx_id, payer_id, member_id, status enum(submitted,pending,approved,denied,addl_info), history JSON, attachments JSON[], submitted_at). Adapter: abstract class PriorAuthAdapter with submit(req), poll_status(id), attach_doc(id,doc). Mock impl: async delays, random outcomes.",
+        "testStrategy": "Migration tests; adapter unit tests: full state machine cycle with mock responses.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create prior_auth_requests DB Migration",
+            "description": "Develop and run database migration to create the prior_auth_requests table with specified schema including enums and JSON fields.",
+            "dependencies": [],
+            "details": "Implement Rails migration or equivalent SQL for table: id (primary key), rx_id, payer_id, member_id, status enum('submitted','pending','approved','denied','addl_info'), history JSON, attachments JSON[], submitted_at timestamp. Add any necessary indexes on rx_id, payer_id, member_id.",
+            "status": "pending",
+            "testStrategy": "Unit tests to validate migration creates table with correct columns, enums, JSON types, and indexes; verify schema matches spec with schema inspection."
+          },
+          {
+            "id": 2,
+            "title": "Implement PriorAuthAdapter and Mock",
+            "description": "Define abstract PriorAuthAdapter class and concrete MockPriorAuthAdapter with async methods for submit, poll_status, and attach_doc simulating real-world behavior.",
+            "dependencies": [
+              1
+            ],
+            "details": "Abstract class: async submit(req), poll_status(id), attach_doc(id, doc). Mock impl: use async delays (e.g., 1-5s random), random status outcomes (approved/denied/etc.), store state in memory/DB for polling, simulate history/attachments JSON updates.",
+            "status": "pending",
+            "testStrategy": "Unit tests covering full state machine: submit → pending → poll to approved/denied/addl_info; attach_doc updates attachments; edge cases like rapid polling, failures; integration test with DB table."
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Rx UI for ePA Requests",
+        "description": "Integrate ePA into Rx workflow: submit request, track status/history, upload docs.",
+        "details": "Rx form: 'Request PA' button → modal with payer/member select, submit via adapter. Status badge updates via polling/websockets. History accordion, doc upload drag-drop to attachments[]. Errors toast notifications.",
+        "testStrategy": "E2E: Rx → PA submit → status changes → approve/deny flows; verify history/attachments persist.",
+        "priority": "high",
+        "dependencies": [
+          6
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Rx Form Integration with PA Modal",
+            "description": "Add 'Request PA' button to Rx form, open modal with payer/member selection, and submit request via ePA adapter.",
+            "dependencies": [],
+            "details": "Implement button click handler to open modal; add dropdowns for payer_id and member_id selection from available options; call PriorAuthAdapter.submit() on form submit with rx_id, selected payer/member; close modal on success.",
+            "status": "pending",
+            "testStrategy": "Unit: button opens modal, form submits valid payload; Integration: mock adapter call succeeds, request created in DB."
+          },
+          {
+            "id": 2,
+            "title": "Status Polling/WebSockets and History UI",
+            "description": "Update status badge via polling or WebSockets, implement history accordion displaying request timeline.",
+            "dependencies": [
+              1
+            ],
+            "details": "Add status badge component that polls adapter.poll_status() every 5s or listens to WebSocket events for prior_auth_requests updates; render history accordion from history JSON field with timestamps/status changes; support both polling fallback and WebSocket preferred.",
+            "status": "pending",
+            "testStrategy": "E2E: submit request → observe status change via poll/WS → verify history accordion populates correctly."
+          },
+          {
+            "id": 3,
+            "title": "Document Upload Drag-Drop and Error Handling",
+            "description": "Implement drag-drop file upload to attachments array, show toast notifications for errors.",
+            "dependencies": [
+              1
+            ],
+            "details": "Use HTML5 drag-drop API or library for file uploads; on drop, call PriorAuthAdapter.attach_doc() with file; append to attachments[] JSON on success; implement toast notifications for errors (network, file size, adapter failures) using toast library.",
+            "status": "pending",
+            "testStrategy": "Unit: drag-drop handles files, calls adapter; Integration: successful upload persists in DB, error shows toast."
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Fax Database and Adapter MVP",
+        "description": "Implement faxes table and mock fax adapter with inbound webhook.",
+        "details": "DB: `faxes` (id, direction enum(in,out), status enum(queued,sent,delivered,failed), from/to numbers, doc_id, error_msg, timestamps). Adapter: FaxAdapter send(pdf, to), receive webhook → create fax + attach doc to patient/doc queue. Mock: store files locally, simulate delays/errors.",
+        "testStrategy": "Unit: adapter send/receive; webhook POST handling creates records correctly; integration: full inbound → doc queue.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create faxes table migration",
+            "description": "Generate and run database migration to create the faxes table with specified fields, enums, indexes, and constraints.",
+            "dependencies": [],
+            "details": "Use Rails migration: create_table :faxes with id (primary key), direction enum('in','out'), status enum('queued','sent','delivered','failed'), from_number, to_number, doc_id, error_msg (nullable), created_at, updated_at. Add indexes on direction, status, doc_id. Implement check constraints for valid enums and timestamps.",
+            "status": "pending",
+            "testStrategy": "Verify migration creates table with correct schema using schema inspection; test enum constraints reject invalid values; check indexes with EXPLAIN on sample queries."
+          },
+          {
+            "id": 2,
+            "title": "Implement FaxAdapter with mock send/receive",
+            "description": "Develop FaxAdapter class with send(pdf, to) and receive webhook methods, using local file storage and simulated delays/errors.",
+            "dependencies": [
+              1
+            ],
+            "details": "Create mock FaxAdapter: send() stores PDF locally, updates fax status asynchronously (queued→sent→delivered/failed with random errors/delays 1-5s), returns fax ID. Receive() handles webhook payload to create fax record and queue doc. Use local dir for files, simulate via threads/async.",
+            "status": "pending",
+            "testStrategy": "Unit tests: send() creates record and simulates full status lifecycle; receive() parses webhook and triggers doc queue; mock file I/O and error scenarios."
+          },
+          {
+            "id": 3,
+            "title": "Build inbound webhook endpoint and doc queue integration",
+            "description": "Add POST /webhooks/fax_inbound endpoint to process incoming faxes, create records via adapter, and attach to patient/doc queue.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Implement Rails/Sinatra endpoint: validate signature if needed, parse JSON (fax_id, status, direction, numbers, pdf_url), call adapter.receive(), integrate with existing doc queue (e.g., Sidekiq/Redis) to attach to patient/doc. Log errors, return 200.",
+            "status": "pending",
+            "testStrategy": "Integration tests: POST webhook creates fax record, updates status, enqueues doc correctly; security test for invalid payloads; E2E with mock external sender."
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Fax UI Inbox/Outbox",
+        "description": "Add Documents tab for fax send/retry/view/download.",
+        "details": "New tabs: Inbox (inbound faxes), Outbox (outbound). List with status icons, retry failed sends, download PDF viewer. Send modal: select doc/PDF upload, to number, call adapter.",
+        "testStrategy": "E2E: send fax → status updates → download; receive webhook → appears in inbox; retry failed.",
+        "priority": "medium",
+        "dependencies": [
+          8
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement Inbox/Outbox Tabs with Status Lists and PDF Viewer",
+            "description": "Create UI tabs for Inbox (inbound faxes) and Outbox (outbound faxes) displaying lists with status icons and integrated PDF viewer for viewing documents.",
+            "dependencies": [],
+            "details": "Use React components for tabbed interface; fetch fax lists via API with status filtering (pending, sent, failed, received); render status icons (e.g., green check, red X); embed PDF viewer (e.g., react-pdf) for preview; ensure responsive design and loading states.",
+            "status": "pending",
+            "testStrategy": "Unit tests for tab rendering and status icon display; E2E tests verifying list population from mock API data and PDF viewer functionality."
+          },
+          {
+            "id": 2,
+            "title": "Build Send Modal, Retry Logic, and Download Handling",
+            "description": "Develop send modal for fax dispatch, implement retry for failed outbound faxes, and handle PDF downloads from both tabs.",
+            "dependencies": [
+              1
+            ],
+            "details": "Send modal: form with document selector/PDF upload, recipient number input, submit calls fax adapter API; retry button for failed outbox items triggers re-send API; download generates blob URL from fax PDF endpoint; add confirmation dialogs and error toasts.",
+            "status": "pending",
+            "testStrategy": "E2E tests: complete send flow → verify outbox status update → retry failed → download succeeds; unit tests for modal form validation and retry API calls."
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Portal Pre-Check-In Enhancements",
+        "description": "Polish portal to show/resume/complete pre-check-in with backend session sync.",
+        "details": "Portal appointments list: precheckin_status badge. Resume/complete buttons → API updates session, sets appointment 'confirmed', optional SMS/email. Backend: session expiry 24h, audit logs for completions.",
+        "testStrategy": "E2E: start precheckin → portal shows state → complete → appointment confirmed + notification.",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement Backend Session Sync and Expiry Logic",
+            "description": "Develop backend logic for pre-check-in session management including 24-hour expiry, API endpoints for resume/complete actions that update session and set appointment to 'confirmed', with optional SMS/email notifications and audit logging.",
+            "dependencies": [],
+            "details": "Create session model with expiry timestamp (24h from start). API: POST /api/precheckin/:session_id/resume, POST /api/precheckin/:session_id/complete → update appointment.confirmed=true, send optional SMS/email via service, log audit entry without PHI. Handle expired sessions with 410 Gone.",
+            "status": "pending",
+            "testStrategy": "Unit tests: session expiry enforcement; API integration: resume/complete updates appointment status, triggers notifications; verify audit logs capture actions."
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Compliance and Monitoring Setup",
+        "description": "Implement HIPAA audit logs, PHI redaction, monitoring for queues/retries.",
+        "details": "Audit log table for key actions (block create, PA submit, fax send). Lograge/Sentry without PHI (hash PII). Queue monitoring: Sidekiq dashboard, retries x3 then dead letter. Rate limits on notifications.",
+        "testStrategy": "Verify logs redact PHI; simulate queue failure → retries → DLQ; load test rate limits.",
+        "priority": "medium",
+        "dependencies": [
+          2,
+          5,
+          7,
+          9
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "HIPAA Audit Log Table and Service",
+            "description": "Design and implement database table and service for logging key HIPAA-compliant audit events like block creation, PA submission, and fax sending.",
+            "dependencies": [],
+            "details": "Create Rails migration for phi_access_log table using phi_attrs gem; define fields for user_id, action, timestamp, request_uuid; integrate automated logging in relevant models/services for block create, PA submit, fax send with immutable storage.",
+            "status": "pending",
+            "testStrategy": "Unit tests verify log entries created on key actions; integration tests check log completeness and HIPAA fields; validate no PHI stored directly."
+          },
+          {
+            "id": 2,
+            "title": "PHI Redaction in Lograge and Sentry",
+            "description": "Configure Lograge and Sentry to hash or redact all PHI/PII before logging to ensure HIPAA compliance.",
+            "dependencies": [],
+            "details": "Implement phi_attrs for explicit PHI access control; add middleware to hash PII in logs; update Lograge formatter and Sentry DSN config to strip sensitive data; test with sample PHI payloads to confirm redaction.",
+            "status": "pending",
+            "testStrategy": "Tests simulate PHI in logs, assert hashed/redacted output in Lograge/Sentry; verify request UUID tagging links to audit logs."
+          },
+          {
+            "id": 3,
+            "title": "Sidekiq Queue Monitoring and Retries",
+            "description": "Set up Sidekiq dashboard for monitoring, configure retries (max 3) with dead letter queue (DLQ) for failed jobs.",
+            "dependencies": [],
+            "details": "Install Sidekiq web UI with authentication; configure sidekiq.yml for retry: 3, dead: true; create DLQ processing worker; integrate monitoring alerts for high retry/failure rates; log non-PHI queue events to audit system.",
+            "status": "pending",
+            "testStrategy": "Simulate job failures to verify 3 retries then DLQ; E2E tests check dashboard displays metrics; load tests confirm no PHI leakage in queue logs."
+          },
+          {
+            "id": 4,
+            "title": "Notification Rate Limiting Configuration",
+            "description": "Implement rate limits on notification endpoints/services to prevent abuse while maintaining HIPAA audit logging.",
+            "dependencies": [
+              1
+            ],
+            "details": "Use Rack::Attack or Redis-based rate limiter on notification APIs/workers; set limits e.g., 100/hour per user/IP; log rate limit events to audit log without PHI; configure exceptions for critical alerts.",
+            "status": "pending",
+            "testStrategy": "Load tests exceed limits and verify 429 responses; check audit logs capture rate limit hits; integration tests ensure limits don't block legit traffic."
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "End-to-End Integration Tests and TaskMaster Generation",
+        "description": "Comprehensive tests across features + generate/validate these tasks.",
+        "details": "Cucumber/RSpec: time block prevents booking, waitlist fills on cancel, ePA/fax full cycles, portal confirms. Commit tasks JSON with sprint tag 'derm-parity-quest', deps validated (no cycles).",
+        "testStrategy": "Run full suite: acceptance criteria scenarios pass; task deps acyclic.",
+        "priority": "low",
+        "dependencies": [
+          3,
+          5,
+          7,
+          9,
+          10,
+          11
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Develop E2E Integration Test Scenarios",
+            "description": "Create comprehensive Cucumber and RSpec feature tests covering all key scenarios across dependent tasks including time blocks, waitlist, ePA/fax cycles, and portal confirmations.",
+            "dependencies": [],
+            "details": "Implement Cucumber features for: time block prevents booking, waitlist fills on cancel, full ePA/fax request/response cycles, portal status confirmations. Use Capybara for browser interactions, ensure tests run against full stack including Resque workers if applicable. Cover dependencies from tasks 3,5,7,9,10,11.",
+            "status": "pending",
+            "testStrategy": "Run full Cucumber suite; verify all acceptance criteria scenarios pass with green output; check database state and UI assertions post-test."
+          },
+          {
+            "id": 2,
+            "title": "Generate and Validate TaskMaster JSON",
+            "description": "Generate tasks JSON file with all subtasks, validate dependencies for cycles, and commit with sprint tag 'derm-parity-quest'.",
+            "dependencies": [
+              1
+            ],
+            "details": "Script or manually create tasks JSON including this parent task and all subtasks; implement cycle detection algorithm on dependency graph; validate no cycles exist; git commit with message including sprint tag 'derm-parity-quest'; ensure JSON schema compliance.",
+            "status": "pending",
+            "testStrategy": "Validate JSON parses correctly; run dependency cycle detection algorithm asserts no cycles; git diff confirms commit with correct tag; manual review of generated tasks structure."
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "created": "2025-12-30T19:36:14.078Z",
+      "updated": "2025-12-30T19:36:14.078Z",
+      "description": "Tasks for master context"
+    }
+  },
+  "sprint-2025-12": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Database Schema for Time Blocks",
+        "description": "Create database tables and indexes for provider/location time blocks with conflict detection support.",
+        "details": "Add `time_blocks` table with fields: id, provider_id, location_id, start_time, end_time, recurrence_pattern (JSON for weekly/daily), color_code, description, is_active. Add indexes on provider_id+start_time+end_time composite and location_id. Implement check constraints to prevent invalid overlaps at DB level. Use Rails migration or equivalent SQL: `CREATE TABLE time_blocks (...); CREATE INDEX idx_time_blocks_provider_time ON time_blocks(provider_id, start_time, end_time);`. Ensure no PHI storage.",
+        "testStrategy": "Unit tests: validate migration creates tables/indexes correctly; test overlap detection query returns expected conflicts; integration test: insert block and verify index usage with EXPLAIN.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create time_blocks table migration",
+            "description": "Generate Rails migration to create time_blocks table with all specified fields including id, provider_id, location_id, start_time, end_time, recurrence_pattern as JSON, color_code, description, is_active, plus timestamps and ensure no PHI fields.",
+            "dependencies": [],
+            "details": "Use create_table with t.bigint :provider_id, t.bigint :location_id, t.datetime :start_time, t.datetime :end_time, t.json :recurrence_pattern, t.string :color_code, t.text :description, t.boolean :is_active, default: true. Add foreign key constraints if applicable. Verify schema follows best practices.",
+            "status": "pending",
+            "testStrategy": "Run migration and verify table structure with db:schema:dump; check JSON column support and no PHI fields present."
+          },
+          {
+            "id": 2,
+            "title": "Add indexes and overlap check constraints",
+            "description": "Implement composite indexes on provider_id+start_time+end_time and location_id; add database-level check constraints or partial unique indexes to prevent time overlaps per provider/location.",
+            "dependencies": [
+              1
+            ],
+            "details": "Use add_index :time_blocks, [:provider_id, :start_time, :end_time], name: 'idx_time_blocks_provider_time', using: :btree. Add location_id index. Implement overlap prevention via exclusion constraint (PostgreSQL) or unique index with range types. Include test insert queries to validate.",
+            "status": "pending",
+            "testStrategy": "Test queries: attempt overlapping inserts to verify constraint errors; use EXPLAIN ANALYZE on conflict detection queries to confirm index usage."
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Time Blocks CRUD APIs",
+        "description": "Implement RESTful APIs for creating, reading, updating, deleting time blocks with recurrence and cancellation logic.",
+        "details": "Build endpoints: POST /api/time_blocks (create with optional recurrence), GET /api/time_blocks?provider_id=X&date=Y (list with expansions), PATCH /api/time_blocks/:id (update/cancel), DELETE /api/time_blocks/:id. Use service layer for recurrence expansion (e.g., 6 months ahead). Integrate conflict check against existing blocks/appointments. Return 409 on overlaps. Use JSON recurrence like {pattern: 'weekly', days: [1,3], until: '2026-06-01'}.",
+        "testStrategy": "API tests: happy path CRUD; recurrence expansion matches expected instances; conflict detection blocks overlapping create/update; cancellation removes future instances; edge cases like same-minute overlaps.",
+        "priority": "high",
+        "dependencies": [
+          1
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement POST /api/time_blocks Create Endpoint",
+            "description": "Build the create endpoint with recurrence pattern parsing, validation, initial conflict check, and service layer integration for generating instances.",
+            "dependencies": [],
+            "details": "Parse JSON recurrence (e.g., {pattern: 'weekly', days: [1,3], until: '2026-06-01'}); validate inputs; call service to expand up to 6 months; check overlaps against existing blocks/appointments; return 409 on conflicts; use transactions.",
+            "status": "pending",
+            "testStrategy": "Test happy path create; recurrence parsing/expansion; conflict 409 response; invalid JSON handling."
+          },
+          {
+            "id": 2,
+            "title": "Implement GET /api/time_blocks List Endpoint",
+            "description": "Develop the list endpoint filtering by provider_id and date, with on-demand recurrence expansion and support for expansions.",
+            "dependencies": [],
+            "details": "Query time_blocks by provider_id and date range; use service layer to expand recurrences visible on that date (6 months logic); include expansions in response; add pagination if needed; optimize with indexes.",
+            "status": "pending",
+            "testStrategy": "Test listing with/without recurrence; expansion matches expected instances; performance with large date ranges."
+          },
+          {
+            "id": 3,
+            "title": "Implement PATCH /api/time_blocks/:id Update/Cancel",
+            "description": "Create update and cancel logic for single instances or series, including conflict checks on updates and future instance handling.",
+            "dependencies": [],
+            "details": "Support partial updates via PATCH; handle cancel (set is_active=false or delete future instances); re-check conflicts on updates; optimistic concurrency if possible; integrate service for series updates.",
+            "status": "pending",
+            "testStrategy": "Test update happy path; cancel single vs series; conflict 409 on overlapping updates; concurrent edit rejection."
+          },
+          {
+            "id": 4,
+            "title": "Implement DELETE /api/time_blocks/:id and Integrations",
+            "description": "Build delete endpoint with confirmation of no dependencies, full CRUD integration, error handling, and 409 responses for conflicts.",
+            "dependencies": [],
+            "details": "Soft/hard delete logic; ensure no active appointments overlap; integrate conflict checks across all endpoints; add auth/RBAC; consistent error responses; transaction safety for all operations.",
+            "status": "pending",
+            "testStrategy": "Test delete success/failure; end-to-end CRUD flow; 409 on all overlap scenarios; edge cases like same-minute overlaps."
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Scheduler UI for Time Blocks",
+        "description": "Update scheduler frontend to display time blocks with color coding, tooltips, and block booking conflicts.",
+        "details": "In React/Vue scheduler component: fetch blocks via API, render as colored overlays on calendar grid, tooltips show details/recurrence. Disable drag-drop/book on blocked times. Use CSS classes for colors from block data. Add create/edit modals calling CRUD APIs. Ensure responsive for desktop/mobile.",
+        "testStrategy": "E2E tests: view blocks in scheduler, create block, verify visual overlap blocking, tooltip content, mobile rendering; unit tests for component rendering with mock data.",
+        "priority": "high",
+        "dependencies": [
+          2
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "API Integration and Calendar Overlay Rendering",
+            "description": "Fetch time blocks via API and render as colored overlays on the scheduler calendar grid using CSS classes from block data.",
+            "dependencies": [],
+            "details": "Integrate with Task 2 APIs (GET /api/time_blocks). Use React scheduler library (e.g., Kendo/Syncfusion) to display blocks as events/overlays. Apply dynamic CSS classes based on color_code field for visual distinction.",
+            "status": "pending",
+            "testStrategy": "Unit tests: mock API response renders correct colored blocks; visual regression tests for overlay positioning."
+          },
+          {
+            "id": 2,
+            "title": "Tooltips, Drag-Drop Disable, and Responsive Design",
+            "description": "Implement tooltips showing block details/recurrence, disable drag-drop/booking on blocked times, and ensure responsive layout for desktop/mobile.",
+            "dependencies": [
+              1
+            ],
+            "details": "Add custom tooltips via scheduler event templates (details, recurrence_pattern). Configure scheduler editable=false or custom validation for blocked slots. Use media queries/CSS flex for mobile responsiveness across views (day/week/month).",
+            "status": "pending",
+            "testStrategy": "E2E tests: tooltip content on hover, prevent booking on overlap, responsive rendering on mobile viewport."
+          },
+          {
+            "id": 3,
+            "title": "Create/Edit Modals with Form Validation and CRUD APIs",
+            "description": "Add modals for creating/editing time blocks with form validation, calling CRUD APIs for provider/location blocks.",
+            "dependencies": [
+              1
+            ],
+            "details": "Build React modals triggered from scheduler UI. Forms validate start/end times, recurrence JSON, conflicts. Call POST/PATCH/DELETE to Task 2 APIs, refresh calendar on success. Include color_code/description fields.",
+            "status": "pending",
+            "testStrategy": "Unit tests: form validation errors, API integration mocks; E2E: create block appears on calendar, edit updates correctly."
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Waitlist Auto-Fill Worker Service",
+        "description": "Implement background worker to scan cancellations/open slots and match waitlist entries.",
+        "details": "Use Sidekiq/Resque worker: cron every 5min or trigger on cancellation. Query open slots (availability minus blocks/appointments). Match waitlist by provider/location/type/preferred_days/priority score (e.g., weighted SQL ORDER BY). Create hold slot, transition status to 'matched'. Configurable hold_window (24h). Log audits without PHI.",
+        "testStrategy": "Unit tests: matching logic scores correctly; integration: simulate cancellation triggers scan, matches entry; test hold expiration auto-cancels.",
+        "priority": "medium",
+        "dependencies": [
+          1,
+          2
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Set up Sidekiq WaitlistAutoFillWorker",
+            "description": "Create the Sidekiq worker class with cron scheduling every 5 minutes and triggered enqueueing on cancellations.",
+            "dependencies": [],
+            "details": "Generate worker using `rails generate sidekiq:job waitlist_auto_fill`; include Sidekiq::Worker; add sidekiq_cron for 5min schedule; implement perform method skeleton; configure retry: 3, queue: 'waitlist'.",
+            "status": "pending",
+            "testStrategy": "Unit test: verify worker enqueues on cancellation event; test cron schedule triggers perform."
+          },
+          {
+            "id": 2,
+            "title": "Implement open slots query logic",
+            "description": "Develop SQL query to find available slots by subtracting time blocks and existing appointments from provider/location availability.",
+            "dependencies": [
+              1
+            ],
+            "details": "Write service method: JOIN providers_availability with time_blocks and appointments on provider_id/location_id/time ranges; use date ranges for current day/week; apply WHERE not overlapping blocks/appointments; limit to configurable look-ahead window.",
+            "status": "pending",
+            "testStrategy": "Unit tests: mock data verifies slots correctly exclude blocks/appointments; test edge cases like partial overlaps."
+          },
+          {
+            "id": 3,
+            "title": "Build priority matching and scoring",
+            "description": "Create matching logic using weighted SQL ORDER BY on provider/location/service_type/preferred_days/priority_score for waitlist entries.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Query waitlist entries with pending status; compute score: (provider_match*0.4 + location_match*0.3 + type_match*0.2 + days_match*0.1); ORDER BY score DESC LIMIT slots_count; handle one-to-one matching.",
+            "status": "pending",
+            "testStrategy": "Unit tests: verify scoring weights produce correct match order; test various match combinations."
+          },
+          {
+            "id": 4,
+            "title": "Handle hold creation, status transition, and audits",
+            "description": "Create hold records, update waitlist to 'matched', schedule expiration after hold_window, log audits without PHI.",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Use transactions for atomicity; create holds table with slot_id/waitlist_id/hold_until; enqueue expiration job; update status; audit log: {waitlist_id, slot_id, matched_at, provider_id} excluding PHI; race condition: advisory locks on slots.",
+            "status": "pending",
+            "testStrategy": "Integration tests: simulate full flow from slots to match/hold; verify expiration cancels holds; test concurrent matching doesn't double-book."
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Waitlist Notifications and UI",
+        "description": "Add notification delivery for matches and manual fill UI with status transitions.",
+        "details": "SMS/Email/Portal via Twilio/SendGrid: template 'Slot available for Dr. X on DATE - reply YES'. Hold confirmation via link/SMS reply. UI: waitlist table shows matches, 'Fill' button calls API to schedule/mark resolved. Audit log: status changes.",
+        "testStrategy": "E2E: trigger match, verify notification sent, accept schedules appointment, marks resolved; test rate limiting doesn't throttle.",
+        "priority": "medium",
+        "dependencies": [
+          4
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement Notification Delivery System",
+            "description": "Develop SMS and Email notification delivery using Twilio and SendGrid with PHI-redacted templates for waitlist matches.",
+            "dependencies": [],
+            "details": "Create service for sending 'Slot available for Dr. X on DATE - reply YES' via Twilio SMS (HIPAA-eligible) and SendGrid Email (non-PHI). Add rate limiting, audit logging without PHI, and portal notifications. Use dynamic templates.",
+            "status": "pending",
+            "testStrategy": "Unit tests for template rendering and sending; integration tests verify delivery to Twilio/SendGrid APIs; mock PHI redaction."
+          },
+          {
+            "id": 2,
+            "title": "Build Confirmation Handling Logic",
+            "description": "Handle patient confirmations via SMS reply parsing and confirmation links to create holds and transition statuses.",
+            "dependencies": [
+              1
+            ],
+            "details": "Set up Twilio webhook for SMS replies ('YES'), parse and call API to create hold slot (24h window), update waitlist to 'confirmed'. Implement secure links in emails/SMS for portal confirmation. Ensure audit trails for all actions.",
+            "status": "pending",
+            "testStrategy": "E2E: simulate match notification, send reply/link click, verify hold created and status 'confirmed'; test invalid replies ignored."
+          },
+          {
+            "id": 3,
+            "title": "Develop Waitlist UI Table and Manual Fill",
+            "description": "Build frontend waitlist table displaying matches with 'Fill' buttons, status transitions, and API integration.",
+            "dependencies": [
+              1
+            ],
+            "details": "React table showing waitlist entries, matches highlighted, 'Fill' button triggers API to schedule appointment/mark resolved. Include status badges, audit log viewer. Handle loading/error states, responsive design.",
+            "status": "pending",
+            "testStrategy": "E2E: view table post-match, click 'Fill', verify appointment scheduled and status 'resolved'; unit tests for component state updates."
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "ePA Database and Adapter Interface",
+        "description": "Create prior_auth_requests table and pluggable mock adapter for ePA MVP.",
+        "details": "DB migration: `prior_auth_requests` (id, rx_id, payer_id, member_id, status enum(submitted,pending,approved,denied,addl_info), history JSON, attachments JSON[], submitted_at). Adapter: abstract class PriorAuthAdapter with submit(req), poll_status(id), attach_doc(id,doc). Mock impl: async delays, random outcomes.",
+        "testStrategy": "Migration tests; adapter unit tests: full state machine cycle with mock responses.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create prior_auth_requests DB Migration",
+            "description": "Develop and run database migration to create the prior_auth_requests table with specified schema including enums and JSON fields.",
+            "dependencies": [],
+            "details": "Implement Rails migration or equivalent SQL for table: id (primary key), rx_id, payer_id, member_id, status enum('submitted','pending','approved','denied','addl_info'), history JSON, attachments JSON[], submitted_at timestamp. Add any necessary indexes on rx_id, payer_id, member_id.",
+            "status": "pending",
+            "testStrategy": "Unit tests to validate migration creates table with correct columns, enums, JSON types, and indexes; verify schema matches spec with schema inspection."
+          },
+          {
+            "id": 2,
+            "title": "Implement PriorAuthAdapter and Mock",
+            "description": "Define abstract PriorAuthAdapter class and concrete MockPriorAuthAdapter with async methods for submit, poll_status, and attach_doc simulating real-world behavior.",
+            "dependencies": [
+              1
+            ],
+            "details": "Abstract class: async submit(req), poll_status(id), attach_doc(id, doc). Mock impl: use async delays (e.g., 1-5s random), random status outcomes (approved/denied/etc.), store state in memory/DB for polling, simulate history/attachments JSON updates.",
+            "status": "pending",
+            "testStrategy": "Unit tests covering full state machine: submit → pending → poll to approved/denied/addl_info; attach_doc updates attachments; edge cases like rapid polling, failures; integration test with DB table."
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Rx UI for ePA Requests",
+        "description": "Integrate ePA into Rx workflow: submit request, track status/history, upload docs.",
+        "details": "Rx form: 'Request PA' button → modal with payer/member select, submit via adapter. Status badge updates via polling/websockets. History accordion, doc upload drag-drop to attachments[]. Errors toast notifications.",
+        "testStrategy": "E2E: Rx → PA submit → status changes → approve/deny flows; verify history/attachments persist.",
+        "priority": "high",
+        "dependencies": [
+          6
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Rx Form Integration with PA Modal",
+            "description": "Add 'Request PA' button to Rx form, open modal with payer/member selection, and submit request via ePA adapter.",
+            "dependencies": [],
+            "details": "Implement button click handler to open modal; add dropdowns for payer_id and member_id selection from available options; call PriorAuthAdapter.submit() on form submit with rx_id, selected payer/member; close modal on success.",
+            "status": "pending",
+            "testStrategy": "Unit: button opens modal, form submits valid payload; Integration: mock adapter call succeeds, request created in DB."
+          },
+          {
+            "id": 2,
+            "title": "Status Polling/WebSockets and History UI",
+            "description": "Update status badge via polling or WebSockets, implement history accordion displaying request timeline.",
+            "dependencies": [
+              1
+            ],
+            "details": "Add status badge component that polls adapter.poll_status() every 5s or listens to WebSocket events for prior_auth_requests updates; render history accordion from history JSON field with timestamps/status changes; support both polling fallback and WebSocket preferred.",
+            "status": "pending",
+            "testStrategy": "E2E: submit request → observe status change via poll/WS → verify history accordion populates correctly."
+          },
+          {
+            "id": 3,
+            "title": "Document Upload Drag-Drop and Error Handling",
+            "description": "Implement drag-drop file upload to attachments array, show toast notifications for errors.",
+            "dependencies": [
+              1
+            ],
+            "details": "Use HTML5 drag-drop API or library for file uploads; on drop, call PriorAuthAdapter.attach_doc() with file; append to attachments[] JSON on success; implement toast notifications for errors (network, file size, adapter failures) using toast library.",
+            "status": "pending",
+            "testStrategy": "Unit: drag-drop handles files, calls adapter; Integration: successful upload persists in DB, error shows toast."
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Fax Database and Adapter MVP",
+        "description": "Implement faxes table and mock fax adapter with inbound webhook.",
+        "details": "DB: `faxes` (id, direction enum(in,out), status enum(queued,sent,delivered,failed), from/to numbers, doc_id, error_msg, timestamps). Adapter: FaxAdapter send(pdf, to), receive webhook → create fax + attach doc to patient/doc queue. Mock: store files locally, simulate delays/errors.",
+        "testStrategy": "Unit: adapter send/receive; webhook POST handling creates records correctly; integration: full inbound → doc queue.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create faxes table migration",
+            "description": "Generate and run database migration to create the faxes table with specified fields, enums, indexes, and constraints.",
+            "dependencies": [],
+            "details": "Use Rails migration: create_table :faxes with id (primary key), direction enum('in','out'), status enum('queued','sent','delivered','failed'), from_number, to_number, doc_id, error_msg (nullable), created_at, updated_at. Add indexes on direction, status, doc_id. Implement check constraints for valid enums and timestamps.",
+            "status": "pending",
+            "testStrategy": "Verify migration creates table with correct schema using schema inspection; test enum constraints reject invalid values; check indexes with EXPLAIN on sample queries."
+          },
+          {
+            "id": 2,
+            "title": "Implement FaxAdapter with mock send/receive",
+            "description": "Develop FaxAdapter class with send(pdf, to) and receive webhook methods, using local file storage and simulated delays/errors.",
+            "dependencies": [
+              1
+            ],
+            "details": "Create mock FaxAdapter: send() stores PDF locally, updates fax status asynchronously (queued→sent→delivered/failed with random errors/delays 1-5s), returns fax ID. Receive() handles webhook payload to create fax record and queue doc. Use local dir for files, simulate via threads/async.",
+            "status": "pending",
+            "testStrategy": "Unit tests: send() creates record and simulates full status lifecycle; receive() parses webhook and triggers doc queue; mock file I/O and error scenarios."
+          },
+          {
+            "id": 3,
+            "title": "Build inbound webhook endpoint and doc queue integration",
+            "description": "Add POST /webhooks/fax_inbound endpoint to process incoming faxes, create records via adapter, and attach to patient/doc queue.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Implement Rails/Sinatra endpoint: validate signature if needed, parse JSON (fax_id, status, direction, numbers, pdf_url), call adapter.receive(), integrate with existing doc queue (e.g., Sidekiq/Redis) to attach to patient/doc. Log errors, return 200.",
+            "status": "pending",
+            "testStrategy": "Integration tests: POST webhook creates fax record, updates status, enqueues doc correctly; security test for invalid payloads; E2E with mock external sender."
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Fax UI Inbox/Outbox",
+        "description": "Add Documents tab for fax send/retry/view/download.",
+        "details": "New tabs: Inbox (inbound faxes), Outbox (outbound). List with status icons, retry failed sends, download PDF viewer. Send modal: select doc/PDF upload, to number, call adapter.",
+        "testStrategy": "E2E: send fax → status updates → download; receive webhook → appears in inbox; retry failed.",
+        "priority": "medium",
+        "dependencies": [
+          8
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement Inbox/Outbox Tabs with Status Lists and PDF Viewer",
+            "description": "Create UI tabs for Inbox (inbound faxes) and Outbox (outbound faxes) displaying lists with status icons and integrated PDF viewer for viewing documents.",
+            "dependencies": [],
+            "details": "Use React components for tabbed interface; fetch fax lists via API with status filtering (pending, sent, failed, received); render status icons (e.g., green check, red X); embed PDF viewer (e.g., react-pdf) for preview; ensure responsive design and loading states.",
+            "status": "pending",
+            "testStrategy": "Unit tests for tab rendering and status icon display; E2E tests verifying list population from mock API data and PDF viewer functionality."
+          },
+          {
+            "id": 2,
+            "title": "Build Send Modal, Retry Logic, and Download Handling",
+            "description": "Develop send modal for fax dispatch, implement retry for failed outbound faxes, and handle PDF downloads from both tabs.",
+            "dependencies": [
+              1
+            ],
+            "details": "Send modal: form with document selector/PDF upload, recipient number input, submit calls fax adapter API; retry button for failed outbox items triggers re-send API; download generates blob URL from fax PDF endpoint; add confirmation dialogs and error toasts.",
+            "status": "pending",
+            "testStrategy": "E2E tests: complete send flow → verify outbox status update → retry failed → download succeeds; unit tests for modal form validation and retry API calls."
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Portal Pre-Check-In Enhancements",
+        "description": "Polish portal to show/resume/complete pre-check-in with backend session sync.",
+        "details": "Portal appointments list: precheckin_status badge. Resume/complete buttons → API updates session, sets appointment 'confirmed', optional SMS/email. Backend: session expiry 24h, audit logs for completions.",
+        "testStrategy": "E2E: start precheckin → portal shows state → complete → appointment confirmed + notification.",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement Backend Session Sync and Expiry Logic",
+            "description": "Develop backend logic for pre-check-in session management including 24-hour expiry, API endpoints for resume/complete actions that update session and set appointment to 'confirmed', with optional SMS/email notifications and audit logging.",
+            "dependencies": [],
+            "details": "Create session model with expiry timestamp (24h from start). API: POST /api/precheckin/:session_id/resume, POST /api/precheckin/:session_id/complete → update appointment.confirmed=true, send optional SMS/email via service, log audit entry without PHI. Handle expired sessions with 410 Gone.",
+            "status": "pending",
+            "testStrategy": "Unit tests: session expiry enforcement; API integration: resume/complete updates appointment status, triggers notifications; verify audit logs capture actions."
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Compliance and Monitoring Setup",
+        "description": "Implement HIPAA audit logs, PHI redaction, monitoring for queues/retries.",
+        "details": "Audit log table for key actions (block create, PA submit, fax send). Lograge/Sentry without PHI (hash PII). Queue monitoring: Sidekiq dashboard, retries x3 then dead letter. Rate limits on notifications.",
+        "testStrategy": "Verify logs redact PHI; simulate queue failure → retries → DLQ; load test rate limits.",
+        "priority": "medium",
+        "dependencies": [
+          2,
+          5,
+          7,
+          9
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "HIPAA Audit Log Table and Service",
+            "description": "Design and implement database table and service for logging key HIPAA-compliant audit events like block creation, PA submission, and fax sending.",
+            "dependencies": [],
+            "details": "Create Rails migration for phi_access_log table using phi_attrs gem; define fields for user_id, action, timestamp, request_uuid; integrate automated logging in relevant models/services for block create, PA submit, fax send with immutable storage.",
+            "status": "pending",
+            "testStrategy": "Unit tests verify log entries created on key actions; integration tests check log completeness and HIPAA fields; validate no PHI stored directly."
+          },
+          {
+            "id": 2,
+            "title": "PHI Redaction in Lograge and Sentry",
+            "description": "Configure Lograge and Sentry to hash or redact all PHI/PII before logging to ensure HIPAA compliance.",
+            "dependencies": [],
+            "details": "Implement phi_attrs for explicit PHI access control; add middleware to hash PII in logs; update Lograge formatter and Sentry DSN config to strip sensitive data; test with sample PHI payloads to confirm redaction.",
+            "status": "pending",
+            "testStrategy": "Tests simulate PHI in logs, assert hashed/redacted output in Lograge/Sentry; verify request UUID tagging links to audit logs."
+          },
+          {
+            "id": 3,
+            "title": "Sidekiq Queue Monitoring and Retries",
+            "description": "Set up Sidekiq dashboard for monitoring, configure retries (max 3) with dead letter queue (DLQ) for failed jobs.",
+            "dependencies": [],
+            "details": "Install Sidekiq web UI with authentication; configure sidekiq.yml for retry: 3, dead: true; create DLQ processing worker; integrate monitoring alerts for high retry/failure rates; log non-PHI queue events to audit system.",
+            "status": "pending",
+            "testStrategy": "Simulate job failures to verify 3 retries then DLQ; E2E tests check dashboard displays metrics; load tests confirm no PHI leakage in queue logs."
+          },
+          {
+            "id": 4,
+            "title": "Notification Rate Limiting Configuration",
+            "description": "Implement rate limits on notification endpoints/services to prevent abuse while maintaining HIPAA audit logging.",
+            "dependencies": [
+              1
+            ],
+            "details": "Use Rack::Attack or Redis-based rate limiter on notification APIs/workers; set limits e.g., 100/hour per user/IP; log rate limit events to audit log without PHI; configure exceptions for critical alerts.",
+            "status": "pending",
+            "testStrategy": "Load tests exceed limits and verify 429 responses; check audit logs capture rate limit hits; integration tests ensure limits don't block legit traffic."
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "End-to-End Integration Tests and TaskMaster Generation",
+        "description": "Comprehensive tests across features + generate/validate these tasks.",
+        "details": "Cucumber/RSpec: time block prevents booking, waitlist fills on cancel, ePA/fax full cycles, portal confirms. Commit tasks JSON with sprint tag 'derm-parity-quest', deps validated (no cycles).",
+        "testStrategy": "Run full suite: acceptance criteria scenarios pass; task deps acyclic.",
+        "priority": "low",
+        "dependencies": [
+          3,
+          5,
+          7,
+          9,
+          10,
+          11
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Develop E2E Integration Test Scenarios",
+            "description": "Create comprehensive Cucumber and RSpec feature tests covering all key scenarios across dependent tasks including time blocks, waitlist, ePA/fax cycles, and portal confirmations.",
+            "dependencies": [],
+            "details": "Implement Cucumber features for: time block prevents booking, waitlist fills on cancel, full ePA/fax request/response cycles, portal status confirmations. Use Capybara for browser interactions, ensure tests run against full stack including Resque workers if applicable. Cover dependencies from tasks 3,5,7,9,10,11.",
+            "status": "pending",
+            "testStrategy": "Run full Cucumber suite; verify all acceptance criteria scenarios pass with green output; check database state and UI assertions post-test."
+          },
+          {
+            "id": 2,
+            "title": "Generate and Validate TaskMaster JSON",
+            "description": "Generate tasks JSON file with all subtasks, validate dependencies for cycles, and commit with sprint tag 'derm-parity-quest'.",
+            "dependencies": [
+              1
+            ],
+            "details": "Script or manually create tasks JSON including this parent task and all subtasks; implement cycle detection algorithm on dependency graph; validate no cycles exist; git commit with message including sprint tag 'derm-parity-quest'; ensure JSON schema compliance.",
+            "status": "pending",
+            "testStrategy": "Validate JSON parses correctly; run dependency cycle detection algorithm asserts no cycles; git diff confirms commit with correct tag; manual review of generated tasks structure."
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "created": "2025-12-30T19:38:03.037Z",
+      "updated": "2025-12-30T19:38:03.037Z",
+      "description": "Tag created on 12/30/2025"
+    }
+  }
+}

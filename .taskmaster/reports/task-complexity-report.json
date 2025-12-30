@@ -1,0 +1,109 @@
+{
+	"meta": {
+		"generatedAt": "2025-12-30T19:36:34.732Z",
+		"tasksAnalyzed": 12,
+		"totalTasks": 12,
+		"analysisCount": 12,
+		"thresholdScore": 5,
+		"projectName": "Task Master",
+		"usedResearch": true
+	},
+	"complexityAnalysis": [
+		{
+			"taskId": 1,
+			"taskTitle": "Database Schema for Time Blocks",
+			"complexityScore": 4,
+			"recommendedSubtasks": 2,
+			"expansionPrompt": "Break down into: 1) Create time_blocks table migration with all specified fields, constraints, and JSON recurrence support; 2) Add composite indexes and overlap check constraints with test queries.",
+			"reasoning": "Standard Rails migration with composite indexes and check constraints for overlaps. Moderate complexity due to recurrence JSON handling and ensuring no PHI, but well-defined schema follows best practices for time-series indexing[1][4]. Testing straightforward with EXPLAIN."
+		},
+		{
+			"taskId": 2,
+			"taskTitle": "Time Blocks CRUD APIs",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Divide into: 1) POST create with recurrence parsing; 2) GET list with expansion logic; 3) PATCH update/cancel handling; 4) DELETE with conflict integration and 409 responses.",
+			"reasoning": "High complexity from recurrence expansion (6 months ahead), conflict detection queries against appointments/blocks, service layer abstraction. Requires robust validation, edge cases like same-minute overlaps, and transaction safety[1][2]."
+		},
+		{
+			"taskId": 3,
+			"taskTitle": "Scheduler UI for Time Blocks",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Split into: 1) API integration and calendar overlay rendering with colors; 2) Tooltips, drag-drop disable, responsive design; 3) Create/edit modals with form validation.",
+			"reasoning": "Frontend integration with scheduler library (React/Vue), real-time block visualization, mobile responsiveness, and API modals. Moderate-high due to UI state management and visual conflict feedback[4]."
+		},
+		{
+			"taskId": 4,
+			"taskTitle": "Waitlist Auto-Fill Worker Service",
+			"complexityScore": 8,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break down: 1) Worker setup (cron/triggered); 2) Open slots query (availability minus blocks); 3) Priority matching/scoring logic; 4) Hold creation, expiration, and audit logging.",
+			"reasoning": "Complex background job with SQL optimization for slot queries, weighted priority scoring, race condition handling for holds, configurable expiration. Sidekiq integration adds queue management[4]."
+		},
+		{
+			"taskId": 5,
+			"taskTitle": "Waitlist Notifications and UI",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Divide into: 1) Notification delivery (SMS/Email templates, Twilio/SendGrid); 2) Confirmation handling (links/SMS reply); 3) Waitlist UI table with fill buttons and status transitions.",
+			"reasoning": "Integrates multiple channels with rate limiting, reply parsing, and UI state management. Moderate complexity but requires careful PHI redaction and audit trails[11]."
+		},
+		{
+			"taskId": 6,
+			"taskTitle": "ePA Database and Adapter Interface",
+			"complexityScore": 5,
+			"recommendedSubtasks": 2,
+			"expansionPrompt": "Split: 1) prior_auth_requests table migration with enums/JSON; 2) Abstract adapter + mock implementation with async state simulation.",
+			"reasoning": "Straightforward schema and pluggable pattern, but state machine testing and JSON history/attachments add moderate complexity. Follows adapter best practices[7]."
+		},
+		{
+			"taskId": 7,
+			"taskTitle": "Rx UI for ePA Requests",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break into: 1) Rx form integration with PA modal; 2) Status polling/websockets and history UI; 3) Doc upload drag-drop and error handling.",
+			"reasoning": "UI workflow integration with polling/websockets, file uploads, and state visualization. Moderate complexity for real-time updates and user flows[7]."
+		},
+		{
+			"taskId": 8,
+			"taskTitle": "Fax Database and Adapter MVP",
+			"complexityScore": 6,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Divide: 1) faxes table migration; 2) FaxAdapter send/receive with mock file handling; 3) Inbound webhook endpoint and doc queue integration.",
+			"reasoning": "Involves file storage, webhook security, status tracking enums, and queue integration. Moderate-high due to async simulation and error states[8]."
+		},
+		{
+			"taskId": 9,
+			"taskTitle": "Fax UI Inbox/Outbox",
+			"complexityScore": 5,
+			"recommendedSubtasks": 2,
+			"expansionPrompt": "Split: 1) Inbox/Outbox tabs with status lists and PDF viewer; 2) Send modal, retry logic, and download handling.",
+			"reasoning": "Standard tabbed UI with file handling and retry workflows. Lower complexity as backend adapter exists, focuses on UX polish[8]."
+		},
+		{
+			"taskId": 10,
+			"taskTitle": "Portal Pre-Check-In Enhancements",
+			"complexityScore": 4,
+			"recommendedSubtasks": 1,
+			"expansionPrompt": "Backend session sync with expiry + Portal UI badges/buttons/notifications.",
+			"reasoning": "Polish/enhancement task with straightforward API/UI sync and expiry logic. Low dependencies make it simple[10]."
+		},
+		{
+			"taskId": 11,
+			"taskTitle": "Compliance and Monitoring Setup",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break down: 1) HIPAA audit log table/service; 2) PHI redaction in Lograge/Sentry; 3) Sidekiq monitoring/retries/DLQ; 4) Rate limiting configuration.",
+			"reasoning": "Cross-cutting concern with HIPAA compliance, redaction patterns, queue monitoring, and multiple integrations. High complexity due to regulatory precision[11]."
+		},
+		{
+			"taskId": 12,
+			"taskTitle": "End-to-End Integration Tests and TaskMaster Generation",
+			"complexityScore": 5,
+			"recommendedSubtasks": 2,
+			"expansionPrompt": "Split: 1) E2E test scenarios for all features; 2) Task JSON validation and dependency cycle detection.",
+			"reasoning": "Comprehensive testing across features plus task management tooling. Moderate as it depends on completed work, standard Cucumber/RSpec patterns."
+		}
+	]
+}

@@ -41,8 +41,10 @@ describe('Button Component', () => {
   });
 
   it('applies variant styles', () => {
-    const { container } = render(<Button variant="primary">Primary</Button>);
-    expect(container.firstChild).toHaveClass('bg-blue-600');
+    render(<Button variant="ghost">Ghost</Button>);
+    const button = screen.getByRole('button', { name: /ghost/i });
+    expect(button).toHaveClass('btn');
+    expect(button).toHaveClass('ghost');
   });
 
   it('supports type attribute', () => {

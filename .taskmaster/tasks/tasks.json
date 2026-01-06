@@ -1112,7 +1112,7 @@
         "dependencies": [
           "13"
         ],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1133,15 +1133,16 @@
               1
             ],
             "details": "Write unit tests checking navigation items visibility based on mock user roles from auth service. Create e2e tests simulating login with admin vs non-admin credentials, verifying link presence/absence and access denial (e.g., 403 or redirect). Include tests for edge cases like missing roles or unauthenticated state.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Run unit tests with Jest/Vitest covering role permutations. E2E with Cypress/Playwright: Test flows for different user types, confirm no console errors, and validate HTTP responses for denied access.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-01-06T14:58:18.273Z"
           }
         ],
         "complexity": 3,
         "recommendedSubtasks": 2,
         "expansionPrompt": "Split into: 1) Update navigation component with new links and role checks using existing auth service; 2) Add role-based visibility tests and e2e access denial verification.",
-        "updatedAt": "2026-01-06T05:39:59.261Z"
+        "updatedAt": "2026-01-06T14:58:18.273Z"
       },
       {
         "id": "15",
@@ -2136,9 +2137,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-01-06T05:39:59.264Z",
+      "lastModified": "2026-01-06T14:58:18.275Z",
       "taskCount": 14,
-      "completedCount": 1,
+      "completedCount": 2,
       "tags": [
         "gap-ema-2025-12"
       ]

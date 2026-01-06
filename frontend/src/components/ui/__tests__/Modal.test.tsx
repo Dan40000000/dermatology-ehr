@@ -51,7 +51,7 @@ describe('Modal Component', () => {
       </Modal>
     );
 
-    const backdrop = screen.getByTestId('modal-backdrop');
+    const backdrop = screen.getByRole('presentation');
     await user.click(backdrop);
 
     expect(handleClose).toHaveBeenCalledTimes(1);

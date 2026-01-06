@@ -1020,5 +1020,1128 @@
       "updated": "2025-12-30T19:38:03.037Z",
       "description": "Tag created on 12/30/2025"
     }
+  },
+  "gap-ema-2025-12": {
+    "tasks": [
+      {
+        "id": "13",
+        "title": "Add Missing Modules to Navigation",
+        "description": "Implement routes and placeholder pages for Registry, Referrals, Protocols, Preferences, Help, and Recalls modules.",
+        "details": "Use existing routing framework (e.g., React Router or Angular Router) to add new routes: /registry, /referrals, /protocols, /preferences, /help, /recalls. Create placeholder React/Vue/Angular components with basic layout matching ModMed EMA blueprint. Ensure responsive design with touch targets >=44px.",
+        "testStrategy": "Unit tests for route rendering; e2e tests verify navigation links appear and load placeholders without errors; manual verification on tablet viewport.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Add Routes for 6 Modules",
+            "description": "Implement new routes /registry, /referrals, /protocols, /preferences, /help, /recalls using existing routing framework.",
+            "dependencies": [],
+            "details": "Update main router configuration file to define paths mapping to new placeholder components. Follow existing route patterns for consistency.",
+            "status": "done",
+            "testStrategy": "Unit tests verify routes render correct components without errors.",
+            "parentId": "undefined",
+            "updatedAt": "2026-01-06T05:07:59.954Z"
+          },
+          {
+            "id": 2,
+            "title": "Create Placeholder Components",
+            "description": "Develop 6 placeholder components for each module matching ModMed EMA blueprint layout.",
+            "dependencies": [
+              1
+            ],
+            "details": "Create React/Vue/Angular components with basic structure: header, content area, footer per EMA design. Use shared layout components.",
+            "status": "done",
+            "testStrategy": "Snapshot tests confirm component renders EMA blueprint structure.",
+            "parentId": "undefined",
+            "updatedAt": "2026-01-06T05:08:08.213Z"
+          },
+          {
+            "id": 3,
+            "title": "Ensure Responsive Design",
+            "description": "Apply responsive styles ensuring touch targets >=44px across all new components.",
+            "dependencies": [
+              2
+            ],
+            "details": "Use CSS media queries, flex/grid layouts for mobile/tablet/desktop. Verify button/link sizes meet 44px minimum.",
+            "status": "done",
+            "testStrategy": "Manual verification on tablet viewport; responsive breakpoint tests.",
+            "parentId": "undefined",
+            "updatedAt": "2026-01-06T05:08:16.396Z"
+          },
+          {
+            "id": 4,
+            "title": "Add Unit and E2E Tests",
+            "description": "Implement unit tests for routes/components and e2e tests for navigation.",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Unit tests for route rendering and component snapshots; e2e tests verify navigation links load placeholders without errors.",
+            "status": "done",
+            "testStrategy": "Run full test suite; verify coverage >80%; tablet viewport e2e verification.",
+            "parentId": "undefined",
+            "updatedAt": "2026-01-06T05:08:26.203Z"
+          },
+          {
+            "id": 5,
+            "title": "Add Forms and Templates modules",
+            "description": "Add top-level Forms module route/page and expose Templates in main nav; wire to existing templates page where applicable.",
+            "details": "",
+            "status": "done",
+            "dependencies": [],
+            "parentTaskId": 13,
+            "parentId": "undefined",
+            "updatedAt": "2026-01-06T05:37:43.772Z"
+          }
+        ],
+        "complexity": 4,
+        "recommendedSubtasks": 4,
+        "expansionPrompt": "Break down into: 1) Add routes for 6 modules using existing router; 2) Create placeholder components matching EMA blueprint; 3) Implement responsive design with 44px touch targets; 4) Add unit/e2e tests and tablet verification.",
+        "updatedAt": "2026-01-06T05:37:43.772Z"
+      },
+      {
+        "id": "14",
+        "title": "Expose Admin and Quality in Main Navigation",
+        "description": "Add Admin and Quality pages to primary UI navigation with role-based access controls.",
+        "details": "Update main navigation component to include Admin and Quality links. Implement role checks using existing auth service (e.g., if user.roles.includes('admin')). Link to existing page components.",
+        "testStrategy": "Test navigation visibility for different roles; e2e tests confirm access denied for unauthorized users.",
+        "priority": "high",
+        "dependencies": [
+          "13"
+        ],
+        "status": "in-progress",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Update Main Navigation Component with Admin and Quality Links",
+            "description": "Modify the primary navigation component to include new links for Admin and Quality pages, integrating role-based visibility checks using the existing auth service.",
+            "dependencies": [],
+            "details": "Locate the main navigation component file. Add conditional rendering for Admin and Quality links using logic like {user && user.roles.includes('admin') && <Link to='/admin'>Admin</Link>}. Ensure links point to existing page components. Update any navigation styling or responsive behavior to match current design.",
+            "status": "done",
+            "testStrategy": "Unit tests: Verify links render for admin role, hidden for non-admin. Snapshot testing for navigation structure. Manual verification across breakpoints.",
+            "parentId": "undefined",
+            "updatedAt": "2026-01-06T05:39:59.261Z"
+          },
+          {
+            "id": 2,
+            "title": "Implement and Test Role-Based Navigation Visibility and Access Denial",
+            "description": "Add comprehensive tests for role-based visibility in navigation and end-to-end verification that unauthorized users are denied access to Admin and Quality pages.",
+            "dependencies": [
+              1
+            ],
+            "details": "Write unit tests checking navigation items visibility based on mock user roles from auth service. Create e2e tests simulating login with admin vs non-admin credentials, verifying link presence/absence and access denial (e.g., 403 or redirect). Include tests for edge cases like missing roles or unauthenticated state.",
+            "status": "pending",
+            "testStrategy": "Run unit tests with Jest/Vitest covering role permutations. E2E with Cypress/Playwright: Test flows for different user types, confirm no console errors, and validate HTTP responses for denied access.",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 3,
+        "recommendedSubtasks": 2,
+        "expansionPrompt": "Split into: 1) Update navigation component with new links and role checks using existing auth service; 2) Add role-based visibility tests and e2e access denial verification.",
+        "updatedAt": "2026-01-06T05:39:59.261Z"
+      },
+      {
+        "id": "15",
+        "title": "Define Module Access Controls and Roles",
+        "description": "Establish role-based permissions for all 29 modules including newly added ones.",
+        "details": "Extend existing RBAC system with roles: clinician, admin, registry-manager, etc. Create permissions matrix in config file mapping modules to required roles. Integrate with navigation guards.",
+        "testStrategy": "Unit tests for permission checks; integration tests verify module access by role.",
+        "priority": "medium",
+        "dependencies": [
+          "13",
+          "14"
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define RBAC Roles and Permissions",
+            "description": "Establish comprehensive roles such as clinician, admin, registry-manager with associated permissions following least privilege principle.",
+            "dependencies": [],
+            "details": "Document roles based on job functions; include business experts; avoid role proliferation; align with healthcare modules like Registry, Referrals[1][2][3].",
+            "status": "pending",
+            "testStrategy": "Validate role definitions against organizational needs via review with stakeholders",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Create Permissions Matrix for 29 Modules",
+            "description": "Develop config file mapping all 29 modules to required roles, including newly added ones like Registry and Referrals.",
+            "dependencies": [
+              1
+            ],
+            "details": "List modules explicitly; define granular read/write permissions per role; use JSON/YAML config; ensure scoped access to prevent over-permissioning[1][4].",
+            "status": "pending",
+            "testStrategy": "Matrix validation script to check coverage and conflicts across modules",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Extend RBAC System and Integrate Navigation Guards",
+            "description": "Implement permission checks in existing RBAC system and hook into navigation guards for route protection.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Update auth service/middleware; frontend/backend guards for modules; enforce checks at GraphQL API and UI layers[7]; handle dynamic schema context if multi-tenant[24].",
+            "status": "pending",
+            "testStrategy": "Mock user roles to test unauthorized access denial",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "Develop Unit Tests for Permission Logic",
+            "description": "Write unit tests covering all role-module permission checks and edge cases.",
+            "dependencies": [
+              3
+            ],
+            "details": "Test least privilege enforcement; role inheritance if any; invalid role handling; integrate with Jest/Vitest for config parsing and guard functions[2][3].",
+            "status": "pending",
+            "testStrategy": "100% coverage on permission resolver functions; parametrize tests for all 29 modules",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "Implement Integration Tests for Module Access",
+            "description": "Create end-to-end tests verifying role-based access across modules, including navigation and data isolation.",
+            "dependencies": [
+              3,
+              4
+            ],
+            "details": "Simulate user logins with roles; test guards block access; verify post-deps tasks like multi-tenant isolation[24]; tablet viewport checks per Task 13[13].",
+            "status": "pending",
+            "testStrategy": "Cypress/Playwright e2e flows; database state assertions; cross-tenant leakage prevention",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 6,
+        "recommendedSubtasks": 5,
+        "expansionPrompt": "Divide into: 1) Define roles (clinician, admin, etc.); 2) Create permissions matrix config for 29 modules; 3) Integrate with navigation guards; 4) Unit test permission logic; 5) Integration tests for role-based module access."
+      },
+      {
+        "id": "16",
+        "title": "Implement AllergyIntolerance FHIR Resource",
+        "description": "Add full CRUD support for AllergyIntolerance FHIR R4 resource with search parameters.",
+        "details": "Create /fhir/AllergyIntolerance endpoints (GET, POST, PUT, DELETE). Implement FHIR R4 schema validation, search params (_id, patient, code, status per US Core). Return OperationOutcome on validation errors. Use existing FHIR base controller pattern.",
+        "testStrategy": "Postman collection tests for CRUD operations; validate against FHIR validator; test error responses with missing required fields.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create CRUD Endpoints for AllergyIntolerance",
+            "description": "Implement GET, POST, PUT, DELETE endpoints at /fhir/AllergyIntolerance following RESTful FHIR conventions.",
+            "dependencies": [],
+            "details": "Use existing FHIR base controller pattern. Support single resource operations (GET by ID), collection operations (GET list), create (POST), update (PUT), delete (DELETE). Return standard HTTP status codes.",
+            "status": "pending",
+            "testStrategy": "Postman tests for each endpoint with valid payloads; verify HTTP status codes and response formats.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Implement FHIR R4 Schema Validation",
+            "description": "Add JSON schema validation for AllergyIntolerance resource against official FHIR R4 schemas.",
+            "dependencies": [
+              1
+            ],
+            "details": "Integrate fhir-validator or equivalent library loading 'schemas/r4/fhir.schema.json'. Validate incoming payloads on POST/PUT. Use compiled validator for performance on bundle/single resources.",
+            "status": "pending",
+            "testStrategy": "Test invalid JSON structures; verify validation rejects malformed resources per FHIR R4 spec.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Add US Core Search Parameters",
+            "description": "Implement search parameters _id, patient, code, status per US Core Profile for AllergyIntolerance.",
+            "dependencies": [
+              1
+            ],
+            "details": "Support query params: GET /fhir/AllergyIntolerance?_id=123, ?patient=Patient/456, ?code=code-system|code, ?status=active. Implement token/string reference search logic using existing FHIR search engine.",
+            "status": "pending",
+            "testStrategy": "Postman collection testing each search param combination; verify correct filtering and Bundle response format.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "Implement OperationOutcome Error Handling",
+            "description": "Return standardized FHIR OperationOutcome for all validation and business rule errors.",
+            "dependencies": [
+              2
+            ],
+            "details": "Map schema validation errors to OperationOutcome.issue array with severity, code, diagnostics. Handle missing required fields, invalid references, duplicate keys. Use HTTP 400/422 status codes.",
+            "status": "pending",
+            "testStrategy": "Test error scenarios: missing required fields, invalid codes, duplicate IDs; validate OperationOutcome structure.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "Refactor Using Base Controller Pattern",
+            "description": "Extract common FHIR controller logic into reusable base class for AllergyIntolerance.",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4
+            ],
+            "details": "Extend existing FHIR base controller. Centralize auth, pagination, content negotiation, etag handling. Ensure consistent response formatting across all CRUD+search operations.",
+            "status": "pending",
+            "testStrategy": "Verify base controller handles cross-cutting concerns; test inheritance behavior.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "Create Postman and FHIR Validator Tests",
+            "description": "Develop comprehensive test suite using Postman collection and FHIR validator tooling.",
+            "dependencies": [
+              5
+            ],
+            "details": "Create Postman collection covering CRUD+search scenarios, error cases. Add FHIR validator scripts using HL7 validator or fhir-validator PyPI package. Include US Core profile validation.",
+            "status": "pending",
+            "testStrategy": "Run full test suite; achieve 100% coverage of endpoints and error conditions; validate against official FHIR validator service.",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 7,
+        "recommendedSubtasks": 6,
+        "expansionPrompt": "Break into: 1) Create CRUD endpoints; 2) Implement FHIR R4 schema validation; 3) Add US Core search params (_id, patient, code, status); 4) Error handling with OperationOutcome; 5) Use base controller pattern; 6) Postman/FHIR validator tests."
+      },
+      {
+        "id": "17",
+        "title": "Implement CarePlan and CareTeam FHIR Resources",
+        "description": "Add CRUD and search for CarePlan and CareTeam FHIR R4 resources.",
+        "details": "Follow pattern from task 16 for /fhir/CarePlan and /fhir/CareTeam. Support standard search params (patient, status, intent). Ensure conformance with FHIR R4 spec including required fields validation.",
+        "testStrategy": "FHIR validator tests; search parameter coverage tests; bundle pagination tests.",
+        "priority": "medium",
+        "dependencies": [
+          "16"
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement CarePlan CRUD and Search",
+            "description": "Create /fhir/CarePlan endpoints for GET, POST, PUT, DELETE with search params patient, status, intent following task 16 pattern.",
+            "dependencies": [],
+            "details": "Use FHIR base controller pattern. Implement R4 schema validation for required fields like subject, status, intent. Return OperationOutcome on errors. Support standard search parameters per FHIR spec.",
+            "status": "pending",
+            "testStrategy": "Postman CRUD tests; FHIR validator runs; search param coverage for patient, status, intent",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Implement CareTeam CRUD and Search",
+            "description": "Create /fhir/CareTeam endpoints for GET, POST, PUT, DELETE with standard search parameters.",
+            "dependencies": [],
+            "details": "Follow task 16 pattern exactly. Add validation for CareTeam fields like participant, status, category. Ensure references to CarePlan are handled properly per FHIR R4 spec.",
+            "status": "pending",
+            "testStrategy": "CRUD operation tests; validate participant role bindings; cross-reference tests with CarePlan",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Add FHIR R4 Conformance Validation",
+            "description": "Ensure both CarePlan and CareTeam resources conform to FHIR R4 spec with required fields validation.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Implement comprehensive validation for mandatory elements (CarePlan: intent 1..1, subject; CareTeam: status, participant). Add conformance statements to CapabilityStatement. Handle careTeam references bidirectionally.",
+            "status": "pending",
+            "testStrategy": "Automated FHIR validator tests for sample bundles; required field rejection tests",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "Implement Tests and Pagination",
+            "description": "Add validator tests, full search coverage, and bundle pagination for both resources.",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Create test suite covering CRUD, search params (patient, status, intent, care-team), pagination with _count. Include error cases and OperationOutcome validation. Run against official FHIR validator.",
+            "status": "pending",
+            "testStrategy": "Integration tests with Postman collection; search matrix validation; bundle pagination edge cases; Lighthouse-style conformance audit",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 7,
+        "recommendedSubtasks": 4,
+        "expansionPrompt": "Split by resource: 1) CarePlan CRUD+search (patient, status, intent); 2) CareTeam CRUD+search; 3) FHIR R4 validation for both; 4) Validator tests, search coverage, pagination."
+      },
+      {
+        "id": "18",
+        "title": "Complete Remaining FHIR Resources Implementation",
+        "description": "Implement Coverage, Device, DiagnosticReport, DocumentReference, Goal, Immunization, Location, Medication, MedicationRequest, PractitionerRole, Provenance, RelatedPerson, ServiceRequest.",
+        "details": "Batch implement remaining 13 resources using code generation from FHIR R4 schema if available, or copy pattern from previous tasks. Ensure all support CRUD + standard search params. Add conformance statements to CapabilityStatement.",
+        "testStrategy": "Automated conformance testing suite; validator runs for each resource; search parameter matrix validation.",
+        "priority": "medium",
+        "dependencies": [
+          "16",
+          "17"
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Setup FHIR R4 Code Generation Pipeline",
+            "description": "Establish code generation tooling from FHIR R4 schema for batch implementing remaining resources.",
+            "dependencies": [],
+            "details": "Download FHIR R4 schema/package, configure codegen tool (e.g., fhir-codegen-ts or swift-fhir), create templates matching existing controller/service pattern from tasks 16-17.",
+            "status": "pending",
+            "testStrategy": "Verify generated code compiles and matches FHIR R4 structure for sample resource",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Generate Code for 5 Simple Resources",
+            "description": "Apply codegen to Coverage, Device, Goal, Location, RelatedPerson resources.",
+            "dependencies": [
+              1
+            ],
+            "details": "Run codegen pipeline, review generated DTOs/controllers/services, apply project-specific customizations (tenant_id, auth middleware). Ensure CRUD endpoints and standard search params.",
+            "status": "pending",
+            "testStrategy": "Basic CRUD tests via Postman; FHIR validator on sample payloads",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Implement CRUD and Search for Simple Resources",
+            "description": "Integrate generated code for simple resources into API with full CRUD + standard search.",
+            "dependencies": [
+              2
+            ],
+            "details": "Wire up database models/migrations, implement service layer logic, add search parameter handlers per FHIR R4 spec (patient, status, etc.), ensure OperationOutcome errors.",
+            "status": "pending",
+            "testStrategy": "Unit tests for service layer; integration tests for endpoints",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "Generate Code for 8 Complex Resources",
+            "description": "Apply codegen to DiagnosticReport, DocumentReference, Immunization, Medication, MedicationRequest, PractitionerRole, Provenance, ServiceRequest.",
+            "dependencies": [
+              1
+            ],
+            "details": "Handle complex nested structures/references in codegen templates, customize for relationships (e.g., DiagnosticReport references Observation), validate generated schemas.",
+            "status": "pending",
+            "testStrategy": "Schema validation against FHIR validator for complex payloads",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "Implement CRUD and Search for Complex Resources",
+            "description": "Integrate complex resources with full CRUD operations and FHIR standard search parameters.",
+            "dependencies": [
+              3,
+              4
+            ],
+            "details": "Implement reference resolution logic, handle conditional references (e.g., MedicationRequest.medicationReference), support advanced search params like date-range, status combinations.",
+            "status": "pending",
+            "testStrategy": "End-to-end tests with referenced resources; search matrix validation",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "Update CapabilityStatement with New Resources",
+            "description": "Add conformance statements for all 13 new resources to the CapabilityStatement.",
+            "dependencies": [
+              5
+            ],
+            "details": "Extend rest.resource array with supported operations (CRUD), search parameters, interactions per FHIR R4 spec. Use codegen for consistency if possible.",
+            "status": "pending",
+            "testStrategy": "Validate CapabilityStatement against FHIR validator; conformance testing tools",
+            "parentId": "undefined"
+          },
+          {
+            "id": 7,
+            "title": "Create Comprehensive Testing Suite",
+            "description": "Develop automated test suite covering all 13 resources' CRUD and search functionality.",
+            "dependencies": [
+              6
+            ],
+            "details": "Build Postman collection or Jest suite with validator integration, test data factory for FHIR payloads, coverage matrix for all standard search params across resources.",
+            "status": "pending",
+            "testStrategy": "CI/CD integration; 100% search param coverage; cross-resource reference tests",
+            "parentId": "undefined"
+          },
+          {
+            "id": 8,
+            "title": "Review and Refactor for Consistency",
+            "description": "Conduct code review and ensure pattern consistency across all implemented resources.",
+            "dependencies": [
+              7
+            ],
+            "details": "Compare against tasks 16-17 patterns, standardize error handling/response formats, optimize database queries, document any resource-specific deviations.",
+            "status": "pending",
+            "testStrategy": "Peer review checklist; performance benchmarks; consistency validator script",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 9,
+        "recommendedSubtasks": 8,
+        "expansionPrompt": "Group by complexity: 1) Code generation/schema setup; 2-6) Implement 5 simple resources (Coverage, Device, Goal, Location, RelatedPerson); 7-14) Implement 8 complex resources (DiagnosticReport, DocumentReference, etc.); 15) Conformance statements; 16) Testing suite."
+      },
+      {
+        "id": "19",
+        "title": "Implement FHIR Bulk Export $export Operation",
+        "description": "Add /fhir/$export endpoint with async status polling, NDJSON output, and manifest.",
+        "details": "Implement POST /fhir/$export supporting patient/provider/bulk scopes. Create job queue for export processing. Return JobStatus endpoint for polling. Generate NDJSON files + manifest.json per FHIR spec. Enforce scope validation.",
+        "testStrategy": "Integration tests with mock queue; validate NDJSON format and manifest structure; scope enforcement tests.",
+        "priority": "high",
+        "dependencies": [
+          "18"
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement $export endpoint with scope validation",
+            "description": "Create POST /fhir/$export endpoint handling patient/provider/bulk scopes with FHIR Parameters support and validation.",
+            "dependencies": [],
+            "details": "Support GET/POST requests per FHIR spec. Validate scopes (patient, provider, bulk). Return 202 Accepted with Location header for JobStatus. Handle _since, _type parameters. Enforce Prefer: respond-async header.",
+            "status": "pending",
+            "testStrategy": "Test scope validation for authorized/unauthorized requests; validate parameter parsing and error responses with OperationOutcome.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Create job queue integration",
+            "description": "Set up queue system to process export jobs asynchronously after $export request.",
+            "dependencies": [
+              1
+            ],
+            "details": "Integrate with existing queue (RabbitMQ/Redis/SQS). Generate unique job ID. Queue job payload with scope, parameters, and output config. Ensure idempotency with job ID deduplication.",
+            "status": "pending",
+            "testStrategy": "Verify job enqueuing with mock queue; test duplicate job handling and job ID generation.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Implement JobStatus polling endpoint",
+            "description": "Create GET /fhir/$export-status endpoint for polling job progress.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Support _jobId query parameter. Return JobStatus resource with states (queued, running, complete, error). Include completion timestamp, file count, and output URL when done. Cache status for performance.",
+            "status": "pending",
+            "testStrategy": "Test all status transitions; validate JobStatus resource structure against FHIR spec.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "Develop NDJSON file generation",
+            "description": "Generate NDJSON files for each resource type during export processing.",
+            "dependencies": [
+              2
+            ],
+            "details": "Query FHIR resources based on _type and _typeFilter parameters. Write newline-delimited JSON per FHIR Bulk Data Access spec. Create separate .ndjson files per resource type. Handle large datasets with streaming.",
+            "status": "pending",
+            "testStrategy": "Validate NDJSON format with FHIR validator; test file splitting by resource type and size limits.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "Create manifest.json generation",
+            "description": "Generate manifest.json file listing all output NDJSON files per FHIR specification.",
+            "dependencies": [
+              4
+            ],
+            "details": "Include fileUrls array with type, url, and count for each NDJSON file. Add transactionTime and version. Store in accessible location (S3/local filesystem). Ensure Content-Location headers match.",
+            "status": "pending",
+            "testStrategy": "Validate manifest structure and completeness; test file URL accessibility and counts accuracy.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "Implement async processing worker",
+            "description": "Build queue worker that processes export jobs and updates status.",
+            "dependencies": [
+              2,
+              3,
+              4,
+              5
+            ],
+            "details": "Consume queue messages. Update job status (queued→running→complete/error). Execute NDJSON generation and manifest creation. Handle errors with retry logic and final error status. Cleanup temporary files.",
+            "status": "pending",
+            "testStrategy": "End-to-end job processing with mock data; test error scenarios and recovery.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 7,
+            "title": "Add integration tests with mock queue",
+            "description": "Create comprehensive integration tests covering full export workflow.",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            "details": "Use mock queue and filesystem. Test happy path, scope validation failures, invalid parameters, partial failures. Validate NDJSON format, manifest structure, and JobStatus transitions. Include load testing.",
+            "status": "pending",
+            "testStrategy": "CI/CD pipeline integration; FHIR validator integration; performance under concurrent jobs.",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 9,
+        "recommendedSubtasks": 7,
+        "expansionPrompt": "Break into: 1) $export endpoint with scope validation; 2) Job queue integration; 3) JobStatus polling endpoint; 4) NDJSON generation; 5) Manifest.json creation; 6) Async processing; 7) Integration tests with mock queue."
+      },
+      {
+        "id": "20",
+        "title": "Add FHIR OAuth Scopes and App Registration",
+        "description": "Implement patient/provider/bulk app flows with SMART scopes and basic app registration.",
+        "details": "Extend existing OAuth2 server with FHIR scopes (patient/*.read, user/*.read). Add /fhir/apps endpoint for app registration stubs. Implement consent management with basic UI flow.",
+        "testStrategy": "OAuth flow tests with different scopes; app registration CRUD tests; consent UI validation.",
+        "priority": "medium",
+        "dependencies": [
+          "19"
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Extend OAuth2 Server with FHIR SMART Scopes",
+            "description": "Add support for SMART on FHIR scopes including patient/*.read, user/*.read, and system scopes per SMART v2 spec.",
+            "dependencies": [],
+            "details": "Update OAuth2 authorization and token endpoints to validate and issue SMART scopes (patient/Observation.read, launch/patient, etc.). Reference FHIR SMART App Launch IG for scope syntax and validation logic.",
+            "status": "pending",
+            "testStrategy": "Unit tests for scope parsing/validation; integration tests for token issuance with mock clients.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Implement Patient, Provider, and Bulk OAuth Flows",
+            "description": "Develop SMART app launch flows for patient-specific, user-impersonation, and bulk export scopes with launch context.",
+            "dependencies": [
+              1
+            ],
+            "details": "Handle launch/patient, launch/practitioner scopes; include fhirUser and patient claims in tokens. Support bulk scopes for $export operation per task 19 integration.",
+            "status": "pending",
+            "testStrategy": "End-to-end OAuth flow tests simulating patient/provider launches; verify context claims in tokens.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Add /fhir/apps App Registration Endpoint",
+            "description": "Create CRUD endpoints for registering SMART apps with supported scopes and client metadata.",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement POST/GET/PUT/DELETE /fhir/apps supporting client_id, redirect_uris, scopes_supported per SMART metadata. Store in database with validation.",
+            "status": "pending",
+            "testStrategy": "CRUD API tests; validate app registration payloads against SMART spec; test scope restriction enforcement.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "Implement Consent Management UI Flow",
+            "description": "Build UI for users to review and approve/deny requested SMART scopes during authorization.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Create consent screen showing granular scopes (e.g., patient/Observation.rs); support select-all and partial approval. Integrate with existing OAuth callback flow.",
+            "status": "pending",
+            "testStrategy": "UI automation tests for consent approval/denial; manual verification of scope selection UI.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "Add Comprehensive OAuth Flow and UI Tests",
+            "description": "Develop integration and E2E tests covering all SMART flows, app registration, and consent UI.",
+            "dependencies": [
+              2,
+              3,
+              4
+            ],
+            "details": "Create test suite with mock FHIR server; test scope enforcement, launch context, bulk export auth, consent scenarios. Include security tests for invalid scopes.",
+            "status": "pending",
+            "testStrategy": "Cypress/Jest for UI flows; Postman for API; FHIR validator for token responses; penetration testing for OAuth vulns.",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 8,
+        "recommendedSubtasks": 5,
+        "expansionPrompt": "Divide into: 1) Extend OAuth2 with FHIR SMART scopes; 2) Implement patient/provider/bulk flows; 3) Add /fhir/apps registration endpoint; 4) Consent management UI; 5) OAuth flow and UI tests."
+      },
+      {
+        "id": "21",
+        "title": "Expand HL7 v2.x ADT and SIU Message Processing",
+        "description": "Add ADT A01/A11/A13/A31 and SIU S14/S17 message parsing and processing.",
+        "details": "Use HAPI HL7 library to parse ADT/SIU messages. Map to internal domain models. Implement ACK/NACK generation with validation errors. Add to existing HL7 processor pipeline.",
+        "testStrategy": "Unit tests with sample HL7 messages; validation error scenarios; ACK/NACK response verification.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement ADT A01/A11/A13/A31 Parsing and Mapping",
+            "description": "Use HAPI HL7 library to parse specified ADT message types and map segments like MSH, PID, PV1 to internal domain models.",
+            "dependencies": [],
+            "details": "Leverage HAPI parsers for ADT events (admit/register/discharge/update); handle key segments for patient demographics and visits; ensure mappings align with existing domain objects.",
+            "status": "pending",
+            "testStrategy": "Unit tests with sample ADT messages; verify parsed data matches domain models; test edge cases like missing segments.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Implement SIU S14/S17 Parsing and Mapping",
+            "description": "Parse SIU S14 (modify appointment) and S17 (delete appointment) messages using HAPI, mapping SCH, PID, RGS, AIG segments to domain models.",
+            "dependencies": [],
+            "details": "Focus on scheduling segments (SCH for details, RGS/AIG for resources); map to internal appointment and resource models; account for SIU structure variations.",
+            "status": "pending",
+            "testStrategy": "Unit tests using HL7 v2.3+ SIU examples; validate appointment data extraction; test resource group handling.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Develop ACK/NACK Generation with Validation",
+            "description": "Create logic to generate HL7 ACK (AA) or NACK (AR/AE) responses based on parsing, validation, and processing errors.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Implement MSA segment with codes (AA/AR/AE); include ERR segments for validation failures; integrate validation rules for required fields and business logic.",
+            "status": "pending",
+            "testStrategy": "Test success ACKs and error NACKs; simulate validation failures; verify response format per HL7 standards.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "Integrate into HL7 Pipeline and Add Unit Tests",
+            "description": "Add new parsers/mappers to existing HL7 processor pipeline; implement comprehensive unit and integration tests.",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Extend pipeline to route ADT/SIU messages; ensure sequential/parallel processing compatibility; cover all scenarios including errors and database interactions.",
+            "status": "pending",
+            "testStrategy": "End-to-end pipeline tests; mock external dependencies; verify database state and ACK/NACK flows.",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 7,
+        "recommendedSubtasks": 4,
+        "expansionPrompt": "Split by message type: 1) ADT (A01/A11/A13/A31) parsing+mapping; 2) SIU (S14/S17) parsing+mapping; 3) ACK/NACK generation with validation; 4) Pipeline integration and unit tests."
+      },
+      {
+        "id": "22",
+        "title": "Implement HL7 DFT P03 and ORM/ORU Processing",
+        "description": "Add financial (DFT^P03) and order/result (ORM/ORU) message processing.",
+        "details": "Extend HL7 processor for DFT^P03 (charge posting), ORM (orders), ORU (results). Implement domain mappings and database transactions. Ensure robust error handling with detailed NACKs.",
+        "testStrategy": "End-to-end message flow tests; database state verification post-processing; error recovery tests.",
+        "priority": "medium",
+        "dependencies": [
+          "21"
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement DFT^P03 Charge Posting Parser",
+            "description": "Extend HL7 processor to parse incoming DFT^P03 messages including MSH, EVN, PID, PV1, and FT1 segments for charge posting.",
+            "dependencies": [],
+            "details": "Handle FT1 segment variations for financial transactions (charges, up to 99 per message). Extract patient demographics, visit info, charge details per HL7 v2 specs from sources [1][3][4].",
+            "status": "pending",
+            "testStrategy": "Unit tests for segment parsing; validate against sample DFT^P03 messages from docs",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Implement ORM Orders Processing",
+            "description": "Add HL7 processor support for ORM messages to handle order entry and management workflows.",
+            "dependencies": [],
+            "details": "Parse ORM segments for order details, linking to patient context. Support order control codes and service requests per standard HL7 ORM structure.",
+            "status": "pending",
+            "testStrategy": "Integration tests for order creation/update flows; mock database verification",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Implement ORU Results Processing",
+            "description": "Extend processor for ORU^R01 messages to handle observation results reporting.",
+            "dependencies": [],
+            "details": "Process ORU segments including OBR (order) and OBX (observations). Map results to domain models with status updates[2].",
+            "status": "pending",
+            "testStrategy": "End-to-end tests for result ingestion; validate result data accuracy",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "Add Domain Mappings and DB Transactions",
+            "description": "Implement business logic mappings from HL7 data to domain entities with ACID database transactions.",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Create mappers for DFT charges, ORM orders, ORU results to internal models. Wrap processing in transactions ensuring consistency across financial/order/result data.",
+            "status": "pending",
+            "testStrategy": "Transaction rollback tests; database state verification after processing",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "Implement Error Handling and NACK Generation",
+            "description": "Add comprehensive error handling with detailed NACK responses and end-to-end testing.",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4
+            ],
+            "details": "Generate HL7 NACKs for validation failures, parsing errors, DB issues. Include detailed error codes/messages. Run e2e tests covering happy path and all error scenarios.",
+            "status": "pending",
+            "testStrategy": "Error injection tests; validate NACK structure and content matches HL7 specs",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 8,
+        "recommendedSubtasks": 5,
+        "expansionPrompt": "Break into: 1) DFT^P03 charge posting; 2) ORM orders processing; 3) ORU results processing; 4) Domain mappings+DB transactions; 5) Error handling+NACKs with e2e tests."
+      },
+      {
+        "id": "23",
+        "title": "Add HL7 MLLP Listener and Reliability Features",
+        "description": "Implement configurable MLLP listener with retry/backoff and dead-letter queue.",
+        "details": "Use Netty or HAPI MLLP for TCP listener (configurable port). Add message queue (RabbitMQ/Kafka) with retry policy (exponential backoff). Implement dead-letter queue for failed messages after max retries.",
+        "testStrategy": "Load testing with high-volume messages; retry logic verification; dead-letter queue population tests.",
+        "priority": "high",
+        "dependencies": [
+          "22"
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement MLLP TCP Listener with Netty/HAPI",
+            "description": "Create core TCP listener using Netty or HAPI MLLP codec to receive HL7 messages over configurable port.",
+            "dependencies": [],
+            "details": "Configure Netty endpoint with HL7MLLPNettyDecoderFactory and HL7MLLPNettyEncoderFactory beans. Use camel-netty or HAPI context for MLLP protocol support with sync=true[1][3].",
+            "status": "pending",
+            "testStrategy": "Verify MLLP framing and HL7 message reception using HAPI TestPanel or sample ADT messages",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Add Configurable Port Setup",
+            "description": "Implement configuration properties for listener port and externalize via application.yml or environment variables.",
+            "dependencies": [
+              1
+            ],
+            "details": "Use Spring @Value or @ConfigurationProperties to inject port (default 8888). Update Netty URI dynamically: netty:tcp://localhost:${hl7.port}[1][3].",
+            "status": "pending",
+            "testStrategy": "Test listener startup on multiple ports via config changes; verify binding logs",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Integrate Message Queue (RabbitMQ/Kafka)",
+            "description": "Route received HL7 messages to RabbitMQ or Kafka queue for decoupled processing.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Add Camel route from hl7NettyListener to queue producer. Configure queue/topic with durable=true and persistence for healthcare reliability[1].",
+            "status": "pending",
+            "testStrategy": "Verify message delivery to queue with queue depth monitoring and consumer acknowledgment",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "Implement Retry Policy with Exponential Backoff",
+            "description": "Add Camel retry policy with exponential backoff for message processing failures.",
+            "dependencies": [
+              3
+            ],
+            "details": "Use .onException().maximumRedeliveries(5).redeliveryDelay(1000, 2000, 4000...).backOffMultiplier(2). Use dead letter exchange routing after max retries.",
+            "status": "pending",
+            "testStrategy": "Simulate processing failures; verify retry intervals and eventual DLQ routing",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "Implement Dead-Letter Queue",
+            "description": "Configure DLQ for messages failing after maximum retries with full message context.",
+            "dependencies": [
+              3,
+              4
+            ],
+            "details": "Create DLQ exchange/queue with x-dead-letter-exchange header. Include original message, retry count, and failure reason in headers/body.",
+            "status": "pending",
+            "testStrategy": "Force messages to DLQ after max retries; verify message enrichment and DLQ consumption",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "Add Load and Reliability Tests",
+            "description": "Create comprehensive load tests for high-volume HL7 messaging and reliability scenarios.",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "details": "Use JMeter or Artillery for 1000+ msg/sec load tests. Test concurrent connections, retry storms, DLQ overflow. Monitor memory/CPU under sustained load.",
+            "status": "pending",
+            "testStrategy": "Load test: 10k messages at 500/sec; Reliability: network partition, consumer crash recovery, idempotency verification",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 9,
+        "recommendedSubtasks": 6,
+        "expansionPrompt": "Divide into: 1) MLLP TCP listener (Netty/HAPI); 2) Configurable port setup; 3) Message queue integration (RabbitMQ/Kafka); 4) Retry policy with exponential backoff; 5) Dead-letter queue; 6) Load/reliability tests."
+      },
+      {
+        "id": "24",
+        "title": "Evaluate and Implement Multi-Tenant Schema-per-Tenant",
+        "description": "Migrate from row-level tenant_id to schema-per-tenant architecture if feasible.",
+        "details": "Assess current schema complexity vs migration cost. If proceeding: implement dynamic schema switching in ORM (e.g., Prisma/Sequelize tenant context). Create migration tooling for existing data. Update connection pooling.",
+        "testStrategy": "Cross-tenant isolation tests; migration script validation on test data; performance benchmarking.",
+        "priority": "high",
+        "dependencies": [
+          "15"
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Assess Current Schema Complexity",
+            "description": "Analyze existing database schema to evaluate table count, relationships, indexes, and tenant_id usage across all tables.",
+            "dependencies": [],
+            "details": "Document schema diagram, count tables with tenant_id, identify foreign key constraints involving tenant_id, estimate data volume per tenant. Use tools like pg_dump schema or Prisma introspection.",
+            "status": "pending",
+            "testStrategy": "Verify assessment covers all tables and relationships; cross-check with production schema dump.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Conduct Migration Cost-Benefit Analysis",
+            "description": "Compare schema-per-tenant benefits (isolation, performance) against costs (migration effort, tooling, downtime risks).",
+            "dependencies": [
+              1
+            ],
+            "details": "Quantify pros/cons using search results: better isolation vs row-level [1][2][5], estimate dev hours for migration, calculate downtime impact, project scaling costs. Decide go/no-go.",
+            "status": "pending",
+            "testStrategy": null,
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Research and Design Dynamic Schema Switching",
+            "description": "Select ORM (Prisma/Sequelize) and design tenant context for runtime schema switching based on user/tenant identifier.",
+            "dependencies": [
+              2
+            ],
+            "details": "Review Apartment gem pattern for Rails or Prisma middleware [3]; implement tenant resolver from auth context; handle schema search_path in PostgreSQL. Prototype connection.",
+            "status": "pending",
+            "testStrategy": "Unit tests for schema switch based on mock tenant; verify query isolation.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "Prototype Dynamic Schema Switching in ORM",
+            "description": "Implement and test schema switching middleware in development environment with sample multi-schema setup.",
+            "dependencies": [
+              3
+            ],
+            "details": "Create test schemas (tenant1, tenant2); add ORM middleware to switch schema via tenant_id from JWT/session; test CRUD operations stay isolated per schema.",
+            "status": "pending",
+            "testStrategy": "Integration tests: insert to tenant1, query from tenant2 returns empty; measure switch overhead.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "Develop Migration Tooling for New Tenants",
+            "description": "Build scripts to create new tenant schemas and run base migrations on demand.",
+            "dependencies": [
+              4
+            ],
+            "details": "Create CLI tool or API endpoint: generate schema name (e.g., tenant_{id}), run Prisma migrate or raw SQL CREATE SCHEMA + tables; integrate with tenant provisioning flow.",
+            "status": "pending",
+            "testStrategy": "Test create 3 schemas, verify identical structure; run migrations on empty schemas.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "Create Data Migration Scripts for Existing Data",
+            "description": "Write scripts to migrate data from shared tables with tenant_id to separate tenant schemas.",
+            "dependencies": [
+              5
+            ],
+            "details": "Group data by tenant_id, create target schemas if missing, COPY/INSERT data preserving relationships; handle large tables with chunking; include indexes post-migration.",
+            "status": "pending",
+            "testStrategy": "Run on staging copy: verify row counts match pre/post, relationships intact, no data loss.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 7,
+            "title": "Update Connection Pooling and Tenant Resolution",
+            "description": "Modify database connection config for schema-per-tenant while optimizing pooling; ensure tenant resolution from requests.",
+            "dependencies": [
+              6
+            ],
+            "details": "Use single pooled connection with dynamic search_path; update PgBouncer if used; middleware extracts tenant from subdomain/header/auth; fallback to default schema.",
+            "status": "pending",
+            "testStrategy": "Load test 100 concurrent requests across tenants; monitor connection count and query performance.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 8,
+            "title": "Execute Cross-Tenant Isolation and Performance Tests",
+            "description": "Run comprehensive tests for data isolation, migration validation, and benchmark vs current row-level setup.",
+            "dependencies": [
+              7
+            ],
+            "details": "Test leakage: query tenant1 data as tenant2 user; validate migration on full dataset backup; benchmark read/write latency, connection usage under load; document results.",
+            "status": "pending",
+            "testStrategy": "Automated isolation tests fail on leakage; performance regression <10%; FHIR endpoints tested post-migration.",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 10,
+        "recommendedSubtasks": 8,
+        "expansionPrompt": "Phased approach: 1) Current schema assessment; 2) Migration cost-benefit analysis; 3) Dynamic schema switching in ORM; 4) Migration tooling development; 5) Data migration scripts; 6) Connection pooling updates; 7) Cross-tenant isolation tests; 8) Performance benchmarking."
+      },
+      {
+        "id": "25",
+        "title": "Integrate Adaptive Learning UI in Clinical Workflows",
+        "description": "Surface adaptive diagnosis/procedure suggestions in clinical flows wired to existing endpoints.",
+        "details": "Add suggestion panel component to diagnosis/procedure screens. Connect to existing adaptive learning API endpoints. Implement real-time updates via WebSocket or polling. Add dismiss/accept actions.",
+        "testStrategy": "Component tests for suggestion display; integration tests with mock API; user acceptance testing in clinical flows.",
+        "priority": "medium",
+        "dependencies": [
+          "13"
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Develop Suggestion Panel Component",
+            "description": "Create and add the suggestion panel UI component to diagnosis and procedure screens in clinical workflows.",
+            "dependencies": [],
+            "details": "Design a flexible, intuitive panel that displays adaptive diagnosis/procedure suggestions, ensuring seamless integration into existing clinical UI without disrupting workflows. Include responsive design for various screen sizes and accessibility features.",
+            "status": "pending",
+            "testStrategy": "Component tests for rendering, display logic, and accessibility compliance using tools like Jest and React Testing Library.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Integrate with Existing Adaptive Learning API Endpoints",
+            "description": "Connect the suggestion panel to existing adaptive learning API endpoints for fetching diagnosis/procedure suggestions.",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement API calls to retrieve suggestions based on patient data and clinical context. Handle authentication, error states, and data mapping to UI. Ensure compatibility with FHIR or similar standards for clinical data exchange.",
+            "status": "pending",
+            "testStrategy": "Integration tests with mocked API responses to verify data fetching, parsing, and error handling.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Implement Real-Time Updates via WebSocket or Polling",
+            "description": "Add real-time update mechanism for suggestion panel using WebSocket or polling to reflect live changes in clinical flows.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Evaluate and implement WebSocket for low-latency updates or fallback polling. Manage connection states, reconnection logic, and optimize for clinical environment performance to avoid workflow disruptions.",
+            "status": "pending",
+            "testStrategy": "Integration tests simulating real-time data streams with mock WebSocket servers; performance tests for latency and reliability.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "Implement Dismiss/Accept Actions with Tests",
+            "description": "Add user actions for dismissing or accepting suggestions, including backend updates and full testing suite.",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Develop action handlers that send accept/dismiss events to APIs, update UI state, and log interactions for adaptive learning feedback. Include confirmation modals and undo functionality where appropriate.",
+            "status": "pending",
+            "testStrategy": "Component and integration tests for action flows; end-to-end user acceptance testing in mocked clinical workflows.",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 6,
+        "recommendedSubtasks": 4,
+        "expansionPrompt": "Break into: 1) Suggestion panel component; 2) Integration with existing API endpoints; 3) Real-time updates (WebSocket/polling); 4) Dismiss/accept actions with component/integration tests."
+      },
+      {
+        "id": "26",
+        "title": "Implement Touch-First UI Patterns",
+        "description": "Apply 44px touch targets, iPad layouts, high-contrast, and gesture affordances to clinical flows.",
+        "details": "Update CSS framework with min-touch-target: 44px. Add media queries for iPad split-view. Implement swipe gestures for navigation using Hammer.js or native touch events. Ensure WCAG AA contrast ratios.",
+        "testStrategy": "Manual testing on physical iPad; Lighthouse accessibility audit; touch target validation tools.",
+        "priority": "medium",
+        "dependencies": [
+          "13",
+          "25"
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Update CSS Framework for Touch Targets and iPad Layouts",
+            "description": "Implement 44px minimum touch targets and iPad-specific media queries for split-view layouts in the CSS framework targeting clinical flows.",
+            "dependencies": [],
+            "details": "Add CSS custom property min-touch-target: 44px; create media queries for iPad dimensions like @media (max-width: 1024px) and (min-aspect-ratio: 4/3) for split-view support per responsive design best practices.",
+            "status": "pending",
+            "testStrategy": "Validate touch target sizes using browser dev tools; test layouts in iPad simulator for split-view modes.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "Implement Swipe Gestures for Navigation",
+            "description": "Add swipe gesture support for navigation in clinical flows using Hammer.js library or native touch events.",
+            "dependencies": [
+              1
+            ],
+            "details": "Integrate Hammer.js for swipe detection on navigation elements; fallback to native touchstart/touchmove/touchend events; handle horizontal swipes to trigger prev/next navigation with visual feedback.",
+            "status": "pending",
+            "testStrategy": "Manual gesture testing on physical touch devices; unit tests for gesture recognition thresholds and navigation triggers.",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "Audit and Ensure WCAG AA Contrast Ratios with iPad Testing",
+            "description": "Conduct contrast ratio audit for WCAG AA compliance and perform comprehensive testing on iPad devices.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Use tools like WAVE or Lighthouse to audit all clinical flow elements for 4.5:1 contrast ratios; adjust colors in CSS framework; test full implementation on physical iPad including split-view and touch interactions.",
+            "status": "pending",
+            "testStrategy": "Lighthouse accessibility audits; manual verification on iPad Pro/Air models; touch target validation with specialized tools.",
+            "parentId": "undefined"
+          }
+        ],
+        "complexity": 5,
+        "recommendedSubtasks": 3,
+        "expansionPrompt": "Split into: 1) CSS framework updates (44px targets, iPad media queries); 2) Swipe gesture implementation (Hammer.js/native); 3) WCAG AA contrast audit and iPad testing."
+      }
+    ],
+    "metadata": {
+      "version": "1.0.0",
+      "lastModified": "2026-01-06T05:39:59.264Z",
+      "taskCount": 14,
+      "completedCount": 1,
+      "tags": [
+        "gap-ema-2025-12"
+      ]
+    }
   }
 }

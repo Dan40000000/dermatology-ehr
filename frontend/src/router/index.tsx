@@ -24,7 +24,7 @@ const MailPage = lazy(() => import('../pages/MailPage').then(m => ({ default: m.
 const TasksPage = lazy(() => import('../pages/TasksPage').then(m => ({ default: m.TasksPage })));
 const RemindersPage = lazy(() => import('../pages/RemindersPage').then(m => ({ default: m.RemindersPage })));
 const TextMessagesPage = lazy(() => import('../pages/TextMessagesPage'));
-const TelehealthPage = lazy(() => import('../pages/TelehealthPage').then(m => ({ default: m.TelehealthPage })));
+const TelehealthPage = lazy(() => import('../pages/TelehealthPage'));
 const InventoryPage = lazy(() => import('../pages/InventoryPage').then(m => ({ default: m.InventoryPage })));
 const FinancialsPage = lazy(() => import('../pages/FinancialsPage').then(m => ({ default: m.FinancialsPage })));
 const QuotesPage = lazy(() => import('../pages/QuotesPage').then(m => ({ default: m.QuotesPage })));
@@ -40,6 +40,20 @@ const FaceSheetPage = lazy(() => import('../pages/FaceSheetPage').then(m => ({ d
 const PriorAuthPage = lazy(() => import('../pages/PriorAuthPage').then(m => ({ default: m.PriorAuthPage })));
 const WaitlistPage = lazy(() => import('../pages/WaitlistPage').then(m => ({ default: m.WaitlistPage })));
 const HandoutsPage = lazy(() => import('../pages/HandoutsPage').then(m => ({ default: m.HandoutsPage })));
+const FaxPage = lazy(() => import('../pages/FaxPage').then(m => ({ default: m.FaxPage })));
+const DirectMessagingPage = lazy(() => import('../pages/DirectMessagingPage').then(m => ({ default: m.DirectMessagingPage })));
+const NotesPage = lazy(() => import('../pages/NotesPage').then(m => ({ default: m.NotesPage })));
+const ClearinghousePage = lazy(() => import('../pages/ClearinghousePage').then(m => ({ default: m.ClearinghousePage })));
+const QualityPage = lazy(() => import('../pages/QualityPage').then(m => ({ default: m.default })));
+const AdminPage = lazy(() => import('../pages/AdminPage').then(m => ({ default: m.AdminPage })));
+const AIAgentConfigsPage = lazy(() => import('../pages/AIAgentConfigsPage').then(m => ({ default: m.AIAgentConfigsPage })));
+const RegistryPage = lazy(() => import('../pages/RegistryPage').then(m => ({ default: m.RegistryPage })));
+const ReferralsPage = lazy(() => import('../pages/ReferralsPage').then(m => ({ default: m.ReferralsPage })));
+const ProtocolsPage = lazy(() => import('../pages/ProtocolsPage').then(m => ({ default: m.ProtocolsPage })));
+const PreferencesPage = lazy(() => import('../pages/PreferencesPage').then(m => ({ default: m.PreferencesPage })));
+const HelpPage = lazy(() => import('../pages/HelpPage').then(m => ({ default: m.HelpPage })));
+const RecallsPage = lazy(() => import('../pages/RecallsPage').then(m => ({ default: m.RecallsPage })));
+const FormsPage = lazy(() => import('../pages/FormsPage').then(m => ({ default: m.FormsPage })));
 
 // Loading fallback component
 function PageLoader() {
@@ -86,6 +100,7 @@ export const router = createBrowserRouter([
       { path: 'patients/:patientId/encounter/:encounterId', element: lazyWithSuspense(EncounterPage) },
 
       // Clinical
+      { path: 'notes', element: lazyWithSuspense(NotesPage) },
       { path: 'orders', element: lazyWithSuspense(OrdersPage) },
       { path: 'rx', element: lazyWithSuspense(PrescriptionsPage) },
       { path: 'prior-auth', element: lazyWithSuspense(PriorAuthPage) },
@@ -95,8 +110,11 @@ export const router = createBrowserRouter([
       // Communication
       { path: 'text-messages', element: lazyWithSuspense(TextMessagesPage) },
       { path: 'mail', element: lazyWithSuspense(MailPage) },
+      { path: 'direct', element: lazyWithSuspense(DirectMessagingPage) },
+      { path: 'fax', element: lazyWithSuspense(FaxPage) },
       { path: 'tasks', element: lazyWithSuspense(TasksPage) },
       { path: 'reminders', element: lazyWithSuspense(RemindersPage) },
+      { path: 'recalls', element: lazyWithSuspense(RecallsPage) },
 
       // Documents
       { path: 'documents', element: lazyWithSuspense(DocumentsPage) },
@@ -109,14 +127,25 @@ export const router = createBrowserRouter([
       { path: 'inventory', element: lazyWithSuspense(InventoryPage) },
       { path: 'financials', element: lazyWithSuspense(FinancialsPage) },
       { path: 'claims', element: lazyWithSuspense(ClaimsPage) },
+      { path: 'clearinghouse', element: lazyWithSuspense(ClearinghousePage) },
       { path: 'quotes', element: lazyWithSuspense(QuotesPage) },
       { path: 'analytics', element: lazyWithSuspense(AnalyticsPage) },
       { path: 'reports', element: lazyWithSuspense(ReportsPage) },
+      { path: 'quality', element: lazyWithSuspense(QualityPage) },
+      { path: 'registry', element: lazyWithSuspense(RegistryPage) },
+      { path: 'referrals', element: lazyWithSuspense(ReferralsPage) },
+      { path: 'forms', element: lazyWithSuspense(FormsPage) },
+      { path: 'protocols', element: lazyWithSuspense(ProtocolsPage) },
+      { path: 'templates', element: lazyWithSuspense(NoteTemplatesPage) },
+      { path: 'preferences', element: lazyWithSuspense(PreferencesPage) },
+      { path: 'help', element: lazyWithSuspense(HelpPage) },
 
       // Admin
+      { path: 'admin', element: lazyWithSuspense(AdminPage) },
       { path: 'admin/fee-schedules', element: lazyWithSuspense(FeeSchedulePage) },
       { path: 'admin/note-templates', element: lazyWithSuspense(NoteTemplatesPage) },
       { path: 'admin/audit-log', element: lazyWithSuspense(AuditLogPage) },
+      { path: 'admin/ai-agents', element: lazyWithSuspense(AIAgentConfigsPage) },
     ],
   },
   {

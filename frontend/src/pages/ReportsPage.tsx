@@ -260,12 +260,12 @@ export default function ReportsPage() {
   };
 
   const reportTypes = [
-    { id: 'appointments' as ReportType, name: 'Appointments', icon: '📅' },
-    { id: 'financial' as ReportType, name: 'Financial', icon: '💰' },
-    { id: 'clinical' as ReportType, name: 'Clinical', icon: '⚕️' },
-    { id: 'patients' as ReportType, name: 'Patient List', icon: '👥' },
-    { id: 'productivity' as ReportType, name: 'Provider Productivity', icon: '📊' },
-    { id: 'no-shows' as ReportType, name: 'No-Shows', icon: '❌' },
+    { id: 'appointments' as ReportType, name: 'Appointments', icon: '' },
+    { id: 'financial' as ReportType, name: 'Financial', icon: '' },
+    { id: 'clinical' as ReportType, name: 'Clinical', icon: '' },
+    { id: 'patients' as ReportType, name: 'Patient List', icon: '' },
+    { id: 'productivity' as ReportType, name: 'Provider Productivity', icon: '' },
+    { id: 'no-shows' as ReportType, name: 'No-Shows', icon: '' },
   ];
 
   return (
@@ -858,7 +858,7 @@ export default function ReportsPage() {
           {/* Empty State */}
           {!loading && reportData.length === 0 && (
             <div style={{ background: 'white', borderRadius: '12px', padding: '60px 24px', textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-              <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}></div>
               <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', marginBottom: '8px' }}>
                 No Data Generated
               </h3>

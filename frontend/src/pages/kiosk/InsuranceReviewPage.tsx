@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
+import '../../styles/kiosk.css';
 
 interface InsuranceData {
   insurance?: string;
@@ -8,6 +9,13 @@ interface InsuranceData {
   insuranceGroupNumber?: string;
   insurancePlanName?: string;
 }
+
+const cardStyle: React.CSSProperties = {
+  background: 'white',
+  borderRadius: '1rem',
+  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+  padding: '2rem',
+};
 
 export function KioskInsuranceReviewPage() {
   const navigate = useNavigate();
@@ -170,7 +178,6 @@ export function KioskInsuranceReviewPage() {
         setBackPhoto(photoData);
       }
 
-      // Upload photo
       await uploadPhoto(capturingSide, photoData);
     }
 
@@ -204,9 +211,9 @@ export function KioskInsuranceReviewPage() {
   if (loading) {
     return (
       <KioskLayout currentStep={3} totalSteps={6} stepName="Loading..." onTimeout={handleTimeout}>
-        <div className="bg-white rounded-2xl shadow-xl p-12 text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-purple-600 mx-auto mb-4"></div>
-          <p className="text-2xl text-gray-600">Loading insurance information...</p>
+        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem' }}>
+          <div className="kiosk-spinner" style={{ margin: '0 auto 1rem' }} />
+          <p style={{ fontSize: '1.5rem', color: '#4b5563' }}>Loading insurance information...</p>
         </div>
       </KioskLayout>
     );
@@ -215,43 +222,33 @@ export function KioskInsuranceReviewPage() {
   if (capturingSide) {
     return (
       <KioskLayout currentStep={3} totalSteps={6} stepName="Capture Insurance Card" onTimeout={handleTimeout}>
-        <div className="bg-white rounded-2xl shadow-xl p-8">
-          <h2 className="text-3xl font-bold text-gray-900 mb-6">
+        <div style={cardStyle}>
+          <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '1.5rem' }}>
             Capture {capturingSide === 'front' ? 'Front' : 'Back'} of Card
           </h2>
 
-          <div className="relative mb-6">
+          <div style={{ position: 'relative', marginBottom: '1.5rem' }}>
             <video
               ref={videoRef}
               autoPlay
               playsInline
-              className="w-full rounded-lg border-4 border-gray-300"
+              style={{ width: '100%', borderRadius: '0.5rem', border: '4px solid #d1d5db' }}
             />
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="border-4 border-purple-500 rounded-lg" style={{ width: '80%', height: '60%' }}>
-                <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-purple-500"></div>
-                <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-purple-500"></div>
-                <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-purple-500"></div>
-                <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-purple-500"></div>
-              </div>
-            </div>
           </div>
 
-          <p className="text-xl text-gray-600 mb-6 text-center">
+          <p style={{ fontSize: '1.25rem', color: '#4b5563', marginBottom: '1.5rem', textAlign: 'center' }}>
             Position your insurance card within the frame
           </p>
 
-          <div className="flex gap-4">
-            <button
-              onClick={stopCamera}
-              className="flex-1 py-5 text-xl font-medium text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50"
-            >
+          <div className="kiosk-nav-buttons">
+            <button onClick={stopCamera} className="kiosk-btn-secondary" style={{ flex: 1 }}>
               Cancel
             </button>
             <button
               onClick={capturePhoto}
               disabled={uploadingPhoto}
-              className="flex-1 py-5 text-xl font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50"
+              className="kiosk-btn-primary"
+              style={{ flex: 1 }}
             >
               {uploadingPhoto ? 'Uploading...' : 'Capture Photo'}
             </button>
@@ -263,15 +260,17 @@ export function KioskInsuranceReviewPage() {
 
   return (
     <KioskLayout currentStep={3} totalSteps={6} stepName="Review Insurance" onTimeout={handleTimeout}>
-      <div className="bg-white rounded-2xl shadow-xl p-8">
-        <h2 className="text-3xl font-bold text-gray-900 mb-4">Review Insurance Information</h2>
-        <p className="text-xl text-gray-600 mb-8">
+      <div style={cardStyle}>
+        <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '1rem' }}>
+          Review Insurance Information
+        </h2>
+        <p style={{ fontSize: '1.25rem', color: '#4b5563', marginBottom: '2rem' }}>
           Please verify your insurance information is up to date.
         </p>
 
         {!isEditing && !useCamera ? (
           <>
-            <div className="space-y-4 mb-8">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '2rem' }}>
               <InfoField label="Insurance Provider" value={insuranceData.insurance || 'Not provided'} />
               <InfoField label="Member ID" value={insuranceData.insuranceMemberId || 'Not provided'} />
               <InfoField label="Group Number" value={insuranceData.insuranceGroupNumber || 'Not provided'} />
@@ -279,33 +278,42 @@ export function KioskInsuranceReviewPage() {
             </div>
 
             {(frontPhoto || backPhoto) && (
-              <div className="mb-8">
-                <h3 className="text-xl font-semibold text-gray-900 mb-4">Insurance Card Photos</h3>
-                <div className="grid grid-cols-2 gap-4">
+              <div style={{ marginBottom: '2rem' }}>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111827', marginBottom: '1rem' }}>
+                  Insurance Card Photos
+                </h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
                   {frontPhoto && (
                     <div>
-                      <p className="text-sm text-gray-600 mb-2">Front</p>
-                      <img src={frontPhoto} alt="Front of insurance card" className="rounded-lg border-2 border-gray-300" />
+                      <p style={{ fontSize: '0.875rem', color: '#4b5563', marginBottom: '0.5rem' }}>Front</p>
+                      <img src={frontPhoto} alt="Front of insurance card" style={{ borderRadius: '0.5rem', border: '2px solid #d1d5db', width: '100%' }} />
                     </div>
                   )}
                   {backPhoto && (
                     <div>
-                      <p className="text-sm text-gray-600 mb-2">Back</p>
-                      <img src={backPhoto} alt="Back of insurance card" className="rounded-lg border-2 border-gray-300" />
+                      <p style={{ fontSize: '0.875rem', color: '#4b5563', marginBottom: '0.5rem' }}>Back</p>
+                      <img src={backPhoto} alt="Back of insurance card" style={{ borderRadius: '0.5rem', border: '2px solid #d1d5db', width: '100%' }} />
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-6 mb-8">
-              <p className="text-xl font-medium text-purple-900 text-center">
+            <div style={{
+              background: '#f3e8ff',
+              border: '2px solid #c4b5fd',
+              borderRadius: '0.5rem',
+              padding: '1.5rem',
+              marginBottom: '2rem',
+              textAlign: 'center',
+            }}>
+              <p style={{ fontSize: '1.25rem', fontWeight: 500, color: '#6b21a8' }}>
                 Is your insurance information correct?
               </p>
             </div>
           </>
         ) : isEditing ? (
-          <div className="space-y-6 mb-8">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginBottom: '2rem' }}>
             <EditField
               label="Insurance Provider"
               value={editedData.insurance || ''}
@@ -328,27 +336,39 @@ export function KioskInsuranceReviewPage() {
             />
           </div>
         ) : (
-          <div className="space-y-6 mb-8">
-            <p className="text-xl text-gray-700 text-center mb-6">
+          <div style={{ marginBottom: '2rem' }}>
+            <p style={{ fontSize: '1.25rem', color: '#374151', textAlign: 'center', marginBottom: '1.5rem' }}>
               You can take photos of both sides of your insurance card
             </p>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
               <button
                 onClick={() => startCamera('front')}
-                className="py-12 bg-purple-50 border-2 border-purple-300 rounded-lg hover:bg-purple-100 text-center"
+                style={{
+                  padding: '3rem',
+                  background: '#f3e8ff',
+                  border: '2px solid #c4b5fd',
+                  borderRadius: '0.5rem',
+                  cursor: 'pointer',
+                  textAlign: 'center',
+                }}
               >
-                <div className="text-6xl mb-2">📷</div>
-                <div className="text-xl font-semibold text-purple-900">
+                <div style={{ fontSize: '1.25rem', fontWeight: 600, color: '#6b21a8' }}>
                   {frontPhoto ? 'Retake Front' : 'Capture Front'}
                 </div>
               </button>
               <button
                 onClick={() => startCamera('back')}
-                className="py-12 bg-purple-50 border-2 border-purple-300 rounded-lg hover:bg-purple-100 text-center"
+                style={{
+                  padding: '3rem',
+                  background: '#f3e8ff',
+                  border: '2px solid #c4b5fd',
+                  borderRadius: '0.5rem',
+                  cursor: 'pointer',
+                  textAlign: 'center',
+                }}
               >
-                <div className="text-6xl mb-2">📷</div>
-                <div className="text-xl font-semibold text-purple-900">
+                <div style={{ fontSize: '1.25rem', fontWeight: 600, color: '#6b21a8' }}>
                   {backPhoto ? 'Retake Back' : 'Capture Back'}
                 </div>
               </button>
@@ -357,7 +377,8 @@ export function KioskInsuranceReviewPage() {
             {(frontPhoto || backPhoto) && (
               <button
                 onClick={() => setUseCamera(false)}
-                className="w-full py-4 text-lg font-medium text-purple-600 bg-white border-2 border-purple-300 rounded-lg hover:bg-purple-50"
+                className="kiosk-btn-secondary"
+                style={{ width: '100%', marginTop: '1rem' }}
               >
                 Done with Photos
               </button>
@@ -365,61 +386,66 @@ export function KioskInsuranceReviewPage() {
           </div>
         )}
 
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border-2 border-red-200 rounded-lg">
-            <p className="text-lg text-red-800">{error}</p>
-          </div>
-        )}
+        {error && <div className="kiosk-error">{error}</div>}
 
-        <div className="flex gap-4">
-          <button
-            onClick={handleBack}
-            className="flex-1 py-5 text-xl font-medium text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50"
-          >
+        <div className="kiosk-nav-buttons">
+          <button onClick={handleBack} className="kiosk-btn-secondary">
             Back
           </button>
           {!isEditing && !useCamera ? (
             <>
               <button
                 onClick={() => setUseCamera(true)}
-                className="flex-1 py-5 text-xl font-medium text-purple-600 bg-purple-50 border-2 border-purple-300 rounded-lg hover:bg-purple-100"
+                style={{
+                  flex: 1,
+                  padding: '1.25rem',
+                  fontSize: '1.25rem',
+                  fontWeight: 500,
+                  color: '#7c3aed',
+                  background: '#f3e8ff',
+                  border: '2px solid #c4b5fd',
+                  borderRadius: '0.5rem',
+                  cursor: 'pointer',
+                }}
               >
                 Take Photo
               </button>
               <button
                 onClick={handleEdit}
-                className="flex-1 py-5 text-xl font-medium text-purple-600 bg-purple-50 border-2 border-purple-300 rounded-lg hover:bg-purple-100"
+                style={{
+                  flex: 1,
+                  padding: '1.25rem',
+                  fontSize: '1.25rem',
+                  fontWeight: 500,
+                  color: '#7c3aed',
+                  background: '#f3e8ff',
+                  border: '2px solid #c4b5fd',
+                  borderRadius: '0.5rem',
+                  cursor: 'pointer',
+                }}
               >
                 Update Info
               </button>
-              <button
-                onClick={handleContinue}
-                className="flex-1 py-5 text-xl font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700"
-              >
+              <button onClick={handleContinue} className="kiosk-btn-primary" style={{ flex: 1 }}>
                 Continue
               </button>
             </>
           ) : isEditing ? (
             <>
-              <button
-                onClick={() => setIsEditing(false)}
-                className="flex-1 py-5 text-xl font-medium text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50"
-              >
+              <button onClick={() => setIsEditing(false)} className="kiosk-btn-secondary">
                 Cancel
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex-1 py-5 text-xl font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50"
+                className="kiosk-btn-primary"
+                style={{ flex: 1 }}
               >
                 {saving ? 'Saving...' : 'Save & Continue'}
               </button>
             </>
           ) : (
-            <button
-              onClick={() => setUseCamera(false)}
-              className="flex-1 py-5 text-xl font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700"
-            >
+            <button onClick={() => setUseCamera(false)} className="kiosk-btn-primary" style={{ flex: 1 }}>
               Continue
             </button>
           )}
@@ -432,8 +458,8 @@ export function KioskInsuranceReviewPage() {
 function InfoField({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-sm font-medium text-gray-600 mb-1">{label}</div>
-      <div className="text-xl text-gray-900">{value}</div>
+      <div style={{ fontSize: '0.875rem', fontWeight: 500, color: '#4b5563', marginBottom: '0.25rem' }}>{label}</div>
+      <div style={{ fontSize: '1.25rem', color: '#111827' }}>{value}</div>
     </div>
   );
 }
@@ -448,13 +474,13 @@ function EditField({
   onChange: (value: string) => void;
 }) {
   return (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
+    <div className="kiosk-form-group">
+      <label className="kiosk-form-label">{label}</label>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+        className="kiosk-form-input"
       />
     </div>
   );

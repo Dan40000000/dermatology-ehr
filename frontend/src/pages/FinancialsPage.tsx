@@ -218,36 +218,223 @@ export function FinancialsPage() {
   }
 
   return (
-    <div className="financials-page">
-      <div className="page-header">
-        <h1>Financials</h1>
+    <div className="financials-page" style={{
+      background: 'linear-gradient(135deg, #059669 0%, #10b981 50%, #34d399 100%)',
+      minHeight: '100vh',
+      padding: '2rem'
+    }}>
+      <div className="page-header" style={{
+        background: 'linear-gradient(to right, rgba(255,255,255,0.95), rgba(255,255,255,0.9))',
+        padding: '2rem',
+        borderRadius: '16px',
+        boxShadow: '0 10px 40px rgba(0,0,0,0.2)',
+        marginBottom: '2rem',
+        animation: 'slideInDown 0.5s ease-out',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <div>
+          <h1 style={{
+            fontSize: '2.5rem',
+            fontWeight: '800',
+            background: 'linear-gradient(135deg, #059669, #10b981)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            marginBottom: '0.5rem'
+          }}>Financial Management</h1>
+          <p style={{ color: '#6b7280', fontSize: '1.1rem' }}>Track revenue, invoices, and payments</p>
+        </div>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button type="button" className="btn-secondary" onClick={() => navigate('/claims')}>
+          <button type="button" className="btn-secondary" onClick={() => navigate('/claims')} style={{
+            background: 'white',
+            color: '#059669',
+            border: '2px solid #059669',
+            padding: '0.75rem 1.5rem',
+            borderRadius: '10px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            boxShadow: '0 4px 12px rgba(5, 150, 105, 0.2)'
+          }} onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#059669';
+            e.currentTarget.style.color = 'white';
+            e.currentTarget.style.transform = 'translateY(-2px)';
+          }} onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'white';
+            e.currentTarget.style.color = '#059669';
+            e.currentTarget.style.transform = 'translateY(0)';
+          }}>
             Claims Management
           </button>
-          <button type="button" className="btn-primary">
+          <button type="button" className="btn-primary" style={{
+            background: 'linear-gradient(135deg, #059669, #10b981)',
+            color: 'white',
+            border: 'none',
+            padding: '0.75rem 1.5rem',
+            borderRadius: '10px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.4)'
+          }} onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 8px 20px rgba(16, 185, 129, 0.6)';
+          }} onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.4)';
+          }}>
             + New Invoice
           </button>
         </div>
       </div>
 
       {/* Stats */}
-      <div className="financial-stats">
-        <div className="stat-card">
-          <div className="stat-value">{formatCurrency(totalRevenue)}</div>
-          <div className="stat-label">Collected (MTD)</div>
+      <div className="financial-stats" style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+        gap: '1.5rem',
+        marginBottom: '2rem'
+      }}>
+        <div className="stat-card" style={{
+          background: 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9))',
+          padding: '2rem',
+          borderRadius: '16px',
+          boxShadow: '0 8px 24px rgba(16, 185, 129, 0.2)',
+          border: '2px solid rgba(16, 185, 129, 0.1)',
+          transition: 'all 0.3s ease',
+          cursor: 'pointer',
+          animation: 'fadeIn 0.6s ease-out'
+        }} onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-8px) scale(1.02)';
+          e.currentTarget.style.boxShadow = '0 12px 32px rgba(16, 185, 129, 0.3)';
+        }} onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0) scale(1)';
+          e.currentTarget.style.boxShadow = '0 8px 24px rgba(16, 185, 129, 0.2)';
+        }}>
+          <div className="stat-value" style={{
+            fontSize: '2.5rem',
+            fontWeight: '800',
+            background: 'linear-gradient(135deg, #059669, #34d399)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            marginBottom: '0.5rem'
+          }}>{formatCurrency(totalRevenue)}</div>
+          <div className="stat-label" style={{
+            color: '#6b7280',
+            fontSize: '1rem',
+            fontWeight: '600',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em'
+          }}>Collected (MTD)</div>
         </div>
-        <div className="stat-card">
-          <div className="stat-value">{formatCurrency(totalOutstanding)}</div>
-          <div className="stat-label">Outstanding</div>
+        <div className="stat-card" style={{
+          background: 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9))',
+          padding: '2rem',
+          borderRadius: '16px',
+          boxShadow: '0 8px 24px rgba(16, 185, 129, 0.2)',
+          border: '2px solid rgba(16, 185, 129, 0.1)',
+          transition: 'all 0.3s ease',
+          cursor: 'pointer',
+          animation: 'fadeIn 0.7s ease-out'
+        }} onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-8px) scale(1.02)';
+          e.currentTarget.style.boxShadow = '0 12px 32px rgba(16, 185, 129, 0.3)';
+        }} onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0) scale(1)';
+          e.currentTarget.style.boxShadow = '0 8px 24px rgba(16, 185, 129, 0.2)';
+        }}>
+          <div className="stat-value" style={{
+            fontSize: '2.5rem',
+            fontWeight: '800',
+            background: 'linear-gradient(135deg, #10b981, #6ee7b7)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            marginBottom: '0.5rem'
+          }}>{formatCurrency(totalOutstanding)}</div>
+          <div className="stat-label" style={{
+            color: '#6b7280',
+            fontSize: '1rem',
+            fontWeight: '600',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em'
+          }}>Outstanding</div>
         </div>
-        <div className={`stat-card ${overdueAmount > 0 ? 'warning' : ''}`}>
-          <div className="stat-value">{formatCurrency(overdueAmount)}</div>
-          <div className="stat-label">Overdue</div>
+        <div className={`stat-card ${overdueAmount > 0 ? 'warning' : ''}`} style={{
+          background: overdueAmount > 0
+            ? 'linear-gradient(135deg, rgba(251, 146, 60, 0.1), rgba(251, 146, 60, 0.05))'
+            : 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9))',
+          padding: '2rem',
+          borderRadius: '16px',
+          boxShadow: overdueAmount > 0
+            ? '0 8px 24px rgba(251, 146, 60, 0.3)'
+            : '0 8px 24px rgba(16, 185, 129, 0.2)',
+          border: overdueAmount > 0
+            ? '2px solid rgba(251, 146, 60, 0.3)'
+            : '2px solid rgba(16, 185, 129, 0.1)',
+          transition: 'all 0.3s ease',
+          cursor: 'pointer',
+          animation: 'fadeIn 0.8s ease-out'
+        }} onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-8px) scale(1.02)';
+          e.currentTarget.style.boxShadow = overdueAmount > 0
+            ? '0 12px 32px rgba(251, 146, 60, 0.4)'
+            : '0 12px 32px rgba(16, 185, 129, 0.3)';
+        }} onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0) scale(1)';
+          e.currentTarget.style.boxShadow = overdueAmount > 0
+            ? '0 8px 24px rgba(251, 146, 60, 0.3)'
+            : '0 8px 24px rgba(16, 185, 129, 0.2)';
+        }}>
+          <div className="stat-value" style={{
+            fontSize: '2.5rem',
+            fontWeight: '800',
+            background: overdueAmount > 0
+              ? 'linear-gradient(135deg, #fb923c, #fdba74)'
+              : 'linear-gradient(135deg, #059669, #34d399)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            marginBottom: '0.5rem'
+          }}>{formatCurrency(overdueAmount)}</div>
+          <div className="stat-label" style={{
+            color: overdueAmount > 0 ? '#c2410c' : '#6b7280',
+            fontSize: '1rem',
+            fontWeight: '600',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em'
+          }}>Overdue</div>
         </div>
-        <div className="stat-card">
-          <div className="stat-value">{invoices.length}</div>
-          <div className="stat-label">Total Invoices</div>
+        <div className="stat-card" style={{
+          background: 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9))',
+          padding: '2rem',
+          borderRadius: '16px',
+          boxShadow: '0 8px 24px rgba(16, 185, 129, 0.2)',
+          border: '2px solid rgba(16, 185, 129, 0.1)',
+          transition: 'all 0.3s ease',
+          cursor: 'pointer',
+          animation: 'fadeIn 0.9s ease-out'
+        }} onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-8px) scale(1.02)';
+          e.currentTarget.style.boxShadow = '0 12px 32px rgba(16, 185, 129, 0.3)';
+        }} onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0) scale(1)';
+          e.currentTarget.style.boxShadow = '0 8px 24px rgba(16, 185, 129, 0.2)';
+        }}>
+          <div className="stat-value" style={{
+            fontSize: '2.5rem',
+            fontWeight: '800',
+            background: 'linear-gradient(135deg, #047857, #10b981)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            marginBottom: '0.5rem'
+          }}>{invoices.length}</div>
+          <div className="stat-label" style={{
+            color: '#6b7280',
+            fontSize: '1rem',
+            fontWeight: '600',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em'
+          }}>Total Invoices</div>
         </div>
       </div>
 
@@ -292,7 +479,7 @@ export function FinancialsPage() {
                 {transactions.slice(-5).reverse().map((t) => (
                   <div key={t.id} className="activity-item">
                     <span className={`activity-icon ${t.type}`}>
-                      {t.type === 'payment' ? '💵' : t.type === 'charge' ? '📄' : '↩️'}
+                      {t.type === 'payment' ? '' : t.type === 'charge' ? '' : ''}
                     </span>
                     <div className="activity-info">
                       <div className="activity-desc">{t.description}</div>

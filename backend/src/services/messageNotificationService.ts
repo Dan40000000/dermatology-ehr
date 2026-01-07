@@ -12,6 +12,7 @@
 
 import { pool } from "../db/pool";
 import { auditLog } from "./audit";
+import { logger } from "../lib/logger";
 
 // Email configuration interface
 interface EmailConfig {
@@ -56,20 +57,20 @@ export async function notifyPatientOfNewMessage(
     );
 
     if (result.rows.length === 0) {
-      console.error(`Patient not found: ${patientId}`);
+      logger.warn('Patient not found for message notification', { patientId, tenantId });
       return;
     }
 
     const patient = result.rows[0];
 
     if (!patient.email_enabled) {
-      console.log(`Email notifications disabled for patient ${patientId}`);
+      logger.info('Patient email notifications disabled', { patientId, tenantId });
       return;
     }
 
     const recipientEmail = patient.notification_email || patient.email;
     if (!recipientEmail) {
-      console.error(`No email address for patient ${patientId}`);
+      logger.warn('No email address for patient notification', { patientId, tenantId });
       return;
     }
 
@@ -96,12 +97,13 @@ To manage your notification preferences, log in to the patient portal.
     `.trim();
 
     // In production, send actual email here
-    // For now, log it
-    console.log("=== EMAIL NOTIFICATION ===");
-    console.log(`To: ${recipientEmail}`);
-    console.log(`Subject: ${emailSubject}`);
-    console.log(`Body:\n${emailBody}`);
-    console.log("========================");
+    // For now, log metadata only (no body)
+    logger.info('Patient message notification prepared', {
+      tenantId,
+      patientId,
+      to: recipientEmail,
+      subject: emailSubject,
+    });
 
     // Audit log
     await auditLog(
@@ -113,7 +115,7 @@ To manage your notification preferences, log in to the patient portal.
       { recipientEmail, patientId }
     );
   } catch (error) {
-    console.error("Error sending patient notification:", error);
+    logger.error('Error sending patient notification', { error: (error as Error).message });
     // Don't throw - notification failure shouldn't break message sending
   }
 }
@@ -136,7 +138,7 @@ export async function notifyStaffOfNewPatientMessage(
     );
 
     if (patientResult.rows.length === 0) {
-      console.error(`Patient not found: ${patientId}`);
+      logger.warn('Patient not found for staff notification', { patientId, tenantId });
       return;
     }
 
@@ -193,11 +195,12 @@ This is an automated message. Please do not reply to this email.
       `.trim();
 
       // In production, send actual email here
-      console.log("=== STAFF EMAIL NOTIFICATION ===");
-      console.log(`To: ${user.email}`);
-      console.log(`Subject: ${emailSubject}`);
-      console.log(`Body:\n${emailBody}`);
-      console.log("==============================");
+      logger.info('Staff message notification prepared', {
+        tenantId,
+        userId: user.id,
+        to: user.email,
+        subject: emailSubject,
+      });
 
       // Audit log
       await auditLog(
@@ -210,7 +213,7 @@ This is an automated message. Please do not reply to this email.
       );
     }
   } catch (error) {
-    console.error("Error sending staff notification:", error);
+    logger.error('Error sending staff notification', { error: (error as Error).message });
     // Don't throw - notification failure shouldn't break message sending
   }
 }
@@ -274,16 +277,17 @@ Thank you,
 Dermatology EHR System
       `.trim();
 
-      console.log("=== STAFF DIGEST EMAIL ===");
-      console.log(`To: ${row.email}`);
-      console.log(`Subject: ${emailSubject}`);
-      console.log(`Body:\n${emailBody}`);
-      console.log("========================");
+      logger.info('Staff digest email prepared', {
+        tenantId,
+        to: row.email,
+        subject: emailSubject,
+        totalMessages: row.unread_count,
+      });
 
       await auditLog(tenantId, "system", "staff_digest_email_sent", "user", row.user_id);
     }
   } catch (error) {
-    console.error("Error sending staff digest:", error);
+    logger.error('Error sending staff digest', { error: (error as Error).message });
   }
 }
 

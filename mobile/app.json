@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "Dermatology EHR",
+    "slug": "derm-ehr-mobile",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dermehr.mobile",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "This app needs access to your microphone to record clinical notes during patient encounters.",
+        "NSSpeechRecognitionUsageDescription": "This app needs speech recognition to transcribe your voice notes into text."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.dermehr.mobile",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow Dermatology EHR to access your microphone for recording clinical notes."
+        }
+      ]
+    ]
+  }
+}

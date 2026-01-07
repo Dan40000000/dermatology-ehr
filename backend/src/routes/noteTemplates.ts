@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { requireModuleAccess } from "../middleware/moduleAccess";
 import { auditLog } from "../services/audit";
 
 const templateContentSchema = z.object({
@@ -39,8 +40,10 @@ const updateTemplateSchema = z.object({
 
 export const noteTemplatesRouter = Router();
 
+noteTemplatesRouter.use(requireAuth, requireModuleAccess("templates"));
+
 // GET /api/note-templates - List templates
-noteTemplatesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
+noteTemplatesRouter.get("/", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const userId = req.user!.id;
   const { category, providerId } = req.query;
@@ -88,7 +91,7 @@ noteTemplatesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
 });
 
 // GET /api/note-templates/:id - Get single template
-noteTemplatesRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
+noteTemplatesRouter.get("/:id", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const userId = req.user!.id;
   const templateId = String(req.params.id);
@@ -126,7 +129,6 @@ noteTemplatesRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => 
 // POST /api/note-templates - Create template
 noteTemplatesRouter.post(
   "/",
-  requireAuth,
   requireRoles(["provider", "admin"]),
   async (req: AuthedRequest, res) => {
     const parsed = createTemplateSchema.safeParse(req.body);
@@ -164,7 +166,6 @@ noteTemplatesRouter.post(
 // PUT /api/note-templates/:id - Update template
 noteTemplatesRouter.put(
   "/:id",
-  requireAuth,
   requireRoles(["provider", "admin"]),
   async (req: AuthedRequest, res) => {
     const parsed = updateTemplateSchema.safeParse(req.body);
@@ -256,7 +257,6 @@ noteTemplatesRouter.put(
 // DELETE /api/note-templates/:id - Delete template
 noteTemplatesRouter.delete(
   "/:id",
-  requireAuth,
   requireRoles(["provider", "admin"]),
   async (req: AuthedRequest, res) => {
     const templateId = String(req.params.id);
@@ -322,7 +322,7 @@ noteTemplatesRouter.post("/:id/apply", requireAuth, async (req: AuthedRequest, r
 });
 
 // POST /api/note-templates/:id/favorite - Toggle favorite
-noteTemplatesRouter.post("/:id/favorite", requireAuth, async (req: AuthedRequest, res) => {
+noteTemplatesRouter.post("/:id/favorite", async (req: AuthedRequest, res) => {
   const templateId = String(req.params.id);
   const tenantId = req.user!.tenantId;
   const userId = req.user!.id;

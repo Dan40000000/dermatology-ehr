@@ -347,7 +347,7 @@ export function PhotosPage() {
       {filteredPhotos.length === 0 ? (
         <Panel title="">
           <div className="empty-state">
-            <div className="empty-icon">📷</div>
+            <div className="empty-icon"></div>
             <h3>No photos found</h3>
             <p className="muted">
               {categoryFilter !== 'all' || selectedPatient !== 'all'
@@ -586,7 +586,7 @@ export function PhotosPage() {
                 className="upload-dropzone"
                 onClick={() => fileInputRef.current?.click()}
               >
-                <div className="upload-icon">📷</div>
+                <div className="upload-icon"></div>
                 <p>Click to select an image</p>
                 <p className="muted tiny">JPG, PNG, or HEIC supported</p>
               </div>

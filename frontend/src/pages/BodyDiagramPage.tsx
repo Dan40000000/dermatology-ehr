@@ -2,9 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { InteractiveBodyMap } from '../components/body-diagram/InteractiveBodyMap';
 import type { BodyMarking } from '../components/body-diagram/InteractiveBodyMap';
+import { BodyDiagram3D } from '../components/body-diagram/BodyDiagram3D';
+import type { BodyMarking3D } from '../components/body-diagram/BodyDiagram3D';
 import { MarkingDetailModal } from '../components/body-diagram/MarkingDetailModal';
 import type { MarkingFormData } from '../components/body-diagram/MarkingDetailModal';
-import { api } from '../api';
+import { api, fetchPatients } from '../api';
 import type { Patient } from '../types';
 
 interface BodyLocation {
@@ -34,8 +36,11 @@ export function BodyDiagramPage() {
     locationCode: string;
     locationX: number;
     locationY: number;
-    viewType: 'front' | 'back';
+    viewType: 'front' | 'back' | 'left' | 'right';
   } | null>(null);
+
+  // View mode: 2D classic or 3D rotatable
+  const [viewMode, setViewMode] = useState<'2d' | '3d'>('3d');
 
   // Filters
   const [filterMarkingType, setFilterMarkingType] = useState<string>('all');
@@ -48,7 +53,7 @@ export function BodyDiagramPage() {
       try {
         const session = JSON.parse(localStorage.getItem('ema_session') || '{}');
         if (!session.tenantId || !session.accessToken) return;
-        const response = await api.getPatients(session.tenantId, session.accessToken);
+        const response = await fetchPatients(session.tenantId, session.accessToken);
         setPatients(response.patients);
       } catch (err) {
         console.error('Failed to load patients:', err);
@@ -111,9 +116,28 @@ export function BodyDiagramPage() {
   };
 
   // Handle adding new marking
-  const handleAddMarking = (locationCode: string, x: number, y: number, viewType: 'front' | 'back') => {
+  const handleAddMarking = (locationCode: string, x: number, y: number, viewType: 'front' | 'back' | 'left' | 'right') => {
     setNewMarkingData({ locationCode, locationX: x, locationY: y, viewType });
     setSelectedMarking(null);
+    setIsModalOpen(true);
+  };
+
+  // Handle adding new marking from 3D view
+  const handleAddMarking3D = (locationCode: string, x: number, y: number, viewType: 'front' | 'back' | 'left' | 'right') => {
+    setNewMarkingData({ locationCode, locationX: x, locationY: y, viewType });
+    setSelectedMarking(null);
+    setIsModalOpen(true);
+  };
+
+  // Handle clicking marking in 3D view
+  const handleMarkingClick3D = (marking: BodyMarking3D) => {
+    // Convert BodyMarking3D to BodyMarking for the modal
+    const convertedMarking: BodyMarking = {
+      ...marking,
+      viewType: marking.viewType === 'left' || marking.viewType === 'right' ? 'front' : marking.viewType,
+    };
+    setSelectedMarking(convertedMarking);
+    setNewMarkingData(null);
     setIsModalOpen(true);
   };
 
@@ -362,11 +386,62 @@ export function BodyDiagramPage() {
                 padding: '20px',
               }}
             >
-              <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: '600', color: '#111827' }}>Interactive Body Map</h3>
+              {/* View Mode Toggle */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '600', color: '#111827' }}>
+                  {viewMode === '3d' ? '3D Interactive Body' : 'Interactive Body Map'}
+                </h3>
+                <div style={{ display: 'flex', gap: '4px', background: '#F3F4F6', padding: '4px', borderRadius: '8px' }}>
+                  <button
+                    onClick={() => setViewMode('2d')}
+                    style={{
+                      padding: '8px 16px',
+                      border: 'none',
+                      borderRadius: '6px',
+                      background: viewMode === '2d' ? 'white' : 'transparent',
+                      color: viewMode === '2d' ? '#6B46C1' : '#6B7280',
+                      fontWeight: '500',
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      boxShadow: viewMode === '2d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    2D Classic
+                  </button>
+                  <button
+                    onClick={() => setViewMode('3d')}
+                    style={{
+                      padding: '8px 16px',
+                      border: 'none',
+                      borderRadius: '6px',
+                      background: viewMode === '3d' ? 'white' : 'transparent',
+                      color: viewMode === '3d' ? '#6B46C1' : '#6B7280',
+                      fontWeight: '500',
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      boxShadow: viewMode === '3d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    3D Rotatable
+                  </button>
+                </div>
+              </div>
+
               {loading ? (
                 <div style={{ padding: '40px', textAlign: 'center', color: '#6B7280' }}>Loading markings...</div>
               ) : error ? (
                 <div style={{ padding: '40px', textAlign: 'center', color: '#EF4444' }}>{error}</div>
+              ) : viewMode === '3d' ? (
+                <BodyDiagram3D
+                  markings={filteredMarkings as BodyMarking3D[]}
+                  editable={true}
+                  onAddMarking={handleAddMarking3D}
+                  onMarkingClick={handleMarkingClick3D}
+                  selectedMarkingId={selectedMarking?.id}
+                  showControls={true}
+                />
               ) : (
                 <InteractiveBodyMap
                   markings={filteredMarkings}
@@ -417,7 +492,7 @@ export function BodyDiagramPage() {
                               {marking.locationName || marking.locationCode}
                             </div>
                             <div style={{ fontSize: '12px', color: '#6B7280' }}>
-                              {marking.viewType === 'front' ? 'Front' : 'Back'} • {marking.createdAt ? new Date(marking.createdAt).toLocaleDateString() : ''}
+                              {marking.viewType.charAt(0).toUpperCase() + marking.viewType.slice(1)} View • {marking.createdAt ? new Date(marking.createdAt).toLocaleDateString() : ''}
                             </div>
                           </div>
                           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>

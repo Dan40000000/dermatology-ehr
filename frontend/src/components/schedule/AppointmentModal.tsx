@@ -56,7 +56,6 @@ export function AppointmentModal({
 
   // Initialize form data when modal opens
   useEffect(() => {
-    console.log('AppointmentModal isOpen changed:', isOpen);
     if (isOpen) {
       if (appointment) {
         // Edit mode

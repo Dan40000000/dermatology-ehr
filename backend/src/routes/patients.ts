@@ -57,6 +57,37 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
   return res.status(201).json({ id });
 });
 
+// GET single patient by ID
+patientsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    const result = await pool.query(
+      `select id, first_name as "firstName", last_name as "lastName", dob, phone, email,
+              address, city, state, zip, insurance, allergies, medications, sex, ssn,
+              emergency_contact_name as "emergencyContactName",
+              emergency_contact_relationship as "emergencyContactRelationship",
+              emergency_contact_phone as "emergencyContactPhone",
+              pharmacy_name as "pharmacyName",
+              pharmacy_phone as "pharmacyPhone",
+              pharmacy_address as "pharmacyAddress",
+              created_at as "createdAt", updated_at as "updatedAt"
+       from patients where id = $1 and tenant_id = $2`,
+      [id, tenantId],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Patient not found" });
+    }
+
+    return res.json({ patient: result.rows[0] });
+  } catch (error) {
+    console.error("Error fetching patient:", error);
+    return res.status(500).json({ error: "Failed to fetch patient" });
+  }
+});
+
 const updatePatientSchema = z.object({
   firstName: z.string().min(1).max(100).optional(),
   lastName: z.string().min(1).max(100).optional(),

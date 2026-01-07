@@ -50,7 +50,7 @@ export function PatientBanner({
         </div>
         {hasAllergies && (
           <span className="allergy-badge" title={patient.allergies?.join(', ')}>
-            ⚠️ Allergies
+            Allergies
           </span>
         )}
       </div>
@@ -89,8 +89,8 @@ export function PatientBanner({
           </div>
 
           <div className="patient-contact-row">
-            {patient.phone && <span className="contact-item">📞 {patient.phone}</span>}
-            {patient.email && <span className="contact-item">✉️ {patient.email}</span>}
+            {patient.phone && <span className="contact-item">{patient.phone}</span>}
+            {patient.email && <span className="contact-item">{patient.email}</span>}
           </div>
         </div>
 
@@ -113,14 +113,14 @@ export function PatientBanner({
         <div className="patient-alerts-strip">
           {hasAllergies && (
             <div className="alert-section allergy">
-              <span className="alert-icon">⚠️</span>
+              <span className="alert-icon"></span>
               <span className="alert-label">Allergies:</span>
               <span className="alert-content">{patient.allergies?.join(', ')}</span>
             </div>
           )}
           {hasAlerts && (
             <div className="alert-section warning">
-              <span className="alert-icon">🔔</span>
+              <span className="alert-icon"></span>
               <span className="alert-label">Alerts:</span>
               <span className="alert-content">{patient.alerts?.join(', ')}</span>
             </div>

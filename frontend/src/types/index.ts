@@ -44,6 +44,48 @@ export interface Patient {
   createdAt: string;
 }
 
+// Registry Types
+export interface RegistryCohort {
+  id: string;
+  name: string;
+  description?: string;
+  status: 'active' | 'inactive';
+  criteria?: Record<string, any>;
+  memberCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface RegistryMember {
+  id: string;
+  registryId: string;
+  patientId: string;
+  patientFirstName?: string;
+  patientLastName?: string;
+  status: 'active' | 'inactive';
+  addedAt?: string;
+}
+
+// Referral Types
+export interface Referral {
+  id: string;
+  patientId: string;
+  patientFirstName?: string;
+  patientLastName?: string;
+  direction: 'incoming' | 'outgoing';
+  status: 'new' | 'scheduled' | 'in_progress' | 'completed' | 'declined' | 'cancelled';
+  priority: 'routine' | 'urgent' | 'stat';
+  referringProvider?: string;
+  referringOrganization?: string;
+  referredToProvider?: string;
+  referredToOrganization?: string;
+  appointmentId?: string;
+  reason?: string;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface CreatePatientData {
   firstName: string;
   lastName: string;

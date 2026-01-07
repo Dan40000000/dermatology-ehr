@@ -1,8 +1,38 @@
 import winston from 'winston';
 import path from 'path';
+import { redactPHI, redactValue } from '../utils/phiRedaction';
+
+// PHI redaction format - applied before any other formatting
+const phiRedactionFormat = winston.format((info) => {
+  // Redact message if it contains PHI patterns
+  if (info.message && typeof info.message === 'string') {
+    info.message = redactValue(info.message);
+  }
+
+  // Redact metadata
+  const keysToCheck = Object.keys(info).filter(
+    key => !['level', 'timestamp', 'message', 'stack'].includes(key)
+  );
+
+  keysToCheck.forEach(key => {
+    if (info[key] && typeof info[key] === 'object') {
+      info[key] = redactPHI(info[key]);
+    } else if (info[key] && typeof info[key] === 'string') {
+      info[key] = redactValue(info[key]);
+    }
+  });
+
+  // Redact stack traces
+  if (info.stack && typeof info.stack === 'string') {
+    info.stack = redactValue(info.stack);
+  }
+
+  return info;
+});
 
 // Custom log format
 const logFormat = winston.format.combine(
+  phiRedactionFormat(),
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.errors({ stack: true }),
   winston.format.splat(),
@@ -11,6 +41,7 @@ const logFormat = winston.format.combine(
 
 // Console format (for development)
 const consoleFormat = winston.format.combine(
+  phiRedactionFormat(),
   winston.format.colorize(),
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.printf(({ timestamp, level, message, ...metadata }) => {
@@ -67,9 +98,14 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Create audit logger for HIPAA compliance
+// Note: Audit logs use PHI redaction format to ensure no PHI in file logs
 export const auditLogger = winston.createLogger({
   level: 'info',
-  format: logFormat,
+  format: winston.format.combine(
+    phiRedactionFormat(),
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    winston.format.json()
+  ),
   transports: [
     new winston.transports.File({
       filename: path.join(logsDir, 'audit.log'),

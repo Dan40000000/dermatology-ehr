@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
+import '../../styles/kiosk.css';
 
 interface Appointment {
   id: string;
@@ -45,14 +46,12 @@ export function KioskAppointmentSelectionPage() {
 
       const data = await response.json();
 
-      // Filter appointments for this patient
       const patientAppointments = data.appointments.filter(
         (apt: any) => apt.patientId === patientId
       );
 
       setAppointments(patientAppointments);
 
-      // Auto-select if only one appointment
       if (patientAppointments.length === 1) {
         setSelectedAppointmentId(patientAppointments[0].id);
       }
@@ -114,12 +113,19 @@ export function KioskAppointmentSelectionPage() {
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
+  const cardStyle: React.CSSProperties = {
+    background: 'white',
+    borderRadius: '1rem',
+    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+    padding: '2rem',
+  };
+
   if (loading) {
     return (
       <KioskLayout currentStep={1} totalSteps={6} stepName="Loading..." onTimeout={handleTimeout}>
-        <div className="bg-white rounded-2xl shadow-xl p-12 text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-purple-600 mx-auto mb-4"></div>
-          <p className="text-2xl text-gray-600">Finding your appointments...</p>
+        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem' }}>
+          <div className="kiosk-spinner" style={{ margin: '0 auto 1rem' }} />
+          <p style={{ fontSize: '1.5rem', color: '#4b5563' }}>Finding your appointments...</p>
         </div>
       </KioskLayout>
     );
@@ -127,13 +133,24 @@ export function KioskAppointmentSelectionPage() {
 
   return (
     <KioskLayout currentStep={1} totalSteps={6} stepName="Select Appointment" onTimeout={handleTimeout}>
-      <div className="bg-white rounded-2xl shadow-xl p-8">
-        <h2 className="text-3xl font-bold text-gray-900 mb-4">Welcome, {patientName}!</h2>
+      <div style={cardStyle}>
+        <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '1rem' }}>
+          Welcome, {patientName}!
+        </h2>
 
         {appointments.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="w-24 h-24 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-6">
-              <svg className="w-12 h-12 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div style={{ textAlign: 'center', padding: '3rem 0' }}>
+            <div style={{
+              width: '6rem',
+              height: '6rem',
+              background: '#fef3c7',
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 1.5rem',
+            }}>
+              <svg style={{ width: '3rem', height: '3rem', color: '#d97706' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -142,54 +159,66 @@ export function KioskAppointmentSelectionPage() {
                 />
               </svg>
             </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-4">No Appointments Found</h3>
-            <p className="text-xl text-gray-600 mb-8">
+            <h3 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#111827', marginBottom: '1rem' }}>
+              No Appointments Found
+            </h3>
+            <p style={{ fontSize: '1.25rem', color: '#4b5563', marginBottom: '2rem' }}>
               We couldn't find any scheduled appointments for you today.
             </p>
-            <p className="text-lg text-gray-500">
+            <p style={{ fontSize: '1.125rem', color: '#6b7280' }}>
               Please see the front desk staff for assistance.
             </p>
-            <button
-              onClick={handleBack}
-              className="mt-8 px-12 py-5 text-xl font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700"
-            >
+            <button onClick={handleBack} className="kiosk-btn-primary" style={{ marginTop: '2rem', padding: '1.25rem 3rem' }}>
               Go Back
             </button>
           </div>
         ) : (
           <>
-            <p className="text-xl text-gray-600 mb-8">
+            <p style={{ fontSize: '1.25rem', color: '#4b5563', marginBottom: '2rem' }}>
               {appointments.length === 1
                 ? 'We found your appointment for today:'
                 : 'Please select your appointment:'}
             </p>
 
-            <div className="space-y-4 mb-8">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '2rem' }}>
               {appointments.map((appointment) => (
                 <button
                   key={appointment.id}
                   onClick={() => setSelectedAppointmentId(appointment.id)}
-                  className={`w-full p-6 rounded-xl text-left transition-all ${
-                    selectedAppointmentId === appointment.id
-                      ? 'bg-purple-100 border-4 border-purple-500'
-                      : 'bg-gray-50 border-2 border-gray-200 hover:border-purple-300'
-                  }`}
+                  style={{
+                    width: '100%',
+                    padding: '1.5rem',
+                    borderRadius: '0.75rem',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    background: selectedAppointmentId === appointment.id ? '#ede9fe' : '#f9fafb',
+                    border: selectedAppointmentId === appointment.id ? '4px solid #7c3aed' : '2px solid #e5e7eb',
+                  }}
                 >
-                  <div className="flex items-center justify-between">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
-                      <div className="text-2xl font-bold text-gray-900 mb-2">
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#111827', marginBottom: '0.5rem' }}>
                         {formatTime(appointment.scheduledStart)}
                       </div>
-                      <div className="text-xl text-gray-700 mb-1">
+                      <div style={{ fontSize: '1.25rem', color: '#374151', marginBottom: '0.25rem' }}>
                         Provider: {appointment.providerName}
                       </div>
-                      <div className="text-lg text-gray-600">
+                      <div style={{ fontSize: '1.125rem', color: '#4b5563' }}>
                         Type: {appointment.appointmentType}
                       </div>
                     </div>
                     {selectedAppointmentId === appointment.id && (
-                      <div className="w-12 h-12 bg-purple-600 rounded-full flex items-center justify-center">
-                        <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <div style={{
+                        width: '3rem',
+                        height: '3rem',
+                        background: '#7c3aed',
+                        borderRadius: '50%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}>
+                        <svg style={{ width: '2rem', height: '2rem', color: 'white' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                         </svg>
                       </div>
@@ -199,23 +228,17 @@ export function KioskAppointmentSelectionPage() {
               ))}
             </div>
 
-            {error && (
-              <div className="mb-6 p-4 bg-red-50 border-2 border-red-200 rounded-lg">
-                <p className="text-lg text-red-800">{error}</p>
-              </div>
-            )}
+            {error && <div className="kiosk-error">{error}</div>}
 
-            <div className="flex gap-4">
-              <button
-                onClick={handleBack}
-                className="flex-1 py-5 text-xl font-medium text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50"
-              >
+            <div className="kiosk-nav-buttons">
+              <button onClick={handleBack} className="kiosk-btn-secondary" style={{ flex: 1 }}>
                 Back
               </button>
               <button
                 onClick={startCheckIn}
                 disabled={!selectedAppointmentId}
-                className="flex-1 py-5 text-xl font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="kiosk-btn-primary"
+                style={{ flex: 1 }}
               >
                 Continue Check-In
               </button>

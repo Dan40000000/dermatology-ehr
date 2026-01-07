@@ -437,7 +437,7 @@ export function RemindersPage() {
           {campaigns.length === 0 ? (
             <Panel title="">
               <div className="empty-state">
-                <div className="empty-icon">📋</div>
+                <div className="empty-icon"></div>
                 <h3>No campaigns yet</h3>
                 <p className="muted">Create your first recall campaign</p>
                 <button
@@ -604,7 +604,7 @@ export function RemindersPage() {
           <Panel title={`Due Recalls (${dueRecalls.length})`}>
             {dueRecalls.length === 0 ? (
               <div className="empty-state">
-                <div className="empty-icon">✓</div>
+                <div className="empty-icon"></div>
                 <h3>No recalls due</h3>
                 <p className="muted">All patients are up to date</p>
               </div>
@@ -742,7 +742,7 @@ export function RemindersPage() {
           <Panel title={`Contact History (${history.length})`}>
             {history.length === 0 ? (
               <div className="empty-state">
-                <div className="empty-icon">📋</div>
+                <div className="empty-icon"></div>
                 <h3>No contact history</h3>
               </div>
             ) : (
@@ -1025,6 +1025,8 @@ export function RemindersPage() {
       <style>{`
         .reminders-page {
           padding: 1.5rem;
+          background: linear-gradient(135deg, #f8fafc 0%, #e0f2fe 100%);
+          min-height: 100vh;
         }
 
         .page-header {
@@ -1032,6 +1034,18 @@ export function RemindersPage() {
           justify-content: space-between;
           align-items: center;
           margin-bottom: 1.5rem;
+          animation: slideDown 0.4s ease-out;
+        }
+
+        @keyframes slideDown {
+          from {
+            opacity: 0;
+            transform: translateY(-20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
         }
 
         .reminder-stats {
@@ -1039,66 +1053,116 @@ export function RemindersPage() {
           grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
           gap: 1rem;
           margin-bottom: 1.5rem;
+          animation: fadeIn 0.5s ease-out 0.1s both;
+        }
+
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+            transform: scale(0.95);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1);
+          }
         }
 
         .stat-card {
-          background: white;
-          border: 1px solid #e5e7eb;
-          border-radius: 8px;
-          padding: 1rem;
+          background: linear-gradient(135deg, #ffffff 0%, #f0f9ff 100%);
+          border: 2px solid #bae6fd;
+          border-radius: 12px;
+          padding: 1.25rem;
           text-align: center;
+          box-shadow: 0 4px 6px rgba(56, 189, 248, 0.1);
+          transition: all 0.3s ease;
+          position: relative;
+          overflow: hidden;
+        }
+
+        .stat-card::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 4px;
+          background: linear-gradient(90deg, #0ea5e9, #38bdf8);
+        }
+
+        .stat-card:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 8px 12px rgba(56, 189, 248, 0.2);
+          border-color: #0ea5e9;
         }
 
         .stat-value {
           font-size: 2rem;
           font-weight: bold;
-          color: #1f2937;
+          color: #0c4a6e;
+          text-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
         }
 
         .stat-label {
           font-size: 0.875rem;
-          color: #6b7280;
+          color: #0369a1;
           margin-top: 0.25rem;
+          font-weight: 500;
         }
 
         .reminder-tabs {
           display: flex;
           gap: 0.5rem;
           margin-bottom: 1.5rem;
-          border-bottom: 2px solid #e5e7eb;
+          border-bottom: none;
+          background: white;
+          padding: 0.5rem;
+          border-radius: 12px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
         }
 
         .tab {
           padding: 0.75rem 1.5rem;
-          background: none;
+          background: transparent;
           border: none;
-          border-bottom: 3px solid transparent;
+          border-radius: 8px;
           cursor: pointer;
           font-weight: 500;
-          color: #6b7280;
-          transition: all 0.2s;
+          color: #64748b;
+          transition: all 0.3s ease;
+          position: relative;
         }
 
         .tab:hover {
-          color: #1f2937;
+          color: #0c4a6e;
+          background: #f0f9ff;
         }
 
         .tab.active {
-          color: #2563eb;
-          border-bottom-color: #2563eb;
+          color: white;
+          background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+          box-shadow: 0 4px 6px rgba(14, 165, 233, 0.3);
         }
 
         .campaign-cards {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-          gap: 1rem;
+          gap: 1.25rem;
         }
 
         .campaign-card {
           background: white;
-          border: 1px solid #e5e7eb;
-          border-radius: 8px;
+          border: 2px solid #e0f2fe;
+          border-radius: 12px;
           padding: 1.5rem;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+          transition: all 0.3s ease;
+          animation: fadeIn 0.4s ease-out;
+        }
+
+        .campaign-card:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 8px 16px rgba(14, 165, 233, 0.15);
+          border-color: #0ea5e9;
         }
 
         .campaign-header {

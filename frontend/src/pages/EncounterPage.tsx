@@ -24,9 +24,11 @@ import {
   createCharge,
   deleteCharge,
   getSuperbillUrl,
+  generateAiNoteDraft,
+  fetchNoteTemplates,
 } from '../api';
 import type { Patient, Encounter, Vitals, Order, EncounterDiagnosis, Charge, ICD10Code, CPTCode } from '../types';
-import type { NoteTemplate } from '../api';
+import type { NoteTemplate, AINoteDraft } from '../api';
 import { useAutosave } from '../hooks/useAutosave';
 
 type EncounterSection = 'note' | 'exam' | 'orders' | 'billing';
@@ -117,6 +119,15 @@ export function EncounterPage() {
   const [showDiagnosisModal, setShowDiagnosisModal] = useState(false);
   const [showProcedureModal, setShowProcedureModal] = useState(false);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const [showAiDraftModal, setShowAiDraftModal] = useState(false);
+  const [aiDraftInput, setAiDraftInput] = useState({ chiefComplaint: '', briefNotes: '' });
+  const [aiDraftResult, setAiDraftResult] = useState<AINoteDraft | null>(null);
+  const [aiDraftError, setAiDraftError] = useState<string | null>(null);
+  const [aiDraftLoading, setAiDraftLoading] = useState(false);
+  const [aiTemplates, setAiTemplates] = useState<NoteTemplate[]>([]);
+  const [aiTemplateId, setAiTemplateId] = useState<string>('');
+  const [aiTemplateLoading, setAiTemplateLoading] = useState(false);
+  const [aiTemplateError, setAiTemplateError] = useState<string | null>(null);
 
   // Form data
   const [vitalsForm, setVitalsForm] = useState<VitalsFormData>({
@@ -231,13 +242,24 @@ export function EncounterPage() {
     setSaving(true);
     try {
       if (isNew) {
-        const res = await createEncounter(session.tenantId, session.accessToken, {
+        const payload: Record<string, string> = {
           patientId,
           providerId: session.user.id,
-          chiefComplaint: encounter.chiefComplaint,
-        });
+        };
+        if (encounter.chiefComplaint) payload.chiefComplaint = encounter.chiefComplaint;
+        if (encounter.hpi) payload.hpi = encounter.hpi;
+        if (encounter.ros) payload.ros = encounter.ros;
+        if (encounter.exam) payload.exam = encounter.exam;
+        if (encounter.assessmentPlan) payload.assessmentPlan = encounter.assessmentPlan;
+
+        const res = await createEncounter(session.tenantId, session.accessToken, payload);
+        const createdId = res?.encounter?.id || res?.id;
+        if (!createdId) {
+          showError('Failed to create encounter');
+          return;
+        }
         showSuccess('Encounter created');
-        navigate(`/patients/${patientId}/encounter/${res.encounter.id}`, { replace: true });
+        navigate(`/patients/${patientId}/encounter/${createdId}`, { replace: true });
       } else if (encounterId) {
         await autosave.saveNow();
         showSuccess('Encounter saved');
@@ -443,6 +465,105 @@ export function EncounterPage() {
     }
   };
 
+  const loadAiTemplates = async () => {
+    if (!session) return;
+    setAiTemplateLoading(true);
+    setAiTemplateError(null);
+    try {
+      const res = await fetchNoteTemplates(session.tenantId, session.accessToken);
+      setAiTemplates(res.templates || []);
+    } catch (err: any) {
+      setAiTemplateError(err.message || 'Failed to load templates');
+    } finally {
+      setAiTemplateLoading(false);
+    }
+  };
+
+  const openAiDraftModal = () => {
+    setAiDraftError(null);
+    setAiDraftResult(null);
+    setAiDraftInput({
+      chiefComplaint: encounter.chiefComplaint || '',
+      briefNotes: '',
+    });
+    if (session && !aiTemplateLoading && aiTemplates.length === 0) {
+      void loadAiTemplates();
+    }
+    setShowAiDraftModal(true);
+  };
+
+  const handleGenerateAiDraft = async () => {
+    if (!session || !patientId) return;
+
+    if (!aiDraftInput.chiefComplaint && !aiDraftInput.briefNotes.trim()) {
+      setAiDraftError('Add a chief complaint or brief notes to generate a draft.');
+      return;
+    }
+
+    setAiDraftLoading(true);
+    setAiDraftError(null);
+    setAiDraftResult(null);
+
+    try {
+      const res = await generateAiNoteDraft(session.tenantId, session.accessToken, {
+        patientId,
+        encounterId: isNew ? undefined : encounterId,
+        chiefComplaint: aiDraftInput.chiefComplaint || undefined,
+        briefNotes: aiDraftInput.briefNotes || undefined,
+        templateId: aiTemplateId || undefined,
+      });
+      setAiDraftResult(res.draft);
+    } catch (err: any) {
+      setAiDraftError(err.message || 'Failed to generate AI draft');
+    } finally {
+      setAiDraftLoading(false);
+    }
+  };
+
+  const applyAiDraft = async (mode: 'replace' | 'merge') => {
+    if (!aiDraftResult) return;
+
+    const mergeText = (current: string | undefined, incoming: string) => {
+      if (!incoming) return current || '';
+      if (!current) return incoming;
+      return `${current}\n\n${incoming}`;
+    };
+
+    const updated = {
+      chiefComplaint: mode === 'merge'
+        ? mergeText(encounter.chiefComplaint, aiDraftResult.chiefComplaint)
+        : aiDraftResult.chiefComplaint,
+      hpi: mode === 'merge'
+        ? mergeText(encounter.hpi, aiDraftResult.hpi)
+        : aiDraftResult.hpi,
+      ros: mode === 'merge'
+        ? mergeText(encounter.ros, aiDraftResult.ros)
+        : aiDraftResult.ros,
+      exam: mode === 'merge'
+        ? mergeText(encounter.exam, aiDraftResult.exam)
+        : aiDraftResult.exam,
+      assessmentPlan: mode === 'merge'
+        ? mergeText(encounter.assessmentPlan, aiDraftResult.assessmentPlan)
+        : aiDraftResult.assessmentPlan,
+    };
+
+    setEncounter((prev) => ({ ...prev, ...updated }));
+    setShowAiDraftModal(false);
+    setAiDraftResult(null);
+
+    if (!session || isNew || !encounterId || isLocked) {
+      showSuccess('AI draft applied');
+      return;
+    }
+
+    try {
+      await updateEncounter(session.tenantId, session.accessToken, encounterId, updated);
+      showSuccess('AI draft applied');
+    } catch (err: any) {
+      showError(err.message || 'Failed to save AI draft');
+    }
+  };
+
   // Apply note template
   const handleApplyTemplate = (templateContent: NoteTemplate['templateContent']) => {
     // Check if there's existing content
@@ -550,10 +671,10 @@ export function EncounterPage() {
   }
 
   const sections: { id: EncounterSection; label: string; icon: string }[] = [
-    { id: 'note', label: 'Clinical Note', icon: '📝' },
-    { id: 'exam', label: 'Skin Exam', icon: '🔬' },
-    { id: 'orders', label: 'Orders', icon: '📋' },
-    { id: 'billing', label: 'Billing', icon: '💳' },
+    { id: 'note', label: 'Clinical Note', icon: '' },
+    { id: 'exam', label: 'Skin Exam', icon: '' },
+    { id: 'orders', label: 'Orders', icon: '' },
+    { id: 'billing', label: 'Billing', icon: '' },
   ];
 
   return (
@@ -590,7 +711,7 @@ export function EncounterPage() {
             )}
             {autosave.status === 'saved' && (
               <>
-                <span style={{ color: '#10b981' }}>✓</span>
+                <span style={{ color: '#10b981' }}></span>
                 <span>Saved</span>
               </>
             )}
@@ -614,7 +735,7 @@ export function EncounterPage() {
           onClick={handleSave}
           disabled={saving || isLocked}
         >
-          <span className="icon">💾</span>
+          <span className="icon"></span>
           {saving ? 'Saving...' : 'Save'}
         </button>
         {!isNew && encounter.status === 'draft' && (
@@ -625,7 +746,7 @@ export function EncounterPage() {
             disabled={saving}
             style={{ background: '#10b981', color: '#ffffff' }}
           >
-            <span className="icon">✅</span>
+            <span className="icon"></span>
             Sign & Lock
           </button>
         )}
@@ -636,15 +757,25 @@ export function EncounterPage() {
           disabled={isLocked}
           style={{ background: '#7c3aed', color: '#ffffff' }}
         >
-          <span className="icon">📋</span>
+          <span className="icon"></span>
           Apply Template
         </button>
+        <button
+          type="button"
+          className="ema-action-btn"
+          onClick={openAiDraftModal}
+          disabled={isLocked}
+          style={{ background: '#0f766e', color: '#ffffff' }}
+        >
+          <span className="icon"></span>
+          AI Draft
+        </button>
         <button type="button" className="ema-action-btn" onClick={() => setShowVitalsModal(true)} disabled={isNew || isLocked}>
-          <span className="icon">📊</span>
+          <span className="icon"></span>
           Vitals
         </button>
         <button type="button" className="ema-action-btn" onClick={() => setShowOrderModal(true)} disabled={isNew || isLocked}>
-          <span className="icon">➕</span>
+          <span className="icon">+</span>
           Add Order
         </button>
         {!isNew && (
@@ -659,12 +790,12 @@ export function EncounterPage() {
             }}
             style={{ background: '#6B46C1', color: '#ffffff' }}
           >
-            <span className="icon">📄</span>
+            <span className="icon"></span>
             Generate Superbill
           </button>
         )}
         <button type="button" className="ema-action-btn" onClick={loadData}>
-          <span className="icon">🔃</span>
+          <span className="icon"></span>
           Refresh
         </button>
       </div>
@@ -709,7 +840,7 @@ export function EncounterPage() {
           gap: '1rem',
           fontSize: '0.875rem'
         }}>
-          <span style={{ fontSize: '1.25rem' }}>🔒</span>
+          <span style={{ fontSize: '1.25rem' }}></span>
           <div>
             <div style={{ fontWeight: 600, color: '#991b1b', marginBottom: '0.25rem' }}>
               This encounter is locked
@@ -1137,7 +1268,7 @@ export function EncounterPage() {
                 padding: '3rem',
                 textAlign: 'center'
               }}>
-                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📋</div>
+                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}></div>
                 <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No orders yet</h3>
                 <p style={{ color: '#6b7280', margin: 0 }}>Use quick orders above or click "Add Order" to create</p>
               </div>
@@ -1836,7 +1967,7 @@ export function EncounterPage() {
             display: 'flex',
             gap: '0.75rem'
           }}>
-            <span style={{ fontSize: '1.25rem' }}>⚠️</span>
+            <span style={{ fontSize: '1.25rem' }}></span>
             <div style={{ fontSize: '0.875rem' }}>
               <div style={{ fontWeight: 600, color: '#92400e', marginBottom: '0.25rem' }}>
                 Important: This action cannot be undone
@@ -1912,6 +2043,157 @@ export function EncounterPage() {
           >
             {saving ? 'Signing...' : 'Sign & Lock Encounter'}
           </button>
+        </div>
+      </Modal>
+
+      {/* AI Draft Modal */}
+      <Modal
+        isOpen={showAiDraftModal}
+        title="AI Note Draft"
+        onClose={() => {
+          setShowAiDraftModal(false);
+          setAiDraftResult(null);
+          setAiDraftError(null);
+        }}
+        size="lg"
+      >
+        <div className="modal-form">
+          <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '1rem' }}>
+            Generate a structured note draft using AI. Review and edit before signing.
+          </p>
+          <div className="form-field">
+            <label>Chief Complaint</label>
+            <input
+              type="text"
+              value={aiDraftInput.chiefComplaint}
+              onChange={(e) => setAiDraftInput((prev) => ({ ...prev, chiefComplaint: e.target.value }))}
+              placeholder="e.g., itchy rash, changing mole"
+              disabled={aiDraftLoading}
+            />
+          </div>
+          <div className="form-field">
+            <label htmlFor="ai-template-select">Template (optional)</label>
+            <select
+              id="ai-template-select"
+              value={aiTemplateId}
+              onChange={(e) => setAiTemplateId(e.target.value)}
+              disabled={aiTemplateLoading || aiDraftLoading}
+            >
+              <option value="">No template</option>
+              {aiTemplates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name} ({template.category})
+                </option>
+              ))}
+            </select>
+            {aiTemplateLoading && (
+              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
+                Loading templates...
+              </div>
+            )}
+            {aiTemplateError && (
+              <div style={{ fontSize: '0.75rem', color: '#dc2626', marginTop: '0.25rem' }}>
+                {aiTemplateError}
+              </div>
+            )}
+            {!aiTemplateLoading && !aiTemplateError && aiTemplates.length === 0 && (
+              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
+                No templates yet. Create them in Note Templates.
+              </div>
+            )}
+          </div>
+          <div className="form-field">
+            <label>Brief Notes for AI</label>
+            <textarea
+              value={aiDraftInput.briefNotes}
+              onChange={(e) => setAiDraftInput((prev) => ({ ...prev, briefNotes: e.target.value }))}
+              placeholder="Key symptoms, onset, treatments tried, exam highlights..."
+              rows={4}
+              disabled={aiDraftLoading}
+            />
+          </div>
+          {aiDraftError && (
+            <div style={{ color: '#dc2626', fontSize: '0.875rem', marginTop: '0.5rem' }}>
+              {aiDraftError}
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.75rem' }}>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={handleGenerateAiDraft}
+              disabled={aiDraftLoading}
+            >
+              {aiDraftLoading ? 'Generating...' : aiDraftResult ? 'Regenerate Draft' : 'Generate Draft'}
+            </button>
+          </div>
+        </div>
+
+        {aiDraftResult && (
+          <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '1rem', marginTop: '1rem' }}>
+            <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>
+              Draft Preview (Confidence: {Math.round((aiDraftResult.confidenceScore || 0) * 100)}%)
+            </div>
+            <div style={{ display: 'grid', gap: '0.75rem', fontSize: '0.875rem' }}>
+              <div>
+                <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.25rem' }}>Chief Complaint</div>
+                <div style={{ whiteSpace: 'pre-wrap' }}>{aiDraftResult.chiefComplaint || '—'}</div>
+              </div>
+              <div>
+                <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.25rem' }}>HPI</div>
+                <div style={{ whiteSpace: 'pre-wrap' }}>{aiDraftResult.hpi || '—'}</div>
+              </div>
+              <div>
+                <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.25rem' }}>ROS</div>
+                <div style={{ whiteSpace: 'pre-wrap' }}>{aiDraftResult.ros || '—'}</div>
+              </div>
+              <div>
+                <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.25rem' }}>Exam</div>
+                <div style={{ whiteSpace: 'pre-wrap' }}>{aiDraftResult.exam || '—'}</div>
+              </div>
+              <div>
+                <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.25rem' }}>Assessment & Plan</div>
+                <div style={{ whiteSpace: 'pre-wrap' }}>{aiDraftResult.assessmentPlan || '—'}</div>
+              </div>
+            </div>
+
+            {aiDraftResult.suggestions?.length > 0 && (
+              <div style={{ marginTop: '1rem' }}>
+                <div style={{ fontWeight: 600, color: '#374151', marginBottom: '0.5rem' }}>Suggestions</div>
+                <ul style={{ paddingLeft: '1.25rem', margin: 0, color: '#6b7280', fontSize: '0.875rem' }}>
+                  {aiDraftResult.suggestions.slice(0, 5).map((suggestion, idx) => (
+                    <li key={`${suggestion.section}-${idx}`}>
+                      {suggestion.section}: {suggestion.suggestion}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="modal-footer">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setShowAiDraftModal(false);
+              setAiDraftResult(null);
+              setAiDraftError(null);
+            }}
+          >
+            Close
+          </button>
+          {aiDraftResult && (
+            <>
+              <button type="button" className="btn-secondary" onClick={() => applyAiDraft('merge')}>
+                Merge Draft
+              </button>
+              <button type="button" className="btn-primary" onClick={() => applyAiDraft('replace')}>
+                Apply Draft
+              </button>
+            </>
+          )}
         </div>
       </Modal>
 

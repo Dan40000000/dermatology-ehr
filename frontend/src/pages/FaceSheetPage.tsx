@@ -108,10 +108,10 @@ export function FaceSheetPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading face sheet...</p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ animation: 'spin 1s linear infinite', borderRadius: '9999px', height: '3rem', width: '3rem', borderBottom: '2px solid #2563eb', margin: '0 auto 1rem' }}></div>
+          <p style={{ color: '#4b5563' }}>Loading face sheet...</p>
         </div>
       </div>
     );
@@ -119,12 +119,14 @@ export function FaceSheetPage() {
 
   if (!patient) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <p className="text-red-600 text-lg">Patient not found</p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <div style={{ textAlign: 'center' }}>
+          <p style={{ color: '#dc2626', fontSize: '1.125rem' }}>Patient not found</p>
           <button
             onClick={() => navigate('/patients')}
-            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            style={{ marginTop: '1rem', padding: '0.5rem 1rem', background: '#2563eb', color: 'white', borderRadius: '0.25rem', border: 'none', cursor: 'pointer' }}
+            onMouseEnter={(e) => e.currentTarget.style.background = '#1d4ed8'}
+            onMouseLeave={(e) => e.currentTarget.style.background = '#2563eb'}
           >
             Back to Patients
           </button>
@@ -136,18 +138,22 @@ export function FaceSheetPage() {
   return (
     <>
       {/* Print Button - Hidden when printing */}
-      <div className="no-print fixed top-4 right-4 z-50 flex gap-2">
+      <div className="no-print" style={{ position: 'fixed', top: '1rem', right: '1rem', zIndex: 50, display: 'flex', gap: '0.5rem' }}>
         <button
           onClick={() => navigate(`/patients/${patientId}`)}
-          className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+          style={{ padding: '0.5rem 1rem', background: '#4b5563', color: 'white', borderRadius: '0.25rem', border: 'none', cursor: 'pointer' }}
+          onMouseEnter={(e) => e.currentTarget.style.background = '#374151'}
+          onMouseLeave={(e) => e.currentTarget.style.background = '#4b5563'}
         >
           Back to Chart
         </button>
         <button
           onClick={handlePrint}
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-2"
+          style={{ padding: '0.5rem 1rem', background: '#2563eb', color: 'white', borderRadius: '0.25rem', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+          onMouseEnter={(e) => e.currentTarget.style.background = '#1d4ed8'}
+          onMouseLeave={(e) => e.currentTarget.style.background = '#2563eb'}
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg style={{ width: '1.25rem', height: '1.25rem' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
           </svg>
           Print Face Sheet
@@ -155,136 +161,136 @@ export function FaceSheetPage() {
       </div>
 
       {/* Face Sheet Content */}
-      <div className="face-sheet-container max-w-4xl mx-auto p-8 bg-white">
+      <div className="face-sheet-container" style={{ maxWidth: '56rem', margin: '0 auto', padding: '2rem', background: 'white' }}>
         {/* Header */}
-        <div className="border-b-4 border-blue-600 pb-4 mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">PATIENT FACE SHEET</h1>
-          <p className="text-gray-600 mt-1">Dermatology EHR System</p>
-          <p className="text-sm text-gray-500 mt-1">Printed: {new Date().toLocaleString()}</p>
+        <div style={{ borderBottom: '4px solid #2563eb', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
+          <h1 style={{ fontSize: '1.875rem', fontWeight: 'bold', color: '#111827' }}>PATIENT FACE SHEET</h1>
+          <p style={{ color: '#4b5563', marginTop: '0.25rem' }}>Dermatology EHR System</p>
+          <p style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.25rem' }}>Printed: {new Date().toLocaleString()}</p>
         </div>
 
         {/* Patient Demographics */}
-        <div className="mb-6">
-          <h2 className="text-xl font-bold text-gray-900 mb-3 border-b-2 border-gray-300 pb-2">
+        <div style={{ marginBottom: '1.5rem' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#111827', marginBottom: '0.75rem', borderBottom: '2px solid #d1d5db', paddingBottom: '0.5rem' }}>
             PATIENT DEMOGRAPHICS
           </h2>
-          <div className="grid grid-cols-2 gap-4">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
             <div>
-              <p className="text-sm text-gray-600 font-semibold">Name:</p>
-              <p className="text-lg font-bold">{patient.firstName} {patient.lastName}</p>
+              <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Name:</p>
+              <p style={{ fontSize: '1.125rem', fontWeight: 'bold' }}>{patient.firstName} {patient.lastName}</p>
             </div>
             <div>
-              <p className="text-sm text-gray-600 font-semibold">Date of Birth:</p>
-              <p className="text-lg">{new Date(patient.dateOfBirth).toLocaleDateString()} (Age: {calculateAge(patient.dateOfBirth)})</p>
+              <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Date of Birth:</p>
+              <p style={{ fontSize: '1.125rem' }}>{new Date(patient.dateOfBirth).toLocaleDateString()} (Age: {calculateAge(patient.dateOfBirth)})</p>
             </div>
             <div>
-              <p className="text-sm text-gray-600 font-semibold">Phone:</p>
-              <p className="text-lg">{patient.phone}</p>
+              <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Phone:</p>
+              <p style={{ fontSize: '1.125rem' }}>{patient.phone}</p>
             </div>
             <div>
-              <p className="text-sm text-gray-600 font-semibold">Email:</p>
-              <p className="text-lg">{patient.email}</p>
+              <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Email:</p>
+              <p style={{ fontSize: '1.125rem' }}>{patient.email}</p>
             </div>
-            <div className="col-span-2">
-              <p className="text-sm text-gray-600 font-semibold">Address:</p>
-              <p className="text-lg">{patient.address}</p>
-              <p className="text-lg">{patient.city}, {patient.state} {patient.zip}</p>
+            <div style={{ gridColumn: 'span 2' }}>
+              <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Address:</p>
+              <p style={{ fontSize: '1.125rem' }}>{patient.address}</p>
+              <p style={{ fontSize: '1.125rem' }}>{patient.city}, {patient.state} {patient.zip}</p>
             </div>
             <div>
-              <p className="text-sm text-gray-600 font-semibold">Insurance:</p>
-              <p className="text-lg">{patient.insurance || 'Self-pay'}</p>
+              <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Insurance:</p>
+              <p style={{ fontSize: '1.125rem' }}>{patient.insurance || 'Self-pay'}</p>
             </div>
           </div>
         </div>
 
         {/* Appointment Info */}
         {appointment && (
-          <div className="mb-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-3 border-b-2 border-gray-300 pb-2">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#111827', marginBottom: '0.75rem', borderBottom: '2px solid #d1d5db', paddingBottom: '0.5rem' }}>
               TODAY'S APPOINTMENT
             </h2>
-            <div className="grid grid-cols-2 gap-4">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
               <div>
-                <p className="text-sm text-gray-600 font-semibold">Time:</p>
-                <p className="text-lg">{new Date(appointment.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Time:</p>
+                <p style={{ fontSize: '1.125rem' }}>{new Date(appointment.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-600 font-semibold">Type:</p>
-                <p className="text-lg">{appointment.appointmentType}</p>
+                <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Type:</p>
+                <p style={{ fontSize: '1.125rem' }}>{appointment.appointmentType}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-600 font-semibold">Provider:</p>
-                <p className="text-lg">{appointment.provider}</p>
+                <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Provider:</p>
+                <p style={{ fontSize: '1.125rem' }}>{appointment.provider}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-600 font-semibold">Status:</p>
-                <p className="text-lg capitalize">{appointment.status.replace('_', ' ')}</p>
+                <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Status:</p>
+                <p style={{ fontSize: '1.125rem', textTransform: 'capitalize' }}>{appointment.status.replace('_', ' ')}</p>
               </div>
             </div>
           </div>
         )}
 
         {/* Allergies */}
-        <div className="mb-6">
-          <h2 className="text-xl font-bold text-red-600 mb-3 border-b-2 border-red-300 pb-2">
-            ⚠️ ALLERGIES
+        <div style={{ marginBottom: '1.5rem' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#dc2626', marginBottom: '0.75rem', borderBottom: '2px solid #fca5a5', paddingBottom: '0.5rem' }}>
+            ALLERGIES
           </h2>
-          <div className="bg-red-50 p-4 rounded border-2 border-red-200">
+          <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.25rem', border: '2px solid #fecaca' }}>
             {patient.allergies ? (
-              <p className="text-lg font-bold text-red-900">{patient.allergies}</p>
+              <p style={{ fontSize: '1.125rem', fontWeight: 'bold', color: '#7f1d1d' }}>{patient.allergies}</p>
             ) : (
-              <p className="text-lg text-gray-600">No known allergies</p>
+              <p style={{ fontSize: '1.125rem', color: '#4b5563' }}>No known allergies</p>
             )}
           </div>
         </div>
 
         {/* Current Medications */}
-        <div className="mb-6">
-          <h2 className="text-xl font-bold text-gray-900 mb-3 border-b-2 border-gray-300 pb-2">
+        <div style={{ marginBottom: '1.5rem' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#111827', marginBottom: '0.75rem', borderBottom: '2px solid #d1d5db', paddingBottom: '0.5rem' }}>
             CURRENT MEDICATIONS
           </h2>
-          <div className="bg-blue-50 p-4 rounded border border-blue-200">
+          <div style={{ background: '#eff6ff', padding: '1rem', borderRadius: '0.25rem', border: '1px solid #bfdbfe' }}>
             {patient.medications ? (
-              <p className="text-lg">{patient.medications}</p>
+              <p style={{ fontSize: '1.125rem' }}>{patient.medications}</p>
             ) : (
-              <p className="text-lg text-gray-600">No current medications</p>
+              <p style={{ fontSize: '1.125rem', color: '#4b5563' }}>No current medications</p>
             )}
           </div>
         </div>
 
         {/* Medical History */}
         {patient.medicalHistory && (
-          <div className="mb-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-3 border-b-2 border-gray-300 pb-2">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#111827', marginBottom: '0.75rem', borderBottom: '2px solid #d1d5db', paddingBottom: '0.5rem' }}>
               MEDICAL HISTORY
             </h2>
-            <div className="bg-gray-50 p-4 rounded border border-gray-200">
-              <p className="text-lg whitespace-pre-wrap">{patient.medicalHistory}</p>
+            <div style={{ background: '#f9fafb', padding: '1rem', borderRadius: '0.25rem', border: '1px solid #e5e7eb' }}>
+              <p style={{ fontSize: '1.125rem', whiteSpace: 'pre-wrap' }}>{patient.medicalHistory}</p>
             </div>
           </div>
         )}
 
         {/* Recent Encounters */}
         {recentEncounters.length > 0 && (
-          <div className="mb-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-3 border-b-2 border-gray-300 pb-2">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#111827', marginBottom: '0.75rem', borderBottom: '2px solid #d1d5db', paddingBottom: '0.5rem' }}>
               RECENT VISITS (Last 5)
             </h2>
-            <div className="space-y-3">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {recentEncounters.map((encounter) => (
-                <div key={encounter.id} className="border border-gray-200 p-3 rounded bg-gray-50">
-                  <div className="flex justify-between items-start mb-2">
-                    <p className="font-semibold text-gray-900">
+                <div key={encounter.id} style={{ border: '1px solid #e5e7eb', padding: '0.75rem', borderRadius: '0.25rem', background: '#f9fafb' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                    <p style={{ fontWeight: '600', color: '#111827' }}>
                       {new Date(encounter.date).toLocaleDateString()}
                     </p>
-                    <p className="text-sm text-gray-600">{encounter.provider}</p>
+                    <p style={{ fontSize: '0.875rem', color: '#4b5563' }}>{encounter.provider}</p>
                   </div>
-                  <p className="text-sm text-gray-700 mb-1">
-                    <span className="font-semibold">Chief Complaint:</span> {encounter.chiefComplaint}
+                  <p style={{ fontSize: '0.875rem', color: '#374151', marginBottom: '0.25rem' }}>
+                    <span style={{ fontWeight: '600' }}>Chief Complaint:</span> {encounter.chiefComplaint}
                   </p>
                   {encounter.assessment && (
-                    <p className="text-sm text-gray-700">
-                      <span className="font-semibold">Assessment:</span> {encounter.assessment}
+                    <p style={{ fontSize: '0.875rem', color: '#374151' }}>
+                      <span style={{ fontWeight: '600' }}>Assessment:</span> {encounter.assessment}
                     </p>
                   )}
                 </div>
@@ -294,32 +300,32 @@ export function FaceSheetPage() {
         )}
 
         {/* Clinical Notes Section (Blank for provider to write) */}
-        <div className="mb-6 page-break-before">
-          <h2 className="text-xl font-bold text-gray-900 mb-3 border-b-2 border-gray-300 pb-2">
+        <div style={{ marginBottom: '1.5rem' }} className="page-break-before">
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#111827', marginBottom: '0.75rem', borderBottom: '2px solid #d1d5db', paddingBottom: '0.5rem' }}>
             CLINICAL NOTES
           </h2>
-          <div className="border border-gray-300 rounded p-4 min-h-64 bg-white">
-            <div className="space-y-8">
+          <div style={{ border: '1px solid #d1d5db', borderRadius: '0.25rem', padding: '1rem', minHeight: '16rem', background: 'white' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
               <div>
-                <p className="font-semibold mb-2">Chief Complaint:</p>
-                <div className="border-b border-gray-300 pb-2 min-h-12"></div>
+                <p style={{ fontWeight: '600', marginBottom: '0.5rem' }}>Chief Complaint:</p>
+                <div style={{ borderBottom: '1px solid #d1d5db', paddingBottom: '0.5rem', minHeight: '3rem' }}></div>
               </div>
               <div>
-                <p className="font-semibold mb-2">Assessment:</p>
-                <div className="border-b border-gray-300 pb-2 min-h-16"></div>
+                <p style={{ fontWeight: '600', marginBottom: '0.5rem' }}>Assessment:</p>
+                <div style={{ borderBottom: '1px solid #d1d5db', paddingBottom: '0.5rem', minHeight: '4rem' }}></div>
               </div>
               <div>
-                <p className="font-semibold mb-2">Plan:</p>
-                <div className="border-b border-gray-300 pb-2 min-h-16"></div>
+                <p style={{ fontWeight: '600', marginBottom: '0.5rem' }}>Plan:</p>
+                <div style={{ borderBottom: '1px solid #d1d5db', paddingBottom: '0.5rem', minHeight: '4rem' }}></div>
               </div>
             </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="border-t-2 border-gray-300 pt-4 mt-8 text-center text-sm text-gray-600">
+        <div style={{ borderTop: '2px solid #d1d5db', paddingTop: '1rem', marginTop: '2rem', textAlign: 'center', fontSize: '0.875rem', color: '#4b5563' }}>
           <p>This face sheet is for clinical use only and contains confidential patient information.</p>
-          <p className="mt-1">HIPAA Protected Health Information - Handle Appropriately</p>
+          <p style={{ marginTop: '0.25rem' }}>HIPAA Protected Health Information - Handle Appropriately</p>
         </div>
       </div>
 

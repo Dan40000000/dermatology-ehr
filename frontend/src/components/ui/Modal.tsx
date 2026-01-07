@@ -7,6 +7,7 @@ interface ModalProps {
   children: ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'full';
   showClose?: boolean;
+  footer?: ReactNode;
 }
 
 export function Modal({
@@ -16,10 +17,10 @@ export function Modal({
   children,
   size = 'md',
   showClose = true,
+  footer,
 }: ModalProps) {
   // Close on escape key
   useEffect(() => {
-    console.log('Modal isOpen changed:', isOpen);
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
         onClose();
@@ -41,6 +42,19 @@ export function Modal({
     };
   }, [isOpen]);
 
+  // Focus management
+  useEffect(() => {
+    if (isOpen) {
+      const focusableElements = document.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      const firstElement = focusableElements[0] as HTMLElement;
+      if (firstElement) {
+        firstElement.focus();
+      }
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const sizeClasses = {
@@ -51,7 +65,7 @@ export function Modal({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={onClose} role="presentation">
       <div
         className={`modal ${sizeClasses[size]}`}
         onClick={(e) => e.stopPropagation()}
@@ -79,6 +93,7 @@ export function Modal({
           </div>
         )}
         <div className="modal-body">{children}</div>
+        {footer && <div className="modal-footer">{footer}</div>}
       </div>
     </div>
   );

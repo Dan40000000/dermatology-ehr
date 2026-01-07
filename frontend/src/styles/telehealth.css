@@ -1,0 +1,603 @@
+/* Telehealth Page Styles */
+
+.telehealth-page {
+  padding: 1.5rem;
+}
+
+.telehealth-header {
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.telehealth-header h1 {
+  font-size: 1.875rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0;
+}
+
+.telehealth-header p {
+  color: #4b5563;
+  margin-top: 0.5rem;
+}
+
+/* Stats Grid */
+.telehealth-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .telehealth-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .telehealth-stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+.telehealth-stat-card {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.telehealth-stat-card .stat-label {
+  font-size: 0.875rem;
+  color: #4b5563;
+  margin-bottom: 0.25rem;
+}
+
+.telehealth-stat-card .stat-value {
+  font-size: 1.875rem;
+  font-weight: 700;
+}
+
+.telehealth-stat-card .stat-value.active {
+  color: #4f46e5;
+}
+
+.telehealth-stat-card .stat-value.waiting {
+  color: #ca8a04;
+}
+
+.telehealth-stat-card .stat-value.scheduled {
+  color: #2563eb;
+}
+
+.telehealth-stat-card .stat-value.completed {
+  color: #16a34a;
+}
+
+/* Waiting Room Section */
+.waiting-room-section {
+  background: #fefce8;
+  border: 1px solid #fde047;
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.waiting-room-section h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.waiting-room-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.waiting-room-entry {
+  background: white;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.waiting-room-entry-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.queue-position {
+  background: #eab308;
+  color: white;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+
+.waiting-room-entry-details .patient-id {
+  font-weight: 600;
+}
+
+.waiting-room-entry-details .join-time {
+  font-size: 0.875rem;
+  color: #4b5563;
+}
+
+.waiting-room-entry-details .equipment-check {
+  font-size: 0.875rem;
+  color: #16a34a;
+}
+
+.waiting-room-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.waiting-room-entry-actions .wait-time {
+  font-size: 0.875rem;
+  color: #4b5563;
+}
+
+/* Sessions Table */
+.sessions-table-container {
+  background: white;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Status Badges */
+.session-status {
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: inline-block;
+}
+
+.session-status.scheduled {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.session-status.waiting {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.session-status.in_progress {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.session-status.completed {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.session-status.cancelled {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+/* Video Layout */
+.telehealth-video-layout {
+  height: 100vh;
+  display: flex;
+}
+
+.telehealth-video-main {
+  flex: 1;
+}
+
+.telehealth-notes-sidebar {
+  width: 24rem;
+  border-left: 1px solid #e5e7eb;
+}
+
+/* Modal Form */
+.telehealth-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.telehealth-modal-form label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 0.5rem;
+}
+
+.telehealth-modal-form select,
+.telehealth-modal-form input[type="text"] {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.telehealth-modal-form select:focus,
+.telehealth-modal-form input:focus {
+  outline: none;
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+}
+
+.telehealth-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.telehealth-checkbox-label input[type="checkbox"] {
+  border-radius: 0.25rem;
+}
+
+.telehealth-modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  padding-top: 1rem;
+}
+
+/* License Warning */
+.license-warning-box {
+  padding: 1rem;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 0.5rem;
+}
+
+.license-warning-box p {
+  color: #991b1b;
+  margin: 0;
+}
+
+.license-warning-description {
+  color: #374151;
+  margin: 1rem 0;
+}
+
+/* Loading State */
+.telehealth-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+}
+
+/* Table Actions */
+.table-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Virtual Waiting Room Styles */
+.virtual-waiting-room {
+  min-height: 100vh;
+  background: linear-gradient(to bottom right, #eef2ff, #faf5ff);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.waiting-room-card {
+  background: white;
+  border-radius: 1rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  padding: 2rem;
+  width: 100%;
+  max-width: 32rem;
+  text-align: center;
+}
+
+.waiting-room-card h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 0.5rem;
+}
+
+.waiting-room-card .subtitle {
+  color: #6b7280;
+  margin-bottom: 2rem;
+}
+
+.waiting-animation {
+  margin: 2rem 0;
+}
+
+.waiting-spinner {
+  width: 4rem;
+  height: 4rem;
+  border: 4px solid #e5e7eb;
+  border-top-color: #4f46e5;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.queue-info {
+  background: #f9fafb;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.queue-info-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+}
+
+.queue-info-row:not(:last-child) {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.queue-info-row .label {
+  color: #6b7280;
+}
+
+.queue-info-row .value {
+  font-weight: 600;
+}
+
+.equipment-check-section {
+  text-align: left;
+  margin-bottom: 1.5rem;
+}
+
+.equipment-check-section h3 {
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.equipment-check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.equipment-check-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.check-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+}
+
+.check-icon.success {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.check-icon.error {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.check-icon.pending {
+  background: #f3f4f6;
+  color: #9ca3af;
+}
+
+/* Video Room Styles */
+.video-room {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #111827;
+}
+
+.video-room-header {
+  background: #1f2937;
+  padding: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.video-room-header h2 {
+  color: white;
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.video-room-header .recording-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #ef4444;
+  font-size: 0.875rem;
+}
+
+.recording-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  background: #ef4444;
+  border-radius: 50%;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.video-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.video-grid.single {
+  grid-template-columns: 1fr;
+}
+
+.video-tile {
+  background: #374151;
+  border-radius: 0.75rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.video-tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.video-tile .participant-name {
+  position: absolute;
+  bottom: 0.75rem;
+  left: 0.75rem;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+}
+
+.video-controls {
+  background: #1f2937;
+  padding: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.video-control-btn {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  transition: all 0.2s;
+}
+
+.video-control-btn.active {
+  background: #374151;
+  color: white;
+}
+
+.video-control-btn.muted {
+  background: #ef4444;
+  color: white;
+}
+
+.video-control-btn.end-call {
+  background: #ef4444;
+  color: white;
+  width: 4rem;
+  border-radius: 1.5rem;
+}
+
+.video-control-btn:hover {
+  transform: scale(1.1);
+}
+
+/* Telehealth Notes Styles */
+.telehealth-notes {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: white;
+}
+
+.telehealth-notes-header {
+  padding: 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.telehealth-notes-header h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.telehealth-notes-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+.notes-section {
+  margin-bottom: 1.5rem;
+}
+
+.notes-section label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 0.5rem;
+}
+
+.notes-section textarea {
+  width: 100%;
+  min-height: 6rem;
+  padding: 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  resize: vertical;
+}
+
+.notes-section textarea:focus {
+  outline: none;
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+}
+
+.telehealth-notes-footer {
+  padding: 1rem;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.telehealth-notes-footer button {
+  flex: 1;
+}

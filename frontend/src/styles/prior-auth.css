@@ -1,0 +1,1289 @@
+/* Electronic Prior Authorization Page Styles */
+
+.epa-page {
+  padding: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* Loading State */
+.epa-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 24px;
+  color: #6b7280;
+}
+
+.epa-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid #e5e7eb;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: epa-spin 0.8s linear infinite;
+}
+
+.epa-spinner-small {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: epa-spin 0.8s linear infinite;
+}
+
+@keyframes epa-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Page Header */
+.epa-header {
+  margin-bottom: 24px;
+}
+
+.epa-header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.epa-header-text h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 4px 0;
+}
+
+.epa-header-text p {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 0;
+}
+
+/* Buttons */
+.epa-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.epa-btn-primary:hover {
+  background: #1d4ed8;
+}
+
+.epa-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.epa-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: white;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.epa-btn-secondary:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.epa-btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Attention Banner */
+.epa-attention-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  border: 1px solid #f59e0b;
+  border-radius: 12px;
+  margin-bottom: 24px;
+}
+
+.epa-attention-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f59e0b;
+  color: white;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.epa-attention-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.epa-attention-text strong {
+  font-size: 15px;
+  color: #92400e;
+}
+
+.epa-attention-text span {
+  font-size: 13px;
+  color: #a16207;
+}
+
+.epa-attention-btn {
+  padding: 8px 16px;
+  background: #f59e0b;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.epa-attention-btn:hover {
+  background: #d97706;
+}
+
+/* Status Filter Cards */
+.epa-status-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.epa-status-card {
+  background: white;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+}
+
+.epa-status-card:hover {
+  border-color: #d1d5db;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.epa-status-card.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.epa-status-card-count {
+  font-size: 28px;
+  font-weight: 700;
+  color: #111827;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.epa-status-card-label {
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.epa-status-card-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  padding: 2px 8px;
+  background: #dc2626;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 10px;
+  text-transform: uppercase;
+}
+
+/* Toolbar */
+.epa-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.epa-search {
+  flex: 1;
+  max-width: 500px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.epa-search svg {
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+.epa-search input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 14px;
+  color: #111827;
+  background: transparent;
+}
+
+.epa-search input::placeholder {
+  color: #9ca3af;
+}
+
+.epa-search-clear {
+  padding: 4px 8px;
+  background: #f3f4f6;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.epa-search-clear:hover {
+  background: #e5e7eb;
+}
+
+.epa-toolbar-info {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+/* List Container */
+.epa-list-container {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+/* Empty State */
+.epa-empty-state {
+  padding: 60px 24px;
+  text-align: center;
+}
+
+.epa-empty-icon {
+  color: #d1d5db;
+  margin-bottom: 16px;
+}
+
+.epa-empty-state h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #374151;
+  margin: 0 0 8px 0;
+}
+
+.epa-empty-state p {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 0 0 24px 0;
+}
+
+/* Table */
+.epa-table-wrapper {
+  overflow-x: auto;
+}
+
+.epa-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.epa-table thead {
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.epa-table th {
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.epa-table tbody tr {
+  border-bottom: 1px solid #f3f4f6;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.epa-table tbody tr:hover {
+  background: #f9fafb;
+}
+
+.epa-table td {
+  padding: 16px;
+  font-size: 14px;
+  color: #374151;
+  vertical-align: middle;
+}
+
+.epa-cell-pa-number {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.epa-pa-number {
+  font-weight: 600;
+  color: #111827;
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.epa-days-badge {
+  padding: 2px 6px;
+  background: #fee2e2;
+  color: #dc2626;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.epa-cell-patient {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.epa-patient-name {
+  font-weight: 500;
+  color: #111827;
+}
+
+.epa-patient-provider {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.epa-cell-medication {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.epa-medication-name {
+  font-weight: 500;
+  color: #111827;
+}
+
+.epa-diagnosis-code {
+  font-size: 12px;
+  color: #6b7280;
+  font-family: monospace;
+}
+
+.epa-insurance {
+  color: #374151;
+}
+
+.epa-urgency-badge,
+.epa-status-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.epa-date {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.epa-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.epa-action-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.epa-action-btn:hover {
+  background: #f3f4f6;
+}
+
+.epa-action-btn.submit {
+  color: #059669;
+  border-color: #d1fae5;
+}
+
+.epa-action-btn.submit:hover {
+  background: #d1fae5;
+}
+
+.epa-action-btn.view {
+  color: #2563eb;
+  border-color: #dbeafe;
+}
+
+.epa-action-btn.view:hover {
+  background: #dbeafe;
+}
+
+/* Modal Overlay */
+.epa-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 1000;
+  overflow-y: auto;
+}
+
+.epa-modal {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  width: 100%;
+  max-width: 640px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.epa-modal-large {
+  max-width: 900px;
+}
+
+.epa-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 24px 24px 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.epa-modal-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+}
+
+.epa-modal-header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.epa-modal-badges {
+  display: flex;
+  gap: 8px;
+}
+
+.epa-modal-close {
+  padding: 8px;
+  margin: -8px;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.epa-modal-close:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+/* Modal Steps */
+.epa-modal-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 24px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.epa-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.5;
+}
+
+.epa-step.active {
+  opacity: 1;
+}
+
+.epa-step.completed .epa-step-number {
+  background: #059669;
+  color: white;
+}
+
+.epa-step-number {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #e5e7eb;
+  color: #6b7280;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.epa-step.active .epa-step-number {
+  background: #2563eb;
+  color: white;
+}
+
+.epa-step-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.epa-step-line {
+  width: 40px;
+  height: 2px;
+  background: #e5e7eb;
+  margin: 0 12px;
+}
+
+/* Modal Form */
+.epa-modal-form {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.epa-form-step {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.epa-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.epa-form-group label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.epa-form-group label .required {
+  color: #dc2626;
+}
+
+.epa-form-group input,
+.epa-form-group select,
+.epa-form-group textarea {
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #111827;
+  background: white;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.epa-form-group input:focus,
+.epa-form-group select:focus,
+.epa-form-group textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.epa-form-group textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+.epa-form-hint {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+.epa-form-hint strong {
+  color: #374151;
+}
+
+.epa-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* Urgency Options */
+.epa-urgency-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.epa-urgency-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 12px;
+  border: 2px solid #e5e7eb;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.epa-urgency-option:hover {
+  border-color: #d1d5db;
+}
+
+.epa-urgency-option.selected {
+  border-color: var(--urgency-color, #2563eb);
+  background: rgba(37, 99, 235, 0.05);
+}
+
+.epa-urgency-option input {
+  display: none;
+}
+
+.epa-urgency-label {
+  font-weight: 600;
+  font-size: 14px;
+  color: #111827;
+}
+
+.epa-urgency-time {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+/* Patient Summary */
+.epa-patient-summary {
+  background: #f3f4f6;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.epa-patient-summary-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.epa-patient-summary-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.epa-patient-summary-content strong {
+  font-size: 16px;
+  color: #111827;
+}
+
+.epa-patient-summary-content span {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+/* Request Summary */
+.epa-request-summary {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.epa-request-summary h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0369a1;
+  margin: 0 0 12px 0;
+}
+
+.epa-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.epa-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.epa-summary-item .label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #0369a1;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.epa-summary-item .value {
+  font-size: 14px;
+  color: #111827;
+  font-weight: 500;
+}
+
+/* Modal Error */
+.epa-modal-error {
+  margin: 16px 24px 0;
+  padding: 12px 16px;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #dc2626;
+  font-size: 14px;
+}
+
+/* Modal Footer */
+.epa-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  background: #f9fafb;
+  border-top: 1px solid #e5e7eb;
+  margin-top: auto;
+}
+
+/* Modal Tabs */
+.epa-modal-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 24px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.epa-tab {
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.epa-tab:hover {
+  color: #374151;
+}
+
+.epa-tab.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+}
+
+/* Modal Content */
+.epa-modal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+/* Detail Grid */
+.epa-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.epa-detail-section {
+  background: #f9fafb;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.epa-detail-section.epa-detail-full {
+  grid-column: 1 / -1;
+}
+
+.epa-detail-section h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 12px 0;
+}
+
+.epa-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.epa-detail-row:last-child {
+  border-bottom: none;
+}
+
+.epa-detail-row .label {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.epa-detail-row .value {
+  font-size: 14px;
+  font-weight: 500;
+  color: #111827;
+}
+
+.epa-auth-number {
+  font-family: monospace;
+  background: #d1fae5;
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: #059669;
+}
+
+.epa-justification-text,
+.epa-notes-text {
+  font-size: 14px;
+  color: #374151;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.epa-denial-section {
+  background: #fee2e2;
+}
+
+.epa-denial-section h3 {
+  color: #dc2626;
+}
+
+.epa-denial-reason {
+  font-size: 14px;
+  color: #991b1b;
+  line-height: 1.5;
+}
+
+/* Documents Section */
+.epa-documents-section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.epa-upload-area {
+  background: #f9fafb;
+  border: 2px dashed #d1d5db;
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.epa-upload-area h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0 0 16px 0;
+}
+
+.epa-upload-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.epa-file-upload {
+  position: relative;
+}
+
+.epa-file-upload input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.epa-file-upload-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px;
+  background: white;
+  border: 2px dashed #d1d5db;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  color: #6b7280;
+}
+
+.epa-file-upload-label:hover {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.epa-documents-list h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0 0 16px 0;
+}
+
+.epa-empty-docs {
+  padding: 24px;
+  text-align: center;
+  color: #6b7280;
+  background: #f9fafb;
+  border-radius: 10px;
+}
+
+/* History Section */
+.epa-history-section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.epa-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.epa-action-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  background: white;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+}
+
+.epa-action-card:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.epa-action-card:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.epa-action-card.submit {
+  border-color: #bbf7d0;
+}
+
+.epa-action-card.submit:hover:not(:disabled) {
+  background: #f0fdf4;
+  border-color: #22c55e;
+}
+
+.epa-action-card.submit .epa-action-icon {
+  color: #16a34a;
+}
+
+.epa-action-card.refresh {
+  border-color: #bfdbfe;
+}
+
+.epa-action-card.refresh:hover:not(:disabled) {
+  background: #eff6ff;
+  border-color: #3b82f6;
+}
+
+.epa-action-card.refresh .epa-action-icon {
+  color: #2563eb;
+}
+
+.epa-action-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f3f4f6;
+  border-radius: 10px;
+}
+
+.epa-action-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.epa-action-text strong {
+  font-size: 15px;
+  color: #111827;
+}
+
+.epa-action-text span {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+/* Status Response */
+.epa-status-response {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.epa-status-response h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #166534;
+  margin: 0 0 12px 0;
+}
+
+.epa-status-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.epa-status-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+}
+
+.epa-status-row span {
+  color: #6b7280;
+}
+
+.epa-status-row strong {
+  color: #111827;
+}
+
+/* Timeline */
+.epa-timeline {
+  background: #f9fafb;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.epa-timeline h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  margin: 0 0 16px 0;
+}
+
+.epa-timeline-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+  padding-left: 24px;
+}
+
+.epa-timeline-items::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: #e5e7eb;
+}
+
+.epa-timeline-item {
+  position: relative;
+  padding-bottom: 20px;
+}
+
+.epa-timeline-item:last-child {
+  padding-bottom: 0;
+}
+
+.epa-timeline-dot {
+  position: absolute;
+  left: -24px;
+  top: 4px;
+  width: 16px;
+  height: 16px;
+  background: #e5e7eb;
+  border: 3px solid #f9fafb;
+  border-radius: 50%;
+}
+
+.epa-timeline-item.completed .epa-timeline-dot {
+  background: #2563eb;
+}
+
+.epa-timeline-item.success .epa-timeline-dot {
+  background: #16a34a;
+}
+
+.epa-timeline-item.error .epa-timeline-dot {
+  background: #dc2626;
+}
+
+.epa-timeline-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.epa-timeline-content strong {
+  font-size: 14px;
+  color: #111827;
+}
+
+.epa-timeline-content span {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+/* Manual Update */
+.epa-manual-update {
+  background: #f9fafb;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.epa-manual-update h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  margin: 0 0 16px 0;
+}
+
+.epa-update-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Loading inline */
+.epa-loading-inline {
+  padding: 12px;
+  background: #f3f4f6;
+  border-radius: 8px;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .epa-page {
+    padding: 16px;
+  }
+
+  .epa-header-content {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .epa-status-cards {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .epa-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .epa-search {
+    max-width: none;
+  }
+
+  .epa-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .epa-form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .epa-urgency-options {
+    grid-template-columns: 1fr;
+  }
+
+  .epa-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .epa-modal {
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .epa-modal-overlay {
+    padding: 0;
+  }
+}

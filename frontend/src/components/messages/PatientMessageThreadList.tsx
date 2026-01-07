@@ -42,8 +42,8 @@ const statusColors: Record<string, string> = {
 };
 
 const priorityIcons: Record<string, string> = {
-  urgent: '🚨',
-  high: '⚠️',
+  urgent: '',
+  high: '',
   normal: '',
   low: '',
 };
@@ -56,9 +56,9 @@ export const PatientMessageThreadList: FC<PatientMessageThreadListProps> = ({
 }) => {
   if (loading) {
     return (
-      <div className="space-y-2 p-4">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '1rem' }}>
         {[1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className="h-24 bg-gray-100 rounded-lg animate-pulse" />
+          <div key={i} style={{ height: '6rem', background: '#f3f4f6', borderRadius: '0.5rem', animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }} />
         ))}
       </div>
     );
@@ -66,10 +66,10 @@ export const PatientMessageThreadList: FC<PatientMessageThreadListProps> = ({
 
   if (threads.length === 0) {
     return (
-      <div className="flex items-center justify-center h-64 text-gray-500">
-        <div className="text-center">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '16rem', color: '#6b7280' }}>
+        <div style={{ textAlign: 'center' }}>
           <svg
-            className="w-16 h-16 mx-auto mb-4 text-gray-400"
+            style={{ width: '4rem', height: '4rem', margin: '0 auto 1rem', color: '#9ca3af' }}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -81,15 +81,15 @@ export const PatientMessageThreadList: FC<PatientMessageThreadListProps> = ({
               d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
             />
           </svg>
-          <p className="text-lg font-medium">No messages</p>
-          <p className="text-sm">Patient messages will appear here</p>
+          <p style={{ fontSize: '1.125rem', fontWeight: '500' }}>No messages</p>
+          <p style={{ fontSize: '0.875rem' }}>Patient messages will appear here</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="divide-y divide-gray-200">
+    <div style={{ borderTop: '1px solid #e5e7eb' }}>
       {threads.map((thread) => {
         const isSelected = thread.id === selectedThreadId;
         const isUnread = !thread.isReadByStaff;
@@ -98,80 +98,128 @@ export const PatientMessageThreadList: FC<PatientMessageThreadListProps> = ({
           <div
             key={thread.id}
             onClick={() => onThreadSelect(thread)}
-            className={`p-4 cursor-pointer transition-colors hover:bg-gray-50 ${
-              isSelected ? 'bg-purple-50 border-l-4 border-purple-600' : ''
-            } ${isUnread ? 'bg-blue-50' : ''}`}
+            style={{
+              padding: '1rem',
+              cursor: 'pointer',
+              transition: 'background-color 0.15s',
+              background: isSelected ? '#faf5ff' : isUnread ? '#eff6ff' : 'white',
+              borderLeft: isSelected ? '4px solid #7c3aed' : 'none',
+              borderBottom: '1px solid #e5e7eb',
+              paddingLeft: isSelected ? 'calc(1rem - 4px)' : '1rem'
+            }}
+            onMouseEnter={(e) => !isSelected && (e.currentTarget.style.background = '#f9fafb')}
+            onMouseLeave={(e) => !isSelected && (e.currentTarget.style.background = isUnread ? '#eff6ff' : 'white')}
           >
-            <div className="flex items-start justify-between mb-2">
-              <div className="flex items-center space-x-2 flex-1 min-w-0">
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 0 }}>
                 {priorityIcons[thread.priority] && (
-                  <span className="text-lg flex-shrink-0">
+                  <span style={{ fontSize: '1.125rem', flexShrink: 0 }}>
                     {priorityIcons[thread.priority]}
                   </span>
                 )}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center space-x-2">
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <h3
-                      className={`text-sm truncate ${
-                        isUnread ? 'font-bold text-gray-900' : 'font-medium text-gray-700'
-                      }`}
+                      style={{
+                        fontSize: '0.875rem',
+                        fontWeight: isUnread ? 'bold' : '500',
+                        color: isUnread ? '#111827' : '#374151',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}
                     >
                       {thread.patientName}
                     </h3>
-                    <span className="text-xs text-gray-500 flex-shrink-0">
+                    <span style={{ fontSize: '0.75rem', color: '#6b7280', flexShrink: 0 }}>
                       MRN: {thread.patientMrn}
                     </span>
                   </div>
                   <p
-                    className={`text-sm truncate ${
-                      isUnread ? 'font-semibold text-gray-900' : 'text-gray-600'
-                    }`}
+                    style={{
+                      fontSize: '0.875rem',
+                      fontWeight: isUnread ? '600' : 'normal',
+                      color: isUnread ? '#111827' : '#4b5563',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}
                   >
                     {thread.subject}
                   </p>
                 </div>
               </div>
-              <div className="flex flex-col items-end space-y-1 ml-2 flex-shrink-0">
-                <span className="text-xs text-gray-500">
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem', marginLeft: '0.5rem', flexShrink: 0 }}>
+                <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                   {formatDistanceToNow(new Date(thread.lastMessageAt), { addSuffix: true })}
                 </span>
                 {isUnread && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-600 text-white">
+                  <span style={{ display: 'inline-flex', alignItems: 'center', padding: '0.125rem 0.5rem', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: '500', background: '#2563eb', color: 'white' }}>
                     New
                   </span>
                 )}
               </div>
             </div>
 
-            <div className="flex items-center space-x-2 mb-2">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
               <span
-                className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                  categoryColors[thread.category] || categoryColors.other
-                }`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '0.125rem 0.5rem',
+                  borderRadius: '0.25rem',
+                  fontSize: '0.75rem',
+                  fontWeight: '500',
+                  background: categoryColors[thread.category]?.includes('gray') ? '#f3f4f6' :
+                             categoryColors[thread.category]?.includes('blue') ? '#dbeafe' :
+                             categoryColors[thread.category]?.includes('green') ? '#d1fae5' :
+                             categoryColors[thread.category]?.includes('yellow') ? '#fef3c7' :
+                             categoryColors[thread.category]?.includes('red') ? '#fee2e2' : '#f3f4f6',
+                  color: categoryColors[thread.category]?.includes('gray') ? '#374151' :
+                         categoryColors[thread.category]?.includes('blue') ? '#1e40af' :
+                         categoryColors[thread.category]?.includes('green') ? '#065f46' :
+                         categoryColors[thread.category]?.includes('yellow') ? '#92400e' :
+                         categoryColors[thread.category]?.includes('red') ? '#991b1b' : '#374151'
+                }}
               >
                 {thread.category.charAt(0).toUpperCase() + thread.category.slice(1)}
               </span>
               <span
-                className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                  statusColors[thread.status] || statusColors.open
-                }`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '0.125rem 0.5rem',
+                  borderRadius: '0.25rem',
+                  fontSize: '0.75rem',
+                  fontWeight: '500',
+                  background: statusColors[thread.status]?.includes('purple') ? '#f3e8ff' :
+                             statusColors[thread.status]?.includes('blue') ? '#dbeafe' :
+                             statusColors[thread.status]?.includes('yellow') ? '#fef3c7' :
+                             statusColors[thread.status]?.includes('orange') ? '#fed7aa' :
+                             statusColors[thread.status]?.includes('gray') ? '#f3f4f6' : '#f3f4f6',
+                  color: statusColors[thread.status]?.includes('purple') ? '#6b21a8' :
+                         statusColors[thread.status]?.includes('blue') ? '#1e40af' :
+                         statusColors[thread.status]?.includes('yellow') ? '#92400e' :
+                         statusColors[thread.status]?.includes('orange') ? '#c2410c' :
+                         statusColors[thread.status]?.includes('gray') ? '#4b5563' : '#4b5563'
+                }}
               >
                 {thread.status.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
               </span>
               {thread.assignedToName && (
-                <span className="text-xs text-gray-500">
+                <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                   Assigned to: {thread.assignedToName}
                 </span>
               )}
             </div>
 
-            <p className="text-sm text-gray-600 truncate">
-              {thread.lastMessageBy === 'patient' ? '👤 ' : '👨‍⚕️ '}
+            <p style={{ fontSize: '0.875rem', color: '#4b5563', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {thread.lastMessageBy === 'patient' ? '' : ''}
               {thread.lastMessagePreview}
             </p>
 
-            <div className="flex items-center justify-between mt-2">
-              <span className="text-xs text-gray-500">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.5rem' }}>
+              <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                 {thread.messageCount} message{thread.messageCount !== 1 ? 's' : ''}
               </span>
             </div>

@@ -334,7 +334,7 @@ auditRouter.get("/summary", requireAuth, requireRoles(["admin", "compliance_offi
 auditRouter.post("/export", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
   try {
     const tenantId = req.user!.tenantId;
-    const userId = req.user!.userId;
+    const userId = req.user!.id;
     const ipAddress = req.ip || req.headers["x-forwarded-for"] as string || "unknown";
     const { filters } = req.body;
 

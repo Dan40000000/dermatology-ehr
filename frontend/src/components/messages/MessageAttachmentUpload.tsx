@@ -48,7 +48,6 @@ export const MessageAttachmentUpload: FC<MessageAttachmentUploadProps> = ({
     setUploading(true);
     try {
       // Upload logic here
-      console.log('Uploading file:', file.name);
       // Simulate upload
       await new Promise((resolve) => setTimeout(resolve, 1000));
       onUploadComplete('attachment-id');

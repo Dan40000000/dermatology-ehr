@@ -6,7 +6,7 @@ import { Skeleton, Modal } from '../components/ui';
 import { PatientBanner, BodyMap } from '../components/clinical';
 import type { Lesion } from '../components/clinical';
 import {
-  fetchPatients,
+  fetchPatient,
   fetchEncounters,
   fetchAppointments,
   fetchDocuments,
@@ -69,19 +69,16 @@ export function PatientDetailPage() {
 
     setLoading(true);
     try {
-      const [patientsRes, encountersRes, appointmentsRes, documentsRes, photosRes] = await Promise.all([
-        fetchPatients(session.tenantId, session.accessToken),
+      const [patientRes, encountersRes, appointmentsRes, documentsRes, photosRes] = await Promise.all([
+        fetchPatient(session.tenantId, session.accessToken, patientId),
         fetchEncounters(session.tenantId, session.accessToken),
         fetchAppointments(session.tenantId, session.accessToken),
         fetchDocuments(session.tenantId, session.accessToken),
         fetchPhotos(session.tenantId, session.accessToken),
       ]);
 
-      const foundPatient = (patientsRes.patients || []).find(
-        (p: Patient) => p.id === patientId
-      );
-      if (foundPatient) {
-        setPatient(foundPatient);
+      if (patientRes.patient) {
+        setPatient(patientRes.patient);
       } else {
         showError('Patient not found');
         navigate('/patients');
@@ -101,6 +98,11 @@ export function PatientDetailPage() {
         (photosRes.photos || []).filter((p: Photo) => p.patientId === patientId)
       );
     } catch (err: any) {
+      if (err.message === 'Patient not found') {
+        showError('Patient not found');
+        navigate('/patients');
+        return;
+      }
       showError(err.message || 'Failed to load patient data');
     } finally {
       setLoading(false);
@@ -160,14 +162,14 @@ export function PatientDetailPage() {
   }
 
   const tabs: { id: TabId; label: string; icon: string; count?: number }[] = [
-    { id: 'overview', label: 'Overview', icon: '📊' },
-    { id: 'demographics', label: 'Demographics', icon: '👤' },
-    { id: 'insurance', label: 'Insurance', icon: '💳' },
-    { id: 'medical-history', label: 'Medical History', icon: '🏥' },
-    { id: 'encounters', label: 'Encounters', icon: '📋', count: encounters.length },
-    { id: 'appointments', label: 'Appointments', icon: '📅', count: appointments.length },
-    { id: 'documents', label: 'Documents', icon: '📄', count: documents.length },
-    { id: 'photos', label: 'Photos', icon: '📷', count: photos.length },
+    { id: 'overview', label: 'Overview', icon: '' },
+    { id: 'demographics', label: 'Demographics', icon: '' },
+    { id: 'insurance', label: 'Insurance', icon: '' },
+    { id: 'medical-history', label: 'Medical History', icon: '' },
+    { id: 'encounters', label: 'Encounters', icon: '', count: encounters.length },
+    { id: 'appointments', label: 'Appointments', icon: '', count: appointments.length },
+    { id: 'documents', label: 'Documents', icon: '', count: documents.length },
+    { id: 'photos', label: 'Photos', icon: '', count: photos.length },
   ];
 
   return (
@@ -185,23 +187,23 @@ export function PatientDetailPage() {
           Back to Patients
         </button>
         <button type="button" className="ema-action-btn" onClick={handleStartEncounter}>
-          <span className="icon">➕</span>
+          <span className="icon">+</span>
           New Encounter
         </button>
         <button type="button" className="ema-action-btn" onClick={() => navigate('/schedule')}>
-          <span className="icon">📅</span>
+          <span className="icon"></span>
           Schedule Appt
         </button>
         <button type="button" className="ema-action-btn" onClick={() => setShowFaceSheet(true)}>
-          <span className="icon">📄</span>
+          <span className="icon"></span>
           Face Sheet
         </button>
         <button type="button" className="ema-action-btn">
-          <span className="icon">💊</span>
+          <span className="icon"></span>
           Prescriptions
         </button>
         <button type="button" className="ema-action-btn" onClick={loadPatientData}>
-          <span className="icon">🔃</span>
+          <span className="icon"></span>
           Refresh
         </button>
       </div>
@@ -303,7 +305,6 @@ export function PatientDetailPage() {
                   view={bodyMapView}
                   lesions={lesions}
                   onLesionClick={(lesion) => {
-                    console.log('Clicked lesion:', lesion);
                   }}
                 />
               </div>
@@ -411,7 +412,7 @@ export function PatientDetailPage() {
                           cursor: 'pointer'
                         }}
                       >
-                        <span style={{ fontSize: '1.25rem' }}>📋</span>
+                        <span style={{ fontSize: '1.25rem' }}></span>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 500, fontSize: '0.875rem' }}>
                             Encounter - {enc.status}
@@ -441,7 +442,7 @@ export function PatientDetailPage() {
                           borderRadius: '8px'
                         }}
                       >
-                        <span style={{ fontSize: '1.25rem' }}>📅</span>
+                        <span style={{ fontSize: '1.25rem' }}></span>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 500, fontSize: '0.875rem' }}>
                             {appt.appointmentTypeName || 'Appointment'}
@@ -466,12 +467,12 @@ export function PatientDetailPage() {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
                   {[
-                    { label: 'New Encounter', icon: '📋', onClick: handleStartEncounter },
-                    { label: 'Schedule', icon: '📅', onClick: () => navigate('/schedule') },
-                    { label: 'Message', icon: '✉️', onClick: () => navigate('/mail') },
-                    { label: 'Documents', icon: '📄', onClick: () => setActiveTab('documents') },
-                    { label: 'Photos', icon: '📷', onClick: () => setActiveTab('photos') },
-                    { label: 'Insurance', icon: '💳', onClick: () => setActiveTab('insurance') },
+                    { label: 'New Encounter', icon: '', onClick: handleStartEncounter },
+                    { label: 'Schedule', icon: '', onClick: () => navigate('/schedule') },
+                    { label: 'Message', icon: '', onClick: () => navigate('/mail') },
+                    { label: 'Documents', icon: '', onClick: () => setActiveTab('documents') },
+                    { label: 'Photos', icon: '', onClick: () => setActiveTab('photos') },
+                    { label: 'Insurance', icon: '', onClick: () => setActiveTab('insurance') },
                   ].map((action) => (
                     <button
                       key={action.label}
@@ -504,7 +505,7 @@ export function PatientDetailPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <div className="ema-section-header">Encounters</div>
               <button type="button" className="ema-action-btn" onClick={handleStartEncounter}>
-                <span className="icon">➕</span>
+                <span className="icon">+</span>
                 New Encounter
               </button>
             </div>
@@ -517,7 +518,7 @@ export function PatientDetailPage() {
                 padding: '3rem',
                 textAlign: 'center'
               }}>
-                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📋</div>
+                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
                 <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No encounters yet</h3>
                 <p style={{ color: '#6b7280', margin: '0 0 1rem' }}>Start the first encounter for this patient</p>
                 <button type="button" className="ema-action-btn" onClick={handleStartEncounter}>
@@ -583,7 +584,7 @@ export function PatientDetailPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <div className="ema-section-header">Appointments</div>
               <button type="button" className="ema-action-btn" onClick={() => navigate('/schedule')}>
-                <span className="icon">➕</span>
+                <span className="icon">+</span>
                 Schedule
               </button>
             </div>
@@ -596,7 +597,7 @@ export function PatientDetailPage() {
                 padding: '3rem',
                 textAlign: 'center'
               }}>
-                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📅</div>
+                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
                 <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No appointments</h3>
                 <p style={{ color: '#6b7280', margin: 0 }}>Schedule an appointment for this patient</p>
               </div>
@@ -826,7 +827,7 @@ function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <div className="ema-section-header">Patient Demographics</div>
         <button type="button" className="ema-action-btn" onClick={onEdit}>
-          <span className="icon">✏️</span>
+          <span className="icon"></span>
           Edit Demographics
         </button>
       </div>
@@ -899,7 +900,7 @@ function InsuranceTab({ patient, onEdit }: { patient: Patient; onEdit: () => voi
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <div className="ema-section-header">Insurance Information</div>
         <button type="button" className="ema-action-btn" onClick={onEdit}>
-          <span className="icon">✏️</span>
+          <span className="icon"></span>
           Edit Insurance
         </button>
       </div>
@@ -969,11 +970,11 @@ function InsuranceTab({ patient, onEdit }: { patient: Patient; onEdit: () => voi
         {/* Eligibility Check */}
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           <button type="button" className="ema-action-btn" onClick={() => alert('Eligibility check feature coming soon')}>
-            <span className="icon">🔍</span>
+            <span className="icon"></span>
             Check Eligibility
           </button>
           <button type="button" className="ema-action-btn" onClick={() => alert('Benefits verification feature coming soon')}>
-            <span className="icon">📋</span>
+            <span className="icon"></span>
             Verify Benefits
           </button>
         </div>
@@ -1021,7 +1022,7 @@ function MedicalHistoryTab({
               Allergies
             </h3>
             <button type="button" className="ema-action-btn" onClick={onEditAllergy}>
-              <span className="icon">➕</span>
+              <span className="icon">+</span>
               Add Allergy
             </button>
           </div>
@@ -1059,7 +1060,7 @@ function MedicalHistoryTab({
               Current Medications
             </h3>
             <button type="button" className="ema-action-btn" onClick={onEditMedication}>
-              <span className="icon">➕</span>
+              <span className="icon">+</span>
               Add Medication
             </button>
           </div>
@@ -1069,7 +1070,7 @@ function MedicalHistoryTab({
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {medications.map((med: any, idx: number) => (
                 <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '4px' }}>
-                  <span style={{ fontSize: '1.25rem' }}>💊</span>
+                  <span style={{ fontSize: '1.25rem' }}></span>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 500 }}>{med.name}</div>
                     <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
@@ -1089,7 +1090,7 @@ function MedicalHistoryTab({
               Problem List
             </h3>
             <button type="button" className="ema-action-btn" onClick={onEditProblem}>
-              <span className="icon">➕</span>
+              <span className="icon">+</span>
               Add Problem
             </button>
           </div>
@@ -1169,7 +1170,7 @@ function DocumentsTab({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <div className="ema-section-header">Documents</div>
         <button type="button" className="ema-action-btn" onClick={onUpload}>
-          <span className="icon">📤</span>
+          <span className="icon"></span>
           Upload Document
         </button>
       </div>
@@ -1182,7 +1183,7 @@ function DocumentsTab({
           padding: '3rem',
           textAlign: 'center'
         }}>
-          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📄</div>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
           <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No documents</h3>
           <p style={{ color: '#6b7280', margin: '0 0 1rem' }}>Upload documents for this patient</p>
           <button type="button" className="ema-action-btn" onClick={onUpload}>
@@ -1205,7 +1206,7 @@ function DocumentsTab({
               <tr key={doc.id}>
                 <td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span>📄</span>
+                    <span></span>
                     <span>{doc.title}</span>
                   </div>
                 </td>
@@ -1275,7 +1276,7 @@ function PhotosTab({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <div className="ema-section-header">Clinical Photos</div>
         <button type="button" className="ema-action-btn" onClick={onUpload}>
-          <span className="icon">📷</span>
+          <span className="icon"></span>
           Upload Photo
         </button>
       </div>
@@ -1288,7 +1289,7 @@ function PhotosTab({
           padding: '3rem',
           textAlign: 'center'
         }}>
-          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📷</div>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
           <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No photos</h3>
           <p style={{ color: '#6b7280', margin: '0 0 1rem' }}>Upload clinical photos for this patient</p>
           <button type="button" className="ema-action-btn" onClick={onUpload}>

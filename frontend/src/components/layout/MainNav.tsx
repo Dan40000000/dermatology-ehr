@@ -2,75 +2,66 @@ import { useEffect, useState, useCallback } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchUnreadCount } from '../../api';
+import { canAccessModule, type ModuleKey } from '../../config/moduleAccess';
 
 interface NavItem {
   label: string;
   path: string;
-  adminOnly?: boolean;
-  roles?: string[];
+  module: ModuleKey;
 }
 
 const navItems: NavItem[] = [
-  { label: 'Home', path: '/home' },
-  { label: 'Schedule', path: '/schedule' },
-  { label: 'OfficeFlow', path: '/office-flow' },
-  { label: 'Appt Flow', path: '/appt-flow' },
-  { label: 'Waitlist', path: '/waitlist' },
-  { label: 'Patients', path: '/patients' },
-  { label: 'Notes', path: '/notes' },
-  { label: 'Orders', path: '/orders' },
-  { label: 'Rx', path: '/rx' },
-  { label: 'ePA', path: '/prior-auth' },
-  { label: 'Labs', path: '/labs' },
-  { label: 'Text Messages', path: '/text-messages' },
-  { label: 'Tasks', path: '/tasks' },
-  { label: 'Mail', path: '/mail' },
-  { label: 'Direct', path: '/direct' },
-  { label: 'Fax', path: '/fax' },
-  { label: 'Documents', path: '/documents' },
-  { label: 'Photos', path: '/photos' },
-  { label: 'Body Diagram', path: '/body-diagram' },
-  { label: 'Handouts', path: '/handouts' },
-  { label: 'Reminders', path: '/reminders' },
-  { label: 'Recalls', path: '/recalls' },
-  { label: 'Analytics', path: '/analytics' },
-  { label: 'Reports', path: '/reports' },
-  { label: 'Quality', path: '/quality', roles: ['admin', 'provider'] },
-  { label: 'Registry', path: '/registry' },
-  { label: 'Referrals', path: '/referrals' },
-  { label: 'Forms', path: '/forms' },
-  { label: 'Protocols', path: '/protocols' },
-  { label: 'Templates', path: '/templates' },
-  { label: 'Preferences', path: '/preferences' },
-  { label: 'Help', path: '/help' },
-  { label: 'Telehealth', path: '/telehealth' },
-  { label: 'Inventory', path: '/inventory' },
-  { label: 'Financials', path: '/financials' },
-  { label: 'Claims', path: '/claims' },
-  { label: 'Clearinghouse', path: '/clearinghouse' },
-  { label: 'Fee Schedules', path: '/admin/fee-schedules' },
-  { label: 'Quotes', path: '/quotes' },
-  { label: 'Audit Log', path: '/admin/audit-log' },
-  { label: 'Admin', path: '/admin', adminOnly: true },
+  { label: 'Home', path: '/home', module: 'home' },
+  { label: 'Schedule', path: '/schedule', module: 'schedule' },
+  { label: 'OfficeFlow', path: '/office-flow', module: 'office_flow' },
+  { label: 'Appt Flow', path: '/appt-flow', module: 'appt_flow' },
+  { label: 'Waitlist', path: '/waitlist', module: 'waitlist' },
+  { label: 'Patients', path: '/patients', module: 'patients' },
+  { label: 'Notes', path: '/notes', module: 'notes' },
+  { label: 'Orders', path: '/orders', module: 'orders' },
+  { label: 'Rx', path: '/rx', module: 'rx' },
+  { label: 'ePA', path: '/prior-auth', module: 'epa' },
+  { label: 'Labs', path: '/labs', module: 'labs' },
+  { label: 'Text Messages', path: '/text-messages', module: 'text_messages' },
+  { label: 'Tasks', path: '/tasks', module: 'tasks' },
+  { label: 'Mail', path: '/mail', module: 'mail' },
+  { label: 'Direct', path: '/direct', module: 'direct' },
+  { label: 'Fax', path: '/fax', module: 'fax' },
+  { label: 'Documents', path: '/documents', module: 'documents' },
+  { label: 'Photos', path: '/photos', module: 'photos' },
+  { label: 'Body Diagram', path: '/body-diagram', module: 'body_diagram' },
+  { label: 'Handouts', path: '/handouts', module: 'handouts' },
+  { label: 'Reminders', path: '/reminders', module: 'reminders' },
+  { label: 'Recalls', path: '/recalls', module: 'recalls' },
+  { label: 'Analytics', path: '/analytics', module: 'analytics' },
+  { label: 'Reports', path: '/reports', module: 'reports' },
+  { label: 'Quality', path: '/quality', module: 'quality' },
+  { label: 'Registry', path: '/registry', module: 'registry' },
+  { label: 'Referrals', path: '/referrals', module: 'referrals' },
+  { label: 'Forms', path: '/forms', module: 'forms' },
+  { label: 'Protocols', path: '/protocols', module: 'protocols' },
+  { label: 'Templates', path: '/templates', module: 'templates' },
+  { label: 'Preferences', path: '/preferences', module: 'preferences' },
+  { label: 'Help', path: '/help', module: 'help' },
+  { label: 'Telehealth', path: '/telehealth', module: 'telehealth' },
+  { label: 'Inventory', path: '/inventory', module: 'inventory' },
+  { label: 'Financials', path: '/financials', module: 'financials' },
+  { label: 'Claims', path: '/claims', module: 'claims' },
+  { label: 'Clearinghouse', path: '/clearinghouse', module: 'clearinghouse' },
+  { label: 'Fee Schedules', path: '/admin/fee-schedules', module: 'admin' },
+  { label: 'Quotes', path: '/quotes', module: 'quotes' },
+  { label: 'Audit Log', path: '/admin/audit-log', module: 'admin' },
+  { label: 'Admin', path: '/admin', module: 'admin' },
 ];
 
 export function MainNav() {
   const location = useLocation();
   const { session, user } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
-  const isAdmin = user?.role === 'admin';
   const userRole = user?.role;
 
   // Filter nav items based on user role
-  const filteredNavItems = navItems.filter(item => {
-    if (item.roles) {
-      return !!userRole && item.roles.includes(userRole);
-    }
-    if (item.adminOnly) {
-      return isAdmin;
-    }
-    return true;
-  });
+  const filteredNavItems = navItems.filter(item => canAccessModule(userRole, item.module));
 
   const loadUnreadCount = useCallback(async () => {
     if (!session) return;

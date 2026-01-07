@@ -35,3 +35,21 @@ Roles seeded:
 - front_desk
 
 Tenant header: `x-tenant-id` (must match user’s tenant). Refresh tokens are stored in DB and revoked on rotation.
+
+## Module Access Matrix (UI)
+
+| Module | Roles |
+| --- | --- |
+| Home, Schedule, OfficeFlow, Appt Flow, Waitlist, Patients, Tasks, Reminders, Recalls | admin, provider, ma, front_desk |
+| Notes, Orders, Rx, ePA | admin, provider |
+| Labs, Radiology | admin, provider, ma |
+| Mail, Direct, Fax, Text Messages | admin, provider, ma, front_desk |
+| Documents, Handouts | admin, provider, ma, front_desk |
+| Photos, Body Diagram | admin, provider, ma |
+| Analytics, Reports, Quality, Registry | admin, provider |
+| Referrals, Forms, Preferences, Help | admin, provider, ma, front_desk |
+| Protocols, Templates | admin, provider |
+| Telehealth | admin, provider |
+| Inventory | admin, ma, front_desk |
+| Financials, Claims, Clearinghouse, Quotes | admin, front_desk (quotes also ma) |
+| Admin | admin |

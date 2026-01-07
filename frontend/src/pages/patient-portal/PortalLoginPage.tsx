@@ -32,7 +32,7 @@ export function PortalLoginPage() {
     <div className="portal-login-page">
       <div className="portal-login-card">
         <div className="portal-login-header">
-          <div className="portal-login-icon">🏥</div>
+          <div className="portal-login-icon"></div>
           <h1>Patient Portal</h1>
           <p>Access your health information securely</p>
         </div>
@@ -101,7 +101,7 @@ export function PortalLoginPage() {
         {error && <div className="portal-login-error">{error}</div>}
 
         <div className="portal-security-badge">
-          <span>🔒</span>
+          <span></span>
           <p>Secure connection - Your information is protected</p>
         </div>
       </div>

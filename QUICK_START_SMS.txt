@@ -1,0 +1,107 @@
+================================================================================
+SMS TEXT MESSAGING - QUICK START (5 MINUTES)
+================================================================================
+
+STEP 1: Get Twilio Credentials (https://console.twilio.com/)
+   - Account SID: ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   - Auth Token: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   - Phone Number: +15551234567
+
+STEP 2: Update Backend Config
+   File: /backend/.env
+
+   TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   TWILIO_PHONE_NUMBER=+15551234567
+
+STEP 3: Update Database
+   Run this SQL (replace with your actual credentials):
+
+   UPDATE sms_settings
+   SET
+     twilio_account_sid = 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+     twilio_auth_token = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+     twilio_phone_number = '+15551234567',
+     is_active = true,
+     is_test_mode = false
+   WHERE tenant_id = 'default-tenant';
+
+STEP 4: Run Migration
+   cd backend
+   npm run db:migrate
+
+STEP 5: Start Servers
+   Terminal 1:  cd backend && npm run dev
+   Terminal 2:  cd frontend && npm run dev
+
+STEP 6: Test It!
+   1. Login at http://localhost:5173
+   2. Go to "Text Messages" in menu
+   3. Click "Conversations" tab
+   4. Select a patient (or add your phone to a test patient)
+   5. Send a message
+   6. Check your phone!
+
+STEP 7: Test Receiving (Local Dev Only)
+   Terminal 3:  ngrok http 4000
+
+   Copy the https URL (e.g., https://abc123.ngrok.io)
+
+   Update Twilio webhooks:
+   - Console > Phone Numbers > Your Number > Messaging
+   - A MESSAGE COMES IN: https://abc123.ngrok.io/api/sms/webhook/incoming
+   - MESSAGE STATUS: https://abc123.ngrok.io/api/sms/webhook/status
+
+   Reply to a message from your phone -> should appear in app!
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Issue: "SMS not configured"
+Fix:   UPDATE sms_settings SET is_active = true WHERE tenant_id = 'default-tenant';
+
+Issue: "Patient has opted out"
+Fix:   UPDATE patient_sms_preferences SET opted_in = true WHERE patient_id = '<id>';
+
+Issue: Not receiving messages
+Fix:   - Check ngrok is running
+       - Verify webhook URLs in Twilio console
+       - Check Twilio debugger: https://console.twilio.com/us1/monitor/logs/debugger
+
+================================================================================
+FILES CHANGED
+================================================================================
+
+Backend:
+   /backend/.env - Added Twilio config
+   /backend/src/routes/sms.ts - Added conversation endpoints
+   /backend/migrations/043_sms_conversation_reads.sql - New table
+
+Frontend:
+   /frontend/src/api.ts - Added API functions
+   /frontend/src/pages/TextMessagesPage.tsx - Wired to real API
+
+================================================================================
+ENDPOINTS ADDED
+================================================================================
+
+GET    /api/sms/conversations                  - List conversations
+GET    /api/sms/conversations/:patientId       - Get conversation
+POST   /api/sms/conversations/:patientId/send  - Send message
+PUT    /api/sms/conversations/:patientId/mark-read - Mark read
+POST   /api/sms/webhook/incoming                - Receive messages (Twilio)
+POST   /api/sms/webhook/status                  - Delivery status (Twilio)
+
+================================================================================
+DOCUMENTATION
+================================================================================
+
+Full guides available at:
+  - SMS_TESTING_QUICKSTART.md - Detailed testing guide
+  - SMS_IMPLEMENTATION_SUMMARY.md - Technical details
+  - SMS_SETUP_GUIDE.md - Complete setup instructions
+
+================================================================================
+STATUS: READY TO TEST 
+================================================================================

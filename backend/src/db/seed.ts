@@ -559,12 +559,49 @@ async function seed() {
       );
     }
 
+    // Facilities (Locations)
+    const locations = [
+      { id: "loc-demo", name: "Main Clinic", address: "123 Skin St, Denver, CO 80202", phone: "(303) 555-0100" },
+      { id: "loc-east", name: "East Office", address: "456 Aurora Ave, Aurora, CO 80010", phone: "(303) 555-0101" },
+      { id: "loc-south", name: "South Campus", address: "789 Littleton Blvd, Littleton, CO 80123", phone: "(303) 555-0102" },
+    ];
+
+    for (const loc of locations) {
+      await pool.query(
+        `insert into locations(id, tenant_id, name, address, phone, is_active)
+         values ($1,$2,$3,$4,$5,true) on conflict (id) do update set phone = $5, is_active = true`,
+        [loc.id, tenantId, loc.name, loc.address, loc.phone],
+      );
+    }
+
     const locationId = "loc-demo";
-    await pool.query(
-      `insert into locations(id, tenant_id, name, address)
-       values ($1,$2,$3,$4) on conflict (id) do nothing`,
-      [locationId, tenantId, "Main Clinic", "123 Skin St"],
-    );
+
+    // Rooms for each facility
+    const rooms = [
+      // Main Clinic rooms
+      { id: "room-main-1", facilityId: "loc-demo", name: "Exam Room 1", roomType: "exam" },
+      { id: "room-main-2", facilityId: "loc-demo", name: "Exam Room 2", roomType: "exam" },
+      { id: "room-main-3", facilityId: "loc-demo", name: "Exam Room 3", roomType: "exam" },
+      { id: "room-main-proc", facilityId: "loc-demo", name: "Procedure Room", roomType: "procedure" },
+      { id: "room-main-photo", facilityId: "loc-demo", name: "Photo Room", roomType: "photo" },
+      // East Office rooms
+      { id: "room-east-1", facilityId: "loc-east", name: "Exam Room A", roomType: "exam" },
+      { id: "room-east-2", facilityId: "loc-east", name: "Exam Room B", roomType: "exam" },
+      { id: "room-east-proc", facilityId: "loc-east", name: "Minor Procedure", roomType: "procedure" },
+      // South Campus rooms
+      { id: "room-south-1", facilityId: "loc-south", name: "Suite 101", roomType: "exam" },
+      { id: "room-south-2", facilityId: "loc-south", name: "Suite 102", roomType: "exam" },
+      { id: "room-south-3", facilityId: "loc-south", name: "Suite 103", roomType: "exam" },
+      { id: "room-south-proc", facilityId: "loc-south", name: "Surgical Suite", roomType: "procedure" },
+    ];
+
+    for (const room of rooms) {
+      await pool.query(
+        `insert into rooms(id, tenant_id, facility_id, name, room_type, is_active)
+         values ($1,$2,$3,$4,$5,true) on conflict (id) do nothing`,
+        [room.id, tenantId, room.facilityId, room.name, room.roomType],
+      );
+    }
 
     const apptTypes = [
       { id: "appttype-demo", name: "Derm Consult", duration: 30 },

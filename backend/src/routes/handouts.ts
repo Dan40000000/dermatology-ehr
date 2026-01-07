@@ -26,7 +26,7 @@ const updateHandoutSchema = z.object({
 // Get all handouts
 router.get('/', async (req, res, next) => {
   try {
-    const tenantId = req.headers['x-tenant-id'] as string;
+    const tenantId = req.user!.tenantId;
     const { category, condition, search } = req.query;
 
     let query = 'SELECT * FROM patient_handouts WHERE tenant_id = $1';
@@ -63,7 +63,7 @@ router.get('/', async (req, res, next) => {
 // Get single handout
 router.get('/:id', async (req, res, next) => {
   try {
-    const tenantId = req.headers['x-tenant-id'] as string;
+    const tenantId = req.user!.tenantId;
     const { id } = req.params;
 
     const result = await pool.query(
@@ -84,8 +84,8 @@ router.get('/:id', async (req, res, next) => {
 // Create handout
 router.post('/', async (req, res, next) => {
   try {
-    const tenantId = req.headers['x-tenant-id'] as string;
-    const userId = req.user?.userId;
+    const tenantId = req.user!.tenantId;
+    const userId = req.user?.id;
     const validated = createHandoutSchema.parse(req.body);
 
     const id = randomUUID();
@@ -118,7 +118,7 @@ router.post('/', async (req, res, next) => {
 // Update handout
 router.patch('/:id', async (req, res, next) => {
   try {
-    const tenantId = req.headers['x-tenant-id'] as string;
+    const tenantId = req.user!.tenantId;
     const { id } = req.params;
     const validated = updateHandoutSchema.parse(req.body);
 
@@ -190,7 +190,7 @@ router.patch('/:id', async (req, res, next) => {
 // Delete handout
 router.delete('/:id', async (req, res, next) => {
   try {
-    const tenantId = req.headers['x-tenant-id'] as string;
+    const tenantId = req.user!.tenantId;
     const { id } = req.params;
 
     const result = await pool.query(

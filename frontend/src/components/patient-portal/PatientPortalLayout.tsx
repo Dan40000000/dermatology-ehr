@@ -21,7 +21,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
       <header className="portal-header">
         <div className="portal-header-content">
           <Link to="/portal/dashboard" className="portal-logo">
-            <div className="portal-logo-icon">🏥</div>
+            <div className="portal-logo-icon"></div>
             <div>
               <h1>Mountain Pine Dermatology</h1>
               <p>Patient Portal</p>
@@ -51,27 +51,27 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
         <aside className="portal-sidebar">
           <nav className="portal-nav">
             <NavLink to="/portal/dashboard" className={({ isActive }) => isActive ? 'portal-nav-link active' : 'portal-nav-link'}>
-              <span className="portal-nav-icon">🏠</span>
+              <span className="portal-nav-icon"></span>
               Dashboard
             </NavLink>
             <NavLink to="/portal/appointments" className={({ isActive }) => isActive ? 'portal-nav-link active' : 'portal-nav-link'}>
-              <span className="portal-nav-icon">📅</span>
+              <span className="portal-nav-icon"></span>
               Appointments
             </NavLink>
             <NavLink to="/portal/visits" className={({ isActive }) => isActive ? 'portal-nav-link active' : 'portal-nav-link'}>
-              <span className="portal-nav-icon">📋</span>
+              <span className="portal-nav-icon"></span>
               Visit Summaries
             </NavLink>
             <NavLink to="/portal/documents" className={({ isActive }) => isActive ? 'portal-nav-link active' : 'portal-nav-link'}>
-              <span className="portal-nav-icon">📄</span>
+              <span className="portal-nav-icon"></span>
               Documents
             </NavLink>
             <NavLink to="/portal/health-record" className={({ isActive }) => isActive ? 'portal-nav-link active' : 'portal-nav-link'}>
-              <span className="portal-nav-icon">💊</span>
+              <span className="portal-nav-icon"></span>
               Health Record
             </NavLink>
             <NavLink to="/portal/profile" className={({ isActive }) => isActive ? 'portal-nav-link active' : 'portal-nav-link'}>
-              <span className="portal-nav-icon">⚙️</span>
+              <span className="portal-nav-icon"></span>
               Profile
             </NavLink>
           </nav>

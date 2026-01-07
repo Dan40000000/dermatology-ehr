@@ -6,9 +6,10 @@ import { Footer } from './Footer';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchPatients } from '../../api';
 import type { Patient } from '../../types';
+import { canAccessModule, getModuleForPath } from '../../config/moduleAccess';
 
 export function AppLayout() {
-  const { isAuthenticated, session } = useAuth();
+  const { isAuthenticated, session, user } = useAuth();
   const location = useLocation();
   const [patients, setPatients] = useState<Patient[]>([]);
 
@@ -31,16 +32,24 @@ export function AppLayout() {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  const activeModule = getModuleForPath(location.pathname);
+  if (activeModule && !canAccessModule(user?.role, activeModule)) {
+    return <Navigate to="/home" replace />;
+  }
+
   return (
     <div className="page">
+      <a href="#main-content" className="skip-to-main">
+        Skip to main content
+      </a>
       <div className="layout">
         <TopBar patients={patients} onRefresh={loadPatients} />
         <MainNav />
         <MobileNav />
 
-        <div className="content-card">
+        <main id="main-content" className="content-card" role="main" aria-label="Main content">
           <Outlet />
-        </div>
+        </main>
 
         <Footer />
       </div>

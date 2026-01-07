@@ -5,6 +5,7 @@
  */
 
 import { Router } from "express";
+import crypto from "crypto";
 import { pool } from "../db/pool";
 import { requireFHIRAuth, requireFHIRScope, logFHIRAccess, FHIRAuthenticatedRequest } from "../middleware/fhirAuth";
 import {
@@ -16,11 +17,13 @@ import {
   mapChargeToProcedure,
   mapAppointmentToFHIR,
   mapOrganizationToFHIR,
+  mapAllergyToFHIR,
   createFHIRBundle,
   createOperationOutcome,
   fetchDiagnosisWithContext,
   fetchChargeWithContext,
   fetchVitalWithContext,
+  fetchAllergyWithContext,
 } from "../services/fhirMapper";
 
 export const fhirRouter = Router();
@@ -453,6 +456,341 @@ fhirRouter.get("/Condition", requireFHIRAuth, requireFHIRScope("Condition", "rea
   }
 });
 
+// ==================== ALLERGY INTOLERANCE ENDPOINTS ====================
+
+/**
+ * GET /fhir/AllergyIntolerance/:id - Get single allergy by ID
+ */
+fhirRouter.get(
+  "/AllergyIntolerance/:id",
+  requireFHIRAuth,
+  requireFHIRScope("AllergyIntolerance", "read"),
+  async (req: FHIRAuthenticatedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const tenantId = req.fhirAuth!.tenantId;
+
+      const allergy = await fetchAllergyWithContext(id, tenantId);
+      if (!allergy) {
+        return res.status(404).json(
+          createOperationOutcome("error", "not-found", `AllergyIntolerance with id ${id} not found`)
+        );
+      }
+
+      await logFHIRAccess(req, "AllergyIntolerance", id, "read");
+      return res.json(mapAllergyToFHIR(allergy));
+    } catch (error) {
+      console.error("Error fetching allergy:", error);
+      return res.status(500).json(
+        createOperationOutcome("error", "exception", "Internal server error")
+      );
+    }
+  }
+);
+
+/**
+ * GET /fhir/AllergyIntolerance - Search allergies
+ * Supported params: patient, clinical-status, verification-status, category, code, _count, _offset
+ */
+fhirRouter.get(
+  "/AllergyIntolerance",
+  requireFHIRAuth,
+  requireFHIRScope("AllergyIntolerance", "read"),
+  async (req: FHIRAuthenticatedRequest, res) => {
+    try {
+      const tenantId = req.fhirAuth!.tenantId;
+      const patientParam = req.query.patient as string | undefined;
+      const clinicalStatusParam =
+        (req.query["clinical-status"] as string | undefined) ||
+        (req.query.status as string | undefined);
+      const verificationStatusParam = req.query["verification-status"] as string | undefined;
+      const categoryParam = req.query.category as string | undefined;
+      const codeParam = req.query.code as string | undefined;
+      const idParam = req.query._id as string | undefined;
+      const _count = (req.query._count as string) || "50";
+      const _offset = (req.query._offset as string) || "0";
+
+      const patientId = patientParam ? patientParam.replace("Patient/", "") : undefined;
+
+      let query = `SELECT * FROM patient_allergies WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      let paramIndex = 2;
+
+      if (patientId) {
+        query += ` AND patient_id = $${paramIndex}`;
+        params.push(patientId);
+        paramIndex++;
+      }
+
+      if (idParam) {
+        const ids = idParam.split(",").map((value) => value.trim()).filter(Boolean);
+        if (ids.length === 1) {
+          query += ` AND id = $${paramIndex}`;
+          params.push(ids[0]);
+          paramIndex++;
+        } else if (ids.length > 1) {
+          query += ` AND id = ANY($${paramIndex}::text[])`;
+          params.push(ids);
+          paramIndex++;
+        }
+      }
+
+      if (clinicalStatusParam) {
+        query += ` AND status = $${paramIndex}`;
+        params.push(clinicalStatusParam);
+        paramIndex++;
+      }
+
+      if (verificationStatusParam) {
+        if (verificationStatusParam === "confirmed") {
+          query += ` AND verified_at IS NOT NULL`;
+        } else if (verificationStatusParam === "unconfirmed") {
+          query += ` AND verified_at IS NULL`;
+        }
+      }
+
+      if (categoryParam) {
+        query += ` AND allergen_type = $${paramIndex}`;
+        params.push(categoryParam);
+        paramIndex++;
+      }
+
+      if (codeParam) {
+        query += ` AND allergen ILIKE $${paramIndex}`;
+        params.push(`%${codeParam}%`);
+        paramIndex++;
+      }
+
+      const countResult = await pool.query(
+        query.replace("SELECT *", "SELECT COUNT(*)"),
+        params
+      );
+      const total = parseInt(countResult.rows[0].count);
+
+      query += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      params.push(parseInt(_count), parseInt(_offset));
+
+      const result = await pool.query(query, params);
+      const resources = result.rows.map(mapAllergyToFHIR);
+
+      await logFHIRAccess(req, "AllergyIntolerance", undefined, "search");
+      return res.json(createFHIRBundle(resources, "searchset", total));
+    } catch (error) {
+      console.error("Error searching allergies:", error);
+      return res.status(500).json(
+        createOperationOutcome("error", "exception", "Internal server error")
+      );
+    }
+  }
+);
+
+/**
+ * POST /fhir/AllergyIntolerance - Create allergy
+ */
+fhirRouter.post(
+  "/AllergyIntolerance",
+  requireFHIRAuth,
+  requireFHIRScope("AllergyIntolerance", "write"),
+  async (req: FHIRAuthenticatedRequest, res) => {
+    try {
+      const tenantId = req.fhirAuth!.tenantId;
+      const resource = req.body;
+
+      if (!resource || resource.resourceType !== "AllergyIntolerance") {
+        return res.status(400).json(
+          createOperationOutcome("error", "invalid", "Invalid AllergyIntolerance payload")
+        );
+      }
+
+      const patientRef = resource.patient?.reference || resource.subject?.reference;
+      const patientId = patientRef ? String(patientRef).replace("Patient/", "") : undefined;
+      if (!patientId) {
+        return res.status(400).json(
+          createOperationOutcome("error", "invalid", "Patient reference is required")
+        );
+      }
+
+      const allergen =
+        resource.code?.text ||
+        resource.code?.coding?.[0]?.display ||
+        resource.code?.coding?.[0]?.code;
+      if (!allergen) {
+        return res.status(400).json(
+          createOperationOutcome("error", "invalid", "Allergen code or text is required")
+        );
+      }
+
+      const clinicalStatus = resource.clinicalStatus?.coding?.[0]?.code || "active";
+      const verificationStatus = resource.verificationStatus?.coding?.[0]?.code;
+      const reaction = resource.reaction?.[0]?.manifestation?.[0]?.text;
+      const reactionSeverity = resource.reaction?.[0]?.severity;
+      const criticality = resource.criticality;
+      const notes = resource.note?.[0]?.text;
+      const onsetDate = resource.onsetDateTime || resource.onsetDate;
+      const allergenType = resource.category?.[0];
+
+      const id = resource.id || crypto.randomUUID();
+      const severity = reactionSeverity || (criticality === "high" ? "severe" : criticality === "low" ? "mild" : undefined);
+      const verifiedAt = verificationStatus === "confirmed" ? new Date().toISOString() : null;
+
+      await pool.query(
+        `INSERT INTO patient_allergies(
+          id, tenant_id, patient_id, allergen, allergen_type, reaction, severity,
+          onset_date, notes, status, verified_at, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())`,
+        [
+          id,
+          tenantId,
+          patientId,
+          allergen,
+          allergenType || null,
+          reaction || null,
+          severity || null,
+          onsetDate || null,
+          notes || null,
+          clinicalStatus,
+          verifiedAt,
+        ]
+      );
+
+      const allergy = await fetchAllergyWithContext(id, tenantId);
+      await logFHIRAccess(req, "AllergyIntolerance", id, "write");
+      return res.status(201).json(mapAllergyToFHIR(allergy));
+    } catch (error) {
+      console.error("Error creating allergy:", error);
+      return res.status(500).json(
+        createOperationOutcome("error", "exception", "Internal server error")
+      );
+    }
+  }
+);
+
+/**
+ * PUT /fhir/AllergyIntolerance/:id - Update allergy
+ */
+fhirRouter.put(
+  "/AllergyIntolerance/:id",
+  requireFHIRAuth,
+  requireFHIRScope("AllergyIntolerance", "write"),
+  async (req: FHIRAuthenticatedRequest, res) => {
+    try {
+      const tenantId = req.fhirAuth!.tenantId;
+      const id = req.params.id;
+      const resource = req.body;
+
+      if (!resource || resource.resourceType !== "AllergyIntolerance") {
+        return res.status(400).json(
+          createOperationOutcome("error", "invalid", "Invalid AllergyIntolerance payload")
+        );
+      }
+
+      const allergen =
+        resource.code?.text ||
+        resource.code?.coding?.[0]?.display ||
+        resource.code?.coding?.[0]?.code;
+      const clinicalStatus = resource.clinicalStatus?.coding?.[0]?.code;
+      const verificationStatus = resource.verificationStatus?.coding?.[0]?.code;
+      const reaction = resource.reaction?.[0]?.manifestation?.[0]?.text;
+      const reactionSeverity = resource.reaction?.[0]?.severity;
+      const criticality = resource.criticality;
+      const notes = resource.note?.[0]?.text;
+      const onsetDate = resource.onsetDateTime || resource.onsetDate;
+      const allergenType = resource.category?.[0];
+
+      const updates: string[] = [];
+      const values: any[] = [];
+      let paramIndex = 1;
+
+      const add = (field: string, value: any) => {
+        updates.push(`${field} = $${paramIndex++}`);
+        values.push(value);
+      };
+
+      if (allergen) add("allergen", allergen);
+      if (allergenType !== undefined) add("allergen_type", allergenType || null);
+      if (reaction !== undefined) add("reaction", reaction || null);
+      if (notes !== undefined) add("notes", notes || null);
+      if (clinicalStatus) add("status", clinicalStatus);
+      if (onsetDate !== undefined) add("onset_date", onsetDate || null);
+
+      if (verificationStatus === "confirmed") {
+        add("verified_at", new Date().toISOString());
+      } else if (verificationStatus === "unconfirmed") {
+        add("verified_at", null);
+      }
+
+      if (reactionSeverity || criticality) {
+        const severity = reactionSeverity || (criticality === "high" ? "severe" : criticality === "low" ? "mild" : null);
+        add("severity", severity);
+      }
+
+      if (updates.length === 0) {
+        return res.status(400).json(
+          createOperationOutcome("error", "invalid", "No updates provided")
+        );
+      }
+
+      updates.push("updated_at = now()");
+      values.push(id, tenantId);
+
+      const result = await pool.query(
+        `UPDATE patient_allergies SET ${updates.join(", ")}
+         WHERE id = $${paramIndex++} AND tenant_id = $${paramIndex}
+         RETURNING *`,
+        values
+      );
+
+      if (!result.rowCount) {
+        return res.status(404).json(
+          createOperationOutcome("error", "not-found", `AllergyIntolerance with id ${id} not found`)
+        );
+      }
+
+      await logFHIRAccess(req, "AllergyIntolerance", id, "write");
+      return res.json(mapAllergyToFHIR(result.rows[0]));
+    } catch (error) {
+      console.error("Error updating allergy:", error);
+      return res.status(500).json(
+        createOperationOutcome("error", "exception", "Internal server error")
+      );
+    }
+  }
+);
+
+/**
+ * DELETE /fhir/AllergyIntolerance/:id - Delete allergy
+ */
+fhirRouter.delete(
+  "/AllergyIntolerance/:id",
+  requireFHIRAuth,
+  requireFHIRScope("AllergyIntolerance", "write"),
+  async (req: FHIRAuthenticatedRequest, res) => {
+    try {
+      const tenantId = req.fhirAuth!.tenantId;
+      const id = req.params.id;
+
+      const result = await pool.query(
+        `DELETE FROM patient_allergies WHERE id = $1 AND tenant_id = $2 RETURNING id`,
+        [id, tenantId]
+      );
+
+      if (!result.rowCount) {
+        return res.status(404).json(
+          createOperationOutcome("error", "not-found", `AllergyIntolerance with id ${id} not found`)
+        );
+      }
+
+      await logFHIRAccess(req, "AllergyIntolerance", id, "write");
+      return res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting allergy:", error);
+      return res.status(500).json(
+        createOperationOutcome("error", "exception", "Internal server error")
+      );
+    }
+  }
+);
+
 // ==================== PROCEDURE ENDPOINTS ====================
 
 /**
@@ -766,6 +1104,24 @@ fhirRouter.get("/metadata", async (req, res) => {
               { name: "identifier", type: "token" },
               { name: "birthdate", type: "date" },
               { name: "gender", type: "token" },
+            ],
+          },
+          {
+            type: "AllergyIntolerance",
+            interaction: [
+              { code: "read" },
+              { code: "search-type" },
+              { code: "create" },
+              { code: "update" },
+              { code: "delete" },
+            ],
+            searchParam: [
+              { name: "_id", type: "token" },
+              { name: "patient", type: "reference" },
+              { name: "clinical-status", type: "token" },
+              { name: "verification-status", type: "token" },
+              { name: "category", type: "token" },
+              { name: "code", type: "token" },
             ],
           },
           {

@@ -21,7 +21,8 @@ import type {
   CreateThreadData,
 } from '../types';
 
-type MailFolder = 'inbox' | 'sent' | 'archived';
+type MailFolder = 'inbox' | 'sent' | 'archived' | 'drafts';
+type MailSection = 'intramail' | 'direct-mail';
 
 export function MailPage() {
   const { session } = useAuth();
@@ -34,11 +35,20 @@ export function MailPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [folder, setFolder] = useState<MailFolder>('inbox');
+  const [mailSection, setMailSection] = useState<MailSection>('intramail');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showFilters, setShowFilters] = useState(true);
+  const [priorityFilter, setPriorityFilter] = useState<string>('any');
+  const [dateFilter, setDateFilter] = useState<string>('');
+  const [flaggedFilter, setFlaggedFilter] = useState<string>('any');
+  const [readFilter, setReadFilter] = useState<string>('any');
 
   const [showComposeModal, setShowComposeModal] = useState(false);
   const [sending, setSending] = useState(false);
   const [replyText, setReplyText] = useState('');
+  const [composePriority, setComposePriority] = useState<string>('normal');
+  const [composeCc, setComposeCc] = useState<string>('');
+  const [allowSearchPatients, setAllowSearchPatients] = useState(false);
 
   const [newThread, setNewThread] = useState<CreateThreadData>({
     subject: '',
@@ -228,25 +238,39 @@ export function MailPage() {
   const unreadCount = threads.filter((t) => t.unreadCount > 0 && !t.isArchived).length;
 
   return (
-    <div className="mail-page" style={{ display: 'flex', minHeight: 'calc(100vh - 200px)' }}>
+    <div className="mail-page" style={{
+      display: 'flex',
+      minHeight: 'calc(100vh - 200px)',
+      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      padding: '1.5rem',
+      gap: '1rem',
+      borderRadius: '12px',
+      boxShadow: '0 20px 60px rgba(102, 126, 234, 0.3)',
+    }}>
       {/* Left Sidebar */}
       <div
         style={{
-          width: '200px',
-          borderRight: '1px solid #e5e7eb',
-          background: '#ffffff',
+          width: '220px',
+          borderRight: 'none',
+          background: 'rgba(255, 255, 255, 0.95)',
           flexShrink: 0,
+          borderRadius: '12px',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+          backdropFilter: 'blur(10px)',
+          overflow: 'hidden',
         }}
       >
         <div
           style={{
-            padding: '0.75rem 1rem',
-            fontWeight: 600,
-            color: '#374151',
-            borderBottom: '1px solid #e5e7eb',
+            padding: '1rem',
+            fontWeight: 700,
+            color: '#ffffff',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             display: 'flex',
             alignItems: 'center',
             gap: '0.5rem',
+            fontSize: '1.125rem',
+            letterSpacing: '0.5px',
           }}
         >
           IntraMail
@@ -260,14 +284,25 @@ export function MailPage() {
               display: 'block',
               width: 'calc(100% - 1rem)',
               margin: '0 0.5rem 0.5rem 0.5rem',
-              padding: '0.5rem 1rem',
-              background: '#7c3aed',
+              padding: '0.75rem 1rem',
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
               color: '#ffffff',
               border: 'none',
-              borderRadius: '4px',
+              borderRadius: '8px',
               fontSize: '0.875rem',
-              fontWeight: 600,
+              fontWeight: 700,
               cursor: 'pointer',
+              boxShadow: '0 4px 12px rgba(102, 126, 234, 0.4)',
+              transition: 'all 0.3s ease',
+              transform: 'translateY(0)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.6)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.4)';
             }}
           >
             + New Message
@@ -282,14 +317,26 @@ export function MailPage() {
             style={{
               display: 'block',
               width: '100%',
-              padding: '0.5rem 1rem 0.5rem 2rem',
-              background: folder === 'inbox' ? '#ede9fe' : 'transparent',
+              padding: '0.75rem 1rem 0.75rem 2rem',
+              background: folder === 'inbox' ? 'linear-gradient(90deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.1) 100%)' : 'transparent',
               border: 'none',
+              borderLeft: folder === 'inbox' ? '4px solid #667eea' : '4px solid transparent',
               textAlign: 'left',
               fontSize: '0.875rem',
-              color: folder === 'inbox' ? '#7c3aed' : '#374151',
-              fontWeight: folder === 'inbox' ? 600 : 400,
+              color: folder === 'inbox' ? '#667eea' : '#374151',
+              fontWeight: folder === 'inbox' ? 700 : 500,
               cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              if (folder !== 'inbox') {
+                e.currentTarget.style.background = 'rgba(102, 126, 234, 0.05)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (folder !== 'inbox') {
+                e.currentTarget.style.background = 'transparent';
+              }
             }}
           >
             Inbox {inboxCount > 0 && `(${inboxCount})`}
@@ -304,14 +351,26 @@ export function MailPage() {
             style={{
               display: 'block',
               width: '100%',
-              padding: '0.5rem 1rem 0.5rem 2rem',
-              background: folder === 'sent' ? '#ede9fe' : 'transparent',
+              padding: '0.75rem 1rem 0.75rem 2rem',
+              background: folder === 'sent' ? 'linear-gradient(90deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.1) 100%)' : 'transparent',
               border: 'none',
+              borderLeft: folder === 'sent' ? '4px solid #667eea' : '4px solid transparent',
               textAlign: 'left',
               fontSize: '0.875rem',
-              color: folder === 'sent' ? '#7c3aed' : '#374151',
-              fontWeight: folder === 'sent' ? 600 : 400,
+              color: folder === 'sent' ? '#667eea' : '#374151',
+              fontWeight: folder === 'sent' ? 700 : 500,
               cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              if (folder !== 'sent') {
+                e.currentTarget.style.background = 'rgba(102, 126, 234, 0.05)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (folder !== 'sent') {
+                e.currentTarget.style.background = 'transparent';
+              }
             }}
           >
             Sent {sentCount > 0 && `(${sentCount})`}
@@ -326,14 +385,26 @@ export function MailPage() {
             style={{
               display: 'block',
               width: '100%',
-              padding: '0.5rem 1rem 0.5rem 2rem',
-              background: folder === 'archived' ? '#ede9fe' : 'transparent',
+              padding: '0.75rem 1rem 0.75rem 2rem',
+              background: folder === 'archived' ? 'linear-gradient(90deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.1) 100%)' : 'transparent',
               border: 'none',
+              borderLeft: folder === 'archived' ? '4px solid #667eea' : '4px solid transparent',
               textAlign: 'left',
               fontSize: '0.875rem',
-              color: folder === 'archived' ? '#7c3aed' : '#374151',
-              fontWeight: folder === 'archived' ? 600 : 400,
+              color: folder === 'archived' ? '#667eea' : '#374151',
+              fontWeight: folder === 'archived' ? 700 : 500,
               cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              if (folder !== 'archived') {
+                e.currentTarget.style.background = 'rgba(102, 126, 234, 0.05)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (folder !== 'archived') {
+                e.currentTarget.style.background = 'transparent';
+              }
             }}
           >
             Archived {archivedCount > 0 && `(${archivedCount})`}
@@ -364,11 +435,15 @@ export function MailPage() {
       <div
         style={{
           width: '400px',
-          borderRight: '1px solid #e5e7eb',
-          background: '#ffffff',
+          borderRight: 'none',
+          background: 'rgba(255, 255, 255, 0.95)',
           display: 'flex',
           flexDirection: 'column',
           flexShrink: 0,
+          borderRadius: '12px',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+          backdropFilter: 'blur(10px)',
+          overflow: 'hidden',
         }}
       >
         <div
@@ -406,7 +481,7 @@ export function MailPage() {
             </div>
           ) : filteredThreads.length === 0 ? (
             <div style={{ padding: '3rem', textAlign: 'center' }}>
-              <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>📭</div>
+              <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}></div>
               <p style={{ color: '#6b7280' }}>No messages in {folder}</p>
             </div>
           ) : (
@@ -534,7 +609,16 @@ export function MailPage() {
       </div>
 
       {/* Right - Message Detail */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#ffffff' }}>
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: '12px',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+        backdropFilter: 'blur(10px)',
+        overflow: 'hidden',
+      }}>
         {selectedThread ? (
           <>
             {/* Thread Header */}
@@ -748,7 +832,7 @@ export function MailPage() {
             }}
           >
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>💬</div>
+              <div style={{ fontSize: '4rem', marginBottom: '1rem' }}></div>
               <p style={{ fontSize: '1.125rem' }}>Select a message to view</p>
               <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
                 Or press <kbd style={{ background: '#f3f4f6', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>C</kbd> to compose a new message

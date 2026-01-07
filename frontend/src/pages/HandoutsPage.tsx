@@ -165,11 +165,11 @@ export function HandoutsPage() {
       {/* Action Bar */}
       <div className="ema-action-bar">
         <button type="button" className="ema-action-btn" onClick={() => setShowCreateModal(true)}>
-          <span className="icon">➕</span>
+          <span className="icon">+</span>
           Create Handout
         </button>
         <button type="button" className="ema-action-btn" onClick={loadData}>
-          <span className="icon">🔃</span>
+          <span className="icon"></span>
           Refresh
         </button>
       </div>
@@ -223,7 +223,7 @@ export function HandoutsPage() {
                 borderRadius: '8px',
               }}
             >
-              <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📚</div>
+              <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
               <div style={{ fontSize: '1.125rem', fontWeight: 500, marginBottom: '0.5rem' }}>
                 No handouts found
               </div>

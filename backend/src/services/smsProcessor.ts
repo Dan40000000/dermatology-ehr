@@ -8,6 +8,7 @@ import { logger } from '../lib/logger';
 import { formatPhoneE164 } from '../utils/phone';
 import { TwilioService } from './twilioService';
 import { auditLog } from './audit';
+import { processWaitlistSMSReply } from './waitlistNotificationService';
 import crypto from 'crypto';
 
 export interface IncomingSMSParams {
@@ -67,7 +68,84 @@ export async function processIncomingSMS(
       // Still log the message but mark as unmatched
     }
 
-    // 2. Check if patient has opted out
+    // 2. Check for waitlist confirmation (YES/NO replies)
+    if (patient) {
+      const waitlistReply = await processWaitlistSMSReply(
+        params.tenantId,
+        fromPhone,
+        params.body
+      );
+
+      if (waitlistReply.matched) {
+        // Log the message
+        const messageId = await logSMSMessage(
+          {
+            tenantId: params.tenantId,
+            twilioSid: params.messageSid,
+            direction: 'inbound',
+            from: fromPhone,
+            to: toPhone,
+            body: params.body,
+            status: 'received',
+            messageType: 'waitlist_confirmation',
+            patientId: patient.id,
+            mediaUrls: params.mediaUrls,
+          },
+          client
+        );
+
+        // Send confirmation message
+        try {
+          let confirmationMessage = '';
+          if (waitlistReply.action === 'accepted') {
+            confirmationMessage = `Thank you for confirming! We'll contact you shortly to finalize your appointment. If you have questions, please call our office.`;
+          } else if (waitlistReply.action === 'declined') {
+            confirmationMessage = `Thanks for letting us know. We'll keep you on the waitlist and notify you of other available appointments.`;
+          }
+
+          if (confirmationMessage) {
+            const response = await twilioService.sendSMS({
+              to: fromPhone,
+              from: toPhone,
+              body: confirmationMessage,
+            });
+
+            // Log outgoing confirmation
+            await logSMSMessage(
+              {
+                tenantId: params.tenantId,
+                twilioSid: response.sid,
+                direction: 'outbound',
+                from: toPhone,
+                to: fromPhone,
+                body: confirmationMessage,
+                status: response.status,
+                messageType: 'auto_response',
+                patientId: patient.id,
+                inResponseTo: messageId,
+              },
+              client
+            );
+          }
+        } catch (error: any) {
+          logger.error('Failed to send waitlist confirmation message', {
+            error: error.message,
+            patientId: patient.id,
+          });
+        }
+
+        await client.query('COMMIT');
+
+        return {
+          success: true,
+          messageId,
+          autoResponseSent: true,
+          actionPerformed: `waitlist_${waitlistReply.action}`,
+        };
+      }
+    }
+
+    // 3. Check if patient has opted out
     if (patient) {
       const optedOut = await isPatientOptedOut(params.tenantId, patient.id, client);
       if (optedOut) {
@@ -97,7 +175,7 @@ export async function processIncomingSMS(
       }
     }
 
-    // 3. Check for keyword auto-responses
+    // 4. Check for keyword auto-responses
     const keyword = extractKeyword(params.body);
     const autoResponse = await findAutoResponse(params.tenantId, keyword, client);
 
@@ -191,7 +269,7 @@ export async function processIncomingSMS(
       };
     }
 
-    // 4. No keyword match - create or update message thread
+    // 5. No keyword match - create or update message thread
     if (patient) {
       // Find existing open thread or create new one
       const thread = await findOrCreateMessageThread(
@@ -249,7 +327,7 @@ export async function processIncomingSMS(
       };
     }
 
-    // 5. Unknown patient - log message but no action
+    // 6. Unknown patient - log message but no action
     const messageId = await logSMSMessage(
       {
         tenantId: params.tenantId,

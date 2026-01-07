@@ -9,12 +9,12 @@ type OrderFilter = 'all' | 'pending' | 'in-progress' | 'completed' | 'cancelled'
 type OrderType = 'lab' | 'imaging' | 'biopsy' | 'procedure' | 'referral' | 'rx';
 
 const ORDER_TYPES: { value: OrderType; label: string; icon: string }[] = [
-  { value: 'lab', label: 'Lab', icon: '🧪' },
-  { value: 'biopsy', label: 'Biopsy', icon: '🔬' },
-  { value: 'imaging', label: 'Imaging', icon: '📷' },
-  { value: 'procedure', label: 'Procedure', icon: '🩺' },
-  { value: 'referral', label: 'Referral', icon: '📋' },
-  { value: 'rx', label: 'Prescription', icon: '💊' },
+  { value: 'lab', label: 'Lab', icon: '' },
+  { value: 'biopsy', label: 'Biopsy', icon: '' },
+  { value: 'imaging', label: 'Imaging', icon: '' },
+  { value: 'procedure', label: 'Procedure', icon: '' },
+  { value: 'referral', label: 'Referral', icon: '' },
+  { value: 'rx', label: 'Prescription', icon: '' },
 ];
 
 export function OrdersPage() {
@@ -153,72 +153,204 @@ export function OrdersPage() {
   const statCount = orders.filter((o) => o.priority === 'stat' && o.status !== 'completed').length;
 
   return (
-    <div className="orders-page">
+    <div className="orders-page" style={{
+      background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+      minHeight: 'calc(100vh - 200px)',
+      padding: '1.5rem',
+      borderRadius: '12px',
+      boxShadow: '0 20px 60px rgba(16, 185, 129, 0.3)',
+    }}>
       {/* Action Bar */}
-      <div className="ema-action-bar">
-        <button type="button" className="ema-action-btn" onClick={() => setShowNewOrderModal(true)}>
-          <span className="icon">➕</span>
+      <div className="ema-action-bar" style={{
+        background: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: '12px',
+        padding: '1rem',
+        marginBottom: '1rem',
+        display: 'flex',
+        gap: '0.75rem',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+        backdropFilter: 'blur(10px)',
+      }}>
+        <button type="button" onClick={() => setShowNewOrderModal(true)} style={{
+          padding: '0.75rem 1.25rem',
+          background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+          color: '#ffffff',
+          border: 'none',
+          borderRadius: '8px',
+          fontSize: '0.875rem',
+          fontWeight: 700,
+          cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(16, 185, 129, 0.4)',
+          transition: 'all 0.3s ease',
+        }}>
+          <span style={{ marginRight: '0.5rem' }}>+</span>
           New Order
         </button>
-        <button type="button" className="ema-action-btn" disabled={selectedOrders.size === 0}>
-          <span className="icon">▶️</span>
+        <button type="button" disabled={selectedOrders.size === 0} style={{
+          padding: '0.75rem 1.25rem',
+          background: selectedOrders.size === 0 ? '#d1d5db' : '#ffffff',
+          color: selectedOrders.size === 0 ? '#9ca3af' : '#059669',
+          border: '2px solid #10b981',
+          borderRadius: '8px',
+          fontSize: '0.875rem',
+          fontWeight: 600,
+          cursor: selectedOrders.size === 0 ? 'not-allowed' : 'pointer',
+          transition: 'all 0.3s ease',
+        }}>
           Start Selected
         </button>
-        <button type="button" className="ema-action-btn" disabled={selectedOrders.size === 0}>
-          <span className="icon">✅</span>
+        <button type="button" disabled={selectedOrders.size === 0} style={{
+          padding: '0.75rem 1.25rem',
+          background: selectedOrders.size === 0 ? '#d1d5db' : '#ffffff',
+          color: selectedOrders.size === 0 ? '#9ca3af' : '#059669',
+          border: '2px solid #10b981',
+          borderRadius: '8px',
+          fontSize: '0.875rem',
+          fontWeight: 600,
+          cursor: selectedOrders.size === 0 ? 'not-allowed' : 'pointer',
+          transition: 'all 0.3s ease',
+        }}>
           Complete Selected
         </button>
-        <button type="button" className="ema-action-btn" disabled={selectedOrders.size === 0}>
-          <span className="icon">🖨️</span>
+        <button type="button" disabled={selectedOrders.size === 0} style={{
+          padding: '0.75rem 1.25rem',
+          background: selectedOrders.size === 0 ? '#d1d5db' : '#ffffff',
+          color: selectedOrders.size === 0 ? '#9ca3af' : '#059669',
+          border: '2px solid #10b981',
+          borderRadius: '8px',
+          fontSize: '0.875rem',
+          fontWeight: 600,
+          cursor: selectedOrders.size === 0 ? 'not-allowed' : 'pointer',
+          transition: 'all 0.3s ease',
+        }}>
           Print
         </button>
-        <button type="button" className="ema-action-btn" onClick={loadData}>
-          <span className="icon">🔃</span>
+        <button type="button" onClick={loadData} style={{
+          padding: '0.75rem 1.25rem',
+          background: '#ffffff',
+          color: '#059669',
+          border: '2px solid #10b981',
+          borderRadius: '8px',
+          fontSize: '0.875rem',
+          fontWeight: 600,
+          cursor: 'pointer',
+          transition: 'all 0.3s ease',
+        }}>
           Refresh
         </button>
       </div>
 
       {/* Section Header */}
-      <div className="ema-section-header">Orders Management</div>
+      <div style={{
+        background: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: '12px',
+        padding: '1.5rem',
+        marginBottom: '1rem',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+        backdropFilter: 'blur(10px)',
+      }}>
+        <h1 style={{
+          margin: 0,
+          fontSize: '2rem',
+          fontWeight: 700,
+          background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text',
+        }}>Orders Log</h1>
+      </div>
 
       {/* Stats Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', padding: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
         <div
-          className="stat-card-teal"
-          style={{ cursor: 'pointer', opacity: filter === 'pending' ? 1 : 0.8 }}
           onClick={() => setFilter('pending')}
-        >
-          <div className="stat-number">{pendingCount}</div>
-          <div className="stat-label">Pending</div>
-        </div>
-        <div
-          className="stat-card-teal"
-          style={{ cursor: 'pointer', opacity: filter === 'in-progress' ? 1 : 0.8 }}
-          onClick={() => setFilter('in-progress')}
-        >
-          <div className="stat-number">{inProgressCount}</div>
-          <div className="stat-label">In Progress</div>
-        </div>
-        <div
-          className="stat-card-teal"
           style={{
             cursor: 'pointer',
-            opacity: filter === 'completed' ? 1 : 0.8,
-            background: '#10b981',
+            background: 'rgba(255, 255, 255, 0.95)',
+            borderRadius: '12px',
+            padding: '1.5rem',
+            boxShadow: filter === 'pending' ? '0 8px 32px rgba(16, 185, 129, 0.4)' : '0 4px 16px rgba(0, 0, 0, 0.1)',
+            backdropFilter: 'blur(10px)',
+            border: filter === 'pending' ? '2px solid #10b981' : '2px solid transparent',
+            transition: 'all 0.3s ease',
           }}
-          onClick={() => setFilter('completed')}
         >
-          <div className="stat-number">{completedCount}</div>
-          <div className="stat-label">Completed</div>
+          <div style={{
+            fontSize: '2.5rem',
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            marginBottom: '0.5rem',
+          }}>{pendingCount}</div>
+          <div style={{ color: '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>Pending</div>
         </div>
         <div
-          className="stat-card-teal"
+          onClick={() => setFilter('in-progress')}
           style={{
-            background: statCount > 0 ? '#dc2626' : undefined,
+            cursor: 'pointer',
+            background: 'rgba(255, 255, 255, 0.95)',
+            borderRadius: '12px',
+            padding: '1.5rem',
+            boxShadow: filter === 'in-progress' ? '0 8px 32px rgba(16, 185, 129, 0.4)' : '0 4px 16px rgba(0, 0, 0, 0.1)',
+            backdropFilter: 'blur(10px)',
+            border: filter === 'in-progress' ? '2px solid #10b981' : '2px solid transparent',
+            transition: 'all 0.3s ease',
           }}
         >
-          <div className="stat-number">{statCount}</div>
-          <div className="stat-label">STAT Orders</div>
+          <div style={{
+            fontSize: '2.5rem',
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            marginBottom: '0.5rem',
+          }}>{inProgressCount}</div>
+          <div style={{ color: '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>In Progress</div>
+        </div>
+        <div
+          onClick={() => setFilter('completed')}
+          style={{
+            cursor: 'pointer',
+            background: 'rgba(255, 255, 255, 0.95)',
+            borderRadius: '12px',
+            padding: '1.5rem',
+            boxShadow: filter === 'completed' ? '0 8px 32px rgba(16, 185, 129, 0.4)' : '0 4px 16px rgba(0, 0, 0, 0.1)',
+            backdropFilter: 'blur(10px)',
+            border: filter === 'completed' ? '2px solid #10b981' : '2px solid transparent',
+            transition: 'all 0.3s ease',
+          }}
+        >
+          <div style={{
+            fontSize: '2.5rem',
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            marginBottom: '0.5rem',
+          }}>{completedCount}</div>
+          <div style={{ color: '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>Completed</div>
+        </div>
+        <div
+          style={{
+            background: statCount > 0 ? 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)' : 'rgba(255, 255, 255, 0.95)',
+            borderRadius: '12px',
+            padding: '1.5rem',
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.1)',
+            backdropFilter: 'blur(10px)',
+            transition: 'all 0.3s ease',
+          }}
+        >
+          <div style={{
+            fontSize: '2.5rem',
+            fontWeight: 700,
+            color: statCount > 0 ? '#ffffff' : '#6b7280',
+            marginBottom: '0.5rem',
+          }}>{statCount}</div>
+          <div style={{ color: statCount > 0 ? '#ffffff' : '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>STAT Orders</div>
         </div>
       </div>
 
@@ -300,7 +432,7 @@ export function OrdersPage() {
             border: '1px solid #e5e7eb',
           }}
         >
-          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📋</div>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
           <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No Orders Found</h3>
           <p style={{ color: '#6b7280', margin: 0 }}>
             {filter !== 'all' || typeFilter !== 'all'

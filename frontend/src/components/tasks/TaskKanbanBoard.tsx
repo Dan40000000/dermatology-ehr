@@ -205,7 +205,7 @@ export function TaskKanbanBoard({ tasks, onTaskClick, onStatusChange }: TaskKanb
                               gap: '0.25rem',
                             }}
                           >
-                            <span>👤</span>
+                            <span></span>
                             <span>
                               {task.patientLastName}, {task.patientFirstName}
                             </span>
@@ -248,7 +248,7 @@ export function TaskKanbanBoard({ tasks, onTaskClick, onStatusChange }: TaskKanb
                               gap: '0.25rem',
                             }}
                           >
-                            <span>📅</span>
+                            <span></span>
                             <span>{new Date(task.dueDate).toLocaleDateString()}</span>
                             {overdue && (
                               <span
@@ -278,7 +278,7 @@ export function TaskKanbanBoard({ tasks, onTaskClick, onStatusChange }: TaskKanb
                               gap: '0.25rem',
                             }}
                           >
-                            <span>👨‍⚕️</span>
+                            <span></span>
                             <span>{task.assignedToName}</span>
                           </div>
                         )}

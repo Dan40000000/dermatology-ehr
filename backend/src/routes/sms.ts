@@ -13,7 +13,7 @@ import { processIncomingSMS, updateSMSStatus } from '../services/smsProcessor';
 import { sendImmediateReminder } from '../services/smsReminderScheduler';
 import { formatPhoneE164, validateAndFormatPhone, formatPhoneDisplay } from '../utils/phone';
 import { logger } from '../lib/logger';
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 
 const router = Router();
 
@@ -456,6 +456,253 @@ router.get('/messages/patient/:patientId', requireAuth, async (req: AuthedReques
 });
 
 /**
+ * GET /api/sms/conversations
+ * List all SMS conversations with patients (for chat UI)
+ */
+router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+
+    const result = await pool.query(
+      `SELECT DISTINCT ON (p.id)
+        p.id as "patientId",
+        p.first_name as "firstName",
+        p.last_name as "lastName",
+        p.phone,
+        COALESCE(prefs.opted_in, true) as "smsOptIn",
+        prefs.opted_out_at as "optedOutAt",
+        (
+          SELECT m.message_body
+          FROM sms_messages m
+          WHERE m.patient_id = p.id AND m.tenant_id = $1
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) as "lastMessage",
+        (
+          SELECT m.created_at
+          FROM sms_messages m
+          WHERE m.patient_id = p.id AND m.tenant_id = $1
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) as "lastMessageTime",
+        (
+          SELECT COUNT(*)::int
+          FROM sms_messages m
+          WHERE m.patient_id = p.id
+            AND m.tenant_id = $1
+            AND m.direction = 'inbound'
+            AND m.created_at > COALESCE((
+              SELECT last_read_at FROM sms_message_reads
+              WHERE patient_id = p.id AND tenant_id = $1
+            ), '1970-01-01'::timestamp)
+        ) as "unreadCount"
+      FROM patients p
+      LEFT JOIN patient_sms_preferences prefs ON prefs.patient_id = p.id AND prefs.tenant_id = $1
+      WHERE p.tenant_id = $1
+        AND p.phone IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM sms_messages m
+          WHERE m.patient_id = p.id AND m.tenant_id = $1
+        )
+      ORDER BY p.id, (
+        SELECT m.created_at
+        FROM sms_messages m
+        WHERE m.patient_id = p.id AND m.tenant_id = $1
+        ORDER BY m.created_at DESC
+        LIMIT 1
+      ) DESC NULLS LAST`,
+      [tenantId]
+    );
+
+    res.json({ conversations: result.rows });
+  } catch (error: any) {
+    logger.error('Error fetching SMS conversations', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch conversations' });
+  }
+});
+
+/**
+ * GET /api/sms/conversations/:patientId
+ * Get full conversation with a specific patient
+ */
+router.get('/conversations/:patientId', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const patientId = req.params.patientId;
+
+    // Get patient info
+    const patientResult = await pool.query(
+      `SELECT id, first_name as "firstName", last_name as "lastName", phone
+       FROM patients
+       WHERE id = $1 AND tenant_id = $2`,
+      [patientId, tenantId]
+    );
+
+    if (patientResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    const patient = patientResult.rows[0];
+
+    // Get messages
+    const messagesResult = await pool.query(
+      `SELECT
+        id,
+        direction,
+        message_body as "messageBody",
+        status,
+        sent_at as "sentAt",
+        delivered_at as "deliveredAt",
+        created_at as "createdAt"
+      FROM sms_messages
+      WHERE patient_id = $1 AND tenant_id = $2
+      ORDER BY created_at ASC`,
+      [patientId, tenantId]
+    );
+
+    res.json({
+      patientId: patient.id,
+      patientName: `${patient.firstName} ${patient.lastName}`,
+      patientPhone: patient.phone,
+      messages: messagesResult.rows,
+    });
+  } catch (error: any) {
+    logger.error('Error fetching conversation', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch conversation' });
+  }
+});
+
+/**
+ * POST /api/sms/conversations/:patientId/send
+ * Send a message in a conversation
+ */
+const sendConversationMessageSchema = z.object({
+  message: z.string().min(1).max(1600),
+});
+
+router.post('/conversations/:patientId/send', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const patientId = req.params.patientId;
+
+    const parsed = sendConversationMessageSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { message } = parsed.data;
+
+    // Get patient phone
+    const patientResult = await pool.query(
+      `SELECT phone, first_name, last_name FROM patients WHERE id = $1 AND tenant_id = $2`,
+      [patientId, tenantId]
+    );
+
+    if (patientResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    const patient = patientResult.rows[0];
+    if (!patient.phone) {
+      return res.status(400).json({ error: 'Patient has no phone number' });
+    }
+
+    // Check opt-in status
+    const prefsResult = await pool.query(
+      `SELECT opted_in FROM patient_sms_preferences WHERE tenant_id = $1 AND patient_id = $2`,
+      [tenantId, patientId]
+    );
+
+    if (prefsResult.rows.length > 0 && !prefsResult.rows[0].opted_in) {
+      return res.status(400).json({ error: 'Patient has opted out of SMS' });
+    }
+
+    // Get SMS settings
+    const settingsResult = await pool.query(
+      `SELECT twilio_account_sid, twilio_auth_token, twilio_phone_number, is_active
+       FROM sms_settings
+       WHERE tenant_id = $1`,
+      [tenantId]
+    );
+
+    if (settingsResult.rows.length === 0 || !settingsResult.rows[0].is_active) {
+      return res.status(400).json({ error: 'SMS not configured or not active' });
+    }
+
+    const settings = settingsResult.rows[0];
+    const twilioService = createTwilioService(
+      settings.twilio_account_sid,
+      settings.twilio_auth_token
+    );
+
+    // Send SMS
+    const result = await twilioService.sendSMS({
+      to: patient.phone,
+      from: settings.twilio_phone_number,
+      body: message,
+    });
+
+    // Log message
+    const messageId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO sms_messages
+       (id, tenant_id, twilio_message_sid, direction, from_number, to_number,
+        patient_id, message_body, status, message_type, sent_at, segment_count)
+       VALUES ($1, $2, $3, 'outbound', $4, $5, $6, $7, $8, 'conversation', CURRENT_TIMESTAMP, $9)`,
+      [
+        messageId,
+        tenantId,
+        result.sid,
+        settings.twilio_phone_number,
+        formatPhoneE164(patient.phone),
+        patientId,
+        message,
+        result.status,
+        result.numSegments,
+      ]
+    );
+
+    await auditLog(tenantId, userId, 'sms_send', 'sms_message', messageId);
+
+    res.json({
+      success: true,
+      messageId,
+      twilioSid: result.sid,
+      status: result.status,
+    });
+  } catch (error: any) {
+    logger.error('Error sending conversation message', { error: error.message });
+    res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+/**
+ * PUT /api/sms/conversations/:patientId/mark-read
+ * Mark conversation as read
+ */
+router.put('/conversations/:patientId/mark-read', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const patientId = req.params.patientId;
+
+    // Create or update read status
+    await pool.query(
+      `INSERT INTO sms_message_reads (tenant_id, patient_id, last_read_at)
+       VALUES ($1, $2, CURRENT_TIMESTAMP)
+       ON CONFLICT (tenant_id, patient_id)
+       DO UPDATE SET last_read_at = CURRENT_TIMESTAMP`,
+      [tenantId, patientId]
+    );
+
+    res.json({ success: true });
+  } catch (error: any) {
+    logger.error('Error marking conversation as read', { error: error.message });
+    res.status(500).json({ error: 'Failed to mark conversation as read' });
+  }
+});
+
+/**
  * GET /api/sms/auto-responses
  * List auto-response keywords
  */
@@ -720,6 +967,541 @@ router.post('/send-reminder/:appointmentId', requireAuth, async (req: AuthedRequ
 });
 
 // ============================================================================
+// MESSAGE TEMPLATES
+// ============================================================================
+
+/**
+ * GET /api/sms/templates
+ * List message templates
+ */
+router.get('/templates', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const category = req.query.category as string | undefined;
+    const activeOnly = req.query.activeOnly === 'true';
+
+    let query = `
+      SELECT
+        id,
+        name,
+        description,
+        message_body as "messageBody",
+        category,
+        is_system_template as "isSystemTemplate",
+        is_active as "isActive",
+        usage_count as "usageCount",
+        last_used_at as "lastUsedAt",
+        created_at as "createdAt"
+      FROM sms_message_templates
+      WHERE tenant_id = $1
+    `;
+
+    const params: any[] = [tenantId];
+    let paramIndex = 2;
+
+    if (category) {
+      query += ` AND category = $${paramIndex}`;
+      params.push(category);
+      paramIndex++;
+    }
+
+    if (activeOnly) {
+      query += ` AND is_active = true`;
+    }
+
+    query += ` ORDER BY category, name`;
+
+    const result = await pool.query(query, params);
+
+    res.json({ templates: result.rows });
+  } catch (error: any) {
+    logger.error('Error fetching templates', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch templates' });
+  }
+});
+
+/**
+ * POST /api/sms/templates
+ * Create new message template
+ */
+const createTemplateSchema = z.object({
+  name: z.string().min(1).max(255),
+  description: z.string().optional(),
+  messageBody: z.string().min(1).max(1600),
+  category: z.string().optional(),
+});
+
+router.post('/templates', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+
+    const parsed = createTemplateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { name, description, messageBody, category } = parsed.data;
+
+    const templateId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO sms_message_templates
+       (id, tenant_id, name, description, message_body, category, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [templateId, tenantId, name, description || null, messageBody, category || 'general', userId]
+    );
+
+    await auditLog(tenantId, userId, 'sms_template_create', 'sms_template', templateId);
+
+    res.json({ success: true, templateId });
+  } catch (error: any) {
+    logger.error('Error creating template', { error: error.message });
+    res.status(500).json({ error: 'Failed to create template' });
+  }
+});
+
+/**
+ * PATCH /api/sms/templates/:id
+ * Update message template
+ */
+const updateTemplateSchema = z.object({
+  name: z.string().min(1).max(255).optional(),
+  description: z.string().optional(),
+  messageBody: z.string().min(1).max(1600).optional(),
+  category: z.string().optional(),
+  isActive: z.boolean().optional(),
+});
+
+router.patch('/templates/:id', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const templateId = req.params.id;
+
+    const parsed = updateTemplateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    // Check if template is system template
+    const checkResult = await pool.query(
+      `SELECT is_system_template FROM sms_message_templates WHERE id = $1 AND tenant_id = $2`,
+      [templateId, tenantId]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+
+    if (checkResult.rows[0].is_system_template && (parsed.data.name || parsed.data.messageBody)) {
+      return res.status(400).json({ error: 'Cannot modify name or body of system templates' });
+    }
+
+    const updates: string[] = [];
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    const data = parsed.data;
+    if (data.name !== undefined) {
+      updates.push(`name = $${paramIndex}`);
+      params.push(data.name);
+      paramIndex++;
+    }
+    if (data.description !== undefined) {
+      updates.push(`description = $${paramIndex}`);
+      params.push(data.description);
+      paramIndex++;
+    }
+    if (data.messageBody !== undefined) {
+      updates.push(`message_body = $${paramIndex}`);
+      params.push(data.messageBody);
+      paramIndex++;
+    }
+    if (data.category !== undefined) {
+      updates.push(`category = $${paramIndex}`);
+      params.push(data.category);
+      paramIndex++;
+    }
+    if (data.isActive !== undefined) {
+      updates.push(`is_active = $${paramIndex}`);
+      params.push(data.isActive);
+      paramIndex++;
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No updates provided' });
+    }
+
+    updates.push(`updated_at = CURRENT_TIMESTAMP`);
+    params.push(templateId, tenantId);
+
+    await pool.query(
+      `UPDATE sms_message_templates SET ${updates.join(', ')} WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}`,
+      params
+    );
+
+    await auditLog(tenantId, userId, 'sms_template_update', 'sms_template', templateId);
+
+    res.json({ success: true });
+  } catch (error: any) {
+    logger.error('Error updating template', { error: error.message });
+    res.status(500).json({ error: 'Failed to update template' });
+  }
+});
+
+/**
+ * DELETE /api/sms/templates/:id
+ * Delete message template (only non-system templates)
+ */
+router.delete('/templates/:id', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const templateId = req.params.id;
+
+    // Check if template is system template
+    const checkResult = await pool.query(
+      `SELECT is_system_template FROM sms_message_templates WHERE id = $1 AND tenant_id = $2`,
+      [templateId, tenantId]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+
+    if (checkResult.rows[0].is_system_template) {
+      return res.status(400).json({ error: 'Cannot delete system templates' });
+    }
+
+    await pool.query(
+      `DELETE FROM sms_message_templates WHERE id = $1 AND tenant_id = $2`,
+      [templateId, tenantId]
+    );
+
+    await auditLog(tenantId, userId, 'sms_template_delete', 'sms_template', templateId);
+
+    res.json({ success: true });
+  } catch (error: any) {
+    logger.error('Error deleting template', { error: error.message });
+    res.status(500).json({ error: 'Failed to delete template' });
+  }
+});
+
+// ============================================================================
+// BULK MESSAGING
+// ============================================================================
+
+/**
+ * POST /api/sms/send-bulk
+ * Send message to multiple patients
+ */
+const sendBulkSchema = z.object({
+  patientIds: z.array(z.string().uuid()).min(1),
+  messageBody: z.string().min(1).max(1600),
+  templateId: z.string().uuid().optional(),
+  scheduleTime: z.string().optional(), // ISO timestamp for scheduling
+});
+
+router.post('/send-bulk', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+
+    const parsed = sendBulkSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { patientIds, messageBody, templateId, scheduleTime } = parsed.data;
+
+    // Get SMS settings
+    const settingsResult = await pool.query(
+      `SELECT twilio_account_sid, twilio_auth_token, twilio_phone_number, is_active
+       FROM sms_settings
+       WHERE tenant_id = $1`,
+      [tenantId]
+    );
+
+    if (settingsResult.rows.length === 0 || !settingsResult.rows[0].is_active) {
+      return res.status(400).json({ error: 'SMS not configured or not active' });
+    }
+
+    const settings = settingsResult.rows[0];
+
+    // If scheduled, create scheduled message
+    if (scheduleTime) {
+      const scheduledId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO sms_scheduled_messages
+         (id, tenant_id, patient_ids, message_body, template_id, scheduled_send_time,
+          status, total_recipients, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8)`,
+        [
+          scheduledId,
+          tenantId,
+          JSON.stringify(patientIds),
+          messageBody,
+          templateId || null,
+          scheduleTime,
+          patientIds.length,
+          userId,
+        ]
+      );
+
+      await auditLog(tenantId, userId, 'sms_bulk_schedule', 'sms_scheduled_message', scheduledId);
+
+      return res.json({ success: true, scheduledId, scheduled: true });
+    }
+
+    // Send immediately
+    const twilioService = createTwilioService(
+      settings.twilio_account_sid,
+      settings.twilio_auth_token
+    );
+
+    const results = {
+      total: patientIds.length,
+      sent: 0,
+      failed: 0,
+      messageIds: [] as string[],
+    };
+
+    // Get patients
+    const patientsResult = await pool.query(
+      `SELECT id, phone, first_name, last_name FROM patients
+       WHERE id = ANY($1) AND tenant_id = $2`,
+      [patientIds, tenantId]
+    );
+
+    for (const patient of patientsResult.rows) {
+      if (!patient.phone) {
+        results.failed++;
+        continue;
+      }
+
+      // Check opt-out status
+      const prefsResult = await pool.query(
+        `SELECT opted_in FROM patient_sms_preferences WHERE tenant_id = $1 AND patient_id = $2`,
+        [tenantId, patient.id]
+      );
+
+      if (prefsResult.rows.length > 0 && !prefsResult.rows[0].opted_in) {
+        results.failed++;
+        continue;
+      }
+
+      try {
+        // Replace variables in message
+        let personalizedMessage = messageBody
+          .replace(/{firstName}/g, patient.first_name)
+          .replace(/{lastName}/g, patient.last_name)
+          .replace(/{patientName}/g, `${patient.first_name} ${patient.last_name}`);
+
+        const result = await twilioService.sendSMS({
+          to: patient.phone,
+          from: settings.twilio_phone_number,
+          body: personalizedMessage,
+        });
+
+        const messageId = crypto.randomUUID();
+        await pool.query(
+          `INSERT INTO sms_messages
+           (id, tenant_id, twilio_message_sid, direction, from_number, to_number,
+            patient_id, message_body, status, message_type, sent_at, segment_count)
+           VALUES ($1, $2, $3, 'outbound', $4, $5, $6, $7, $8, 'notification', CURRENT_TIMESTAMP, $9)`,
+          [
+            messageId,
+            tenantId,
+            result.sid,
+            settings.twilio_phone_number,
+            formatPhoneE164(patient.phone),
+            patient.id,
+            personalizedMessage,
+            result.status,
+            result.numSegments,
+          ]
+        );
+
+        results.sent++;
+        results.messageIds.push(messageId);
+      } catch (error: any) {
+        logger.error('Error sending bulk SMS to patient', {
+          patientId: patient.id,
+          error: error.message,
+        });
+        results.failed++;
+      }
+    }
+
+    // Update template usage if used
+    if (templateId) {
+      await pool.query(
+        `UPDATE sms_message_templates
+         SET usage_count = usage_count + $1, last_used_at = CURRENT_TIMESTAMP
+         WHERE id = $2 AND tenant_id = $3`,
+        [results.sent, templateId, tenantId]
+      );
+    }
+
+    await auditLog(tenantId, userId, 'sms_bulk_send', 'sms_bulk', userId);
+
+    res.json({ success: true, results });
+  } catch (error: any) {
+    logger.error('Error sending bulk SMS', { error: error.message });
+    res.status(500).json({ error: 'Failed to send bulk messages' });
+  }
+});
+
+// ============================================================================
+// SCHEDULED MESSAGES
+// ============================================================================
+
+/**
+ * GET /api/sms/scheduled
+ * List scheduled messages
+ */
+router.get('/scheduled', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const status = req.query.status as string | undefined;
+
+    let query = `
+      SELECT
+        s.id,
+        s.patient_id as "patientId",
+        s.patient_ids as "patientIds",
+        s.message_body as "messageBody",
+        s.template_id as "templateId",
+        s.scheduled_send_time as "scheduledSendTime",
+        s.is_recurring as "isRecurring",
+        s.recurrence_pattern as "recurrencePattern",
+        s.status,
+        s.total_recipients as "totalRecipients",
+        s.sent_count as "sentCount",
+        s.delivered_count as "deliveredCount",
+        s.failed_count as "failedCount",
+        s.created_at as "createdAt",
+        s.sent_at as "sentAt",
+        t.name as "templateName",
+        p.first_name || ' ' || p.last_name as "patientName"
+      FROM sms_scheduled_messages s
+      LEFT JOIN sms_message_templates t ON s.template_id = t.id
+      LEFT JOIN patients p ON s.patient_id = p.id
+      WHERE s.tenant_id = $1
+    `;
+
+    const params: any[] = [tenantId];
+    let paramIndex = 2;
+
+    if (status) {
+      query += ` AND s.status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+
+    query += ` ORDER BY s.scheduled_send_time DESC`;
+
+    const result = await pool.query(query, params);
+
+    res.json({ scheduled: result.rows });
+  } catch (error: any) {
+    logger.error('Error fetching scheduled messages', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch scheduled messages' });
+  }
+});
+
+/**
+ * POST /api/sms/scheduled
+ * Create scheduled message
+ */
+const createScheduledSchema = z.object({
+  patientId: z.string().uuid().optional(),
+  patientIds: z.array(z.string().uuid()).optional(),
+  messageBody: z.string().min(1).max(1600),
+  templateId: z.string().uuid().optional(),
+  scheduledSendTime: z.string(), // ISO timestamp
+  isRecurring: z.boolean().optional(),
+  recurrencePattern: z.enum(['daily', 'weekly', 'biweekly', 'monthly']).optional(),
+  recurrenceEndDate: z.string().optional(),
+});
+
+router.post('/scheduled', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+
+    const parsed = createScheduledSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const data = parsed.data;
+
+    if (!data.patientId && (!data.patientIds || data.patientIds.length === 0)) {
+      return res.status(400).json({ error: 'Must provide patientId or patientIds' });
+    }
+
+    const scheduledId = crypto.randomUUID();
+    const totalRecipients = data.patientIds ? data.patientIds.length : 1;
+
+    await pool.query(
+      `INSERT INTO sms_scheduled_messages
+       (id, tenant_id, patient_id, patient_ids, message_body, template_id,
+        scheduled_send_time, is_recurring, recurrence_pattern, recurrence_end_date,
+        status, total_recipients, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'scheduled', $11, $12)`,
+      [
+        scheduledId,
+        tenantId,
+        data.patientId || null,
+        data.patientIds ? JSON.stringify(data.patientIds) : null,
+        data.messageBody,
+        data.templateId || null,
+        data.scheduledSendTime,
+        data.isRecurring || false,
+        data.recurrencePattern || null,
+        data.recurrenceEndDate || null,
+        totalRecipients,
+        userId,
+      ]
+    );
+
+    await auditLog(tenantId, userId, 'sms_scheduled_create', 'sms_scheduled_message', scheduledId);
+
+    res.json({ success: true, scheduledId });
+  } catch (error: any) {
+    logger.error('Error creating scheduled message', { error: error.message });
+    res.status(500).json({ error: 'Failed to create scheduled message' });
+  }
+});
+
+/**
+ * DELETE /api/sms/scheduled/:id
+ * Cancel scheduled message
+ */
+router.delete('/scheduled/:id', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const scheduledId = req.params.id;
+
+    await pool.query(
+      `UPDATE sms_scheduled_messages
+       SET status = 'cancelled', cancelled_at = CURRENT_TIMESTAMP, cancelled_by = $1
+       WHERE id = $2 AND tenant_id = $3 AND status = 'scheduled'`,
+      [userId, scheduledId, tenantId]
+    );
+
+    await auditLog(tenantId, userId, 'sms_scheduled_cancel', 'sms_scheduled_message', scheduledId);
+
+    res.json({ success: true });
+  } catch (error: any) {
+    logger.error('Error cancelling scheduled message', { error: error.message });
+    res.status(500).json({ error: 'Failed to cancel scheduled message' });
+  }
+});
+
+// ============================================================================
 // TWILIO WEBHOOK ROUTES (NO AUTHENTICATION - validated by signature)
 // ============================================================================
 
@@ -788,7 +1570,7 @@ router.post('/webhook/incoming', async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Error processing incoming SMS webhook', {
       error: error.message,
-      body: req.body,
+      messageSid: req.body?.MessageSid,
     });
     res.status(500).send('Error processing message');
   }
@@ -800,10 +1582,42 @@ router.post('/webhook/incoming', async (req: Request, res: Response) => {
  */
 router.post('/webhook/status', async (req: Request, res: Response) => {
   try {
+    const signature = req.headers['x-twilio-signature'] as string;
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
     const messageSid = req.body.MessageSid;
     const messageStatus = req.body.MessageStatus;
     const errorCode = req.body.ErrorCode;
     const errorMessage = req.body.ErrorMessage;
+
+    if (!messageSid) {
+      return res.status(400).send('Missing MessageSid');
+    }
+
+    const tenantResult = await pool.query(
+      `SELECT m.tenant_id, s.twilio_account_sid, s.twilio_auth_token
+       FROM sms_messages m
+       JOIN sms_settings s ON s.tenant_id = m.tenant_id
+       WHERE m.twilio_message_sid = $1
+       LIMIT 1`,
+      [messageSid]
+    );
+
+    if (tenantResult.rows.length === 0) {
+      logger.warn('SMS status webhook for unknown message', { messageSid });
+      return res.status(404).send('Message not found');
+    }
+
+    const tenant = tenantResult.rows[0];
+    const twilioService = createTwilioService(
+      tenant.twilio_account_sid,
+      tenant.twilio_auth_token
+    );
+
+    const isValid = twilioService.validateWebhookSignature(signature, url, req.body);
+    if (!isValid) {
+      logger.error('Invalid Twilio status webhook signature', { messageSid });
+      return res.status(403).send('Invalid signature');
+    }
 
     logger.info('SMS status webhook', {
       messageSid,
@@ -818,7 +1632,7 @@ router.post('/webhook/status', async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Error processing status webhook', {
       error: error.message,
-      body: req.body,
+      messageSid: req.body?.MessageSid,
     });
     res.status(500).send('Error processing status');
   }

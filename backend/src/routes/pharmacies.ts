@@ -24,7 +24,142 @@ const createPharmacySchema = z.object({
 
 const updatePharmacySchema = createPharmacySchema.partial();
 
-// GET /api/pharmacies - List/search pharmacies
+// GET /api/pharmacies/search - Enhanced search pharmacies
+pharmaciesRouter.get('/search', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const { query: searchQuery, city, state, zip, chain, preferred, ncpdpId } = req.query;
+
+    let query = 'select * from pharmacies where 1=1';
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    if (searchQuery && typeof searchQuery === 'string') {
+      query += ` and (name ilike $${paramIndex} or ncpdp_id = $${paramIndex} or chain ilike $${paramIndex})`;
+      params.push(`%${searchQuery}%`);
+      paramIndex++;
+    }
+
+    if (ncpdpId && typeof ncpdpId === 'string') {
+      query += ` and ncpdp_id = $${paramIndex}`;
+      params.push(ncpdpId);
+      paramIndex++;
+    }
+
+    if (city && typeof city === 'string') {
+      query += ` and city ilike $${paramIndex}`;
+      params.push(`%${city}%`);
+      paramIndex++;
+    }
+
+    if (state && typeof state === 'string') {
+      query += ` and state = $${paramIndex}`;
+      params.push(state.toUpperCase());
+      paramIndex++;
+    }
+
+    if (zip && typeof zip === 'string') {
+      query += ` and zip = $${paramIndex}`;
+      params.push(zip);
+      paramIndex++;
+    }
+
+    if (chain && typeof chain === 'string') {
+      query += ` and chain ilike $${paramIndex}`;
+      params.push(`%${chain}%`);
+      paramIndex++;
+    }
+
+    if (preferred === 'true') {
+      query += ` and is_preferred = true`;
+    }
+
+    query += ' and surescripts_enabled = true';
+    query += ' order by is_preferred desc, chain, name limit 100';
+
+    const result = await pool.query(query, params);
+
+    return res.json({ pharmacies: result.rows, total: result.rows.length });
+  } catch (error) {
+    console.error('Error searching pharmacies:', error);
+    return res.status(500).json({ error: 'Failed to search pharmacies' });
+  }
+});
+
+// GET /api/pharmacies/nearby - Find pharmacies near a location
+pharmaciesRouter.get('/nearby', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const { latitude, longitude, radius, city, state, zip } = req.query;
+
+    let pharmacies: any[] = [];
+
+    if (latitude && longitude) {
+      // Use lat/long for distance calculation
+      const lat = parseFloat(latitude as string);
+      const lon = parseFloat(longitude as string);
+      const radiusMiles = radius ? parseFloat(radius as string) : 10;
+
+      // Haversine formula for distance calculation
+      const result = await pool.query(
+        `SELECT *,
+          (3959 * acos(
+            cos(radians($1)) * cos(radians(latitude)) *
+            cos(radians(longitude) - radians($2)) +
+            sin(radians($1)) * sin(radians(latitude))
+          )) AS distance
+        FROM pharmacies
+        WHERE latitude IS NOT NULL
+          AND longitude IS NOT NULL
+          AND surescripts_enabled = true
+        HAVING distance < $3
+        ORDER BY distance, is_preferred DESC
+        LIMIT 50`,
+        [lat, lon, radiusMiles]
+      );
+
+      pharmacies = result.rows;
+    } else if (city && state) {
+      // Search by city/state
+      const result = await pool.query(
+        `SELECT * FROM pharmacies
+         WHERE city ILIKE $1
+           AND state = $2
+           AND surescripts_enabled = true
+         ORDER BY is_preferred DESC, name
+         LIMIT 50`,
+        [`%${city}%`, state]
+      );
+
+      pharmacies = result.rows;
+    } else if (zip) {
+      // Search by ZIP code
+      const result = await pool.query(
+        `SELECT * FROM pharmacies
+         WHERE zip = $1
+           AND surescripts_enabled = true
+         ORDER BY is_preferred DESC, name
+         LIMIT 50`,
+        [zip]
+      );
+
+      pharmacies = result.rows;
+    } else {
+      return res.status(400).json({
+        error: 'Must provide either latitude/longitude, city/state, or zip code',
+      });
+    }
+
+    return res.json({
+      pharmacies,
+      total: pharmacies.length,
+      searchCriteria: { latitude, longitude, radius, city, state, zip },
+    });
+  } catch (error) {
+    console.error('Error finding nearby pharmacies:', error);
+    return res.status(500).json({ error: 'Failed to find nearby pharmacies' });
+  }
+});
+
+// GET /api/pharmacies - List/search pharmacies (legacy endpoint)
 pharmaciesRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
   try {
     const { search, city, state, zip, preferred } = req.query;
@@ -83,6 +218,27 @@ pharmaciesRouter.get('/list/preferred', requireAuth, async (_req: AuthedRequest,
   } catch (error) {
     console.error('Error fetching preferred pharmacies:', error);
     return res.status(500).json({ error: 'Failed to fetch preferred pharmacies' });
+  }
+});
+
+// GET /api/pharmacies/ncpdp/:ncpdpId - Get pharmacy by NCPDP ID
+pharmaciesRouter.get('/ncpdp/:ncpdpId', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const { ncpdpId } = req.params;
+
+    const result = await pool.query(
+      'select * from pharmacies where ncpdp_id = $1',
+      [ncpdpId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Pharmacy not found' });
+    }
+
+    return res.json({ pharmacy: result.rows[0] });
+  } catch (error) {
+    console.error('Error fetching pharmacy by NCPDP:', error);
+    return res.status(500).json({ error: 'Failed to fetch pharmacy' });
   }
 });
 

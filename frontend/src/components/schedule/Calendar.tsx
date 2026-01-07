@@ -1,5 +1,19 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { Appointment, Provider, Availability } from '../../types';
+
+interface TimeBlock {
+  id: string;
+  providerId: string;
+  title: string;
+  blockType: string;
+  description?: string;
+  startTime: string;
+  endTime: string;
+  status: string;
+  isRecurring?: boolean;
+  recurrencePattern?: 'daily' | 'weekly' | 'biweekly' | 'monthly';
+  recurrenceEndDate?: string;
+}
 
 interface CalendarProps {
   currentDate: Date;
@@ -7,9 +21,11 @@ interface CalendarProps {
   appointments: Appointment[];
   providers: Provider[];
   availability: Availability[];
+  timeBlocks: TimeBlock[];
   selectedAppointment: Appointment | null;
   onAppointmentClick: (appointment: Appointment) => void;
   onSlotClick: (providerId: string, date: Date, hour: number, minute: number) => void;
+  onTimeBlockClick?: (timeBlockId: string) => void;
 }
 
 export function Calendar({
@@ -18,10 +34,15 @@ export function Calendar({
   appointments,
   providers,
   availability,
+  timeBlocks,
   selectedAppointment,
   onAppointmentClick,
   onSlotClick,
+  onTimeBlockClick,
 }: CalendarProps) {
+  const [hoveredTimeBlock, setHoveredTimeBlock] = useState<TimeBlock | null>(null);
+  const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
+
   // Time slots from 7am to 7pm in 5-minute increments
   const timeSlots = useMemo(() => {
     const slots = [];
@@ -98,6 +119,116 @@ export function Calendar({
     });
   };
 
+  // Helper: Get time blocks for a specific slot
+  const getTimeBlocksForSlot = (providerId: string, date: Date, hour: number, minute: number) => {
+    return timeBlocks.filter((block) => {
+      if (block.providerId !== providerId || block.status !== 'active') return false;
+
+      const blockStart = new Date(block.startTime);
+      const blockEnd = new Date(block.endTime);
+
+      // Check if same day
+      if (
+        blockStart.getDate() !== date.getDate() ||
+        blockStart.getMonth() !== date.getMonth() ||
+        blockStart.getFullYear() !== date.getFullYear()
+      ) {
+        return false;
+      }
+
+      const slotTimeInMinutes = hour * 60 + minute;
+      const blockStartInMinutes = blockStart.getHours() * 60 + blockStart.getMinutes();
+      const blockEndInMinutes = blockEnd.getHours() * 60 + blockEnd.getMinutes();
+
+      // Check if this slot is within the time block range
+      return slotTimeInMinutes >= blockStartInMinutes && slotTimeInMinutes < blockEndInMinutes;
+    });
+  };
+
+  // Helper: Check if this is the first slot of a time block
+  const isFirstTimeBlockSlot = (timeBlock: TimeBlock, hour: number, minute: number) => {
+    const blockStart = new Date(timeBlock.startTime);
+    return blockStart.getHours() === hour && blockStart.getMinutes() === minute;
+  };
+
+  // Helper: Get time block duration in slots
+  const getTimeBlockSlots = (timeBlock: TimeBlock) => {
+    const start = new Date(timeBlock.startTime);
+    const end = new Date(timeBlock.endTime);
+    const durationMinutes = (end.getTime() - start.getTime()) / 60000;
+    return Math.ceil(durationMinutes / 5);
+  };
+
+  // Helper: Get time block color based on type
+  const getTimeBlockColor = (blockType: string) => {
+    switch (blockType) {
+      case 'lunch':
+        return { bg: '#fef3c7', border: '#f59e0b', text: '#92400e' }; // amber
+      case 'meeting':
+        return { bg: '#dbeafe', border: '#3b82f6', text: '#1e40af' }; // blue
+      case 'admin':
+        return { bg: '#ede9fe', border: '#8b5cf6', text: '#5b21b6' }; // purple
+      case 'continuing_education':
+        return { bg: '#d1fae5', border: '#10b981', text: '#065f46' }; // green
+      case 'out_of_office':
+        return { bg: '#fee2e2', border: '#ef4444', text: '#991b1b' }; // red
+      case 'blocked':
+      default:
+        return { bg: '#f3f4f6', border: '#6b7280', text: '#374151' }; // gray
+    }
+  };
+
+  // Helper: Format recurrence pattern for display
+  const formatRecurrencePattern = (pattern?: string) => {
+    switch (pattern) {
+      case 'daily':
+        return 'Daily';
+      case 'weekly':
+        return 'Weekly';
+      case 'biweekly':
+        return 'Biweekly';
+      case 'monthly':
+        return 'Monthly';
+      default:
+        return '';
+    }
+  };
+
+  // Helper: Format block type for display
+  const formatBlockType = (blockType: string) => {
+    switch (blockType) {
+      case 'lunch':
+        return 'Lunch Break';
+      case 'meeting':
+        return 'Meeting';
+      case 'admin':
+        return 'Admin Time';
+      case 'continuing_education':
+        return 'Continuing Education';
+      case 'out_of_office':
+        return 'Out of Office';
+      case 'blocked':
+      default:
+        return 'Blocked';
+    }
+  };
+
+  // Helper: Handle time block mouse enter
+  const handleTimeBlockMouseEnter = (timeBlock: TimeBlock, event: React.MouseEvent) => {
+    setHoveredTimeBlock(timeBlock);
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    setTooltipPosition({
+      x: rect.left + rect.width / 2,
+      y: rect.top - 10,
+    });
+  };
+
+  // Helper: Handle time block mouse leave
+  const handleTimeBlockMouseLeave = () => {
+    setHoveredTimeBlock(null);
+    setTooltipPosition(null);
+  };
+
   // Helper: Check if this is the first slot of an appointment
   const isFirstSlot = (appointment: Appointment, hour: number, minute: number) => {
     const apptStart = new Date(appointment.scheduledStart);
@@ -140,9 +271,10 @@ export function Calendar({
   };
 
   return (
-    <div className="calendar-container">
-      {/* Header with provider names */}
-      <div className="calendar-header">
+    <>
+      <div className="calendar-container">
+        {/* Header with provider names */}
+        <div className="calendar-header">
         <div className="calendar-time-column-header">Time</div>
         {viewMode === 'day' ? (
           // Day view: show providers as columns
@@ -189,28 +321,76 @@ export function Calendar({
               {timeSlots.map(({ hour, minute }) => {
                 const day = days[0]; // Single day in day view
                 const slotAppointments = getAppointmentsForSlot(provider.id, day, hour, minute);
+                const slotTimeBlocks = getTimeBlocksForSlot(provider.id, day, hour, minute);
                 const isAvailable = isProviderAvailable(provider.id, day, hour, minute);
                 const appointment = slotAppointments[0];
+                const timeBlock = slotTimeBlocks[0];
                 const isFirst = appointment && isFirstSlot(appointment, hour, minute);
+                const isFirstBlock = timeBlock && isFirstTimeBlockSlot(timeBlock, hour, minute);
                 const slots = appointment ? getAppointmentSlots(appointment) : 0;
+                const blockSlots = timeBlock ? getTimeBlockSlots(timeBlock) : 0;
 
                 return (
                   <div
                     key={`${hour}-${minute}`}
                     className={`calendar-slot ${isAvailable ? 'available' : 'unavailable'} ${
-                      appointment ? 'has-appointment' : ''
+                      appointment || timeBlock ? 'has-appointment' : ''
                     } ${minute === 0 ? 'hour-mark' : ''}`}
                     onClick={() => {
                       if (appointment) {
                         onAppointmentClick(appointment);
+                      } else if (timeBlock) {
+                        if (onTimeBlockClick) {
+                          onTimeBlockClick(timeBlock.id);
+                        }
                       } else if (isAvailable) {
                         onSlotClick(provider.id, day, hour, minute);
                       }
                     }}
                     style={{
-                      cursor: appointment || isAvailable ? 'pointer' : 'default',
+                      cursor: appointment || timeBlock || isAvailable ? 'pointer' : 'default',
                     }}
                   >
+                    {isFirstBlock && timeBlock && !appointment && (
+                      <div
+                        className="calendar-time-block"
+                        onMouseEnter={(e) => handleTimeBlockMouseEnter(timeBlock, e)}
+                        onMouseLeave={handleTimeBlockMouseLeave}
+                        style={{
+                          backgroundColor: getTimeBlockColor(timeBlock.blockType).bg,
+                          height: `${blockSlots * 100}%`,
+                          borderLeft: `4px solid ${getTimeBlockColor(timeBlock.blockType).border}`,
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          padding: '0.25rem',
+                          fontSize: '0.75rem',
+                          color: getTimeBlockColor(timeBlock.blockType).text,
+                          overflow: 'hidden',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, fontSize: '0.7rem' }}>{timeBlock.title}</div>
+                        <div style={{ fontSize: '0.65rem', opacity: 0.85, marginTop: '2px' }}>
+                          {new Date(timeBlock.startTime).toLocaleTimeString('en-US', {
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}
+                        </div>
+                        {timeBlock.isRecurring && (
+                          <div style={{
+                            fontSize: '0.6rem',
+                            opacity: 0.75,
+                            marginTop: '2px',
+                            fontStyle: 'italic'
+                          }}>
+                            {formatRecurrencePattern(timeBlock.recurrencePattern)}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {isFirst && appointment && (
                       <div
                         className={`calendar-appointment ${
@@ -321,5 +501,73 @@ export function Calendar({
         )}
       </div>
     </div>
+
+    {/* Time Block Tooltip */}
+    {hoveredTimeBlock && tooltipPosition && (
+      <div
+        className="time-block-tooltip"
+        style={{
+          position: 'fixed',
+          left: `${tooltipPosition.x}px`,
+          top: `${tooltipPosition.y}px`,
+          transform: 'translate(-50%, -100%)',
+          zIndex: 1000,
+        }}
+      >
+        <div className="tooltip-content">
+          <div className="tooltip-header">
+            <strong>{hoveredTimeBlock.title}</strong>
+          </div>
+          <div className="tooltip-body">
+            <div className="tooltip-row">
+              <span className="tooltip-label">Type:</span>
+              <span className="tooltip-value">{formatBlockType(hoveredTimeBlock.blockType)}</span>
+            </div>
+            <div className="tooltip-row">
+              <span className="tooltip-label">Time:</span>
+              <span className="tooltip-value">
+                {new Date(hoveredTimeBlock.startTime).toLocaleTimeString('en-US', {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+                {' - '}
+                {new Date(hoveredTimeBlock.endTime).toLocaleTimeString('en-US', {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </span>
+            </div>
+            {hoveredTimeBlock.description && (
+              <div className="tooltip-row">
+                <span className="tooltip-label">Description:</span>
+                <span className="tooltip-value">{hoveredTimeBlock.description}</span>
+              </div>
+            )}
+            {hoveredTimeBlock.isRecurring && (
+              <>
+                <div className="tooltip-row">
+                  <span className="tooltip-label">Recurrence:</span>
+                  <span className="tooltip-value">{formatRecurrencePattern(hoveredTimeBlock.recurrencePattern)}</span>
+                </div>
+                {hoveredTimeBlock.recurrenceEndDate && (
+                  <div className="tooltip-row">
+                    <span className="tooltip-label">Until:</span>
+                    <span className="tooltip-value">
+                      {new Date(hoveredTimeBlock.recurrenceEndDate).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <div className="tooltip-footer">Click to edit or delete</div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

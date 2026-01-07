@@ -5,6 +5,7 @@ import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
 import { validatePrescription, checkDrugInteractions, checkAllergies } from '../services/prescriptionValidator';
+import { sendNewRx, checkFormulary, getPatientBenefits } from '../services/surescriptsService';
 
 export const prescriptionsRouter = Router();
 
@@ -108,6 +109,52 @@ prescriptionsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
   }
 });
 
+// GET /api/prescriptions/refill-requests - List all refill requests
+prescriptionsRouter.get('/refill-requests', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { status, patientId } = req.query;
+
+    let query = `
+      select
+        p.*,
+        pat.first_name as "patientFirstName",
+        pat.last_name as "patientLastName",
+        prov.full_name as "providerName",
+        pharm.name as "pharmacyName"
+      from prescriptions p
+      left join patients pat on p.patient_id = pat.id
+      left join providers prov on p.provider_id = prov.id
+      left join pharmacies pharm on p.pharmacy_id = pharm.id
+      where p.tenant_id = $1 and p.refill_status is not null
+    `;
+
+    const params: any[] = [tenantId];
+    let paramIndex = 2;
+
+    if (status) {
+      query += ` and p.refill_status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+
+    if (patientId) {
+      query += ` and p.patient_id = $${paramIndex}`;
+      params.push(patientId);
+      paramIndex++;
+    }
+
+    query += ' order by p.created_at desc limit 100';
+
+    const result = await pool.query(query, params);
+
+    return res.json({ refillRequests: result.rows });
+  } catch (error) {
+    console.error('Error fetching refill requests:', error);
+    return res.status(500).json({ error: 'Failed to fetch refill requests' });
+  }
+});
+
 // GET /api/prescriptions/:id - Get single prescription
 prescriptionsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) => {
   try {
@@ -181,6 +228,47 @@ prescriptionsRouter.post(
       const tenantId = req.user!.tenantId;
       const userId = req.user!.id;
       const data = parsed.data;
+
+      const patientCheck = await pool.query(
+        'select id from patients where id = $1 and tenant_id = $2',
+        [data.patientId, tenantId]
+      );
+      if (patientCheck.rows.length === 0) {
+        return res.status(404).json({ error: 'Patient not found' });
+      }
+
+      if (data.encounterId) {
+        const encounterCheck = await pool.query(
+          'select id, patient_id from encounters where id = $1 and tenant_id = $2',
+          [data.encounterId, tenantId]
+        );
+        if (encounterCheck.rows.length === 0) {
+          return res.status(404).json({ error: 'Encounter not found' });
+        }
+        if (encounterCheck.rows[0].patient_id !== data.patientId) {
+          return res.status(400).json({ error: 'Encounter does not match patient' });
+        }
+      }
+
+      if (data.pharmacyId) {
+        const pharmacyCheck = await pool.query(
+          'select id from pharmacies where id = $1',
+          [data.pharmacyId]
+        );
+        if (pharmacyCheck.rows.length === 0) {
+          return res.status(404).json({ error: 'Pharmacy not found' });
+        }
+      }
+
+      if (data.medicationId) {
+        const medicationCheck = await pool.query(
+          'select id from medications where id = $1',
+          [data.medicationId]
+        );
+        if (medicationCheck.rows.length === 0) {
+          return res.status(404).json({ error: 'Medication not found' });
+        }
+      }
 
       // Validate prescription
       const validation = validatePrescription({
@@ -297,6 +385,16 @@ prescriptionsRouter.put(
         return res.status(400).json({ error: 'Cannot modify prescription that has been sent' });
       }
 
+      if (data.pharmacyId) {
+        const pharmacyCheck = await pool.query(
+          'select id from pharmacies where id = $1',
+          [data.pharmacyId]
+        );
+        if (pharmacyCheck.rows.length === 0) {
+          return res.status(404).json({ error: 'Pharmacy not found' });
+        }
+      }
+
       // Build dynamic update query
       const updates: string[] = [];
       const values: any[] = [];
@@ -385,24 +483,30 @@ prescriptionsRouter.delete(
   }
 );
 
-// POST /api/prescriptions/:id/send - Send prescription to pharmacy (stub for Surescripts)
+// POST /api/prescriptions/send-erx - Send prescription to pharmacy via NCPDP/Surescripts
 prescriptionsRouter.post(
-  '/:id/send',
+  '/send-erx',
   requireAuth,
   requireRoles(['admin', 'provider']),
   async (req: AuthedRequest, res) => {
     try {
-      const { id } = req.params;
+      const { prescriptionId, pharmacyNcpdp } = req.body;
       const tenantId = req.user!.tenantId;
       const userId = req.user!.id;
 
-      // Check prescription exists
+      if (!prescriptionId || !pharmacyNcpdp) {
+        return res.status(400).json({ error: 'prescriptionId and pharmacyNcpdp are required' });
+      }
+
+      // Get prescription details
       const result = await pool.query(
-        `select p.*, pharm.ncpdp_id
+        `select p.*, pat.first_name, pat.last_name, pat.date_of_birth, pat.gender,
+                prov.full_name as provider_name, prov.npi as provider_npi
          from prescriptions p
-         left join pharmacies pharm on p.pharmacy_id = pharm.id
+         join patients pat on p.patient_id = pat.id
+         join providers prov on p.provider_id = prov.id
          where p.id = $1 and p.tenant_id = $2`,
-        [id, tenantId]
+        [prescriptionId, tenantId]
       );
 
       if (result.rows.length === 0) {
@@ -415,46 +519,356 @@ prescriptionsRouter.post(
         return res.status(400).json({ error: 'Cannot send cancelled prescription' });
       }
 
-      if (!prescription.pharmacy_id) {
-        return res.status(400).json({ error: 'Pharmacy is required to send prescription' });
+      if (prescription.status === 'sent' || prescription.status === 'transmitted') {
+        return res.status(400).json({ error: 'Prescription has already been sent' });
       }
 
-      // STUB: In production, this would integrate with Surescripts
-      // For now, just mark as sent
-      console.log('[STUB] Sending prescription to Surescripts:', {
-        prescriptionId: id,
-        pharmacyNcpdp: prescription.ncpdp_id,
-        medicationName: prescription.medication_name,
+      // Get pharmacy details
+      const pharmacyResult = await pool.query(
+        'SELECT * FROM pharmacies WHERE ncpdp_id = $1',
+        [pharmacyNcpdp]
+      );
+
+      if (pharmacyResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Pharmacy not found' });
+      }
+
+      const pharmacy = pharmacyResult.rows[0];
+
+      // Build NCPDP SCRIPT message
+      const prescriptionData = {
+        prescription: {
+          medicationName: prescription.medication_name,
+          genericName: prescription.generic_name,
+          strength: prescription.strength,
+          dosageForm: prescription.dosage_form,
+          sig: prescription.sig,
+          quantity: prescription.quantity,
+          quantityUnit: prescription.quantity_unit,
+          refills: prescription.refills,
+          daysSupply: prescription.days_supply,
+          daw: prescription.daw,
+          isControlled: prescription.is_controlled,
+          deaSchedule: prescription.dea_schedule,
+        },
+        patient: {
+          firstName: prescription.first_name,
+          lastName: prescription.last_name,
+          dateOfBirth: prescription.date_of_birth,
+          gender: prescription.gender,
+        },
+        prescriber: {
+          name: prescription.provider_name,
+          npi: prescription.provider_npi,
+        },
+      };
+
+      // Send via Surescripts
+      const transmissionResult = await sendNewRx(prescriptionId, pharmacyNcpdp, prescriptionData);
+
+      if (!transmissionResult.success) {
+        await pool.query(
+          `UPDATE prescriptions
+           SET status = 'error', updated_at = CURRENT_TIMESTAMP, updated_by = $1
+           WHERE id = $2`,
+          [userId, prescriptionId]
+        );
+
+        return res.status(500).json({
+          error: transmissionResult.error || 'Failed to transmit prescription',
+        });
+      }
+
+      // Update prescription status
+      await pool.query(
+        `UPDATE prescriptions
+         SET status = 'sent',
+             pharmacy_ncpdp = $1,
+             pharmacy_id = $2,
+             sent_at = CURRENT_TIMESTAMP,
+             surescripts_message_id = $3,
+             updated_at = CURRENT_TIMESTAMP,
+             updated_by = $4
+         WHERE id = $5`,
+        [pharmacyNcpdp, pharmacy.id, transmissionResult.messageId, userId, prescriptionId]
+      );
+
+      // Log to audit
+      await pool.query(
+        `INSERT INTO prescription_audit_log(prescription_id, action, user_id, ip_address, metadata)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          prescriptionId,
+          'transmitted',
+          userId,
+          req.ip,
+          JSON.stringify({ pharmacyNcpdp, messageId: transmissionResult.messageId }),
+        ]
+      );
+
+      return res.json({
+        success: true,
+        messageId: transmissionResult.messageId,
+        pharmacyName: pharmacy.name,
+        message: 'Prescription sent successfully',
       });
+    } catch (error) {
+      console.error('Error sending eRx:', error);
+      return res.status(500).json({ error: 'Failed to send electronic prescription' });
+    }
+  }
+);
 
-      const messageId = `STUB-${crypto.randomUUID()}`;
+// POST /api/prescriptions/check-formulary - Check insurance formulary
+prescriptionsRouter.post(
+  '/check-formulary',
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    try {
+      const { medicationName, ndc, payerId } = req.body;
 
+      if (!medicationName) {
+        return res.status(400).json({ error: 'medicationName is required' });
+      }
+
+      const formularyResult = await checkFormulary(medicationName, payerId, ndc);
+
+      return res.json(formularyResult);
+    } catch (error) {
+      console.error('Error checking formulary:', error);
+      return res.status(500).json({ error: 'Failed to check formulary' });
+    }
+  }
+);
+
+// GET /api/prescriptions/patient-benefits/:patientId - Get patient pharmacy benefits
+prescriptionsRouter.get(
+  '/patient-benefits/:patientId',
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    try {
+      const { patientId } = req.params;
+      const tenantId = req.user!.tenantId;
+
+      // Verify patient
+      const patientCheck = await pool.query(
+        'SELECT id FROM patients WHERE id = $1 AND tenant_id = $2',
+        [patientId, tenantId]
+      );
+
+      if (patientCheck.rows.length === 0) {
+        return res.status(404).json({ error: 'Patient not found' });
+      }
+
+      const benefits = await getPatientBenefits(patientId, tenantId);
+
+      if (!benefits) {
+        return res.status(404).json({ error: 'No pharmacy benefits found for patient' });
+      }
+
+      return res.json(benefits);
+    } catch (error) {
+      console.error('Error fetching patient benefits:', error);
+      return res.status(500).json({ error: 'Failed to fetch patient benefits' });
+    }
+  }
+);
+
+// POST /api/prescriptions/:id/send - Legacy endpoint (redirects to send-erx)
+prescriptionsRouter.post(
+  '/:id/send',
+  requireAuth,
+  requireRoles(['admin', 'provider']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const tenantId = req.user!.tenantId;
+
+      // Get prescription with pharmacy NCPDP
+      const result = await pool.query(
+        `SELECT p.*, pharm.ncpdp_id
+         FROM prescriptions p
+         LEFT JOIN pharmacies pharm ON p.pharmacy_id = pharm.id
+         WHERE p.id = $1 AND p.tenant_id = $2`,
+        [id, tenantId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Prescription not found' });
+      }
+
+      const prescription = result.rows[0];
+
+      if (!prescription.ncpdp_id && !prescription.pharmacy_ncpdp) {
+        return res.status(400).json({ error: 'Pharmacy NCPDP ID is required' });
+      }
+
+      // Forward to new endpoint
+      req.body = {
+        prescriptionId: id,
+        pharmacyNcpdp: prescription.pharmacy_ncpdp || prescription.ncpdp_id,
+      };
+
+      // Call the send-erx logic inline
+      return prescriptionsRouter.handle(
+        { ...req, url: '/send-erx', method: 'POST' } as any,
+        res,
+        () => {}
+      );
+    } catch (error) {
+      console.error('Error sending prescription:', error);
+      return res.status(500).json({ error: 'Failed to send prescription' });
+    }
+  }
+);
+
+// POST /api/prescriptions/:id/refill-deny - Deny refill with reason
+prescriptionsRouter.post(
+  '/:id/refill-deny',
+  requireAuth,
+  requireRoles(['admin', 'provider']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const { reason } = req.body;
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+
+      if (!reason) {
+        return res.status(400).json({ error: 'Denial reason is required' });
+      }
+
+      // Check prescription exists
+      const existing = await pool.query(
+        'select id from prescriptions where id = $1 and tenant_id = $2',
+        [id, tenantId]
+      );
+
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: 'Prescription not found' });
+      }
+
+      // Update refill status to denied
       await pool.query(
         `update prescriptions
-         set status = 'sent',
-             sent_at = CURRENT_TIMESTAMP,
-             surescripts_message_id = $1,
+         set refill_status = 'denied',
+             denial_reason = $1,
              updated_at = CURRENT_TIMESTAMP,
              updated_by = $2
          where id = $3`,
-        [messageId, userId, id]
+        [reason, userId, id]
+      );
+
+      // Log to audit
+      await pool.query(
+        `insert into prescription_audit_log(prescription_id, action, changed_fields, user_id, ip_address)
+         values ($1, $2, $3, $4, $5)`,
+        [id, 'refill_denied', JSON.stringify({ reason }), userId, req.ip]
+      );
+
+      return res.json({ success: true, message: 'Refill denied' });
+    } catch (error) {
+      console.error('Error denying refill:', error);
+      return res.status(500).json({ error: 'Failed to deny refill' });
+    }
+  }
+);
+
+// POST /api/prescriptions/:id/change-request - Request medication change
+prescriptionsRouter.post(
+  '/:id/change-request',
+  requireAuth,
+  requireRoles(['admin', 'provider']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const { changeType, details } = req.body;
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+
+      if (!changeType || !details) {
+        return res.status(400).json({ error: 'Change type and details are required' });
+      }
+
+      // Check prescription exists
+      const existing = await pool.query(
+        'select id from prescriptions where id = $1 and tenant_id = $2',
+        [id, tenantId]
+      );
+
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: 'Prescription not found' });
+      }
+
+      // Update refill status and change request details
+      await pool.query(
+        `update prescriptions
+         set refill_status = 'change_requested',
+             change_request_details = $1,
+             updated_at = CURRENT_TIMESTAMP,
+             updated_by = $2
+         where id = $3`,
+        [JSON.stringify({ changeType, details, requestedAt: new Date().toISOString(), requestedBy: userId }), userId, id]
+      );
+
+      // Log to audit
+      await pool.query(
+        `insert into prescription_audit_log(prescription_id, action, changed_fields, user_id, ip_address)
+         values ($1, $2, $3, $4, $5)`,
+        [id, 'change_requested', JSON.stringify({ changeType, details }), userId, req.ip]
+      );
+
+      return res.json({ success: true, message: 'Change request submitted' });
+    } catch (error) {
+      console.error('Error requesting change:', error);
+      return res.status(500).json({ error: 'Failed to request change' });
+    }
+  }
+);
+
+// POST /api/prescriptions/:id/audit-confirm - Confirm review for compliance
+prescriptionsRouter.post(
+  '/:id/audit-confirm',
+  requireAuth,
+  requireRoles(['admin', 'provider']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const { id } = req.params;
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+
+      // Check prescription exists
+      const existing = await pool.query(
+        'select id from prescriptions where id = $1 and tenant_id = $2',
+        [id, tenantId]
+      );
+
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: 'Prescription not found' });
+      }
+
+      // Update audit confirmation
+      await pool.query(
+        `update prescriptions
+         set audit_confirmed_at = CURRENT_TIMESTAMP,
+             audit_confirmed_by = $1,
+             updated_at = CURRENT_TIMESTAMP,
+             updated_by = $1
+         where id = $2`,
+        [userId, id]
       );
 
       // Log to audit
       await pool.query(
         `insert into prescription_audit_log(prescription_id, action, user_id, ip_address)
          values ($1, $2, $3, $4)`,
-        [id, 'transmitted', userId, req.ip]
+        [id, 'audit_confirmed', userId, req.ip]
       );
 
-      return res.json({
-        success: true,
-        messageId,
-        message: 'Prescription sent successfully (stub mode - not actually transmitted)',
-      });
+      return res.json({ success: true, message: 'Audit confirmation recorded' });
     } catch (error) {
-      console.error('Error sending prescription:', error);
-      return res.status(500).json({ error: 'Failed to send prescription' });
+      console.error('Error confirming audit:', error);
+      return res.status(500).json({ error: 'Failed to confirm audit' });
     }
   }
 );

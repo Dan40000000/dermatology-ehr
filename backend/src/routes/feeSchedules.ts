@@ -8,7 +8,7 @@ const router = Router();
 
 // Get all fee schedules
 router.get('/', requireAuth, async (req: AuthedRequest, res: Response) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = req.user!.tenantId;
 
   try {
     const result = await pool.query(
@@ -25,7 +25,7 @@ router.get('/', requireAuth, async (req: AuthedRequest, res: Response) => {
 
 // Get a single fee schedule with items
 router.get('/:id', requireAuth, async (req: AuthedRequest, res: Response) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
   try {
@@ -57,7 +57,7 @@ router.get('/:id', requireAuth, async (req: AuthedRequest, res: Response) => {
 
 // Create a new fee schedule
 router.post('/', requireAuth, requireRoles(['admin', 'billing']), async (req: AuthedRequest, res: Response) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = req.user!.tenantId;
   const { name, isDefault = false, description = null, cloneFromId = null } = req.body;
 
   if (!name) {
@@ -121,7 +121,7 @@ router.post('/', requireAuth, requireRoles(['admin', 'billing']), async (req: Au
 
 // Update a fee schedule
 router.put('/:id', requireAuth, requireRoles(['admin', 'billing']), async (req: AuthedRequest, res: Response) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const { name, isDefault, description } = req.body;
 
@@ -194,7 +194,7 @@ router.put('/:id', requireAuth, requireRoles(['admin', 'billing']), async (req: 
 
 // Delete a fee schedule
 router.delete('/:id', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res: Response) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
   const client = await pool.connect();
@@ -243,7 +243,7 @@ router.delete('/:id', requireAuth, requireRoles(['admin']), async (req: AuthedRe
 
 // Get items for a fee schedule
 router.get('/:id/items', requireAuth, async (req: AuthedRequest, res: Response) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
   try {
@@ -271,7 +271,7 @@ router.get('/:id/items', requireAuth, async (req: AuthedRequest, res: Response) 
 
 // Add or update a fee schedule item
 router.put('/:id/items/:cptCode', requireAuth, requireRoles(['admin', 'billing']), async (req: AuthedRequest, res: Response) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = req.user!.tenantId;
   const { id, cptCode } = req.params;
   const { feeCents, cptDescription } = req.body;
 
@@ -309,7 +309,7 @@ router.put('/:id/items/:cptCode', requireAuth, requireRoles(['admin', 'billing']
 
 // Delete a fee schedule item
 router.delete('/:id/items/:cptCode', requireAuth, requireRoles(['admin', 'billing']), async (req: AuthedRequest, res: Response) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = req.user!.tenantId;
   const { id, cptCode } = req.params;
 
   try {
@@ -337,7 +337,7 @@ router.delete('/:id/items/:cptCode', requireAuth, requireRoles(['admin', 'billin
 
 // Bulk import items
 router.post('/:id/items/import', requireAuth, requireRoles(['admin', 'billing']), async (req: AuthedRequest, res: Response) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const { items } = req.body; // Array of { cptCode, fee, description? }
 
@@ -405,7 +405,7 @@ router.post('/:id/items/import', requireAuth, requireRoles(['admin', 'billing'])
 
 // Export fee schedule to CSV
 router.get('/:id/export', requireAuth, async (req: AuthedRequest, res: Response) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
   try {
@@ -446,7 +446,7 @@ router.get('/:id/export', requireAuth, async (req: AuthedRequest, res: Response)
 
 // Get default fee schedule
 router.get('/default/schedule', requireAuth, async (req: AuthedRequest, res: Response) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = req.user!.tenantId;
 
   try {
     const result = await pool.query(
@@ -475,7 +475,7 @@ router.get('/default/schedule', requireAuth, async (req: AuthedRequest, res: Res
 
 // Get fee for a specific CPT code from default schedule
 router.get('/default/fee/:cptCode', requireAuth, async (req: AuthedRequest, res: Response) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = req.user!.tenantId;
   const { cptCode } = req.params;
 
   try {

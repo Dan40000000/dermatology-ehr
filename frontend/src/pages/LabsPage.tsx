@@ -178,66 +178,204 @@ export function LabsPage() {
   const statCount = labOrders.filter((l) => l.priority === 'stat' && l.status !== 'completed').length;
 
   return (
-    <div className="labs-page">
+    <div className="labs-page" style={{
+      background: 'linear-gradient(135deg, #fb7185 0%, #f43f5e 100%)',
+      minHeight: 'calc(100vh - 200px)',
+      padding: '1.5rem',
+      borderRadius: '12px',
+      boxShadow: '0 20px 60px rgba(251, 113, 133, 0.3)',
+    }}>
       {/* Action Bar */}
-      <div className="ema-action-bar">
-        <button type="button" className="ema-action-btn" onClick={() => setShowNewLabModal(true)}>
-          <span className="icon">➕</span>
+      <div className="ema-action-bar" style={{
+        background: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: '12px',
+        padding: '1rem',
+        marginBottom: '1rem',
+        display: 'flex',
+        gap: '0.75rem',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+        backdropFilter: 'blur(10px)',
+      }}>
+        <button type="button" onClick={() => setShowNewLabModal(true)} style={{
+          padding: '0.75rem 1.25rem',
+          background: 'linear-gradient(135deg, #fb7185 0%, #f43f5e 100%)',
+          color: '#ffffff',
+          border: 'none',
+          borderRadius: '8px',
+          fontSize: '0.875rem',
+          fontWeight: 700,
+          cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(251, 113, 133, 0.4)',
+          transition: 'all 0.3s ease',
+        }}>
+          <span style={{ marginRight: '0.5rem' }}>+</span>
           New Lab Order
         </button>
-        <button type="button" className="ema-action-btn" disabled={selectedLabs.size === 0}>
-          <span className="icon">🖨️</span>
+        <button type="button" disabled={selectedLabs.size === 0} style={{
+          padding: '0.75rem 1.25rem',
+          background: selectedLabs.size === 0 ? '#d1d5db' : '#ffffff',
+          color: selectedLabs.size === 0 ? '#9ca3af' : '#f43f5e',
+          border: '2px solid #fb7185',
+          borderRadius: '8px',
+          fontSize: '0.875rem',
+          fontWeight: 600,
+          cursor: selectedLabs.size === 0 ? 'not-allowed' : 'pointer',
+          transition: 'all 0.3s ease',
+        }}>
           Print Requisition
         </button>
-        <button type="button" className="ema-action-btn" disabled={selectedLabs.size === 0}>
-          <span className="icon">📤</span>
+        <button type="button" disabled={selectedLabs.size === 0} style={{
+          padding: '0.75rem 1.25rem',
+          background: selectedLabs.size === 0 ? '#d1d5db' : '#ffffff',
+          color: selectedLabs.size === 0 ? '#9ca3af' : '#f43f5e',
+          border: '2px solid #fb7185',
+          borderRadius: '8px',
+          fontSize: '0.875rem',
+          fontWeight: 600,
+          cursor: selectedLabs.size === 0 ? 'not-allowed' : 'pointer',
+          transition: 'all 0.3s ease',
+        }}>
           Send to Lab
         </button>
-        <button type="button" className="ema-action-btn">
-          <span className="icon">📊</span>
+        <button type="button" style={{
+          padding: '0.75rem 1.25rem',
+          background: '#ffffff',
+          color: '#f43f5e',
+          border: '2px solid #fb7185',
+          borderRadius: '8px',
+          fontSize: '0.875rem',
+          fontWeight: 600,
+          cursor: 'pointer',
+          transition: 'all 0.3s ease',
+        }}>
           Review Results
         </button>
-        <button type="button" className="ema-action-btn" onClick={loadData}>
-          <span className="icon">🔃</span>
+        <button type="button" onClick={loadData} style={{
+          padding: '0.75rem 1.25rem',
+          background: '#ffffff',
+          color: '#f43f5e',
+          border: '2px solid #fb7185',
+          borderRadius: '8px',
+          fontSize: '0.875rem',
+          fontWeight: 600,
+          cursor: 'pointer',
+          transition: 'all 0.3s ease',
+        }}>
           Refresh
         </button>
       </div>
 
       {/* Section Header */}
-      <div className="ema-section-header">Lab Orders</div>
+      <div style={{
+        background: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: '12px',
+        padding: '1.5rem',
+        marginBottom: '1rem',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+        backdropFilter: 'blur(10px)',
+      }}>
+        <h1 style={{
+          margin: 0,
+          fontSize: '2rem',
+          fontWeight: 700,
+          background: 'linear-gradient(135deg, #fb7185 0%, #f43f5e 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text',
+        }}>Pathology & Lab Orders</h1>
+      </div>
 
       {/* Stats Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', padding: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
         <div
-          className="stat-card-teal"
-          style={{ cursor: 'pointer', opacity: filter === 'pending' ? 1 : 0.8 }}
           onClick={() => setFilter('pending')}
+          style={{
+            cursor: 'pointer',
+            background: 'rgba(255, 255, 255, 0.95)',
+            borderRadius: '12px',
+            padding: '1.5rem',
+            boxShadow: filter === 'pending' ? '0 8px 32px rgba(251, 113, 133, 0.4)' : '0 4px 16px rgba(0, 0, 0, 0.1)',
+            backdropFilter: 'blur(10px)',
+            border: filter === 'pending' ? '2px solid #fb7185' : '2px solid transparent',
+            transition: 'all 0.3s ease',
+          }}
         >
-          <div className="stat-number">{pendingCount}</div>
-          <div className="stat-label">Pending</div>
+          <div style={{
+            fontSize: '2.5rem',
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            marginBottom: '0.5rem',
+          }}>{pendingCount}</div>
+          <div style={{ color: '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>Pending</div>
         </div>
         <div
-          className="stat-card-teal"
-          style={{ cursor: 'pointer', opacity: filter === 'in-progress' ? 1 : 0.8 }}
           onClick={() => setFilter('in-progress')}
+          style={{
+            cursor: 'pointer',
+            background: 'rgba(255, 255, 255, 0.95)',
+            borderRadius: '12px',
+            padding: '1.5rem',
+            boxShadow: filter === 'in-progress' ? '0 8px 32px rgba(251, 113, 133, 0.4)' : '0 4px 16px rgba(0, 0, 0, 0.1)',
+            backdropFilter: 'blur(10px)',
+            border: filter === 'in-progress' ? '2px solid #fb7185' : '2px solid transparent',
+            transition: 'all 0.3s ease',
+          }}
         >
-          <div className="stat-number">{inProgressCount}</div>
-          <div className="stat-label">In Progress</div>
+          <div style={{
+            fontSize: '2.5rem',
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            marginBottom: '0.5rem',
+          }}>{inProgressCount}</div>
+          <div style={{ color: '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>In Progress</div>
         </div>
         <div
-          className="stat-card-teal"
-          style={{ cursor: 'pointer', opacity: filter === 'completed' ? 1 : 0.8, background: '#10b981' }}
           onClick={() => setFilter('completed')}
+          style={{
+            cursor: 'pointer',
+            background: 'rgba(255, 255, 255, 0.95)',
+            borderRadius: '12px',
+            padding: '1.5rem',
+            boxShadow: filter === 'completed' ? '0 8px 32px rgba(251, 113, 133, 0.4)' : '0 4px 16px rgba(0, 0, 0, 0.1)',
+            backdropFilter: 'blur(10px)',
+            border: filter === 'completed' ? '2px solid #fb7185' : '2px solid transparent',
+            transition: 'all 0.3s ease',
+          }}
         >
-          <div className="stat-number">{completedCount}</div>
-          <div className="stat-label">Completed</div>
+          <div style={{
+            fontSize: '2.5rem',
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            marginBottom: '0.5rem',
+          }}>{completedCount}</div>
+          <div style={{ color: '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>Completed</div>
         </div>
         <div
-          className="stat-card-teal"
-          style={{ background: statCount > 0 ? '#dc2626' : undefined }}
+          style={{
+            background: statCount > 0 ? 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)' : 'rgba(255, 255, 255, 0.95)',
+            borderRadius: '12px',
+            padding: '1.5rem',
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.1)',
+            backdropFilter: 'blur(10px)',
+            transition: 'all 0.3s ease',
+          }}
         >
-          <div className="stat-number">{statCount}</div>
-          <div className="stat-label">STAT Orders</div>
+          <div style={{
+            fontSize: '2.5rem',
+            fontWeight: 700,
+            color: statCount > 0 ? '#ffffff' : '#6b7280',
+            marginBottom: '0.5rem',
+          }}>{statCount}</div>
+          <div style={{ color: statCount > 0 ? '#ffffff' : '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>STAT Orders</div>
         </div>
       </div>
 

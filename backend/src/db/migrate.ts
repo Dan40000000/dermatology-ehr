@@ -900,6 +900,1221 @@ const migrations: { name: string; sql: string }[] = [
     create index idx_lesion_events_date on lesion_events(event_date);
     `,
   },
+  {
+    name: "017_quality_measures_mips",
+    sql: `
+    -- Quality Measures (CQM/MIPS)
+    create table if not exists quality_measures (
+      id text primary key,
+      measure_code text not null unique,
+      measure_name text not null,
+      category text not null,
+      description text,
+      numerator_criteria jsonb not null,
+      denominator_criteria jsonb not null,
+      exclusion_criteria jsonb,
+      specialty text default 'dermatology',
+      is_active boolean default true,
+      reporting_year int,
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    -- Measure Performance tracking
+    create table if not exists measure_performance (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      provider_id text references users(id),
+      measure_id text not null references quality_measures(id),
+      reporting_period_start date not null,
+      reporting_period_end date not null,
+      numerator_count int default 0,
+      denominator_count int default 0,
+      exclusion_count int default 0,
+      performance_rate numeric,
+      meets_benchmark boolean default false,
+      benchmark_rate numeric,
+      patient_list jsonb,
+      last_calculated_at timestamptz,
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    -- MIPS Submissions
+    create table if not exists mips_submissions (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      provider_id text references users(id),
+      submission_year int not null,
+      submission_quarter int check (submission_quarter between 1 and 4),
+      submission_type text default 'quality',
+      submission_date timestamptz,
+      status text default 'draft',
+      submission_data jsonb,
+      confirmation_number text,
+      score numeric,
+      feedback text,
+      submitted_by text references users(id),
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    -- Patient Quality Measure Attribution
+    create table if not exists patient_measure_events (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      patient_id text not null references patients(id),
+      provider_id text references users(id),
+      measure_id text not null references quality_measures(id),
+      encounter_id text references encounters(id),
+      event_date date not null,
+      event_type text not null,
+      numerator_met boolean default false,
+      denominator_met boolean default false,
+      excluded boolean default false,
+      exclusion_reason text,
+      supporting_data jsonb,
+      created_at timestamptz default now()
+    );
+
+    -- Gap Closure Opportunities
+    create table if not exists quality_gaps (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      patient_id text not null references patients(id),
+      provider_id text references users(id),
+      measure_id text not null references quality_measures(id),
+      gap_type text not null,
+      gap_description text not null,
+      priority text default 'medium',
+      due_date date,
+      status text default 'open',
+      intervention_notes text,
+      closed_date timestamptz,
+      closed_by text references users(id),
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    -- Indexes
+    create index idx_quality_measures_code on quality_measures(measure_code);
+    create index idx_quality_measures_category on quality_measures(category);
+    create index idx_quality_measures_active on quality_measures(is_active);
+
+    create index idx_measure_performance_tenant on measure_performance(tenant_id);
+    create index idx_measure_performance_provider on measure_performance(provider_id);
+    create index idx_measure_performance_measure on measure_performance(measure_id);
+    create index idx_measure_performance_period on measure_performance(reporting_period_start, reporting_period_end);
+
+    create index idx_mips_submissions_tenant on mips_submissions(tenant_id);
+    create index idx_mips_submissions_provider on mips_submissions(provider_id);
+    create index idx_mips_submissions_year on mips_submissions(submission_year);
+    create index idx_mips_submissions_status on mips_submissions(status);
+
+    create index idx_patient_measure_events_tenant on patient_measure_events(tenant_id);
+    create index idx_patient_measure_events_patient on patient_measure_events(patient_id);
+    create index idx_patient_measure_events_measure on patient_measure_events(measure_id);
+    create index idx_patient_measure_events_date on patient_measure_events(event_date);
+
+    create index idx_quality_gaps_tenant on quality_gaps(tenant_id);
+    create index idx_quality_gaps_patient on quality_gaps(patient_id);
+    create index idx_quality_gaps_measure on quality_gaps(measure_id);
+    create index idx_quality_gaps_status on quality_gaps(status);
+    create index idx_quality_gaps_priority on quality_gaps(priority);
+
+    -- Seed common dermatology quality measures
+    insert into quality_measures (
+      id, measure_code, measure_name, category, description,
+      numerator_criteria, denominator_criteria, exclusion_criteria,
+      specialty, is_active, reporting_year
+    ) values
+    (
+      gen_random_uuid()::text,
+      'DERM-001',
+      'Melanoma Screening Rate',
+      'Preventive Care',
+      'Percentage of patients aged 18 and older with a complete skin examination documented in the past 12 months',
+      '{"criteria": "Full body skin exam documented", "code_requirement": "Skin exam CPT codes or documentation in encounter"}',
+      '{"criteria": "All patients aged 18+", "age_range": "18-999"}',
+      '{"criteria": "Recent melanoma diagnosis, currently undergoing cancer treatment"}',
+      'dermatology',
+      true,
+      2025
+    ),
+    (
+      gen_random_uuid()::text,
+      'DERM-002',
+      'Acne Treatment Appropriateness',
+      'Clinical Quality',
+      'Percentage of patients with acne who received evidence-based treatment (topical retinoid, benzoyl peroxide, or appropriate antibiotic)',
+      '{"criteria": "Prescription for topical retinoid, benzoyl peroxide, or appropriate antibiotic", "icd10_codes": ["L70.0", "L70.1", "L70.8", "L70.9"]}',
+      '{"criteria": "Patients with acne diagnosis", "icd10_codes": ["L70.0", "L70.1", "L70.8", "L70.9"]}',
+      '{"criteria": "Contraindication to standard acne therapy documented"}',
+      'dermatology',
+      true,
+      2025
+    ),
+    (
+      gen_random_uuid()::text,
+      'DERM-003',
+      'Psoriasis Management and Treatment',
+      'Clinical Quality',
+      'Percentage of patients with moderate to severe psoriasis who received systemic therapy or phototherapy',
+      '{"criteria": "Prescription for systemic therapy or phototherapy documented", "icd10_codes": ["L40.0", "L40.1", "L40.8", "L40.9"]}',
+      '{"criteria": "Patients with psoriasis diagnosis and BSA >10% or PASI >10", "icd10_codes": ["L40.0", "L40.1", "L40.8", "L40.9"]}',
+      '{"criteria": "Contraindication to systemic therapy, patient preference documented"}',
+      'dermatology',
+      true,
+      2025
+    ),
+    (
+      gen_random_uuid()::text,
+      'PREV-001',
+      'Diabetic Foot Exam',
+      'Preventive Care',
+      'Percentage of patients with diabetes who had a foot examination during the reporting period',
+      '{"criteria": "Foot exam documented", "icd10_codes": ["E10", "E11"], "exam_requirement": "Visual inspection and sensory exam"}',
+      '{"criteria": "Patients with diabetes diagnosis", "icd10_codes": ["E10", "E11"]}',
+      '{"criteria": "Bilateral foot amputation"}',
+      'dermatology',
+      true,
+      2025
+    ),
+    (
+      gen_random_uuid()::text,
+      'DERM-004',
+      'Skin Cancer Biopsy Appropriateness',
+      'Clinical Quality',
+      'Percentage of biopsied lesions that were clinically indicated based on dermoscopy or ABCDE criteria',
+      '{"criteria": "Biopsy performed with documented indication (ABCDE criteria, dermoscopy findings, or clinical concern)", "cpt_codes": ["11102", "11104", "11106"]}',
+      '{"criteria": "All skin biopsies performed", "cpt_codes": ["11102", "11104", "11106"]}',
+      '{"criteria": "Patient requested biopsy for cosmetic concerns"}',
+      'dermatology',
+      true,
+      2025
+    ),
+    (
+      gen_random_uuid()::text,
+      'DERM-005',
+      'Atopic Dermatitis Quality of Life Assessment',
+      'Patient Experience',
+      'Percentage of patients with atopic dermatitis who had quality of life impact documented using validated tool',
+      '{"criteria": "DLQI or EASI score documented", "icd10_codes": ["L20.0", "L20.8", "L20.9"]}',
+      '{"criteria": "Patients with atopic dermatitis diagnosis", "icd10_codes": ["L20.0", "L20.8", "L20.9"]}',
+      '{"criteria": "Initial visit only, established patient"}',
+      'dermatology',
+      true,
+      2025
+    ),
+    (
+      gen_random_uuid()::text,
+      'PREV-002',
+      'Sunscreen Education for High-Risk Patients',
+      'Preventive Care',
+      'Percentage of high-risk patients who received sun protection counseling',
+      '{"criteria": "Sun protection counseling documented", "risk_factors": ["fair skin", "history of sunburns", "family history of skin cancer", "immunosuppression"]}',
+      '{"criteria": "Patients with risk factors for skin cancer", "risk_factors": ["fair skin", "history of sunburns", "family history of skin cancer", "immunosuppression"]}',
+      '{}',
+      'dermatology',
+      true,
+      2025
+    );
+    `,
+  },
+  {
+    name: "018_faxes_table",
+    sql: `
+    -- Fax management table for inbound/outbound faxes
+    create table if not exists faxes (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      direction text not null check (direction in ('inbound', 'outbound')),
+      status text not null default 'queued' check (status in ('queued', 'sending', 'sent', 'received', 'failed')),
+      from_number text,
+      to_number text,
+      subject text,
+      pages int default 1,
+      document_id text,
+      file_url text,
+      pdf_url text,
+      error_message text,
+      metadata jsonb default '{}',
+      patient_id text references patients(id),
+      encounter_id text references encounters(id),
+      read boolean default false,
+      notes text,
+      assigned_to text references users(id),
+      sent_by text references users(id),
+      transmission_id text,
+      received_at timestamptz,
+      sent_at timestamptz,
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    create index idx_faxes_tenant on faxes(tenant_id);
+    create index idx_faxes_direction on faxes(direction);
+    create index idx_faxes_status on faxes(status);
+    create index idx_faxes_created_at on faxes(created_at desc);
+    create index idx_faxes_patient on faxes(patient_id);
+    create index idx_faxes_document on faxes(document_id);
+    `,
+  },
+  {
+    name: "019_prior_auth_requests",
+    sql: `
+    -- Enhanced prior authorization requests with adapter support
+    create table if not exists prior_auth_requests (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      patient_id text not null references patients(id),
+      prescription_id text references prescriptions(id),
+      medication_name text,
+      medication_strength text,
+      medication_quantity int,
+      sig text,
+      payer text not null,
+      member_id text not null,
+      prescriber text references users(id),
+      prescriber_npi text,
+      prescriber_name text,
+      status text not null default 'pending' check (status in ('pending', 'submitted', 'approved', 'denied', 'needs_info', 'error')),
+      status_reason text,
+      request_payload jsonb,
+      response_payload jsonb,
+      attachments jsonb default '[]',
+      history jsonb default '[]',
+      external_reference_id text,
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    create index idx_prior_auth_requests_tenant on prior_auth_requests(tenant_id);
+    create index idx_prior_auth_requests_patient on prior_auth_requests(patient_id);
+    create index idx_prior_auth_requests_prescription on prior_auth_requests(prescription_id);
+    create index idx_prior_auth_requests_status on prior_auth_requests(status);
+    create index idx_prior_auth_requests_payer on prior_auth_requests(payer);
+    create index idx_prior_auth_requests_created_at on prior_auth_requests(created_at desc);
+    `,
+  },
+  {
+    name: "020_time_blocks_overlap_indexes",
+    sql: `
+    -- Enhanced indexes for time block overlap detection
+    -- Composite index for provider + time range overlap queries
+    create index if not exists idx_time_blocks_provider_time_range
+      on time_blocks(provider_id, status, start_time, end_time)
+      where status = 'active';
+
+    -- Composite index for location + time range overlap queries
+    create index if not exists idx_time_blocks_location_time_range
+      on time_blocks(location_id, status, start_time, end_time)
+      where location_id is not null and status = 'active';
+
+    -- Index on end_time for efficient range queries
+    create index if not exists idx_time_blocks_end_time on time_blocks(end_time);
+
+    -- Add location_id index if not exists
+    create index if not exists idx_time_blocks_location on time_blocks(location_id) where location_id is not null;
+    `,
+  },
+  {
+    name: "021_portal_checkin_sessions",
+    sql: `
+    -- Portal check-in sessions for pre-appointment intake
+    create table if not exists portal_checkin_sessions (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      patient_id text not null references patients(id),
+      appointment_id text not null references appointments(id),
+      status text not null default 'started' check (status in ('started', 'in_progress', 'completed', 'expired', 'cancelled')),
+      demographics_confirmed boolean default false,
+      insurance_verified boolean default false,
+      forms_completed boolean default false,
+      copay_collected boolean default false,
+      copay_amount numeric,
+      insurance_card_front_url text,
+      insurance_card_back_url text,
+      ip_address text,
+      user_agent text,
+      started_at timestamptz default now(),
+      completed_at timestamptz,
+      expires_at timestamptz default (now() + interval '24 hours'),
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    create index idx_portal_checkin_tenant on portal_checkin_sessions(tenant_id);
+    create index idx_portal_checkin_patient on portal_checkin_sessions(patient_id);
+    create index idx_portal_checkin_appointment on portal_checkin_sessions(appointment_id);
+    create index idx_portal_checkin_status on portal_checkin_sessions(status);
+
+    -- Waitlist holds for auto-fill feature
+    create table if not exists waitlist_holds (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      waitlist_id text not null references waitlist(id),
+      appointment_slot_start timestamptz not null,
+      appointment_slot_end timestamptz not null,
+      provider_id text references users(id),
+      location_id text references locations(id),
+      hold_until timestamptz not null,
+      status text default 'active' check (status in ('active', 'accepted', 'expired', 'cancelled')),
+      notification_sent_at timestamptz,
+      notification_method text,
+      created_at timestamptz default now()
+    );
+
+    create index idx_waitlist_holds_tenant on waitlist_holds(tenant_id);
+    create index idx_waitlist_holds_waitlist on waitlist_holds(waitlist_id);
+    create index idx_waitlist_holds_status on waitlist_holds(status);
+    create index idx_waitlist_holds_hold_until on waitlist_holds(hold_until);
+    `,
+  },
+  {
+    name: "022_message_threads_and_task_updates",
+    sql: `
+    -- Message threads for internal messaging
+    create table if not exists message_threads (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      subject text,
+      is_archived boolean default false,
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    create index idx_message_threads_tenant on message_threads(tenant_id);
+
+    create table if not exists message_participants (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      thread_id text not null references message_threads(id),
+      user_id text not null references users(id),
+      is_archived boolean default false,
+      last_read_at timestamptz,
+      created_at timestamptz default now()
+    );
+
+    create index idx_message_participants_thread on message_participants(thread_id);
+    create index idx_message_participants_user on message_participants(user_id);
+
+    create table if not exists thread_messages (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      thread_id text not null references message_threads(id),
+      sender_id text not null references users(id),
+      body text not null,
+      created_at timestamptz default now()
+    );
+
+    create index idx_thread_messages_thread on thread_messages(thread_id);
+    create index idx_thread_messages_sender on thread_messages(sender_id);
+
+    -- Add missing columns to tasks table
+    alter table tasks add column if not exists description text;
+    alter table tasks add column if not exists category text;
+    alter table tasks add column if not exists priority text default 'normal';
+    `,
+  },
+  {
+    name: "023_tasks_due_date",
+    sql: `
+    alter table tasks add column if not exists due_date timestamptz;
+    `,
+  },
+  {
+    name: "024_rooms_and_location_enhancements",
+    sql: `
+    -- Add phone and is_active to locations (facilities)
+    alter table locations add column if not exists phone text;
+    alter table locations add column if not exists is_active boolean default true;
+
+    -- Add is_active to providers
+    alter table providers add column if not exists is_active boolean default true;
+
+    -- Create rooms table
+    create table if not exists rooms (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      facility_id text not null references locations(id),
+      name text not null,
+      room_type text default 'exam',
+      is_active boolean default true,
+      created_at timestamptz default now()
+    );
+
+    create index idx_rooms_tenant on rooms(tenant_id);
+    create index idx_rooms_facility on rooms(facility_id);
+    create index idx_rooms_active on rooms(is_active);
+    `,
+  },
+  {
+    name: "025_photos_lesion_id",
+    sql: `
+    -- Add lesion_id to photos table for linking photos to lesions
+    alter table photos add column if not exists lesion_id text references lesions(id);
+    create index if not exists idx_photos_lesion on photos(lesion_id) where lesion_id is not null;
+    `,
+  },
+  {
+    name: "026_photos_extended_columns",
+    sql: `
+    -- Add additional columns to photos table for full feature support
+    alter table photos add column if not exists photo_type text;
+    alter table photos add column if not exists annotations jsonb;
+    alter table photos add column if not exists comparison_group_id text;
+    alter table photos add column if not exists sequence_number int;
+    alter table photos add column if not exists category text;
+    alter table photos add column if not exists body_region text;
+    alter table photos add column if not exists description text;
+    alter table photos add column if not exists filename text;
+    alter table photos add column if not exists mime_type text;
+    alter table photos add column if not exists file_size int;
+    `,
+  },
+  {
+    name: "027_documents_extended_columns",
+    sql: `
+    -- Add additional columns to documents table for full feature support
+    alter table documents add column if not exists category text;
+    alter table documents add column if not exists subcategory text;
+    alter table documents add column if not exists description text;
+    alter table documents add column if not exists file_size int;
+    alter table documents add column if not exists mime_type text;
+    alter table documents add column if not exists thumbnail_url text;
+    alter table documents add column if not exists uploaded_by text references users(id);
+    alter table documents add column if not exists is_signed boolean default false;
+    alter table documents add column if not exists signed_at timestamptz;
+    alter table documents add column if not exists signed_by text references users(id);
+    alter table documents add column if not exists ocr_text text;
+
+    -- Create document access log table
+    create table if not exists document_access_log (
+      id text primary key,
+      document_id text not null references documents(id) on delete cascade,
+      tenant_id text not null references tenants(id),
+      user_id text not null references users(id),
+      action text not null,
+      ip_address text,
+      user_agent text,
+      created_at timestamptz default now()
+    );
+
+    -- Create document signatures table
+    create table if not exists document_signatures (
+      id text primary key,
+      document_id text not null references documents(id) on delete cascade,
+      tenant_id text not null references tenants(id),
+      signer_id text not null references users(id),
+      signer_name text not null,
+      signature_data text not null,
+      signature_type text not null,
+      ip_address text,
+      user_agent text,
+      created_at timestamptz default now()
+    );
+
+    -- Create document versions table
+    create table if not exists document_versions (
+      id text primary key,
+      document_id text not null references documents(id) on delete cascade,
+      version_number int not null,
+      file_url text not null,
+      file_size int,
+      mime_type text,
+      uploaded_by text references users(id),
+      uploaded_at timestamptz default now(),
+      change_description text
+    );
+    `,
+  },
+  {
+    name: "028_tasks_extended_columns",
+    sql: `
+    -- Add additional columns to tasks table for full feature support
+    alter table tasks add column if not exists due_at timestamptz;
+    alter table tasks add column if not exists completed_at timestamptz;
+    alter table tasks add column if not exists completed_by text references users(id);
+
+    -- Create task comments table
+    create table if not exists task_comments (
+      id text primary key,
+      task_id text not null references tasks(id) on delete cascade,
+      tenant_id text not null references tenants(id),
+      user_id text not null references users(id),
+      comment text not null,
+      created_at timestamptz default now()
+    );
+
+    -- Create index for task comments lookup
+    create index if not exists idx_task_comments_task_id on task_comments(task_id);
+    `,
+  },
+  {
+    name: "029_audit_log_enhancements",
+    sql: `
+    -- Enhanced Audit Log for HIPAA Compliance
+    -- Add new columns to existing audit_log table or recreate if needed
+
+    -- Drop and recreate audit_log with enhanced schema
+    DROP TABLE IF EXISTS audit_log CASCADE;
+
+    CREATE TABLE audit_log (
+      id text PRIMARY KEY,
+      tenant_id text NOT NULL,
+      user_id text REFERENCES users(id),
+      action text NOT NULL,
+      resource_type text NOT NULL,
+      resource_id text,
+      ip_address text,
+      user_agent text,
+      changes jsonb,
+      metadata jsonb,
+      severity text DEFAULT 'info',
+      status text DEFAULT 'success',
+      created_at timestamptz DEFAULT now()
+    );
+
+    -- Indexes for fast filtering and searching
+    CREATE INDEX idx_audit_tenant ON audit_log(tenant_id);
+    CREATE INDEX idx_audit_user ON audit_log(user_id);
+    CREATE INDEX idx_audit_action ON audit_log(action);
+    CREATE INDEX idx_audit_resource ON audit_log(resource_type, resource_id);
+    CREATE INDEX idx_audit_resource_type ON audit_log(resource_type);
+    CREATE INDEX idx_audit_created ON audit_log(created_at DESC);
+    CREATE INDEX idx_audit_ip ON audit_log(ip_address);
+    CREATE INDEX idx_audit_severity ON audit_log(severity);
+    CREATE INDEX idx_audit_status ON audit_log(status);
+
+    -- Composite indexes for common queries
+    CREATE INDEX idx_audit_tenant_created ON audit_log(tenant_id, created_at DESC);
+    CREATE INDEX idx_audit_tenant_user ON audit_log(tenant_id, user_id, created_at DESC);
+    CREATE INDEX idx_audit_tenant_action ON audit_log(tenant_id, action, created_at DESC);
+    CREATE INDEX idx_audit_tenant_resource ON audit_log(tenant_id, resource_type, created_at DESC);
+
+    -- JSONB indexes for searching changes
+    CREATE INDEX idx_audit_changes ON audit_log USING gin(changes);
+    CREATE INDEX idx_audit_metadata ON audit_log USING gin(metadata);
+    `,
+  },
+  {
+    name: "030_ambient_scribe_tables",
+    sql: `
+    -- Ambient Scribe Tables
+    -- Recording sessions for ambient AI note generation
+    create table if not exists ambient_recordings (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      encounter_id text references encounters(id),
+      patient_id text not null references patients(id),
+      provider_id text not null references users(id),
+      status text not null default 'recording' check (status in ('recording', 'processing', 'completed', 'failed')),
+      audio_url text,
+      duration_seconds int,
+      transcript text,
+      started_at timestamptz default now(),
+      ended_at timestamptz,
+      processed_at timestamptz,
+      error_message text,
+      created_at timestamptz default now()
+    );
+
+    create index idx_ambient_recordings_tenant on ambient_recordings(tenant_id);
+    create index idx_ambient_recordings_encounter on ambient_recordings(encounter_id);
+    create index idx_ambient_recordings_patient on ambient_recordings(patient_id);
+    create index idx_ambient_recordings_provider on ambient_recordings(provider_id);
+    create index idx_ambient_recordings_status on ambient_recordings(status);
+
+    -- Generated notes from ambient recordings
+    create table if not exists ambient_generated_notes (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      recording_id text not null references ambient_recordings(id) on delete cascade,
+      encounter_id text references encounters(id),
+      note_content jsonb not null,
+      status text not null default 'draft' check (status in ('draft', 'approved', 'rejected', 'edited')),
+      confidence_score numeric,
+      edit_count int default 0,
+      approved_by text references users(id),
+      approved_at timestamptz,
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    create index idx_ambient_notes_tenant on ambient_generated_notes(tenant_id);
+    create index idx_ambient_notes_recording on ambient_generated_notes(recording_id);
+    create index idx_ambient_notes_encounter on ambient_generated_notes(encounter_id);
+    create index idx_ambient_notes_status on ambient_generated_notes(status);
+    `,
+  },
+  {
+    name: "031_ai_agent_configurations",
+    sql: `
+    -- AI Agent Configurations
+    -- Allows offices to create multiple AI agent profiles for different visit types
+    -- e.g., Medical Dermatology, Cosmetic Consult, Mohs Surgery, Pediatric Derm
+
+    -- Main configurations table
+    CREATE TABLE IF NOT EXISTS ai_agent_configurations (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+
+      -- Configuration metadata
+      name TEXT NOT NULL,
+      description TEXT,
+      is_default BOOLEAN DEFAULT false,
+      is_active BOOLEAN DEFAULT true,
+
+      -- Visit type association (optional)
+      appointment_type_id TEXT REFERENCES appointment_types(id) ON DELETE SET NULL,
+      specialty_focus TEXT, -- 'medical_derm', 'cosmetic', 'mohs', 'pediatric_derm', 'general'
+
+      -- AI Model Configuration
+      ai_model TEXT DEFAULT 'claude-3-5-sonnet-20241022',
+      temperature DECIMAL(3,2) DEFAULT 0.30,
+      max_tokens INTEGER DEFAULT 4000,
+
+      -- Prompt Templates
+      system_prompt TEXT NOT NULL,
+      prompt_template TEXT NOT NULL,
+
+      -- Note Structure Configuration (JSONB)
+      note_sections JSONB NOT NULL DEFAULT '["chiefComplaint", "hpi", "ros", "physicalExam", "assessment", "plan"]'::jsonb,
+      section_prompts JSONB DEFAULT '{}'::jsonb,
+
+      -- Output Formatting
+      output_format TEXT DEFAULT 'soap', -- soap, narrative, procedure_note
+      verbosity_level TEXT DEFAULT 'standard', -- concise, standard, detailed
+      include_codes BOOLEAN DEFAULT true,
+
+      -- Terminology & Focus (JSONB)
+      terminology_set JSONB DEFAULT '{}'::jsonb,
+      focus_areas JSONB DEFAULT '[]'::jsonb,
+
+      -- Code Suggestions (JSONB)
+      default_cpt_codes JSONB DEFAULT '[]'::jsonb,
+      default_icd10_codes JSONB DEFAULT '[]'::jsonb,
+
+      -- Follow-up & Tasks
+      default_follow_up_interval TEXT,
+      task_templates JSONB DEFAULT '[]'::jsonb,
+
+      -- Metadata
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+      -- Ensure unique names per tenant
+      UNIQUE(tenant_id, name)
+    );
+
+    -- Indexes
+    CREATE INDEX idx_agent_configs_tenant ON ai_agent_configurations(tenant_id);
+    CREATE INDEX idx_agent_configs_appointment_type ON ai_agent_configurations(appointment_type_id);
+    CREATE INDEX idx_agent_configs_active ON ai_agent_configurations(tenant_id, is_active);
+    CREATE INDEX idx_agent_configs_specialty ON ai_agent_configurations(tenant_id, specialty_focus);
+
+    -- Ensure only one default per tenant
+    CREATE UNIQUE INDEX idx_agent_configs_one_default_per_tenant
+      ON ai_agent_configurations(tenant_id)
+      WHERE is_default = true;
+
+    -- Add agent configuration reference to ambient_recordings
+    ALTER TABLE ambient_recordings
+    ADD COLUMN IF NOT EXISTS agent_config_id TEXT REFERENCES ai_agent_configurations(id) ON DELETE SET NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_ambient_recordings_agent_config ON ambient_recordings(agent_config_id);
+
+    -- Add agent configuration tracking to ambient_generated_notes
+    ALTER TABLE ambient_generated_notes
+    ADD COLUMN IF NOT EXISTS agent_config_id TEXT REFERENCES ai_agent_configurations(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS agent_config_snapshot JSONB;
+
+    CREATE INDEX IF NOT EXISTS idx_ambient_notes_agent_config ON ambient_generated_notes(agent_config_id);
+
+    -- Agent configuration version history (for audit trail)
+    CREATE TABLE IF NOT EXISTS ai_agent_config_versions (
+      id TEXT PRIMARY KEY,
+      config_id TEXT NOT NULL REFERENCES ai_agent_configurations(id) ON DELETE CASCADE,
+      version_number INTEGER NOT NULL,
+
+      -- Snapshot of configuration at this version
+      config_snapshot JSONB NOT NULL,
+
+      -- Change metadata
+      changed_by TEXT REFERENCES users(id),
+      change_reason TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+      UNIQUE(config_id, version_number)
+    );
+
+    CREATE INDEX idx_agent_config_versions_config ON ai_agent_config_versions(config_id);
+
+    -- Usage analytics tracking
+    CREATE TABLE IF NOT EXISTS ai_agent_usage_analytics (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      agent_config_id TEXT NOT NULL REFERENCES ai_agent_configurations(id) ON DELETE CASCADE,
+      provider_id TEXT REFERENCES providers(id) ON DELETE CASCADE,
+
+      -- Usage metrics
+      notes_generated INTEGER DEFAULT 0,
+      notes_approved INTEGER DEFAULT 0,
+      notes_rejected INTEGER DEFAULT 0,
+      avg_confidence_score DECIMAL(5,4),
+      avg_edit_count DECIMAL(5,2),
+
+      -- Time metrics
+      avg_generation_time_ms INTEGER,
+      avg_review_time_seconds INTEGER,
+
+      -- Period (for aggregation)
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+      UNIQUE(tenant_id, agent_config_id, provider_id, period_start)
+    );
+
+    CREATE INDEX idx_agent_analytics_config ON ai_agent_usage_analytics(agent_config_id);
+    CREATE INDEX idx_agent_analytics_period ON ai_agent_usage_analytics(period_start, period_end);
+    CREATE INDEX idx_agent_analytics_tenant ON ai_agent_usage_analytics(tenant_id);
+
+    -- Trigger to update updated_at
+    CREATE OR REPLACE FUNCTION update_ai_agent_config_timestamp()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_ai_agent_config_updated_at ON ai_agent_configurations;
+    CREATE TRIGGER trigger_ai_agent_config_updated_at
+      BEFORE UPDATE ON ai_agent_configurations
+      FOR EACH ROW
+      EXECUTE FUNCTION update_ai_agent_config_timestamp();
+
+    DROP TRIGGER IF EXISTS trigger_ai_agent_analytics_updated_at ON ai_agent_usage_analytics;
+    CREATE TRIGGER trigger_ai_agent_analytics_updated_at
+      BEFORE UPDATE ON ai_agent_usage_analytics
+      FOR EACH ROW
+      EXECUTE FUNCTION update_ai_agent_config_timestamp();
+    `,
+  },
+  {
+    name: "032_ai_agent_config_templates",
+    sql: `
+    -- System-level AI Agent Configuration Templates
+    -- These are master templates that can be copied to tenant configurations
+
+    CREATE TABLE IF NOT EXISTS ai_agent_config_templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      specialty_focus TEXT NOT NULL,
+
+      -- AI Model Configuration
+      ai_model TEXT DEFAULT 'claude-3-5-sonnet-20241022',
+      temperature DECIMAL(3,2) DEFAULT 0.30,
+      max_tokens INTEGER DEFAULT 4000,
+
+      -- Prompt Templates
+      system_prompt TEXT NOT NULL,
+      prompt_template TEXT NOT NULL,
+
+      -- Note Structure Configuration
+      note_sections JSONB NOT NULL,
+      section_prompts JSONB DEFAULT '{}'::jsonb,
+
+      -- Output Formatting
+      output_format TEXT DEFAULT 'soap',
+      verbosity_level TEXT DEFAULT 'standard',
+      include_codes BOOLEAN DEFAULT true,
+
+      -- Specialty-specific terminology
+      terminology_set JSONB DEFAULT '{}'::jsonb,
+      focus_areas JSONB DEFAULT '[]'::jsonb,
+
+      -- Default billing codes
+      default_cpt_codes JSONB DEFAULT '[]'::jsonb,
+      default_icd10_codes JSONB DEFAULT '[]'::jsonb,
+
+      -- Follow-up defaults
+      default_follow_up_interval TEXT,
+      task_templates JSONB DEFAULT '[]'::jsonb,
+
+      -- Metadata
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    );
+
+    CREATE INDEX idx_agent_templates_specialty ON ai_agent_config_templates(specialty_focus);
+    CREATE INDEX idx_agent_templates_active ON ai_agent_config_templates(is_active);
+
+    -- Insert default dermatology templates
+    INSERT INTO ai_agent_config_templates (
+      id, name, description, specialty_focus,
+      system_prompt, prompt_template, note_sections, section_prompts,
+      output_format, verbosity_level, terminology_set, focus_areas,
+      default_cpt_codes, default_icd10_codes, default_follow_up_interval, task_templates
+    ) VALUES
+    -- Medical Dermatology Template
+    (
+      'tpl-medical-derm',
+      'Medical Dermatology',
+      'General medical dermatology visits including inflammatory conditions, infections, and chronic skin diseases',
+      'medical_derm',
+      'You are a medical dermatology documentation assistant. Generate thorough, clinically accurate notes for medical dermatology encounters. Focus on:
+- Precise lesion descriptions using dermatologic terminology
+- Relevant history including duration, triggers, treatments tried
+- Detailed physical exam with morphology, distribution, and clinical features
+- Evidence-based assessment and treatment plans
+- Appropriate ICD-10 and CPT coding suggestions
+
+Use standard dermatologic terminology and SOAP format. Be concise but comprehensive.',
+      'Based on the following transcript from a medical dermatology visit, generate a complete clinical note.
+
+TRANSCRIPT:
+{{transcript}}
+
+PATIENT CONTEXT:
+- Name: {{patientName}}
+- Age: {{patientAge}}
+- Chief Complaint: {{chiefComplaint}}
+- Relevant History: {{relevantHistory}}
+
+Generate the note with the following sections: {{sections}}
+
+For each section, provide clinically appropriate content based on the transcript. If information for a section is not available in the transcript, indicate "Not documented" rather than making assumptions.',
+      '["chiefComplaint", "hpi", "ros", "physicalExam", "assessment", "plan"]'::jsonb,
+      '{
+        "chiefComplaint": "Extract the primary reason for visit in 1-2 sentences",
+        "hpi": "Include onset, duration, location, quality, severity, timing, context, modifying factors, and associated symptoms",
+        "ros": "Focus on constitutional symptoms and skin-related review",
+        "physicalExam": "Detail morphology, color, size, distribution, configuration, and any dermoscopic findings",
+        "assessment": "List diagnoses with ICD-10 codes, include differential if applicable",
+        "plan": "Include medications, procedures, patient education, and follow-up with CPT codes"
+      }'::jsonb,
+      'soap',
+      'standard',
+      '{
+        "morphology": ["macule", "patch", "papule", "plaque", "nodule", "tumor", "vesicle", "bulla", "pustule", "wheal", "cyst"],
+        "color": ["erythematous", "violaceous", "hyperpigmented", "hypopigmented", "flesh-colored", "yellow", "brown", "black"],
+        "distribution": ["localized", "generalized", "symmetric", "asymmetric", "acral", "truncal", "flexural", "extensor"],
+        "configuration": ["linear", "annular", "grouped", "scattered", "dermatomal", "follicular"]
+      }'::jsonb,
+      '["inflammatory skin conditions", "infections", "chronic dermatoses", "drug reactions", "autoimmune conditions"]'::jsonb,
+      '[{"code": "99213", "description": "Office visit, established, level 3"}, {"code": "99214", "description": "Office visit, established, level 4"}]'::jsonb,
+      '[{"code": "L30.9", "description": "Dermatitis, unspecified"}, {"code": "L70.0", "description": "Acne vulgaris"}]'::jsonb,
+      '4-6 weeks',
+      '[{"task": "Prior authorization if biologic prescribed", "priority": "high", "daysFromVisit": 1}, {"task": "Lab follow-up for systemic medications", "priority": "medium", "daysFromVisit": 14}]'::jsonb
+    ),
+    -- Cosmetic Consultation Template
+    (
+      'tpl-cosmetic',
+      'Cosmetic Consultation',
+      'Aesthetic consultations including neurotoxins, fillers, laser treatments, and cosmetic procedures',
+      'cosmetic',
+      'You are a cosmetic dermatology documentation assistant. Generate professional notes for aesthetic consultations. Focus on:
+- Patient aesthetic concerns and goals
+- Skin type assessment (Fitzpatrick scale)
+- Facial analysis and anatomy
+- Treatment recommendations with expected outcomes
+- Informed consent documentation
+- Pre and post procedure instructions
+
+Maintain professional, patient-friendly language while being clinically accurate.',
+      'Based on the following transcript from a cosmetic consultation, generate a complete consultation note.
+
+TRANSCRIPT:
+{{transcript}}
+
+PATIENT CONTEXT:
+- Name: {{patientName}}
+- Age: {{patientAge}}
+- Primary Concern: {{chiefComplaint}}
+- Previous Cosmetic History: {{relevantHistory}}
+
+Generate the consultation note with these sections: {{sections}}
+
+Focus on patient goals, anatomical assessment, and treatment planning.',
+      '["chiefComplaint", "cosmeticHistory", "skinAnalysis", "treatmentDiscussion", "plan", "informedConsent"]'::jsonb,
+      '{
+        "chiefComplaint": "Patient aesthetic concerns and goals for today visit",
+        "cosmeticHistory": "Previous cosmetic treatments, reactions, satisfaction with results",
+        "skinAnalysis": "Fitzpatrick skin type, facial analysis, areas of concern, skin quality assessment",
+        "treatmentDiscussion": "Options discussed, expected outcomes, risks, alternatives",
+        "plan": "Recommended treatments, products, timeline",
+        "informedConsent": "Risks discussed, questions answered, consent obtained"
+      }'::jsonb,
+      'narrative',
+      'detailed',
+      '{
+        "facial_zones": ["forehead", "glabella", "periorbital", "malar", "nasolabial", "perioral", "jawline", "neck"],
+        "assessment_terms": ["rhytids", "volume loss", "skin laxity", "textural irregularities", "dyschromia", "pore size"],
+        "treatments": ["neurotoxin", "dermal filler", "laser resurfacing", "chemical peel", "microneedling", "IPL"]
+      }'::jsonb,
+      '["facial rejuvenation", "volume restoration", "wrinkle reduction", "skin texture", "pigmentation correction"]'::jsonb,
+      '[{"code": "11102", "description": "Tangential biopsy"}, {"code": "64615", "description": "Chemodenervation, muscle"}]'::jsonb,
+      '[]'::jsonb,
+      '2-4 weeks',
+      '[{"task": "Send before photos to patient", "priority": "low", "daysFromVisit": 1}, {"task": "Follow-up call for treatment satisfaction", "priority": "medium", "daysFromVisit": 14}]'::jsonb
+    ),
+    -- Mohs Surgery Template
+    (
+      'tpl-mohs',
+      'Mohs Surgery',
+      'Mohs micrographic surgery documentation including pre-op, intra-op, and reconstruction',
+      'mohs',
+      'You are a Mohs surgery documentation assistant. Generate comprehensive surgical documentation. Focus on:
+- Pre-operative tumor assessment and staging
+- Detailed surgical margins and layers
+- Defect size and reconstruction planning
+- Pathology correlation
+- Post-operative care instructions
+
+Use precise surgical terminology and measurements. Document all stages systematically.',
+      'Based on the following transcript from a Mohs surgery case, generate a complete surgical note.
+
+TRANSCRIPT:
+{{transcript}}
+
+PATIENT CONTEXT:
+- Name: {{patientName}}
+- Age: {{patientAge}}
+- Diagnosis: {{chiefComplaint}}
+- Tumor Location: {{relevantHistory}}
+
+Generate the surgical note with these sections: {{sections}}
+
+Include precise measurements and staging details.',
+      '["preOperative", "tumorAssessment", "mohsStages", "defectDescription", "reconstruction", "postOperativePlan"]'::jsonb,
+      '{
+        "preOperative": "Indication, informed consent, anesthesia plan, pre-op photos",
+        "tumorAssessment": "Clinical size, borders, depth estimate, prior treatments",
+        "mohsStages": "Each stage: tissue processed, margins examined, clearance status",
+        "defectDescription": "Final defect size (LxWxD), location, structures involved",
+        "reconstruction": "Repair type, technique, sutures used, estimated cosmetic outcome",
+        "postOperativePlan": "Wound care, activity restrictions, signs of complications, follow-up"
+      }'::jsonb,
+      'procedure_note',
+      'detailed',
+      '{
+        "tumor_types": ["basal cell carcinoma", "squamous cell carcinoma", "melanoma in situ", "dermatofibrosarcoma protuberans"],
+        "reconstruction": ["primary closure", "adjacent tissue transfer", "flap", "graft", "secondary intention"],
+        "flap_types": ["advancement", "rotation", "transposition", "interpolation", "bilobe"]
+      }'::jsonb,
+      '["margin assessment", "tissue processing", "reconstruction options", "wound healing"]'::jsonb,
+      '[{"code": "17311", "description": "Mohs, head/neck/hands/feet/genitalia, first stage"}, {"code": "17312", "description": "Mohs, each additional stage"}]'::jsonb,
+      '[{"code": "C44.31", "description": "BCC skin of face"}, {"code": "C44.41", "description": "SCC skin of scalp/neck"}]'::jsonb,
+      '1-2 weeks',
+      '[{"task": "Pathology report review", "priority": "high", "daysFromVisit": 3}, {"task": "Wound check appointment", "priority": "high", "daysFromVisit": 7}, {"task": "Suture removal", "priority": "high", "daysFromVisit": 10}]'::jsonb
+    ),
+    -- Pediatric Dermatology Template
+    (
+      'tpl-pediatric',
+      'Pediatric Dermatology',
+      'Pediatric skin conditions with age-appropriate documentation and family counseling',
+      'pediatric_derm',
+      'You are a pediatric dermatology documentation assistant. Generate comprehensive notes for pediatric patients. Focus on:
+- Age-appropriate history taking (from parent/guardian)
+- Growth and developmental considerations
+- Child-friendly examination documentation
+- Family impact and quality of life
+- Age-appropriate treatment options
+- Parent/guardian education and counseling
+
+Use clear language suitable for family communication while maintaining clinical accuracy.',
+      'Based on the following transcript from a pediatric dermatology visit, generate a complete clinical note.
+
+TRANSCRIPT:
+{{transcript}}
+
+PATIENT CONTEXT:
+- Name: {{patientName}}
+- Age: {{patientAge}}
+- Chief Complaint: {{chiefComplaint}}
+- Relevant History: {{relevantHistory}}
+- Historian: Parent/Guardian
+
+Generate the note with these sections: {{sections}}
+
+Consider age-appropriate treatments and include family counseling points.',
+      '["chiefComplaint", "hpi", "birthHistory", "developmentalHistory", "familyHistory", "physicalExam", "assessment", "plan", "familyCounseling"]'::jsonb,
+      '{
+        "chiefComplaint": "Primary concern as reported by parent/guardian",
+        "hpi": "Include onset, triggers, impact on sleep/school/activities, treatments tried",
+        "birthHistory": "Gestational age, delivery, NICU stay if relevant",
+        "developmentalHistory": "Growth, milestones, relevant to skin condition",
+        "familyHistory": "Atopy, skin conditions, autoimmune disease in family",
+        "physicalExam": "Child-friendly exam, cooperation level, detailed skin findings",
+        "assessment": "Age-appropriate differential and diagnosis",
+        "plan": "Child-safe medications, dosing by weight, vehicle preferences",
+        "familyCounseling": "Education provided, expectations set, when to return"
+      }'::jsonb,
+      'soap',
+      'detailed',
+      '{
+        "pediatric_conditions": ["atopic dermatitis", "molluscum", "warts", "birthmarks", "hemangioma", "port wine stain", "tinea", "impetigo"],
+        "age_groups": ["neonate", "infant", "toddler", "school-age", "adolescent"],
+        "considerations": ["weight-based dosing", "vehicle preference", "taste", "application ease"]
+      }'::jsonb,
+      '["atopic dermatitis", "birthmarks", "vascular lesions", "pediatric infections", "genetic skin disorders"]'::jsonb,
+      '[{"code": "99213", "description": "Office visit, established, level 3"}, {"code": "99214", "description": "Office visit, established, level 4"}]'::jsonb,
+      '[{"code": "L20.9", "description": "Atopic dermatitis, unspecified"}, {"code": "B07.9", "description": "Viral wart, unspecified"}]'::jsonb,
+      '4-8 weeks',
+      '[{"task": "Call family for treatment response check", "priority": "medium", "daysFromVisit": 14}, {"task": "School/daycare letter if needed", "priority": "low", "daysFromVisit": 1}]'::jsonb
+    )
+    ON CONFLICT (name) DO NOTHING;
+
+    -- Function to seed AI agent configurations for a tenant from templates
+    CREATE OR REPLACE FUNCTION seed_ai_agent_configs_for_tenant(p_tenant_id TEXT, p_created_by TEXT DEFAULT NULL)
+    RETURNS INTEGER AS $$
+    DECLARE
+      v_count INTEGER := 0;
+      v_template RECORD;
+      v_config_id TEXT;
+      v_is_first BOOLEAN := true;
+    BEGIN
+      -- Loop through active templates and create tenant configs
+      FOR v_template IN
+        SELECT * FROM ai_agent_config_templates WHERE is_active = true ORDER BY name
+      LOOP
+        v_config_id := 'cfg-' || gen_random_uuid()::text;
+
+        INSERT INTO ai_agent_configurations (
+          id, tenant_id, name, description, specialty_focus,
+          ai_model, temperature, max_tokens,
+          system_prompt, prompt_template,
+          note_sections, section_prompts,
+          output_format, verbosity_level, include_codes,
+          terminology_set, focus_areas,
+          default_cpt_codes, default_icd10_codes,
+          default_follow_up_interval, task_templates,
+          is_default, is_active, created_by
+        ) VALUES (
+          v_config_id,
+          p_tenant_id,
+          v_template.name,
+          v_template.description,
+          v_template.specialty_focus,
+          v_template.ai_model,
+          v_template.temperature,
+          v_template.max_tokens,
+          v_template.system_prompt,
+          v_template.prompt_template,
+          v_template.note_sections,
+          v_template.section_prompts,
+          v_template.output_format,
+          v_template.verbosity_level,
+          v_template.include_codes,
+          v_template.terminology_set,
+          v_template.focus_areas,
+          v_template.default_cpt_codes,
+          v_template.default_icd10_codes,
+          v_template.default_follow_up_interval,
+          v_template.task_templates,
+          v_is_first, -- First template becomes the default
+          true,
+          p_created_by
+        ) ON CONFLICT (tenant_id, name) DO NOTHING;
+
+        IF FOUND THEN
+          v_count := v_count + 1;
+          v_is_first := false;
+        END IF;
+      END LOOP;
+
+      RETURN v_count;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    -- Seed configurations for existing demo tenant
+    SELECT seed_ai_agent_configs_for_tenant('tenant-demo', 'u-admin');
+    `,
+  },
+  {
+    name: "033_referrals_registry_allergies",
+    sql: `
+    create table if not exists patient_allergies (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      patient_id text not null references patients(id),
+      allergen text not null,
+      allergen_type text,
+      reaction text,
+      severity text,
+      onset_date date,
+      notes text,
+      status text default 'active',
+      verified_at timestamptz,
+      verified_by text references users(id),
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    create index if not exists idx_patient_allergies_patient on patient_allergies(patient_id);
+    create index if not exists idx_patient_allergies_tenant on patient_allergies(tenant_id);
+    create index if not exists idx_patient_allergies_status on patient_allergies(status);
+
+    create table if not exists referrals (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      patient_id text not null references patients(id),
+      direction text not null,
+      status text not null default 'new',
+      priority text not null default 'routine',
+      referring_provider text,
+      referring_organization text,
+      referred_to_provider text,
+      referred_to_organization text,
+      appointment_id text references appointments(id),
+      reason text,
+      notes text,
+      created_by text references users(id),
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    create index if not exists idx_referrals_patient on referrals(patient_id);
+    create index if not exists idx_referrals_tenant on referrals(tenant_id);
+    create index if not exists idx_referrals_status on referrals(status);
+
+    create table if not exists registry_cohorts (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      name text not null,
+      description text,
+      status text not null default 'active',
+      criteria jsonb,
+      created_by text references users(id),
+      created_at timestamptz default now(),
+      updated_at timestamptz default now(),
+      unique(tenant_id, name)
+    );
+
+    create table if not exists registry_members (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      registry_id text not null references registry_cohorts(id) on delete cascade,
+      patient_id text not null references patients(id),
+      status text not null default 'active',
+      added_by text references users(id),
+      added_at timestamptz default now(),
+      unique(tenant_id, registry_id, patient_id)
+    );
+
+    create index if not exists idx_registry_members_registry on registry_members(registry_id);
+    create index if not exists idx_registry_members_patient on registry_members(patient_id);
+    create index if not exists idx_registry_members_tenant on registry_members(tenant_id);
+    `,
+  },
 ];
 
 async function ensureMigrationsTable() {

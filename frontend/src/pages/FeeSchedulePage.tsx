@@ -402,7 +402,7 @@ export function FeeSchedulePage() {
                         }}
                         title={schedule.isDefault ? 'Unset as default' : 'Set as default'}
                       >
-                        {schedule.isDefault ? '★' : '☆'}
+                        {schedule.isDefault ? '' : ''}
                       </button>
                       <button
                         type="button"

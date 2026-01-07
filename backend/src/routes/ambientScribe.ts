@@ -1,0 +1,1001 @@
+/**
+ * Ambient AI Medical Scribe Routes
+ *
+ * Handles recording, transcription, and AI-powered clinical note generation
+ */
+
+import { Router } from 'express';
+import crypto from 'crypto';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs/promises';
+import { z } from 'zod';
+import { pool } from '../db/pool';
+import { AuthedRequest, requireAuth } from '../middleware/auth';
+import { requireRoles } from '../middleware/rbac';
+import { auditLog } from '../services/audit';
+import {
+  transcribeAudio,
+  generateClinicalNote,
+  maskPHI,
+  TranscriptionResult
+} from '../services/ambientAI';
+
+const router = Router();
+
+// Configure multer for audio uploads
+const storage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    const uploadDir = path.join(process.cwd(), 'uploads', 'ambient-recordings');
+    try {
+      await fs.mkdir(uploadDir, { recursive: true });
+      cb(null, uploadDir);
+    } catch (error: any) {
+      cb(error, uploadDir);
+    }
+  },
+  filename: (req, file, cb) => {
+    const uniqueId = crypto.randomUUID();
+    cb(null, `recording-${uniqueId}${path.extname(file.originalname)}`);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 500 * 1024 * 1024 // 500MB max
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['.webm', '.mp4', '.mp3', '.wav', '.m4a', '.ogg'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowedTypes.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid audio format'));
+    }
+  }
+});
+
+// Validation schemas
+const startRecordingSchema = z.object({
+  encounterId: z.string().optional(),
+  patientId: z.string(),
+  providerId: z.string(),
+  consentObtained: z.boolean(),
+  consentMethod: z.enum(['verbal', 'written', 'electronic']).optional()
+});
+
+const completeRecordingSchema = z.object({
+  durationSeconds: z.number().min(1)
+});
+
+const updateNoteSchema = z.object({
+  chiefComplaint: z.string().optional(),
+  hpi: z.string().optional(),
+  ros: z.string().optional(),
+  physicalExam: z.string().optional(),
+  assessment: z.string().optional(),
+  plan: z.string().optional(),
+  editReason: z.string().optional()
+});
+
+const reviewActionSchema = z.object({
+  action: z.enum(['approve', 'reject', 'request_regeneration']),
+  reason: z.string().optional()
+});
+
+// ============================================================================
+// RECORDING ENDPOINTS
+// ============================================================================
+
+/**
+ * POST /api/ambient/recordings/start
+ * Start a new recording session
+ */
+router.post('/recordings/start', requireAuth, requireRoles(['provider', 'ma', 'admin']), async (req: AuthedRequest, res) => {
+  try {
+    const parsed = startRecordingSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { encounterId, patientId, providerId, consentObtained, consentMethod } = parsed.data;
+    const tenantId = req.user!.tenantId;
+    const recordingId = crypto.randomUUID();
+
+    if (!consentObtained) {
+      return res.status(400).json({ error: 'Patient consent required before recording' });
+    }
+
+    const patientCheck = await pool.query(
+      'SELECT id FROM patients WHERE id = $1 AND tenant_id = $2',
+      [patientId, tenantId]
+    );
+    if (patientCheck.rowCount === 0) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    const providerCheck = await pool.query(
+      'SELECT id FROM providers WHERE id = $1 AND tenant_id = $2',
+      [providerId, tenantId]
+    );
+    if (providerCheck.rowCount === 0) {
+      return res.status(404).json({ error: 'Provider not found' });
+    }
+
+    if (encounterId) {
+      const encounterCheck = await pool.query(
+        'SELECT id, patient_id FROM encounters WHERE id = $1 AND tenant_id = $2',
+        [encounterId, tenantId]
+      );
+      if (encounterCheck.rowCount === 0) {
+        return res.status(404).json({ error: 'Encounter not found' });
+      }
+      if (encounterCheck.rows[0].patient_id !== patientId) {
+        return res.status(400).json({ error: 'Encounter does not match patient' });
+      }
+    }
+
+    await pool.query(
+      `INSERT INTO ambient_recordings (
+        id, tenant_id, encounter_id, patient_id, provider_id,
+        recording_status, consent_obtained, consent_timestamp, consent_method,
+        is_encrypted, contains_phi
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10)`,
+      [recordingId, tenantId, encounterId || null, patientId, providerId, 'recording', true, consentMethod || 'verbal', false, true]
+    );
+
+    await auditLog(tenantId, req.user!.id, 'ambient_recording_start', 'ambient_recording', recordingId);
+
+    res.status(201).json({
+      recordingId,
+      status: 'recording',
+      startedAt: new Date().toISOString()
+    });
+  } catch (error: any) {
+    console.error('Start recording error:', error);
+    res.status(500).json({ error: 'Failed to start recording' });
+  }
+});
+
+/**
+ * POST /api/ambient/recordings/:id/upload
+ * Upload audio file for an existing recording
+ */
+router.post('/recordings/:id/upload', requireAuth, upload.single('audio'), async (req: AuthedRequest, res) => {
+  try {
+    const recordingId = req.params.id;
+    const tenantId = req.user!.tenantId;
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No audio file provided' });
+    }
+
+    const parsed = completeRecordingSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid duration' });
+    }
+
+    const { durationSeconds } = parsed.data;
+
+    // Verify recording exists and belongs to tenant
+    const recordingCheck = await pool.query(
+      'SELECT id FROM ambient_recordings WHERE id = $1 AND tenant_id = $2',
+      [recordingId, tenantId]
+    );
+
+    if (recordingCheck.rowCount === 0) {
+      return res.status(404).json({ error: 'Recording not found' });
+    }
+
+    // Update recording with file info
+    await pool.query(
+      `UPDATE ambient_recordings
+       SET file_path = $1,
+           file_size_bytes = $2,
+           mime_type = $3,
+           duration_seconds = $4,
+           recording_status = 'completed',
+           completed_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $5 AND tenant_id = $6`,
+      [req.file.path, req.file.size, req.file.mimetype, durationSeconds, recordingId, tenantId]
+    );
+
+    await auditLog(tenantId, req.user!.id, 'ambient_recording_upload', 'ambient_recording', recordingId);
+
+    // Automatically start transcription
+    try {
+      await startTranscription(recordingId, tenantId, req.file.path, durationSeconds);
+    } catch (error) {
+      console.error('Auto-transcription failed:', error);
+      // Don't fail the upload if transcription fails
+    }
+
+    res.json({
+      recordingId,
+      status: 'completed',
+      fileSize: req.file.size,
+      duration: durationSeconds
+    });
+  } catch (error: any) {
+    console.error('Upload recording error:', error);
+    res.status(500).json({ error: 'Failed to upload recording' });
+  }
+});
+
+/**
+ * GET /api/ambient/recordings
+ * List recordings for the current tenant
+ */
+router.get('/recordings', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { encounterId, patientId, status, limit = 50 } = req.query;
+
+    let query = `
+      SELECT
+        r.id,
+        r.encounter_id as "encounterId",
+        r.patient_id as "patientId",
+        r.provider_id as "providerId",
+        r.recording_status as "status",
+        r.duration_seconds as "durationSeconds",
+        r.consent_obtained as "consentObtained",
+        r.consent_method as "consentMethod",
+        r.started_at as "startedAt",
+        r.completed_at as "completedAt",
+        r.created_at as "createdAt",
+        p.first_name || ' ' || p.last_name as "patientName",
+        pr.full_name as "providerName"
+      FROM ambient_recordings r
+      JOIN patients p ON p.id = r.patient_id
+      JOIN providers pr ON pr.id = r.provider_id
+      WHERE r.tenant_id = $1
+    `;
+
+    const params: any[] = [tenantId];
+    let paramIndex = 2;
+
+    if (encounterId) {
+      query += ` AND r.encounter_id = $${paramIndex++}`;
+      params.push(encounterId);
+    }
+
+    if (patientId) {
+      query += ` AND r.patient_id = $${paramIndex++}`;
+      params.push(patientId);
+    }
+
+    if (status) {
+      query += ` AND r.recording_status = $${paramIndex++}`;
+      params.push(status);
+    }
+
+    query += ` ORDER BY r.created_at DESC LIMIT $${paramIndex}`;
+    params.push(Number(limit));
+
+    const result = await pool.query(query, params);
+
+    res.json({ recordings: result.rows });
+  } catch (error: any) {
+    console.error('List recordings error:', error);
+    res.status(500).json({ error: 'Failed to list recordings' });
+  }
+});
+
+/**
+ * GET /api/ambient/recordings/:id
+ * Get recording details
+ */
+router.get('/recordings/:id', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const recordingId = req.params.id;
+    const tenantId = req.user!.tenantId;
+
+    const result = await pool.query(
+      `SELECT
+        r.*,
+        p.first_name || ' ' || p.last_name as "patientName",
+        pr.full_name as "providerName"
+      FROM ambient_recordings r
+      JOIN patients p ON p.id = r.patient_id
+      JOIN providers pr ON pr.id = r.provider_id
+      WHERE r.id = $1 AND r.tenant_id = $2`,
+      [recordingId, tenantId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Recording not found' });
+    }
+
+    res.json({ recording: result.rows[0] });
+  } catch (error: any) {
+    console.error('Get recording error:', error);
+    res.status(500).json({ error: 'Failed to get recording' });
+  }
+});
+
+// ============================================================================
+// TRANSCRIPTION ENDPOINTS
+// ============================================================================
+
+/**
+ * POST /api/ambient/recordings/:id/transcribe
+ * Manually trigger transcription for a recording
+ */
+router.post('/recordings/:id/transcribe', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const recordingId = req.params.id;
+    const tenantId = req.user!.tenantId;
+
+    const recording = await pool.query(
+      'SELECT file_path, duration_seconds FROM ambient_recordings WHERE id = $1 AND tenant_id = $2',
+      [recordingId, tenantId]
+    );
+
+    if (recording.rowCount === 0) {
+      return res.status(404).json({ error: 'Recording not found' });
+    }
+
+    const { file_path, duration_seconds } = recording.rows[0];
+
+    if (!file_path) {
+      return res.status(400).json({ error: 'No audio file uploaded yet' });
+    }
+
+    const transcriptId = await startTranscription(recordingId, tenantId, file_path, duration_seconds);
+
+    res.json({
+      transcriptId,
+      status: 'processing',
+      message: 'Transcription started'
+    });
+  } catch (error: any) {
+    console.error('Transcribe error:', error);
+    res.status(500).json({ error: 'Failed to start transcription' });
+  }
+});
+
+/**
+ * GET /api/ambient/transcripts/:id
+ * Get transcript details
+ */
+router.get('/transcripts/:id', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const transcriptId = req.params.id;
+    const tenantId = req.user!.tenantId;
+
+    const result = await pool.query(
+      `SELECT * FROM ambient_transcripts WHERE id = $1 AND tenant_id = $2`,
+      [transcriptId, tenantId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Transcript not found' });
+    }
+
+    res.json({ transcript: result.rows[0] });
+  } catch (error: any) {
+    console.error('Get transcript error:', error);
+    res.status(500).json({ error: 'Failed to get transcript' });
+  }
+});
+
+/**
+ * GET /api/ambient/recordings/:id/transcript
+ * Get transcript for a recording
+ */
+router.get('/recordings/:id/transcript', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const recordingId = req.params.id;
+    const tenantId = req.user!.tenantId;
+
+    const result = await pool.query(
+      `SELECT * FROM ambient_transcripts WHERE recording_id = $1 AND tenant_id = $2`,
+      [recordingId, tenantId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Transcript not found' });
+    }
+
+    res.json({ transcript: result.rows[0] });
+  } catch (error: any) {
+    console.error('Get recording transcript error:', error);
+    res.status(500).json({ error: 'Failed to get transcript' });
+  }
+});
+
+// ============================================================================
+// GENERATED NOTES ENDPOINTS
+// ============================================================================
+
+/**
+ * POST /api/ambient/transcripts/:id/generate-note
+ * Generate clinical note from transcript
+ */
+router.post('/transcripts/:id/generate-note', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const transcriptId = req.params.id;
+    const tenantId = req.user!.tenantId;
+
+    const transcript = await pool.query(
+      `SELECT transcript_text, transcript_segments, encounter_id, recording_id
+       FROM ambient_transcripts WHERE id = $1 AND tenant_id = $2`,
+      [transcriptId, tenantId]
+    );
+
+    if (transcript.rowCount === 0) {
+      return res.status(404).json({ error: 'Transcript not found' });
+    }
+
+    const { transcript_text, transcript_segments, encounter_id, recording_id } = transcript.rows[0];
+
+    if (!transcript_text) {
+      return res.status(400).json({ error: 'Transcript not completed yet' });
+    }
+
+    const noteId = await generateNote(tenantId, transcriptId, encounter_id, transcript_text, transcript_segments);
+
+    res.json({
+      noteId,
+      status: 'processing',
+      message: 'Note generation started'
+    });
+  } catch (error: any) {
+    console.error('Generate note error:', error);
+    res.status(500).json({ error: 'Failed to generate note' });
+  }
+});
+
+/**
+ * GET /api/ambient/notes/:id
+ * Get generated note details
+ */
+router.get('/notes/:id', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const noteId = req.params.id;
+    const tenantId = req.user!.tenantId;
+
+    const result = await pool.query(
+      `SELECT
+        n.*,
+        t.transcript_text,
+        r.patient_id as "patientId",
+        r.provider_id as "providerId"
+      FROM ambient_generated_notes n
+      JOIN ambient_transcripts t ON t.id = n.transcript_id
+      JOIN ambient_recordings r ON r.id = t.recording_id
+      WHERE n.id = $1 AND n.tenant_id = $2`,
+      [noteId, tenantId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Generated note not found' });
+    }
+
+    res.json({ note: result.rows[0] });
+  } catch (error: any) {
+    console.error('Get note error:', error);
+    res.status(500).json({ error: 'Failed to get note' });
+  }
+});
+
+/**
+ * GET /api/ambient/encounters/:encounterId/notes
+ * Get all generated notes for an encounter
+ */
+router.get('/encounters/:encounterId/notes', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const encounterId = req.params.encounterId;
+    const tenantId = req.user!.tenantId;
+
+    const result = await pool.query(
+      `SELECT
+        n.*,
+        t.created_at as "transcriptCreatedAt"
+      FROM ambient_generated_notes n
+      JOIN ambient_transcripts t ON t.id = n.transcript_id
+      WHERE n.encounter_id = $1 AND n.tenant_id = $2
+      ORDER BY n.created_at DESC`,
+      [encounterId, tenantId]
+    );
+
+    res.json({ notes: result.rows });
+  } catch (error: any) {
+    console.error('Get encounter notes error:', error);
+    res.status(500).json({ error: 'Failed to get encounter notes' });
+  }
+});
+
+/**
+ * PATCH /api/ambient/notes/:id
+ * Update a generated note (creates audit trail)
+ */
+router.patch('/notes/:id', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
+  try {
+    const noteId = req.params.id;
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+
+    const parsed = updateNoteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const updates = parsed.data;
+
+    // Get current note values for audit trail
+    const current = await pool.query(
+      'SELECT * FROM ambient_generated_notes WHERE id = $1 AND tenant_id = $2',
+      [noteId, tenantId]
+    );
+
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    const currentNote = current.rows[0];
+
+    // Update note
+    const updateFields: string[] = [];
+    const updateValues: any[] = [];
+    let paramIndex = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined && key !== 'editReason') {
+        const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase(); // camelCase to snake_case
+        updateFields.push(`${dbKey} = $${paramIndex++}`);
+        updateValues.push(value);
+      }
+    }
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    updateFields.push(`updated_at = NOW()`);
+    updateValues.push(noteId, tenantId);
+
+    await pool.query(
+      `UPDATE ambient_generated_notes SET ${updateFields.join(', ')}
+       WHERE id = $${paramIndex++} AND tenant_id = $${paramIndex++}`,
+      updateValues
+    );
+
+    // Create audit trail entries for each changed field
+    for (const [key, newValue] of Object.entries(updates)) {
+      if (newValue !== undefined && key !== 'editReason') {
+        const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+        const oldValue = currentNote[dbKey];
+
+        if (oldValue !== newValue) {
+          await pool.query(
+            `INSERT INTO ambient_note_edits (
+              id, tenant_id, generated_note_id, edited_by, section,
+              previous_value, new_value, change_type, edit_reason, is_significant
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [
+              crypto.randomUUID(),
+              tenantId,
+              noteId,
+              userId,
+              dbKey,
+              oldValue,
+              newValue,
+              'update',
+              updates.editReason || null,
+              true
+            ]
+          );
+        }
+      }
+    }
+
+    await auditLog(tenantId, userId, 'ambient_note_edit', 'ambient_note', noteId);
+
+    res.json({ success: true, message: 'Note updated successfully' });
+  } catch (error: any) {
+    console.error('Update note error:', error);
+    res.status(500).json({ error: 'Failed to update note' });
+  }
+});
+
+/**
+ * POST /api/ambient/notes/:id/review
+ * Submit review decision (approve/reject)
+ */
+router.post('/notes/:id/review', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
+  try {
+    const noteId = req.params.id;
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+
+    const parsed = reviewActionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { action, reason } = parsed.data;
+
+    let newStatus: string;
+    switch (action) {
+      case 'approve':
+        newStatus = 'approved';
+        break;
+      case 'reject':
+        newStatus = 'rejected';
+        break;
+      case 'request_regeneration':
+        newStatus = 'regenerating';
+        break;
+      default:
+        return res.status(400).json({ error: 'Invalid action' });
+    }
+
+    await pool.query(
+      `UPDATE ambient_generated_notes
+       SET review_status = $1, reviewed_by = $2, reviewed_at = NOW(), updated_at = NOW()
+       WHERE id = $3 AND tenant_id = $4`,
+      [newStatus, userId, noteId, tenantId]
+    );
+
+    // Create audit entry
+    await pool.query(
+      `INSERT INTO ambient_note_edits (
+        id, tenant_id, generated_note_id, edited_by, section,
+        previous_value, new_value, change_type, edit_reason
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [crypto.randomUUID(), tenantId, noteId, userId, 'review_status', 'pending', newStatus, action, reason || null]
+    );
+
+    await auditLog(tenantId, userId, `ambient_note_${action}`, 'ambient_note', noteId);
+
+    res.json({
+      success: true,
+      status: newStatus,
+      message: `Note ${action}d successfully`
+    });
+  } catch (error: any) {
+    console.error('Review note error:', error);
+    res.status(500).json({ error: 'Failed to review note' });
+  }
+});
+
+/**
+ * POST /api/ambient/notes/:id/apply-to-encounter
+ * Apply approved note to encounter
+ */
+router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
+  try {
+    const noteId = req.params.id;
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+
+    const note = await pool.query(
+      `SELECT * FROM ambient_generated_notes WHERE id = $1 AND tenant_id = $2`,
+      [noteId, tenantId]
+    );
+
+    if (note.rowCount === 0) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    const noteData = note.rows[0];
+
+    if (noteData.review_status !== 'approved') {
+      return res.status(400).json({ error: 'Note must be approved before applying to encounter' });
+    }
+
+    if (!noteData.encounter_id) {
+      return res.status(400).json({ error: 'No encounter associated with this note' });
+    }
+
+    // Update encounter with note content
+    await pool.query(
+      `UPDATE encounters
+       SET chief_complaint = COALESCE($1, chief_complaint),
+           hpi = COALESCE($2, hpi),
+           ros = COALESCE($3, ros),
+           exam = COALESCE($4, exam),
+           assessment_plan = COALESCE($5, assessment_plan),
+           updated_at = NOW()
+       WHERE id = $6 AND tenant_id = $7`,
+      [
+        noteData.chief_complaint,
+        noteData.hpi,
+        noteData.ros,
+        noteData.physical_exam,
+        noteData.assessment + '\n\n' + noteData.plan,
+        noteData.encounter_id,
+        tenantId
+      ]
+    );
+
+    await auditLog(tenantId, userId, 'ambient_note_applied', 'encounter', noteData.encounter_id);
+
+    res.json({
+      success: true,
+      encounterId: noteData.encounter_id,
+      message: 'Note applied to encounter successfully'
+    });
+  } catch (error: any) {
+    console.error('Apply note error:', error);
+    res.status(500).json({ error: 'Failed to apply note to encounter' });
+  }
+});
+
+/**
+ * GET /api/ambient/notes/:id/edits
+ * Get edit history for a note
+ */
+router.get('/notes/:id/edits', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const noteId = req.params.id;
+    const tenantId = req.user!.tenantId;
+
+    const result = await pool.query(
+      `SELECT
+        e.*,
+        u.name as "editorName"
+      FROM ambient_note_edits e
+      JOIN users u ON u.id = e.edited_by
+      WHERE e.generated_note_id = $1 AND e.tenant_id = $2
+      ORDER BY e.created_at DESC`,
+      [noteId, tenantId]
+    );
+
+    res.json({ edits: result.rows });
+  } catch (error: any) {
+    console.error('Get edits error:', error);
+    res.status(500).json({ error: 'Failed to get edit history' });
+  }
+});
+
+/**
+ * DELETE /api/ambient/recordings/:id
+ * Delete a recording and associated data
+ */
+router.delete('/recordings/:id', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
+  try {
+    const recordingId = req.params.id;
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+
+    // Get file path for deletion
+    const recording = await pool.query(
+      'SELECT file_path FROM ambient_recordings WHERE id = $1 AND tenant_id = $2',
+      [recordingId, tenantId]
+    );
+
+    if (recording.rowCount === 0) {
+      return res.status(404).json({ error: 'Recording not found' });
+    }
+
+    const filePath = recording.rows[0].file_path;
+
+    // Delete from database (cascades to transcripts and notes)
+    await pool.query('DELETE FROM ambient_recordings WHERE id = $1 AND tenant_id = $2', [recordingId, tenantId]);
+
+    // Delete file
+    if (filePath) {
+      try {
+        await fs.unlink(filePath);
+      } catch (error) {
+        console.error('Failed to delete audio file:', error);
+        // Don't fail the request if file deletion fails
+      }
+    }
+
+    await auditLog(tenantId, userId, 'ambient_recording_delete', 'ambient_recording', recordingId);
+
+    res.json({ success: true, message: 'Recording deleted successfully' });
+  } catch (error: any) {
+    console.error('Delete recording error:', error);
+    res.status(500).json({ error: 'Failed to delete recording' });
+  }
+});
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/**
+ * Start transcription process for a recording
+ */
+async function startTranscription(
+  recordingId: string,
+  tenantId: string,
+  filePath: string,
+  durationSeconds: number
+): Promise<string> {
+  const transcriptId = crypto.randomUUID();
+
+  // Create transcript record
+  await pool.query(
+    `INSERT INTO ambient_transcripts (
+      id, tenant_id, recording_id, transcription_status, started_at
+    ) VALUES ($1, $2, $3, $4, NOW())`,
+    [transcriptId, tenantId, recordingId, 'processing']
+  );
+
+  // Get encounter_id from recording
+  const recording = await pool.query(
+    'SELECT encounter_id FROM ambient_recordings WHERE id = $1',
+    [recordingId]
+  );
+  const encounterId = recording.rows[0]?.encounter_id;
+
+  // Process transcription asynchronously
+  processTranscription(transcriptId, tenantId, recordingId, encounterId, filePath, durationSeconds).catch(error => {
+    console.error('Transcription processing error:', error);
+  });
+
+  return transcriptId;
+}
+
+/**
+ * Process transcription (async)
+ */
+async function processTranscription(
+  transcriptId: string,
+  tenantId: string,
+  recordingId: string,
+  encounterId: string | null,
+  filePath: string,
+  durationSeconds: number
+): Promise<void> {
+  try {
+    // Call mock AI service
+    const result: TranscriptionResult = await transcribeAudio(filePath, durationSeconds);
+
+    // Mask PHI
+    const maskedText = maskPHI(result.text, result.phiEntities);
+
+    // Update transcript
+    await pool.query(
+      `UPDATE ambient_transcripts
+       SET transcript_text = $1,
+           transcript_segments = $2,
+           language = $3,
+           speakers = $4,
+           speaker_count = $5,
+           confidence_score = $6,
+           word_count = $7,
+           original_text = $8,
+           phi_entities = $9,
+           phi_masked = $10,
+           transcription_status = $11,
+           completed_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $12 AND tenant_id = $13`,
+      [
+        maskedText,
+        JSON.stringify(result.segments),
+        result.language,
+        JSON.stringify(result.speakers),
+        result.speakerCount,
+        result.confidence,
+        result.wordCount,
+        result.text,
+        JSON.stringify(result.phiEntities),
+        result.phiEntities.length > 0,
+        'completed',
+        transcriptId,
+        tenantId
+      ]
+    );
+
+    // Auto-generate note if enabled
+    const settings = await pool.query(
+      'SELECT auto_generate_notes FROM ambient_scribe_settings WHERE tenant_id = $1 AND provider_id IS NULL',
+      [tenantId]
+    );
+
+    if (settings.rows[0]?.auto_generate_notes) {
+      await generateNote(tenantId, transcriptId, encounterId, maskedText, result.segments);
+    }
+  } catch (error: any) {
+    console.error('Transcription error:', error);
+    await pool.query(
+      `UPDATE ambient_transcripts
+       SET transcription_status = $1, error_message = $2, updated_at = NOW()
+       WHERE id = $3 AND tenant_id = $4`,
+      ['failed', error.message, transcriptId, tenantId]
+    );
+  }
+}
+
+/**
+ * Generate clinical note from transcript
+ */
+async function generateNote(
+  tenantId: string,
+  transcriptId: string,
+  encounterId: string | null,
+  transcriptText: string,
+  segments: any
+): Promise<string> {
+  const noteId = crypto.randomUUID();
+
+  // Create note record
+  await pool.query(
+    `INSERT INTO ambient_generated_notes (
+      id, tenant_id, transcript_id, encounter_id, generation_status, started_at
+    ) VALUES ($1, $2, $3, $4, $5, NOW())`,
+    [noteId, tenantId, transcriptId, encounterId, 'processing']
+  );
+
+  // Process note generation asynchronously
+  processNoteGeneration(noteId, tenantId, transcriptText, segments).catch(error => {
+    console.error('Note generation error:', error);
+  });
+
+  return noteId;
+}
+
+/**
+ * Process note generation (async)
+ */
+async function processNoteGeneration(
+  noteId: string,
+  tenantId: string,
+  transcriptText: string,
+  segments: any
+): Promise<void> {
+  try {
+    // Call mock AI service
+    const result = await generateClinicalNote(transcriptText, segments);
+
+    // Update note
+    await pool.query(
+      `UPDATE ambient_generated_notes
+       SET chief_complaint = $1,
+           hpi = $2,
+           ros = $3,
+           physical_exam = $4,
+           assessment = $5,
+           plan = $6,
+           suggested_icd10_codes = $7,
+           suggested_cpt_codes = $8,
+           mentioned_medications = $9,
+           mentioned_allergies = $10,
+           follow_up_tasks = $11,
+           overall_confidence = $12,
+           section_confidence = $13,
+           generation_status = $14,
+           completed_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $15 AND tenant_id = $16`,
+      [
+        result.chiefComplaint,
+        result.hpi,
+        result.ros,
+        result.physicalExam,
+        result.assessment,
+        result.plan,
+        JSON.stringify(result.suggestedIcd10),
+        JSON.stringify(result.suggestedCpt),
+        JSON.stringify(result.medications),
+        JSON.stringify(result.allergies),
+        JSON.stringify(result.followUpTasks),
+        result.overallConfidence,
+        JSON.stringify(result.sectionConfidence),
+        'completed',
+        noteId,
+        tenantId
+      ]
+    );
+  } catch (error: any) {
+    console.error('Note generation error:', error);
+    await pool.query(
+      `UPDATE ambient_generated_notes
+       SET generation_status = $1, error_message = $2, updated_at = NOW()
+       WHERE id = $3 AND tenant_id = $4`,
+      ['failed', error.message, noteId, tenantId]
+    );
+  }
+}
+
+export default router;

@@ -1,17 +1,37 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 
-interface Toast {
+export type ToastType = 'ok' | 'error' | 'warning' | 'info';
+
+export interface Toast {
   id: number;
   message: string;
-  type: 'ok' | 'error';
+  type: ToastType;
+  duration?: number;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
+  persistent?: boolean;
+}
+
+export interface ToastOptions {
+  duration?: number;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
+  persistent?: boolean;
 }
 
 interface ToastContextValue {
   toasts: Toast[];
-  showToast: (message: string, type?: 'ok' | 'error') => void;
-  showSuccess: (message: string) => void;
-  showError: (message: string) => void;
+  showToast: (message: string, type?: ToastType, options?: ToastOptions) => number;
+  showSuccess: (message: string, options?: ToastOptions) => number;
+  showError: (message: string, options?: ToastOptions) => number;
+  showWarning: (message: string, options?: ToastOptions) => number;
+  showInfo: (message: string, options?: ToastOptions) => number;
   dismissToast: (id: number) => void;
+  dismissAll: () => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -21,26 +41,52 @@ let toastId = 0;
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const showToast = useCallback((message: string, type: 'ok' | 'error' = 'ok') => {
+  const showToast = useCallback((
+    message: string,
+    type: ToastType = 'ok',
+    options: ToastOptions = {}
+  ): number => {
     const id = ++toastId;
-    setToasts((prev) => [...prev, { id, message, type }]);
+    const {
+      duration = 4000,
+      action,
+      persistent = false,
+    } = options;
 
-    // Auto-dismiss after 4 seconds
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    setToasts((prev) => [...prev, { id, message, type, duration, action, persistent }]);
+
+    // Auto-dismiss after duration unless persistent
+    if (!persistent && duration > 0) {
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, duration);
+    }
+
+    return id;
   }, []);
 
-  const showSuccess = useCallback((message: string) => {
-    showToast(message, 'ok');
+  const showSuccess = useCallback((message: string, options?: ToastOptions): number => {
+    return showToast(message, 'ok', options);
   }, [showToast]);
 
-  const showError = useCallback((message: string) => {
-    showToast(message, 'error');
+  const showError = useCallback((message: string, options?: ToastOptions): number => {
+    return showToast(message, 'error', { duration: 6000, ...options });
+  }, [showToast]);
+
+  const showWarning = useCallback((message: string, options?: ToastOptions): number => {
+    return showToast(message, 'warning', { duration: 5000, ...options });
+  }, [showToast]);
+
+  const showInfo = useCallback((message: string, options?: ToastOptions): number => {
+    return showToast(message, 'info', options);
   }, [showToast]);
 
   const dismissToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const dismissAll = useCallback(() => {
+    setToasts([]);
   }, []);
 
   return (
@@ -50,7 +96,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         showToast,
         showSuccess,
         showError,
+        showWarning,
+        showInfo,
         dismissToast,
+        dismissAll,
       }}
     >
       {children}
@@ -59,10 +108,34 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`toast ${toast.type === 'error' ? 'error' : ''}`}
-            onClick={() => dismissToast(toast.id)}
+            className={`toast ${toast.type}`}
+            onClick={() => !toast.persistent && dismissToast(toast.id)}
           >
-            {toast.message}
+            <span className="toast-message">{toast.message}</span>
+            {toast.action && (
+              <button
+                className="toast-action"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toast.action?.onClick();
+                  dismissToast(toast.id);
+                }}
+              >
+                {toast.action.label}
+              </button>
+            )}
+            {toast.persistent && (
+              <button
+                className="toast-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  dismissToast(toast.id);
+                }}
+                aria-label="Dismiss"
+              >
+                ×
+              </button>
+            )}
           </div>
         ))}
       </div>

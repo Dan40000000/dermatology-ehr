@@ -163,7 +163,7 @@ export function PhotoTimeline({ photos, getPhotoUrl, onPhotoClick }: PhotoTimeli
 
       {photos.length === 0 && (
         <div className="timeline-empty">
-          <div className="empty-icon">📷</div>
+          <div className="empty-icon"></div>
           <h3>No photos to display</h3>
           <p className="muted">Upload photos to see them in the timeline</p>
         </div>

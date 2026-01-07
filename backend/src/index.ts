@@ -46,6 +46,7 @@ import { recallsRouter } from "./routes/recalls";
 import { prescriptionsRouter } from "./routes/prescriptions";
 import { medicationsRouter } from "./routes/medications";
 import { pharmaciesRouter } from "./routes/pharmacies";
+import { rxHistoryRouter } from "./routes/rxHistory";
 import { kioskRouter } from "./routes/kiosk";
 import { consentFormsRouter } from "./routes/consentForms";
 import { patientPortalRouter } from "./routes/patientPortal";
@@ -66,8 +67,30 @@ import lesionsRouter from "./routes/lesions";
 import aiNoteDraftingRouter from "./routes/aiNoteDrafting";
 import voiceTranscriptionRouter from "./routes/voiceTranscription";
 import cdsRouter from "./routes/cds";
+import { faxRouter } from "./routes/fax";
+import { notesRouter } from "./routes/notes";
+import { directMessagingRouter } from "./routes/directMessaging";
+import { clearinghouseRouter } from "./routes/clearinghouse";
+import { qualityMeasuresRouter } from "./routes/qualityMeasures";
+import { referralsRouter } from "./routes/referrals";
+import { registryRouter } from "./routes/registry";
+// import telehealthRouter from "./routes/telehealth"; // TEMPORARILY DISABLED - needs bug fixes
+import { portalBillingRouter } from "./routes/portalBilling";
+import { portalIntakeRouter } from "./routes/portalIntake";
+import { labOrdersRouter } from "./routes/labOrders";
+import { labResultsRouter } from "./routes/labResults";
+import { labVendorsRouter } from "./routes/labVendors";
+import { dermPathRouter } from "./routes/dermPath";
+import ambientScribeRouter from "./routes/ambientScribe";
+import priorAuthRequestsRouter from "./routes/priorAuthRequests";
+import { erxRouter } from "./routes/erx";
+import adminRouter from "./routes/admin";
+import { aiAgentConfigsRouter } from "./routes/aiAgentConfigs";
+import { inventoryRouter } from "./routes/inventory";
+import { inventoryUsageRouter } from "./routes/inventoryUsage";
 import path from "path";
 import fs from "fs";
+import { waitlistAutoFillService } from "./services/waitlistAutoFillService";
 
 const app = express();
 
@@ -146,6 +169,9 @@ app.use("/api/recalls", recallsRouter);
 app.use("/api/prescriptions", prescriptionsRouter);
 app.use("/api/medications", medicationsRouter);
 app.use("/api/pharmacies", pharmaciesRouter);
+app.use("/api/rx-history", rxHistoryRouter);
+app.use("/api/erx", erxRouter);
+app.use("/api/admin", adminRouter);
 app.use("/api/prior-auth", priorAuthRouter);
 app.use("/api/time-blocks", timeBlocksRouter);
 app.use("/api/waitlist", waitlistRouter);
@@ -159,6 +185,8 @@ app.use("/api/patient-messages", patientMessagesRouter);
 app.use("/api/patient-portal/messages", patientPortalMessagesRouter);
 app.use("/api/canned-responses", cannedResponsesRouter);
 app.use("/api/patient-portal/scheduling", portalLimiter, patientSchedulingRouter);
+app.use("/api/patient-portal/billing", portalLimiter, portalBillingRouter);
+app.use("/api/patient-portal/intake", portalLimiter, portalIntakeRouter);
 app.use("/api/scheduling", apiLimiter, providerSchedulingRouter);
 app.use("/api/body-diagram", bodyDiagramRouter);
 app.use("/api/sms", smsRouter);
@@ -167,6 +195,23 @@ app.use("/api/lesions", lesionsRouter);
 app.use("/api/ai-notes", aiNoteDraftingRouter);
 app.use("/api/voice", voiceTranscriptionRouter);
 app.use("/api/cds", cdsRouter);
+app.use("/api/fax", faxRouter);
+app.use("/api/notes", notesRouter);
+app.use("/api/direct", directMessagingRouter);
+app.use("/api/clearinghouse", clearinghouseRouter);
+app.use("/api/quality", qualityMeasuresRouter);
+app.use("/api/referrals", referralsRouter);
+app.use("/api/registry", registryRouter);
+// app.use("/api/telehealth", telehealthRouter); // TEMPORARILY DISABLED - needs bug fixes
+app.use("/api/lab-orders", labOrdersRouter);
+app.use("/api/lab-results", labResultsRouter);
+app.use("/api/lab-vendors", labVendorsRouter);
+app.use("/api/dermpath", dermPathRouter);
+app.use("/api/ambient", ambientScribeRouter);
+app.use("/api/prior-auth-requests", priorAuthRequestsRouter);
+app.use("/api/ai-agent-configs", aiAgentConfigsRouter);
+app.use("/api/inventory", inventoryRouter);
+app.use("/api/inventory-usage", inventoryUsageRouter);
 
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -189,5 +234,14 @@ app.listen(env.port, () => {
   logger.info(`API server started on port ${env.port}`, {
     nodeEnv: process.env.NODE_ENV,
     port: env.port,
+  });
+
+  // Start waitlist hold expiration worker (runs every 15 minutes)
+  waitlistAutoFillService.startExpirationWorker(15).then(() => {
+    logger.info('Waitlist hold expiration worker started');
+  }).catch((error: any) => {
+    logger.error('Failed to start waitlist hold expiration worker', {
+      error: error.message,
+    });
   });
 });

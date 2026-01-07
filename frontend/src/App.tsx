@@ -441,7 +441,7 @@ function App() {
           padding: '2.5rem',
         }}>
           <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🏥</div>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
             <h1 style={{ margin: '0 0 0.5rem 0', color: '#1e1147', fontSize: '1.5rem', fontWeight: 700 }}>
               Mountain Pine Dermatology
             </h1>
@@ -555,7 +555,6 @@ function App() {
               }}
               onClick={handleLoadData}
             >
-              ⟳
             </button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -647,7 +646,7 @@ function App() {
                 Next Day ▶
               </button>
               <button type="button" className="ghost" onClick={handleLoadData}>
-                ⟳ Reload (⌘/Ctrl+R)
+                Reload (⌘/Ctrl+R)
               </button>
             </div>
           </div>

@@ -1,289 +1,853 @@
-import { useEffect, useState, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useToast } from '../contexts/ToastContext';
-import { Panel, Skeleton } from '../components/ui';
-import { fetchAppointments, fetchPatients } from '../api';
-import type { Appointment, Patient } from '../types';
+import {
+  createTelehealthSession,
+  fetchTelehealthSessions,
+  fetchTelehealthSession,
+  updateSessionStatus,
+  fetchWaitingRoom,
+  callPatientFromWaitingRoom,
+  fetchProviders,
+  fetchPatients,
+  type TelehealthSession,
+  type WaitingRoomEntry,
+} from '../api';
+import { Button } from '../components/ui/Button';
+import { Modal } from '../components/ui/Modal';
+import { LoadingSpinner } from '../components/ui/LoadingSpinner';
+import { DataTable } from '../components/ui/DataTable';
+import VideoRoom from '../components/telehealth/VideoRoom';
+import VirtualWaitingRoom from '../components/telehealth/VirtualWaitingRoom';
+import TelehealthNotes from '../components/telehealth/TelehealthNotes';
+import '../styles/telehealth.css';
 
-type TelehealthStatus = 'waiting' | 'in-progress' | 'completed';
+type ViewMode = 'list' | 'waiting-room' | 'video' | 'notes';
 
-interface TelehealthSession {
-  id: string;
-  appointmentId: string;
-  patientId: string;
-  patientName: string;
-  scheduledStart: string;
-  status: TelehealthStatus;
-  waitTime?: number;
-}
-
-export function TelehealthPage() {
+const TelehealthPage: React.FC = () => {
   const { session } = useAuth();
-  const { showSuccess, showError } = useToast();
+  const tenantId = session?.tenantId;
+  const accessToken = session?.accessToken;
+  const user = session?.user;
 
-  const [loading, setLoading] = useState(true);
-  const [, setAppointments] = useState<Appointment[]>([]);
-  const [, setPatients] = useState<Patient[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [sessions, setSessions] = useState<TelehealthSession[]>([]);
-  const [activeSession, setActiveSession] = useState<TelehealthSession | null>(null);
+  const [waitingRoom, setWaitingRoom] = useState<WaitingRoomEntry[]>([]);
+  const [currentSession, setCurrentSession] = useState<TelehealthSession | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showNewSessionModal, setShowNewSessionModal] = useState(false);
+  const [showLicenseWarning, setShowLicenseWarning] = useState(false);
+  const [licenseWarningMessage, setLicenseWarningMessage] = useState('');
 
-  const loadData = useCallback(async () => {
-    if (!session) return;
+  // New session form
+  const [newSessionForm, setNewSessionForm] = useState({
+    patientId: '',
+    providerId: user?.id || '',
+    patientState: '',
+    recordingConsent: false,
+  });
 
-    setLoading(true);
-    try {
-      const [appointmentsRes, patientsRes] = await Promise.all([
-        fetchAppointments(session.tenantId, session.accessToken),
-        fetchPatients(session.tenantId, session.accessToken),
-      ]);
-
-      setAppointments(appointmentsRes.appointments || []);
-      setPatients(patientsRes.patients || []);
-
-      // Create mock telehealth sessions from today's appointments
-      const today = new Date().toDateString();
-      const todayAppts = (appointmentsRes.appointments || []).filter(
-        (a: Appointment) =>
-          new Date(a.scheduledStart).toDateString() === today &&
-          a.status !== 'cancelled'
-      );
-
-      const mockSessions: TelehealthSession[] = todayAppts.slice(0, 5).map((appt: Appointment, i: number) => ({
-        id: `session-${i}`,
-        appointmentId: appt.id,
-        patientId: appt.patientId,
-        patientName: appt.patientName || 'Patient',
-        scheduledStart: appt.scheduledStart,
-        status: i === 0 ? 'waiting' : i === 1 ? 'in-progress' : 'completed' as TelehealthStatus,
-        waitTime: i === 0 ? 5 : undefined,
-      }));
-
-      setSessions(mockSessions);
-    } catch (err: any) {
-      showError(err.message || 'Failed to load data');
-    } finally {
-      setLoading(false);
-    }
-  }, [session, showError]);
+  const [providers, setProviders] = useState<any[]>([]);
+  const [patients, setPatients] = useState<any[]>([]);
 
   useEffect(() => {
     loadData();
-  }, [loadData]);
+    loadProvidersAndPatients();
 
-  const handleStartSession = (sessionData: TelehealthSession) => {
-    setActiveSession(sessionData);
-    setSessions((prev) =>
-      prev.map((s) => (s.id === sessionData.id ? { ...s, status: 'in-progress' as const } : s))
-    );
-    showSuccess('Starting telehealth session...');
-  };
+    // Poll for updates every 30 seconds
+    const interval = setInterval(() => {
+      loadData();
+    }, 30000);
 
-  const handleEndSession = () => {
-    if (activeSession) {
-      setSessions((prev) =>
-        prev.map((s) => (s.id === activeSession.id ? { ...s, status: 'completed' as const } : s))
-      );
+    return () => clearInterval(interval);
+  }, []);
+
+  const loadData = async () => {
+    if (!tenantId || !accessToken) {
+      setLoading(false);
+      return;
     }
-    setActiveSession(null);
-    showSuccess('Session ended');
+    try {
+      const [sessionsData, waitingRoomData] = await Promise.all([
+        fetchTelehealthSessions(tenantId, accessToken),
+        fetchWaitingRoom(tenantId, accessToken),
+      ]);
+
+      setSessions(sessionsData);
+      setWaitingRoom(waitingRoomData);
+      setLoading(false);
+    } catch (error) {
+      console.error('Failed to load telehealth data:', error);
+      setLoading(false);
+    }
   };
 
-  const waitingCount = sessions.filter((s) => s.status === 'waiting').length;
-  const inProgressCount = sessions.filter((s) => s.status === 'in-progress').length;
+  const loadProvidersAndPatients = async () => {
+    if (!tenantId || !accessToken) return;
+    try {
+      const [providersData, patientsData] = await Promise.all([
+        fetchProviders(tenantId, accessToken),
+        fetchPatients(tenantId, accessToken),
+      ]);
+
+      setProviders(providersData.providers || []);
+      setPatients(patientsData.patients || []);
+    } catch (error) {
+      console.error('Failed to load providers/patients:', error);
+    }
+  };
+
+  const handleCreateSession = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tenantId || !accessToken) return;
+
+    try {
+      const sessionData = await createTelehealthSession(tenantId, accessToken, {
+        patientId: parseInt(newSessionForm.patientId),
+        providerId: parseInt(newSessionForm.providerId),
+        patientState: newSessionForm.patientState,
+        recordingConsent: newSessionForm.recordingConsent,
+      });
+
+      setSessions([sessionData, ...sessions]);
+      setShowNewSessionModal(false);
+      setNewSessionForm({
+        patientId: '',
+        providerId: user?.id || '',
+        patientState: '',
+        recordingConsent: false,
+      });
+
+      alert('Telehealth session created successfully! Send the session link to the patient.');
+    } catch (error: any) {
+      console.error('Failed to create session:', error);
+
+      // Check for licensing error
+      if (error.message.includes('not licensed')) {
+        setLicenseWarningMessage(error.message);
+        setShowLicenseWarning(true);
+      } else {
+        alert('Failed to create session: ' + error.message);
+      }
+    }
+  };
+
+  const handleJoinSession = async (teleSession: TelehealthSession) => {
+    if (!tenantId || !accessToken) return;
+    try {
+      // Refresh session data
+      const updatedSession = await fetchTelehealthSession(tenantId, accessToken, teleSession.id);
+      setCurrentSession(updatedSession);
+
+      if (user?.role === 'patient') {
+        setViewMode('waiting-room');
+      } else {
+        setViewMode('video');
+      }
+    } catch (error) {
+      console.error('Failed to join session:', error);
+      alert('Failed to join session. Please try again.');
+    }
+  };
+
+  const handleWaitingRoomReady = () => {
+    setViewMode('video');
+  };
+
+  const handleCallPatient = async (waitingEntry: WaitingRoomEntry) => {
+    if (!tenantId || !accessToken) return;
+    try {
+      await callPatientFromWaitingRoom(tenantId, accessToken, waitingEntry.id);
+
+      // Find and load the session
+      const teleSession = sessions.find(s => s.id === waitingEntry.session_id);
+      if (teleSession) {
+        handleJoinSession(teleSession);
+      }
+
+      // Refresh waiting room
+      loadData();
+    } catch (error) {
+      console.error('Failed to call patient:', error);
+      alert('Failed to call patient. Please try again.');
+    }
+  };
+
+  const handleSessionEnd = async () => {
+    if (!currentSession || !tenantId || !accessToken) return;
+
+    if (confirm('Are you sure you want to end this session?')) {
+      try {
+        await updateSessionStatus(tenantId, accessToken, currentSession.id, 'completed');
+
+        // Show notes view
+        setViewMode('notes');
+      } catch (error) {
+        console.error('Failed to end session:', error);
+        alert('Failed to end session. Please try again.');
+      }
+    }
+  };
+
+  const handleNotesFinalized = () => {
+    setViewMode('list');
+    setCurrentSession(null);
+    loadData();
+  };
+
+  const getStatusClass = (status: string) => {
+    return `session-status ${status}`;
+  };
 
   if (loading) {
     return (
-      <div className="telehealth-page">
-        <div className="page-header">
-          <h1>Telehealth</h1>
-        </div>
-        <Skeleton variant="card" height={400} />
+      <div className="telehealth-loading">
+        <LoadingSpinner size="large" />
       </div>
     );
   }
 
+  // Render based on view mode
+  if (viewMode === 'waiting-room' && currentSession) {
+    return (
+      <VirtualWaitingRoom
+        session={currentSession}
+        patientId={user?.id || 0}
+        onReady={handleWaitingRoomReady}
+      />
+    );
+  }
+
+  if (viewMode === 'video' && currentSession) {
+    return (
+      <div className="telehealth-video-layout">
+        <div className="telehealth-video-main">
+          <VideoRoom session={currentSession} onSessionEnd={handleSessionEnd} />
+        </div>
+        <div className="telehealth-notes-sidebar">
+          <TelehealthNotes session={currentSession} />
+        </div>
+      </div>
+    );
+  }
+
+  if (viewMode === 'notes' && currentSession) {
+    return (
+      <div style={{ height: '100vh' }}>
+        <TelehealthNotes session={currentSession} onNotesFinalized={handleNotesFinalized} />
+      </div>
+    );
+  }
+
+  // Main list view
   return (
     <div className="telehealth-page">
-      <div className="page-header">
-        <h1>Telehealth</h1>
+      <div className="telehealth-header">
+        <div>
+          <h1>Telehealth Video Consultations</h1>
+          <p>
+            Conduct secure video visits with HIPAA compliance and state licensing verification
+          </p>
+        </div>
+        <Button onClick={() => setShowNewSessionModal(true)} variant="primary">
+          + New Session
+        </Button>
+      </div>
+
+      {/* Current Telehealth Stats */}
+      <div className="telehealth-stats-section">
+        <h2>Current Telehealth Stats</h2>
         <div className="telehealth-stats">
-          <span className="stat-badge waiting">{waitingCount} waiting</span>
-          <span className="stat-badge active">{inProgressCount} active</span>
+          <div className="telehealth-stat-card in-progress">
+            <div className="stat-value">
+              {sessions.filter(s => s.status === 'in_progress').length}
+            </div>
+            <div className="stat-label">My cases in progress</div>
+          </div>
+          <div className="telehealth-stat-card completed">
+            <div className="stat-value">
+              {sessions.filter(s => s.status === 'completed').length}
+            </div>
+            <div className="stat-label">My completed cases</div>
+          </div>
+          <div className="telehealth-stat-card unread">
+            <div className="stat-value">0</div>
+            <div className="stat-label">My unread messages</div>
+          </div>
+          <div className="telehealth-stat-card unassigned">
+            <div className="stat-value">0</div>
+            <div className="stat-label">Unassigned Cases</div>
+          </div>
         </div>
       </div>
 
-      <div className="telehealth-layout">
-        {/* Waiting Room */}
-        <div className="waiting-room">
-          <Panel title="Virtual Waiting Room">
-            {sessions.filter((s) => s.status === 'waiting').length === 0 ? (
-              <div className="empty-waiting">
-                <div className="empty-icon">🏠</div>
-                <p className="muted">No patients waiting</p>
-              </div>
-            ) : (
-              <div className="waiting-list">
-                {sessions
-                  .filter((s) => s.status === 'waiting')
-                  .map((sessionData) => (
-                    <div key={sessionData.id} className="waiting-patient">
-                      <div className="patient-avatar">👤</div>
-                      <div className="patient-info">
-                        <div className="patient-name strong">{sessionData.patientName}</div>
-                        <div className="patient-time muted tiny">
-                          Scheduled: {new Date(sessionData.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                        {sessionData.waitTime && (
-                          <div className="wait-time">
-                            Waiting: {sessionData.waitTime} min
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        onClick={() => handleStartSession(sessionData)}
-                      >
-                        Start Visit
-                      </button>
+      {/* Waiting Room Queue */}
+      {waitingRoom.length > 0 && (
+        <div className="waiting-room-section">
+          <h2>Patients in Waiting Room</h2>
+          <div className="waiting-room-list">
+            {waitingRoom.map((entry) => (
+              <div key={entry.id} className="waiting-room-entry">
+                <div className="waiting-room-entry-info">
+                  <div className="queue-position">
+                    #{entry.queue_position}
+                  </div>
+                  <div className="waiting-room-entry-details">
+                    <div className="patient-id">Patient ID: {entry.patient_id}</div>
+                    <div className="join-time">
+                      Joined: {new Date(entry.joined_at).toLocaleTimeString()}
                     </div>
-                  ))}
-              </div>
-            )}
-          </Panel>
-
-          {/* Completed Sessions */}
-          <Panel title="Today's Completed">
-            {sessions.filter((s) => s.status === 'completed').length === 0 ? (
-              <p className="muted">No completed sessions today</p>
-            ) : (
-              <div className="completed-list">
-                {sessions
-                  .filter((s) => s.status === 'completed')
-                  .map((sessionData) => (
-                    <div key={sessionData.id} className="completed-session">
-                      <span className="check-icon">✓</span>
-                      <span className="patient-name">{sessionData.patientName}</span>
-                      <span className="session-time muted tiny">
-                        {new Date(sessionData.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                  ))}
-              </div>
-            )}
-          </Panel>
-        </div>
-
-        {/* Video Area */}
-        <div className="video-area">
-          {activeSession ? (
-            <div className="active-call">
-              <div className="video-container">
-                <div className="remote-video">
-                  <div className="video-placeholder">
-                    <div className="video-avatar">👤</div>
-                    <div className="video-name">{activeSession.patientName}</div>
+                    {entry.equipment_check_completed && (
+                      <div className="equipment-check">Equipment check completed</div>
+                    )}
                   </div>
                 </div>
-                <div className="local-video">
-                  <div className="video-placeholder small">
-                    <span>You</span>
-                  </div>
+                <div className="waiting-room-entry-actions">
+                  <span className="wait-time">
+                    Est. wait: {entry.estimated_wait_minutes} min
+                  </span>
+                  <Button onClick={() => handleCallPatient(entry)} variant="primary" size="sm">
+                    Call Patient
+                  </Button>
                 </div>
               </div>
-
-              <div className="call-controls">
-                <button type="button" className="control-btn" title="Toggle Microphone">
-                  🎤
-                </button>
-                <button type="button" className="control-btn" title="Toggle Camera">
-                  📷
-                </button>
-                <button type="button" className="control-btn" title="Share Screen">
-                  🖥️
-                </button>
-                <button type="button" className="control-btn" title="Chat">
-                  💬
-                </button>
-                <button
-                  type="button"
-                  className="control-btn end-call"
-                  onClick={handleEndSession}
-                  title="End Call"
-                >
-                  📞
-                </button>
-              </div>
-
-              <div className="call-info">
-                <div className="call-duration">00:00:00</div>
-                <div className="call-quality">HD Quality</div>
-              </div>
-            </div>
-          ) : (
-            <div className="no-active-call">
-              <div className="empty-video">
-                <div className="empty-icon">📹</div>
-                <h3>No Active Session</h3>
-                <p className="muted">Select a patient from the waiting room to start</p>
-              </div>
-
-              <div className="quick-actions">
-                <h4>Quick Actions</h4>
-                <button type="button" className="quick-action-btn">
-                  📋 Review Today's Schedule
-                </button>
-                <button type="button" className="quick-action-btn">
-                  ⚙️ Test Audio/Video
-                </button>
-                <button type="button" className="quick-action-btn">
-                  📝 View Recent Notes
-                </button>
-              </div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
+      )}
 
-        {/* Side Panel */}
-        <div className="telehealth-sidebar">
-          <Panel title="Session Tools">
-            <div className="tool-buttons">
-              <button type="button" className="tool-btn" disabled={!activeSession}>
-                📋 Patient Chart
-              </button>
-              <button type="button" className="tool-btn" disabled={!activeSession}>
-                📝 Quick Note
-              </button>
-              <button type="button" className="tool-btn" disabled={!activeSession}>
-                💊 Prescribe
-              </button>
-              <button type="button" className="tool-btn" disabled={!activeSession}>
-                🧪 Order Labs
-              </button>
-              <button type="button" className="tool-btn" disabled={!activeSession}>
-                📅 Schedule Follow-up
-              </button>
-            </div>
-          </Panel>
-
-          <Panel title="Connection Status">
-            <div className="connection-status">
-              <div className="status-item">
-                <span className="status-indicator good"></span>
-                <span>Internet: Good</span>
-              </div>
-              <div className="status-item">
-                <span className="status-indicator good"></span>
-                <span>Camera: Connected</span>
-              </div>
-              <div className="status-item">
-                <span className="status-indicator good"></span>
-                <span>Microphone: Connected</span>
-              </div>
-            </div>
-          </Panel>
-        </div>
+      {/* Sessions Table */}
+      <div className="sessions-table-container">
+        <DataTable
+          columns={[
+            {
+              key: 'patient',
+              label: 'Patient',
+              render: (row: TelehealthSession) =>
+                `${row.patient_first_name} ${row.patient_last_name}`,
+            },
+            {
+              key: 'provider',
+              label: 'Provider',
+              render: (row: TelehealthSession) => row.provider_name || 'Unknown',
+            },
+            {
+              key: 'status',
+              label: 'Status',
+              render: (row: TelehealthSession) => (
+                <span className={getStatusClass(row.status)}>
+                  {row.status}
+                </span>
+              ),
+            },
+            {
+              key: 'state',
+              label: 'State',
+              render: (row: TelehealthSession) => row.patient_state,
+            },
+            {
+              key: 'consent',
+              label: 'Recording Consent',
+              render: (row: TelehealthSession) => (row.recording_consent ? 'Yes' : 'No'),
+            },
+            {
+              key: 'created',
+              label: 'Created',
+              render: (row: TelehealthSession) => new Date(row.created_at).toLocaleString(),
+            },
+            {
+              key: 'duration',
+              label: 'Duration',
+              render: (row: TelehealthSession) =>
+                row.duration_minutes ? `${row.duration_minutes} min` : '-',
+            },
+            {
+              key: 'actions',
+              label: 'Actions',
+              render: (row: TelehealthSession) => (
+                <div className="table-actions">
+                  {row.status === 'scheduled' && (
+                    <Button onClick={() => handleJoinSession(row)} variant="primary" size="sm">
+                      Start
+                    </Button>
+                  )}
+                  {row.status === 'in_progress' && (
+                    <Button onClick={() => handleJoinSession(row)} variant="primary" size="sm">
+                      Join
+                    </Button>
+                  )}
+                  {row.status === 'completed' && (
+                    <Button
+                      onClick={() => {
+                        setCurrentSession(row);
+                        setViewMode('notes');
+                      }}
+                      variant="secondary"
+                      size="sm"
+                    >
+                      View Notes
+                    </Button>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+          data={sessions}
+          keyExtractor={(row) => row.id}
+          emptyMessage="No telehealth sessions found"
+        />
       </div>
+
+      {/* New Session Modal */}
+      {showNewSessionModal && (
+        <Modal
+          isOpen={showNewSessionModal}
+          onClose={() => setShowNewSessionModal(false)}
+          title="Create New Telehealth Session"
+        >
+          <form onSubmit={handleCreateSession} className="telehealth-modal-form">
+            <div>
+              <label>Patient</label>
+              <select
+                value={newSessionForm.patientId}
+                onChange={(e) => setNewSessionForm({ ...newSessionForm, patientId: e.target.value })}
+                required
+              >
+                <option value="">Select patient...</option>
+                {patients.map((patient) => (
+                  <option key={patient.id} value={patient.id}>
+                    {patient.firstName} {patient.lastName}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label>Provider</label>
+              <select
+                value={newSessionForm.providerId}
+                onChange={(e) => setNewSessionForm({ ...newSessionForm, providerId: e.target.value })}
+                required
+              >
+                <option value="">Select provider...</option>
+                {providers.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.fullName || provider.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label>
+                Patient State (for licensing verification)
+              </label>
+              <select
+                value={newSessionForm.patientState}
+                onChange={(e) => setNewSessionForm({ ...newSessionForm, patientState: e.target.value })}
+                required
+              >
+                <option value="">Select state...</option>
+                <option value="CA">California</option>
+                <option value="NY">New York</option>
+                <option value="TX">Texas</option>
+                <option value="FL">Florida</option>
+                <option value="IL">Illinois</option>
+                <option value="PA">Pennsylvania</option>
+                <option value="OH">Ohio</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="telehealth-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={newSessionForm.recordingConsent}
+                  onChange={(e) =>
+                    setNewSessionForm({ ...newSessionForm, recordingConsent: e.target.checked })
+                  }
+                />
+                <span>
+                  Patient has provided recording consent
+                </span>
+              </label>
+            </div>
+
+            <div className="telehealth-modal-actions">
+              <Button type="button" onClick={() => setShowNewSessionModal(false)} variant="secondary">
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary">
+                Create Session
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* License Warning Modal */}
+      {showLicenseWarning && (
+        <Modal
+          isOpen={showLicenseWarning}
+          onClose={() => setShowLicenseWarning(false)}
+          title="State Licensing Issue"
+        >
+          <div>
+            <div className="license-warning-box">
+              <p>{licenseWarningMessage}</p>
+            </div>
+            <p className="license-warning-description">
+              Providers must be licensed in the state where the patient is located to conduct telehealth visits.
+              Please add the required license or select a different provider.
+            </p>
+            <Button onClick={() => setShowLicenseWarning(false)} variant="primary">
+              Understood
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      <style>{`
+        .telehealth-page {
+          padding: 1.5rem;
+          background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+          min-height: 100vh;
+        }
+
+        .telehealth-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 2rem;
+          animation: slideDown 0.4s ease-out;
+        }
+
+        @keyframes slideDown {
+          from {
+            opacity: 0;
+            transform: translateY(-20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        .telehealth-header h1 {
+          margin: 0 0 0.5rem 0;
+          color: #065f46;
+        }
+
+        .telehealth-header p {
+          margin: 0;
+          color: #047857;
+        }
+
+        .telehealth-stats-section {
+          margin-bottom: 2rem;
+        }
+
+        .telehealth-stats-section h2 {
+          margin: 0 0 1rem 0;
+          padding: 0.75rem 1rem;
+          background: linear-gradient(135deg, #6ee7b7 0%, #34d399 100%);
+          color: white;
+          border-radius: 8px;
+          font-size: 1.125rem;
+        }
+
+        .telehealth-stats {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 1.25rem;
+          animation: fadeIn 0.5s ease-out 0.1s both;
+        }
+
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+            transform: scale(0.95);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+
+        .telehealth-stat-card {
+          background: white;
+          border-radius: 12px;
+          padding: 2rem 1.5rem;
+          text-align: center;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+          transition: all 0.3s ease;
+          border: 2px solid transparent;
+          position: relative;
+          overflow: hidden;
+        }
+
+        .telehealth-stat-card::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          height: 4px;
+        }
+
+        .telehealth-stat-card.in-progress {
+          border-color: #059669;
+        }
+
+        .telehealth-stat-card.in-progress::before {
+          background: linear-gradient(90deg, #059669, #10b981);
+        }
+
+        .telehealth-stat-card.completed {
+          border-color: #059669;
+        }
+
+        .telehealth-stat-card.completed::before {
+          background: linear-gradient(90deg, #059669, #10b981);
+        }
+
+        .telehealth-stat-card.unread {
+          border-color: #059669;
+        }
+
+        .telehealth-stat-card.unread::before {
+          background: linear-gradient(90deg, #059669, #10b981);
+        }
+
+        .telehealth-stat-card.unassigned {
+          border-color: #059669;
+        }
+
+        .telehealth-stat-card.unassigned::before {
+          background: linear-gradient(90deg, #059669, #10b981);
+        }
+
+        .telehealth-stat-card:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 8px 16px rgba(5, 150, 105, 0.2);
+        }
+
+        .telehealth-stat-card .stat-value {
+          font-size: 3rem;
+          font-weight: bold;
+          color: #065f46;
+          line-height: 1;
+          margin-bottom: 0.5rem;
+        }
+
+        .telehealth-stat-card .stat-label {
+          font-size: 0.875rem;
+          color: #059669;
+          font-weight: 500;
+        }
+
+        .waiting-room-section {
+          background: white;
+          border-radius: 12px;
+          padding: 1.5rem;
+          margin-bottom: 2rem;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+          border-left: 4px solid #10b981;
+        }
+
+        .waiting-room-section h2 {
+          margin: 0 0 1rem 0;
+          color: #065f46;
+        }
+
+        .waiting-room-list {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+
+        .waiting-room-entry {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 1rem;
+          background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+          border-radius: 8px;
+          border: 1px solid #a7f3d0;
+        }
+
+        .waiting-room-entry-info {
+          display: flex;
+          gap: 1rem;
+          align-items: center;
+        }
+
+        .queue-position {
+          background: linear-gradient(135deg, #059669 0%, #047857 100%);
+          color: white;
+          font-weight: bold;
+          font-size: 1.25rem;
+          width: 48px;
+          height: 48px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 10px;
+          box-shadow: 0 2px 4px rgba(5, 150, 105, 0.3);
+        }
+
+        .waiting-room-entry-details {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+
+        .patient-id {
+          font-weight: 600;
+          color: #065f46;
+        }
+
+        .join-time, .equipment-check {
+          font-size: 0.875rem;
+          color: #047857;
+        }
+
+        .waiting-room-entry-actions {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+        }
+
+        .wait-time {
+          font-size: 0.875rem;
+          color: #059669;
+          font-weight: 500;
+        }
+
+        .sessions-table-container {
+          background: white;
+          border-radius: 12px;
+          padding: 1.5rem;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        }
+
+        .session-status {
+          display: inline-block;
+          padding: 0.375rem 0.875rem;
+          border-radius: 12px;
+          font-size: 0.875rem;
+          font-weight: 500;
+          text-transform: capitalize;
+        }
+
+        .session-status.scheduled {
+          background: #fef3c7;
+          color: #92400e;
+        }
+
+        .session-status.in_progress {
+          background: #d1fae5;
+          color: #065f46;
+        }
+
+        .session-status.completed {
+          background: #dbeafe;
+          color: #1e40af;
+        }
+
+        .table-actions {
+          display: flex;
+          gap: 0.5rem;
+        }
+
+        .telehealth-modal-form {
+          display: flex;
+          flex-direction: column;
+          gap: 1.25rem;
+        }
+
+        .telehealth-modal-form > div {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+
+        .telehealth-modal-form label {
+          font-weight: 500;
+          color: #374151;
+        }
+
+        .telehealth-modal-form input,
+        .telehealth-modal-form select {
+          padding: 0.625rem;
+          border: 1px solid #d1d5db;
+          border-radius: 8px;
+          font-size: 1rem;
+        }
+
+        .telehealth-checkbox-label {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          cursor: pointer;
+        }
+
+        .telehealth-checkbox-label input[type="checkbox"] {
+          width: auto;
+        }
+
+        .telehealth-modal-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 0.75rem;
+          margin-top: 1rem;
+        }
+
+        .license-warning-box {
+          padding: 1.25rem;
+          background: #fef2f2;
+          border: 2px solid #fca5a5;
+          border-radius: 8px;
+          color: #991b1b;
+          margin-bottom: 1rem;
+          font-weight: 500;
+        }
+
+        .license-warning-description {
+          color: #6b7280;
+          margin-bottom: 1.5rem;
+        }
+
+        .telehealth-loading {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          min-height: 400px;
+        }
+
+        .telehealth-video-layout {
+          display: flex;
+          gap: 1.5rem;
+          height: calc(100vh - 2rem);
+          padding: 1rem;
+        }
+
+        .telehealth-video-main {
+          flex: 1;
+          background: #1f2937;
+          border-radius: 12px;
+          overflow: hidden;
+        }
+
+        .telehealth-notes-sidebar {
+          width: 400px;
+          background: white;
+          border-radius: 12px;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+          overflow-y: auto;
+        }
+      `}</style>
     </div>
   );
-}
+};
+
+export default TelehealthPage;

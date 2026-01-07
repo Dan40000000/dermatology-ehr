@@ -148,8 +148,8 @@ export function PatientsPage() {
   };
 
   const getSortIcon = (field: SortField) => {
-    if (sortField !== field) return '⇅';
-    return sortOrder === 'asc' ? '↑' : '↓';
+    if (sortField !== field) return '';
+    return sortOrder === 'asc' ? '' : '';
   };
 
   const formatDOB = (dob: string | undefined) => {
@@ -165,23 +165,96 @@ export function PatientsPage() {
   };
 
   return (
-    <div className="patients-page">
+    <div className="patients-page" style={{
+      background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 50%, #bfdbfe 100%)',
+      minHeight: '100vh',
+      padding: '1.5rem'
+    }}>
       {/* Action Buttons Row - Like ModMed */}
-      <div className="ema-action-bar">
+      <div className="ema-action-bar" style={{
+        background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)',
+        padding: '1rem 1.5rem',
+        borderRadius: '12px',
+        marginBottom: '1.5rem',
+        boxShadow: '0 10px 25px rgba(59, 130, 246, 0.3)',
+        display: 'flex',
+        gap: '0.75rem',
+        flexWrap: 'wrap'
+      }}>
         <button
           type="button"
           className="ema-action-btn"
           onClick={() => navigate('/patients/new')}
+          style={{
+            background: 'rgba(255,255,255,0.95)',
+            border: '2px solid rgba(255,255,255,0.4)',
+            padding: '0.75rem 1.25rem',
+            borderRadius: '8px',
+            fontWeight: 600,
+            color: '#2563eb',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+          }}
         >
-          <span className="icon">👤</span>
+          <span className="icon" style={{ fontSize: '1.1rem' }}>👤</span>
           Register New Patient
         </button>
-        <button type="button" className="ema-action-btn">
-          <span className="icon">🔍</span>
+        <button type="button" className="ema-action-btn" style={{
+          background: 'rgba(255,255,255,0.95)',
+          border: '2px solid rgba(255,255,255,0.4)',
+          padding: '0.75rem 1.25rem',
+          borderRadius: '8px',
+          fontWeight: 600,
+          color: '#2563eb',
+          cursor: 'pointer',
+          transition: 'all 0.3s ease',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem'
+        }} onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-2px)';
+          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+        }} onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+        }}>
+          <span className="icon" style={{ fontSize: '1.1rem' }}>🔍</span>
           Advanced Search
         </button>
-        <button type="button" className="ema-action-btn">
-          <span className="icon">📚</span>
+        <button type="button" className="ema-action-btn" style={{
+          background: 'rgba(255,255,255,0.95)',
+          border: '2px solid rgba(255,255,255,0.4)',
+          padding: '0.75rem 1.25rem',
+          borderRadius: '8px',
+          fontWeight: 600,
+          color: '#2563eb',
+          cursor: 'pointer',
+          transition: 'all 0.3s ease',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem'
+        }} onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-2px)';
+          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+        }} onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+        }}>
+          <span className="icon" style={{ fontSize: '1.1rem' }}>📄</span>
           Patient Handout Library
         </button>
         <div style={{ marginLeft: 'auto' }}>
@@ -208,10 +281,32 @@ export function PatientsPage() {
       </div>
 
       {/* Patient Search Section Header */}
-      <div className="ema-section-header">Patient Search</div>
+      <div className="ema-section-header" style={{
+        background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)',
+        color: '#ffffff',
+        padding: '1rem 1.5rem',
+        borderRadius: '10px',
+        marginBottom: '1.5rem',
+        fontSize: '1.25rem',
+        fontWeight: 700,
+        boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.75rem'
+      }}>
+        <span style={{ fontSize: '1.5rem' }}>🔍</span>
+        Patient Search
+      </div>
 
       {/* Filter Panel - Like ModMed */}
-      <div className="ema-filter-panel">
+      <div className="ema-filter-panel" style={{
+        background: 'rgba(255,255,255,0.9)',
+        border: '2px solid #93c5fd',
+        borderRadius: '12px',
+        padding: '1.5rem',
+        marginBottom: '1.5rem',
+        boxShadow: '0 4px 12px rgba(59, 130, 246, 0.15)'
+      }}>
         <div className="ema-filter-row">
           <div className="ema-filter-group">
             <label className="ema-filter-label">Search Patients By</label>
@@ -270,9 +365,22 @@ export function PatientsPage() {
       </div>
 
       {/* Patient Search Results Section Header */}
-      <div className="ema-section-header">
+      <div className="ema-section-header" style={{
+        background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)',
+        color: '#ffffff',
+        padding: '1rem 1.5rem',
+        borderRadius: '10px',
+        marginBottom: '1.5rem',
+        fontSize: '1.25rem',
+        fontWeight: 700,
+        boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.75rem'
+      }}>
+        <span style={{ fontSize: '1.5rem' }}>📋</span>
         Patient Search Results
-        <span style={{ fontWeight: 'normal', marginLeft: '1rem', fontSize: '0.8125rem' }}>
+        <span style={{ fontWeight: 'normal', marginLeft: '1rem', fontSize: '0.8125rem', opacity: 0.9 }}>
           ({filteredPatients.length} patient{filteredPatients.length !== 1 ? 's' : ''})
           {totalPages > 1 && ` - Page ${currentPage} of ${totalPages}`}
         </span>

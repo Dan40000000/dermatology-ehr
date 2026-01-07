@@ -5,6 +5,8 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
+import { waitlistAutoFillService } from "../services/waitlistAutoFillService";
+import { logger } from "../lib/logger";
 
 const createAppointmentSchema = z.object({
   patientId: z.string().min(1),
@@ -19,6 +21,7 @@ const createAppointmentSchema = z.object({
 const rescheduleSchema = z.object({
   scheduledStart: z.string().refine((v) => !Number.isNaN(Date.parse(v)), { message: "Invalid start" }),
   scheduledEnd: z.string().refine((v) => !Number.isNaN(Date.parse(v)), { message: "Invalid end" }),
+  providerId: z.string().min(1).optional(), // Optional: allow changing provider
 });
 
 async function hasConflict(tenantId: string, providerId: string, start: string, end: string, ignoreId?: string) {
@@ -110,12 +113,17 @@ appointmentsRouter.post("/:id/reschedule", requireAuth, requireRoles(["admin", "
   const apptId = String(req.params.id);
   const apptRes = await pool.query(`select provider_id from appointments where id = $1 and tenant_id = $2`, [apptId, tenantId]);
   if (!apptRes.rowCount) return res.status(404).json({ error: "Not found" });
-  const providerId = apptRes.rows[0].provider_id as string;
-  const conflict = await hasConflict(tenantId, providerId, parsed.data.scheduledStart, parsed.data.scheduledEnd, apptId);
+
+  // Use new provider if provided, otherwise keep the original
+  const newProviderId = parsed.data.providerId || apptRes.rows[0].provider_id as string;
+
+  const conflict = await hasConflict(tenantId, newProviderId, parsed.data.scheduledStart, parsed.data.scheduledEnd, apptId);
   if (conflict) return res.status(409).json({ error: "Time conflict for provider" });
+
+  // Update with new time and optionally new provider
   await pool.query(
-    `update appointments set scheduled_start = $1, scheduled_end = $2 where id = $3 and tenant_id = $4`,
-    [parsed.data.scheduledStart, parsed.data.scheduledEnd, apptId, tenantId],
+    `update appointments set scheduled_start = $1, scheduled_end = $2, provider_id = $3 where id = $4 and tenant_id = $5`,
+    [parsed.data.scheduledStart, parsed.data.scheduledEnd, newProviderId, apptId, tenantId],
   );
   await auditLog(tenantId, req.user!.id, "appointment_reschedule", "appointment", apptId);
   res.json({ ok: true });
@@ -138,5 +146,25 @@ appointmentsRouter.post("/:id/status", requireAuth, requireRoles(["admin", "fron
     [crypto.randomUUID(), tenantId, apptId, parsed.data.status, req.user!.id],
   );
   await auditLog(tenantId, req.user!.id, "appointment_status_change", "appointment", apptId);
+
+  // Trigger waitlist auto-fill when appointment is cancelled
+  if (parsed.data.status === 'cancelled') {
+    try {
+      const matches = await waitlistAutoFillService.processAppointmentCancellation(tenantId, apptId);
+      logger.info('Waitlist auto-fill triggered for cancelled appointment', {
+        tenantId,
+        appointmentId: apptId,
+        matchesCreated: matches.length,
+      });
+    } catch (error: any) {
+      // Log error but don't fail the status update
+      logger.error('Waitlist auto-fill failed for cancelled appointment', {
+        error: error.message,
+        tenantId,
+        appointmentId: apptId,
+      });
+    }
+  }
+
   res.json({ ok: true });
 });

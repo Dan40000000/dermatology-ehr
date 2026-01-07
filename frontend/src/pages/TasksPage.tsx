@@ -236,11 +236,43 @@ export function TasksPage() {
   const users = providers.map((p) => ({ id: p.id, fullName: p.fullName }));
 
   return (
-    <div className="tasks-page">
+    <div className="tasks-page" style={{
+      background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 50%, #a7f3d0 100%)',
+      minHeight: '100vh',
+      padding: '1.5rem'
+    }}>
       {/* Action Bar */}
-      <div className="ema-action-bar">
-        <button type="button" className="ema-action-btn" onClick={() => setShowNewTaskModal(true)}>
-          <span className="icon">+</span>
+      <div className="ema-action-bar" style={{
+        background: 'linear-gradient(90deg, #10b981 0%, #059669 100%)',
+        padding: '1rem 1.5rem',
+        borderRadius: '12px',
+        marginBottom: '1.5rem',
+        boxShadow: '0 10px 25px rgba(16, 185, 129, 0.3)',
+        display: 'flex',
+        gap: '0.75rem',
+        flexWrap: 'wrap'
+      }}>
+        <button type="button" className="ema-action-btn" onClick={() => setShowNewTaskModal(true)} style={{
+          background: 'rgba(255,255,255,0.95)',
+          border: '2px solid rgba(255,255,255,0.4)',
+          padding: '0.75rem 1.25rem',
+          borderRadius: '8px',
+          fontWeight: 600,
+          color: '#059669',
+          cursor: 'pointer',
+          transition: 'all 0.3s ease',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem'
+        }} onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-2px)';
+          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+        }} onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+        }}>
+          <span className="icon" style={{ fontSize: '1.2rem' }}>✚</span>
           New Task <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>(N)</span>
         </button>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
@@ -253,7 +285,7 @@ export function TasksPage() {
             }}
             onClick={() => setViewMode('kanban')}
           >
-            <span className="icon">⚡</span>
+            <span className="icon"></span>
             Kanban
           </button>
           <button
@@ -265,11 +297,11 @@ export function TasksPage() {
             }}
             onClick={() => setViewMode('list')}
           >
-            <span className="icon">≡</span>
+            <span className="icon"></span>
             List
           </button>
           <button type="button" className="ema-action-btn" onClick={loadData}>
-            <span className="icon">↻</span>
+            <span className="icon"></span>
             Refresh
           </button>
           <ExportButtons
@@ -294,49 +326,144 @@ export function TasksPage() {
       </div>
 
       {/* Section Header */}
-      <div className="ema-section-header">Task Management</div>
+      <div className="ema-section-header" style={{
+        background: 'linear-gradient(90deg, #10b981 0%, #059669 100%)',
+        color: '#ffffff',
+        padding: '1rem 1.5rem',
+        borderRadius: '10px',
+        marginBottom: '1.5rem',
+        fontSize: '1.25rem',
+        fontWeight: 700,
+        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.75rem'
+      }}>
+        <span style={{ fontSize: '1.5rem' }}>✓</span>
+        Task Management
+      </div>
 
       {/* Stats Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', padding: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
         <div
           className="stat-card-teal"
-          style={{ cursor: 'pointer' }}
+          style={{
+            cursor: 'pointer',
+            background: 'linear-gradient(135deg, #34d399 0%, #10b981 100%)',
+            padding: '1.25rem',
+            borderRadius: '12px',
+            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)',
+            border: '2px solid rgba(255,255,255,0.4)',
+            transition: 'all 0.3s ease'
+          }}
           onClick={() => setFilters((prev) => ({ ...prev, status: '' }))}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-4px)';
+            e.currentTarget.style.boxShadow = '0 8px 20px rgba(16, 185, 129, 0.4)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.25)';
+          }}
         >
-          <div className="stat-number">{tasks.length}</div>
-          <div className="stat-label">Total Tasks</div>
+          <div className="stat-number" style={{ color: '#ffffff', fontSize: '2rem', fontWeight: 700, textShadow: '1px 1px 2px rgba(0,0,0,0.2)' }}>{tasks.length}</div>
+          <div className="stat-label" style={{ color: '#ffffff', fontSize: '0.85rem', fontWeight: 600, marginTop: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Tasks</div>
         </div>
         <div
           className="stat-card-teal"
-          style={{ cursor: 'pointer' }}
+          style={{
+            cursor: 'pointer',
+            background: 'linear-gradient(135deg, #6ee7b7 0%, #34d399 100%)',
+            padding: '1.25rem',
+            borderRadius: '12px',
+            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)',
+            border: '2px solid rgba(255,255,255,0.4)',
+            transition: 'all 0.3s ease'
+          }}
           onClick={() => setFilters((prev) => ({ ...prev, status: 'todo' }))}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-4px)';
+            e.currentTarget.style.boxShadow = '0 8px 20px rgba(16, 185, 129, 0.4)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.25)';
+          }}
         >
-          <div className="stat-number">{todoCount}</div>
-          <div className="stat-label">To Do</div>
+          <div className="stat-number" style={{ color: '#ffffff', fontSize: '2rem', fontWeight: 700, textShadow: '1px 1px 2px rgba(0,0,0,0.2)' }}>{todoCount}</div>
+          <div className="stat-label" style={{ color: '#ffffff', fontSize: '0.85rem', fontWeight: 600, marginTop: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>To Do</div>
         </div>
         <div
           className="stat-card-teal"
-          style={{ cursor: 'pointer' }}
+          style={{
+            cursor: 'pointer',
+            background: 'linear-gradient(135deg, #34d399 0%, #10b981 100%)',
+            padding: '1.25rem',
+            borderRadius: '12px',
+            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)',
+            border: '2px solid rgba(255,255,255,0.4)',
+            transition: 'all 0.3s ease'
+          }}
           onClick={() => setFilters((prev) => ({ ...prev, status: 'in_progress' }))}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-4px)';
+            e.currentTarget.style.boxShadow = '0 8px 20px rgba(16, 185, 129, 0.4)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.25)';
+          }}
         >
-          <div className="stat-number">{inProgressCount}</div>
-          <div className="stat-label">In Progress</div>
+          <div className="stat-number" style={{ color: '#ffffff', fontSize: '2rem', fontWeight: 700, textShadow: '1px 1px 2px rgba(0,0,0,0.2)' }}>{inProgressCount}</div>
+          <div className="stat-label" style={{ color: '#ffffff', fontSize: '0.85rem', fontWeight: 600, marginTop: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>In Progress</div>
         </div>
         <div
           className="stat-card-teal"
-          style={{ cursor: 'pointer', background: overdueCount > 0 ? '#dc2626' : undefined }}
+          style={{
+            cursor: 'pointer',
+            background: overdueCount > 0 ? 'linear-gradient(135deg, #dc2626 0%, #991b1b 100%)' : 'linear-gradient(135deg, #6ee7b7 0%, #34d399 100%)',
+            padding: '1.25rem',
+            borderRadius: '12px',
+            boxShadow: overdueCount > 0 ? '0 4px 12px rgba(220, 38, 38, 0.25)' : '0 4px 12px rgba(16, 185, 129, 0.25)',
+            border: '2px solid rgba(255,255,255,0.4)',
+            transition: 'all 0.3s ease'
+          }}
           onClick={() => setFilters((prev) => ({ ...prev, assignedTo: 'overdue' }))}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-4px)';
+            e.currentTarget.style.boxShadow = overdueCount > 0 ? '0 8px 20px rgba(220, 38, 38, 0.4)' : '0 8px 20px rgba(16, 185, 129, 0.4)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = overdueCount > 0 ? '0 4px 12px rgba(220, 38, 38, 0.25)' : '0 4px 12px rgba(16, 185, 129, 0.25)';
+          }}
         >
-          <div className="stat-number">{overdueCount}</div>
-          <div className="stat-label">Overdue</div>
+          <div className="stat-number" style={{ color: '#ffffff', fontSize: '2rem', fontWeight: 700, textShadow: '1px 1px 2px rgba(0,0,0,0.2)' }}>{overdueCount}</div>
+          <div className="stat-label" style={{ color: '#ffffff', fontSize: '0.85rem', fontWeight: 600, marginTop: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Overdue</div>
         </div>
         <div
           className="stat-card-teal"
-          style={{ cursor: 'pointer' }}
+          style={{
+            cursor: 'pointer',
+            background: 'linear-gradient(135deg, #34d399 0%, #10b981 100%)',
+            padding: '1.25rem',
+            borderRadius: '12px',
+            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)',
+            border: '2px solid rgba(255,255,255,0.4)',
+            transition: 'all 0.3s ease'
+          }}
           onClick={() => setFilters((prev) => ({ ...prev, assignedTo: 'me' }))}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-4px)';
+            e.currentTarget.style.boxShadow = '0 8px 20px rgba(16, 185, 129, 0.4)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.25)';
+          }}
         >
-          <div className="stat-number">{myTasksCount}</div>
-          <div className="stat-label">My Tasks</div>
+          <div className="stat-number" style={{ color: '#ffffff', fontSize: '2rem', fontWeight: 700, textShadow: '1px 1px 2px rgba(0,0,0,0.2)' }}>{myTasksCount}</div>
+          <div className="stat-label" style={{ color: '#ffffff', fontSize: '0.85rem', fontWeight: 600, marginTop: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>My Tasks</div>
         </div>
       </div>
 
@@ -442,7 +569,7 @@ export function TasksPage() {
             border: '1px solid #e5e7eb',
           }}
         >
-          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>✅</div>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
           <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No Tasks Found</h3>
           <p style={{ color: '#6b7280', margin: '0 0 1rem' }}>
             {filters.search || filters.category || filters.priority || filters.assignedTo

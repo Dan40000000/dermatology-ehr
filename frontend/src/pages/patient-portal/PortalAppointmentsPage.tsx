@@ -139,7 +139,7 @@ export function PortalAppointmentsPage() {
             <div className="portal-loading">Loading appointments...</div>
           ) : appointments.length === 0 ? (
             <div className="portal-empty-state">
-              <div className="empty-icon">📅</div>
+              <div className="empty-icon"></div>
               <h3>No {tab} appointments</h3>
               <p>
                 {tab === 'upcoming'
@@ -204,7 +204,7 @@ export function PortalAppointmentsPage() {
                   {tab === 'upcoming' && apt.status !== 'cancelled' && (
                     <div className="appointment-actions">
                       <button className="action-btn add-calendar">
-                        📅 Add to Calendar
+                        Add to Calendar
                       </button>
                       <button
                         className="action-btn primary"
@@ -212,14 +212,14 @@ export function PortalAppointmentsPage() {
                         disabled={!!checkinSessionId}
                         title="Start pre-check-in before arrival"
                       >
-                        ✅ Start Pre-Check-In
+                        Start Pre-Check-In
                       </button>
                       {checkinSessionId && (
                         <button
                           className="action-btn confirm"
                           onClick={completeCheckIn}
                         >
-                          ✔️ Complete Check-In
+                          Complete Check-In
                         </button>
                       )}
                     </div>

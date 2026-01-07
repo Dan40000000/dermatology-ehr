@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
+import '../../styles/kiosk.css';
 
 export function KioskWelcomePage() {
   const navigate = useNavigate();
@@ -29,9 +30,9 @@ export function KioskWelcomePage() {
     },
     es: {
       title: 'Bienvenido',
-      subtitle: 'Gracias por elegir nuestra práctica de dermatología',
+      subtitle: 'Gracias por elegir nuestra practica de dermatologia',
       checkIn: 'Registrarse',
-      instructions: 'Toque el botón a continuación para comenzar su registro',
+      instructions: 'Toque el boton a continuacion para comenzar su registro',
       language: 'Idioma',
     },
   };
@@ -40,11 +41,11 @@ export function KioskWelcomePage() {
 
   return (
     <KioskLayout showProgress={false}>
-      <div className="bg-white rounded-2xl shadow-2xl p-12 text-center">
+      <div className="kiosk-welcome-card">
         {/* Logo/Icon */}
-        <div className="flex justify-center mb-8">
-          <div className="w-32 h-32 bg-gradient-to-br from-purple-600 to-purple-700 rounded-full flex items-center justify-center shadow-lg">
-            <svg className="w-20 h-20 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="kiosk-welcome-icon-container">
+          <div className="kiosk-welcome-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -56,50 +57,39 @@ export function KioskWelcomePage() {
         </div>
 
         {/* Welcome text */}
-        <h1 className="text-5xl font-bold text-gray-900 mb-4">{t.title}</h1>
-        <p className="text-2xl text-gray-600 mb-12">{t.subtitle}</p>
+        <h1 className="kiosk-welcome-title">{t.title}</h1>
+        <p className="kiosk-welcome-subtitle">{t.subtitle}</p>
 
         {/* Check-in button */}
-        <button
-          onClick={handleStartCheckIn}
-          className="w-full max-w-md mx-auto bg-gradient-to-r from-purple-600 to-purple-700 text-white text-3xl font-bold py-8 px-12 rounded-2xl shadow-xl hover:shadow-2xl hover:from-purple-700 hover:to-purple-800 transform hover:scale-105 transition-all duration-200 mb-8"
-        >
+        <button onClick={handleStartCheckIn} className="kiosk-checkin-btn">
           {t.checkIn}
         </button>
 
-        <p className="text-xl text-gray-500 mb-12">{t.instructions}</p>
+        <p className="kiosk-instructions">{t.instructions}</p>
 
         {/* Language selector */}
-        <div className="flex items-center justify-center gap-4">
-          <span className="text-lg text-gray-600">{t.language}:</span>
+        <div className="kiosk-language-selector">
+          <span className="kiosk-language-label">{t.language}:</span>
           <button
             onClick={() => setLanguage('en')}
-            className={`px-6 py-3 text-lg font-medium rounded-lg transition-all ${
-              language === 'en'
-                ? 'bg-purple-600 text-white'
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
+            className={`kiosk-language-btn ${language === 'en' ? 'active' : ''}`}
           >
             English
           </button>
           <button
             onClick={() => setLanguage('es')}
-            className={`px-6 py-3 text-lg font-medium rounded-lg transition-all ${
-              language === 'es'
-                ? 'bg-purple-600 text-white'
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
+            className={`kiosk-language-btn ${language === 'es' ? 'active' : ''}`}
           >
-            Español
+            Espanol
           </button>
         </div>
 
         {/* Help text */}
-        <div className="mt-12 p-6 bg-purple-50 rounded-lg border-2 border-purple-200">
-          <p className="text-lg text-purple-800">
+        <div className="kiosk-help-box">
+          <p>
             {language === 'en'
               ? 'If you need assistance, please see the front desk staff.'
-              : 'Si necesita ayuda, consulte al personal de recepción.'}
+              : 'Si necesita ayuda, consulte al personal de recepcion.'}
           </p>
         </div>
       </div>

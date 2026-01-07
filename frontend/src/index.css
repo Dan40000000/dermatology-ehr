@@ -1,12 +1,26 @@
 /* Import Inter font from Google Fonts */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
+/* Import Accessibility Styles */
+@import './styles/accessibility.css';
+
+/* Import Responsive Styles */
+@import './styles/responsive.css';
+
 * {
   box-sizing: border-box;
 }
 
 html {
-  font-size: 14px;
+  font-size: 16px; /* Increased base size for better readability */
+  scroll-behavior: smooth;
+}
+
+/* Disable smooth scroll for users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
 }
 
 body {
@@ -14,10 +28,39 @@ body {
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: #f3f4f6;
   color: #111827;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Improve text rendering */
+  text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #root {
   min-height: 100vh;
+}
+
+/* Ensure proper landmarks for screen readers */
+main {
+  display: block;
+}
+
+/* Improve heading hierarchy */
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* Accessible list styles */
+ul, ol {
+  list-style-position: inside;
+}
+
+/* Remove list styles from navigation */
+nav ul,
+nav ol {
+  list-style: none;
+  padding: 0;
+  margin: 0;
 }

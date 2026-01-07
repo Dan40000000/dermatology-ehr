@@ -150,7 +150,7 @@ export function TemplateSelector({ isOpen, onClose, onApply, tenantId, accessTok
           padding: 0
         }}
       >
-        {template.isFavorite ? '⭐' : '☆'}
+        {template.isFavorite ? '' : ''}
       </button>
 
       {/* Category Badge */}
@@ -290,7 +290,7 @@ export function TemplateSelector({ isOpen, onClose, onApply, tenantId, accessTok
                 borderRadius: '8px',
                 border: '1px dashed #d1d5db'
               }}>
-                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📝</div>
+                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}></div>
                 <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>
                   No templates found. Try adjusting your filters.
                 </div>
@@ -309,7 +309,7 @@ export function TemplateSelector({ isOpen, onClose, onApply, tenantId, accessTok
                       alignItems: 'center',
                       gap: '0.5rem'
                     }}>
-                      <span>⭐</span>
+                      <span></span>
                       <span>Favorites</span>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
@@ -332,7 +332,7 @@ export function TemplateSelector({ isOpen, onClose, onApply, tenantId, accessTok
                       alignItems: 'center',
                       gap: '0.5rem'
                     }}>
-                      <span>🔥</span>
+                      <span></span>
                       <span>Most Used</span>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>

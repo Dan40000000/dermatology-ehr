@@ -37,10 +37,10 @@ messagingRouter.get("/threads", requireAuth, async (req: AuthedRequest, res) => 
         mp.last_read_at as "lastReadAt",
         (
           select count(*)
-          from messages m
-          where m.thread_id = mt.id
-            and m.sender != $2
-            and (m.created_at > mp.last_read_at or mp.last_read_at is null)
+          from thread_messages tm
+          where tm.thread_id = mt.id
+            and tm.sender_id != $2
+            and (tm.created_at > mp.last_read_at or mp.last_read_at is null)
         ) as "unreadCount",
         (
           select json_agg(json_build_object(
@@ -57,10 +57,10 @@ messagingRouter.get("/threads", requireAuth, async (req: AuthedRequest, res) => 
           select json_build_object(
             'id', last_msg.id,
             'body', left(last_msg.body, 100),
-            'sender', last_msg.sender,
+            'sender', last_msg.sender_id,
             'createdAt', last_msg.created_at
           )
-          from messages last_msg
+          from thread_messages last_msg
           where last_msg.thread_id = mt.id
           order by last_msg.created_at desc
           limit 1
@@ -136,16 +136,16 @@ messagingRouter.get("/threads/:id", requireAuth, async (req: AuthedRequest, res)
     // Get messages in thread
     const messagesResult = await pool.query(
       `select
-        m.id,
-        m.body,
-        m.sender,
-        m.created_at as "createdAt",
+        tm.id,
+        tm.body,
+        tm.sender_id as sender,
+        tm.created_at as "createdAt",
         u.first_name as "senderFirstName",
         u.last_name as "senderLastName"
-      from messages m
-      left join users u on u.id = m.sender
-      where m.thread_id = $1
-      order by m.created_at asc`,
+      from thread_messages tm
+      left join users u on u.id = tm.sender_id
+      where tm.thread_id = $1
+      order by tm.created_at asc`,
       [threadId]
     );
 
@@ -205,7 +205,7 @@ messagingRouter.post("/threads", requireAuth, async (req: AuthedRequest, res) =>
     // Create first message
     const messageId = crypto.randomUUID();
     await client.query(
-      `insert into messages(id, tenant_id, thread_id, body, sender)
+      `insert into thread_messages(id, tenant_id, thread_id, body, sender_id)
        values ($1, $2, $3, $4, $5)`,
       [messageId, tenantId, threadId, message, userId]
     );
@@ -253,7 +253,7 @@ messagingRouter.post("/threads/:id/messages", requireAuth, async (req: AuthedReq
     // Create message
     const messageId = crypto.randomUUID();
     await client.query(
-      `insert into messages(id, tenant_id, thread_id, body, sender)
+      `insert into thread_messages(id, tenant_id, thread_id, body, sender_id)
        values ($1, $2, $3, $4, $5)`,
       [messageId, tenantId, threadId, body, userId]
     );
@@ -332,10 +332,10 @@ messagingRouter.get("/unread-count", requireAuth, async (req: AuthedRequest, res
          and mp.is_archived = false
          and exists (
            select 1
-           from messages m
-           where m.thread_id = mt.id
-             and m.sender != $2
-             and (m.created_at > mp.last_read_at or mp.last_read_at is null)
+           from thread_messages tm
+           where tm.thread_id = mt.id
+             and tm.sender_id != $2
+             and (tm.created_at > mp.last_read_at or mp.last_read_at is null)
          )`,
       [tenantId, userId]
     );

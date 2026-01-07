@@ -99,40 +99,26 @@ export function NewPatientPage() {
 
     setSaving(true);
     try {
+      // Format data to match backend schema (flat structure)
       const result = await createPatient(session.tenantId, session.accessToken, {
         firstName: formData.firstName,
         lastName: formData.lastName,
-        dateOfBirth: formData.dateOfBirth,
-        sex: formData.sex || undefined,
+        dob: formData.dateOfBirth,
         email: formData.email || undefined,
-        phone: formData.phone || undefined,
-        address: formData.address
-          ? {
-              street: formData.address,
-              city: formData.city,
-              state: formData.state,
-              zip: formData.zipCode,
-            }
-          : undefined,
+        phone: formData.phone || formData.cellPhone || undefined,
+        address: formData.address || undefined,
+        city: formData.city || undefined,
+        state: formData.state || undefined,
+        zip: formData.zipCode || undefined,
         insurance: formData.insuranceProvider
-          ? {
-              provider: formData.insuranceProvider,
-              memberId: formData.insuranceId,
-            }
-          : undefined,
-        emergencyContact: formData.emergencyContactName
-          ? {
-              name: formData.emergencyContactName,
-              phone: formData.emergencyContactPhone,
-            }
+          ? `${formData.insuranceProvider}${formData.insuranceId ? ` - ID: ${formData.insuranceId}` : ''}${formData.insuranceGroupNumber ? ` - Group: ${formData.insuranceGroupNumber}` : ''}`
           : undefined,
         allergies: formData.allergies || undefined,
-        primaryCarePhysician: formData.primaryCarePhysician || undefined,
-        referralSource: formData.referralSource || undefined,
+        medications: undefined,
       });
 
       showSuccess('Patient created successfully');
-      navigate(`/patients/${result.patient.id}`);
+      navigate(`/patients/${result.id}`);
     } catch (err: any) {
       showError(err.message || 'Failed to create patient');
     } finally {
@@ -141,10 +127,10 @@ export function NewPatientPage() {
   };
 
   const sections = [
-    { id: 'demographics', label: 'Demographics', icon: '👤' },
-    { id: 'contact', label: 'Contact Info', icon: '📞' },
-    { id: 'insurance', label: 'Insurance', icon: '🏥' },
-    { id: 'medical', label: 'Medical Info', icon: '📋' },
+    { id: 'demographics', label: 'Demographics', icon: '' },
+    { id: 'contact', label: 'Contact Info', icon: '' },
+    { id: 'insurance', label: 'Insurance', icon: '' },
+    { id: 'medical', label: 'Medical Info', icon: '' },
   ];
 
   return (
@@ -156,11 +142,11 @@ export function NewPatientPage() {
           Back to Patients
         </button>
         <button type="button" className="ema-action-btn" onClick={handleSubmit} disabled={saving}>
-          <span className="icon">💾</span>
+          <span className="icon"></span>
           {saving ? 'Saving...' : 'Save Patient'}
         </button>
         <button type="button" className="ema-action-btn" onClick={() => navigate('/patients')}>
-          <span className="icon">❌</span>
+          <span className="icon">X</span>
           Cancel
         </button>
       </div>

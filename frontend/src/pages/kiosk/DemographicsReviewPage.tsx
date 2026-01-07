@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
+import '../../styles/kiosk.css';
 
 interface PatientData {
   firstName: string;
@@ -16,6 +17,25 @@ interface PatientData {
   emergencyContactPhone?: string;
   emergencyContactRelationship?: string;
 }
+
+const cardStyle: React.CSSProperties = {
+  background: 'white',
+  borderRadius: '1rem',
+  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+  padding: '2rem',
+};
+
+const gridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(2, 1fr)',
+  gap: '1.5rem',
+};
+
+const sectionStyle: React.CSSProperties = {
+  paddingTop: '1rem',
+  borderTop: '1px solid #e5e7eb',
+  marginTop: '1rem',
+};
 
 export function KioskDemographicsReviewPage() {
   const navigate = useNavigate();
@@ -119,7 +139,6 @@ export function KioskDemographicsReviewPage() {
   };
 
   const handleContinue = async () => {
-    // No changes, just mark as reviewed and continue
     try {
       await fetch(`/api/kiosk/checkin/${sessionId}/demographics`, {
         method: 'PUT',
@@ -128,7 +147,7 @@ export function KioskDemographicsReviewPage() {
           'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
           'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
         },
-        body: JSON.stringify({}), // No changes
+        body: JSON.stringify({}),
       });
     } catch (err) {
       console.error('Error marking demographics as reviewed:', err);
@@ -140,9 +159,9 @@ export function KioskDemographicsReviewPage() {
   if (loading) {
     return (
       <KioskLayout currentStep={2} totalSteps={6} stepName="Loading..." onTimeout={handleTimeout}>
-        <div className="bg-white rounded-2xl shadow-xl p-12 text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-purple-600 mx-auto mb-4"></div>
-          <p className="text-2xl text-gray-600">Loading your information...</p>
+        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem' }}>
+          <div className="kiosk-spinner" style={{ margin: '0 auto 1rem' }} />
+          <p style={{ fontSize: '1.5rem', color: '#4b5563' }}>Loading your information...</p>
         </div>
       </KioskLayout>
     );
@@ -154,15 +173,17 @@ export function KioskDemographicsReviewPage() {
 
   return (
     <KioskLayout currentStep={2} totalSteps={6} stepName="Review Information" onTimeout={handleTimeout}>
-      <div className="bg-white rounded-2xl shadow-xl p-8">
-        <h2 className="text-3xl font-bold text-gray-900 mb-4">Review Your Information</h2>
-        <p className="text-xl text-gray-600 mb-8">
+      <div style={cardStyle}>
+        <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '1rem' }}>
+          Review Your Information
+        </h2>
+        <p style={{ fontSize: '1.25rem', color: '#4b5563', marginBottom: '2rem' }}>
           Please verify that your contact information is correct.
         </p>
 
         {!isEditing ? (
-          <div className="space-y-6 mb-8">
-            <div className="grid grid-cols-2 gap-6">
+          <div style={{ marginBottom: '2rem' }}>
+            <div style={gridStyle}>
               <InfoField label="First Name" value={patientData.firstName} />
               <InfoField label="Last Name" value={patientData.lastName} />
               <InfoField label="Date of Birth" value={new Date(patientData.dob).toLocaleDateString()} />
@@ -170,33 +191,40 @@ export function KioskDemographicsReviewPage() {
               <InfoField label="Email" value={patientData.email || 'Not provided'} />
             </div>
 
-            <div className="pt-4 border-t border-gray-200">
-              <h3 className="text-xl font-semibold text-gray-900 mb-4">Address</h3>
-              <div className="grid grid-cols-2 gap-6">
-                <InfoField label="Street Address" value={patientData.address || 'Not provided'} className="col-span-2" />
+            <div style={sectionStyle}>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111827', marginBottom: '1rem' }}>Address</h3>
+              <div style={gridStyle}>
+                <InfoField label="Street Address" value={patientData.address || 'Not provided'} />
                 <InfoField label="City" value={patientData.city || 'Not provided'} />
                 <InfoField label="State" value={patientData.state || 'Not provided'} />
                 <InfoField label="ZIP Code" value={patientData.zip || 'Not provided'} />
               </div>
             </div>
 
-            <div className="pt-4 border-t border-gray-200">
-              <h3 className="text-xl font-semibold text-gray-900 mb-4">Emergency Contact</h3>
-              <div className="grid grid-cols-2 gap-6">
+            <div style={sectionStyle}>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111827', marginBottom: '1rem' }}>Emergency Contact</h3>
+              <div style={gridStyle}>
                 <InfoField label="Name" value={patientData.emergencyContactName || 'Not provided'} />
                 <InfoField label="Phone" value={patientData.emergencyContactPhone || 'Not provided'} />
               </div>
             </div>
 
-            <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-6 mt-8">
-              <p className="text-xl font-medium text-purple-900 text-center">
+            <div style={{
+              background: '#f3e8ff',
+              border: '2px solid #c4b5fd',
+              borderRadius: '0.5rem',
+              padding: '1.5rem',
+              marginTop: '2rem',
+              textAlign: 'center',
+            }}>
+              <p style={{ fontSize: '1.25rem', fontWeight: 500, color: '#6b21a8' }}>
                 Is this information correct?
               </p>
             </div>
           </div>
         ) : (
-          <div className="space-y-6 mb-8">
-            <div className="grid grid-cols-2 gap-6">
+          <div style={{ marginBottom: '2rem' }}>
+            <div style={gridStyle}>
               <EditField
                 label="Phone"
                 value={editedData.phone || ''}
@@ -211,14 +239,13 @@ export function KioskDemographicsReviewPage() {
               />
             </div>
 
-            <div className="pt-4 border-t border-gray-200">
-              <h3 className="text-xl font-semibold text-gray-900 mb-4">Address</h3>
-              <div className="grid grid-cols-2 gap-6">
+            <div style={sectionStyle}>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111827', marginBottom: '1rem' }}>Address</h3>
+              <div style={gridStyle}>
                 <EditField
                   label="Street Address"
                   value={editedData.address || ''}
                   onChange={(v) => handleChange('address', v)}
-                  className="col-span-2"
                 />
                 <EditField label="City" value={editedData.city || ''} onChange={(v) => handleChange('city', v)} />
                 <EditField label="State" value={editedData.state || ''} onChange={(v) => handleChange('state', v)} />
@@ -226,9 +253,9 @@ export function KioskDemographicsReviewPage() {
               </div>
             </div>
 
-            <div className="pt-4 border-t border-gray-200">
-              <h3 className="text-xl font-semibold text-gray-900 mb-4">Emergency Contact</h3>
-              <div className="grid grid-cols-2 gap-6">
+            <div style={sectionStyle}>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111827', marginBottom: '1rem' }}>Emergency Contact</h3>
+              <div style={gridStyle}>
                 <EditField
                   label="Name"
                   value={editedData.emergencyContactName || ''}
@@ -244,46 +271,44 @@ export function KioskDemographicsReviewPage() {
           </div>
         )}
 
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border-2 border-red-200 rounded-lg">
-            <p className="text-lg text-red-800">{error}</p>
-          </div>
-        )}
+        {error && <div className="kiosk-error">{error}</div>}
 
-        <div className="flex gap-4">
-          <button
-            onClick={handleBack}
-            className="flex-1 py-5 text-xl font-medium text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50"
-          >
+        <div className="kiosk-nav-buttons">
+          <button onClick={handleBack} className="kiosk-btn-secondary">
             Back
           </button>
           {!isEditing ? (
             <>
               <button
                 onClick={handleEdit}
-                className="flex-1 py-5 text-xl font-medium text-purple-600 bg-purple-50 border-2 border-purple-300 rounded-lg hover:bg-purple-100"
+                style={{
+                  flex: 1,
+                  padding: '1.25rem',
+                  fontSize: '1.25rem',
+                  fontWeight: 500,
+                  color: '#7c3aed',
+                  background: '#f3e8ff',
+                  border: '2px solid #c4b5fd',
+                  borderRadius: '0.5rem',
+                  cursor: 'pointer',
+                }}
               >
                 Update Information
               </button>
-              <button
-                onClick={handleContinue}
-                className="flex-1 py-5 text-xl font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700"
-              >
+              <button onClick={handleContinue} className="kiosk-btn-primary" style={{ flex: 1 }}>
                 Looks Good
               </button>
             </>
           ) : (
             <>
-              <button
-                onClick={() => setIsEditing(false)}
-                className="flex-1 py-5 text-xl font-medium text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50"
-              >
+              <button onClick={() => setIsEditing(false)} className="kiosk-btn-secondary">
                 Cancel
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex-1 py-5 text-xl font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50"
+                className="kiosk-btn-primary"
+                style={{ flex: 1 }}
               >
                 {saving ? 'Saving...' : 'Save & Continue'}
               </button>
@@ -295,11 +320,11 @@ export function KioskDemographicsReviewPage() {
   );
 }
 
-function InfoField({ label, value, className = '' }: { label: string; value: string; className?: string }) {
+function InfoField({ label, value }: { label: string; value: string }) {
   return (
-    <div className={className}>
-      <div className="text-sm font-medium text-gray-600 mb-1">{label}</div>
-      <div className="text-xl text-gray-900">{value}</div>
+    <div>
+      <div style={{ fontSize: '0.875rem', fontWeight: 500, color: '#4b5563', marginBottom: '0.25rem' }}>{label}</div>
+      <div style={{ fontSize: '1.25rem', color: '#111827' }}>{value}</div>
     </div>
   );
 }
@@ -309,23 +334,21 @@ function EditField({
   value,
   onChange,
   placeholder = '',
-  className = '',
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
-  className?: string;
 }) {
   return (
-    <div className={className}>
-      <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
+    <div className="kiosk-form-group">
+      <label className="kiosk-form-label">{label}</label>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full px-4 py-3 text-lg border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+        className="kiosk-form-input"
       />
     </div>
   );

@@ -251,31 +251,165 @@ export function QuotesPage() {
   }
 
   return (
-    <div className="quotes-page">
-      <div className="page-header">
-        <h1>Cosmetic Quotes</h1>
+    <div className="quotes-page" style={{
+      background: 'linear-gradient(135deg, #f59e0b 0%, #fbbf24 50%, #fcd34d 100%)',
+      minHeight: '100vh',
+      padding: '2rem'
+    }}>
+      <div className="page-header" style={{
+        background: 'linear-gradient(to right, rgba(255,255,255,0.95), rgba(255,255,255,0.9))',
+        padding: '2rem',
+        borderRadius: '16px',
+        boxShadow: '0 10px 40px rgba(245, 158, 11, 0.3)',
+        marginBottom: '2rem',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <div>
+          <h1 style={{
+            fontSize: '2.5rem',
+            fontWeight: '800',
+            background: 'linear-gradient(135deg, #f59e0b, #fbbf24)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            marginBottom: '0.5rem'
+          }}>Cosmetic Quotes</h1>
+          <p style={{ color: '#6b7280', fontSize: '1.1rem' }}>Manage cosmetic procedure quotes</p>
+        </div>
         <button
           type="button"
           className="btn-primary"
           onClick={() => setShowNewQuoteModal(true)}
+          style={{
+            background: 'linear-gradient(135deg, #f59e0b, #fbbf24)',
+            color: 'white',
+            border: 'none',
+            padding: '0.75rem 1.5rem',
+            borderRadius: '10px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            boxShadow: '0 4px 12px rgba(245, 158, 11, 0.4)'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 8px 20px rgba(245, 158, 11, 0.6)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(245, 158, 11, 0.4)';
+          }}
         >
           + New Quote
         </button>
       </div>
 
       {/* Stats */}
-      <div className="quote-stats">
-        <div className="stat-card">
-          <div className="stat-value">{quotes.length}</div>
-          <div className="stat-label">Total Quotes</div>
+      <div className="quote-stats" style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+        gap: '1.5rem',
+        marginBottom: '2rem'
+      }}>
+        <div className="stat-card" style={{
+          background: 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9))',
+          padding: '2rem',
+          borderRadius: '16px',
+          boxShadow: '0 8px 24px rgba(245, 158, 11, 0.2)',
+          border: '2px solid rgba(245, 158, 11, 0.1)',
+          transition: 'all 0.3s ease',
+          cursor: 'pointer'
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-8px) scale(1.02)';
+          e.currentTarget.style.boxShadow = '0 12px 32px rgba(245, 158, 11, 0.3)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0) scale(1)';
+          e.currentTarget.style.boxShadow = '0 8px 24px rgba(245, 158, 11, 0.2)';
+        }}>
+          <div className="stat-value" style={{
+            fontSize: '2.5rem',
+            fontWeight: '800',
+            background: 'linear-gradient(135deg, #f59e0b, #fbbf24)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            marginBottom: '0.5rem'
+          }}>{quotes.length}</div>
+          <div className="stat-label" style={{
+            color: '#6b7280',
+            fontSize: '1rem',
+            fontWeight: '600',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em'
+          }}>Total Quotes</div>
         </div>
-        <div className="stat-card">
-          <div className="stat-value">{pendingQuotes.length}</div>
-          <div className="stat-label">Awaiting Response</div>
+        <div className="stat-card" style={{
+          background: 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9))',
+          padding: '2rem',
+          borderRadius: '16px',
+          boxShadow: '0 8px 24px rgba(251, 191, 36, 0.2)',
+          border: '2px solid rgba(251, 191, 36, 0.1)',
+          transition: 'all 0.3s ease',
+          cursor: 'pointer'
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-8px) scale(1.02)';
+          e.currentTarget.style.boxShadow = '0 12px 32px rgba(251, 191, 36, 0.3)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0) scale(1)';
+          e.currentTarget.style.boxShadow = '0 8px 24px rgba(251, 191, 36, 0.2)';
+        }}>
+          <div className="stat-value" style={{
+            fontSize: '2.5rem',
+            fontWeight: '800',
+            background: 'linear-gradient(135deg, #fbbf24, #fcd34d)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            marginBottom: '0.5rem'
+          }}>{pendingQuotes.length}</div>
+          <div className="stat-label" style={{
+            color: '#6b7280',
+            fontSize: '1rem',
+            fontWeight: '600',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em'
+          }}>Awaiting Response</div>
         </div>
-        <div className="stat-card">
-          <div className="stat-value">{formatCurrency(acceptedTotal)}</div>
-          <div className="stat-label">Accepted Value</div>
+        <div className="stat-card" style={{
+          background: 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9))',
+          padding: '2rem',
+          borderRadius: '16px',
+          boxShadow: '0 8px 24px rgba(217, 119, 6, 0.2)',
+          border: '2px solid rgba(217, 119, 6, 0.1)',
+          transition: 'all 0.3s ease',
+          cursor: 'pointer'
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-8px) scale(1.02)';
+          e.currentTarget.style.boxShadow = '0 12px 32px rgba(217, 119, 6, 0.3)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0) scale(1)';
+          e.currentTarget.style.boxShadow = '0 8px 24px rgba(217, 119, 6, 0.2)';
+        }}>
+          <div className="stat-value" style={{
+            fontSize: '2.5rem',
+            fontWeight: '800',
+            background: 'linear-gradient(135deg, #d97706, #f59e0b)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            marginBottom: '0.5rem'
+          }}>{formatCurrency(acceptedTotal)}</div>
+          <div className="stat-label" style={{
+            color: '#6b7280',
+            fontSize: '1rem',
+            fontWeight: '600',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em'
+          }}>Accepted Value</div>
         </div>
       </div>
 

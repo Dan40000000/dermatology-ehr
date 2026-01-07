@@ -26,6 +26,8 @@
 
 /* Loading spinner */
 .loading-spinner {
+  width: 32px;
+  height: 32px;
   border: 3px solid #e5e7eb;
   border-top-color: #6B46C1; /* ModMed purple */
   border-radius: 50%;

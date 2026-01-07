@@ -1,0 +1,686 @@
+/* Kiosk Mode Styles */
+
+/* Layout Container */
+.kiosk-container {
+  min-height: 100vh;
+  background: linear-gradient(to bottom right, #f3e8ff, #ede9fe);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.kiosk-header {
+  background: white;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  padding: 1.5rem 2rem;
+}
+
+.kiosk-header-content {
+  max-width: 72rem;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kiosk-header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.kiosk-logo {
+  width: 3rem;
+  height: 3rem;
+  background: #7c3aed;
+  border-radius: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kiosk-logo svg {
+  width: 2rem;
+  height: 2rem;
+  color: white;
+}
+
+.kiosk-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0;
+}
+
+.kiosk-step-name {
+  font-size: 0.875rem;
+  color: #4b5563;
+  margin: 0;
+}
+
+/* Progress dots */
+.kiosk-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.kiosk-progress-dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: #d1d5db;
+}
+
+.kiosk-progress-dot.completed {
+  background: #7c3aed;
+}
+
+.kiosk-progress-dot.current {
+  background: #a78bfa;
+}
+
+.kiosk-progress-text {
+  margin-left: 0.5rem;
+  font-size: 0.875rem;
+  color: #4b5563;
+}
+
+/* Main content */
+.kiosk-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.kiosk-content {
+  width: 100%;
+  max-width: 56rem;
+}
+
+/* Footer */
+.kiosk-footer {
+  background: white;
+  border-top: 1px solid #e5e7eb;
+  padding: 1rem 2rem;
+}
+
+.kiosk-footer-content {
+  max-width: 72rem;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kiosk-help-btn {
+  padding: 0.75rem 2rem;
+  font-size: 1.125rem;
+  font-weight: 500;
+  color: #7c3aed;
+  background: #f3e8ff;
+  border: 2px solid #c4b5fd;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.kiosk-help-btn:hover {
+  background: #ede9fe;
+}
+
+/* Welcome Card */
+.kiosk-welcome-card {
+  background: white;
+  border-radius: 1rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  padding: 3rem;
+  text-align: center;
+}
+
+.kiosk-welcome-icon-container {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 2rem;
+}
+
+.kiosk-welcome-icon {
+  width: 8rem;
+  height: 8rem;
+  background: linear-gradient(to bottom right, #7c3aed, #6d28d9);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 25px rgba(124, 58, 237, 0.3);
+}
+
+.kiosk-welcome-icon svg {
+  width: 5rem;
+  height: 5rem;
+  color: white;
+}
+
+.kiosk-welcome-title {
+  font-size: 3rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 1rem;
+}
+
+.kiosk-welcome-subtitle {
+  font-size: 1.5rem;
+  color: #4b5563;
+  margin: 0 0 3rem;
+}
+
+/* Check-in Button */
+.kiosk-checkin-btn {
+  width: 100%;
+  max-width: 28rem;
+  margin: 0 auto;
+  background: linear-gradient(to right, #7c3aed, #6d28d9);
+  color: white;
+  font-size: 1.875rem;
+  font-weight: 700;
+  padding: 2rem 3rem;
+  border: none;
+  border-radius: 1rem;
+  box-shadow: 0 10px 25px rgba(124, 58, 237, 0.3);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: block;
+}
+
+.kiosk-checkin-btn:hover {
+  background: linear-gradient(to right, #6d28d9, #5b21b6);
+  box-shadow: 0 15px 35px rgba(124, 58, 237, 0.4);
+  transform: scale(1.05);
+}
+
+.kiosk-instructions {
+  font-size: 1.25rem;
+  color: #6b7280;
+  margin: 2rem 0 3rem;
+}
+
+/* Language Selector */
+.kiosk-language-selector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.kiosk-language-label {
+  font-size: 1.125rem;
+  color: #4b5563;
+}
+
+.kiosk-language-btn {
+  padding: 0.75rem 1.5rem;
+  font-size: 1.125rem;
+  font-weight: 500;
+  background: #e5e7eb;
+  color: #374151;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.kiosk-language-btn:hover {
+  background: #d1d5db;
+}
+
+.kiosk-language-btn.active {
+  background: #7c3aed;
+  color: white;
+}
+
+/* Help Box */
+.kiosk-help-box {
+  margin-top: 3rem;
+  padding: 1.5rem;
+  background: #f3e8ff;
+  border: 2px solid #c4b5fd;
+  border-radius: 0.5rem;
+}
+
+.kiosk-help-box p {
+  font-size: 1.125rem;
+  color: #6b21a8;
+  margin: 0;
+}
+
+/* Verification Page */
+.kiosk-verify-card {
+  background: white;
+  border-radius: 1rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  padding: 3rem;
+}
+
+.kiosk-verify-title {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #111827;
+  text-align: center;
+  margin: 0 0 0.5rem;
+}
+
+.kiosk-verify-subtitle {
+  font-size: 1.125rem;
+  color: #4b5563;
+  text-align: center;
+  margin: 0 0 2rem;
+}
+
+.kiosk-form-group {
+  margin-bottom: 1.5rem;
+}
+
+.kiosk-form-label {
+  display: block;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 0.5rem;
+}
+
+.kiosk-form-input {
+  width: 100%;
+  padding: 1rem 1.25rem;
+  font-size: 1.25rem;
+  border: 2px solid #d1d5db;
+  border-radius: 0.75rem;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  box-sizing: border-box;
+}
+
+.kiosk-form-input:focus {
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+}
+
+.kiosk-form-input::placeholder {
+  color: #9ca3af;
+}
+
+.kiosk-date-inputs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+.kiosk-date-input {
+  padding: 1rem;
+  font-size: 1.25rem;
+  text-align: center;
+  border: 2px solid #d1d5db;
+  border-radius: 0.75rem;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.kiosk-date-input:focus {
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+}
+
+/* Primary Button */
+.kiosk-btn-primary {
+  width: 100%;
+  padding: 1.25rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: white;
+  background: linear-gradient(to right, #7c3aed, #6d28d9);
+  border: none;
+  border-radius: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.kiosk-btn-primary:hover:not(:disabled) {
+  background: linear-gradient(to right, #6d28d9, #5b21b6);
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3);
+}
+
+.kiosk-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Secondary Button */
+.kiosk-btn-secondary {
+  padding: 1rem 2rem;
+  font-size: 1.125rem;
+  font-weight: 500;
+  color: #374151;
+  background: #f3f4f6;
+  border: 2px solid #d1d5db;
+  border-radius: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.kiosk-btn-secondary:hover {
+  background: #e5e7eb;
+}
+
+/* Error message */
+.kiosk-error {
+  padding: 1rem;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 0.5rem;
+  color: #dc2626;
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+/* Appointment Selection */
+.kiosk-appointments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.kiosk-appointment-card {
+  padding: 1.5rem;
+  background: #f9fafb;
+  border: 2px solid #e5e7eb;
+  border-radius: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.kiosk-appointment-card:hover {
+  border-color: #a78bfa;
+  background: #f5f3ff;
+}
+
+.kiosk-appointment-card.selected {
+  border-color: #7c3aed;
+  background: #ede9fe;
+}
+
+.kiosk-appointment-time {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 0.25rem;
+}
+
+.kiosk-appointment-provider {
+  font-size: 1.125rem;
+  color: #4b5563;
+  margin-bottom: 0.25rem;
+}
+
+.kiosk-appointment-type {
+  font-size: 1rem;
+  color: #6b7280;
+}
+
+/* Demographics / Form sections */
+.kiosk-section {
+  margin-bottom: 2rem;
+}
+
+.kiosk-section-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #111827;
+  margin: 0 0 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.kiosk-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 768px) {
+  .kiosk-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Insurance Card */
+.kiosk-insurance-card {
+  padding: 1.5rem;
+  background: #f0fdf4;
+  border: 2px solid #86efac;
+  border-radius: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.kiosk-insurance-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #166534;
+  margin: 0 0 0.5rem;
+}
+
+.kiosk-insurance-info {
+  font-size: 1rem;
+  color: #166534;
+}
+
+/* Consent Forms */
+.kiosk-consent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.kiosk-consent-item {
+  padding: 1.25rem;
+  background: white;
+  border: 2px solid #e5e7eb;
+  border-radius: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.kiosk-consent-item:hover {
+  border-color: #a78bfa;
+}
+
+.kiosk-consent-item.completed {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.kiosk-consent-name {
+  font-size: 1.125rem;
+  font-weight: 500;
+  color: #111827;
+}
+
+.kiosk-consent-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.kiosk-consent-status.pending {
+  color: #6b7280;
+}
+
+.kiosk-consent-status.signed {
+  color: #16a34a;
+}
+
+/* Signature Pad */
+.kiosk-signature-container {
+  margin-bottom: 1.5rem;
+}
+
+.kiosk-signature-canvas {
+  width: 100%;
+  height: 12rem;
+  border: 2px solid #d1d5db;
+  border-radius: 0.75rem;
+  background: white;
+  cursor: crosshair;
+}
+
+.kiosk-signature-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.kiosk-signature-clear {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  color: #6b7280;
+  background: transparent;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  cursor: pointer;
+}
+
+.kiosk-signature-clear:hover {
+  background: #f3f4f6;
+}
+
+/* Completion Page */
+.kiosk-completion-card {
+  background: white;
+  border-radius: 1rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  padding: 3rem;
+  text-align: center;
+}
+
+.kiosk-completion-icon {
+  width: 6rem;
+  height: 6rem;
+  background: #dcfce7;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 2rem;
+}
+
+.kiosk-completion-icon svg {
+  width: 3rem;
+  height: 3rem;
+  color: #16a34a;
+}
+
+.kiosk-completion-title {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 1rem;
+}
+
+.kiosk-completion-message {
+  font-size: 1.25rem;
+  color: #4b5563;
+  margin: 0 0 2rem;
+}
+
+.kiosk-completion-details {
+  background: #f9fafb;
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  text-align: left;
+}
+
+.kiosk-completion-detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.kiosk-completion-detail-row:last-child {
+  border-bottom: none;
+}
+
+.kiosk-completion-detail-label {
+  color: #6b7280;
+}
+
+.kiosk-completion-detail-value {
+  font-weight: 600;
+  color: #111827;
+}
+
+/* Navigation Buttons */
+.kiosk-nav-buttons {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.kiosk-nav-buttons.center {
+  justify-content: center;
+}
+
+/* Info Box */
+.kiosk-info-box {
+  padding: 1rem 1.5rem;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  border-radius: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.kiosk-info-box p {
+  color: #1e40af;
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+/* Loading State */
+.kiosk-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem;
+}
+
+.kiosk-spinner {
+  width: 3rem;
+  height: 3rem;
+  border: 4px solid #e5e7eb;
+  border-top-color: #7c3aed;
+  border-radius: 50%;
+  animation: kiosk-spin 1s linear infinite;
+}
+
+@keyframes kiosk-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.kiosk-loading-text {
+  margin-top: 1rem;
+  font-size: 1.125rem;
+  color: #4b5563;
+}

@@ -1,0 +1,125 @@
+{
+	"meta": {
+		"generatedAt": "2026-01-06T03:40:04.982Z",
+		"tasksAnalyzed": 14,
+		"totalTasks": 14,
+		"analysisCount": 14,
+		"thresholdScore": 5,
+		"projectName": "Task Master",
+		"usedResearch": true
+	},
+	"complexityAnalysis": [
+		{
+			"taskId": 13,
+			"taskTitle": "Add Missing Modules to Navigation",
+			"complexityScore": 4,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break down into: 1) Add routes for 6 modules using existing router; 2) Create placeholder components matching EMA blueprint; 3) Implement responsive design with 44px touch targets; 4) Add unit/e2e tests and tablet verification.",
+			"reasoning": "Straightforward UI task using existing routing framework. Multiple components (6 modules) increase effort but follow established patterns. Low technical risk, standard testing. Complexity from volume rather than novelty."
+		},
+		{
+			"taskId": 14,
+			"taskTitle": "Expose Admin and Quality in Main Navigation",
+			"complexityScore": 3,
+			"recommendedSubtasks": 2,
+			"expansionPrompt": "Split into: 1) Update navigation component with new links and role checks using existing auth service; 2) Add role-based visibility tests and e2e access denial verification.",
+			"reasoning": "Simple nav update leveraging existing auth and page components. Minimal new code, low cyclomatic complexity. Dependency on task 13 is straightforward sequencing."
+		},
+		{
+			"taskId": 15,
+			"taskTitle": "Define Module Access Controls and Roles",
+			"complexityScore": 6,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Divide into: 1) Define roles (clinician, admin, etc.); 2) Create permissions matrix config for 29 modules; 3) Integrate with navigation guards; 4) Unit test permission logic; 5) Integration tests for role-based module access.",
+			"reasoning": "RBAC extension across 29 modules requires comprehensive matrix design and integration. High cognitive complexity from permission logic and testing coverage, but builds on existing system."
+		},
+		{
+			"taskId": 16,
+			"taskTitle": "Implement AllergyIntolerance FHIR Resource",
+			"complexityScore": 7,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "Break into: 1) Create CRUD endpoints; 2) Implement FHIR R4 schema validation; 3) Add US Core search params (_id, patient, code, status); 4) Error handling with OperationOutcome; 5) Use base controller pattern; 6) Postman/FHIR validator tests.",
+			"reasoning": "FHIR R4 compliance requires precise schema validation, search params, and error formats. Moderate complexity from spec adherence and testing, but single resource with established pattern reduces risk."
+		},
+		{
+			"taskId": 17,
+			"taskTitle": "Implement CarePlan and CareTeam FHIR Resources",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Split by resource: 1) CarePlan CRUD+search (patient, status, intent); 2) CareTeam CRUD+search; 3) FHIR R4 validation for both; 4) Validator tests, search coverage, pagination.",
+			"reasoning": "Two resources following task 16 pattern. Similar complexity to single resource but doubled volume. Standard search params increase validation surface area."
+		},
+		{
+			"taskId": 18,
+			"taskTitle": "Complete Remaining FHIR Resources Implementation",
+			"complexityScore": 9,
+			"recommendedSubtasks": 8,
+			"expansionPrompt": "Group by complexity: 1) Code generation/schema setup; 2-6) Implement 5 simple resources (Coverage, Device, Goal, Location, RelatedPerson); 7-14) Implement 8 complex resources (DiagnosticReport, DocumentReference, etc.); 15) Conformance statements; 16) Testing suite.",
+			"reasoning": "13 resources create massive scope. Even with patterns/codegen, validation/testing matrix is high complexity. Risk of inconsistency across resources and dependency chain."
+		},
+		{
+			"taskId": 19,
+			"taskTitle": "Implement FHIR Bulk Export $export Operation",
+			"complexityScore": 9,
+			"recommendedSubtasks": 7,
+			"expansionPrompt": "Break into: 1) $export endpoint with scope validation; 2) Job queue integration; 3) JobStatus polling endpoint; 4) NDJSON generation; 5) Manifest.json creation; 6) Async processing; 7) Integration tests with mock queue.",
+			"reasoning": "Complex async architecture with queueing, polling, file generation, and FHIR-specific formats. High integration complexity across multiple systems and strict spec compliance."
+		},
+		{
+			"taskId": 20,
+			"taskTitle": "Add FHIR OAuth Scopes and App Registration",
+			"complexityScore": 8,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Divide into: 1) Extend OAuth2 with FHIR SMART scopes; 2) Implement patient/provider/bulk flows; 3) Add /fhir/apps registration endpoint; 4) Consent management UI; 5) OAuth flow and UI tests.",
+			"reasoning": "Security-critical OAuth extension with healthcare-specific SMART scopes. Consent UI adds frontend complexity. High risk of security vulnerabilities."
+		},
+		{
+			"taskId": 21,
+			"taskTitle": "Expand HL7 v2.x ADT and SIU Message Processing",
+			"complexityScore": 7,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Split by message type: 1) ADT (A01/A11/A13/A31) parsing+mapping; 2) SIU (S14/S17) parsing+mapping; 3) ACK/NACK generation with validation; 4) Pipeline integration and unit tests.",
+			"reasoning": "Multiple HL7 message types require precise parsing/mapping. HAPI library helps but domain knowledge and error handling add cognitive complexity."
+		},
+		{
+			"taskId": 22,
+			"taskTitle": "Implement HL7 DFT P03 and ORM/ORU Processing",
+			"complexityScore": 8,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Break into: 1) DFT^P03 charge posting; 2) ORM orders processing; 3) ORU results processing; 4) Domain mappings+DB transactions; 5) Error handling+NACKs with e2e tests.",
+			"reasoning": "Financial/orders/results processing involves complex domain mappings and transactions. Higher complexity than ADT/SIU due to business logic density."
+		},
+		{
+			"taskId": 23,
+			"taskTitle": "Add HL7 MLLP Listener and Reliability Features",
+			"complexityScore": 9,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "Divide into: 1) MLLP TCP listener (Netty/HAPI); 2) Configurable port setup; 3) Message queue integration (RabbitMQ/Kafka); 4) Retry policy with exponential backoff; 5) Dead-letter queue; 6) Load/reliability tests.",
+			"reasoning": "Distributed systems complexity with networking, queuing, retries, and reliability patterns. Load testing critical for healthcare messaging."
+		},
+		{
+			"taskId": 24,
+			"taskTitle": "Evaluate and Implement Multi-Tenant Schema-per-Tenant",
+			"complexityScore": 10,
+			"recommendedSubtasks": 8,
+			"expansionPrompt": "Phased approach: 1) Current schema assessment; 2) Migration cost-benefit analysis; 3) Dynamic schema switching in ORM; 4) Migration tooling development; 5) Data migration scripts; 6) Connection pooling updates; 7) Cross-tenant isolation tests; 8) Performance benchmarking.",
+			"reasoning": "Architectural migration with evaluation phase. High risk of data loss, performance degradation, cross-tenant leakage. Complex ORM changes and migration tooling."
+		},
+		{
+			"taskId": 25,
+			"taskTitle": "Integrate Adaptive Learning UI in Clinical Workflows",
+			"complexityScore": 6,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break into: 1) Suggestion panel component; 2) Integration with existing API endpoints; 3) Real-time updates (WebSocket/polling); 4) Dismiss/accept actions with component/integration tests.",
+			"reasoning": "UI integration with real-time features. Clinical workflow context adds UX complexity but leverages existing APIs. Moderate real-time implementation challenge."
+		},
+		{
+			"taskId": 26,
+			"taskTitle": "Implement Touch-First UI Patterns",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Split into: 1) CSS framework updates (44px targets, iPad media queries); 2) Swipe gesture implementation (Hammer.js/native); 3) WCAG AA contrast audit and iPad testing.",
+			"reasoning": "CSS/media query heavy task with gesture implementation. Manual device testing required. Follows accessibility best practices but broad surface area."
+		}
+	]
+}

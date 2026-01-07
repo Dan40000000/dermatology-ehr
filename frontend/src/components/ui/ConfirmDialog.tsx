@@ -57,9 +57,9 @@ export function ConfirmDialog({
   };
 
   const variantIcons = {
-    danger: '🗑️',
-    warning: '⚠️',
-    info: 'ℹ️',
+    danger: '',
+    warning: '',
+    info: '',
   };
 
   return (

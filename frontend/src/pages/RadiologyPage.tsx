@@ -158,14 +158,14 @@ export function RadiologyPage() {
   };
 
   const getModalityIcon = (details?: string) => {
-    if (!details) return '📷';
+    if (!details) return '';
     const lower = details.toLowerCase();
-    if (lower.includes('x-ray') || lower.includes('xr')) return '☢️';
-    if (lower.includes('ct')) return '🔬';
-    if (lower.includes('mri') || lower.includes('mr ')) return '🧲';
-    if (lower.includes('ultrasound') || lower.includes('us ')) return '🔊';
-    if (lower.includes('pet')) return '⚛️';
-    return '📷';
+    if (lower.includes('x-ray') || lower.includes('xr')) return '';
+    if (lower.includes('ct')) return '';
+    if (lower.includes('mri') || lower.includes('mr ')) return '';
+    if (lower.includes('ultrasound') || lower.includes('us ')) return '';
+    if (lower.includes('pet')) return '';
+    return '';
   };
 
   if (loading) {
@@ -181,36 +181,104 @@ export function RadiologyPage() {
   }
 
   return (
-    <div className="radiology-page">
-      <div className="page-header">
-        <h1>Radiology / Imaging</h1>
+    <div className="radiology-page" style={{
+      background: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
+      minHeight: 'calc(100vh - 200px)',
+      padding: '1.5rem',
+      borderRadius: '12px',
+      boxShadow: '0 20px 60px rgba(6, 182, 212, 0.3)',
+    }}>
+      <div className="page-header" style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '1.5rem',
+        padding: '1.5rem',
+        background: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: '12px',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+        backdropFilter: 'blur(10px)',
+      }}>
+        <h1 style={{
+          margin: 0,
+          fontSize: '2rem',
+          fontWeight: 700,
+          background: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text',
+        }}>Radiology & Imaging</h1>
         <button
           type="button"
-          className="btn-primary"
           onClick={() => setShowNewImagingModal(true)}
+          style={{
+            padding: '0.75rem 1.5rem',
+            background: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+            fontWeight: 700,
+            cursor: 'pointer',
+            boxShadow: '0 4px 12px rgba(6, 182, 212, 0.4)',
+            transition: 'all 0.3s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 6px 20px rgba(6, 182, 212, 0.6)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(6, 182, 212, 0.4)';
+          }}
         >
           + New Imaging Order
         </button>
       </div>
 
       {/* Filters */}
-      <div className="imaging-filters">
-        <div className="search-box">
+      <div style={{
+        background: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: '12px',
+        padding: '1.5rem',
+        marginBottom: '1.5rem',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+        backdropFilter: 'blur(10px)',
+      }}>
+        <div style={{ marginBottom: '1rem' }}>
           <input
             type="text"
             placeholder="Search imaging orders..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              border: '2px solid #06b6d4',
+              borderRadius: '8px',
+              fontSize: '0.875rem',
+            }}
           />
         </div>
 
-        <div className="filter-tabs">
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
           {(['all', 'pending', 'scheduled', 'completed'] as ImagingFilter[]).map((f) => (
             <button
               key={f}
               type="button"
-              className={`filter-tab ${filter === f ? 'active' : ''}`}
               onClick={() => setFilter(f)}
+              style={{
+                flex: 1,
+                padding: '0.75rem',
+                background: filter === f ? 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)' : '#ffffff',
+                color: filter === f ? '#ffffff' : '#0891b2',
+                border: '2px solid #06b6d4',
+                borderRadius: '8px',
+                fontSize: '0.875rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+              }}
             >
               {f.charAt(0).toUpperCase() + f.slice(1)}
             </button>
@@ -220,55 +288,110 @@ export function RadiologyPage() {
 
       {/* Imaging Orders List */}
       {filteredImaging.length === 0 ? (
-        <Panel title="">
-          <div className="empty-state">
-            <div className="empty-icon">📷</div>
-            <h3>No imaging orders found</h3>
-            <p className="muted">
-              {filter !== 'all' ? 'Try adjusting your filters' : 'Create your first imaging order'}
-            </p>
-          </div>
-        </Panel>
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.95)',
+          borderRadius: '12px',
+          padding: '3rem',
+          textAlign: 'center',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+          backdropFilter: 'blur(10px)',
+        }}>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📷</div>
+          <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No imaging orders found</h3>
+          <p style={{ color: '#6b7280', margin: 0 }}>
+            {filter !== 'all' ? 'Try adjusting your filters' : 'Create your first imaging order'}
+          </p>
+        </div>
       ) : (
-        <div className="imaging-list">
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.95)',
+          borderRadius: '12px',
+          padding: '1.5rem',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+          backdropFilter: 'blur(10px)',
+        }}>
           {filteredImaging.map((img) => (
-            <div key={img.id} className="imaging-card">
-              <div className="imaging-icon">{getModalityIcon(img.details)}</div>
+            <div key={img.id} style={{
+              display: 'flex',
+              gap: '1rem',
+              padding: '1.5rem',
+              borderBottom: '1px solid #e5e7eb',
+              transition: 'all 0.3s ease',
+            }}>
+              <div style={{
+                fontSize: '2rem',
+                width: '3rem',
+                height: '3rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
+                borderRadius: '12px',
+                color: '#ffffff',
+                flexShrink: 0,
+              }}>{getModalityIcon(img.details)}</div>
 
-              <div className="imaging-content">
-                <div className="imaging-header">
-                  <span className="imaging-patient strong">{getPatientName(img.patientId)}</span>
-                  <span className={`pill ${getStatusColor(img.status)}`}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0891b2' }}>{getPatientName(img.patientId)}</span>
+                  <span style={{
+                    padding: '0.25rem 0.75rem',
+                    borderRadius: '9999px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background: img.status === 'completed' ? '#d1fae5' : img.status === 'ordered' ? '#dbeafe' : '#fef3c7',
+                    color: img.status === 'completed' ? '#059669' : img.status === 'ordered' ? '#2563eb' : '#d97706',
+                  }}>
                     {img.status === 'ordered' ? 'scheduled' : img.status}
                   </span>
                 </div>
 
-                <div className="imaging-study">
+                <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151', marginBottom: '0.25rem' }}>
                   {img.details?.split('\n')[0]}
                 </div>
 
                 {img.details?.includes('Indication:') && (
-                  <div className="imaging-indication muted">
+                  <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>
                     {img.details.split('\n').find((l) => l.includes('Indication:'))}
                   </div>
                 )}
 
-                <div className="imaging-meta muted tiny">
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
                   Ordered: {new Date(img.createdAt).toLocaleString()}
                 </div>
               </div>
 
-              <div className="imaging-actions">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', justifyContent: 'center' }}>
                 {img.status === 'pending' && (
                   <>
                     <button
                       type="button"
-                      className="btn-sm btn-secondary"
                       onClick={() => handleStatusChange(img.id, 'ordered')}
+                      style={{
+                        padding: '0.5rem 1rem',
+                        background: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        transition: 'all 0.3s ease',
+                      }}
                     >
                       Schedule
                     </button>
-                    <button type="button" className="btn-sm btn-secondary">
+                    <button type="button" style={{
+                      padding: '0.5rem 1rem',
+                      background: '#ffffff',
+                      color: '#0891b2',
+                      border: '2px solid #06b6d4',
+                      borderRadius: '6px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'all 0.3s ease',
+                    }}>
                       Print Req
                     </button>
                   </>
@@ -276,14 +399,34 @@ export function RadiologyPage() {
                 {img.status === 'ordered' && (
                   <button
                     type="button"
-                    className="btn-sm btn-success"
                     onClick={() => handleStatusChange(img.id, 'completed')}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'all 0.3s ease',
+                    }}
                   >
                     Mark Complete
                   </button>
                 )}
                 {img.status === 'completed' && (
-                  <button type="button" className="btn-sm btn-secondary">
+                  <button type="button" style={{
+                    padding: '0.5rem 1rem',
+                    background: '#ffffff',
+                    color: '#0891b2',
+                    border: '2px solid #06b6d4',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.3s ease',
+                  }}>
                     View Results
                   </button>
                 )}

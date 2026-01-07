@@ -7,6 +7,8 @@ import type { ExportColumn } from '../utils/export';
 import { formatDate as formatExportDate, formatPhone } from '../utils/export';
 import { Calendar } from '../components/schedule/Calendar';
 import { AppointmentModal, type AppointmentFormData } from '../components/schedule/AppointmentModal';
+import { TimeBlockModal, type TimeBlockFormData } from '../components/schedule/TimeBlockModal';
+import { RescheduleModal, type RescheduleFormData } from '../components/schedule/RescheduleModal';
 import {
   fetchAppointments,
   fetchProviders,
@@ -17,6 +19,11 @@ import {
   updateAppointmentStatus,
   createAppointment,
   rescheduleAppointment,
+  fetchTimeBlocks,
+  createTimeBlock,
+  updateTimeBlock,
+  deleteTimeBlock,
+  type TimeBlock,
 } from '../api';
 import type { Appointment, Provider, Location, AppointmentType, Availability, Patient, ConflictInfo } from '../types';
 
@@ -46,13 +53,14 @@ export function SchedulePage() {
   const [locationFilter, setLocationFilter] = useState('all');
 
   const [overlaps, setOverlaps] = useState<ConflictInfo[]>([]);
-  const [timeBlocks, setTimeBlocks] = useState<any[]>([]);
+  const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([]);
 
   // Modal states
   const [showNewApptModal, setShowNewApptModal] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [showTimeBlockModal, setShowTimeBlockModal] = useState(false);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
+  const [selectedTimeBlock, setSelectedTimeBlock] = useState<TimeBlock | null>(null);
   const [creating, setCreating] = useState(false);
 
   // New appointment form
@@ -67,25 +75,32 @@ export function SchedulePage() {
     notes: '',
   });
 
-  // Reschedule form
+  // Appointment Finder states
+  const [showAppointmentFinder, setShowAppointmentFinder] = useState(false);
+  const [showExpandedFinder, setShowExpandedFinder] = useState(false);
+  const [finderData, setFinderData] = useState({
+    locations: '',
+    providers: '',
+    appointmentType: '',
+    duration: '5',
+    timePreference: 'Anytime',
+    weekdayPreference: 'Any Day',
+    schedulingPreference: 'First available',
+    displayBy: 'By Provider',
+  });
+
+  // Reschedule form (legacy - keeping for compatibility)
   const [rescheduleData, setRescheduleData] = useState({
     date: '',
     time: '09:00',
   });
 
-  // Time block form
-  const [timeBlockData, setTimeBlockData] = useState({
-    providerId: '',
-    title: '',
-    blockType: 'blocked' as 'blocked' | 'lunch' | 'meeting' | 'admin' | 'continuing_education' | 'out_of_office',
-    description: '',
-    date: '',
-    startTime: '09:00',
-    endTime: '10:00',
-    isRecurring: false,
-    recurrencePattern: 'weekly' as 'daily' | 'weekly' | 'biweekly' | 'monthly',
-    recurrenceEndDate: '',
-  });
+  // Time block initial data for when clicking a slot
+  const [timeBlockInitialData, setTimeBlockInitialData] = useState<{
+    providerId?: string;
+    date?: string;
+    startTime?: string;
+  } | undefined>(undefined);
 
   // Save filter state
   useEffect(() => {
@@ -106,12 +121,7 @@ export function SchedulePage() {
         fetchAppointmentTypes(session.tenantId, session.accessToken),
         fetchAvailability(session.tenantId, session.accessToken),
         fetchPatients(session.tenantId, session.accessToken),
-        fetch(`${import.meta.env.VITE_API_URL}/api/time-blocks`, {
-          headers: {
-            'Authorization': `Bearer ${session.accessToken}`,
-            'x-tenant-id': session.tenantId,
-          },
-        }).then(r => r.json()).catch(() => []),
+        fetchTimeBlocks(session.tenantId, session.accessToken).catch(() => []),
       ]);
       setAppointments(apptRes.appointments || []);
       setProviders(provRes.providers || []);
@@ -201,36 +211,29 @@ export function SchedulePage() {
     loadData();
   };
 
-  const handleReschedule = async () => {
+  const handleReschedule = async (formData: RescheduleFormData) => {
     if (!session || !selectedAppt) return;
-    if (!rescheduleData.date) {
-      showError('Please select a new date');
-      return;
-    }
 
-    setCreating(true);
-    try {
-      const originalDuration = new Date(selectedAppt.scheduledEnd).getTime() - new Date(selectedAppt.scheduledStart).getTime();
-      const newStart = new Date(`${rescheduleData.date}T${rescheduleData.time}:00`);
-      const newEnd = new Date(newStart.getTime() + originalDuration);
+    const originalDuration = new Date(selectedAppt.scheduledEnd).getTime() - new Date(selectedAppt.scheduledStart).getTime();
+    const newStart = new Date(`${formData.date}T${formData.time}:00`);
+    const newEnd = new Date(newStart.getTime() + originalDuration);
 
-      await rescheduleAppointment(
-        session.tenantId,
-        session.accessToken,
-        selectedAppt.id,
-        newStart.toISOString(),
-        newEnd.toISOString()
-      );
+    // Pass providerId if it changed
+    const newProviderId = formData.providerId !== selectedAppt.providerId ? formData.providerId : undefined;
 
-      showSuccess('Appointment rescheduled');
-      setShowRescheduleModal(false);
-      setSelectedAppt(null);
-      loadData();
-    } catch (err: any) {
-      showError(err.message || 'Failed to reschedule');
-    } finally {
-      setCreating(false);
-    }
+    await rescheduleAppointment(
+      session.tenantId,
+      session.accessToken,
+      selectedAppt.id,
+      newStart.toISOString(),
+      newEnd.toISOString(),
+      newProviderId
+    );
+
+    showSuccess('Appointment rescheduled');
+    setShowRescheduleModal(false);
+    setSelectedAppt(null);
+    loadData();
   };
 
   const handleCheckIn = async (appt: Appointment) => {
@@ -245,11 +248,6 @@ export function SchedulePage() {
 
   const openRescheduleModal = (appt: Appointment) => {
     setSelectedAppt(appt);
-    const date = new Date(appt.scheduledStart);
-    setRescheduleData({
-      date: date.toISOString().split('T')[0],
-      time: date.toTimeString().slice(0, 5),
-    });
     setShowRescheduleModal(true);
   };
 
@@ -269,60 +267,64 @@ export function SchedulePage() {
     setShowNewApptModal(true);
   };
 
-  const handleCreateTimeBlock = async () => {
+  const handleSaveTimeBlock = async (formData: TimeBlockFormData) => {
     if (!session) return;
-    if (!timeBlockData.providerId || !timeBlockData.title || !timeBlockData.date) {
-      showError('Please fill in all required fields');
-      return;
-    }
 
-    setCreating(true);
-    try {
-      const startDateTime = new Date(`${timeBlockData.date}T${timeBlockData.startTime}:00`);
-      const endDateTime = new Date(`${timeBlockData.date}T${timeBlockData.endTime}:00`);
+    const startDateTime = new Date(`${formData.date}T${formData.startTime}:00`);
+    const endDateTime = new Date(`${formData.date}T${formData.endTime}:00`);
 
-      await fetch(`${import.meta.env.VITE_API_URL}/api/time-blocks`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.accessToken}`,
-          'x-tenant-id': session.tenantId,
-        },
-        body: JSON.stringify({
-          providerId: timeBlockData.providerId,
-          title: timeBlockData.title,
-          blockType: timeBlockData.blockType,
-          description: timeBlockData.description || null,
-          startTime: startDateTime.toISOString(),
-          endTime: endDateTime.toISOString(),
-          isRecurring: timeBlockData.isRecurring,
-          recurrencePattern: timeBlockData.isRecurring ? timeBlockData.recurrencePattern : null,
-          recurrenceEndDate: timeBlockData.isRecurring && timeBlockData.recurrenceEndDate
-            ? timeBlockData.recurrenceEndDate
-            : null,
-        }),
-      });
+    const timeBlockPayload = {
+      providerId: formData.providerId,
+      title: formData.title,
+      blockType: formData.blockType,
+      description: formData.description || undefined,
+      startTime: startDateTime.toISOString(),
+      endTime: endDateTime.toISOString(),
+      isRecurring: formData.isRecurring,
+      recurrencePattern: formData.isRecurring ? formData.recurrencePattern : undefined,
+      recurrenceEndDate: formData.isRecurring && formData.recurrenceEndDate
+        ? formData.recurrenceEndDate
+        : undefined,
+    };
 
+    if (selectedTimeBlock) {
+      // Update existing time block
+      await updateTimeBlock(session.tenantId, session.accessToken, selectedTimeBlock.id, timeBlockPayload);
+      showSuccess('Time block updated successfully');
+    } else {
+      // Create new time block
+      await createTimeBlock(session.tenantId, session.accessToken, timeBlockPayload);
       showSuccess('Time block created successfully');
-      setShowTimeBlockModal(false);
-      setTimeBlockData({
-        providerId: '',
-        title: '',
-        blockType: 'blocked',
-        description: '',
-        date: '',
-        startTime: '09:00',
-        endTime: '10:00',
-        isRecurring: false,
-        recurrencePattern: 'weekly',
-        recurrenceEndDate: '',
-      });
-      loadData();
-    } catch (err: any) {
-      showError(err.message || 'Failed to create time block');
-    } finally {
-      setCreating(false);
     }
+
+    setShowTimeBlockModal(false);
+    setSelectedTimeBlock(null);
+    setTimeBlockInitialData(undefined);
+    loadData();
+  };
+
+  const handleDeleteTimeBlock = async (timeBlockId: string) => {
+    if (!session) return;
+
+    await deleteTimeBlock(session.tenantId, session.accessToken, timeBlockId);
+    showSuccess('Time block deleted successfully');
+    setShowTimeBlockModal(false);
+    setSelectedTimeBlock(null);
+    loadData();
+  };
+
+  const handleTimeBlockClick = async (timeBlockId: string) => {
+    const timeBlock = timeBlocks.find(tb => tb.id === timeBlockId);
+    if (timeBlock) {
+      setSelectedTimeBlock(timeBlock);
+      setShowTimeBlockModal(true);
+    }
+  };
+
+  const openNewTimeBlockModal = () => {
+    setSelectedTimeBlock(null);
+    setTimeBlockInitialData(undefined);
+    setShowTimeBlockModal(true);
   };
 
   const currentDate = new Date();
@@ -335,14 +337,26 @@ export function SchedulePage() {
   });
 
   return (
-    <div className="schedule-page">
+    <div className="schedule-page" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Action Buttons Row */}
-      <div className="ema-action-bar">
-        <button type="button" className="ema-action-btn" onClick={() => {
-          console.log('New Appointment button clicked');
-          setShowNewApptModal(true);
-        }}>
-          <span className="icon">📅</span>
+      <div className="ema-action-bar" style={{ background: 'linear-gradient(to bottom, #f9fafb 0%, #f3f4f6 100%)', borderBottom: '2px solid #e5e7eb', gap: '0.5rem', padding: '0.75rem 1.5rem' }}>
+        <button
+          type="button"
+          className="ema-action-btn"
+          onClick={() => {
+            setShowNewApptModal(true);
+          }}
+          style={{
+            background: 'linear-gradient(to bottom, #10b981 0%, #059669 100%)',
+            color: '#ffffff',
+            border: 'none',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            fontWeight: 500,
+            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          }}
+        >
+          <span style={{ marginRight: '0.5rem' }}>+</span>
           New Appointment
         </button>
         <button
@@ -350,8 +364,18 @@ export function SchedulePage() {
           className="ema-action-btn"
           disabled={!selectedAppt}
           onClick={() => selectedAppt && openRescheduleModal(selectedAppt)}
+          style={{
+            background: selectedAppt ? 'linear-gradient(to bottom, #0284c7 0%, #0369a1 100%)' : '#e5e7eb',
+            color: selectedAppt ? '#ffffff' : '#9ca3af',
+            border: 'none',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            cursor: selectedAppt ? 'pointer' : 'not-allowed',
+            fontWeight: 500,
+            boxShadow: selectedAppt ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+          }}
         >
-          <span className="icon">🔄</span>
+          <span style={{ marginRight: '0.5rem' }}>📅</span>
           Reschedule
         </button>
         <button
@@ -359,8 +383,18 @@ export function SchedulePage() {
           className="ema-action-btn"
           disabled={!selectedAppt}
           onClick={() => selectedAppt && handleCancelAppt(selectedAppt)}
+          style={{
+            background: selectedAppt ? 'linear-gradient(to bottom, #ef4444 0%, #dc2626 100%)' : '#e5e7eb',
+            color: selectedAppt ? '#ffffff' : '#9ca3af',
+            border: 'none',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            cursor: selectedAppt ? 'pointer' : 'not-allowed',
+            fontWeight: 500,
+            boxShadow: selectedAppt ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+          }}
         >
-          <span className="icon">❌</span>
+          <span style={{ marginRight: '0.5rem' }}>✕</span>
           Cancel Appointment
         </button>
         <button
@@ -368,17 +402,87 @@ export function SchedulePage() {
           className="ema-action-btn"
           disabled={!selectedAppt}
           onClick={() => selectedAppt && handleCheckIn(selectedAppt)}
+          style={{
+            background: selectedAppt ? 'linear-gradient(to bottom, #8b5cf6 0%, #7c3aed 100%)' : '#e5e7eb',
+            color: selectedAppt ? '#ffffff' : '#9ca3af',
+            border: 'none',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            cursor: selectedAppt ? 'pointer' : 'not-allowed',
+            fontWeight: 500,
+            boxShadow: selectedAppt ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+          }}
         >
-          <span className="icon">✅</span>
+          <span style={{ marginRight: '0.5rem' }}>✓</span>
           Check In
         </button>
-        <button type="button" className="ema-action-btn" onClick={() => setShowTimeBlockModal(true)}>
-          <span className="icon">🚫</span>
+        <button
+          type="button"
+          className="ema-action-btn"
+          onClick={openNewTimeBlockModal}
+          style={{
+            background: 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
+            border: '1px solid #d1d5db',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+            color: '#374151',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            fontWeight: 500,
+          }}
+        >
+          <span style={{ marginRight: '0.5rem' }}>⏱</span>
           Time Block
         </button>
-        <button type="button" className="ema-action-btn" onClick={loadData}>
-          <span className="icon">🔃</span>
+        <button
+          type="button"
+          className="ema-action-btn"
+          onClick={() => navigate('/face-sheets')}
+          style={{
+            background: 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
+            border: '1px solid #d1d5db',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+            color: '#374151',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            fontWeight: 500,
+          }}
+        >
+          <span style={{ marginRight: '0.5rem' }}>📄</span>
+          Face Sheets
+        </button>
+        <button
+          type="button"
+          className="ema-action-btn"
+          onClick={loadData}
+          style={{
+            background: 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
+            border: '1px solid #d1d5db',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+            color: '#374151',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            fontWeight: 500,
+          }}
+        >
+          <span style={{ marginRight: '0.5rem' }}>↻</span>
           Refresh
+        </button>
+        <button
+          type="button"
+          className="ema-action-btn"
+          onClick={() => setShowAppointmentFinder(!showAppointmentFinder)}
+          style={{
+            background: showAppointmentFinder ? 'linear-gradient(to bottom, #06b6d4 0%, #0891b2 100%)' : 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
+            border: showAppointmentFinder ? 'none' : '1px solid #d1d5db',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+            color: showAppointmentFinder ? '#ffffff' : '#374151',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            fontWeight: 500,
+          }}
+        >
+          <span style={{ marginRight: '0.5rem' }}>🔍</span>
+          Appointment Finder
         </button>
         <div style={{ marginLeft: 'auto' }}>
           <ExportButtons
@@ -510,7 +614,7 @@ export function SchedulePage() {
           flexWrap: 'wrap',
           alignItems: 'center'
         }}>
-          <span style={{ fontWeight: 600, color: '#92400e' }}>⚠️ Scheduling Conflicts:</span>
+          <span style={{ fontWeight: 600, color: '#92400e' }}>Scheduling Conflicts:</span>
           {overlaps.slice(0, 4).map((c, idx) => (
             <span
               key={idx}
@@ -529,27 +633,298 @@ export function SchedulePage() {
         </div>
       )}
 
-      {/* Calendar Grid */}
-      {loading ? (
-        <div style={{ padding: '2rem' }}>
-          <Skeleton variant="card" height={600} />
+      {/* Main Content with Sidebar */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* Calendar Grid */}
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {loading ? (
+            <div style={{ padding: '2rem' }}>
+              <Skeleton variant="card" height={600} />
+            </div>
+          ) : (
+            <Calendar
+              currentDate={currentDate}
+              viewMode={viewMode}
+              appointments={appointments.filter((a) => {
+                const typeOk = typeFilter === 'all' || a.appointmentTypeId === typeFilter;
+                const locationOk = locationFilter === 'all' || a.locationId === locationFilter;
+                return typeOk && locationOk;
+              })}
+              providers={providers.filter((p) => providerFilter === 'all' || p.id === providerFilter)}
+              availability={availability}
+              timeBlocks={timeBlocks.filter((tb) => providerFilter === 'all' || tb.providerId === providerFilter)}
+              selectedAppointment={selectedAppt}
+              onAppointmentClick={setSelectedAppt}
+              onSlotClick={handleSlotClick}
+              onTimeBlockClick={handleTimeBlockClick}
+            />
+          )}
         </div>
-      ) : (
-        <Calendar
-          currentDate={currentDate}
-          viewMode={viewMode}
-          appointments={appointments.filter((a) => {
-            const typeOk = typeFilter === 'all' || a.appointmentTypeId === typeFilter;
-            const locationOk = locationFilter === 'all' || a.locationId === locationFilter;
-            return typeOk && locationOk;
-          })}
-          providers={providers.filter((p) => providerFilter === 'all' || p.id === providerFilter)}
-          availability={availability}
-          selectedAppointment={selectedAppt}
-          onAppointmentClick={setSelectedAppt}
-          onSlotClick={handleSlotClick}
-        />
-      )}
+
+        {/* Appointment Finder Sidebar */}
+        {showAppointmentFinder && (
+          <div style={{
+            width: '320px',
+            background: 'linear-gradient(to bottom, #f0f9ff 0%, #e0f2fe 100%)',
+            borderLeft: '2px solid #0284c7',
+            padding: '1.5rem',
+            overflowY: 'auto',
+            boxShadow: '-4px 0 12px rgba(0,0,0,0.08)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 600, color: '#075985' }}>
+                Appointment Finder
+              </h3>
+              <button
+                onClick={() => setShowExpandedFinder(true)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '0.75rem',
+                  color: '#0284c7',
+                  fontWeight: 500,
+                  textDecoration: 'underline',
+                }}
+              >
+                Quick Filters
+              </button>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Locations</label>
+              <select
+                value={finderData.locations}
+                onChange={(e) => setFinderData({ ...finderData, locations: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #bae6fd',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  background: '#ffffff',
+                }}
+              >
+                <option value="">Any Location</option>
+                {locations.map(loc => (
+                  <option key={loc.id} value={loc.id}>{loc.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Providers</label>
+              <select
+                value={finderData.providers}
+                onChange={(e) => setFinderData({ ...finderData, providers: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #bae6fd',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  background: '#ffffff',
+                }}
+              >
+                <option value="">Any Provider</option>
+                {providers.map(p => (
+                  <option key={p.id} value={p.id}>{p.fullName}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                Appointment Type <span style={{ color: '#ef4444' }}>*</span>
+              </label>
+              <select
+                value={finderData.appointmentType}
+                onChange={(e) => setFinderData({ ...finderData, appointmentType: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #bae6fd',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  background: '#ffffff',
+                }}
+              >
+                <option value="">Click to select...</option>
+                {appointmentTypes.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                Duration <span style={{ color: '#ef4444' }}>*</span>
+              </label>
+              <select
+                value={finderData.duration}
+                onChange={(e) => setFinderData({ ...finderData, duration: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #bae6fd',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  background: '#ffffff',
+                }}
+              >
+                <option value="5">5 minutes</option>
+                <option value="15">15 minutes</option>
+                <option value="30">30 minutes</option>
+                <option value="45">45 minutes</option>
+                <option value="60">60 minutes</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                Time Preference <span style={{ color: '#ef4444' }}>*</span>
+              </label>
+              <select
+                value={finderData.timePreference}
+                onChange={(e) => setFinderData({ ...finderData, timePreference: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #bae6fd',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  background: '#ffffff',
+                }}
+              >
+                <option value="Anytime">Anytime</option>
+                <option value="Morning">Morning</option>
+                <option value="Afternoon">Afternoon</option>
+                <option value="Evening">Evening</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Weekday Preference</label>
+              <select
+                value={finderData.weekdayPreference}
+                onChange={(e) => setFinderData({ ...finderData, weekdayPreference: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #bae6fd',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  background: '#ffffff',
+                }}
+              >
+                <option value="Any Day">Any Day</option>
+                <option value="Weekdays">Weekdays Only</option>
+                <option value="Weekends">Weekends Only</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                Scheduling Preference <span style={{ color: '#ef4444' }}>*</span>
+              </label>
+              <select
+                value={finderData.schedulingPreference}
+                onChange={(e) => setFinderData({ ...finderData, schedulingPreference: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #bae6fd',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  background: '#ffffff',
+                }}
+              >
+                <option value="First available">First available</option>
+                <option value="Specific date">Specific date</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Display Options</label>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
+                  <input
+                    type="radio"
+                    name="displayBy"
+                    value="By Provider"
+                    checked={finderData.displayBy === 'By Provider'}
+                    onChange={(e) => setFinderData({ ...finderData, displayBy: e.target.value })}
+                  />
+                  By Provider
+                </label>
+                <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
+                  <input
+                    type="radio"
+                    name="displayBy"
+                    value="By Time Availability"
+                    checked={finderData.displayBy === 'By Time Availability'}
+                    onChange={(e) => setFinderData({ ...finderData, displayBy: e.target.value })}
+                  />
+                  By Time Availability
+                </label>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                onClick={() => {
+                  setFinderData({
+                    locations: '',
+                    providers: '',
+                    appointmentType: '',
+                    duration: '5',
+                    timePreference: 'Anytime',
+                    weekdayPreference: 'Any Day',
+                    schedulingPreference: 'First available',
+                    displayBy: 'By Provider',
+                  });
+                }}
+                style={{
+                  flex: 1,
+                  padding: '0.625rem',
+                  background: '#ffffff',
+                  border: '1px solid #0284c7',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  fontWeight: 500,
+                  color: '#0284c7',
+                }}
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  if (!finderData.appointmentType) {
+                    showError('Please select an appointment type');
+                    return;
+                  }
+                  showSuccess('Searching for available appointments...');
+                }}
+                style={{
+                  flex: 1,
+                  padding: '0.625rem',
+                  background: 'linear-gradient(to bottom, #0284c7 0%, #0369a1 100%)',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  color: '#ffffff',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                }}
+              >
+                Search
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Appointments Table */}
       <div className="ema-section-header">Appointments List</div>
@@ -669,199 +1044,455 @@ export function SchedulePage() {
       />
 
       {/* Reschedule Modal */}
-      <Modal isOpen={showRescheduleModal} title="Reschedule Appointment" onClose={() => setShowRescheduleModal(false)}>
-        {selectedAppt && (
-          <div className="modal-form">
-            <div style={{
-              background: '#f9fafb',
-              padding: '1rem',
-              borderRadius: '8px',
-              marginBottom: '1rem'
-            }}>
-              <div style={{ fontWeight: 500, marginBottom: '0.5rem' }}>Current Appointment</div>
-              <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-                <div>{selectedAppt.patientName}</div>
-                <div>{selectedAppt.appointmentTypeName} with {selectedAppt.providerName}</div>
-                <div>{new Date(selectedAppt.scheduledStart).toLocaleString()}</div>
-              </div>
-            </div>
-
-            <div className="form-row">
-              <div className="form-field">
-                <label>New Date *</label>
-                <input
-                  type="date"
-                  value={rescheduleData.date}
-                  onChange={(e) => setRescheduleData(prev => ({ ...prev, date: e.target.value }))}
-                />
-              </div>
-              <div className="form-field">
-                <label>New Time *</label>
-                <select
-                  value={rescheduleData.time}
-                  onChange={(e) => setRescheduleData(prev => ({ ...prev, time: e.target.value }))}
-                >
-                  {Array.from({ length: 20 }).map((_, i) => {
-                    const hour = 8 + Math.floor(i / 2);
-                    const min = (i % 2) * 30;
-                    const time = `${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
-                    return <option key={time} value={time}>{time}</option>;
-                  })}
-                </select>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="modal-footer">
-          <button type="button" className="btn-secondary" onClick={() => setShowRescheduleModal(false)}>
-            Cancel
-          </button>
-          <button type="button" className="btn-primary" onClick={handleReschedule} disabled={creating}>
-            {creating ? 'Rescheduling...' : 'Reschedule'}
-          </button>
-        </div>
-      </Modal>
+      <RescheduleModal
+        isOpen={showRescheduleModal}
+        onClose={() => setShowRescheduleModal(false)}
+        onSave={handleReschedule}
+        appointment={selectedAppt}
+        providers={providers}
+        availability={availability}
+        appointments={appointments}
+      />
 
       {/* Time Block Modal */}
-      <Modal isOpen={showTimeBlockModal} title="Create Time Block" onClose={() => setShowTimeBlockModal(false)}>
-        <div className="modal-form">
-          <div className="form-row">
-            <div className="form-field">
-              <label>Provider *</label>
-              <select
-                value={timeBlockData.providerId}
-                onChange={(e) => setTimeBlockData(prev => ({ ...prev, providerId: e.target.value }))}
-              >
-                <option value="">Select Provider</option>
-                {providers.map((p) => (
-                  <option key={p.id} value={p.id}>{p.fullName}</option>
-                ))}
-              </select>
-            </div>
+      <TimeBlockModal
+        isOpen={showTimeBlockModal}
+        onClose={() => {
+          setShowTimeBlockModal(false);
+          setSelectedTimeBlock(null);
+          setTimeBlockInitialData(undefined);
+        }}
+        onSave={handleSaveTimeBlock}
+        onDelete={handleDeleteTimeBlock}
+        providers={providers}
+        timeBlock={selectedTimeBlock}
+        initialData={timeBlockInitialData}
+      />
 
-            <div className="form-field">
-              <label>Block Type *</label>
-              <select
-                value={timeBlockData.blockType}
-                onChange={(e) => setTimeBlockData(prev => ({ ...prev, blockType: e.target.value as any }))}
-              >
-                <option value="blocked">Blocked</option>
-                <option value="lunch">Lunch</option>
-                <option value="meeting">Meeting</option>
-                <option value="admin">Admin Time</option>
-                <option value="continuing_education">Continuing Education</option>
-                <option value="out_of_office">Out of Office</option>
-              </select>
-            </div>
-          </div>
+      {/* Expanded Appointment Finder Modal */}
+      <Modal
+        isOpen={showExpandedFinder}
+        title="Expanded Appointment Finder"
+        onClose={() => setShowExpandedFinder(false)}
+      >
+        <div style={{ padding: '1rem', minWidth: '600px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem' }}>
+            {/* 1st Appointment Column */}
+            <div>
+              <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: 600, color: '#075985', borderBottom: '2px solid #0284c7', paddingBottom: '0.5rem' }}>
+                1st Appointment
+              </h4>
 
-          <div className="form-field">
-            <label>Title *</label>
-            <input
-              type="text"
-              value={timeBlockData.title}
-              onChange={(e) => setTimeBlockData(prev => ({ ...prev, title: e.target.value }))}
-              placeholder="e.g., Lunch Break, Staff Meeting"
-            />
-          </div>
-
-          <div className="form-field">
-            <label>Description</label>
-            <textarea
-              value={timeBlockData.description}
-              onChange={(e) => setTimeBlockData(prev => ({ ...prev, description: e.target.value }))}
-              placeholder="Optional notes..."
-              rows={2}
-            />
-          </div>
-
-          <div className="form-row">
-            <div className="form-field">
-              <label>Date *</label>
-              <input
-                type="date"
-                value={timeBlockData.date}
-                onChange={(e) => setTimeBlockData(prev => ({ ...prev, date: e.target.value }))}
-              />
-            </div>
-
-            <div className="form-field">
-              <label>Start Time *</label>
-              <select
-                value={timeBlockData.startTime}
-                onChange={(e) => setTimeBlockData(prev => ({ ...prev, startTime: e.target.value }))}
-              >
-                {Array.from({ length: 24 }).map((_, i) => {
-                  const hour = 6 + Math.floor(i / 2);
-                  const min = (i % 2) * 30;
-                  const time = `${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
-                  return <option key={time} value={time}>{time}</option>;
-                })}
-              </select>
-            </div>
-
-            <div className="form-field">
-              <label>End Time *</label>
-              <select
-                value={timeBlockData.endTime}
-                onChange={(e) => setTimeBlockData(prev => ({ ...prev, endTime: e.target.value }))}
-              >
-                {Array.from({ length: 24 }).map((_, i) => {
-                  const hour = 6 + Math.floor(i / 2);
-                  const min = (i % 2) * 30;
-                  const time = `${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
-                  return <option key={time} value={time}>{time}</option>;
-                })}
-              </select>
-            </div>
-          </div>
-
-          <div className="form-field">
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input
-                type="checkbox"
-                checked={timeBlockData.isRecurring}
-                onChange={(e) => setTimeBlockData(prev => ({ ...prev, isRecurring: e.target.checked }))}
-              />
-              Recurring
-            </label>
-          </div>
-
-          {timeBlockData.isRecurring && (
-            <div className="form-row">
-              <div className="form-field">
-                <label>Recurrence Pattern</label>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                  Appointment Type <span style={{ color: '#ef4444' }}>*</span>
+                </label>
                 <select
-                  value={timeBlockData.recurrencePattern}
-                  onChange={(e) => setTimeBlockData(prev => ({ ...prev, recurrencePattern: e.target.value as any }))}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
                 >
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="biweekly">Biweekly</option>
-                  <option value="monthly">Monthly</option>
+                  <option value="">Click to select...</option>
+                  {appointmentTypes.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
                 </select>
               </div>
 
-              <div className="form-field">
-                <label>End Date</label>
-                <input
-                  type="date"
-                  value={timeBlockData.recurrenceEndDate}
-                  onChange={(e) => setTimeBlockData(prev => ({ ...prev, recurrenceEndDate: e.target.value }))}
-                />
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Locations</label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="">Any Location</option>
+                  {locations.map(loc => (
+                    <option key={loc.id} value={loc.id}>{loc.name}</option>
+                  ))}
+                </select>
               </div>
-            </div>
-          )}
-        </div>
 
-        <div className="modal-footer">
-          <button type="button" className="btn-secondary" onClick={() => setShowTimeBlockModal(false)}>
-            Cancel
-          </button>
-          <button type="button" className="btn-primary" onClick={handleCreateTimeBlock} disabled={creating}>
-            {creating ? 'Creating...' : 'Create Time Block'}
-          </button>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Providers</label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="">Any Provider</option>
+                  {providers.map(p => (
+                    <option key={p.id} value={p.id}>{p.fullName}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                  Duration <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="5">5 minutes</option>
+                  <option value="15">15 minutes</option>
+                  <option value="30">30 minutes</option>
+                  <option value="45">45 minutes</option>
+                  <option value="60">60 minutes</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                  Time Preference <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="Anytime">Anytime</option>
+                  <option value="Morning">Morning</option>
+                  <option value="Afternoon">Afternoon</option>
+                  <option value="Evening">Evening</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Weekday Preference</label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="Any Day">Any Day</option>
+                  <option value="Weekdays">Weekdays Only</option>
+                  <option value="Weekends">Weekends Only</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                  Scheduling Preference <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="First available">First available</option>
+                  <option value="Specific date">Specific date</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Display Options</label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
+                    <input type="radio" name="display1" value="By Provider" defaultChecked />
+                    By Provider
+                  </label>
+                  <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
+                    <input type="radio" name="display1" value="By Time Availability" />
+                    By Time Availability
+                  </label>
+                </div>
+              </div>
+
+              <button
+                onClick={() => showSuccess('Searching for 1st appointment...')}
+                style={{
+                  width: '100%',
+                  padding: '0.625rem',
+                  background: 'linear-gradient(to bottom, #0284c7 0%, #0369a1 100%)',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  color: '#ffffff',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                }}
+              >
+                Search 1st Appt
+              </button>
+            </div>
+
+            {/* 2nd Appointment Column */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '2px solid #0284c7', paddingBottom: '0.5rem' }}>
+                <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: '#075985' }}>
+                  2nd Appointment
+                </h4>
+                <button
+                  onClick={() => navigate('/appointment-finder')}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '0.75rem',
+                    color: '#0284c7',
+                    fontWeight: 500,
+                    textDecoration: 'underline',
+                  }}
+                >
+                  Quick Filters
+                </button>
+              </div>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+                <input type="checkbox" />
+                <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>
+                  After 1st Appointment <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>ℹ️</span>
+                </span>
+              </label>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                  Appointment Type <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="">Click to select...</option>
+                  {appointmentTypes.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Locations</label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="">Any Location</option>
+                  {locations.map(loc => (
+                    <option key={loc.id} value={loc.id}>{loc.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Providers</label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="">Any Provider</option>
+                  {providers.map(p => (
+                    <option key={p.id} value={p.id}>{p.fullName}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                  Duration <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="5">5 minutes</option>
+                  <option value="15">15 minutes</option>
+                  <option value="30">30 minutes</option>
+                  <option value="45">45 minutes</option>
+                  <option value="60">60 minutes</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                  Time Preference <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="Anytime">Anytime</option>
+                  <option value="Morning">Morning</option>
+                  <option value="Afternoon">Afternoon</option>
+                  <option value="Evening">Evening</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Weekday Preference</label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="Any Day">Any Day</option>
+                  <option value="Weekdays">Weekdays Only</option>
+                  <option value="Weekends">Weekends Only</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                  Scheduling Preference <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="First available">First available</option>
+                  <option value="Specific date">Specific date</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Display Options</label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
+                    <input type="radio" name="display2" value="By Provider" defaultChecked />
+                    By Provider
+                  </label>
+                  <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
+                    <input type="radio" name="display2" value="By Time Availability" />
+                    By Time Availability
+                  </label>
+                </div>
+              </div>
+
+              <button
+                onClick={() => showSuccess('Searching for 2nd appointment...')}
+                style={{
+                  width: '100%',
+                  padding: '0.625rem',
+                  background: 'linear-gradient(to bottom, #0284c7 0%, #0369a1 100%)',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  color: '#ffffff',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                }}
+              >
+                Search 2nd Appt
+              </button>
+            </div>
+          </div>
+
+          <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid #e5e7eb', display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => setShowExpandedFinder(false)}
+              style={{
+                padding: '0.625rem 1.5rem',
+                background: '#ffffff',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+                fontWeight: 500,
+                color: '#374151',
+              }}
+            >
+              Close
+            </button>
+            <button
+              onClick={() => {
+                showSuccess('Searching all appointments...');
+                setShowExpandedFinder(false);
+              }}
+              style={{
+                padding: '0.625rem 1.5rem',
+                background: 'linear-gradient(to bottom, #0284c7 0%, #0369a1 100%)',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+                fontWeight: 600,
+                color: '#ffffff',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+              }}
+            >
+              Search All
+            </button>
+          </div>
         </div>
       </Modal>
     </div>

@@ -20,16 +20,17 @@ const createPriorAuthSchema = z.object({
 });
 
 const updatePriorAuthSchema = z.object({
-  status: z.enum(['pending', 'submitted', 'approved', 'denied', 'additional_info_needed']),
+  status: z.enum(['draft', 'pending', 'submitted', 'approved', 'denied', 'more_info_needed']),
   insuranceAuthNumber: z.string().optional(),
   denialReason: z.string().optional(),
+  approvalReason: z.string().optional(),
   notes: z.string().optional(),
 });
 
 // Get all prior auth requests
 router.get('/', async (req, res, next) => {
   try {
-    const tenantId = req.headers['x-tenant-id'] as string;
+    const tenantId = req.user!.tenantId;
     const { patientId, status, providerId } = req.query;
 
     let query = `
@@ -74,7 +75,7 @@ router.get('/', async (req, res, next) => {
 // Get single prior auth request
 router.get('/:id', async (req, res, next) => {
   try {
-    const tenantId = req.headers['x-tenant-id'] as string;
+    const tenantId = req.user!.tenantId;
     const { id } = req.params;
 
     const result = await pool.query(
@@ -101,8 +102,8 @@ router.get('/:id', async (req, res, next) => {
 // Create new prior auth request
 router.post('/', async (req, res, next) => {
   try {
-    const tenantId = req.headers['x-tenant-id'] as string;
-    const userId = req.user?.userId;
+    const tenantId = req.user!.tenantId;
+    const userId = req.user?.id;
     const validated = createPriorAuthSchema.parse(req.body);
 
     const id = randomUUID();
@@ -163,7 +164,7 @@ router.post('/', async (req, res, next) => {
 // Update prior auth request
 router.patch('/:id', async (req, res, next) => {
   try {
-    const tenantId = req.headers['x-tenant-id'] as string;
+    const tenantId = req.user!.tenantId;
     const { id } = req.params;
     const validated = updatePriorAuthSchema.parse(req.body);
 
@@ -244,7 +245,7 @@ router.patch('/:id', async (req, res, next) => {
 // Delete prior auth request
 router.delete('/:id', async (req, res, next) => {
   try {
-    const tenantId = req.headers['x-tenant-id'] as string;
+    const tenantId = req.user!.tenantId;
     const { id } = req.params;
 
     const result = await pool.query(
@@ -265,7 +266,7 @@ router.delete('/:id', async (req, res, next) => {
 // Generate prior auth form (PDF-ready HTML)
 router.get('/:id/form', async (req, res, next) => {
   try {
-    const tenantId = req.headers['x-tenant-id'] as string;
+    const tenantId = req.user!.tenantId;
     const { id } = req.params;
 
     const result = await pool.query(
@@ -311,6 +312,312 @@ router.get('/:id/form', async (req, res, next) => {
       createdAt: pa.created_at,
       submittedAt: pa.submitted_at,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Submit prior auth to payer (mock integration)
+router.post('/:id/submit', async (req, res, next) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { id } = req.params;
+
+    // Get the prior auth
+    const result = await pool.query(
+      'SELECT * FROM prior_authorizations WHERE id = $1 AND tenant_id = $2',
+      [id, tenantId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Prior authorization not found' });
+    }
+
+    const pa = result.rows[0];
+
+    // Can only submit if status is draft or pending
+    if (!['draft', 'pending'].includes(pa.status)) {
+      return res.status(400).json({ error: 'Prior authorization has already been submitted' });
+    }
+
+    // Update status to submitted
+    await pool.query(
+      `UPDATE prior_authorizations
+       SET status = 'submitted', submitted_at = $1, updated_at = $2
+       WHERE id = $3 AND tenant_id = $4`,
+      [new Date().toISOString(), new Date().toISOString(), id, tenantId]
+    );
+
+    // Mock payer integration - simulate async processing
+    // In production, this would integrate with NCPDP ePA, CoverMyMeds, or payer-specific APIs
+    setTimeout(async () => {
+      try {
+        // Random outcome: 60% approved, 20% denied, 20% more info needed
+        const random = Math.random();
+        let newStatus: string;
+        let insuranceAuthNumber: string | null = null;
+        let denialReason: string | null = null;
+        let approvalReason: string | null = null;
+
+        if (random < 0.6) {
+          // Approved
+          newStatus = 'approved';
+          insuranceAuthNumber = `AUTH-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+          approvalReason = 'Medical necessity criteria met. Prior therapies documented. Condition severity confirmed.';
+        } else if (random < 0.8) {
+          // Denied
+          newStatus = 'denied';
+          denialReason = 'Step therapy not completed. Patient must try formulary alternatives (methotrexate, cyclosporine) before biologic approval.';
+        } else {
+          // More info needed
+          newStatus = 'more_info_needed';
+          denialReason = 'Additional documentation required: recent lab results, photographs of affected areas, documentation of failed prior treatments.';
+        }
+
+        // Update the status
+        const updates: string[] = ['status = $1', 'updated_at = $2'];
+        const values: any[] = [newStatus, new Date().toISOString()];
+        let paramCount = 2;
+
+        if (newStatus === 'approved') {
+          paramCount++;
+          updates.push(`approved_at = $${paramCount}`);
+          values.push(new Date().toISOString());
+          paramCount++;
+          updates.push(`insurance_auth_number = $${paramCount}`);
+          values.push(insuranceAuthNumber);
+          paramCount++;
+          updates.push(`notes = COALESCE(notes, '') || $${paramCount}`);
+          values.push(`\n[${new Date().toISOString()}] Payer Response: ${approvalReason}`);
+        } else if (newStatus === 'denied') {
+          paramCount++;
+          updates.push(`denied_at = $${paramCount}`);
+          values.push(new Date().toISOString());
+          paramCount++;
+          updates.push(`denial_reason = $${paramCount}`);
+          values.push(denialReason);
+        } else if (newStatus === 'more_info_needed') {
+          paramCount++;
+          updates.push(`notes = COALESCE(notes, '') || $${paramCount}`);
+          values.push(`\n[${new Date().toISOString()}] Payer Request: ${denialReason}`);
+        }
+
+        paramCount++;
+        values.push(id);
+        paramCount++;
+        values.push(tenantId);
+
+        await pool.query(
+          `UPDATE prior_authorizations SET ${updates.join(', ')} WHERE id = $${paramCount - 1} AND tenant_id = $${paramCount}`,
+          values
+        );
+
+        // In production, you might send a notification here
+      } catch (error) {
+        console.error('Error processing mock payer response:', error);
+      }
+    }, 2000); // 2 second delay to simulate async processing
+
+    res.json({
+      message: 'Prior authorization submitted successfully',
+      status: 'submitted',
+      estimatedResponseTime: '2-3 seconds (mock)',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Upload supporting document
+router.post('/:id/documents', async (req, res, next) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user?.id;
+    const { id } = req.params;
+    const { documentType, documentUrl, documentName, notes } = req.body;
+
+    // Verify prior auth exists
+    const paResult = await pool.query(
+      'SELECT * FROM prior_authorizations WHERE id = $1 AND tenant_id = $2',
+      [id, tenantId]
+    );
+
+    if (paResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Prior authorization not found' });
+    }
+
+    const documentId = randomUUID();
+
+    // Store document reference in documents table
+    await pool.query(
+      `INSERT INTO documents (
+        id, tenant_id, patient_id, document_type, document_name,
+        file_path, uploaded_by, notes, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        documentId,
+        tenantId,
+        paResult.rows[0].patient_id,
+        documentType || 'prior_auth_support',
+        documentName || 'Supporting Document',
+        documentUrl,
+        userId,
+        `Prior Auth: ${paResult.rows[0].auth_number}${notes ? ` - ${notes}` : ''}`,
+        new Date().toISOString(),
+      ]
+    );
+
+    // Update prior auth notes to reference the document
+    await pool.query(
+      `UPDATE prior_authorizations
+       SET notes = COALESCE(notes, '') || $1, updated_at = $2
+       WHERE id = $3 AND tenant_id = $4`,
+      [
+        `\n[${new Date().toISOString()}] Document uploaded: ${documentName} (${documentType})`,
+        new Date().toISOString(),
+        id,
+        tenantId,
+      ]
+    );
+
+    res.status(201).json({
+      id: documentId,
+      message: 'Document uploaded successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Check status with payer
+router.get('/:id/status', async (req, res, next) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { id } = req.params;
+
+    const result = await pool.query(
+      `SELECT pa.*,
+              p.first_name, p.last_name,
+              u.full_name as provider_name
+       FROM prior_authorizations pa
+       JOIN patients p ON pa.patient_id = p.id
+       LEFT JOIN users u ON pa.provider_id = u.id
+       WHERE pa.id = $1 AND pa.tenant_id = $2`,
+      [id, tenantId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Prior authorization not found' });
+    }
+
+    const pa = result.rows[0];
+
+    // Mock payer status check response
+    const statusResponse = {
+      authNumber: pa.auth_number,
+      status: pa.status,
+      submittedAt: pa.submitted_at,
+      lastUpdated: pa.updated_at,
+      payerStatus: pa.status === 'submitted' ? 'In Review' : pa.status === 'approved' ? 'Approved' : pa.status === 'denied' ? 'Denied' : pa.status === 'more_info_needed' ? 'Pending Additional Information' : 'Not Submitted',
+      insuranceAuthNumber: pa.insurance_auth_number,
+      denialReason: pa.denial_reason,
+      estimatedDecisionDate: pa.status === 'submitted' ? new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString() : null,
+      timeline: [
+        {
+          date: pa.created_at,
+          event: 'Request Created',
+          status: 'completed',
+        },
+        pa.submitted_at && {
+          date: pa.submitted_at,
+          event: 'Submitted to Payer',
+          status: 'completed',
+        },
+        pa.status === 'submitted' && {
+          date: new Date().toISOString(),
+          event: 'Under Review',
+          status: 'in_progress',
+        },
+        pa.approved_at && {
+          date: pa.approved_at,
+          event: 'Approved',
+          status: 'completed',
+        },
+        pa.denied_at && {
+          date: pa.denied_at,
+          event: 'Denied',
+          status: 'completed',
+        },
+        pa.status === 'more_info_needed' && {
+          date: pa.updated_at,
+          event: 'Additional Information Requested',
+          status: 'action_required',
+        },
+      ].filter(Boolean),
+    };
+
+    res.json(statusResponse);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Webhook endpoint for payer responses (mock)
+router.post('/webhook/payer-response', async (req, res, next) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { authNumber, status, insuranceAuthNumber, reason, additionalData } = req.body;
+
+    // Find the prior auth by auth number
+    const result = await pool.query(
+      'SELECT * FROM prior_authorizations WHERE auth_number = $1 AND tenant_id = $2',
+      [authNumber, tenantId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Prior authorization not found' });
+    }
+
+    const pa = result.rows[0];
+
+    // Update based on webhook data
+    const updates: string[] = ['status = $1', 'updated_at = $2'];
+    const values: any[] = [status, new Date().toISOString()];
+    let paramCount = 2;
+
+    if (status === 'approved' && insuranceAuthNumber) {
+      paramCount++;
+      updates.push(`approved_at = $${paramCount}`);
+      values.push(new Date().toISOString());
+      paramCount++;
+      updates.push(`insurance_auth_number = $${paramCount}`);
+      values.push(insuranceAuthNumber);
+    } else if (status === 'denied' && reason) {
+      paramCount++;
+      updates.push(`denied_at = $${paramCount}`);
+      values.push(new Date().toISOString());
+      paramCount++;
+      updates.push(`denial_reason = $${paramCount}`);
+      values.push(reason);
+    }
+
+    if (additionalData) {
+      paramCount++;
+      updates.push(`notes = COALESCE(notes, '') || $${paramCount}`);
+      values.push(`\n[${new Date().toISOString()}] Webhook received: ${JSON.stringify(additionalData)}`);
+    }
+
+    paramCount++;
+    values.push(pa.id);
+    paramCount++;
+    values.push(tenantId);
+
+    await pool.query(
+      `UPDATE prior_authorizations SET ${updates.join(', ')} WHERE id = $${paramCount - 1} AND tenant_id = $${paramCount}`,
+      values
+    );
+
+    res.json({ message: 'Webhook processed successfully' });
   } catch (error) {
     next(error);
   }

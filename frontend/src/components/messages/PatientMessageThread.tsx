@@ -96,44 +96,46 @@ export const PatientMessageThread: FC<PatientMessageThreadProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'white' }}>
       {/* Header */}
-      <div className="flex-shrink-0 border-b border-gray-200 bg-gray-50">
-        <div className="px-6 py-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center space-x-4 flex-1">
+      <div style={{ flexShrink: 0, borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
+        <div style={{ padding: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1 }}>
               <button
                 onClick={onClose}
-                className="p-1 hover:bg-gray-200 rounded"
+                style={{ padding: '0.25rem', borderRadius: '0.25rem', cursor: 'pointer' }}
+                className="hover-bg-gray"
                 title="Back to inbox"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg style={{ width: '1.25rem', height: '1.25rem' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
               </button>
               <div>
-                <h2 className="text-xl font-semibold text-gray-900">{thread.subject}</h2>
-                <p className="text-sm text-gray-600">
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111827' }}>{thread.subject}</h2>
+                <p style={{ fontSize: '0.875rem', color: '#4b5563' }}>
                   {thread.patientName} • MRN: {thread.patientMrn}
                 </p>
               </div>
             </div>
             <button
               onClick={handleCloseThread}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 500, color: '#374151', background: 'white', border: '1px solid #d1d5db', borderRadius: '0.375rem', cursor: 'pointer' }}
+              className="hover-bg-gray"
             >
               Close Thread
             </button>
           </div>
 
           {/* Thread controls */}
-          <div className="flex items-center space-x-4">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <div>
-              <label className="text-xs font-medium text-gray-700 mr-2">Status:</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 500, color: '#374151', marginRight: '0.5rem' }}>Status:</label>
               <select
                 value={thread.status}
                 onChange={(e) => handleStatusChange(e.target.value)}
-                className="text-sm border-gray-300 rounded-md"
+                style={{ fontSize: '0.875rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
               >
                 <option value="open">Open</option>
                 <option value="in-progress">In Progress</option>
@@ -144,11 +146,11 @@ export const PatientMessageThread: FC<PatientMessageThreadProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-gray-700 mr-2">Assign to:</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 500, color: '#374151', marginRight: '0.5rem' }}>Assign to:</label>
               <select
                 value={thread.assignedToName || ''}
                 onChange={(e) => handleAssignChange(e.target.value)}
-                className="text-sm border-gray-300 rounded-md"
+                style={{ fontSize: '0.875rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
               >
                 <option value="">Unassigned</option>
                 {staffUsers.map((user) => (
@@ -160,11 +162,11 @@ export const PatientMessageThread: FC<PatientMessageThreadProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-gray-700 mr-2">Priority:</label>
+              <label style={{ fontSize: '0.75rem', fontWeight: 500, color: '#374151', marginRight: '0.5rem' }}>Priority:</label>
               <select
                 value={thread.priority}
                 onChange={(e) => handlePriorityChange(e.target.value)}
-                className="text-sm border-gray-300 rounded-md"
+                style={{ fontSize: '0.875rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
               >
                 <option value="low">Low</option>
                 <option value="normal">Normal</option>
@@ -176,26 +178,26 @@ export const PatientMessageThread: FC<PatientMessageThreadProps> = ({
         </div>
 
         {/* Patient info panel */}
-        <div className="px-6 py-3 bg-white border-t border-gray-200">
-          <div className="grid grid-cols-3 gap-4 text-sm">
+        <div style={{ padding: '0.75rem 1.5rem', background: 'white', borderTop: '1px solid #e5e7eb' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', fontSize: '0.875rem' }}>
             <div>
-              <span className="font-medium text-gray-700">DOB:</span>{' '}
-              <span className="text-gray-600">{thread.patientDob || 'N/A'}</span>
+              <span style={{ fontWeight: 500, color: '#374151' }}>DOB:</span>{' '}
+              <span style={{ color: '#4b5563' }}>{thread.patientDob || 'N/A'}</span>
             </div>
             <div>
-              <span className="font-medium text-gray-700">Email:</span>{' '}
-              <span className="text-gray-600">{thread.patientEmail || 'N/A'}</span>
+              <span style={{ fontWeight: 500, color: '#374151' }}>Email:</span>{' '}
+              <span style={{ color: '#4b5563' }}>{thread.patientEmail || 'N/A'}</span>
             </div>
             <div>
-              <span className="font-medium text-gray-700">Phone:</span>{' '}
-              <span className="text-gray-600">{thread.patientPhone || 'N/A'}</span>
+              <span style={{ fontWeight: 500, color: '#374151' }}>Phone:</span>{' '}
+              <span style={{ color: '#4b5563' }}>{thread.patientPhone || 'N/A'}</span>
             </div>
           </div>
         </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50">
+      <div style={{ flex: 1, overflowY: 'auto', padding: '1.5rem', background: '#f9fafb' }}>
         {messages.map((message) => {
           const isStaff = message.senderType === 'staff';
           const isInternalNote = message.isInternalNote;
@@ -203,62 +205,55 @@ export const PatientMessageThread: FC<PatientMessageThreadProps> = ({
           return (
             <div
               key={message.id}
-              className={`flex ${isStaff ? 'justify-end' : 'justify-start'}`}
+              style={{ display: 'flex', justifyContent: isStaff ? 'flex-end' : 'flex-start' }}
             >
-              <div className={`max-w-2xl ${isStaff ? 'ml-12' : 'mr-12'}`}>
+              <div style={{ maxWidth: '48rem', marginLeft: isStaff ? '3rem' : '0', marginRight: isStaff ? '0' : '3rem' }}>
                 <div
-                  className={`rounded-lg p-4 ${
-                    isInternalNote
-                      ? 'bg-yellow-50 border-2 border-yellow-300'
-                      : isStaff
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-white border border-gray-200'
-                  }`}
+                  style={{
+                    borderRadius: '0.5rem',
+                    padding: '1rem',
+                    background: isInternalNote ? '#fef9c3' : isStaff ? '#7c3aed' : 'white',
+                    border: isInternalNote ? '2px solid #fde047' : `1px solid ${isStaff ? '#7c3aed' : '#e5e7eb'}`,
+                    color: isStaff && !isInternalNote ? 'white' : 'inherit'
+                  }}
                 >
-                  <div className="flex items-center justify-between mb-2">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                     <span
-                      className={`text-sm font-medium ${
-                        isInternalNote
-                          ? 'text-yellow-900'
-                          : isStaff
-                          ? 'text-purple-100'
-                          : 'text-gray-900'
-                      }`}
+                      style={{
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        color: isInternalNote ? '#713f12' : isStaff ? '#e9d5ff' : '#111827'
+                      }}
                     >
                       {message.senderName}
                       {isInternalNote && ' (Internal Note - Patient Cannot See)'}
                     </span>
                     <span
-                      className={`text-xs ${
-                        isInternalNote
-                          ? 'text-yellow-700'
-                          : isStaff
-                          ? 'text-purple-200'
-                          : 'text-gray-500'
-                      }`}
+                      style={{
+                        fontSize: '0.75rem',
+                        color: isInternalNote ? '#a16207' : isStaff ? '#ddd6fe' : '#6b7280'
+                      }}
                     >
                       {format(new Date(message.sentAt), 'MMM d, yyyy h:mm a')}
                     </span>
                   </div>
                   <p
-                    className={`text-sm whitespace-pre-wrap ${
-                      isInternalNote
-                        ? 'text-yellow-900'
-                        : isStaff
-                        ? 'text-white'
-                        : 'text-gray-700'
-                    }`}
+                    style={{
+                      fontSize: '0.875rem',
+                      whiteSpace: 'pre-wrap',
+                      color: isInternalNote ? '#713f12' : isStaff ? 'white' : '#374151'
+                    }}
                   >
                     {message.messageText}
                   </p>
                   {message.attachments && message.attachments.length > 0 && (
-                    <div className="mt-3 space-y-1">
+                    <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                       {message.attachments.map((att: any) => (
                         <div
                           key={att.id}
-                          className={`text-sm ${isStaff ? 'text-purple-100' : 'text-gray-600'}`}
+                          style={{ fontSize: '0.875rem', color: isStaff ? '#e9d5ff' : '#4b5563' }}
                         >
-                          📎 {att.filename} ({Math.round(att.fileSize / 1024)} KB)
+                          {att.filename} ({Math.round(att.fileSize / 1024)} KB)
                         </div>
                       ))}
                     </div>
@@ -272,25 +267,26 @@ export const PatientMessageThread: FC<PatientMessageThreadProps> = ({
       </div>
 
       {/* Message composer */}
-      <div className="flex-shrink-0 border-t border-gray-200 bg-white p-4">
-        <div className="flex items-start space-x-2">
-          <div className="flex-1">
-            <div className="flex items-center space-x-2 mb-2">
+      <div style={{ flexShrink: 0, borderTop: '1px solid #e5e7eb', background: 'white', padding: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
               <button
                 onClick={() => setShowCannedResponses(true)}
-                className="px-3 py-1 text-sm font-medium text-purple-700 bg-purple-100 rounded-md hover:bg-purple-200"
+                style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', fontWeight: 500, color: '#6b21a8', background: '#f3e8ff', borderRadius: '0.375rem', cursor: 'pointer', border: 'none' }}
+                className="hover-bg-purple"
                 title="Insert canned response"
               >
-                📋 Quick Response
+                Quick Response
               </button>
-              <label className="flex items-center space-x-2 cursor-pointer">
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
                   checked={isInternalNote}
                   onChange={(e) => setIsInternalNote(e.target.checked)}
-                  className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                  style={{ borderRadius: '0.25rem', border: '1px solid #d1d5db', color: '#7c3aed' }}
                 />
-                <span className="text-sm font-medium text-gray-700">
+                <span style={{ fontSize: '0.875rem', fontWeight: 500, color: '#374151' }}>
                   Internal Note (Patient cannot see)
                 </span>
               </label>
@@ -299,18 +295,29 @@ export const PatientMessageThread: FC<PatientMessageThreadProps> = ({
               value={messageText}
               onChange={(e) => setMessageText(e.target.value)}
               placeholder={isInternalNote ? 'Type internal note...' : 'Type your message...'}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md resize-none focus:ring-purple-500 focus:border-purple-500"
+              style={{ width: '100%', padding: '0.5rem 0.75rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', resize: 'none' }}
               rows={4}
               disabled={sending}
             />
-            <div className="flex items-center justify-between mt-2">
-              <span className="text-xs text-gray-500">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.5rem' }}>
+              <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                 {messageText.length} / 5000 characters
               </span>
               <button
                 onClick={handleSendMessage}
                 disabled={!messageText.trim() || sending}
-                className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.875rem',
+                  fontWeight: 500,
+                  color: 'white',
+                  background: !messageText.trim() || sending ? '#9ca3af' : '#7c3aed',
+                  borderRadius: '0.375rem',
+                  cursor: !messageText.trim() || sending ? 'not-allowed' : 'pointer',
+                  opacity: !messageText.trim() || sending ? 0.5 : 1,
+                  border: 'none'
+                }}
+                className="hover-bg-purple-dark"
               >
                 {sending ? 'Sending...' : isInternalNote ? 'Add Note' : 'Send Message'}
               </button>

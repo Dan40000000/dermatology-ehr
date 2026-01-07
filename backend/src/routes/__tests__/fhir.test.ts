@@ -14,6 +14,7 @@ import {
   mapChargeToProcedure,
   mapAppointmentToFHIR,
   mapOrganizationToFHIR,
+  mapAllergyToFHIR,
   createFHIRBundle,
   createOperationOutcome,
 } from "../../services/fhirMapper";
@@ -213,6 +214,34 @@ describe("FHIR Resource Mapping", () => {
       expect(fhirProcedure.code.coding[0].code).toBe("11100");
       expect(fhirProcedure.subject.reference).toBe("Patient/patient-123");
       expect(fhirProcedure.encounter.reference).toBe("Encounter/enc-123");
+    });
+  });
+
+  describe("AllergyIntolerance Resource", () => {
+    it("should map allergy to FHIR AllergyIntolerance resource", () => {
+      const dbAllergy = {
+        id: "allergy-123",
+        tenant_id: "tenant-demo",
+        patient_id: "patient-123",
+        allergen: "Penicillin",
+        allergen_type: "medication",
+        reaction: "Hives",
+        severity: "severe",
+        status: "active",
+        created_at: "2024-01-01T10:00:00Z",
+        updated_at: "2024-01-01T10:00:00Z",
+      };
+
+      const fhirAllergy = mapAllergyToFHIR(dbAllergy);
+
+      expect(fhirAllergy.resourceType).toBe("AllergyIntolerance");
+      expect(fhirAllergy.id).toBe("allergy-123");
+      expect(fhirAllergy.code.text).toBe("Penicillin");
+      expect(fhirAllergy.patient.reference).toBe("Patient/patient-123");
+      expect(fhirAllergy.category).toEqual(["medication"]);
+      expect(fhirAllergy.reaction).toHaveLength(1);
+      expect(fhirAllergy.reaction[0].manifestation[0].text).toBe("Hives");
+      expect(fhirAllergy.criticality).toBe("high");
     });
   });
 

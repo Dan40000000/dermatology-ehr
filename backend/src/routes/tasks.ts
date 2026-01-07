@@ -41,44 +41,44 @@ tasksRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const sortOrder = (req.query.sortOrder as string) || "desc";
 
   // Build WHERE clauses
-  const whereClauses: string[] = ["tenant_id = $1"];
+  const whereClauses: string[] = ["t.tenant_id = $1"];
   const params: any[] = [tenantId];
   let paramIndex = 2;
 
   if (status) {
-    whereClauses.push(`status = $${paramIndex}`);
+    whereClauses.push(`t.status = $${paramIndex}`);
     params.push(status);
     paramIndex++;
   }
 
   if (category) {
-    whereClauses.push(`category = $${paramIndex}`);
+    whereClauses.push(`t.category = $${paramIndex}`);
     params.push(category);
     paramIndex++;
   }
 
   if (assignedTo) {
     if (assignedTo === "me") {
-      whereClauses.push(`assigned_to = $${paramIndex}`);
+      whereClauses.push(`t.assigned_to = $${paramIndex}`);
       params.push(req.user!.id);
       paramIndex++;
     } else if (assignedTo === "unassigned") {
-      whereClauses.push("assigned_to is null");
+      whereClauses.push("t.assigned_to is null");
     } else {
-      whereClauses.push(`assigned_to = $${paramIndex}`);
+      whereClauses.push(`t.assigned_to = $${paramIndex}`);
       params.push(assignedTo);
       paramIndex++;
     }
   }
 
   if (priority) {
-    whereClauses.push(`priority = $${paramIndex}`);
+    whereClauses.push(`t.priority = $${paramIndex}`);
     params.push(priority);
     paramIndex++;
   }
 
   if (search) {
-    whereClauses.push(`(title ilike $${paramIndex} or description ilike $${paramIndex})`);
+    whereClauses.push(`(t.title ilike $${paramIndex} or t.description ilike $${paramIndex})`);
     params.push(`%${search}%`);
     paramIndex++;
   }
@@ -96,7 +96,7 @@ tasksRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
     dueDate: "due_date",
     assignedTo: "assigned_to",
   };
-  const dbSortColumn = columnMap[sortColumn] || sortColumn;
+  const dbSortColumn = "t." + (columnMap[sortColumn] || sortColumn);
 
   const query = `
     select

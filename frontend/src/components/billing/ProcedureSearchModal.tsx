@@ -137,7 +137,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
     const lastUsedDate = new Date(lastUsed);
     const daysSince = Math.floor((now.getTime() - lastUsedDate.getTime()) / (1000 * 60 * 60 * 24));
 
-    if (daysSince < 7) return { icon: '⏱️', color: '#10b981', label: 'Recent' };
+    if (daysSince < 7) return { icon: '', color: '#10b981', label: 'Recent' };
     if (daysSince < 30) return null;
     return null;
   };
@@ -235,7 +235,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
               alignItems: 'center',
               gap: '0.5rem'
             }}>
-              <span>🔗</span>
+              <span></span>
               <span>Often Paired with {diagnoses.find(d => d.isPrimary)?.icd10Code}</span>
             </h4>
             <div style={{
@@ -317,7 +317,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
               alignItems: 'center',
               gap: '0.5rem'
             }}>
-              <span>🔥</span>
+              <span></span>
               <span>Frequently Used by You</span>
             </h4>
             <div style={{

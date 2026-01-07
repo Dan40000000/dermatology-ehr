@@ -218,10 +218,6 @@ export async function checkDrugInteractions(
 ): Promise<ValidationWarning[]> {
   // TODO: Integrate with drug interaction database
   // For now, return empty array
-  console.log(
-    `[STUB] Checking drug interactions for medication ${newMedicationId} and patient ${patientId}`
-  );
-
   return [];
 }
 
@@ -235,10 +231,6 @@ export async function checkFormulary(
 ): Promise<{ covered: boolean; tier?: string; priorAuthRequired?: boolean }> {
   // TODO: Integrate with insurance formulary checking
   // For now, assume all medications are covered
-  console.log(
-    `[STUB] Checking formulary coverage for medication ${medicationId} and patient ${patientId}`
-  );
-
   return {
     covered: true,
     tier: 'Unknown',
@@ -256,10 +248,6 @@ export async function checkAllergies(
 ): Promise<ValidationWarning[]> {
   // TODO: Check patient allergies in database and cross-reference with medication
   // For now, return empty array
-  console.log(
-    `[STUB] Checking allergies for medication ${medicationName} and patient ${patientId}`
-  );
-
   return [];
 }
 
@@ -273,9 +261,5 @@ export function canProviderPrescribeControlled(
 ): boolean {
   // TODO: Check provider's DEA license status and number
   // For now, assume all providers can prescribe
-  console.log(
-    `[STUB] Checking if provider ${providerId} can prescribe DEA schedule ${deaSchedule || 'N/A'}`
-  );
-
   return true;
 }

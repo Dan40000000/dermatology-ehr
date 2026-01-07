@@ -1,0 +1,586 @@
+/* ============================================
+   RESPONSIVE & MOBILE STYLES
+   Mobile-First Design (320px - 1920px+)
+   ============================================ */
+
+/* === Base Mobile Styles (320px+) === */
+/* Already covered in main CSS */
+
+/* === Enhanced Mobile Navigation (up to 768px) === */
+@media (max-width: 768px) {
+  /* Hide desktop navigation */
+  .ema-nav {
+    display: none;
+  }
+
+  /* Show mobile navigation */
+  .mobile-nav {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: var(--header-height);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--white);
+    z-index: 100;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+  }
+
+  .mobile-nav.open {
+    transform: translateX(0);
+  }
+
+  .mobile-nav-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 99;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+  }
+
+  .mobile-nav-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Hamburger menu button */
+  .hamburger-button {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0.5rem;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+  }
+
+  .hamburger-button span {
+    display: block;
+    width: 24px;
+    height: 2px;
+    background: var(--white);
+    transition: all 0.3s ease;
+  }
+
+  .hamburger-button.open span:nth-child(1) {
+    transform: rotate(45deg) translate(5px, 5px);
+  }
+
+  .hamburger-button.open span:nth-child(2) {
+    opacity: 0;
+  }
+
+  .hamburger-button.open span:nth-child(3) {
+    transform: rotate(-45deg) translate(7px, -6px);
+  }
+
+  /* Mobile navigation links */
+  .mobile-nav-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    color: var(--gray-900);
+    text-decoration: none;
+    font-weight: 500;
+    border-bottom: 1px solid var(--gray-200);
+    min-height: 44px;
+  }
+
+  .mobile-nav-link:active,
+  .mobile-nav-link.active {
+    background: var(--primary-50);
+    color: var(--primary-700);
+    border-left: 4px solid var(--primary-500);
+  }
+
+  /* Top bar adjustments */
+  .topbar {
+    padding: 0 1rem;
+  }
+
+  .brand {
+    font-size: 1rem;
+  }
+
+  /* Hide patient search on mobile */
+  .patient-search {
+    display: none;
+  }
+
+  /* Content card adjustments */
+  .content-card {
+    margin: 0.75rem;
+    border-radius: var(--radius-lg);
+  }
+
+  /* Grid layouts */
+  .grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    padding: 1rem;
+  }
+
+  /* Stat cards */
+  .stat-card,
+  .stat-card-teal {
+    min-width: 140px;
+  }
+
+  /* Schedule grid */
+  .schedule-grid {
+    grid-template-columns: 1fr;
+    overflow-x: auto;
+  }
+
+  /* Month calendar */
+  .month-grid {
+    grid-template-columns: repeat(7, minmax(40px, 1fr));
+  }
+
+  .month-cell {
+    min-height: 60px;
+    font-size: 0.75rem;
+  }
+
+  /* Forms */
+  .form {
+    grid-template-columns: 1fr;
+    padding: 1rem;
+  }
+
+  .sheet {
+    left: auto;
+    right: 0;
+    min-width: calc(100vw - 2rem);
+    max-width: 400px;
+  }
+
+  /* Modals */
+  .modal {
+    margin: 1rem;
+    max-width: calc(100vw - 2rem);
+  }
+
+  .modal-lg,
+  .modal-full {
+    width: calc(100vw - 2rem);
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+  }
+
+  /* Tables - Stack on mobile */
+  .data-table {
+    display: block;
+    overflow-x: auto;
+  }
+
+  table {
+    min-width: 600px; /* Allow horizontal scroll */
+  }
+
+  /* Alternative: Stack table rows */
+  .data-table.stack {
+    display: block;
+  }
+
+  .data-table.stack table,
+  .data-table.stack thead,
+  .data-table.stack tbody,
+  .data-table.stack tr,
+  .data-table.stack th,
+  .data-table.stack td {
+    display: block;
+  }
+
+  .data-table.stack thead {
+    display: none;
+  }
+
+  .data-table.stack tr {
+    margin-bottom: 1rem;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-md);
+    padding: 0.5rem;
+  }
+
+  .data-table.stack td {
+    border: none;
+    padding: 0.5rem;
+    text-align: right;
+    position: relative;
+    padding-left: 50%;
+  }
+
+  .data-table.stack td::before {
+    content: attr(data-label);
+    position: absolute;
+    left: 0.5rem;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  /* Footer */
+  .footer-content {
+    flex-direction: column;
+    text-align: center;
+    gap: 1rem;
+  }
+
+  /* Quick actions bar */
+  .quick-actions {
+    padding: 0.75rem 1rem;
+    overflow-x: auto;
+  }
+
+  /* Section headers */
+  .section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  /* Page headers */
+  .page-header {
+    padding: 1rem;
+  }
+
+  .page-header-content {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .page-header-actions {
+    width: 100%;
+  }
+
+  .breadcrumbs {
+    font-size: 0.75rem;
+  }
+
+  /* Sticky header */
+  .sticky-header {
+    padding: 0.5rem 1rem;
+    flex-wrap: wrap;
+  }
+
+  .day-nav {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  /* Hide complex analytics on mobile */
+  .analytics-chart.complex {
+    display: none;
+  }
+
+  /* Patient banner */
+  .patient-banner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* Appointment cards */
+  .appointment-card {
+    padding: 0.75rem;
+  }
+
+  /* Photo grid */
+  .photo-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+
+  /* Body diagram */
+  .body-diagram-container {
+    overflow-x: auto;
+  }
+
+  /* Prescription form */
+  .rx-form {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* === Small Tablets / Large Phones (576px+) === */
+@media (min-width: 576px) {
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+
+  .photo-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
+}
+
+/* === Tablets (768px+) === */
+@media (min-width: 768px) {
+  /* Show desktop nav */
+  .ema-nav {
+    display: flex;
+  }
+
+  .mobile-nav,
+  .hamburger-button {
+    display: none;
+  }
+
+  /* Two-column layouts */
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  }
+
+  /* Patient search visible */
+  .patient-search {
+    display: flex;
+  }
+
+  /* Content card */
+  .content-card {
+    margin: 1.5rem;
+  }
+
+  /* Schedule grid - 2 columns */
+  .schedule-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Forms - 2 columns */
+  .form {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Modals */
+  .modal-md {
+    max-width: 600px;
+  }
+
+  .modal-lg {
+    max-width: 900px;
+  }
+}
+
+/* === Desktop (1024px+) === */
+@media (min-width: 1024px) {
+  /* Three-column layouts */
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  }
+
+  /* Schedule grid - 3 columns */
+  .schedule-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  /* Week view - 7 columns */
+  .schedule-grid.week-view {
+    grid-template-columns: repeat(7, 1fr);
+  }
+
+  /* Forms - 3 columns */
+  .form.three-col {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  /* Photo grid */
+  .photo-grid {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+}
+
+/* === Large Desktop (1280px+) === */
+@media (min-width: 1280px) {
+  .content-card {
+    max-width: 1400px;
+    margin: 1.5rem auto;
+  }
+
+  /* Four-column layouts where appropriate */
+  .grid.four-col {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .photo-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  }
+}
+
+/* === Extra Large Desktop (1536px+) === */
+@media (min-width: 1536px) {
+  html {
+    font-size: 15px;
+  }
+
+  .content-card {
+    max-width: 1600px;
+  }
+}
+
+/* === Portrait Orientation === */
+@media (orientation: portrait) {
+  .schedule-grid.week-view {
+    grid-template-columns: 1fr;
+  }
+
+  .month-grid {
+    font-size: 0.75rem;
+  }
+}
+
+/* === Landscape Orientation === */
+@media (orientation: landscape) and (max-height: 600px) {
+  /* Reduce vertical spacing for short landscape screens */
+  .content-card {
+    margin: 0.75rem;
+  }
+
+  .section-header {
+    padding: 1rem;
+  }
+
+  .grid {
+    padding: 1rem;
+    gap: 1rem;
+  }
+}
+
+/* === Print Styles === */
+@media print {
+  .topbar,
+  .ema-nav,
+  .ema-subnav,
+  .mobile-nav,
+  .quick-actions,
+  .filters,
+  button,
+  .footer {
+    display: none !important;
+  }
+
+  .content-card {
+    margin: 0;
+    border: none;
+    box-shadow: none;
+  }
+
+  .page,
+  .layout {
+    display: block;
+  }
+
+  * {
+    background: white !important;
+    color: black !important;
+  }
+
+  .panel {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
+
+/* === Responsive Typography === */
+@media (max-width: 768px) {
+  html {
+    font-size: 14px;
+  }
+
+  h1 {
+    font-size: 1.25rem;
+  }
+
+  h2 {
+    font-size: 1.125rem;
+  }
+
+  h3 {
+    font-size: 1rem;
+  }
+
+  .brand {
+    font-size: 0.9375rem;
+  }
+
+  .panel-title {
+    font-size: 0.875rem;
+  }
+}
+
+/* === Responsive Images === */
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+.photo-thumbnail {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+}
+
+/* === Responsive Embeds (Videos, Maps, etc.) === */
+.embed-responsive {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+
+.embed-responsive::before {
+  display: block;
+  content: "";
+  padding-top: 56.25%; /* 16:9 aspect ratio */
+}
+
+.embed-responsive iframe,
+.embed-responsive embed,
+.embed-responsive object,
+.embed-responsive video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* === Responsive Spacing Utilities === */
+@media (max-width: 768px) {
+  .hide-mobile {
+    display: none !important;
+  }
+
+  .show-mobile {
+    display: block !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .hide-desktop {
+    display: none !important;
+  }
+
+  .show-desktop {
+    display: block !important;
+  }
+}
+
+/* === Safe Area Insets (for notched devices) === */
+@supports (padding: max(0px)) {
+  .topbar {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+
+  .content-card {
+    margin-left: max(0.75rem, env(safe-area-inset-left));
+    margin-right: max(0.75rem, env(safe-area-inset-right));
+  }
+}

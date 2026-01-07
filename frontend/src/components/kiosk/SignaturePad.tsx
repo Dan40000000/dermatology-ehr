@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState } from 'react';
+import '../../styles/kiosk.css';
 
 interface SignaturePadProps {
   onSave: (signatureData: string) => void;
@@ -8,6 +9,51 @@ interface SignaturePadProps {
   lineWidth?: number;
   lineColor?: string;
 }
+
+const canvasStyle: React.CSSProperties = {
+  border: '2px solid #d1d5db',
+  borderRadius: '0.5rem',
+  touchAction: 'none',
+  cursor: 'crosshair',
+  background: 'white',
+  width: '100%',
+  height: 'auto',
+};
+
+const buttonContainerStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: '1rem',
+  marginTop: '1.5rem',
+};
+
+const clearBtnStyle: React.CSSProperties = {
+  flex: 1,
+  padding: '1rem 2rem',
+  fontSize: '1.25rem',
+  fontWeight: 500,
+  color: '#374151',
+  background: 'white',
+  border: '2px solid #d1d5db',
+  borderRadius: '0.5rem',
+  cursor: 'pointer',
+};
+
+const saveBtnStyle: React.CSSProperties = {
+  flex: 1,
+  padding: '1rem 2rem',
+  fontSize: '1.25rem',
+  fontWeight: 500,
+  color: 'white',
+  background: '#7c3aed',
+  border: 'none',
+  borderRadius: '0.5rem',
+  cursor: 'pointer',
+};
+
+const disabledStyle: React.CSSProperties = {
+  opacity: 0.5,
+  cursor: 'not-allowed',
+};
 
 export function SignaturePad({
   onSave,
@@ -95,7 +141,6 @@ export function SignaturePad({
   const clear = () => {
     if (!context || !canvasRef.current) return;
 
-    const canvas = canvasRef.current;
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, width, height);
     setIsEmpty(true);
@@ -113,7 +158,7 @@ export function SignaturePad({
   };
 
   return (
-    <div className="signature-pad-container">
+    <div>
       <canvas
         ref={canvasRef}
         width={width}
@@ -125,15 +170,14 @@ export function SignaturePad({
         onTouchStart={startDrawing}
         onTouchMove={draw}
         onTouchEnd={stopDrawing}
-        className="border-2 border-gray-300 rounded-lg touch-none cursor-crosshair bg-white"
-        style={{ width: '100%', height: 'auto', maxWidth: `${width}px` }}
+        style={{ ...canvasStyle, maxWidth: `${width}px` }}
       />
-      <div className="flex gap-4 mt-6">
+      <div style={buttonContainerStyle}>
         <button
           type="button"
           onClick={clear}
           disabled={isEmpty}
-          className="flex-1 px-8 py-4 text-xl font-medium text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          style={isEmpty ? { ...clearBtnStyle, ...disabledStyle } : clearBtnStyle}
         >
           Clear
         </button>
@@ -141,7 +185,7 @@ export function SignaturePad({
           type="button"
           onClick={save}
           disabled={isEmpty}
-          className="flex-1 px-8 py-4 text-xl font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          style={isEmpty ? { ...saveBtnStyle, ...disabledStyle } : saveBtnStyle}
         >
           Save Signature
         </button>

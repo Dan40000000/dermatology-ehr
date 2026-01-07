@@ -330,7 +330,7 @@ export function NoteTemplatesPage() {
               gap: '0.5rem'
             }}
           >
-            <span>{showOnlyFavorites ? '⭐' : '☆'}</span>
+            <span>{showOnlyFavorites ? '' : ''}</span>
             <span>Favorites Only</span>
           </button>
         </div>
@@ -345,7 +345,7 @@ export function NoteTemplatesPage() {
           padding: '4rem',
           textAlign: 'center'
         }}>
-          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📝</div>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
           <h3 style={{ color: '#374151', marginBottom: '0.5rem' }}>
             {searchQuery || selectedCategory || showOnlyFavorites ? 'No templates found' : 'No templates yet'}
           </h3>
@@ -407,7 +407,7 @@ export function NoteTemplatesPage() {
                   padding: 0
                 }}
               >
-                {template.isFavorite ? '⭐' : '☆'}
+                {template.isFavorite ? '' : ''}
               </button>
 
               {/* Category Badge */}
@@ -722,7 +722,7 @@ export function NoteTemplatesPage() {
                 </div>
                 <div>
                   <span style={{ color: '#6b7280' }}>Favorite:</span>{' '}
-                  <span>{selectedTemplate.isFavorite ? '⭐ Yes' : 'No'}</span>
+                  <span>{selectedTemplate.isFavorite ? 'Yes' : 'No'}</span>
                 </div>
               </div>
               {selectedTemplate.description && (

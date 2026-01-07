@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { FC } from 'react';
 import { formatDistanceToNow } from 'date-fns';
+import '../../styles/patient-portal.css';
 
 interface PatientThread {
   id: string;
@@ -30,7 +31,6 @@ export function PatientPortalMessagesPage() {
   const fetchThreads = async () => {
     setLoading(true);
     try {
-      // Fetch patient threads
       const response = await fetch(
         `http://localhost:4000/api/patient-portal/messages/threads?${filter !== 'all' ? `category=${filter}` : ''}`,
         {
@@ -53,46 +53,48 @@ export function PatientPortalMessagesPage() {
     setSelectedThread(thread);
   };
 
-  const categoryColors: Record<string, string> = {
-    general: 'bg-gray-100 text-gray-700',
-    prescription: 'bg-blue-100 text-blue-700',
-    appointment: 'bg-green-100 text-green-700',
-    billing: 'bg-yellow-100 text-yellow-700',
-    medical: 'bg-red-100 text-red-700',
+  const getCategoryClass = (category: string) => {
+    const classes: Record<string, string> = {
+      general: 'portal-category-general',
+      prescription: 'portal-category-prescription',
+      appointment: 'portal-category-appointment',
+      billing: 'portal-category-billing',
+      medical: 'portal-category-medical',
+    };
+    return classes[category] || classes.general;
+  };
+
+  const headerRowStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="portal-page">
+      <div className="portal-container">
         {/* Header */}
-        <div className="mb-6">
-          <div className="flex items-center justify-between">
+        <div className="portal-page-header">
+          <div style={headerRowStyle}>
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Messages</h1>
-              <p className="mt-1 text-sm text-gray-600">
+              <h1 className="portal-page-title">Messages</h1>
+              <p className="portal-page-subtitle">
                 Secure communication with your healthcare provider
               </p>
             </div>
-            <button
-              onClick={() => setShowComposer(true)}
-              className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700"
-            >
+            <button onClick={() => setShowComposer(true)} className="portal-btn portal-btn-primary">
               New Message
             </button>
           </div>
         </div>
 
         {/* Filters */}
-        <div className="mb-4 flex items-center space-x-2 overflow-x-auto">
+        <div className="portal-filters">
           {['all', 'general', 'prescription', 'appointment', 'billing', 'medical'].map((cat) => (
             <button
               key={cat}
               onClick={() => setFilter(cat)}
-              className={`px-4 py-2 text-sm font-medium rounded-md whitespace-nowrap ${
-                filter === cat
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-              }`}
+              className={`portal-filter-btn ${filter === cat ? 'active' : ''}`}
             >
               {cat.charAt(0).toUpperCase() + cat.slice(1)}
             </button>
@@ -100,15 +102,15 @@ export function PatientPortalMessagesPage() {
         </div>
 
         {/* Thread list */}
-        <div className="bg-white rounded-lg shadow">
+        <div className="portal-thread-list">
           {loading ? (
-            <div className="p-8 text-center">
-              <div className="inline-block w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin" />
+            <div className="portal-loading">
+              <div className="portal-spinner" />
             </div>
           ) : threads.length === 0 ? (
-            <div className="p-8 text-center">
+            <div className="portal-empty">
               <svg
-                className="w-16 h-16 mx-auto mb-4 text-gray-400"
+                className="portal-empty-icon"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -120,42 +122,42 @@ export function PatientPortalMessagesPage() {
                   d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
                 />
               </svg>
-              <p className="text-lg font-medium text-gray-900">No messages</p>
-              <p className="text-sm text-gray-500">Start a new conversation with your provider</p>
+              <p className="portal-empty-title">No messages</p>
+              <p className="portal-empty-text">Start a new conversation with your provider</p>
             </div>
           ) : (
-            <div className="divide-y divide-gray-200">
+            <div>
               {threads.map((thread) => (
                 <div
                   key={thread.id}
                   onClick={() => handleThreadClick(thread)}
-                  className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                  className="portal-thread-item"
                 >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center space-x-2 mb-1">
-                        <h3 className={`text-sm font-${thread.isReadByPatient ? 'medium' : 'bold'} text-gray-900 truncate`}>
+                  <div className="portal-thread-header">
+                    <div className="portal-thread-content">
+                      <div className="portal-thread-title-row">
+                        <h3 className={`portal-thread-title ${thread.isReadByPatient ? 'read' : 'unread'}`}>
                           {thread.subject}
                         </h3>
                         {!thread.isReadByPatient && thread.unreadCount > 0 && (
-                          <span className="px-2 py-0.5 text-xs font-medium text-white bg-purple-600 rounded-full">
+                          <span className="portal-unread-badge">
                             {thread.unreadCount} new
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center space-x-2 mb-2">
-                        <span className={`px-2 py-0.5 text-xs font-medium rounded ${categoryColors[thread.category] || categoryColors.general}`}>
+                      <div className="portal-thread-meta">
+                        <span className={`portal-category-badge ${getCategoryClass(thread.category)}`}>
                           {thread.category.charAt(0).toUpperCase() + thread.category.slice(1)}
                         </span>
-                        <span className="text-xs text-gray-500">
+                        <span className="portal-message-count">
                           {thread.messageCount} message{thread.messageCount !== 1 ? 's' : ''}
                         </span>
                       </div>
-                      <p className="text-sm text-gray-600 truncate">
+                      <p className="portal-thread-preview">
                         {thread.lastMessagePreview}
                       </p>
                     </div>
-                    <span className="ml-4 text-xs text-gray-500 flex-shrink-0">
+                    <span className="portal-thread-time">
                       {formatDistanceToNow(new Date(thread.lastMessageAt), { addSuffix: true })}
                     </span>
                   </div>
@@ -166,49 +168,46 @@ export function PatientPortalMessagesPage() {
         </div>
 
         {/* Important notice */}
-        <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex">
-            <div className="flex-shrink-0">
-              <svg className="h-5 w-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
-                <path
-                  fillRule="evenodd"
-                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </div>
-            <div className="ml-3">
-              <h3 className="text-sm font-medium text-blue-800">For urgent medical needs</h3>
-              <p className="mt-1 text-sm text-blue-700">
-                Please call our office at (555) 123-4567 or seek emergency care at your nearest emergency room. This messaging system is not monitored 24/7 and should not be used for urgent medical concerns.
-              </p>
-            </div>
+        <div className="portal-notice">
+          <div className="portal-notice-icon">
+            <svg fill="currentColor" viewBox="0 0 20 20">
+              <path
+                fillRule="evenodd"
+                d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </div>
+          <div className="portal-notice-content">
+            <h3 className="portal-notice-title">For urgent medical needs</h3>
+            <p className="portal-notice-text">
+              Please call our office at (555) 123-4567 or seek emergency care at your nearest emergency room. This messaging system is not monitored 24/7 and should not be used for urgent medical concerns.
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Modals would go here */}
+      {/* Modals */}
       {showComposer && <MessageComposer onClose={() => setShowComposer(false)} onSuccess={fetchThreads} />}
       {selectedThread && <MessageThreadView thread={selectedThread} onClose={() => setSelectedThread(null)} />}
     </div>
   );
 }
 
-// Placeholder components
 const MessageComposer: FC<{ onClose: () => void; onSuccess: () => void }> = ({ onClose }) => (
-  <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
-    <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
-      <h2 className="text-xl font-bold mb-4">New Message</h2>
-      <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded">Close</button>
+  <div className="portal-modal-overlay">
+    <div className="portal-modal">
+      <h2 className="portal-modal-title">New Message</h2>
+      <button onClick={onClose} className="portal-btn portal-btn-secondary">Close</button>
     </div>
   </div>
 );
 
 const MessageThreadView: FC<{ thread: any; onClose: () => void }> = ({ thread, onClose }) => (
-  <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
-    <div className="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-      <h2 className="text-xl font-bold mb-4">{thread.subject}</h2>
-      <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded">Close</button>
+  <div className="portal-modal-overlay">
+    <div className="portal-modal portal-modal-lg">
+      <h2 className="portal-modal-title">{thread.subject}</h2>
+      <button onClick={onClose} className="portal-btn portal-btn-secondary">Close</button>
     </div>
   </div>
 );

@@ -1155,7 +1155,7 @@
           "13",
           "14"
         ],
-        "status": "pending",
+        "status": "in-progress",
         "subtasks": [
           {
             "id": 1,
@@ -1175,9 +1175,10 @@
               1
             ],
             "details": "List modules explicitly; define granular read/write permissions per role; use JSON/YAML config; ensure scoped access to prevent over-permissioning[1][4].",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Matrix validation script to check coverage and conflicts across modules",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-01-07T17:00:31.445Z"
           },
           {
             "id": 3,
@@ -1188,9 +1189,10 @@
               2
             ],
             "details": "Update auth service/middleware; frontend/backend guards for modules; enforce checks at GraphQL API and UI layers[7]; handle dynamic schema context if multi-tenant[24].",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Mock user roles to test unauthorized access denial",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-01-07T17:00:31.449Z"
           },
           {
             "id": 4,
@@ -1200,9 +1202,10 @@
               3
             ],
             "details": "Test least privilege enforcement; role inheritance if any; invalid role handling; integrate with Jest/Vitest for config parsing and guard functions[2][3].",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "100% coverage on permission resolver functions; parametrize tests for all 29 modules",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-01-07T17:00:31.451Z"
           },
           {
             "id": 5,
@@ -1220,7 +1223,8 @@
         ],
         "complexity": 6,
         "recommendedSubtasks": 5,
-        "expansionPrompt": "Divide into: 1) Define roles (clinician, admin, etc.); 2) Create permissions matrix config for 29 modules; 3) Integrate with navigation guards; 4) Unit test permission logic; 5) Integration tests for role-based module access."
+        "expansionPrompt": "Divide into: 1) Define roles (clinician, admin, etc.); 2) Create permissions matrix config for 29 modules; 3) Integrate with navigation guards; 4) Unit test permission logic; 5) Integration tests for role-based module access.",
+        "updatedAt": "2026-01-07T17:00:31.451Z"
       },
       {
         "id": "16",
@@ -1230,7 +1234,7 @@
         "testStrategy": "Postman collection tests for CRUD operations; validate against FHIR validator; test error responses with missing required fields.",
         "priority": "high",
         "dependencies": [],
-        "status": "pending",
+        "status": "in-progress",
         "subtasks": [
           {
             "id": 1,
@@ -1238,9 +1242,10 @@
             "description": "Implement GET, POST, PUT, DELETE endpoints at /fhir/AllergyIntolerance following RESTful FHIR conventions.",
             "dependencies": [],
             "details": "Use existing FHIR base controller pattern. Support single resource operations (GET by ID), collection operations (GET list), create (POST), update (PUT), delete (DELETE). Return standard HTTP status codes.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Postman tests for each endpoint with valid payloads; verify HTTP status codes and response formats.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-01-07T17:00:13.570Z"
           },
           {
             "id": 2,
@@ -1262,9 +1267,10 @@
               1
             ],
             "details": "Support query params: GET /fhir/AllergyIntolerance?_id=123, ?patient=Patient/456, ?code=code-system|code, ?status=active. Implement token/string reference search logic using existing FHIR search engine.",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Postman collection testing each search param combination; verify correct filtering and Bundle response format.",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2026-01-07T17:00:23.670Z"
           },
           {
             "id": 4,
@@ -1308,7 +1314,8 @@
         ],
         "complexity": 7,
         "recommendedSubtasks": 6,
-        "expansionPrompt": "Break into: 1) Create CRUD endpoints; 2) Implement FHIR R4 schema validation; 3) Add US Core search params (_id, patient, code, status); 4) Error handling with OperationOutcome; 5) Use base controller pattern; 6) Postman/FHIR validator tests."
+        "expansionPrompt": "Break into: 1) Create CRUD endpoints; 2) Implement FHIR R4 schema validation; 3) Add US Core search params (_id, patient, code, status); 4) Error handling with OperationOutcome; 5) Use base controller pattern; 6) Postman/FHIR validator tests.",
+        "updatedAt": "2026-01-07T17:00:23.670Z"
       },
       {
         "id": "17",
@@ -2133,12 +2140,30 @@
         "complexity": 5,
         "recommendedSubtasks": 3,
         "expansionPrompt": "Split into: 1) CSS framework updates (44px targets, iPad media queries); 2) Swipe gesture implementation (Hammer.js/native); 3) WCAG AA contrast audit and iPad testing."
+      },
+      {
+        "id": "27",
+        "title": "Implement Referrals and Registry Data Model with CRUD APIs and Basic UI",
+        "description": "Design and implement FHIR-based data models for registry cohorts and referral tracking, including full CRUD APIs following existing FHIR patterns and basic touch-first UI components.",
+        "details": "Create custom FHIR profiles for **RegistryCohort** (extending List or Group resource with cohortDefinition, status, patient references, and cohortSize) and **Referral** (extending ReferralRequest with trackingStatus, cohortReference, priority, and outcome tracking per FHIR R4 spec)[1][2]. Implement database schemas with tenant-aware tables (reference Task 24 if implemented) linking to Patient, Practitioner, CarePlan, and ServiceRequest resources. Develop RESTful CRUD endpoints at /fhir/RegistryCohort and /fhir/Referral supporting standard search params (_id, patient, status, cohort for RegistryCohort; patient, status, date for Referral) with pagination, validation via FHIR schema, and OperationOutcome errors using existing controller patterns from Tasks 16-18. Integrate auth scopes (patient/*.read, user/*.write) from Task 20. For UI, extend /registry and /referrals routes from Task 13 with React/Vue components: cohort list view (sortable table, filters), referral tracker (kanban-style status board with swipe gestures per Task 26), and basic forms for create/edit using 44px touch targets and iPad layouts. Add FHIR bulk export support via $export (Task 19) for cohort data exports in NDJSON. Ensure conformance by updating CapabilityStatement and testing against FHIR validator.",
+        "testStrategy": "Unit tests for model validation and business logic (e.g., cohort patient counting, referral status transitions); integration tests for CRUD APIs using Postman collections validating JSON structure, search results, pagination, and error responses (400/404/403); FHIR validator runs on all endpoints and sample bundles; UI e2e tests verifying cohort listing, referral creation/tracking, touch interactions on iPad simulator, and navigation from main menu (Task 13); cross-tenant isolation tests if multi-tenancy active (Task 24); load tests for bulk cohort exports; manual verification of WCAG AA contrast and 44px touch targets with Lighthouse audit.",
+        "status": "in-progress",
+        "dependencies": [
+          "13",
+          "16",
+          "18",
+          "20",
+          "26"
+        ],
+        "priority": "high",
+        "subtasks": [],
+        "updatedAt": "2026-01-07T14:59:00.276Z"
       }
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-01-06T14:58:18.275Z",
-      "taskCount": 14,
+      "lastModified": "2026-01-07T17:00:31.452Z",
+      "taskCount": 15,
       "completedCount": 2,
       "tags": [
         "gap-ema-2025-12"

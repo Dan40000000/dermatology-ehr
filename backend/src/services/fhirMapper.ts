@@ -107,6 +107,50 @@ function mapAppointmentStatus(status?: string): "proposed" | "pending" | "booked
   return "pending";
 }
 
+function mapAllergyClinicalStatus(status?: string): FHIRCodeableConcept {
+  const normalized = (status || "active").toLowerCase();
+  let code = "active";
+  if (normalized === "inactive") code = "inactive";
+  if (normalized === "resolved") code = "resolved";
+  return {
+    coding: [
+      {
+        system: "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+        code,
+      },
+    ],
+  };
+}
+
+function mapAllergyVerificationStatus(verifiedAt?: string | null): FHIRCodeableConcept {
+  const code = verifiedAt ? "confirmed" : "unconfirmed";
+  return {
+    coding: [
+      {
+        system: "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+        code,
+      },
+    ],
+  };
+}
+
+function mapAllergyCategory(allergenType?: string): string[] | undefined {
+  if (!allergenType) return undefined;
+  const normalized = allergenType.toLowerCase();
+  if (normalized === "medication") return ["medication"];
+  if (normalized === "food") return ["food"];
+  if (normalized === "environmental") return ["environment"];
+  return undefined;
+}
+
+function mapAllergyCriticality(severity?: string): "low" | "high" | "unable-to-assess" {
+  if (!severity) return "unable-to-assess";
+  const normalized = severity.toLowerCase();
+  if (normalized === "severe") return "high";
+  if (normalized === "moderate" || normalized === "mild") return "low";
+  return "unable-to-assess";
+}
+
 /**
  * Map Patient from database to FHIR R4 Patient resource
  */
@@ -695,6 +739,44 @@ export function mapOrganizationToFHIR(dbOrg: any): any {
 }
 
 /**
+ * Map patient allergy to FHIR R4 AllergyIntolerance resource
+ */
+export function mapAllergyToFHIR(dbAllergy: any): any {
+  const category = mapAllergyCategory(dbAllergy.allergen_type);
+  const reaction = dbAllergy.reaction
+    ? [
+        {
+          manifestation: [{ text: dbAllergy.reaction }],
+          severity: dbAllergy.severity ? dbAllergy.severity.toLowerCase() : undefined,
+        },
+      ]
+    : undefined;
+
+  return {
+    resourceType: "AllergyIntolerance",
+    id: dbAllergy.id,
+    meta: {
+      lastUpdated: formatFHIRDateTime(dbAllergy.updated_at || dbAllergy.created_at),
+    },
+    clinicalStatus: mapAllergyClinicalStatus(dbAllergy.status),
+    verificationStatus: mapAllergyVerificationStatus(dbAllergy.verified_at),
+    type: "allergy",
+    category,
+    criticality: mapAllergyCriticality(dbAllergy.severity),
+    code: {
+      text: dbAllergy.allergen,
+    },
+    patient: {
+      reference: `Patient/${dbAllergy.patient_id}`,
+    },
+    onsetDateTime: formatFHIRDateTime(dbAllergy.onset_date),
+    recordedDate: formatFHIRDateTime(dbAllergy.created_at),
+    reaction,
+    note: dbAllergy.notes ? [{ text: dbAllergy.notes }] : undefined,
+  };
+}
+
+/**
  * Create FHIR Bundle for search results
  */
 export function createFHIRBundle(entries: any[], type: "searchset" | "collection" = "searchset", total?: number): any {
@@ -774,6 +856,17 @@ export async function fetchVitalWithContext(vitalId: string, tenantId: string): 
      LEFT JOIN encounters e ON e.id = v.encounter_id
      WHERE v.id = $1 AND v.tenant_id = $2`,
     [vitalId, tenantId]
+  );
+  return result.rows[0];
+}
+
+/**
+ * Fetch allergy with patient context for AllergyIntolerance mapping
+ */
+export async function fetchAllergyWithContext(allergyId: string, tenantId: string): Promise<any> {
+  const result = await pool.query(
+    `SELECT * FROM patient_allergies WHERE id = $1 AND tenant_id = $2`,
+    [allergyId, tenantId]
   );
   return result.rows[0];
 }

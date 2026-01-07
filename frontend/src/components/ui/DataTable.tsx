@@ -164,7 +164,7 @@ export function DataTable<T extends Record<string, any>>({
                 {col.label}
                 {col.sortable && sortColumn === col.key && (
                   <span className="sort-indicator">
-                    {sortDirection === 'asc' ? ' ↑' : ' ↓'}
+                    {sortDirection === 'asc' ? ' ' : ' '}
                   </span>
                 )}
               </th>

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
 import { SignaturePad } from '../../components/kiosk/SignaturePad';
+import '../../styles/kiosk.css';
 
 interface ConsentForm {
   id: string;
@@ -11,6 +12,13 @@ interface ConsentForm {
   requiresSignature: boolean;
   version: string;
 }
+
+const cardStyle: React.CSSProperties = {
+  background: 'white',
+  borderRadius: '1rem',
+  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+  padding: '2rem',
+};
 
 export function KioskConsentFormsPage() {
   const navigate = useNavigate();
@@ -163,9 +171,9 @@ export function KioskConsentFormsPage() {
   if (loading) {
     return (
       <KioskLayout currentStep={4} totalSteps={6} stepName="Loading..." onTimeout={handleTimeout}>
-        <div className="bg-white rounded-2xl shadow-xl p-12 text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-purple-600 mx-auto mb-4"></div>
-          <p className="text-2xl text-gray-600">Loading consent forms...</p>
+        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem' }}>
+          <div className="kiosk-spinner" style={{ margin: '0 auto 1rem' }} />
+          <p style={{ fontSize: '1.5rem', color: '#4b5563' }}>Loading consent forms...</p>
         </div>
       </KioskLayout>
     );
@@ -173,10 +181,7 @@ export function KioskConsentFormsPage() {
 
   if (consentForms.length === 0) {
     // No consent forms, skip to completion
-    useEffect(() => {
-      completeCheckIn();
-    }, []);
-
+    completeCheckIn();
     return null;
   }
 
@@ -185,36 +190,31 @@ export function KioskConsentFormsPage() {
   if (showSignature) {
     return (
       <KioskLayout currentStep={5} totalSteps={6} stepName="Sign Consent" onTimeout={handleTimeout}>
-        <div className="bg-white rounded-2xl shadow-xl p-8">
-          <h2 className="text-3xl font-bold text-gray-900 mb-4">Sign: {currentForm.formName}</h2>
-          <p className="text-xl text-gray-600 mb-8">
+        <div style={cardStyle}>
+          <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '1rem' }}>
+            Sign: {currentForm.formName}
+          </h2>
+          <p style={{ fontSize: '1.25rem', color: '#4b5563', marginBottom: '2rem' }}>
             Please sign below to acknowledge your consent.
           </p>
 
-          <div className="mb-8">
-            <p className="text-lg text-gray-700 mb-4">
+          <div style={{ marginBottom: '2rem' }}>
+            <p style={{ fontSize: '1.125rem', color: '#374151', marginBottom: '1rem' }}>
               Sign using your finger or stylus in the box below:
             </p>
             <SignaturePad onSave={handleSignatureSave} width={800} height={250} />
           </div>
 
           {signing && (
-            <div className="text-center py-4">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-purple-600 mx-auto mb-2"></div>
-              <p className="text-lg text-gray-600">Saving signature...</p>
+            <div style={{ textAlign: 'center', padding: '1rem' }}>
+              <div className="kiosk-spinner" style={{ margin: '0 auto 0.5rem' }} />
+              <p style={{ fontSize: '1.125rem', color: '#4b5563' }}>Saving signature...</p>
             </div>
           )}
 
-          {error && (
-            <div className="mb-6 p-4 bg-red-50 border-2 border-red-200 rounded-lg">
-              <p className="text-lg text-red-800">{error}</p>
-            </div>
-          )}
+          {error && <div className="kiosk-error">{error}</div>}
 
-          <button
-            onClick={handleBack}
-            className="w-full py-5 text-xl font-medium text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50"
-          >
+          <button onClick={handleBack} className="kiosk-btn-secondary" style={{ width: '100%' }}>
             Back
           </button>
         </div>
@@ -224,64 +224,79 @@ export function KioskConsentFormsPage() {
 
   return (
     <KioskLayout currentStep={4} totalSteps={6} stepName="Review & Sign Consent" onTimeout={handleTimeout}>
-      <div className="bg-white rounded-2xl shadow-xl p-8">
-        <div className="mb-6">
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">{currentForm.formName}</h2>
-          <p className="text-lg text-gray-600">
+      <div style={cardStyle}>
+        <div style={{ marginBottom: '1.5rem' }}>
+          <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '0.5rem' }}>
+            {currentForm.formName}
+          </h2>
+          <p style={{ fontSize: '1.125rem', color: '#4b5563' }}>
             Form {currentFormIndex + 1} of {consentForms.length}
           </p>
         </div>
 
         <div
           onScroll={handleScroll}
-          className="bg-gray-50 border-2 border-gray-300 rounded-lg p-6 mb-6 overflow-y-auto"
-          style={{ maxHeight: '400px' }}
+          style={{
+            background: '#f9fafb',
+            border: '2px solid #d1d5db',
+            borderRadius: '0.5rem',
+            padding: '1.5rem',
+            marginBottom: '1.5rem',
+            overflowY: 'auto',
+            maxHeight: '400px',
+          }}
         >
-          <div
-            className="prose prose-lg max-w-none"
-            dangerouslySetInnerHTML={{ __html: currentForm.formContent }}
-          />
+          <div dangerouslySetInnerHTML={{ __html: currentForm.formContent }} />
         </div>
 
         {!hasScrolledToBottom && (
-          <div className="mb-6 p-4 bg-yellow-50 border-2 border-yellow-200 rounded-lg text-center">
-            <p className="text-lg text-yellow-800">Please scroll to the bottom to continue</p>
+          <div style={{
+            marginBottom: '1.5rem',
+            padding: '1rem',
+            background: '#fef3c7',
+            border: '2px solid #fcd34d',
+            borderRadius: '0.5rem',
+            textAlign: 'center',
+          }}>
+            <p style={{ fontSize: '1.125rem', color: '#92400e' }}>Please scroll to the bottom to continue</p>
           </div>
         )}
 
         {hasScrolledToBottom && (
-          <div className="mb-6">
-            <label className="flex items-center p-4 bg-purple-50 border-2 border-purple-300 rounded-lg cursor-pointer hover:bg-purple-100">
+          <div style={{ marginBottom: '1.5rem' }}>
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              padding: '1rem',
+              background: '#f3e8ff',
+              border: '2px solid #c4b5fd',
+              borderRadius: '0.5rem',
+              cursor: 'pointer',
+            }}>
               <input
                 type="checkbox"
                 checked={agreed}
                 onChange={(e) => setAgreed(e.target.checked)}
-                className="w-8 h-8 text-purple-600 border-2 border-gray-300 rounded focus:ring-purple-500 focus:ring-2"
+                style={{ width: '2rem', height: '2rem', marginRight: '1rem' }}
               />
-              <span className="ml-4 text-xl font-medium text-gray-900">
+              <span style={{ fontSize: '1.25rem', fontWeight: 500, color: '#111827' }}>
                 I have read and agree to this consent form
               </span>
             </label>
           </div>
         )}
 
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border-2 border-red-200 rounded-lg">
-            <p className="text-lg text-red-800">{error}</p>
-          </div>
-        )}
+        {error && <div className="kiosk-error">{error}</div>}
 
-        <div className="flex gap-4">
-          <button
-            onClick={handleBack}
-            className="flex-1 py-5 text-xl font-medium text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50"
-          >
+        <div className="kiosk-nav-buttons">
+          <button onClick={handleBack} className="kiosk-btn-secondary" style={{ flex: 1 }}>
             Back
           </button>
           <button
             onClick={handleContinue}
             disabled={!agreed || !hasScrolledToBottom}
-            className="flex-1 py-5 text-xl font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="kiosk-btn-primary"
+            style={{ flex: 1 }}
           >
             {currentForm.requiresSignature ? 'Continue to Sign' : 'Continue'}
           </button>

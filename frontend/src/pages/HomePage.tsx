@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { Skeleton, DataTable, ExportButtons } from '../components/ui';
+import { Skeleton, DataTable, ExportButtons, Modal } from '../components/ui';
 import type { Column } from '../components/ui';
 import type { ExportColumn } from '../utils/export';
 import { formatDate as formatExportDate } from '../utils/export';
@@ -61,6 +61,32 @@ export function HomePage() {
     patientCount: 0,
     pendingTasks: 0,
     openEncounters: 0,
+  });
+
+  // Modal states
+  const [showRegulatoryModal, setShowRegulatoryModal] = useState(false);
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [showFiltersPanel, setShowFiltersPanel] = useState(false);
+  const [regulatoryType, setRegulatoryType] = useState<'mips' | 'value-path'>('mips');
+
+  // Filter states
+  const [filterPatient, setFilterPatient] = useState('');
+  const [filterType, setFilterType] = useState('all');
+  const [filterEncounterType, setFilterEncounterType] = useState('all');
+  const [filterScribe, setFilterScribe] = useState('any');
+  const [filterDate, setFilterDate] = useState('');
+  const [filterMethod, setFilterMethod] = useState('all');
+  const [filterNoteStatus, setFilterNoteStatus] = useState('all');
+  const [filterAuthor, setFilterAuthor] = useState('any');
+  const [filterFacility, setFilterFacility] = useState('all');
+  const [filterAssignedTo, setFilterAssignedTo] = useState('');
+
+  // Reminder form state
+  const [reminderData, setReminderData] = useState({
+    doctorsNote: '',
+    reminderText: '',
+    reminderDate: '',
+    preferredContact: 'Unspecified',
   });
 
   useEffect(() => {
@@ -275,22 +301,120 @@ export function HomePage() {
   return (
     <div className="home-page">
       {/* Action Buttons Row - Like ModMed */}
-      <div className="ema-action-bar">
+      <div className="ema-action-bar" style={{ background: 'linear-gradient(to bottom, #f9fafb 0%, #f3f4f6 100%)', borderBottom: '2px solid #e5e7eb', gap: '0.5rem' }}>
         <button
           type="button"
           className="ema-action-btn"
           onClick={() => navigate('/patients/new')}
+          style={{
+            background: 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
+            border: '1px solid #d1d5db',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+            color: '#374151',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            fontWeight: 500,
+          }}
         >
-          <span className="icon">👤</span>
+          <span style={{ marginRight: '0.5rem', color: '#16a34a' }}>+</span>
           New Patient
         </button>
-        <button type="button" className="ema-action-btn">
-          <span className="icon">📋</span>
-          Regulatory Reporting
-          <span>▼</span>
-        </button>
-        <button type="button" className="ema-action-btn">
-          <span className="icon">🔔</span>
+        <div style={{ position: 'relative' }}>
+          <button
+            type="button"
+            className="ema-action-btn"
+            onClick={() => setShowRegulatoryModal(!showRegulatoryModal)}
+            style={{
+              background: 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
+              border: '1px solid #d1d5db',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+              color: '#374151',
+              padding: '0.5rem 1rem',
+              borderRadius: '6px',
+              fontWeight: 500,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+            }}
+          >
+            <span style={{ fontSize: '1.2em' }}>📊</span>
+            Regulatory Reporting
+            <span style={{ fontSize: '0.7em' }}>▼</span>
+          </button>
+          {showRegulatoryModal && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              marginTop: '0.25rem',
+              background: '#ffffff',
+              border: '1px solid #d1d5db',
+              borderRadius: '6px',
+              boxShadow: '0 10px 15px rgba(0,0,0,0.1)',
+              minWidth: '200px',
+              zIndex: 1000,
+            }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setRegulatoryType('mips');
+                  navigate('/quality/mips');
+                  setShowRegulatoryModal(false);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem 1rem',
+                  border: 'none',
+                  background: 'transparent',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  borderBottom: '1px solid #e5e7eb',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = '#f3f4f6'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                MIPS Report
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRegulatoryType('value-path');
+                  navigate('/quality/mips');
+                  setShowRegulatoryModal(false);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem 1rem',
+                  border: 'none',
+                  background: 'transparent',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = '#f3f4f6'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                MIPS Value Path Report
+              </button>
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          className="ema-action-btn"
+          onClick={() => setShowReminderModal(true)}
+          style={{
+            background: 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
+            border: '1px solid #d1d5db',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+            color: '#374151',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            fontWeight: 500,
+          }}
+        >
+          <span style={{ marginRight: '0.5rem', color: '#8b5cf6' }}>🔔</span>
           General Reminder
         </button>
         <div style={{ marginLeft: 'auto' }}>
@@ -306,10 +430,254 @@ export function HomePage() {
       </div>
 
       {/* Note History Section Header */}
-      <div className="ema-section-header">Note History</div>
+      <div className="ema-section-header" style={{ background: 'linear-gradient(to right, #dbeafe 0%, #e0f2fe 100%)', color: '#075985', fontWeight: 600, padding: '0.75rem 1.5rem' }}>
+        Note History
+      </div>
+
+      {/* Advanced Filter Panel */}
+      <div style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb', padding: '0.75rem 1.5rem' }}>
+        <button
+          type="button"
+          onClick={() => setShowFiltersPanel(!showFiltersPanel)}
+          style={{
+            background: '#0284c7',
+            color: '#ffffff',
+            border: 'none',
+            padding: '0.5rem 1rem',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontWeight: 500,
+            fontSize: '0.875rem',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+          }}
+        >
+          {showFiltersPanel ? 'Hide Filters' : 'Filters'} ▼
+        </button>
+      </div>
+
+      {showFiltersPanel && (
+        <div style={{
+          background: '#ffffff',
+          border: '1px solid #e5e7eb',
+          borderRadius: '8px',
+          padding: '1.5rem',
+          margin: '1rem 1.5rem',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+        }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase' }}>Patient</label>
+              <select
+                value={filterPatient}
+                onChange={(e) => setFilterPatient(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  fontSize: '0.875rem',
+                }}
+              >
+                <option value="">Last, First</option>
+                {patients.map(p => (
+                  <option key={p.id} value={p.id}>{p.lastName}, {p.firstName}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase' }}>Type</label>
+              <select
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  fontSize: '0.875rem',
+                }}
+              >
+                <option value="all">All</option>
+                <option value="soap">SOAP Note</option>
+                <option value="consultation">Consultation</option>
+                <option value="follow-up">Follow-up</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase' }}>Encounter Type</label>
+              <select
+                value={filterEncounterType}
+                onChange={(e) => setFilterEncounterType(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  fontSize: '0.875rem',
+                }}
+              >
+                <option value="all">All</option>
+                <option value="office">Office Visit</option>
+                <option value="telehealth">Telehealth</option>
+                <option value="procedure">Procedure</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase' }}>Scribe</label>
+              <select
+                value={filterScribe}
+                onChange={(e) => setFilterScribe(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  fontSize: '0.875rem',
+                }}
+              >
+                <option value="any">Any</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase' }}>Date</label>
+              <input
+                type="date"
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  fontSize: '0.875rem',
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase' }}>Method</label>
+              <select
+                value={filterMethod}
+                onChange={(e) => setFilterMethod(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  fontSize: '0.875rem',
+                }}
+              >
+                <option value="all">All</option>
+                <option value="ehr">EHR</option>
+                <option value="dictation">Dictation</option>
+                <option value="scribe">Scribe</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase' }}>Note Status</label>
+              <select
+                value={filterNoteStatus}
+                onChange={(e) => setFilterNoteStatus(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  fontSize: '0.875rem',
+                }}
+              >
+                <option value="all">All</option>
+                <option value="draft">Draft</option>
+                <option value="finalized">Finalized</option>
+                <option value="locked">Locked</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase' }}>Facility</label>
+              <select
+                value={filterFacility}
+                onChange={(e) => setFilterFacility(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  fontSize: '0.875rem',
+                }}
+              >
+                <option value="all">All Preferred Facilities</option>
+                <option value="main">Mountain Pine Dermatology PLLC</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase' }}>Assigned To</label>
+              <select
+                value={filterAssignedTo}
+                onChange={(e) => setFilterAssignedTo(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  fontSize: '0.875rem',
+                }}
+              >
+                <option value="">Staff Search...</option>
+                {providers.map(p => (
+                  <option key={p.id} value={p.id}>{p.fullName}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
+            <button
+              type="button"
+              onClick={() => {
+                setFilterPatient('');
+                setFilterType('all');
+                setFilterEncounterType('all');
+                setFilterScribe('any');
+                setFilterDate('');
+                setFilterMethod('all');
+                setFilterNoteStatus('all');
+                setFilterFacility('all');
+                setFilterAssignedTo('');
+              }}
+              style={{
+                padding: '0.5rem 1.5rem',
+                background: '#f3f4f6',
+                border: '1px solid #d1d5db',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+                fontWeight: 500,
+              }}
+            >
+              Clear Filters
+            </button>
+            <button
+              type="button"
+              onClick={() => showSuccess('Filters applied')}
+              style={{
+                padding: '0.5rem 1.5rem',
+                background: '#0284c7',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+                fontWeight: 500,
+              }}
+            >
+              Apply Filters
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Filter Tabs - Like ModMed */}
-      <div className="ema-tabs">
+      <div className="ema-tabs" style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
         <button
           type="button"
           className={`ema-tab ${activeFilter === 'all' ? 'active' : ''}`}
@@ -421,22 +789,58 @@ export function HomePage() {
       </div>
 
       {/* Bottom Action Bar - Like ModMed */}
-      <div className="ema-bottom-bar">
+      <div className="ema-bottom-bar" style={{ background: 'linear-gradient(to bottom, #f9fafb 0%, #f3f4f6 100%)', borderTop: '2px solid #e5e7eb', gap: '0.5rem', padding: '0.75rem 1.5rem' }}>
         <button
           type="button"
           className="ema-bottom-btn"
           onClick={handleFinalizeSelected}
           disabled={selectedEncounterIds.length === 0}
+          style={{
+            background: selectedEncounterIds.length > 0 ? 'linear-gradient(to bottom, #10b981 0%, #059669 100%)' : '#e5e7eb',
+            color: selectedEncounterIds.length > 0 ? '#ffffff' : '#9ca3af',
+            border: 'none',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            cursor: selectedEncounterIds.length > 0 ? 'pointer' : 'not-allowed',
+            fontWeight: 500,
+            boxShadow: selectedEncounterIds.length > 0 ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+          }}
         >
-          <span className="icon">📝</span>
+          <span className="icon" style={{ marginRight: '0.5rem' }}>✓</span>
           Finalize Selected Notes ({selectedEncounterIds.length})
         </button>
-        <button type="button" className="ema-bottom-btn" disabled>
-          <span className="icon">👤</span>
+        <button
+          type="button"
+          className="ema-bottom-btn"
+          disabled
+          style={{
+            background: '#e5e7eb',
+            color: '#9ca3af',
+            border: 'none',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            cursor: 'not-allowed',
+            fontWeight: 500,
+          }}
+        >
+          <span className="icon" style={{ marginRight: '0.5rem' }}>📋</span>
           Assign Notes
         </button>
-        <button type="button" className="ema-bottom-btn" disabled>
-          <span className="icon">💰</span>
+        <button
+          type="button"
+          className="ema-bottom-btn"
+          disabled
+          style={{
+            background: '#e5e7eb',
+            color: '#9ca3af',
+            border: 'none',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            cursor: 'not-allowed',
+            fontWeight: 500,
+          }}
+        >
+          <span className="icon" style={{ marginRight: '0.5rem' }}>💵</span>
           Billing Summaries
         </button>
         <button
@@ -444,15 +848,191 @@ export function HomePage() {
           className="ema-bottom-btn"
           onClick={handleDownloadNotes}
           disabled={selectedEncounterIds.length === 0}
+          style={{
+            background: selectedEncounterIds.length > 0 ? 'linear-gradient(to bottom, #0284c7 0%, #0369a1 100%)' : '#e5e7eb',
+            color: selectedEncounterIds.length > 0 ? '#ffffff' : '#9ca3af',
+            border: 'none',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            cursor: selectedEncounterIds.length > 0 ? 'pointer' : 'not-allowed',
+            fontWeight: 500,
+            boxShadow: selectedEncounterIds.length > 0 ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+          }}
         >
-          <span className="icon">⬇️</span>
+          <span className="icon" style={{ marginRight: '0.5rem' }}>⬇</span>
           Download Notes
         </button>
-        <button type="button" className="ema-bottom-btn" onClick={handlePrintTable}>
-          <span className="icon">🖨️</span>
+        <button
+          type="button"
+          className="ema-bottom-btn"
+          onClick={handlePrintTable}
+          style={{
+            background: 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
+            color: '#374151',
+            border: '1px solid #d1d5db',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            fontWeight: 500,
+            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+          }}
+        >
+          <span className="icon" style={{ marginRight: '0.5rem' }}>🖨</span>
           Print Table
         </button>
       </div>
+
+      {/* General Reminder Modal */}
+      <Modal
+        isOpen={showReminderModal}
+        title="General Reminder"
+        onClose={() => setShowReminderModal(false)}
+      >
+        <div style={{ padding: '1rem' }}>
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', fontWeight: 600, color: '#374151' }}>
+              Doctor's Note
+            </label>
+            <textarea
+              value={reminderData.doctorsNote}
+              onChange={(e) => setReminderData({ ...reminderData, doctorsNote: e.target.value })}
+              rows={4}
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                fontSize: '0.875rem',
+                fontFamily: 'inherit',
+                resize: 'vertical',
+              }}
+              placeholder="Optional notes for internal reference..."
+            />
+          </div>
+
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', fontWeight: 600, color: '#374151' }}>
+              Reminder Text <span style={{ color: '#ef4444' }}>*</span>
+            </label>
+            <textarea
+              value={reminderData.reminderText}
+              onChange={(e) => setReminderData({ ...reminderData, reminderText: e.target.value })}
+              rows={4}
+              required
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                fontSize: '0.875rem',
+                fontFamily: 'inherit',
+                resize: 'vertical',
+              }}
+              placeholder="Enter the reminder message to send to the patient..."
+            />
+          </div>
+
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', fontWeight: 600, color: '#374151' }}>
+              Reminder Date <span style={{ color: '#ef4444' }}>*</span>
+            </label>
+            <input
+              type="date"
+              value={reminderData.reminderDate}
+              onChange={(e) => setReminderData({ ...reminderData, reminderDate: e.target.value })}
+              required
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                fontSize: '0.875rem',
+              }}
+            />
+          </div>
+
+          <div style={{ marginBottom: '1.5rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', fontWeight: 600, color: '#374151' }}>
+              Preferred Contact Method <span style={{ color: '#ef4444' }}>*</span>
+            </label>
+            <select
+              value={reminderData.preferredContact}
+              onChange={(e) => setReminderData({ ...reminderData, preferredContact: e.target.value })}
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                fontSize: '0.875rem',
+                background: '#ffffff',
+              }}
+            >
+              <option value="Unspecified">Unspecified</option>
+              <option value="Email">Email</option>
+              <option value="Phone">Phone Call</option>
+              <option value="SMS">Text Message (SMS)</option>
+              <option value="Portal">Patient Portal</option>
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', paddingTop: '1rem', borderTop: '1px solid #e5e7eb' }}>
+            <button
+              type="button"
+              onClick={() => {
+                setReminderData({
+                  doctorsNote: '',
+                  reminderText: '',
+                  reminderDate: '',
+                  preferredContact: 'Unspecified',
+                });
+                setShowReminderModal(false);
+              }}
+              style={{
+                padding: '0.625rem 1.5rem',
+                background: '#ffffff',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+                fontWeight: 500,
+                color: '#374151',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!reminderData.reminderText || !reminderData.reminderDate) {
+                  showError('Please fill in all required fields');
+                  return;
+                }
+                showSuccess('General reminder created successfully');
+                setReminderData({
+                  doctorsNote: '',
+                  reminderText: '',
+                  reminderDate: '',
+                  preferredContact: 'Unspecified',
+                });
+                setShowReminderModal(false);
+              }}
+              style={{
+                padding: '0.625rem 1.5rem',
+                background: 'linear-gradient(to bottom, #0284c7 0%, #0369a1 100%)',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+                fontWeight: 600,
+                color: '#ffffff',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

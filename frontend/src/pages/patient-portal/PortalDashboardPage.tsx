@@ -67,7 +67,7 @@ export function PortalDashboardPage() {
             {/* Quick Stats */}
             <div className="portal-stats-grid">
               <Link to="/portal/appointments" className="portal-stat-card stat-appointments">
-                <div className="stat-icon">📅</div>
+                <div className="stat-icon"></div>
                 <div className="stat-content">
                   <p className="stat-label">Upcoming Appointments</p>
                   <h2 className="stat-value">{dashboard?.upcomingAppointments || 0}</h2>
@@ -75,7 +75,7 @@ export function PortalDashboardPage() {
               </Link>
 
               <Link to="/portal/documents" className="portal-stat-card stat-documents">
-                <div className="stat-icon">📄</div>
+                <div className="stat-icon"></div>
                 <div className="stat-content">
                   <p className="stat-label">New Documents</p>
                   <h2 className="stat-value">{dashboard?.newDocuments || 0}</h2>
@@ -83,7 +83,7 @@ export function PortalDashboardPage() {
               </Link>
 
               <Link to="/portal/visits" className="portal-stat-card stat-visits">
-                <div className="stat-icon">📋</div>
+                <div className="stat-icon"></div>
                 <div className="stat-content">
                   <p className="stat-label">Recent Visits</p>
                   <h2 className="stat-value">{dashboard?.newVisits || 0}</h2>
@@ -91,7 +91,7 @@ export function PortalDashboardPage() {
               </Link>
 
               <Link to="/portal/health-record" className="portal-stat-card stat-prescriptions">
-                <div className="stat-icon">💊</div>
+                <div className="stat-icon"></div>
                 <div className="stat-content">
                   <p className="stat-label">Active Medications</p>
                   <h2 className="stat-value">{dashboard?.activePrescriptions || 0}</h2>
@@ -105,7 +105,7 @@ export function PortalDashboardPage() {
                 <h2>Your Next Appointment</h2>
                 <div className="appointment-details">
                   <div className="appointment-date-time">
-                    <div className="appointment-icon">🗓️</div>
+                    <div className="appointment-icon"></div>
                     <div>
                       <p className="appointment-date">
                         {formatDate(dashboard.nextAppointment.appointmentDate)}
@@ -116,7 +116,7 @@ export function PortalDashboardPage() {
                     </div>
                   </div>
                   <div className="appointment-provider">
-                    <span className="provider-icon">👨‍⚕️</span>
+                    <span className="provider-icon"></span>
                     <span>{dashboard.nextAppointment.providerName}</span>
                   </div>
                   <Link to="/portal/appointments" className="view-appointments-btn">
@@ -131,19 +131,19 @@ export function PortalDashboardPage() {
               <h2>Quick Actions</h2>
               <div className="quick-actions-grid">
                 <Link to="/portal/visits" className="quick-action-btn">
-                  <span className="action-icon">📋</span>
+                  <span className="action-icon"></span>
                   <span>View Visit Summaries</span>
                 </Link>
                 <Link to="/portal/documents" className="quick-action-btn">
-                  <span className="action-icon">📄</span>
+                  <span className="action-icon"></span>
                   <span>View Documents</span>
                 </Link>
                 <Link to="/portal/health-record" className="quick-action-btn">
-                  <span className="action-icon">💊</span>
+                  <span className="action-icon"></span>
                   <span>My Health Record</span>
                 </Link>
                 <Link to="/portal/profile" className="quick-action-btn">
-                  <span className="action-icon">⚙️</span>
+                  <span className="action-icon"></span>
                   <span>Update Profile</span>
                 </Link>
               </div>

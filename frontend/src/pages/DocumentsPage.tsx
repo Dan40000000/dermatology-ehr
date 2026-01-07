@@ -15,11 +15,11 @@ type ViewMode = 'grid' | 'list';
 type DocCategory = 'all' | 'lab-result' | 'imaging' | 'referral' | 'consent' | 'other';
 
 const DOC_CATEGORIES: { value: DocCategory; label: string; icon: string }[] = [
-  { value: 'lab-result', label: 'Lab Results', icon: '🧪' },
-  { value: 'imaging', label: 'Imaging', icon: '📷' },
-  { value: 'referral', label: 'Referrals', icon: '📋' },
-  { value: 'consent', label: 'Consent Forms', icon: '✍️' },
-  { value: 'other', label: 'Other', icon: '📄' },
+  { value: 'lab-result', label: 'Lab Results', icon: '' },
+  { value: 'imaging', label: 'Imaging', icon: '' },
+  { value: 'referral', label: 'Referrals', icon: '' },
+  { value: 'consent', label: 'Consent Forms', icon: '' },
+  { value: 'other', label: 'Other', icon: '' },
 ];
 
 export function DocumentsPage() {
@@ -158,7 +158,7 @@ export function DocumentsPage() {
 
   const getCategoryInfo = (category?: string) => {
     const cat = DOC_CATEGORIES.find((c) => c.value === category);
-    return cat || { value: 'other', label: 'Other', icon: '📄' };
+    return cat || { value: 'other', label: 'Other', icon: '' };
   };
 
   const formatFileSize = (bytes?: number) => {
@@ -169,12 +169,12 @@ export function DocumentsPage() {
   };
 
   const getFileIcon = (mimeType?: string) => {
-    if (!mimeType) return '📄';
-    if (mimeType.startsWith('image/')) return '🖼️';
-    if (mimeType === 'application/pdf') return '📕';
-    if (mimeType.includes('word')) return '📘';
-    if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) return '📗';
-    return '📄';
+    if (!mimeType) return '';
+    if (mimeType.startsWith('image/')) return '';
+    if (mimeType === 'application/pdf') return '';
+    if (mimeType.includes('word')) return '';
+    if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) return '';
+    return '';
   };
 
   if (loading) {
@@ -190,26 +190,272 @@ export function DocumentsPage() {
   }
 
   return (
-    <div className="documents-page">
-      <div className="page-header">
-        <h1>Documents</h1>
+    <div className="documents-page" style={{
+      background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+      minHeight: 'calc(100vh - 200px)',
+      padding: '1.5rem',
+      borderRadius: '12px',
+      boxShadow: '0 20px 60px rgba(20, 184, 166, 0.3)',
+    }}>
+      <div className="page-header" style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '1.5rem',
+        padding: '1.5rem',
+        background: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: '12px',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+        backdropFilter: 'blur(10px)',
+      }}>
+        <h1 style={{
+          margin: 0,
+          fontSize: '2rem',
+          fontWeight: 700,
+          background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text',
+        }}>Document Management</h1>
         <button
           type="button"
-          className="btn-primary"
           onClick={() => setShowUploadModal(true)}
+          style={{
+            padding: '0.75rem 1.5rem',
+            background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+            fontWeight: 700,
+            cursor: 'pointer',
+            boxShadow: '0 4px 12px rgba(20, 184, 166, 0.4)',
+            transition: 'all 0.3s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 6px 20px rgba(20, 184, 166, 0.6)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(20, 184, 166, 0.4)';
+          }}
         >
           + Upload Document
         </button>
       </div>
 
+      {/* Document Management Sections */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, 1fr)',
+        gap: '1.5rem',
+        marginBottom: '1.5rem',
+      }}>
+        {/* Patient Attachments */}
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.95)',
+          borderRadius: '12px',
+          padding: '1.5rem',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+          backdropFilter: 'blur(10px)',
+        }}>
+          <h3 style={{
+            margin: '0 0 1rem 0',
+            fontSize: '1.25rem',
+            fontWeight: 700,
+            color: '#0d9488',
+          }}>Patient Attachments</h3>
+          <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
+            Upload attachments (images, scans, etc) and associate them with patients or add to the fax queue.
+          </p>
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button onClick={() => setShowUploadModal(true)} style={{
+              flex: 1,
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+            }}>Upload New Attachments</button>
+            <button style={{
+              flex: 1,
+              padding: '0.75rem',
+              background: '#ffffff',
+              color: '#0d9488',
+              border: '2px solid #14b8a6',
+              borderRadius: '8px',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+            }}>Associate Attachments with Patients</button>
+          </div>
+        </div>
+
+        {/* Physician Specialties and Referral Contacts */}
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.95)',
+          borderRadius: '12px',
+          padding: '1.5rem',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+          backdropFilter: 'blur(10px)',
+        }}>
+          <h3 style={{
+            margin: '0 0 1rem 0',
+            fontSize: '1.25rem',
+            fontWeight: 700,
+            color: '#0d9488',
+          }}>Physician Specialties and Referral Contacts</h3>
+          <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
+            Create and update your referral contacts, mark them as active or inactive.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <button style={{
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+            }}>Manage Referral Contacts</button>
+            <button style={{
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+            }}>Manage Physician Specialties</button>
+          </div>
+        </div>
+
+        {/* Faxes Section */}
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.95)',
+          borderRadius: '12px',
+          padding: '1.5rem',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+          backdropFilter: 'blur(10px)',
+        }}>
+          <h3 style={{
+            margin: '0 0 1rem 0',
+            fontSize: '1.25rem',
+            fontWeight: 700,
+            color: '#0d9488',
+          }}>Faxes</h3>
+          <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
+            Manage incoming and outgoing faxes.
+          </p>
+          <button style={{
+            width: '100%',
+            padding: '0.75rem',
+            background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+          }}>Manage Faxes</button>
+        </div>
+
+        {/* Consents Section */}
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.95)',
+          borderRadius: '12px',
+          padding: '1.5rem',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+          backdropFilter: 'blur(10px)',
+        }}>
+          <h3 style={{
+            margin: '0 0 1rem 0',
+            fontSize: '1.25rem',
+            fontWeight: 700,
+            color: '#0d9488',
+          }}>Consents and Procedure Forms</h3>
+          <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
+            Manage consent forms and procedure consents.
+          </p>
+          <button style={{
+            width: '100%',
+            padding: '0.75rem',
+            background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+          }}>Manage Consents</button>
+        </div>
+
+        {/* Clinical Quality Measures */}
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.95)',
+          borderRadius: '12px',
+          padding: '1.5rem',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+          backdropFilter: 'blur(10px)',
+          gridColumn: 'span 2',
+        }}>
+          <h3 style={{
+            margin: '0 0 1rem 0',
+            fontSize: '1.25rem',
+            fontWeight: 700,
+            color: '#0d9488',
+          }}>Clinical Quality Measures</h3>
+          <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
+            Manage CQM Category 1 Files.
+          </p>
+          <button style={{
+            padding: '0.75rem 1.5rem',
+            background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+          }}>Import CQM Category 1 Files</button>
+        </div>
+      </div>
+
       {/* Filters */}
-      <div className="documents-filters">
+      <div className="documents-filters" style={{
+        background: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: '12px',
+        padding: '1rem',
+        marginBottom: '1rem',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+        backdropFilter: 'blur(10px)',
+      }}>
         <div className="search-box">
           <input
             type="text"
             placeholder="Search documents..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+              padding: '0.75rem',
+              border: '2px solid #14b8a6',
+              borderRadius: '8px',
+              width: '100%',
+              fontSize: '0.875rem',
+            }}
           />
         </div>
 
@@ -272,7 +518,7 @@ export function DocumentsPage() {
       {filteredDocuments.length === 0 ? (
         <Panel title="">
           <div className="empty-state">
-            <div className="empty-icon">📄</div>
+            <div className="empty-icon"></div>
             <h3>No documents found</h3>
             <p className="muted">
               {categoryFilter !== 'all' || selectedPatient !== 'all'
@@ -473,7 +719,7 @@ export function DocumentsPage() {
                 className="upload-dropzone"
                 onClick={() => fileInputRef.current?.click()}
               >
-                <div className="upload-icon">📁</div>
+                <div className="upload-icon"></div>
                 <p>Click to select a file</p>
                 <p className="muted tiny">PDF, Word, Excel, images supported</p>
               </div>

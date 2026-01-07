@@ -23,8 +23,16 @@ const RadiologyPage = lazy(() => import('../pages/RadiologyPage').then(m => ({ d
 const MailPage = lazy(() => import('../pages/MailPage').then(m => ({ default: m.MailPage })));
 const TasksPage = lazy(() => import('../pages/TasksPage').then(m => ({ default: m.TasksPage })));
 const RemindersPage = lazy(() => import('../pages/RemindersPage').then(m => ({ default: m.RemindersPage })));
-const TextMessagesPage = lazy(() => import('../pages/TextMessagesPage'));
-const TelehealthPage = lazy(() => import('../pages/TelehealthPage'));
+const TextMessagesPage = lazy(() =>
+  import('../pages/TextMessagesPage').then((module) => ({
+    default: module.default || (module as any).TextMessagesPage,
+  }))
+);
+const TelehealthPage = lazy(() =>
+  import('../pages/TelehealthPage').then((module) => ({
+    default: module.default || (module as any).TelehealthPage,
+  }))
+);
 const InventoryPage = lazy(() => import('../pages/InventoryPage').then(m => ({ default: m.InventoryPage })));
 const FinancialsPage = lazy(() => import('../pages/FinancialsPage').then(m => ({ default: m.FinancialsPage })));
 const QuotesPage = lazy(() => import('../pages/QuotesPage').then(m => ({ default: m.QuotesPage })));

@@ -1,0 +1,64 @@
+databases:
+  - name: derm-db
+    plan: free
+    databaseName: derm_db
+    user: derm_user
+
+services:
+  # Backend API
+  - type: web
+    name: derm-api
+    plan: free
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: derm-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ISSUER
+        value: derm-app
+      - key: ACCESS_TOKEN_TTL_SEC
+        value: 900
+      - key: REFRESH_TOKEN_TTL_SEC
+        value: 1209600
+      - key: TENANT_HEADER
+        value: x-tenant-id
+      - key: DEFAULT_USER_PASSWORD
+        value: Password123!
+      - key: STORAGE_PROVIDER
+        value: local
+      - key: FRONTEND_URL
+        fromService:
+          name: derm-frontend
+          type: web
+          property: host
+
+  # Frontend
+  - type: web
+    name: derm-frontend
+    plan: free
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://derm-api.onrender.com

@@ -20,7 +20,18 @@ const inventoryItemSchema = z.object({
   lotNumber: z.string().max(100).optional(),
 });
 
-const updateInventoryItemSchema = inventoryItemSchema.partial();
+const updateInventoryItemSchema = z.object({
+  name: z.string().min(1).max(255).optional(),
+  category: z.enum(["medication", "supply", "cosmetic", "equipment"]).optional(),
+  sku: z.string().max(100).optional(),
+  description: z.string().optional(),
+  reorderLevel: z.number().int().min(0).optional(),
+  unitCostCents: z.number().int().min(0).optional(),
+  supplier: z.string().max(255).optional(),
+  location: z.string().max(255).optional(),
+  expirationDate: z.string().optional(), // ISO date string
+  lotNumber: z.string().max(100).optional(),
+});
 
 const adjustmentSchema = z.object({
   itemId: z.string().uuid(),
@@ -60,6 +71,59 @@ inventoryRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
 
   const result = await pool.query(query, params);
   res.json({ items: result.rows });
+});
+
+// Get all usage records (with filters)
+inventoryRouter.get("/usage", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const { patientId, appointmentId, encounterId, limit = "100" } = req.query;
+
+  let query = `
+    SELECT
+      u.id,
+      u.quantity_used as "quantityUsed",
+      u.unit_cost_cents as "unitCostCents",
+      u.notes,
+      u.used_at as "usedAt",
+      u.encounter_id as "encounterId",
+      u.appointment_id as "appointmentId",
+      u.patient_id as "patientId",
+      u.provider_id as "providerId",
+      i.id as "itemId",
+      i.name as "itemName",
+      i.category as "itemCategory",
+      p.first_name as "patientFirstName",
+      p.last_name as "patientLastName",
+      pr.full_name as "providerName"
+    FROM inventory_usage u
+    JOIN inventory_items i ON u.item_id = i.id
+    LEFT JOIN patients p ON u.patient_id = p.id
+    LEFT JOIN users pr ON u.provider_id = pr.id
+    WHERE u.tenant_id = $1
+  `;
+
+  const params: any[] = [tenantId];
+
+  if (patientId && typeof patientId === "string") {
+    params.push(patientId);
+    query += ` AND u.patient_id = $${params.length}`;
+  }
+
+  if (appointmentId && typeof appointmentId === "string") {
+    params.push(appointmentId);
+    query += ` AND u.appointment_id = $${params.length}`;
+  }
+
+  if (encounterId && typeof encounterId === "string") {
+    params.push(encounterId);
+    query += ` AND u.encounter_id = $${params.length}`;
+  }
+
+  params.push(parseInt(limit as string));
+  query += ` ORDER BY u.used_at DESC LIMIT $${params.length}`;
+
+  const result = await pool.query(query, params);
+  res.json({ usage: result.rows });
 });
 
 // Get single inventory item with usage stats
@@ -422,59 +486,6 @@ inventoryRouter.post("/usage", requireAuth, requireRoles(["admin", "provider", "
     usedAt: result.rows[0].used_at,
     message: `${payload.quantityUsed} units of ${item.name} recorded`
   });
-});
-
-// Get all usage records (with filters)
-inventoryRouter.get("/usage", requireAuth, async (req: AuthedRequest, res) => {
-  const tenantId = req.user!.tenantId;
-  const { patientId, appointmentId, encounterId, limit = "100" } = req.query;
-
-  let query = `
-    SELECT
-      u.id,
-      u.quantity_used as "quantityUsed",
-      u.unit_cost_cents as "unitCostCents",
-      u.notes,
-      u.used_at as "usedAt",
-      u.encounter_id as "encounterId",
-      u.appointment_id as "appointmentId",
-      u.patient_id as "patientId",
-      u.provider_id as "providerId",
-      i.id as "itemId",
-      i.name as "itemName",
-      i.category as "itemCategory",
-      p.first_name as "patientFirstName",
-      p.last_name as "patientLastName",
-      pr.full_name as "providerName"
-    FROM inventory_usage u
-    JOIN inventory_items i ON u.item_id = i.id
-    LEFT JOIN patients p ON u.patient_id = p.id
-    LEFT JOIN users pr ON u.provider_id = pr.id
-    WHERE u.tenant_id = $1
-  `;
-
-  const params: any[] = [tenantId];
-
-  if (patientId && typeof patientId === "string") {
-    params.push(patientId);
-    query += ` AND u.patient_id = $${params.length}`;
-  }
-
-  if (appointmentId && typeof appointmentId === "string") {
-    params.push(appointmentId);
-    query += ` AND u.appointment_id = $${params.length}`;
-  }
-
-  if (encounterId && typeof encounterId === "string") {
-    params.push(encounterId);
-    query += ` AND u.encounter_id = $${params.length}`;
-  }
-
-  params.push(parseInt(limit as string));
-  query += ` ORDER BY u.used_at DESC LIMIT $${params.length}`;
-
-  const result = await pool.query(query, params);
-  res.json({ usage: result.rows });
 });
 
 // Get usage record by ID

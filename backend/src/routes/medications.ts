@@ -47,6 +47,20 @@ medicationsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
   }
 });
 
+// GET /api/medications/categories - Get all categories
+medicationsRouter.get('/list/categories', requireAuth, async (_req: AuthedRequest, res) => {
+  try {
+    const result = await pool.query(
+      'select distinct category from medications where category is not null order by category'
+    );
+
+    return res.json({ categories: result.rows.map(r => r.category) });
+  } catch (error) {
+    console.error('Error fetching categories:', error);
+    return res.status(500).json({ error: 'Failed to fetch categories' });
+  }
+});
+
 // GET /api/medications/:id - Get single medication
 medicationsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) => {
   try {
@@ -65,19 +79,5 @@ medicationsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) => {
   } catch (error) {
     console.error('Error fetching medication:', error);
     return res.status(500).json({ error: 'Failed to fetch medication' });
-  }
-});
-
-// GET /api/medications/categories - Get all categories
-medicationsRouter.get('/list/categories', requireAuth, async (_req: AuthedRequest, res) => {
-  try {
-    const result = await pool.query(
-      'select distinct category from medications where category is not null order by category'
-    );
-
-    return res.json({ categories: result.rows.map(r => r.category) });
-  } catch (error) {
-    console.error('Error fetching categories:', error);
-    return res.status(500).json({ error: 'Failed to fetch categories' });
   }
 });

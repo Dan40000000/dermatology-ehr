@@ -119,7 +119,7 @@ export default function BookAppointmentPage() {
       if (!response.ok) throw new Error('Failed to load providers');
 
       const data = await response.json();
-      setProviders(data.providers);
+      setProviders(Array.isArray(data.providers) ? data.providers : []);
     } catch (err) {
       console.error('Error loading providers:', err);
       setError('Failed to load providers');
@@ -135,7 +135,7 @@ export default function BookAppointmentPage() {
       if (!response.ok) throw new Error('Failed to load appointment types');
 
       const data = await response.json();
-      setAppointmentTypes(data.appointmentTypes);
+      setAppointmentTypes(Array.isArray(data.appointmentTypes) ? data.appointmentTypes : []);
     } catch (err) {
       console.error('Error loading appointment types:', err);
       setError('Failed to load appointment types');
@@ -159,9 +159,10 @@ export default function BookAppointmentPage() {
       if (!response.ok) throw new Error('Failed to load available dates');
 
       const data = await response.json();
-      setAvailableDates(data.dates);
+      setAvailableDates(Array.isArray(data.dates) ? data.dates : []);
     } catch (err) {
       console.error('Error loading available dates:', err);
+      setAvailableDates([]);
     }
   };
 
@@ -179,10 +180,11 @@ export default function BookAppointmentPage() {
       if (!response.ok) throw new Error('Failed to load time slots');
 
       const data = await response.json();
-      setTimeSlots(data.slots);
+      setTimeSlots(Array.isArray(data.slots) ? data.slots : []);
     } catch (err) {
       console.error('Error loading time slots:', err);
       setError('Failed to load available times');
+      setTimeSlots([]);
     } finally {
       setLoading(false);
     }

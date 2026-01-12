@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 import { pool } from '../db/pool';
 import { requireAuth, AuthedRequest } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
@@ -77,7 +77,7 @@ router.post('/', requireAuth, requireRoles(['admin', 'billing']), async (req: Au
       );
     }
 
-    const id = uuidv4();
+    const id = crypto.randomUUID();
     const result = await client.query(
       `INSERT INTO fee_schedules (id, tenant_id, name, is_default, description)
        VALUES ($1, $2, $3, $4, $5)

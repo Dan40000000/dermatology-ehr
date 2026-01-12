@@ -263,7 +263,7 @@ export function parseHL7Message(rawMessage: string): HL7Message {
   }
 
   return {
-    messageType: segments.MSH.messageType,
+    messageType: segments.MSH.messageType || '',
     messageControlId: segments.MSH.messageControlId || crypto.randomUUID(),
     sendingApplication: segments.MSH.sendingApplication,
     sendingFacility: segments.MSH.sendingFacility,
@@ -281,7 +281,7 @@ export function parseHL7Message(rawMessage: string): HL7Message {
  */
 function parseMSH(line: string): MSHSegment {
   // MSH is special - field separator is at position 3, encoding chars at position 4
-  const fieldSeparator = line[3];
+  const fieldSeparator = line[3] || '|';
   const encodingCharacters = line.substring(4, 8);
   const fields = line.split(fieldSeparator);
 

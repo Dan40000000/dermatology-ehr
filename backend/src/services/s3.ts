@@ -8,13 +8,22 @@ let client: S3Client | null = null;
 
 function getClient() {
   if (client) return client;
-  client = new S3Client({
+
+  const config: {
+    region: string;
+    credentials?: { accessKeyId: string; secretAccessKey: string };
+  } = {
     region: env.s3Region || "us-east-1",
-    credentials:
-      env.s3AccessKeyId && env.s3SecretAccessKey
-        ? { accessKeyId: env.s3AccessKeyId, secretAccessKey: env.s3SecretAccessKey }
-        : undefined,
-  } as any);
+  };
+
+  if (env.s3AccessKeyId && env.s3SecretAccessKey) {
+    config.credentials = {
+      accessKeyId: env.s3AccessKeyId,
+      secretAccessKey: env.s3SecretAccessKey,
+    };
+  }
+
+  client = new S3Client(config);
   return client;
 }
 
@@ -68,8 +77,7 @@ export async function fetchObjectBuffer(key: string): Promise<Buffer> {
       Key: key,
     }),
   );
-  // @ts-ignore - Body is a stream in Node
-  const bodyStream: Readable | undefined = res.Body;
+  const bodyStream = res.Body as Readable | undefined;
   if (!bodyStream) return Buffer.from("");
   return streamToBuffer(bodyStream);
 }

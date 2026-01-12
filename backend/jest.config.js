@@ -23,10 +23,10 @@ module.exports = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
-  globals: {
-    'ts-jest': {
+  transform: {
+    '^.+\\.ts$': ['ts-jest', {
       isolatedModules: true,
-    },
+    }],
   },
   setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup.ts'],
   globalTeardown: '<rootDir>/jest.teardown.js',

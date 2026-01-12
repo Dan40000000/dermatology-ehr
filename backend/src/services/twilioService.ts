@@ -231,16 +231,21 @@ export class TwilioService {
         limit: 1,
       });
 
-      if (number.length === 0) {
+      if (!number || number.length === 0) {
+        throw new Error('Phone number not found in Twilio account');
+      }
+
+      const phoneNumberInfo = number[0];
+      if (!phoneNumberInfo) {
         throw new Error('Phone number not found in Twilio account');
       }
 
       return {
-        phoneNumber: number[0].phoneNumber,
-        friendlyName: number[0].friendlyName,
-        capabilities: number[0].capabilities,
-        smsUrl: number[0].smsUrl,
-        statusCallback: number[0].statusCallback,
+        phoneNumber: phoneNumberInfo.phoneNumber,
+        friendlyName: phoneNumberInfo.friendlyName || undefined,
+        capabilities: phoneNumberInfo.capabilities || undefined,
+        smsUrl: phoneNumberInfo.smsUrl || undefined,
+        statusCallback: phoneNumberInfo.statusCallback || undefined,
       };
     } catch (error: any) {
       logger.error('Failed to fetch phone number info', {

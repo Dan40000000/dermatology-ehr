@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, AuthedRequest } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { randomUUID } from 'crypto';
 
@@ -24,7 +24,7 @@ const updateHandoutSchema = z.object({
 });
 
 // Get all handouts
-router.get('/', async (req, res, next) => {
+router.get('/', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { category, condition, search } = req.query;
@@ -61,7 +61,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // Get single handout
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
@@ -82,7 +82,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // Create handout
-router.post('/', async (req, res, next) => {
+router.post('/', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user?.id;
@@ -109,14 +109,14 @@ router.post('/', async (req, res, next) => {
     res.status(201).json(result.rows[0]);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: 'Validation error', details: error.errors });
+      return res.status(400).json({ error: 'Validation error', details: error.issues });
     }
     next(error);
   }
 });
 
 // Update handout
-router.patch('/:id', async (req, res, next) => {
+router.patch('/:id', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
@@ -181,14 +181,14 @@ router.patch('/:id', async (req, res, next) => {
     res.json(result.rows[0]);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: 'Validation error', details: error.errors });
+      return res.status(400).json({ error: 'Validation error', details: error.issues });
     }
     next(error);
   }
 });
 
 // Delete handout
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;

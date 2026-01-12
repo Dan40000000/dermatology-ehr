@@ -66,7 +66,7 @@ export class DermPathParser {
 
     for (const { key, pattern } of sectionPatterns) {
       const match = text.match(pattern);
-      if (match) {
+      if (match && match[1]) {
         sections[key] = match[1].trim();
       }
     }
@@ -133,7 +133,7 @@ export class DermPathParser {
 
     // Look for special stains section
     const stainsSection = text.match(/SPECIAL STAINS?:\s*(.+?)(?:\n\n|$)/is);
-    if (!stainsSection) return undefined;
+    if (!stainsSection || !stainsSection[1]) return undefined;
 
     const stainsText = stainsSection[1];
 
@@ -158,7 +158,7 @@ export class DermPathParser {
     for (const stainName of commonStains) {
       const pattern = new RegExp(`${stainName}[:\\s-]+(positive|negative|pending|.*?)(?:\\.|\\n|$)`, 'i');
       const match = stainsText.match(pattern);
-      if (match) {
+      if (match && match[1]) {
         stains.push({
           name: stainName,
           result: match[1].trim()

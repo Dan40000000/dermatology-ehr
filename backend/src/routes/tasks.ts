@@ -245,7 +245,7 @@ tasksRouter.put("/:id", requireAuth, async (req: AuthedRequest, res) => {
     return res.status(404).json({ error: "Task not found" });
   }
 
-  await auditLog(tenantId, req.user!.id, "task_update", "task", id);
+  await auditLog(tenantId, req.user!.id, "task_update", "task", id!);
   res.json({ success: true });
 });
 
@@ -279,7 +279,7 @@ tasksRouter.put("/:id/status", requireAuth, async (req: AuthedRequest, res) => {
     return res.status(404).json({ error: "Task not found" });
   }
 
-  await auditLog(tenantId, req.user!.id, "task_status_change", "task", id);
+  await auditLog(tenantId, req.user!.id, "task_status_change", "task", id!);
   res.json({ success: true });
 });
 
@@ -297,7 +297,7 @@ tasksRouter.delete("/:id", requireAuth, async (req: AuthedRequest, res) => {
     return res.status(404).json({ error: "Task not found" });
   }
 
-  await auditLog(tenantId, req.user!.id, "task_delete", "task", id);
+  await auditLog(tenantId, req.user!.id, "task_delete", "task", id!);
   res.json({ success: true });
 });
 
@@ -348,6 +348,6 @@ tasksRouter.post("/:id/comments", requireAuth, async (req: AuthedRequest, res) =
     [commentId, tenantId, id, req.user!.id, parsed.data.comment],
   );
 
-  await auditLog(tenantId, req.user!.id, "task_comment_add", "task", id);
+  await auditLog(tenantId, req.user!.id, "task_comment_add", "task", id!);
   res.status(201).json({ id: commentId });
 });

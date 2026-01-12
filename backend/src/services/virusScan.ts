@@ -13,7 +13,7 @@ async function scanWithClamav(buf: Buffer): Promise<boolean | null> {
       resolve(ok);
     };
 
-    socket.setTimeout(env.clamavTimeoutMs, () => abort(null));
+    socket.setTimeout(env.clamavTimeoutMs || 10000, () => abort(null));
     socket.on("error", () => abort(null));
     socket.on("close", () => {
       const response = Buffer.concat(chunks).toString();
@@ -24,7 +24,7 @@ async function scanWithClamav(buf: Buffer): Promise<boolean | null> {
     });
     socket.on("data", (d) => chunks.push(d));
 
-    socket.connect(env.clamavPort, env.clamavHost, () => {
+    socket.connect(env.clamavPort || 3310, env.clamavHost!, () => {
       socket.write("zINSTREAM\0");
       const lenBuf = Buffer.alloc(4);
       lenBuf.writeUInt32BE(buf.length, 0);

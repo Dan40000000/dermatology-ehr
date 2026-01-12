@@ -64,7 +64,7 @@ export const PatientMessageThreadList: FC<PatientMessageThreadListProps> = ({
     );
   }
 
-  if (threads.length === 0) {
+  if (!Array.isArray(threads) || threads.length === 0) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '16rem', color: '#6b7280' }}>
         <div style={{ textAlign: 'center' }}>
@@ -204,7 +204,7 @@ export const PatientMessageThreadList: FC<PatientMessageThreadListProps> = ({
                          statusColors[thread.status]?.includes('gray') ? '#4b5563' : '#4b5563'
                 }}
               >
-                {thread.status.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                {(thread.status || '').split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
               </span>
               {thread.assignedToName && (
                 <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>

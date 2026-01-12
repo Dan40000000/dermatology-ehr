@@ -18,6 +18,9 @@ export function TaskKanbanBoard({ tasks, onTaskClick, onStatusChange }: TaskKanb
   const [dragOverColumn, setDragOverColumn] = useState<TaskStatus | null>(null);
 
   const getTasksByStatus = (status: TaskStatus) => {
+    if (!Array.isArray(tasks)) {
+      return [];
+    }
     return tasks.filter((t) => t.status === status);
   };
 

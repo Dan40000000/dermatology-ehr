@@ -52,7 +52,7 @@ const mockFaxService = {
       },
     ];
 
-    const random = sampleFaxes[Math.floor(Math.random() * sampleFaxes.length)];
+    const random = sampleFaxes[Math.floor(Math.random() * sampleFaxes.length)]!;
 
     return {
       id: crypto.randomUUID(),

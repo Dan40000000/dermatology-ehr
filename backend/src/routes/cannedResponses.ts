@@ -183,7 +183,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res) => {
       return res.status(404).json({ error: "Canned response not found" });
     }
 
-    await auditLog(tenantId, userId, "canned_response_update", "message_canned_response", responseId);
+    await auditLog(tenantId, userId, "canned_response_update", "message_canned_response", responseId!);
 
     res.json({ success: true });
   } catch (error) {
@@ -210,7 +210,7 @@ router.delete("/:id", requireAuth, async (req: AuthedRequest, res) => {
       return res.status(404).json({ error: "Canned response not found" });
     }
 
-    await auditLog(tenantId, userId, "canned_response_delete", "message_canned_response", responseId);
+    await auditLog(tenantId, userId, "canned_response_delete", "message_canned_response", responseId!);
 
     res.json({ success: true });
   } catch (error) {

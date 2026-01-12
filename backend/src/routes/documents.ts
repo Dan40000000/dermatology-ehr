@@ -238,7 +238,7 @@ documentsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
   }
 
   // Log the view action
-  await logDocumentAccess(id, tenantId, userId, "view", req);
+  await logDocumentAccess(id!, tenantId, userId, "view", req);
 
   res.json(result.rows[0]);
 });
@@ -263,7 +263,7 @@ documentsRouter.get("/:id/preview", requireAuth, async (req: AuthedRequest, res)
   const doc = result.rows[0];
 
   // Log the view action
-  await logDocumentAccess(id, tenantId, userId, "view", req);
+  await logDocumentAccess(id!, tenantId, userId, "view", req);
 
   res.json({
     previewUrl: doc.thumbnailUrl || doc.url,
@@ -413,7 +413,7 @@ documentsRouter.post("/:id/versions", requireAuth, requireRoles(["admin", "provi
   );
 
   // Log the action
-  await logDocumentAccess(id, tenantId, userId, "edit", req);
+  await logDocumentAccess(id!, tenantId, userId, "edit", req);
 
   res.status(201).json({ id: versionId, versionNumber: newVersionNumber });
 });
@@ -442,7 +442,7 @@ documentsRouter.put("/:id/category", requireAuth, requireRoles(["admin", "provid
   }
 
   // Log the action
-  await logDocumentAccess(id, tenantId, userId, "edit", req);
+  await logDocumentAccess(id!, tenantId, userId, "edit", req);
 
   res.json({ success: true });
 });
@@ -454,7 +454,7 @@ documentsRouter.delete("/:id", requireAuth, requireRoles(["admin", "provider"]),
   const userId = req.user!.id;
 
   // Log the action before deletion
-  await logDocumentAccess(id, tenantId, userId, "delete", req);
+  await logDocumentAccess(id!, tenantId, userId, "delete", req);
 
   const result = await pool.query(
     `DELETE FROM documents WHERE id = $1 AND tenant_id = $2 RETURNING id`,

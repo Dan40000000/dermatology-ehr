@@ -192,7 +192,12 @@ IMPORTANT: This is for clinical decision support only. Always recommend professi
         throw new Error(`OpenAI API error: ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as any;
+
+      if (!data.choices || !data.choices[0]?.message?.content) {
+        throw new Error('Invalid response from OpenAI API');
+      }
+
       const content = data.choices[0].message.content;
 
       // Parse JSON response

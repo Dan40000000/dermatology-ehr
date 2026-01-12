@@ -80,7 +80,7 @@ describe("Portal Billing routes", () => {
       expect(res.body.currentBalance).toBe(0);
       expect(queryMock).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO portal_patient_balances"),
-        ["tenant-1", "patient-1", 0, 0, 0]
+        ["tenant-1", "patient-1"]
       );
     });
 
@@ -392,7 +392,7 @@ describe("Portal Billing routes", () => {
   describe("POST /portal-billing/payments", () => {
     const validPaymentWithExisting = {
       amount: 100.0,
-      paymentMethodId: "pm-1",
+      paymentMethodId: "4cf68edd-5f3f-4e3f-9149-2ecbf329c68d",
       description: "Payment for office visit",
     };
 
@@ -417,6 +417,10 @@ describe("Portal Billing routes", () => {
     };
 
     it("processes payment with existing payment method", async () => {
+      // Mock random to force success
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.5); // > 0.05 = success
+
       queryMock
         .mockResolvedValueOnce({
           rows: [{ token: "tok_existing123" }],
@@ -435,9 +439,15 @@ describe("Portal Billing routes", () => {
       expect(res.body.success).toBe(true);
       expect(res.body.transactionId).toBe("txn-123");
       expect(res.body.receiptNumber).toMatch(/^RCP-/);
+
+      Math.random = originalRandom;
     });
 
     it("processes payment with new card and saves it", async () => {
+      // Mock random to force success
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.5); // > 0.05 = success
+
       queryMock
         .mockResolvedValueOnce({
           rows: [{ id: "pm-new" }],
@@ -457,9 +467,15 @@ describe("Portal Billing routes", () => {
         expect.stringContaining("INSERT INTO portal_payment_methods"),
         expect.any(Array)
       );
+
+      Math.random = originalRandom;
     });
 
     it("processes payment with new card without saving", async () => {
+      // Mock random to force success
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.5); // > 0.05 = success
+
       queryMock
         .mockResolvedValueOnce({
           rows: [{ id: "txn-789" }],
@@ -477,9 +493,15 @@ describe("Portal Billing routes", () => {
         expect.stringContaining("INSERT INTO portal_payment_methods"),
         expect.any(Array)
       );
+
+      Math.random = originalRandom;
     });
 
     it("associates payment with specific charges", async () => {
+      // Mock random to force success
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.5); // > 0.05 = success
+
       queryMock
         .mockResolvedValueOnce({
           rows: [{ token: "tok_123" }],
@@ -492,7 +514,7 @@ describe("Portal Billing routes", () => {
 
       const res = await request(app).post("/portal-billing/payments").send({
         ...validPaymentWithExisting,
-        chargeIds: ["charge-1", "charge-2"],
+        chargeIds: ["30f6879f-d4ed-48dd-b3a2-e86a8131e5b8", "7e1c15c5-4880-4507-921b-74b25324f577"],
       });
 
       expect(res.status).toBe(200);
@@ -506,13 +528,15 @@ describe("Portal Billing routes", () => {
           expect.anything(),
           expect.anything(),
           expect.anything(),
-          JSON.stringify(["charge-1", "charge-2"]),
+          JSON.stringify(["30f6879f-d4ed-48dd-b3a2-e86a8131e5b8", "7e1c15c5-4880-4507-921b-74b25324f577"]),
           expect.anything(),
           expect.anything(),
           expect.anything(),
           expect.anything(),
         ])
       );
+
+      Math.random = originalRandom;
     });
 
     it("returns 400 when no payment method provided", async () => {
@@ -525,6 +549,10 @@ describe("Portal Billing routes", () => {
     });
 
     it("returns 404 when payment method not found", async () => {
+      // Mock random to force success (won't matter since we'll fail earlier)
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.5); // > 0.05 = success
+
       queryMock.mockResolvedValueOnce({ rows: [] });
 
       const res = await request(app)
@@ -533,12 +561,14 @@ describe("Portal Billing routes", () => {
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("Payment method not found");
+
+      Math.random = originalRandom;
     });
 
     it("returns 400 for invalid amount", async () => {
       const res = await request(app).post("/portal-billing/payments").send({
         amount: -10,
-        paymentMethodId: "pm-1",
+        paymentMethodId: "4cf68edd-5f3f-4e3f-9149-2ecbf329c68d",
       });
 
       expect(res.status).toBe(400);
@@ -569,6 +599,10 @@ describe("Portal Billing routes", () => {
     });
 
     it("marks transaction as failed on payment error", async () => {
+      // Mock random to force success (won't matter since we'll throw error)
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.5); // > 0.05 = success
+
       queryMock
         .mockResolvedValueOnce({
           rows: [{ token: "tok_123" }],
@@ -588,9 +622,15 @@ describe("Portal Billing routes", () => {
         expect.stringContaining("UPDATE portal_payment_transactions"),
         ["txn-error"]
       );
+
+      Math.random = originalRandom;
     });
 
     it("returns 500 on database error", async () => {
+      // Mock random to force success (won't matter since we'll throw error)
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.5); // > 0.05 = success
+
       queryMock.mockRejectedValueOnce(new Error("Database error"));
 
       const res = await request(app)
@@ -599,6 +639,8 @@ describe("Portal Billing routes", () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Payment processing failed");
+
+      Math.random = originalRandom;
     });
   });
 
@@ -812,7 +854,7 @@ describe("Portal Billing routes", () => {
 
   describe("POST /portal-billing/autopay", () => {
     const validAutopayPayload = {
-      paymentMethodId: "pm-1",
+      paymentMethodId: "f6130fe6-8820-4c6e-8965-09c1eb5414f0",
       chargeDay: 15,
       chargeAllBalances: true,
       minimumAmount: 25.0,
@@ -824,7 +866,7 @@ describe("Portal Billing routes", () => {
     it("enrolls in autopay", async () => {
       queryMock
         .mockResolvedValueOnce({
-          rows: [{ id: "pm-1" }],
+          rows: [{ id: "f6130fe6-8820-4c6e-8965-09c1eb5414f0" }],
         })
         .mockResolvedValueOnce({ rows: [] }) // cancel existing
         .mockResolvedValueOnce({
@@ -840,7 +882,7 @@ describe("Portal Billing routes", () => {
         expect.arrayContaining([
           "tenant-1",
           "patient-1",
-          "pm-1",
+          "f6130fe6-8820-4c6e-8965-09c1eb5414f0",
           15,
           true,
           25.0,
@@ -854,7 +896,7 @@ describe("Portal Billing routes", () => {
     it("cancels existing enrollments before creating new one", async () => {
       queryMock
         .mockResolvedValueOnce({
-          rows: [{ id: "pm-1" }],
+          rows: [{ id: "f6130fe6-8820-4c6e-8965-09c1eb5414f0" }],
         })
         .mockResolvedValueOnce({ rows: [{ id: "ae-old" }] })
         .mockResolvedValueOnce({
@@ -870,7 +912,7 @@ describe("Portal Billing routes", () => {
       );
     });
 
-    it("returns 400 when payment method not found", async () => {
+    it("returns 404 when payment method not found", async () => {
       queryMock.mockResolvedValueOnce({ rows: [] });
 
       const res = await request(app).post("/portal-billing/autopay").send(validAutopayPayload);

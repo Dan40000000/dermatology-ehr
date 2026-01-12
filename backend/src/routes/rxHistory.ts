@@ -102,7 +102,7 @@ rxHistoryRouter.get('/:patientId', requireAuth, async (req: AuthedRequest, res) 
     // Also fetch from Surescripts (simulated)
     let surescriptsData = null;
     try {
-      surescriptsData = await getRxHistory(patientId, tenantId);
+      surescriptsData = await getRxHistory(patientId!, tenantId);
     } catch (error) {
       console.error('Error fetching Surescripts Rx history:', error);
     }
@@ -262,7 +262,7 @@ rxHistoryRouter.post(
       }
 
       // Fetch from Surescripts
-      const surescriptsData = await getRxHistory(patientId, tenantId);
+      const surescriptsData = await getRxHistory(patientId!, tenantId);
 
       let importedCount = 0;
 

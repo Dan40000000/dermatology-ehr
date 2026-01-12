@@ -364,19 +364,32 @@ export function generatePatientSummaryPDF(patient: Patient & {
 
     template['doc'].setFontSize(9);
     template['doc'].setFont('helvetica', 'normal');
-    template['doc'].text(`Plan: ${patient.insurance.planName}`, 20, template['yPosition']);
-    template['yPosition'] += 5;
-    template['doc'].text(`Member ID: ${patient.insurance.memberId}`, 20, template['yPosition']);
-    template['yPosition'] += 5;
-    if (patient.insurance.groupNumber) {
-      template['doc'].text(`Group: ${patient.insurance.groupNumber}`, 20, template['yPosition']);
+
+    // Handle insurance - backend may return string instead of object
+    if (typeof patient.insurance === 'object' && patient.insurance.planName) {
+      template['doc'].text(`Plan: ${patient.insurance.planName}`, 20, template['yPosition']);
+      template['yPosition'] += 5;
+      template['doc'].text(`Member ID: ${patient.insurance.memberId}`, 20, template['yPosition']);
+      template['yPosition'] += 5;
+      if (patient.insurance.groupNumber) {
+        template['doc'].text(`Group: ${patient.insurance.groupNumber}`, 20, template['yPosition']);
+        template['yPosition'] += 5;
+      }
+    } else if (typeof patient.insurance === 'string') {
+      template['doc'].text(`Insurance: ${patient.insurance}`, 20, template['yPosition']);
       template['yPosition'] += 5;
     }
     template['yPosition'] += 5;
   }
 
-  // Allergies
-  if (patient.allergies && patient.allergies.length > 0) {
+  // Allergies - handle string or array
+  const allergiesArray = Array.isArray(patient.allergies)
+    ? patient.allergies
+    : (typeof patient.allergies === 'string' && patient.allergies.trim() !== ''
+        ? patient.allergies.split(',').map(a => a.trim())
+        : []);
+
+  if (allergiesArray.length > 0) {
     template['doc'].setFontSize(11);
     template['doc'].setFont('helvetica', 'bold');
     template['doc'].text('Allergies', 15, template['yPosition']);
@@ -385,7 +398,7 @@ export function generatePatientSummaryPDF(patient: Patient & {
     template['doc'].setFontSize(9);
     template['doc'].setFont('helvetica', 'normal');
     template['doc'].setTextColor(220, 38, 38);
-    patient.allergies.forEach(allergy => {
+    allergiesArray.forEach(allergy => {
       template['doc'].text(`• ${allergy}`, 20, template['yPosition']);
       template['yPosition'] += 5;
     });

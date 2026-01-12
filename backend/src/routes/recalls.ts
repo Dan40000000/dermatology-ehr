@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../db/pool';
-import { requireAuth } from '../middleware/auth';
-import { v4 as uuidv4 } from 'uuid';
+import { AuthedRequest, requireAuth } from '../middleware/auth';
+import { randomUUID } from 'crypto';
 import {
   generateRecalls,
   generateAllRecalls,
@@ -23,7 +23,7 @@ router.use(requireAuth);
  * GET /api/recalls/campaigns
  * List all recall campaigns
  */
-router.get('/campaigns', async (req, res) => {
+router.get('/campaigns', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
 
@@ -45,7 +45,7 @@ router.get('/campaigns', async (req, res) => {
  * POST /api/recalls/campaigns
  * Create a new recall campaign
  */
-router.post('/campaigns', async (req, res) => {
+router.post('/campaigns', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { name, description, recallType, intervalMonths, isActive } = req.body;
@@ -54,7 +54,7 @@ router.post('/campaigns', async (req, res) => {
       return res.status(400).json({ error: 'Name and recall type are required' });
     }
 
-    const id = uuidv4();
+    const id = randomUUID();
 
     const result = await pool.query<RecallCampaign>(
       `INSERT INTO recall_campaigns (
@@ -75,7 +75,7 @@ router.post('/campaigns', async (req, res) => {
  * PUT /api/recalls/campaigns/:id
  * Update a recall campaign
  */
-router.put('/campaigns/:id', async (req, res) => {
+router.put('/campaigns/:id', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { id } = req.params;
@@ -109,7 +109,7 @@ router.put('/campaigns/:id', async (req, res) => {
  * DELETE /api/recalls/campaigns/:id
  * Delete a recall campaign
  */
-router.delete('/campaigns/:id', async (req, res) => {
+router.delete('/campaigns/:id', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { id } = req.params;
@@ -134,12 +134,12 @@ router.delete('/campaigns/:id', async (req, res) => {
  * POST /api/recalls/campaigns/:id/generate
  * Generate recalls for a specific campaign
  */
-router.post('/campaigns/:id/generate', async (req, res) => {
+router.post('/campaigns/:id/generate', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { id } = req.params;
 
-    const result = await generateRecalls(tenantId, id);
+    const result = await generateRecalls(tenantId, id!);
 
     res.json({
       message: `Generated ${result.created} recalls`,
@@ -155,7 +155,7 @@ router.post('/campaigns/:id/generate', async (req, res) => {
  * POST /api/recalls/generate-all
  * Generate recalls for all active campaigns
  */
-router.post('/generate-all', async (req, res) => {
+router.post('/generate-all', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
 
@@ -175,7 +175,7 @@ router.post('/generate-all', async (req, res) => {
  * GET /api/recalls/due
  * Get patients due for recall (filtered by date range, campaign, status)
  */
-router.get('/due', async (req, res) => {
+router.get('/due', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { startDate, endDate, campaignId, status } = req.query;
@@ -243,7 +243,7 @@ router.get('/due', async (req, res) => {
  * POST /api/recalls/patient
  * Create a patient recall manually
  */
-router.post('/patient', async (req, res) => {
+router.post('/patient', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { patientId, campaignId, dueDate, notes } = req.body;
@@ -252,7 +252,7 @@ router.post('/patient', async (req, res) => {
       return res.status(400).json({ error: 'Patient ID and due date are required' });
     }
 
-    const id = uuidv4();
+    const id = randomUUID();
 
     const result = await pool.query<PatientRecall>(
       `INSERT INTO patient_recalls (
@@ -273,7 +273,7 @@ router.post('/patient', async (req, res) => {
  * PUT /api/recalls/:id/status
  * Update recall status
  */
-router.put('/:id/status', async (req, res) => {
+router.put('/:id/status', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { id } = req.params;
@@ -314,9 +314,9 @@ router.put('/:id/status', async (req, res) => {
  * POST /api/recalls/:id/contact
  * Record a contact attempt
  */
-router.post('/:id/contact', async (req, res) => {
+router.post('/:id/contact', async (req: AuthedRequest, res) => {
   try {
-    const { tenantId, userId } = req.user!;
+    const { tenantId, id: userId } = req.user!;
     const { id } = req.params;
     const { contactMethod, notes, messageContent } = req.body;
 
@@ -339,7 +339,7 @@ router.post('/:id/contact', async (req, res) => {
       return res.status(404).json({ error: 'Recall not found' });
     }
 
-    const recall = recallResult.rows[0];
+    const recall = recallResult.rows[0]!;
 
     // Check if patient can be contacted via this method
     const canContact = await canContactPatient(tenantId, recall.patientId, contactMethod as any);
@@ -352,7 +352,7 @@ router.post('/:id/contact', async (req, res) => {
     await logReminder(
       tenantId,
       recall.patientId,
-      id,
+      id!,
       contactMethod as any,
       messageContent || `Recall: ${contactMethod} contact`,
       userId
@@ -381,7 +381,7 @@ router.post('/:id/contact', async (req, res) => {
  * GET /api/recalls/history
  * Get reminder contact history
  */
-router.get('/history', async (req, res) => {
+router.get('/history', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { patientId, campaignId, startDate, endDate, limit = 100 } = req.query;
@@ -444,7 +444,7 @@ router.get('/history', async (req, res) => {
  * GET /api/recalls/stats
  * Get campaign statistics
  */
-router.get('/stats', async (req, res) => {
+router.get('/stats', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { campaignId, startDate, endDate } = req.query;
@@ -525,12 +525,12 @@ router.get('/stats', async (req, res) => {
  * GET /api/recalls/patient/:patientId/preferences
  * Get patient communication preferences
  */
-router.get('/patient/:patientId/preferences', async (req, res) => {
+router.get('/patient/:patientId/preferences', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { patientId } = req.params;
 
-    const prefs = await getPatientPreferences(tenantId, patientId);
+    const prefs = await getPatientPreferences(tenantId, patientId!);
 
     res.json({ preferences: prefs });
   } catch (error: any) {
@@ -543,13 +543,13 @@ router.get('/patient/:patientId/preferences', async (req, res) => {
  * PUT /api/recalls/patient/:patientId/preferences
  * Update patient communication preferences
  */
-router.put('/patient/:patientId/preferences', async (req, res) => {
+router.put('/patient/:patientId/preferences', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { patientId } = req.params;
     const preferences = req.body;
 
-    const updated = await updatePatientPreferences(tenantId, patientId, preferences);
+    const updated = await updatePatientPreferences(tenantId, patientId!, preferences);
 
     res.json(updated);
   } catch (error: any) {
@@ -562,7 +562,7 @@ router.put('/patient/:patientId/preferences', async (req, res) => {
  * GET /api/recalls/export
  * Export patient recall list to CSV
  */
-router.get('/export', async (req, res) => {
+router.get('/export', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
     const { campaignId, status } = req.query;

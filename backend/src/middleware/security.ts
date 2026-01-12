@@ -100,7 +100,8 @@ export function sqlInjectionPrevention(req: Request, res: Response, next: NextFu
       query: req.query,
       ip: req.ip,
     });
-    return res.status(400).json({ error: 'Invalid request parameters' });
+    res.status(400).json({ error: 'Invalid request parameters' });
+    return;
   }
 
   // Check body
@@ -109,7 +110,8 @@ export function sqlInjectionPrevention(req: Request, res: Response, next: NextFu
       path: req.path,
       ip: req.ip,
     });
-    return res.status(400).json({ error: 'Invalid request data' });
+    res.status(400).json({ error: 'Invalid request data' });
+    return;
   }
 
   next();
@@ -144,7 +146,8 @@ export function xssPrevention(req: Request, res: Response, next: NextFunction): 
       path: req.path,
       ip: req.ip,
     });
-    return res.status(400).json({ error: 'Invalid request data' });
+    res.status(400).json({ error: 'Invalid request data' });
+    return;
   }
 
   next();
@@ -169,7 +172,8 @@ export function sessionSecurity(req: Request, res: Response, next: NextFunction)
       });
 
       session.destroy();
-      return res.status(401).json({ error: 'Session expired' });
+      res.status(401).json({ error: 'Session expired' });
+      return;
     }
 
     // Update last activity

@@ -118,7 +118,7 @@ export class VoiceTranscriptionService {
         throw new Error(`Whisper API error: ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as any;
 
       return {
         text: data.text,
@@ -267,7 +267,7 @@ Pathology pending. Follow up in one week for results and further management.`;
     ];
     for (const pattern of ccPatterns) {
       const match = text.match(pattern);
-      if (match) {
+      if (match && match[1]) {
         sections.chiefComplaint = match[1].trim();
         break;
       }
@@ -287,7 +287,7 @@ Pathology pending. Follow up in one week for results and further management.`;
     ];
     for (const pattern of examPatterns) {
       const match = transcriptionText.match(pattern);
-      if (match) {
+      if (match && match[1]) {
         sections.exam = match[1].trim();
         break;
       }
@@ -297,7 +297,7 @@ Pathology pending. Follow up in one week for results and further management.`;
     const assessmentPatterns = [/assessment[:\s]+([^.]+(?:\.[^.]+){0,2})/i, /diagnosis[:\s]+([^.]+)/i];
     for (const pattern of assessmentPatterns) {
       const match = transcriptionText.match(pattern);
-      if (match) {
+      if (match && match[1]) {
         sections.assessment = match[1].trim();
         break;
       }
@@ -307,7 +307,7 @@ Pathology pending. Follow up in one week for results and further management.`;
     const planPatterns = [/plan[:\s]+([^.]+(?:\.[^.]+){0,5})/i, /will ([^.]+(?:\.[^.]+){0,3})/i];
     for (const pattern of planPatterns) {
       const match = transcriptionText.match(pattern);
-      if (match) {
+      if (match && match[1]) {
         sections.plan = match[1].trim();
         break;
       }
@@ -368,7 +368,7 @@ Pathology pending. Follow up in one week for results and further management.`;
       }
     }
 
-    return result.rowCount > 0;
+    return (result.rowCount || 0) > 0;
   }
 }
 

@@ -51,7 +51,7 @@ export async function saveSignature(base64Data: string, patientId: string): Prom
 
   // Extract mime type and base64 content
   const matches = base64Data.match(/^data:(image\/[a-z+]+);base64,(.+)$/);
-  if (!matches || matches.length !== 3) {
+  if (!matches || matches.length !== 3 || !matches[1] || !matches[2]) {
     throw new Error("Invalid data URL format");
   }
 
@@ -130,7 +130,7 @@ export async function saveInsuranceCardPhoto(
   }
 
   const matches = base64Data.match(/^data:(image\/[a-z+]+);base64,(.+)$/);
-  if (!matches || matches.length !== 3) {
+  if (!matches || matches.length !== 3 || !matches[1] || !matches[2]) {
     throw new Error("Invalid data URL format");
   }
 

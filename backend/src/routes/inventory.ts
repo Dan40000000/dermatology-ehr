@@ -251,7 +251,7 @@ inventoryRouter.put("/:id", requireAuth, requireRoles(["admin", "provider"]), as
     values
   );
 
-  await auditLog(tenantId, req.user!.id, "inventory_item_update", "inventory_item", id);
+  await auditLog(tenantId, req.user!.id, "inventory_item_update", "inventory_item", id!);
 
   res.json({ success: true });
 });
@@ -275,7 +275,7 @@ inventoryRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async (req:
 
   await pool.query(`DELETE FROM inventory_items WHERE id = $1 AND tenant_id = $2`, [id, tenantId]);
 
-  await auditLog(tenantId, req.user!.id, "inventory_item_delete", "inventory_item", id);
+  await auditLog(tenantId, req.user!.id, "inventory_item_delete", "inventory_item", id!);
 
   res.json({ success: true });
 });
@@ -562,7 +562,7 @@ inventoryRouter.delete("/usage/:id", requireAuth, requireRoles(["admin"]), async
 
     await client.query("COMMIT");
 
-    await auditLog(tenantId, req.user!.id, "inventory_usage_void", "inventory_usage", id);
+    await auditLog(tenantId, req.user!.id, "inventory_usage_void", "inventory_usage", id!);
 
     res.json({ success: true, message: "Usage record voided and quantity restored" });
   } catch (error) {

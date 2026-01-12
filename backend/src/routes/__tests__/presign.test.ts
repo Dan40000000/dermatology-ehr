@@ -31,21 +31,21 @@ const fetchMock = fetchObjectBuffer as jest.Mock;
 const getUrlMock = getSignedObjectUrl as jest.Mock;
 const scanMock = scanBuffer as jest.Mock;
 
-const originalBucket = process.env.S3_BUCKET;
+const originalBucket = process.env.AWS_S3_BUCKET;
 
 beforeEach(() => {
   presignMock.mockReset();
   fetchMock.mockReset();
   getUrlMock.mockReset();
   scanMock.mockReset();
-  delete process.env.S3_BUCKET;
+  delete process.env.AWS_S3_BUCKET;
 });
 
 afterEach(() => {
   if (originalBucket) {
-    process.env.S3_BUCKET = originalBucket;
+    process.env.AWS_S3_BUCKET = originalBucket;
   } else {
-    delete process.env.S3_BUCKET;
+    delete process.env.AWS_S3_BUCKET;
   }
 });
 
@@ -64,7 +64,7 @@ describe("Presign routes", () => {
   });
 
   it("POST /presign/s3 returns signed upload", async () => {
-    process.env.S3_BUCKET = "bucket";
+    process.env.AWS_S3_BUCKET = "bucket";
     presignMock.mockResolvedValueOnce({ url: "signed", fields: { key: "k" } });
     const res = await request(app).post("/presign/s3").send({
       contentType: "image/png",
@@ -75,7 +75,7 @@ describe("Presign routes", () => {
   });
 
   it("POST /presign/s3/complete rejects when scan fails", async () => {
-    process.env.S3_BUCKET = "bucket";
+    process.env.AWS_S3_BUCKET = "bucket";
     fetchMock.mockResolvedValueOnce(Buffer.from("data"));
     scanMock.mockResolvedValueOnce(false);
     const res = await request(app).post("/presign/s3/complete").send({ key: "obj", contentType: "image/png" });
@@ -83,7 +83,7 @@ describe("Presign routes", () => {
   });
 
   it("POST /presign/s3/complete returns signed url", async () => {
-    process.env.S3_BUCKET = "bucket";
+    process.env.AWS_S3_BUCKET = "bucket";
     fetchMock.mockResolvedValueOnce(Buffer.from("data"));
     scanMock.mockResolvedValueOnce(true);
     getUrlMock.mockResolvedValueOnce("signed-url");
@@ -93,7 +93,7 @@ describe("Presign routes", () => {
   });
 
   it("POST /presign/s3/complete returns 500 on error", async () => {
-    process.env.S3_BUCKET = "bucket";
+    process.env.AWS_S3_BUCKET = "bucket";
     fetchMock.mockRejectedValueOnce(new Error("boom"));
     const res = await request(app).post("/presign/s3/complete").send({ key: "obj", contentType: "image/png" });
     expect(res.status).toBe(500);
@@ -105,7 +105,7 @@ describe("Presign routes", () => {
   });
 
   it("GET /presign/s3/access/:key returns signed url", async () => {
-    process.env.S3_BUCKET = "bucket";
+    process.env.AWS_S3_BUCKET = "bucket";
     getUrlMock.mockResolvedValueOnce("signed-access");
     const res = await request(app).get("/presign/s3/access/file%20name.pdf");
     expect(res.status).toBe(200);

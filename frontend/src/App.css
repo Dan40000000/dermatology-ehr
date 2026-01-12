@@ -2255,6 +2255,7 @@ pre {
   border-bottom: 1px solid var(--gray-100);
   position: relative;
   transition: background-color 0.15s ease;
+  overflow: visible;
 }
 
 .calendar-slot.hour-mark {
@@ -7199,8 +7200,9 @@ pre {
 }
 
 .ema-refresh-btn {
-  width: 36px;
+  min-width: 80px;
   height: 36px;
+  padding: 0 12px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -7208,9 +7210,11 @@ pre {
   border: none;
   border-radius: 4px;
   color: #ffffff;
-  font-size: 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
   cursor: pointer;
   transition: background 0.15s ease;
+  white-space: nowrap;
 }
 
 .ema-refresh-btn:hover {

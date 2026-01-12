@@ -3,7 +3,7 @@
  * Mock HL7 v2.x message generation and parsing for lab orders and results
  */
 
-import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 import { logger } from '../lib/logger';
 
 interface HL7Patient {
@@ -65,7 +65,7 @@ export class HL7Service {
     provider: HL7Provider,
     facility: { id: string; name: string }
   ): string {
-    const messageControlId = uuidv4();
+    const messageControlId = crypto.randomUUID();
     const timestamp = this.formatHL7DateTime(new Date());
 
     const segments: string[] = [];
@@ -147,7 +147,7 @@ export class HL7Service {
     patient: HL7Patient,
     facility: { id: string; name: string }
   ): string {
-    const messageControlId = uuidv4();
+    const messageControlId = crypto.randomUUID();
     const timestamp = this.formatHL7DateTime(new Date());
 
     const segments: string[] = [];
@@ -216,7 +216,7 @@ export class HL7Service {
    * Parse HL7 ORU^R01 message (Lab Results)
    */
   static parseLabResultMessage(message: string): any {
-    const segments = message.split(/\r?\n/);
+    const segments = message.split(/\r\n|\r|\n/);
     const result: any = {
       messageType: null,
       messageControlId: null,
@@ -227,13 +227,17 @@ export class HL7Service {
     let currentOBR: any = null;
 
     for (const segment of segments) {
+      if (!segment.trim()) continue;
+
       const fields = segment.split(this.FIELD_SEPARATOR);
       const segmentType = fields[0];
 
       switch (segmentType) {
         case 'MSH':
-          result.messageType = this.parseComponent(fields[8])?.[0];
-          result.messageControlId = fields[9];
+          // MSH has special structure: MSH|^~\&|...
+          // Field 1 is the separator ^, so we need to adjust indices
+          result.messageType = fields[6];
+          result.messageControlId = fields[7];
           break;
 
         case 'PID':
@@ -249,8 +253,8 @@ export class HL7Service {
         case 'OBR':
           currentOBR = {
             orderNumber: fields[2],
-            testCode: this.parseComponent(fields[4])?.[0],
-            testName: this.parseComponent(fields[4])?.[1],
+            testCode: this.parseComponent(fields[4] || '')?.[0] || '',
+            testName: this.parseComponent(fields[4] || '')?.[1] || '',
             observationDateTime: fields[7],
             resultStatus: fields[25],
             observations: []
@@ -262,8 +266,8 @@ export class HL7Service {
           if (currentOBR) {
             currentOBR.observations.push({
               valueType: fields[2],
-              testCode: this.parseComponent(fields[3])?.[0],
-              testName: this.parseComponent(fields[3])?.[1],
+              testCode: this.parseComponent(fields[3] || '')?.[0] || '',
+              testName: this.parseComponent(fields[3] || '')?.[1] || '',
               value: fields[5],
               units: fields[6],
               referenceRange: fields[7],
@@ -583,13 +587,34 @@ export class HL7Service {
   private static generateACK(originalMessage: string, acknowledgmentCode: string): string {
     const segments = originalMessage.split('\r');
     const mshSegment = segments[0];
+    if (!mshSegment) {
+      throw new Error('Invalid HL7 message: no MSH segment found');
+    }
     const mshFields = mshSegment.split(this.FIELD_SEPARATOR);
 
-    const messageControlId = mshFields[9];
+    // Extract message control ID from field 7 (0-indexed)
+    const messageControlId = mshFields[7];
     const timestamp = this.formatHL7DateTime(new Date());
 
+    // Swap sender and receiver for ACK response
+    const sendingApp = mshFields[3] || '';
+    const receivingApp = mshFields[2] || '';
+
+    const mshSegmentParts = [
+      'MSH',
+      this.COMPONENT_SEPARATOR,
+      sendingApp,
+      receivingApp,
+      timestamp,
+      '',
+      'ACK',
+      messageControlId,
+      'P',
+      '2.5.1'
+    ];
+
     return [
-      `MSH${this.FIELD_SEPARATOR}${this.COMPONENT_SEPARATOR}${this.FIELD_SEPARATOR}${mshFields[4]}${this.FIELD_SEPARATOR}${mshFields[2]}${this.FIELD_SEPARATOR}${timestamp}${this.FIELD_SEPARATOR}${this.FIELD_SEPARATOR}ACK${this.FIELD_SEPARATOR}${messageControlId}${this.FIELD_SEPARATOR}P${this.FIELD_SEPARATOR}2.5.1`,
+      mshSegmentParts.join(this.FIELD_SEPARATOR),
       `MSA${this.FIELD_SEPARATOR}${acknowledgmentCode}${this.FIELD_SEPARATOR}${messageControlId}`
     ].join('\r');
   }

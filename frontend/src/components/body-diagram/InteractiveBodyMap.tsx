@@ -65,6 +65,9 @@ export function InteractiveBodyMap({
 
   // Filter markings by current view
   const visibleMarkings = useMemo(() => {
+    if (!Array.isArray(markings)) {
+      return [];
+    }
     return markings.filter((m) => m.viewType === currentView);
   }, [markings, currentView]);
 
@@ -310,7 +313,7 @@ export function InteractiveBodyMap({
             <strong>{visibleMarkings.length}</strong> marking{visibleMarkings.length !== 1 ? 's' : ''} on {currentView} view
           </div>
           <div style={{ fontSize: '12px', color: '#9CA3AF', marginTop: '4px' }}>
-            Total: <strong>{markings.length}</strong> marking{markings.length !== 1 ? 's' : ''}
+            Total: <strong>{Array.isArray(markings) ? markings.length : 0}</strong> marking{(Array.isArray(markings) ? markings.length : 0) !== 1 ? 's' : ''}
           </div>
         </div>
       </div>

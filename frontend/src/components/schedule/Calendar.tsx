@@ -77,6 +77,9 @@ export function Calendar({
 
   // Helper: Check if provider is available at this time
   const isProviderAvailable = (providerId: string, date: Date, hour: number, minute: number) => {
+    if (!Array.isArray(availability)) {
+      return false;
+    }
     const dayOfWeek = date.getDay();
     const providerAvail = availability.find(
       (a) => a.providerId === providerId && a.dayOfWeek === dayOfWeek
@@ -95,6 +98,9 @@ export function Calendar({
 
   // Helper: Get appointments for a specific slot
   const getAppointmentsForSlot = (providerId: string, date: Date, hour: number, minute: number) => {
+    if (!Array.isArray(appointments)) {
+      return [];
+    }
     return appointments.filter((appt) => {
       if (appt.providerId !== providerId) return false;
 
@@ -111,16 +117,22 @@ export function Calendar({
       }
 
       const slotTimeInMinutes = hour * 60 + minute;
+      const nextSlotTimeInMinutes = slotTimeInMinutes + 5;
       const apptStartInMinutes = apptStart.getHours() * 60 + apptStart.getMinutes();
       const apptEndInMinutes = apptEnd.getHours() * 60 + apptEnd.getMinutes();
 
-      // Check if this slot is within the appointment time range
-      return slotTimeInMinutes >= apptStartInMinutes && slotTimeInMinutes < apptEndInMinutes;
+      // Check if this slot overlaps with the appointment
+      // Slot covers [slotTime, slotTime+5), appointment covers [apptStart, apptEnd)
+      // They overlap if: slotTime < apptEnd AND nextSlotTime > apptStart
+      return slotTimeInMinutes < apptEndInMinutes && nextSlotTimeInMinutes > apptStartInMinutes;
     });
   };
 
   // Helper: Get time blocks for a specific slot
   const getTimeBlocksForSlot = (providerId: string, date: Date, hour: number, minute: number) => {
+    if (!Array.isArray(timeBlocks)) {
+      return [];
+    }
     return timeBlocks.filter((block) => {
       if (block.providerId !== providerId || block.status !== 'active') return false;
 
@@ -230,9 +242,15 @@ export function Calendar({
   };
 
   // Helper: Check if this is the first slot of an appointment
+  // Appointments may start at any minute, but slots are on 5-minute boundaries
+  // So we need to check if this slot is the one that contains the appointment start
   const isFirstSlot = (appointment: Appointment, hour: number, minute: number) => {
     const apptStart = new Date(appointment.scheduledStart);
-    return apptStart.getHours() === hour && apptStart.getMinutes() === minute;
+    const apptHour = apptStart.getHours();
+    const apptMinute = apptStart.getMinutes();
+    // Round appointment start minute down to nearest 5-minute slot
+    const slotMinute = Math.floor(apptMinute / 5) * 5;
+    return apptHour === hour && slotMinute === minute;
   };
 
   // Helper: Get appointment duration in slots
@@ -278,7 +296,7 @@ export function Calendar({
         <div className="calendar-time-column-header">Time</div>
         {viewMode === 'day' ? (
           // Day view: show providers as columns
-          providers.map((provider) => (
+          Array.isArray(providers) && providers.map((provider) => (
             <div key={provider.id} className="calendar-provider-header-cell">
               <div className="calendar-provider-name">{provider.fullName}</div>
               <div className="calendar-provider-specialty">{provider.specialty || ''}</div>
@@ -316,7 +334,7 @@ export function Calendar({
         {/* Provider/Day columns */}
         {viewMode === 'day' ? (
           // Day view: one column per provider
-          providers.map((provider) => (
+          Array.isArray(providers) && providers.map((provider) => (
             <div key={provider.id} className="calendar-provider-column">
               {timeSlots.map(({ hour, minute }) => {
                 const day = days[0]; // Single day in day view
@@ -430,15 +448,15 @@ export function Calendar({
             <div key={day.toISOString()} className="calendar-day-column">
               {timeSlots.map(({ hour, minute }) => {
                 // In week view, check all providers for this time slot
-                const allSlotAppointments = providers.flatMap((provider) =>
+                const allSlotAppointments = Array.isArray(providers) ? providers.flatMap((provider) =>
                   getAppointmentsForSlot(provider.id, day, hour, minute)
-                );
+                ) : [];
                 const appointment = allSlotAppointments[0];
                 const isFirst = appointment && isFirstSlot(appointment, hour, minute);
                 const slots = appointment ? getAppointmentSlots(appointment) : 0;
 
                 // Check if any provider is available
-                const anyProviderAvailable = providers.some((provider) =>
+                const anyProviderAvailable = Array.isArray(providers) && providers.some((provider) =>
                   isProviderAvailable(provider.id, day, hour, minute)
                 );
 
@@ -451,7 +469,7 @@ export function Calendar({
                     onClick={() => {
                       if (appointment) {
                         onAppointmentClick(appointment);
-                      } else if (anyProviderAvailable) {
+                      } else if (anyProviderAvailable && Array.isArray(providers)) {
                         // Default to first available provider
                         const availableProvider = providers.find((p) =>
                           isProviderAvailable(p.id, day, hour, minute)

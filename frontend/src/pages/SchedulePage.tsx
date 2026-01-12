@@ -143,8 +143,14 @@ export function SchedulePage() {
 
   // Conflict detection
   useEffect(() => {
+    if (!Array.isArray(appointments) || appointments.length === 0) {
+      setOverlaps([]);
+      return;
+    }
+
     const grouped = new Map<string, any[]>();
     appointments.forEach((appt) => {
+      if (!appt || !appt.providerId) return;
       const list = grouped.get(appt.providerId) || [];
       list.push(appt);
       grouped.set(appt.providerId, list);
@@ -152,13 +158,25 @@ export function SchedulePage() {
 
     const conflictMap = new Map<string, { provider: string; time: string; count: number; patients: Set<string> }>();
     grouped.forEach((list) => {
-      const sorted = list.sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime());
+      if (!Array.isArray(list) || list.length === 0) return;
+
+      const sorted = list.sort((a, b) => {
+        if (!a?.scheduledStart || !b?.scheduledStart) return 0;
+        return new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime();
+      });
+
       for (let i = 0; i < sorted.length - 1; i++) {
         const current = sorted[i];
         const next = sorted[i + 1];
+
+        if (!current?.scheduledStart || !current?.scheduledEnd || !next?.scheduledStart) continue;
+
         const start = new Date(current.scheduledStart).getTime();
         const end = new Date(current.scheduledEnd).getTime();
         const nextStart = new Date(next.scheduledStart).getTime();
+
+        if (isNaN(start) || isNaN(end) || isNaN(nextStart)) continue;
+
         if (start < nextStart && end > nextStart) {
           const providerName = current.providerName || 'Provider';
           const startLabel = new Date(current.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -197,6 +215,11 @@ export function SchedulePage() {
     const startDate = new Date(`${formData.date}T${formData.time}:00`);
     const endDate = new Date(startDate.getTime() + formData.duration * 60000);
 
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      showError('Invalid date or time');
+      return;
+    }
+
     await createAppointment(session.tenantId, session.accessToken, {
       patientId: formData.patientId,
       providerId: formData.providerId,
@@ -214,9 +237,19 @@ export function SchedulePage() {
   const handleReschedule = async (formData: RescheduleFormData) => {
     if (!session || !selectedAppt) return;
 
+    if (!selectedAppt.scheduledEnd || !selectedAppt.scheduledStart) {
+      showError('Invalid appointment data');
+      return;
+    }
+
     const originalDuration = new Date(selectedAppt.scheduledEnd).getTime() - new Date(selectedAppt.scheduledStart).getTime();
     const newStart = new Date(`${formData.date}T${formData.time}:00`);
     const newEnd = new Date(newStart.getTime() + originalDuration);
+
+    if (isNaN(originalDuration) || isNaN(newStart.getTime()) || isNaN(newEnd.getTime())) {
+      showError('Invalid date or time');
+      return;
+    }
 
     // Pass providerId if it changed
     const newProviderId = formData.providerId !== selectedAppt.providerId ? formData.providerId : undefined;

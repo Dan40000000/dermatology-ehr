@@ -98,7 +98,7 @@ export async function sendWaitlistNotification(
     if (params.patientPhone) {
       try {
         const message = formatWaitlistSMSMessage(
-          params.patientName.split(' ')[0], // First name
+          params.patientName.split(' ')[0] || params.patientName, // First name
           params.providerName,
           params.appointmentDate,
           params.appointmentTime

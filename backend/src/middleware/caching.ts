@@ -276,7 +276,7 @@ export async function warmupCache(tenantId: string): Promise<void> {
 
   try {
     // Import here to avoid circular dependencies
-    const { pool } = await import('../db/pool');
+    const { pool } = await import('../db/pool.js');
 
     // Warmup providers
     const providers = await pool.query(

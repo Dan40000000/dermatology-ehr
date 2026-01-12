@@ -63,9 +63,9 @@ const measurementSchema = z.object({
 const dermoscopySchema = z.object({
   lesionId: z.string(),
   photoId: z.string().optional(),
-  dermoscopyStructures: z.record(z.boolean()).optional(),
-  dermoscopyPatterns: z.record(z.boolean()).optional(),
-  vascularPatterns: z.record(z.boolean()).optional(),
+  dermoscopyStructures: z.record(z.string(), z.boolean()).optional(),
+  dermoscopyPatterns: z.record(z.string(), z.boolean()).optional(),
+  vascularPatterns: z.record(z.string(), z.boolean()).optional(),
   pigmentNetwork: z.string().optional(),
   blueWhiteVeil: z.boolean().optional(),
   regressionStructures: z.boolean().optional(),
@@ -277,7 +277,7 @@ router.post(
         [eventId, tenantId, id, "lesion_identified", userId, "Initial lesion documentation"]
       );
 
-      await auditLog(tenantId, userId, "lesion_create", "lesion", id);
+      await auditLog(tenantId, userId, "lesion_create", "lesion", id!);
       res.status(201).json({ id });
     } catch (error) {
       console.error("Create lesion error:", error);
@@ -341,7 +341,7 @@ router.post(
         );
       }
 
-      await auditLog(tenantId, userId, "measurement_add", "lesion", id);
+      await auditLog(tenantId, userId, "measurement_add", "lesion", id!);
       res.status(201).json({ id: measurementId });
     } catch (error) {
       console.error("Add measurement error:", error);
@@ -396,7 +396,7 @@ router.post(
         ]
       );
 
-      await auditLog(tenantId, userId, "dermoscopy_add", "lesion", id);
+      await auditLog(tenantId, userId, "dermoscopy_add", "lesion", id!);
       res.status(201).json({ id: dermoscopyId });
     } catch (error) {
       console.error("Add dermoscopy error:", error);
@@ -444,7 +444,7 @@ router.post(
         ]
       );
 
-      await auditLog(tenantId, userId, "lesion_event", "lesion", id);
+      await auditLog(tenantId, userId, "lesion_event", "lesion", id!);
       res.status(201).json({ id: eventId });
     } catch (error) {
       console.error("Add lesion event error:", error);
@@ -520,7 +520,7 @@ router.put(
         [eventId, tenantId, id, "biopsy_performed", userId, `Biopsy result: ${biopsyResult}`]
       );
 
-      await auditLog(tenantId, userId, "biopsy_record", "lesion", id);
+      await auditLog(tenantId, userId, "biopsy_record", "lesion", id!);
       res.json({ success: true });
     } catch (error) {
       console.error("Record biopsy error:", error);
@@ -556,7 +556,7 @@ router.put(
         [eventId, tenantId, id, "status_change", userId, `Status changed to ${status}: ${reason || ""}`]
       );
 
-      await auditLog(tenantId, userId, "lesion_status_update", "lesion", id);
+      await auditLog(tenantId, userId, "lesion_status_update", "lesion", id!);
       res.json({ success: true });
     } catch (error) {
       console.error("Update status error:", error);

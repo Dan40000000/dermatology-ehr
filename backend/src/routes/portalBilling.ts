@@ -36,10 +36,10 @@ const mockStripe = {
       return {
         id: `tok_${crypto.randomBytes(12).toString('hex')}`,
         card: {
-          brand: cardData.card.brand || 'visa',
-          last4: cardData.card.number.slice(-4),
-          exp_month: cardData.card.exp_month,
-          exp_year: cardData.card.exp_year,
+          brand: cardData.card.cardBrand || cardData.card.brand || 'visa',
+          last4: (cardData.card.cardNumber || cardData.card.number || '0000').slice(-4),
+          exp_month: cardData.card.expiryMonth || cardData.card.exp_month,
+          exp_year: cardData.card.expiryYear || cardData.card.exp_year,
         },
       };
     },
@@ -309,7 +309,7 @@ portalBillingRouter.post(
       return res.status(201).json(result.rows[0]);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid input", details: error.errors });
+        return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
       console.error("Add payment method error:", error);
       return res.status(500).json({ error: "Failed to add payment method" });
@@ -541,7 +541,7 @@ portalBillingRouter.post(
       }
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid input", details: error.errors });
+        return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
       console.error("Payment processing error:", error);
       return res.status(500).json({ error: "Payment processing failed" });
@@ -797,7 +797,7 @@ portalBillingRouter.post(
       return res.status(201).json(result.rows[0]);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid input", details: error.errors });
+        return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
       console.error("Enroll autopay error:", error);
       return res.status(500).json({ error: "Failed to enroll in auto-pay" });

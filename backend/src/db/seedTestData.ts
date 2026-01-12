@@ -67,6 +67,7 @@ async function seedTestData() {
 
         const providerIdx = Math.floor(Math.random() * providers.length);
         const apptType = apptTypes[Math.floor(Math.random() * apptTypes.length)];
+        if (!apptType) continue;
         const end = new Date(start.getTime() + apptType.duration * 60 * 1000);
 
         // Determine status based on date
@@ -227,12 +228,14 @@ async function seedTestData() {
       const patientId = patientIds[i % patientIds.length];
       const providerId = userProviders[i % userProviders.length];
 
+      const apptTypeForWaitlist = apptTypes[i % apptTypes.length];
+      if (!apptTypeForWaitlist) continue;
       waitlistEntries.push({
         id: randomUUID(),
         tenant_id: tenantId,
         patient_id: patientId,
         provider_id: providerId,
-        appointment_type_id: apptTypes[i % apptTypes.length].id,
+        appointment_type_id: apptTypeForWaitlist.id,
         priority: priorities[Math.floor(Math.random() * priorities.length)],
         preferred_time_of_day: timePreferences[Math.floor(Math.random() * timePreferences.length)],
         reason: [
@@ -283,6 +286,7 @@ async function seedTestData() {
     const priorAuthRequests = [];
     for (let i = 0; i < 5; i++) {
       const med = medications[i];
+      if (!med) continue;
       const status = paStatuses[i % paStatuses.length];
       const createdDate = new Date(now.getTime() - (5 - i) * 24 * 60 * 60 * 1000);
 

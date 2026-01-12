@@ -448,7 +448,7 @@ router.patch("/:id", requireAuth, requireRoles(["admin", "provider", "front_desk
 
     // Audit log
     const action = data.status === "cancelled" ? "time_block_cancel" : "time_block_update";
-    await auditLog(tenantId, userId, action, "time_block", id);
+    await auditLog(tenantId, userId, action, "time_block", id!);
 
     res.json({ timeBlock: result.rows[0] });
   } catch (error) {
@@ -480,7 +480,7 @@ router.delete("/:id", requireAuth, requireRoles(["admin", "provider", "front_des
     }
 
     // Audit log
-    await auditLog(tenantId, userId, "time_block_delete", "time_block", id);
+    await auditLog(tenantId, userId, "time_block_delete", "time_block", id!);
 
     res.json({ message: "Time block deleted successfully", id });
   } catch (error) {

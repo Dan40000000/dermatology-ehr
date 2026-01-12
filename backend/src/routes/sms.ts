@@ -797,7 +797,7 @@ router.put('/auto-responses/:id', requireAuth, async (req: AuthedRequest, res: R
       params
     );
 
-    await auditLog(tenantId, userId, 'sms_auto_response_update', 'sms_auto_response', autoResponseId);
+    await auditLog(tenantId, userId, 'sms_auto_response_update', 'sms_auto_response', autoResponseId!);
 
     res.json({ success: true });
   } catch (error: any) {
@@ -932,7 +932,7 @@ router.put('/patient-preferences/:patientId', requireAuth, async (req: AuthedReq
       }
     }
 
-    await auditLog(tenantId, userId, 'patient_sms_preferences_update', 'patient_sms_preferences', patientId);
+    await auditLog(tenantId, userId, 'patient_sms_preferences_update', 'patient_sms_preferences', patientId!);
 
     res.json({ success: true });
   } catch (error: any) {
@@ -949,7 +949,7 @@ router.post('/send-reminder/:appointmentId', requireAuth, async (req: AuthedRequ
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
-    const appointmentId = req.params.appointmentId;
+    const appointmentId = req.params.appointmentId!;
 
     const result = await sendImmediateReminder(tenantId, appointmentId);
 
@@ -957,7 +957,7 @@ router.post('/send-reminder/:appointmentId', requireAuth, async (req: AuthedRequ
       return res.status(400).json({ error: result.error });
     }
 
-    await auditLog(tenantId, userId, 'sms_reminder_send', 'appointment', appointmentId);
+    await auditLog(tenantId, userId, 'sms_reminder_send', 'appointment', appointmentId!);
 
     res.json({ success: true });
   } catch (error: any) {
@@ -1140,7 +1140,7 @@ router.patch('/templates/:id', requireAuth, async (req: AuthedRequest, res: Resp
       params
     );
 
-    await auditLog(tenantId, userId, 'sms_template_update', 'sms_template', templateId);
+    await auditLog(tenantId, userId, 'sms_template_update', 'sms_template', templateId!);
 
     res.json({ success: true });
   } catch (error: any) {
@@ -1178,7 +1178,7 @@ router.delete('/templates/:id', requireAuth, async (req: AuthedRequest, res: Res
       [templateId, tenantId]
     );
 
-    await auditLog(tenantId, userId, 'sms_template_delete', 'sms_template', templateId);
+    await auditLog(tenantId, userId, 'sms_template_delete', 'sms_template', templateId!);
 
     res.json({ success: true });
   } catch (error: any) {
@@ -1492,7 +1492,7 @@ router.delete('/scheduled/:id', requireAuth, async (req: AuthedRequest, res: Res
       [userId, scheduledId, tenantId]
     );
 
-    await auditLog(tenantId, userId, 'sms_scheduled_cancel', 'sms_scheduled_message', scheduledId);
+    await auditLog(tenantId, userId, 'sms_scheduled_cancel', 'sms_scheduled_message', scheduledId!);
 
     res.json({ success: true });
   } catch (error: any) {

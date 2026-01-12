@@ -1,7 +1,7 @@
-import { Router } from "express";
+import { Router, Response } from "express";
 import { body, param, query, validationResult } from "express-validator";
 import { pool } from "../db/pool";
-import { requireAuth } from "../middleware/auth";
+import { AuthedRequest, requireAuth } from "../middleware/auth";
 import crypto from "crypto";
 
 const router = Router();
@@ -21,7 +21,7 @@ router.post(
     body("patientState").isString().isLength({ min: 2, max: 2 }),
     body("recordingConsent").optional().isBoolean(),
   ],
-  async (req, res) => {
+  async (req: AuthedRequest, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
@@ -88,7 +88,7 @@ router.post(
 );
 
 // Get session details
-router.get("/sessions/:id", async (req, res) => {
+router.get("/sessions/:id", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
@@ -116,7 +116,7 @@ router.get("/sessions/:id", async (req, res) => {
 });
 
 // List sessions
-router.get("/sessions", async (req, res) => {
+router.get("/sessions", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { status, providerId, patientId, startDate, endDate } = req.query;
 
@@ -169,7 +169,7 @@ router.get("/sessions", async (req, res) => {
 });
 
 // Update session status
-router.patch("/sessions/:id/status", async (req, res) => {
+router.patch("/sessions/:id/status", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const { status } = req.body;
@@ -218,7 +218,7 @@ router.patch("/sessions/:id/status", async (req, res) => {
 // ============================================
 
 // Join waiting room
-router.post("/waiting-room/join", async (req, res) => {
+router.post("/waiting-room/join", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { sessionId, patientId } = req.body;
 
@@ -255,7 +255,7 @@ router.post("/waiting-room/join", async (req, res) => {
 });
 
 // Update equipment check
-router.patch("/waiting-room/:id/equipment-check", async (req, res) => {
+router.patch("/waiting-room/:id/equipment-check", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const { camera, microphone, speaker, bandwidth, browser } = req.body;
@@ -278,7 +278,7 @@ router.patch("/waiting-room/:id/equipment-check", async (req, res) => {
 });
 
 // Add chat message to waiting room
-router.post("/waiting-room/:id/chat", async (req, res) => {
+router.post("/waiting-room/:id/chat", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const { message, sender } = req.body;
@@ -308,7 +308,7 @@ router.post("/waiting-room/:id/chat", async (req, res) => {
 });
 
 // Get waiting room queue
-router.get("/waiting-room", async (req, res) => {
+router.get("/waiting-room", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
 
   try {
@@ -332,7 +332,7 @@ router.get("/waiting-room", async (req, res) => {
 });
 
 // Call patient from waiting room
-router.post("/waiting-room/:id/call", async (req, res) => {
+router.post("/waiting-room/:id/call", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
@@ -367,7 +367,7 @@ router.post("/waiting-room/:id/call", async (req, res) => {
 // ============================================
 
 // Create or update session notes
-router.post("/sessions/:id/notes", async (req, res) => {
+router.post("/sessions/:id/notes", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const {
@@ -447,7 +447,7 @@ router.post("/sessions/:id/notes", async (req, res) => {
 });
 
 // Get session notes
-router.get("/sessions/:id/notes", async (req, res) => {
+router.get("/sessions/:id/notes", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
@@ -469,7 +469,7 @@ router.get("/sessions/:id/notes", async (req, res) => {
 });
 
 // Finalize session notes
-router.post("/sessions/:id/notes/finalize", async (req, res) => {
+router.post("/sessions/:id/notes/finalize", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const providerId = req.user?.id;
@@ -495,7 +495,7 @@ router.post("/sessions/:id/notes/finalize", async (req, res) => {
 // ============================================
 
 // Report quality metrics
-router.post("/sessions/:id/metrics", async (req, res) => {
+router.post("/sessions/:id/metrics", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const {
@@ -564,7 +564,7 @@ router.post("/sessions/:id/metrics", async (req, res) => {
 });
 
 // Get session metrics
-router.get("/sessions/:id/metrics", async (req, res) => {
+router.get("/sessions/:id/metrics", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
@@ -589,7 +589,7 @@ router.get("/sessions/:id/metrics", async (req, res) => {
 // ============================================
 
 // Start recording
-router.post("/sessions/:id/recordings/start", async (req, res) => {
+router.post("/sessions/:id/recordings/start", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
@@ -630,7 +630,7 @@ router.post("/sessions/:id/recordings/start", async (req, res) => {
 });
 
 // Stop recording
-router.post("/recordings/:id/stop", async (req, res) => {
+router.post("/recordings/:id/stop", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const { durationSeconds, fileSizeBytes, resolution } = req.body;
@@ -652,7 +652,7 @@ router.post("/recordings/:id/stop", async (req, res) => {
 });
 
 // List session recordings
-router.get("/sessions/:id/recordings", async (req, res) => {
+router.get("/sessions/:id/recordings", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
@@ -676,7 +676,7 @@ router.get("/sessions/:id/recordings", async (req, res) => {
 // ============================================
 
 // Capture photo during session
-router.post("/sessions/:id/photos", async (req, res) => {
+router.post("/sessions/:id/photos", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const { filePath, bodySite, viewType, annotationData } = req.body;
@@ -717,7 +717,7 @@ router.post("/sessions/:id/photos", async (req, res) => {
 });
 
 // Get session photos
-router.get("/sessions/:id/photos", async (req, res) => {
+router.get("/sessions/:id/photos", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
@@ -741,7 +741,7 @@ router.get("/sessions/:id/photos", async (req, res) => {
 // ============================================
 
 // Add provider license
-router.post("/provider-licenses", async (req, res) => {
+router.post("/provider-licenses", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const {
     providerId,
@@ -776,7 +776,7 @@ router.post("/provider-licenses", async (req, res) => {
 });
 
 // Get provider licenses
-router.get("/providers/:id/licenses", async (req, res) => {
+router.get("/providers/:id/licenses", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
@@ -800,7 +800,7 @@ router.get("/providers/:id/licenses", async (req, res) => {
 // ============================================
 
 // Get educational content for waiting room
-router.get("/educational-content", async (req, res) => {
+router.get("/educational-content", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { category } = req.query;
 
@@ -824,7 +824,7 @@ router.get("/educational-content", async (req, res) => {
 });
 
 // Track content view
-router.post("/educational-content/:id/view", async (req, res) => {
+router.post("/educational-content/:id/view", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
@@ -848,7 +848,7 @@ router.post("/educational-content/:id/view", async (req, res) => {
 // ============================================
 
 // Get session events
-router.get("/sessions/:id/events", async (req, res) => {
+router.get("/sessions/:id/events", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
@@ -869,7 +869,7 @@ router.get("/sessions/:id/events", async (req, res) => {
 });
 
 // Log custom event
-router.post("/sessions/:id/events", async (req, res) => {
+router.post("/sessions/:id/events", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const { eventType, eventData } = req.body;

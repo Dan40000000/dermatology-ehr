@@ -123,14 +123,7 @@ consentFormsRouter.post(
         [id, tenantId, formName, formType, formContent, requiresSignature, version || "1.0", effectiveDate || null]
       );
 
-      await auditLog({
-        tenantId,
-        userId: req.user!.id,
-        resourceType: "consent_form",
-        resourceId: id,
-        action: "create",
-        details: { formName, formType },
-      });
+      await auditLog(tenantId, req.user!.id, "consent_form_create", "consent_form", id);
 
       return res.status(201).json({ id });
     } catch (err) {
@@ -196,14 +189,7 @@ consentFormsRouter.put(
         return res.status(404).json({ error: "Consent form not found" });
       }
 
-      await auditLog({
-        tenantId,
-        userId: req.user!.id,
-        resourceType: "consent_form",
-        resourceId: id,
-        action: "update",
-        details: { updatedFields: Object.keys(parsed.data) },
-      });
+      await auditLog(tenantId, req.user!.id, "consent_form_update", "consent_form", id!);
 
       return res.json({ success: true, id: result.rows[0].id });
     } catch (err) {
@@ -235,14 +221,7 @@ consentFormsRouter.delete(
         return res.status(404).json({ error: "Consent form not found" });
       }
 
-      await auditLog({
-        tenantId,
-        userId: req.user!.id,
-        resourceType: "consent_form",
-        resourceId: id,
-        action: "deactivate",
-        details: {},
-      });
+      await auditLog(tenantId, req.user!.id, "consent_form_deactivate", "consent_form", id!);
 
       return res.json({ success: true });
     } catch (err) {

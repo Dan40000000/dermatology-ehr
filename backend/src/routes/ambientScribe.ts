@@ -145,7 +145,7 @@ router.post('/recordings/start', requireAuth, requireRoles(['provider', 'ma', 'a
       [recordingId, tenantId, encounterId || null, patientId, providerId, 'recording', true, consentMethod || 'verbal', false, true]
     );
 
-    await auditLog(tenantId, req.user!.id, 'ambient_recording_start', 'ambient_recording', recordingId);
+    await auditLog(tenantId, req.user?.id || null, 'ambient_recording_start', 'ambient_recording', recordingId);
 
     res.status(201).json({
       recordingId,
@@ -164,7 +164,7 @@ router.post('/recordings/start', requireAuth, requireRoles(['provider', 'ma', 'a
  */
 router.post('/recordings/:id/upload', requireAuth, upload.single('audio'), async (req: AuthedRequest, res) => {
   try {
-    const recordingId = req.params.id;
+    const recordingId = req.params.id!;
     const tenantId = req.user!.tenantId;
 
     if (!req.file) {
@@ -202,11 +202,11 @@ router.post('/recordings/:id/upload', requireAuth, upload.single('audio'), async
       [req.file.path, req.file.size, req.file.mimetype, durationSeconds, recordingId, tenantId]
     );
 
-    await auditLog(tenantId, req.user!.id, 'ambient_recording_upload', 'ambient_recording', recordingId);
+    await auditLog(tenantId, req.user?.id || null, 'ambient_recording_upload', 'ambient_recording', recordingId);
 
     // Automatically start transcription
     try {
-      await startTranscription(recordingId, tenantId, req.file.path, durationSeconds);
+      await startTranscription(recordingId, tenantId, req.file!.path, durationSeconds);
     } catch (error) {
       console.error('Auto-transcription failed:', error);
       // Don't fail the upload if transcription fails
@@ -326,7 +326,7 @@ router.get('/recordings/:id', requireAuth, async (req: AuthedRequest, res) => {
  */
 router.post('/recordings/:id/transcribe', requireAuth, async (req: AuthedRequest, res) => {
   try {
-    const recordingId = req.params.id;
+    const recordingId = req.params.id!;
     const tenantId = req.user!.tenantId;
 
     const recording = await pool.query(
@@ -344,7 +344,7 @@ router.post('/recordings/:id/transcribe', requireAuth, async (req: AuthedRequest
       return res.status(400).json({ error: 'No audio file uploaded yet' });
     }
 
-    const transcriptId = await startTranscription(recordingId, tenantId, file_path, duration_seconds);
+    const transcriptId = await startTranscription(recordingId, tenantId, file_path!, duration_seconds!);
 
     res.json({
       transcriptId,
@@ -417,7 +417,7 @@ router.get('/recordings/:id/transcript', requireAuth, async (req: AuthedRequest,
  */
 router.post('/transcripts/:id/generate-note', requireAuth, async (req: AuthedRequest, res) => {
   try {
-    const transcriptId = req.params.id;
+    const transcriptId = req.params.id!;
     const tenantId = req.user!.tenantId;
 
     const transcript = await pool.query(
@@ -436,7 +436,7 @@ router.post('/transcripts/:id/generate-note', requireAuth, async (req: AuthedReq
       return res.status(400).json({ error: 'Transcript not completed yet' });
     }
 
-    const noteId = await generateNote(tenantId, transcriptId, encounter_id, transcript_text, transcript_segments);
+    const noteId = await generateNote(tenantId, transcriptId, encounter_id, transcript_text!, transcript_segments);
 
     res.json({
       noteId,
@@ -515,7 +515,7 @@ router.get('/encounters/:encounterId/notes', requireAuth, async (req: AuthedRequ
  */
 router.patch('/notes/:id', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
   try {
-    const noteId = req.params.id;
+    const noteId = req.params.id!;
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
 
@@ -593,7 +593,7 @@ router.patch('/notes/:id', requireAuth, requireRoles(['provider', 'admin']), asy
       }
     }
 
-    await auditLog(tenantId, userId, 'ambient_note_edit', 'ambient_note', noteId);
+    await auditLog(tenantId, userId || null, 'ambient_note_edit', 'ambient_note', noteId);
 
     res.json({ success: true, message: 'Note updated successfully' });
   } catch (error: any) {
@@ -608,7 +608,7 @@ router.patch('/notes/:id', requireAuth, requireRoles(['provider', 'admin']), asy
  */
 router.post('/notes/:id/review', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
   try {
-    const noteId = req.params.id;
+    const noteId = req.params.id!;
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
 
@@ -650,7 +650,7 @@ router.post('/notes/:id/review', requireAuth, requireRoles(['provider', 'admin']
       [crypto.randomUUID(), tenantId, noteId, userId, 'review_status', 'pending', newStatus, action, reason || null]
     );
 
-    await auditLog(tenantId, userId, `ambient_note_${action}`, 'ambient_note', noteId);
+    await auditLog(tenantId, userId || null, `ambient_note_${action}`, 'ambient_note', noteId);
 
     res.json({
       success: true,
@@ -713,7 +713,7 @@ router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles(['provide
       ]
     );
 
-    await auditLog(tenantId, userId, 'ambient_note_applied', 'encounter', noteData.encounter_id);
+    await auditLog(tenantId, userId || null, 'ambient_note_applied', 'encounter', noteData.encounter_id!);
 
     res.json({
       success: true,
@@ -759,7 +759,7 @@ router.get('/notes/:id/edits', requireAuth, async (req: AuthedRequest, res) => {
  */
 router.delete('/recordings/:id', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
   try {
-    const recordingId = req.params.id;
+    const recordingId = req.params.id!;
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
 
@@ -788,7 +788,7 @@ router.delete('/recordings/:id', requireAuth, requireRoles(['provider', 'admin']
       }
     }
 
-    await auditLog(tenantId, userId, 'ambient_recording_delete', 'ambient_recording', recordingId);
+    await auditLog(tenantId, userId || null, 'ambient_recording_delete', 'ambient_recording', recordingId);
 
     res.json({ success: true, message: 'Recording deleted successfully' });
   } catch (error: any) {

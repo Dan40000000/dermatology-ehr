@@ -21,7 +21,7 @@ export const presignRouter = Router();
 presignRouter.post("/s3", requireAuth, async (req: AuthedRequest, res) => {
   const parsed = presignSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
-  if (!process.env.S3_BUCKET) return res.status(400).json({ error: "S3 not configured" });
+  if (!process.env.AWS_S3_BUCKET) return res.status(400).json({ error: "S3 not configured" });
   const signed = await presignUpload(parsed.data.contentType, parsed.data.filename);
   res.json(signed);
 });
@@ -30,7 +30,7 @@ presignRouter.post("/s3", requireAuth, async (req: AuthedRequest, res) => {
 presignRouter.post("/s3/complete", requireAuth, async (req: AuthedRequest, res) => {
   const parsed = completeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
-  if (!process.env.S3_BUCKET) return res.status(400).json({ error: "S3 not configured" });
+  if (!process.env.AWS_S3_BUCKET) return res.status(400).json({ error: "S3 not configured" });
 
   try {
     const buffer = await fetchObjectBuffer(parsed.data.key);
@@ -44,8 +44,8 @@ presignRouter.post("/s3/complete", requireAuth, async (req: AuthedRequest, res) 
 });
 
 presignRouter.get("/s3/access/:key", requireAuth, async (req: AuthedRequest, res) => {
-  if (!process.env.S3_BUCKET) return res.status(400).json({ error: "S3 not configured" });
-  const key = decodeURIComponent(req.params.key);
+  if (!process.env.AWS_S3_BUCKET) return res.status(400).json({ error: "S3 not configured" });
+  const key = decodeURIComponent(req.params.key!);
   try {
     const url = await getSignedObjectUrl(key, 120);
     res.json({ url, expiresIn: 120 });

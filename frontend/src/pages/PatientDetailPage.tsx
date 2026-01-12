@@ -709,18 +709,28 @@ export function PatientDetailPage() {
               <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
                 <h4 style={{ margin: '0 0 0.5rem 0' }}>Insurance</h4>
                 {patient.insurance ? (
-                  <>
-                    <p style={{ margin: 0 }}>{patient.insurance.planName}</p>
-                    <p style={{ margin: 0 }}>Member: {patient.insurance.memberId}</p>
-                    {patient.insurance.groupNumber && <p style={{ margin: 0 }}>Group: {patient.insurance.groupNumber}</p>}
-                  </>
+                  typeof patient.insurance === 'object' && patient.insurance.planName ? (
+                    <>
+                      <p style={{ margin: 0 }}>{patient.insurance.planName}</p>
+                      <p style={{ margin: 0 }}>Member: {patient.insurance.memberId}</p>
+                      {patient.insurance.groupNumber && <p style={{ margin: 0 }}>Group: {patient.insurance.groupNumber}</p>}
+                    </>
+                  ) : (
+                    <p style={{ margin: 0 }}>{typeof patient.insurance === 'string' ? patient.insurance : 'On file'}</p>
+                  )
                 ) : (
                   <p style={{ margin: 0 }}>No insurance on file</p>
                 )}
               </div>
               <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
                 <h4 style={{ margin: '0 0 0.5rem 0' }}>Allergies</h4>
-                <p style={{ margin: 0 }}>{patient.allergies?.length ? patient.allergies.join(', ') : 'None reported'}</p>
+                <p style={{ margin: 0 }}>
+                  {Array.isArray(patient.allergies) && patient.allergies.length > 0
+                    ? patient.allergies.join(', ')
+                    : typeof patient.allergies === 'string' && patient.allergies.trim() !== ''
+                      ? patient.allergies
+                      : 'None reported'}
+                </p>
               </div>
               <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
                 <h4 style={{ margin: '0 0 0.5rem 0' }}>Medications</h4>
@@ -995,20 +1005,12 @@ function MedicalHistoryTab({
   onEditMedication: () => void;
   onEditProblem: () => void;
 }) {
-  const allergies = (patient as any).allergiesList || [
-    { name: 'Penicillin', severity: 'severe', reaction: 'Anaphylaxis' },
-    { name: 'Latex', severity: 'moderate', reaction: 'Rash' },
-  ];
+  // Use actual patient data - no mock fallbacks for new patients
+  const allergies = (patient as any).allergiesList || [];
 
-  const medications = (patient as any).medicationsList || [
-    { name: 'Tretinoin 0.025% Cream', dosage: 'Apply nightly', prescribedDate: '2024-01-15' },
-    { name: 'Doxycycline 100mg', dosage: 'Twice daily', prescribedDate: '2024-02-10' },
-  ];
+  const medications = (patient as any).medicationsList || [];
 
-  const problems = (patient as any).problemsList || [
-    { name: 'Acne Vulgaris', icdCode: 'L70.0', status: 'Active', onsetDate: '2023-06-15' },
-    { name: 'Atopic Dermatitis', icdCode: 'L20.9', status: 'Active', onsetDate: '2022-03-20' },
-  ];
+  const problems = (patient as any).problemsList || [];
 
   return (
     <div style={{ maxWidth: '1200px' }}>

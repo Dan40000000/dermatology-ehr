@@ -166,35 +166,10 @@ export default function TextMessagesPage() {
       setTemplates(templatesData);
     } catch (err: any) {
       console.error('Failed to load templates:', err);
-      // Set default templates if API fails
-      setTemplates([
-        {
-          id: 'tpl-1',
-          name: 'Appointment Reminder',
-          body: 'Hi {patientName}, this is a reminder about your appointment on {date} at {time}. Reply Y to confirm or call us to reschedule.',
-          category: 'appointment',
-          isActive: true,
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: 'tpl-2',
-          name: 'Lab Results Ready',
-          body: 'Hi {patientName}, your lab results are ready. Please log in to your patient portal or call our office.',
-          category: 'results',
-          isActive: true,
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: 'tpl-3',
-          name: 'Follow-up Reminder',
-          body: 'Hi {patientName}, it\'s time to schedule your follow-up appointment. Please call our office at (555) 123-4567.',
-          category: 'reminder',
-          isActive: true,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
+      showError(err.message || 'Failed to load templates');
+      setTemplates([]);
     }
-  }, [session]);
+  }, [session, showError]);
 
   const loadScheduledMessages = useCallback(async () => {
     if (!session) return;
@@ -204,21 +179,10 @@ export default function TextMessagesPage() {
       setScheduledMessages(scheduledData);
     } catch (err: any) {
       console.error('Failed to load scheduled messages:', err);
-      // Set mock data for demo
-      setScheduledMessages([
-        {
-          id: 'sch-1',
-          patientId: patients[0]?.id,
-          recipientName: patients[0]?.firstName + ' ' + patients[0]?.lastName,
-          recipientPhone: patients[0]?.phone || '',
-          messageBody: 'Reminder: Your appointment is tomorrow at 10:00 AM.',
-          scheduledFor: new Date(Date.now() + 24 * 3600000).toISOString(),
-          status: 'scheduled',
-          createdAt: new Date().toISOString(),
-        },
-      ]);
+      showError(err.message || 'Failed to load scheduled messages');
+      setScheduledMessages([]);
     }
-  }, [session, patients]);
+  }, [session, showError]);
 
   useEffect(() => {
     const loadInitialData = async () => {
@@ -310,14 +274,12 @@ export default function TextMessagesPage() {
         templateId: bulkTemplateId || undefined,
       });
       showSuccess(`Messages sent to ${selectedPatients.size} patients`);
-    } catch {
-      // Mock for demo
-      showSuccess(`Messages queued for ${selectedPatients.size} patients`);
+      setSelectedPatients(new Set());
+      setBulkMessageText('');
+      setBulkTemplateId('');
+    } catch (err: any) {
+      showError(err.message || 'Failed to send bulk messages');
     }
-
-    setSelectedPatients(new Set());
-    setBulkMessageText('');
-    setBulkTemplateId('');
   };
 
   const handleSaveTemplate = async (data: { name: string; body: string; category?: string }) => {
@@ -332,23 +294,9 @@ export default function TextMessagesPage() {
         showSuccess('Template created');
       }
       loadTemplates();
-    } catch {
-      // Mock for demo
-      if (editingTemplate) {
-        setTemplates(prev => prev.map(t => t.id === editingTemplate.id ? { ...t, ...data } : t));
-        showSuccess('Template updated');
-      } else {
-        const newTemplate: SMSTemplate = {
-          id: `tpl-${Date.now()}`,
-          name: data.name,
-          body: data.body,
-          category: data.category,
-          isActive: true,
-          createdAt: new Date().toISOString(),
-        };
-        setTemplates(prev => [...prev, newTemplate]);
-        showSuccess('Template created');
-      }
+    } catch (err: any) {
+      showError(err.message || 'Failed to save template');
+      return;
     }
 
     setShowTemplateModal(false);
@@ -360,13 +308,11 @@ export default function TextMessagesPage() {
 
     try {
       await deleteSMSTemplate(session.tenantId, session.accessToken, templateId);
+      setTemplates(prev => prev.filter(t => t.id !== templateId));
       showSuccess('Template deleted');
-    } catch {
-      // Mock for demo
-      showSuccess('Template deleted');
+    } catch (err: any) {
+      showError(err.message || 'Failed to delete template');
     }
-
-    setTemplates(prev => prev.filter(t => t.id !== templateId));
   };
 
   const handleCancelScheduled = async (scheduledId: string) => {
@@ -374,14 +320,13 @@ export default function TextMessagesPage() {
 
     try {
       await cancelScheduledMessage(session.tenantId, session.accessToken, scheduledId);
+      setScheduledMessages(prev => prev.map(s =>
+        s.id === scheduledId ? { ...s, status: 'cancelled' } : s
+      ));
       showSuccess('Scheduled message cancelled');
-    } catch {
-      showSuccess('Scheduled message cancelled');
+    } catch (err: any) {
+      showError(err.message || 'Failed to cancel scheduled message');
     }
-
-    setScheduledMessages(prev => prev.map(s =>
-      s.id === scheduledId ? { ...s, status: 'cancelled' } : s
-    ));
   };
 
   const handleOptInToggle = (patientId: string, optIn: boolean) => {
@@ -1003,21 +948,11 @@ export default function TextMessagesPage() {
             if (!session) return;
             try {
               await createScheduledMessage(session.tenantId, session.accessToken, data);
+              await loadScheduledMessages();
               showSuccess('Message scheduled');
-            } catch {
-              // Mock for demo
-              const patient = patients.find(p => p.id === data.patientId);
-              setScheduledMessages(prev => [...prev, {
-                id: `sch-${Date.now()}`,
-                patientId: data.patientId,
-                recipientName: patient ? `${patient.firstName} ${patient.lastName}` : '',
-                recipientPhone: patient?.phone || '',
-                messageBody: data.messageBody,
-                scheduledFor: data.scheduledFor,
-                status: 'scheduled',
-                createdAt: new Date().toISOString(),
-              }]);
-              showSuccess('Message scheduled');
+            } catch (err: any) {
+              showError(err.message || 'Failed to schedule message');
+              return;
             }
             setShowScheduleModal(false);
           }}

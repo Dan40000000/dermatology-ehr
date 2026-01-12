@@ -28,11 +28,11 @@ const createConfigSchema = z.object({
   systemPrompt: z.string().min(10),
   promptTemplate: z.string().min(10),
   noteSections: z.array(z.string()).min(1),
-  sectionPrompts: z.record(z.string()).optional(),
+  sectionPrompts: z.record(z.string(), z.string()).optional(),
   outputFormat: z.enum(['soap', 'narrative', 'procedure_note']).optional(),
   verbosityLevel: z.enum(['concise', 'standard', 'detailed']).optional(),
   includeCodes: z.boolean().optional(),
-  terminologySet: z.record(z.array(z.string())).optional(),
+  terminologySet: z.record(z.string(), z.array(z.string())).optional(),
   focusAreas: z.array(z.string()).optional(),
   defaultCptCodes: z.array(z.object({
     code: z.string(),
@@ -105,6 +105,10 @@ aiAgentConfigsRouter.get('/for-appointment/:appointmentTypeId', requireAuth, asy
     const tenantId = req.user!.tenantId;
     const { appointmentTypeId } = req.params;
 
+    if (!appointmentTypeId) {
+      return res.status(400).json({ error: 'Appointment type ID is required' });
+    }
+
     const config = await agentConfigService.getConfigurationForAppointmentType(tenantId, appointmentTypeId);
 
     if (!config) {
@@ -126,6 +130,10 @@ aiAgentConfigsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) =>
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ error: 'Configuration ID is required' });
+    }
 
     const config = await agentConfigService.getConfiguration(id, tenantId);
 
@@ -197,6 +205,10 @@ aiAgentConfigsRouter.put('/:id', requireAuth, requireRoles(['admin']), async (re
     const userId = req.user!.id;
     const { id } = req.params;
 
+    if (!id) {
+      return res.status(400).json({ error: 'Configuration ID is required' });
+    }
+
     const config = await agentConfigService.updateConfiguration(id, tenantId, parsed.data, userId);
 
     if (!config) {
@@ -223,6 +235,10 @@ aiAgentConfigsRouter.delete('/:id', requireAuth, requireRoles(['admin']), async 
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
     const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ error: 'Configuration ID is required' });
+    }
 
     const deleted = await agentConfigService.deleteConfiguration(id, tenantId);
 
@@ -256,6 +272,10 @@ aiAgentConfigsRouter.post('/:id/clone', requireAuth, requireRoles(['admin']), as
     const userId = req.user!.id;
     const { id } = req.params;
     const { name } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ error: 'Configuration ID is required' });
+    }
 
     if (!name || typeof name !== 'string' || name.length < 1) {
       return res.status(400).json({ error: 'New name is required' });
@@ -291,6 +311,10 @@ aiAgentConfigsRouter.get('/:id/versions', requireAuth, requireRoles(['admin']), 
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ error: 'Configuration ID is required' });
+    }
 
     const versions = await agentConfigService.getVersionHistory(id, tenantId);
 
@@ -333,6 +357,10 @@ aiAgentConfigsRouter.post('/:id/test', requireAuth, requireRoles(['admin']), asy
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
     const { sampleTranscript } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ error: 'Configuration ID is required' });
+    }
 
     if (!sampleTranscript || typeof sampleTranscript !== 'string') {
       return res.status(400).json({ error: 'Sample transcript is required' });

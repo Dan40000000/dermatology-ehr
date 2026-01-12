@@ -407,7 +407,7 @@ patientSchedulingRouter.put(
       const appointment = apptResult.rows[0];
 
       // Check if appointment can be rescheduled (must meet cancellation cutoff)
-      const canCancel = await canCancelAppointment(req.patient!.tenantId, appointmentId);
+      const canCancel = await canCancelAppointment(req.patient!.tenantId, appointmentId!);
       if (!canCancel.canCancel) {
         await client.query("ROLLBACK");
         return res.status(403).json({ error: canCancel.reason });
@@ -564,7 +564,7 @@ patientSchedulingRouter.delete(
       const appointment = apptResult.rows[0];
 
       // Check if appointment can be cancelled
-      const canCancel = await canCancelAppointment(req.patient!.tenantId, appointmentId);
+      const canCancel = await canCancelAppointment(req.patient!.tenantId, appointmentId!);
       if (!canCancel.canCancel) {
         await client.query("ROLLBACK");
         return res.status(403).json({ error: canCancel.reason });

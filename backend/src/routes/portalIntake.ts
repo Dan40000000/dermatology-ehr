@@ -150,7 +150,7 @@ portalIntakeRouter.post(
           patientId,
           assignment.form_template_id,
           req.ip,
-          req.get('user-agent'),
+          req.get('user-agent') || null,
         ]
       );
 
@@ -175,7 +175,7 @@ portalIntakeRouter.post(
  * Save form response (draft or submit)
  */
 const saveResponseSchema = z.object({
-  responseData: z.record(z.any()), // {field_id: value}
+  responseData: z.record(z.string(), z.any()), // {field_id: value}
   submit: z.boolean().default(false),
   signatureData: z.string().optional(), // base64 signature if form requires it
 });
@@ -255,7 +255,7 @@ portalIntakeRouter.put(
       return res.json(updateResult.rows[0]);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid input", details: error.errors });
+        return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
       console.error("Save response error:", error);
       return res.status(500).json({ error: "Failed to save response" });
@@ -457,14 +457,14 @@ portalIntakeRouter.post(
           consent.version,
           consent.content,
           req.ip,
-          req.get('user-agent'),
+          req.get('user-agent') || null,
         ]
       );
 
       return res.status(201).json(result.rows[0]);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid input", details: error.errors });
+        return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
       console.error("Sign consent error:", error);
       return res.status(500).json({ error: "Failed to sign consent" });
@@ -582,14 +582,14 @@ portalIntakeRouter.post(
           data.deviceType,
           appointment.location_id,
           req.ip,
-          req.get('user-agent'),
+          req.get('user-agent') || null,
         ]
       );
 
       return res.status(201).json(result.rows[0]);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid input", details: error.errors });
+        return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
       console.error("Start check-in error:", error);
       return res.status(500).json({ error: "Failed to start check-in" });
@@ -733,7 +733,7 @@ portalIntakeRouter.put(
       return res.json(result.rows[0]);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid input", details: error.errors });
+        return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
       console.error("Update check-in error:", error);
       return res.status(500).json({ error: "Failed to update check-in" });

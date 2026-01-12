@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, AuthedRequest } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { randomUUID } from 'crypto';
 import { getTwilioServiceFromEnv } from '../services/twilioService';
@@ -35,7 +35,7 @@ const updateWaitlistSchema = z.object({
 });
 
 // Get waitlist entries
-router.get('/', async (req, res, next) => {
+router.get('/', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { status, priority, providerId } = req.query;
@@ -84,10 +84,10 @@ router.get('/', async (req, res, next) => {
 });
 
 // Create waitlist entry
-router.post('/', async (req, res, next) => {
+router.post('/', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
-    const userId = req.user?.id;
+    const userId = req.user!.id;
     const validated = createWaitlistSchema.parse(req.body);
 
     const id = randomUUID();
@@ -119,14 +119,14 @@ router.post('/', async (req, res, next) => {
     res.status(201).json(result.rows[0]);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: 'Validation error', details: error.errors });
+      return res.status(400).json({ error: 'Validation error', details: error.issues });
     }
     next(error);
   }
 });
 
 // Update waitlist entry
-router.patch('/:id', async (req, res, next) => {
+router.patch('/:id', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
@@ -197,14 +197,14 @@ router.patch('/:id', async (req, res, next) => {
     res.json(result.rows[0]);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: 'Validation error', details: error.errors });
+      return res.status(400).json({ error: 'Validation error', details: error.issues });
     }
     next(error);
   }
 });
 
 // Delete waitlist entry
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
@@ -225,10 +225,10 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 // Auto-fill waitlist when appointment is cancelled
-router.post('/auto-fill', async (req, res, next) => {
+router.post('/auto-fill', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
-    const userId = req.user?.id;
+    const userId = req.user!.id;
     const { appointmentId, providerId, appointmentDate, appointmentTime } = req.body;
 
     if (!appointmentId || !providerId || !appointmentDate || !appointmentTime) {
@@ -295,36 +295,57 @@ router.post('/auto-fill', async (req, res, next) => {
       try {
         // Send SMS notification
         if (entry.phone) {
+          const twilioService = getTwilioServiceFromEnv();
           await sendWaitlistNotification(
-            tenantId,
-            entry,
-            appointment.provider_name,
-            appointmentDate,
-            appointmentTime,
-            'sms'
+            {
+              waitlistId: entry.id,
+              patientId: entry.patient_id,
+              patientName: `${entry.first_name} ${entry.last_name}`,
+              patientPhone: entry.phone,
+              patientEmail: entry.email,
+              providerName: appointment.provider_name,
+              appointmentDate,
+              appointmentTime,
+              tenantId,
+            },
+            twilioService
           );
         }
 
         // Send email notification (simulated)
         if (entry.email) {
+          const twilioService = getTwilioServiceFromEnv();
           await sendWaitlistNotification(
-            tenantId,
-            entry,
-            appointment.provider_name,
-            appointmentDate,
-            appointmentTime,
-            'email'
+            {
+              waitlistId: entry.id,
+              patientId: entry.patient_id,
+              patientName: `${entry.first_name} ${entry.last_name}`,
+              patientPhone: entry.phone,
+              patientEmail: entry.email,
+              providerName: appointment.provider_name,
+              appointmentDate,
+              appointmentTime,
+              tenantId,
+            },
+            twilioService
           );
         }
 
         // Create portal notification
+        const twilioService = getTwilioServiceFromEnv();
         await sendWaitlistNotification(
-          tenantId,
-          entry,
-          appointment.provider_name,
-          appointmentDate,
-          appointmentTime,
-          'portal'
+          {
+            waitlistId: entry.id,
+            patientId: entry.patient_id,
+            patientName: `${entry.first_name} ${entry.last_name}`,
+            patientPhone: entry.phone,
+            patientEmail: entry.email,
+            providerName: appointment.provider_name,
+            appointmentDate,
+            appointmentTime,
+            tenantId,
+          },
+          twilioService
         );
 
         // Update waitlist entry status
@@ -347,7 +368,7 @@ router.post('/auto-fill', async (req, res, next) => {
         });
 
         // Audit log
-        await auditLog(tenantId, userId || 'system', 'waitlist_auto_fill_notification', 'waitlist', entry.id);
+        await auditLog(tenantId, userId, 'waitlist_auto_fill_notification', 'waitlist', entry.id);
       } catch (error: any) {
         logger.error('Failed to notify waitlist patient', { error: error.message, waitlistId: entry.id });
         notifications.push({
@@ -372,10 +393,10 @@ router.post('/auto-fill', async (req, res, next) => {
 });
 
 // Manually notify a waitlist patient
-router.post('/:id/notify', async (req, res, next) => {
+router.post('/:id/notify', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
-    const userId = req.user?.id;
+    const userId = req.user!.id;
     const { id } = req.params;
     const { method, appointmentDate, appointmentTime, providerName } = req.body;
 
@@ -389,7 +410,7 @@ router.post('/:id/notify', async (req, res, next) => {
        FROM waitlist w
        JOIN patients p ON w.patient_id = p.id
        WHERE w.id = $1 AND w.tenant_id = $2`,
-      [id, tenantId]
+      [id!, tenantId]
     );
 
     if (result.rows.length === 0) {
@@ -403,7 +424,7 @@ router.post('/:id/notify', async (req, res, next) => {
       const twilioService = getTwilioServiceFromEnv();
       const notificationResult = await sendWaitlistNotification(
         {
-          waitlistId: id,
+          waitlistId: id!,
           patientId: entry.patient_id,
           patientName: `${entry.first_name} ${entry.last_name}`,
           patientPhone: entry.phone,
@@ -421,11 +442,11 @@ router.post('/:id/notify', async (req, res, next) => {
       }
 
       // Audit log
-      await auditLog(tenantId, userId || 'system', 'waitlist_manual_notification', 'waitlist', id);
+      await auditLog(tenantId, userId, 'waitlist_manual_notification', 'waitlist', id!);
 
       res.json({
         message: 'Patient notified successfully',
-        waitlistId: id,
+        waitlistId: id!,
         notificationId: notificationResult.notificationId,
         method,
         notifiedAt: new Date().toISOString(),
@@ -449,15 +470,15 @@ router.post('/:id/notify', async (req, res, next) => {
              notification_method = $2,
              updated_at = $1
          WHERE id = $3 AND tenant_id = $4`,
-        [new Date().toISOString(), method, id, tenantId]
+        [new Date().toISOString(), method, id!, tenantId]
       );
 
       // Audit log
-      await auditLog(tenantId, userId || 'system', 'waitlist_manual_notification', 'waitlist', id);
+      await auditLog(tenantId, userId, 'waitlist_manual_notification', 'waitlist', id!);
 
       res.json({
         message: 'Patient notified successfully',
-        waitlistId: id,
+        waitlistId: id!,
         method,
         notifiedAt: new Date().toISOString(),
       });
@@ -469,7 +490,7 @@ router.post('/:id/notify', async (req, res, next) => {
 });
 
 // Get notification history for a waitlist entry
-router.get('/:id/notifications', async (req, res, next) => {
+router.get('/:id/notifications', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
@@ -477,7 +498,7 @@ router.get('/:id/notifications', async (req, res, next) => {
     // Verify waitlist entry exists and belongs to tenant
     const waitlistCheck = await pool.query(
       'SELECT id FROM waitlist WHERE id = $1 AND tenant_id = $2',
-      [id, tenantId]
+      [id!, tenantId]
     );
 
     if (waitlistCheck.rows.length === 0) {
@@ -485,7 +506,7 @@ router.get('/:id/notifications', async (req, res, next) => {
     }
 
     // Get notification history
-    const notifications = await getWaitlistNotificationHistory(tenantId, id);
+    const notifications = await getWaitlistNotificationHistory(tenantId, id!);
 
     res.json(notifications);
   } catch (error: any) {
@@ -495,10 +516,10 @@ router.get('/:id/notifications', async (req, res, next) => {
 });
 
 // Fill waitlist entry by manually scheduling
-router.post('/:id/fill', async (req, res, next) => {
+router.post('/:id/fill', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
-    const userId = req.user?.id;
+    const userId = req.user!.id;
     const { id } = req.params;
     const { appointmentId } = req.body;
 
@@ -515,7 +536,7 @@ router.post('/:id/fill', async (req, res, next) => {
            updated_at = $2
        WHERE id = $3 AND tenant_id = $4
        RETURNING *`,
-      [appointmentId, new Date().toISOString(), id, tenantId]
+      [appointmentId, new Date().toISOString(), id!, tenantId]
     );
 
     if (result.rows.length === 0) {
@@ -523,9 +544,7 @@ router.post('/:id/fill', async (req, res, next) => {
     }
 
     // Audit log
-    await auditLog(tenantId, userId || 'system', 'waitlist_manual_fill', 'waitlist', id, {
-      appointmentId,
-    });
+    await auditLog(tenantId, userId, 'waitlist_manual_fill', 'waitlist', id!);
 
     logger.info('Waitlist entry filled manually', {
       waitlistId: id,
@@ -640,7 +659,7 @@ Your Healthcare Team
 }
 
 // Get holds for a waitlist entry
-router.get('/:id/holds', async (req, res, next) => {
+router.get('/:id/holds', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
@@ -668,12 +687,12 @@ router.get('/:id/holds', async (req, res, next) => {
 });
 
 // Accept a hold and schedule the appointment
-router.post('/holds/:holdId/accept', async (req, res, next) => {
+router.post('/holds/:holdId/accept', async (req: AuthedRequest, res, next) => {
   const client = await pool.connect();
 
   try {
     const tenantId = req.user!.tenantId;
-    const userId = req.user?.id;
+    const userId = req.user!.id;
     const { holdId } = req.params;
 
     await client.query('BEGIN');
@@ -685,7 +704,7 @@ router.post('/holds/:holdId/accept', async (req, res, next) => {
        JOIN waitlist w ON wh.waitlist_id = w.id
        WHERE wh.id = $1 AND wh.tenant_id = $2 AND wh.status = 'active'
        FOR UPDATE`,
-      [holdId, tenantId]
+      [holdId!, tenantId]
     );
 
     if (holdResult.rows.length === 0) {
@@ -736,7 +755,7 @@ router.post('/holds/:holdId/accept', async (req, res, next) => {
     );
 
     // Audit log
-    await auditLog(tenantId, userId || 'system', 'waitlist_hold_accepted', 'waitlist_hold', holdId);
+    await auditLog(tenantId, userId, 'waitlist_hold_accepted', 'waitlist_hold', holdId!);
 
     await client.query('COMMIT');
 
@@ -755,12 +774,12 @@ router.post('/holds/:holdId/accept', async (req, res, next) => {
 });
 
 // Reject/cancel a hold
-router.post('/holds/:holdId/cancel', async (req, res, next) => {
+router.post('/holds/:holdId/cancel', async (req: AuthedRequest, res, next) => {
   const client = await pool.connect();
 
   try {
     const tenantId = req.user!.tenantId;
-    const userId = req.user?.id;
+    const userId = req.user!.id;
     const { holdId } = req.params;
 
     await client.query('BEGIN');
@@ -771,7 +790,7 @@ router.post('/holds/:holdId/cancel', async (req, res, next) => {
        SET status = 'cancelled', updated_at = NOW()
        WHERE id = $1 AND tenant_id = $2 AND status = 'active'
        RETURNING waitlist_id`,
-      [holdId, tenantId]
+      [holdId!, tenantId]
     );
 
     if (result.rows.length === 0) {
@@ -799,7 +818,7 @@ router.post('/holds/:holdId/cancel', async (req, res, next) => {
     }
 
     // Audit log
-    await auditLog(tenantId, userId || 'system', 'waitlist_hold_cancelled', 'waitlist_hold', holdId);
+    await auditLog(tenantId, userId, 'waitlist_hold_cancelled', 'waitlist_hold', holdId!);
 
     await client.query('COMMIT');
 
@@ -817,7 +836,7 @@ router.post('/holds/:holdId/cancel', async (req, res, next) => {
 });
 
 // Get all active holds for a tenant
-router.get('/holds', async (req, res, next) => {
+router.get('/holds', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { status } = req.query;
@@ -862,21 +881,21 @@ router.get('/holds', async (req, res, next) => {
 });
 
 // Manual trigger for waitlist auto-fill (for testing or manual runs)
-router.post('/trigger-auto-fill/:appointmentId', async (req, res, next) => {
+router.post('/trigger-auto-fill/:appointmentId', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
-    const userId = req.user?.id;
+    const userId = req.user!.id;
     const { appointmentId } = req.params;
     const { maxMatches = 5 } = req.body;
 
     const matches = await waitlistAutoFillService.processAppointmentCancellation(
       tenantId,
-      appointmentId,
+      appointmentId!,
       maxMatches
     );
 
     // Audit log
-    await auditLog(tenantId, userId || 'system', 'waitlist_auto_fill_manual_trigger', 'appointment', appointmentId);
+    await auditLog(tenantId, userId, 'waitlist_auto_fill_manual_trigger', 'appointment', appointmentId!);
 
     res.json({
       message: 'Waitlist auto-fill triggered',
@@ -895,7 +914,7 @@ router.post('/trigger-auto-fill/:appointmentId', async (req, res, next) => {
 });
 
 // Get waitlist auto-fill statistics
-router.get('/stats/auto-fill', async (req, res, next) => {
+router.get('/stats/auto-fill', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { startDate, endDate } = req.query;

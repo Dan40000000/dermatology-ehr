@@ -1,5 +1,5 @@
 import { pool } from '../db/pool';
-import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 
 export interface RecallCampaign {
   id: string;
@@ -81,6 +81,9 @@ export async function generateRecalls(
     }
 
     const campaign = campaignResult.rows[0];
+    if (!campaign) {
+      throw new Error('Campaign not found');
+    }
     const intervalMonths = campaign.intervalMonths || 12;
 
     // Find patients who need recalls
@@ -116,7 +119,7 @@ export async function generateRecalls(
     // Create recalls for eligible patients
     for (const row of patientsResult.rows) {
       try {
-        const recallId = uuidv4();
+        const recallId = crypto.randomUUID();
         const dueDate = new Date();
         dueDate.setDate(dueDate.getDate() + 7); // Due in 7 days
 
@@ -193,7 +196,7 @@ export async function logReminder(
   sentBy: string,
   deliveryStatus: 'pending' | 'sent' | 'delivered' | 'failed' | 'bounced' | 'opted_out' = 'sent'
 ): Promise<string> {
-  const logId = uuidv4();
+  const logId = crypto.randomUUID();
 
   await pool.query(
     `INSERT INTO reminder_log (
@@ -219,7 +222,7 @@ export async function getPatientPreferences(
     [tenantId, patientId]
   );
 
-  return result.rows[0] || null;
+  return result.rows[0] ?? null;
 }
 
 /**
@@ -230,7 +233,7 @@ export async function updatePatientPreferences(
   patientId: string,
   preferences: Partial<Omit<CommunicationPreferences, 'id' | 'tenantId' | 'patientId'>>
 ): Promise<CommunicationPreferences> {
-  const id = uuidv4();
+  const id = crypto.randomUUID();
 
   const result = await pool.query<CommunicationPreferences>(
     `INSERT INTO patient_communication_preferences (
@@ -260,7 +263,7 @@ export async function updatePatientPreferences(
     ]
   );
 
-  return result.rows[0];
+  return result.rows[0]!;
 }
 
 /**

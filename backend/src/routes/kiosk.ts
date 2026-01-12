@@ -182,14 +182,7 @@ kioskRouter.post("/checkin/start", requireKioskAuth, async (req: KioskRequest, r
     );
 
     // Audit log
-    await auditLog({
-      tenantId,
-      userId: kioskId,
-      resourceType: "checkin_session",
-      resourceId: sessionId,
-      action: "create",
-      details: { patientId, appointmentId },
-    });
+    await auditLog(tenantId, kioskId, "create", "checkin_session", sessionId);
 
     return res.status(201).json({ sessionId, patientId, appointmentId });
   } catch (err) {
@@ -294,14 +287,7 @@ kioskRouter.put("/checkin/:sessionId/demographics", requireKioskAuth, async (req
     );
 
     // Audit log
-    await auditLog({
-      tenantId,
-      userId: req.kiosk!.id,
-      resourceType: "patient",
-      resourceId: patientId,
-      action: "update",
-      details: { updatedFields: Object.keys(parsed.data), source: "kiosk" },
-    });
+    await auditLog(tenantId, req.kiosk!.id, "update", "patient", patientId);
 
     return res.json({ success: true });
   } catch (err) {
@@ -370,14 +356,7 @@ kioskRouter.put("/checkin/:sessionId/insurance", requireKioskAuth, async (req: K
       [sessionId]
     );
 
-    await auditLog({
-      tenantId,
-      userId: req.kiosk!.id,
-      resourceType: "patient",
-      resourceId: patientId,
-      action: "update",
-      details: { updatedFields: Object.keys(parsed.data), source: "kiosk_insurance" },
-    });
+    await auditLog(tenantId, req.kiosk!.id, "update", "patient", patientId);
 
     return res.json({ success: true });
   } catch (err) {
@@ -393,7 +372,7 @@ const insurancePhotoSchema = z.object({
 });
 
 kioskRouter.post("/checkin/:sessionId/insurance-photo", requireKioskAuth, async (req: KioskRequest, res) => {
-  const { sessionId } = req.params;
+  const sessionId = req.params.sessionId!;
   const tenantId = req.kiosk!.tenantId;
 
   const parsed = insurancePhotoSchema.safeParse(req.body);
@@ -425,14 +404,7 @@ kioskRouter.post("/checkin/:sessionId/insurance-photo", requireKioskAuth, async 
       [savedPhoto.url, sessionId]
     );
 
-    await auditLog({
-      tenantId,
-      userId: req.kiosk!.id,
-      resourceType: "checkin_session",
-      resourceId: sessionId,
-      action: "upload_insurance_photo",
-      details: { side, patientId },
-    });
+    await auditLog(tenantId, req.kiosk!.id, "upload_insurance_photo", "checkin_session", sessionId);
 
     return res.json({ success: true, photoUrl: savedPhoto.url, thumbnailUrl: savedPhoto.thumbnailUrl });
   } catch (err) {
@@ -511,14 +483,7 @@ kioskRouter.post("/checkin/:sessionId/signature", requireKioskAuth, async (req: 
       [savedSignature.url, consentFormId, sessionId]
     );
 
-    await auditLog({
-      tenantId,
-      userId: req.kiosk!.id,
-      resourceType: "patient_consent",
-      resourceId: consentId,
-      action: "create",
-      details: { patientId, consentFormId, sessionId },
-    });
+    await auditLog(tenantId, req.kiosk!.id, "create", "patient_consent", consentId);
 
     return res.json({
       success: true,
@@ -534,7 +499,7 @@ kioskRouter.post("/checkin/:sessionId/signature", requireKioskAuth, async (req: 
 
 // Complete check-in
 kioskRouter.post("/checkin/:sessionId/complete", requireKioskAuth, async (req: KioskRequest, res) => {
-  const { sessionId } = req.params;
+  const sessionId = req.params.sessionId!;
   const tenantId = req.kiosk!.tenantId;
 
   try {
@@ -560,14 +525,7 @@ kioskRouter.post("/checkin/:sessionId/complete", requireKioskAuth, async (req: K
       );
     }
 
-    await auditLog({
-      tenantId,
-      userId: req.kiosk!.id,
-      resourceType: "checkin_session",
-      resourceId: sessionId,
-      action: "complete",
-      details: { patientId, appointmentId },
-    });
+    await auditLog(tenantId, req.kiosk!.id, "complete", "checkin_session", sessionId);
 
     return res.json({ success: true, patientId, appointmentId });
   } catch (err) {
@@ -578,7 +536,7 @@ kioskRouter.post("/checkin/:sessionId/complete", requireKioskAuth, async (req: K
 
 // Cancel check-in session
 kioskRouter.post("/checkin/:sessionId/cancel", requireKioskAuth, async (req: KioskRequest, res) => {
-  const { sessionId } = req.params;
+  const sessionId = req.params.sessionId!;
   const tenantId = req.kiosk!.tenantId;
 
   try {
@@ -593,14 +551,7 @@ kioskRouter.post("/checkin/:sessionId/cancel", requireKioskAuth, async (req: Kio
       return res.status(404).json({ error: "Session not found" });
     }
 
-    await auditLog({
-      tenantId,
-      userId: req.kiosk!.id,
-      resourceType: "checkin_session",
-      resourceId: sessionId,
-      action: "cancel",
-      details: {},
-    });
+    await auditLog(tenantId, req.kiosk!.id, "cancel", "checkin_session", sessionId);
 
     return res.json({ success: true });
   } catch (err) {

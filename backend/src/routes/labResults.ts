@@ -3,9 +3,9 @@
  * Manage laboratory results, trends, and critical value notifications
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import { pool } from '../db/pool';
-import { requireAuth } from '../middleware/auth';
+import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { logger } from '../lib/logger';
 import { HL7Service } from '../services/hl7Service';
 
@@ -18,7 +18,7 @@ router.use(requireAuth);
  * GET /api/lab-results
  * Get lab results with filtering
  */
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', async (req: AuthedRequest, res: Response) => {
   try {
     const { patient_id, lab_order_id, from_date, to_date, abnormal_only, critical_only } = req.query;
 
@@ -87,7 +87,7 @@ router.get('/', async (req: Request, res: Response) => {
  * GET /api/lab-results/trends/:patient_id/:test_code
  * Get trend data for a specific test over time
  */
-router.get('/trends/:patient_id/:test_code', async (req: Request, res: Response) => {
+router.get('/trends/:patient_id/:test_code', async (req: AuthedRequest, res: Response) => {
   try {
     const { patient_id, test_code } = req.params;
     const { months = 12 } = req.query;
@@ -162,7 +162,7 @@ router.get('/trends/:patient_id/:test_code', async (req: Request, res: Response)
  * POST /api/lab-results/ingest
  * Ingest lab results from HL7 ORU message or manual entry
  */
-router.post('/ingest', async (req: Request, res: Response) => {
+router.post('/ingest', async (req: AuthedRequest, res: Response) => {
   const client = await pool.connect();
 
   try {
@@ -318,7 +318,7 @@ router.post('/ingest', async (req: Request, res: Response) => {
  * POST /api/lab-results/:id/acknowledge
  * Acknowledge review of lab result
  */
-router.post('/:id/acknowledge', async (req: Request, res: Response) => {
+router.post('/:id/acknowledge', async (req: AuthedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { comments } = req.body;
@@ -348,7 +348,7 @@ router.post('/:id/acknowledge', async (req: Request, res: Response) => {
  * GET /api/lab-results/critical
  * Get pending critical value notifications
  */
-router.get('/critical', async (req: Request, res: Response) => {
+router.get('/critical', async (req: AuthedRequest, res: Response) => {
   try {
     const result = await pool.query(
       `SELECT
@@ -378,7 +378,7 @@ router.get('/critical', async (req: Request, res: Response) => {
  * POST /api/lab-results/critical/:id/acknowledge
  * Acknowledge a critical value notification
  */
-router.post('/critical/:id/acknowledge', async (req: Request, res: Response) => {
+router.post('/critical/:id/acknowledge', async (req: AuthedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { notification_method, read_back_value, action_taken } = req.body;

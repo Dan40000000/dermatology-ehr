@@ -212,6 +212,7 @@ export function TasksPage() {
 
   // Filter tasks
   const filteredTasks = tasks.filter((task) => {
+    if (!task) return false;
     if (filters.search) {
       const searchLower = filters.search.toLowerCase();
       const title = (task.title || '').toLowerCase();
@@ -227,11 +228,11 @@ export function TasksPage() {
   });
 
   // Stats
-  const todoCount = tasks.filter((t) => t.status === 'todo').length;
-  const inProgressCount = tasks.filter((t) => t.status === 'in_progress').length;
-  const completedCount = tasks.filter((t) => t.status === 'completed').length;
-  const overdueCount = tasks.filter((t) => t.status !== 'completed' && isOverdue(t.dueDate)).length;
-  const myTasksCount = tasks.filter((t) => t.assignedTo === session?.user.id).length;
+  const todoCount = tasks.filter((t) => t && t.status === 'todo').length;
+  const inProgressCount = tasks.filter((t) => t && t.status === 'in_progress').length;
+  const completedCount = tasks.filter((t) => t && t.status === 'completed').length;
+  const overdueCount = tasks.filter((t) => t && t.status !== 'completed' && isOverdue(t.dueDate)).length;
+  const myTasksCount = tasks.filter((t) => t && t.assignedTo === session?.user?.id).length;
 
   const users = providers.map((p) => ({ id: p.id, fullName: p.fullName }));
 

@@ -99,8 +99,8 @@ export default function ECheckInPage({ tenantId, portalToken, appointmentId }: E
       const consentsData = await fetchPortalRequiredConsents(tenantId, portalToken);
       setRequiredConsents(consentsData.requiredConsents);
 
-      // Mock copay amount - would come from appointment/insurance
-      setCopayAmount(25.00);
+      // Copay amount should come from appointment/insurance data in session
+      setCopayAmount(sessionData.copayAmount || 0);
     } catch (err) {
       setError('Failed to initialize check-in');
       console.error(err);
@@ -192,15 +192,16 @@ export default function ECheckInPage({ tenantId, portalToken, appointmentId }: E
       setLoading(true);
 
       // In real implementation, capture actual signature
-      const mockSignature = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+      // For now, this will require actual signature capture implementation
+      setError('Signature capture not yet implemented. Please sign forms in person.');
 
-      await signPortalConsent(tenantId, portalToken, consentId, {
-        signatureData: mockSignature,
-        signerName: 'Patient Name', // Would come from patient data
-        signerRelationship: 'self',
-      });
-
-      setSignedConsents((prev) => new Set([...prev, consentId]));
+      // Note: Remove this block and implement signature capture
+      // await signPortalConsent(tenantId, portalToken, consentId, {
+      //   signatureData: signatureData,
+      //   signerName: patientName,
+      //   signerRelationship: 'self',
+      // });
+      // setSignedConsents((prev) => new Set([...prev, consentId]));
     } catch (err) {
       setError('Failed to sign consent');
       console.error(err);

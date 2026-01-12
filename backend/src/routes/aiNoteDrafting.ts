@@ -134,7 +134,7 @@ router.post(
       const data = parsed.data;
 
       await aiNoteDraftingService.recordSuggestionFeedback(
-        id,
+        id!,
         data.accepted,
         data.feedback || null,
         tenantId

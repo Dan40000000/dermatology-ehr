@@ -1679,7 +1679,7 @@ function App() {
                   <div key={c.id} className="list-row">
                     <div>
                       <p className="strong">CPT {c.cptCode}</p>
-                      <p className="muted">ICD: {c.icdCodes?.join(", ") || "n/a"}</p>
+                      <p className="muted">ICD: {Array.isArray(c.icdCodes) ? c.icdCodes.join(", ") : (c.icdCodes || "n/a")}</p>
                     </div>
                     <span className="muted">${(c.amountCents / 100).toFixed(2)}</span>
                   </div>
@@ -1966,7 +1966,7 @@ function App() {
                 <div className="list-row">
                   <div>
                     <p className="strong">Resources</p>
-                    <p className="muted">{interop?.resources?.join(", ") || "-"}</p>
+                    <p className="muted">{Array.isArray(interop?.resources) ? interop.resources.join(", ") : (interop?.resources || "-")}</p>
                   </div>
                 </div>
               </div>

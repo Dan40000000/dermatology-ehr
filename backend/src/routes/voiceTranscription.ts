@@ -75,7 +75,7 @@ router.post(
         language: language || "en",
       });
 
-      await auditLog(tenantId, userId, "voice_transcribe", "transcription", result.id);
+      await auditLog(tenantId, userId, "voice_transcribe", "transcription", result.id!);
 
       res.json({
         transcription: result,
@@ -94,7 +94,7 @@ router.get("/transcriptions/:id", requireAuth, async (req: AuthedRequest, res) =
     const { id } = req.params;
     const tenantId = req.user!.tenantId;
 
-    const transcription = await voiceTranscriptionService.getTranscription(id, tenantId);
+    const transcription = await voiceTranscriptionService.getTranscription(id!, tenantId);
 
     if (!transcription) {
       return res.status(404).json({ error: "Transcription not found" });
@@ -114,7 +114,7 @@ router.get("/encounters/:encounterId", requireAuth, async (req: AuthedRequest, r
     const tenantId = req.user!.tenantId;
 
     const transcriptions = await voiceTranscriptionService.getEncounterTranscriptions(
-      encounterId,
+      encounterId!,
       tenantId
     );
 
@@ -134,14 +134,14 @@ router.post(
       const { id } = req.params;
       const tenantId = req.user!.tenantId;
 
-      const transcription = await voiceTranscriptionService.getTranscription(id, tenantId);
+      const transcription = await voiceTranscriptionService.getTranscription(id!, tenantId);
 
       if (!transcription) {
         return res.status(404).json({ error: "Transcription not found" });
       }
 
       const sections = await voiceTranscriptionService.transcriptionToNoteSections(
-        transcription.transcriptionText
+        transcription.transcriptionText!
       );
 
       res.json({ sections });
@@ -181,13 +181,13 @@ router.delete(
       const tenantId = req.user!.tenantId;
       const userId = req.user!.id;
 
-      const deleted = await voiceTranscriptionService.deleteTranscription(id, tenantId);
+      const deleted = await voiceTranscriptionService.deleteTranscription(id!, tenantId);
 
       if (!deleted) {
         return res.status(404).json({ error: "Transcription not found" });
       }
 
-      await auditLog(tenantId, userId, "transcription_delete", "transcription", id);
+      await auditLog(tenantId, userId, "transcription_delete", "transcription", id!);
       res.json({ success: true });
     } catch (error) {
       console.error("Delete transcription error:", error);

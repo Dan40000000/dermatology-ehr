@@ -85,11 +85,7 @@ inventoryUsageRouter.post("/", requireAuth, requireRoles(["provider", "ma", "adm
 
     const usageId = result.rows[0].id;
 
-    await auditLog(tenantId, req.user!.id, "inventory_usage_record", "inventory_usage", usageId, {
-      itemId: payload.itemId,
-      quantity: payload.quantityUsed,
-      patientId: payload.patientId,
-    });
+    await auditLog(tenantId, req.user!.id, "inventory_usage_record", "inventory_usage", usageId);
 
     res.status(201).json({ id: usageId });
   } catch (error: any) {
@@ -163,11 +159,7 @@ inventoryUsageRouter.post("/batch", requireAuth, requireRoles(["provider", "ma",
 
     await client.query("COMMIT");
 
-    await auditLog(tenantId, req.user!.id, "inventory_usage_batch_record", "inventory_usage", "batch", {
-      count: payload.items.length,
-      patientId: payload.patientId,
-      encounterId: payload.encounterId,
-    });
+    await auditLog(tenantId, req.user!.id, "inventory_usage_batch_record", "inventory_usage", "batch");
 
     res.status(201).json({ ids: usageIds, count: usageIds.length });
   } catch (error: any) {
@@ -404,7 +396,7 @@ inventoryUsageRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async 
 
     await client.query("COMMIT");
 
-    await auditLog(tenantId, req.user!.id, "inventory_usage_delete", "inventory_usage", id);
+    await auditLog(tenantId, req.user!.id, "inventory_usage_delete", "inventory_usage", id!);
 
     res.json({ success: true });
   } catch (error) {

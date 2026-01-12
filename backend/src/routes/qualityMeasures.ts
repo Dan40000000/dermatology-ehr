@@ -300,10 +300,13 @@ qualityMeasuresRouter.get("/reports/pqrs", requireAuth, async (req: AuthedReques
     // Group by category
     const byCategory: Record<string, any[]> = {};
     result.rows.forEach(row => {
-      if (!byCategory[row.category]) {
-        byCategory[row.category] = [];
+      const category = row.category;
+      if (category) {
+        if (!byCategory[category]) {
+          byCategory[category] = [];
+        }
+        byCategory[category]!.push(row);
       }
-      byCategory[row.category].push(row);
     });
 
     const report = {

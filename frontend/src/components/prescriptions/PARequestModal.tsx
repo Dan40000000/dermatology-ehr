@@ -74,11 +74,20 @@ export function PARequestModal({ isOpen, onClose, onSuccess, prescription }: PAR
       setSelectedPatient(patient || null);
 
       if (patient?.insurance) {
-        setFormData((prev) => ({
-          ...prev,
-          payer: patient.insurance?.planName || '',
-          memberId: patient.insurance?.memberId || '',
-        }));
+        // Handle insurance - backend may return string instead of object
+        if (typeof patient.insurance === 'object' && patient.insurance.planName) {
+          setFormData((prev) => ({
+            ...prev,
+            payer: patient.insurance.planName || '',
+            memberId: patient.insurance.memberId || '',
+          }));
+        } else if (typeof patient.insurance === 'string') {
+          setFormData((prev) => ({
+            ...prev,
+            payer: patient.insurance as string,
+            memberId: '',
+          }));
+        }
       }
     }
   }, [formData.patientId, patients]);

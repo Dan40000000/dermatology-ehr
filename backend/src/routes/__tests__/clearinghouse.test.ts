@@ -62,7 +62,7 @@ describe('Clearinghouse Routes - Claim Submission', () => {
       queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
       const res = await request(app)
         .post('/api/clearinghouse/submit-claim')
-        .send({ claimId: '00000000-0000-0000-0000-000000000001' });
+        .send({ claimId: '11111111-1111-4111-8111-111111111111' });
       expect(res.status).toBe(404);
       expect(res.body.error).toBe('Claim not found');
     });
@@ -74,7 +74,7 @@ describe('Clearinghouse Routes - Claim Submission', () => {
       });
       const res = await request(app)
         .post('/api/clearinghouse/submit-claim')
-        .send({ claimId: '00000000-0000-0000-0000-000000000001' });
+        .send({ claimId: '11111111-1111-4111-8111-111111111111' });
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('Claim already submitted');
     });
@@ -86,7 +86,7 @@ describe('Clearinghouse Routes - Claim Submission', () => {
       });
       const res = await request(app)
         .post('/api/clearinghouse/submit-claim')
-        .send({ claimId: '00000000-0000-0000-0000-000000000001' });
+        .send({ claimId: '11111111-1111-4111-8111-111111111111' });
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('Claim already submitted');
     });
@@ -103,7 +103,7 @@ describe('Clearinghouse Routes - Claim Submission', () => {
       const res = await request(app)
         .post('/api/clearinghouse/submit-claim')
         .send({
-          claimId: '00000000-0000-0000-0000-000000000001',
+          claimId: '11111111-1111-4111-8111-111111111111',
           batchId: 'batch-1',
         });
       expect(res.status).toBe(201);
@@ -117,7 +117,7 @@ describe('Clearinghouse Routes - Claim Submission', () => {
       queryMock.mockRejectedValueOnce(new Error('Database error'));
       const res = await request(app)
         .post('/api/clearinghouse/submit-claim')
-        .send({ claimId: '00000000-0000-0000-0000-000000000001' });
+        .send({ claimId: '11111111-1111-4111-8111-111111111111' });
       expect(res.status).toBe(500);
     });
   });
@@ -439,7 +439,7 @@ describe('Clearinghouse Routes - Reconciliation', () => {
       queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
       const res = await request(app)
         .post('/api/clearinghouse/reconcile')
-        .send({ eraId: '00000000-0000-0000-0000-000000000001' });
+        .send({ eraId: '11111111-1111-4111-8111-111111111111' });
       expect(res.status).toBe(404);
       expect(res.body.error).toBe('ERA not found');
     });
@@ -454,8 +454,8 @@ describe('Clearinghouse Routes - Reconciliation', () => {
       const res = await request(app)
         .post('/api/clearinghouse/reconcile')
         .send({
-          eraId: '00000000-0000-0000-0000-000000000001',
-          eftId: '00000000-0000-0000-0000-000000000002',
+          eraId: '11111111-1111-4111-8111-111111111111',
+          eftId: '22222222-2222-4222-8222-222222222222',
         });
       expect(res.status).toBe(404);
       expect(res.body.error).toBe('EFT not found');
@@ -472,7 +472,7 @@ describe('Clearinghouse Routes - Reconciliation', () => {
       const res = await request(app)
         .post('/api/clearinghouse/reconcile')
         .send({
-          eraId: '00000000-0000-0000-0000-000000000001',
+          eraId: '11111111-1111-4111-8111-111111111111',
         });
       expect(res.status).toBe(200);
       expect(res.body.varianceCents).toBe(0);
@@ -496,8 +496,8 @@ describe('Clearinghouse Routes - Reconciliation', () => {
       const res = await request(app)
         .post('/api/clearinghouse/reconcile')
         .send({
-          eraId: '00000000-0000-0000-0000-000000000001',
-          eftId: '00000000-0000-0000-0000-000000000002',
+          eraId: '11111111-1111-4111-8111-111111111111',
+          eftId: '22222222-2222-4222-8222-222222222222',
         });
       expect(res.status).toBe(200);
       expect(res.body.varianceCents).toBe(0);
@@ -520,8 +520,8 @@ describe('Clearinghouse Routes - Reconciliation', () => {
       const res = await request(app)
         .post('/api/clearinghouse/reconcile')
         .send({
-          eraId: '00000000-0000-0000-0000-000000000001',
-          eftId: '00000000-0000-0000-0000-000000000002',
+          eraId: '11111111-1111-4111-8111-111111111111',
+          eftId: '22222222-2222-4222-8222-222222222222',
           varianceReason: 'Bank fee',
         });
       expect(res.status).toBe(200);
@@ -533,7 +533,7 @@ describe('Clearinghouse Routes - Reconciliation', () => {
       queryMock.mockRejectedValueOnce(new Error('Database error'));
       const res = await request(app)
         .post('/api/clearinghouse/reconcile')
-        .send({ eraId: '00000000-0000-0000-0000-000000000001' });
+        .send({ eraId: '11111111-1111-4111-8111-111111111111' });
       expect(res.status).toBe(500);
     });
   });

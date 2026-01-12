@@ -337,10 +337,10 @@ erxRouter.get(
       );
 
       // Get Rx history from external sources (Surescripts)
-      let externalHistory = { medications: [] };
+      let externalHistory: { medications: any[] } = { medications: [] };
       if (!source || source === 'all' || source === 'external') {
         try {
-          externalHistory = await getRxHistory(patientId, tenantId);
+          externalHistory = await getRxHistory(patientId!, tenantId);
         } catch (error) {
           console.error('Error fetching external Rx history:', error);
         }
@@ -536,7 +536,7 @@ erxRouter.get(
         return res.status(404).json({ error: 'Patient not found' });
       }
 
-      const benefits = await getPatientBenefits(patientId, tenantId);
+      const benefits = await getPatientBenefits(patientId!, tenantId);
 
       if (!benefits) {
         return res.status(404).json({

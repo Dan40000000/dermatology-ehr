@@ -499,9 +499,9 @@ export async function checkDrugInteractions(
     const currentLower = currentMed.toLowerCase();
 
     // Check for known interactions
-    for (const [drug1, interactions] of Object.entries(interactionRules)) {
+    for (const [drug1, drugInteractions] of Object.entries(interactionRules)) {
       if (medLower.includes(drug1)) {
-        for (const [drug2, interaction] of Object.entries(interactions)) {
+        for (const [drug2, interaction] of Object.entries(drugInteractions)) {
           if (currentLower.includes(drug2)) {
             interactions.push({
               severity: interaction.severity,

@@ -3,9 +3,9 @@
  * Manage laboratory orders, tracking, and submission
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import { pool } from '../db/pool';
-import { requireAuth } from '../middleware/auth';
+import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { logger } from '../lib/logger';
 import { HL7Service } from '../services/hl7Service';
 
@@ -18,7 +18,7 @@ router.use(requireAuth);
  * GET /api/lab-orders
  * Get lab orders with filtering
  */
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', async (req: AuthedRequest, res: Response) => {
   try {
     const { patient_id, encounter_id, status, vendor_id, from_date, to_date } = req.query;
 
@@ -109,7 +109,7 @@ router.get('/', async (req: Request, res: Response) => {
  * GET /api/lab-orders/:id
  * Get a specific lab order with full details
  */
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', async (req: AuthedRequest, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -179,7 +179,7 @@ router.get('/:id', async (req: Request, res: Response) => {
  * POST /api/lab-orders
  * Create a new lab order
  */
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', async (req: AuthedRequest, res: Response) => {
   const client = await pool.connect();
 
   try {
@@ -279,7 +279,7 @@ router.post('/', async (req: Request, res: Response) => {
  * POST /api/lab-orders/:id/submit
  * Submit lab order electronically (generate HL7 ORM message)
  */
-router.post('/:id/submit', async (req: Request, res: Response) => {
+router.post('/:id/submit', async (req: AuthedRequest, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -380,7 +380,7 @@ router.post('/:id/submit', async (req: Request, res: Response) => {
  * PATCH /api/lab-orders/:id/specimen
  * Update specimen tracking information
  */
-router.patch('/:id/specimen', async (req: Request, res: Response) => {
+router.patch('/:id/specimen', async (req: AuthedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const {
@@ -488,7 +488,7 @@ router.patch('/:id/specimen', async (req: Request, res: Response) => {
  * PATCH /api/lab-orders/:id/status
  * Update order status
  */
-router.patch('/:id/status', async (req: Request, res: Response) => {
+router.patch('/:id/status', async (req: AuthedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { status, notes } = req.body;
@@ -522,7 +522,7 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
  * DELETE /api/lab-orders/:id
  * Cancel a lab order
  */
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', async (req: AuthedRequest, res: Response) => {
   try {
     const { id } = req.params;
 

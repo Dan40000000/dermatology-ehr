@@ -198,7 +198,15 @@ export function FaceSheetPage() {
             </div>
             <div>
               <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Insurance:</p>
-              <p style={{ fontSize: '1.125rem' }}>{patient.insurance || 'Self-pay'}</p>
+              <p style={{ fontSize: '1.125rem' }}>
+                {patient.insurance
+                  ? (typeof patient.insurance === 'object' && patient.insurance.planName
+                      ? patient.insurance.planName
+                      : typeof patient.insurance === 'string'
+                        ? patient.insurance
+                        : 'On file')
+                  : 'Self-pay'}
+              </p>
             </div>
           </div>
         </div>
@@ -237,7 +245,11 @@ export function FaceSheetPage() {
           </h2>
           <div style={{ background: '#fef2f2', padding: '1rem', borderRadius: '0.25rem', border: '2px solid #fecaca' }}>
             {patient.allergies ? (
-              <p style={{ fontSize: '1.125rem', fontWeight: 'bold', color: '#7f1d1d' }}>{patient.allergies}</p>
+              <p style={{ fontSize: '1.125rem', fontWeight: 'bold', color: '#7f1d1d' }}>
+                {Array.isArray(patient.allergies)
+                  ? patient.allergies.join(', ')
+                  : patient.allergies}
+              </p>
             ) : (
               <p style={{ fontSize: '1.125rem', color: '#4b5563' }}>No known allergies</p>
             )}

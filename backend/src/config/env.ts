@@ -11,10 +11,10 @@ export const env = {
   refreshTokenTtlSec: parseInt(process.env.REFRESH_TOKEN_TTL_SEC || "1209600", 10), // 14d
   tenantHeader: process.env.TENANT_HEADER || "x-tenant-id",
   storageProvider: process.env.STORAGE_PROVIDER || "s3", // s3 by default; falls back to local when bucket missing
-  s3Bucket: process.env.S3_BUCKET || "",
-  s3Region: process.env.S3_REGION || "",
-  s3AccessKeyId: process.env.S3_ACCESS_KEY_ID || "",
-  s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY || "",
+  s3Bucket: process.env.AWS_S3_BUCKET || "",
+  s3Region: process.env.AWS_REGION || "",
+  s3AccessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
+  s3SecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
   clamavHost: process.env.CLAMAV_HOST,
   clamavPort: parseInt(process.env.CLAMAV_PORT || "3310", 10),
   clamavTimeoutMs: parseInt(process.env.CLAMAV_TIMEOUT_MS || "4000", 10),

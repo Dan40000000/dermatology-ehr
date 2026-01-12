@@ -44,7 +44,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
     if (isOpen && session && providerId) {
       setLoadingFrequent(true);
       fetchSuggestedProcedures(session.tenantId, session.accessToken, providerId, 10)
-        .then((res) => setFrequentlyUsed(res.suggestions))
+        .then((res) => setFrequentlyUsed(Array.isArray(res.suggestions) ? res.suggestions : []))
         .catch((err) => {
           console.error('Failed to load frequent procedures:', err);
           setFrequentlyUsed([]);
@@ -55,11 +55,11 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
 
   // Load procedures commonly paired with primary diagnosis
   useEffect(() => {
-    if (isOpen && session && providerId) {
+    if (isOpen && session && providerId && Array.isArray(diagnoses)) {
       const primaryDx = diagnoses.find(d => d.isPrimary);
       if (primaryDx && primaryDx.icd10Code) {
         fetchProceduresForDiagnosis(session.tenantId, session.accessToken, providerId, primaryDx.icd10Code, 10)
-          .then((res) => setPairedProcedures(res.suggestions))
+          .then((res) => setPairedProcedures(Array.isArray(res.suggestions) ? res.suggestions : []))
           .catch((err) => {
             console.error('Failed to load paired procedures:', err);
             setPairedProcedures([]);
@@ -76,7 +76,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
     setSearching(true);
     try {
       const res = await searchCPTCodes(session.tenantId, session.accessToken, searchQuery);
-      setSearchResults(res.codes || []);
+      setSearchResults(Array.isArray(res.codes) ? res.codes : []);
     } catch (err: any) {
       showError(err.message || 'Failed to search procedures');
     } finally {
@@ -101,9 +101,11 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
     }
 
     // Auto-link to primary diagnosis if available
-    const primaryDx = diagnoses.find(d => d.isPrimary);
-    if (primaryDx) {
-      setLinkedDiagnosisIds([primaryDx.id]);
+    if (Array.isArray(diagnoses)) {
+      const primaryDx = diagnoses.find(d => d.isPrimary);
+      if (primaryDx) {
+        setLinkedDiagnosisIds([primaryDx.id]);
+      }
     }
   };
 
@@ -154,11 +156,14 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
   };
 
   const toggleDiagnosis = (diagnosisId: string) => {
-    setLinkedDiagnosisIds(prev =>
-      prev.includes(diagnosisId)
+    setLinkedDiagnosisIds(prev => {
+      if (!Array.isArray(prev)) {
+        return [diagnosisId];
+      }
+      return prev.includes(diagnosisId)
         ? prev.filter(id => id !== diagnosisId)
-        : [...prev, diagnosisId]
-    );
+        : [...prev, diagnosisId];
+    });
   };
 
   const commonProcedures: CPTCode[] = [
@@ -236,7 +241,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
               gap: '0.5rem'
             }}>
               <span></span>
-              <span>Often Paired with {diagnoses.find(d => d.isPrimary)?.icd10Code}</span>
+              <span>Often Paired with {Array.isArray(diagnoses) ? diagnoses.find(d => d.isPrimary)?.icd10Code : ''}</span>
             </h4>
             <div style={{
               maxHeight: '200px',
@@ -596,7 +601,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
               }}>
                 Link to Diagnoses (Required for CMS Compliance)
               </label>
-              {diagnoses.length === 0 ? (
+              {!Array.isArray(diagnoses) || diagnoses.length === 0 ? (
                 <div style={{
                   padding: '0.75rem',
                   background: '#fef3c7',
@@ -668,10 +673,10 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
           type="button"
           className="btn-primary"
           onClick={handleAdd}
-          disabled={!selectedCode || linkedDiagnosisIds.length === 0}
+          disabled={!selectedCode || !Array.isArray(linkedDiagnosisIds) || linkedDiagnosisIds.length === 0}
           style={{
-            opacity: !selectedCode || linkedDiagnosisIds.length === 0 ? 0.5 : 1,
-            cursor: !selectedCode || linkedDiagnosisIds.length === 0 ? 'not-allowed' : 'pointer'
+            opacity: !selectedCode || !Array.isArray(linkedDiagnosisIds) || linkedDiagnosisIds.length === 0 ? 0.5 : 1,
+            cursor: !selectedCode || !Array.isArray(linkedDiagnosisIds) || linkedDiagnosisIds.length === 0 ? 'not-allowed' : 'pointer'
           }}
         >
           Add Procedure

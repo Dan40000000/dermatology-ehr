@@ -111,8 +111,7 @@ To manage your notification preferences, log in to the patient portal.
       "system",
       "patient_message_notification_sent",
       "patient_message_thread",
-      threadId,
-      { recipientEmail, patientId }
+      threadId
     );
   } catch (error) {
     logger.error('Error sending patient notification', { error: (error as Error).message });
@@ -208,8 +207,7 @@ This is an automated message. Please do not reply to this email.
         "system",
         "staff_message_notification_sent",
         "patient_message_thread",
-        threadId,
-        { recipientEmail: user.email, userId: user.id, patientId }
+        threadId
       );
     }
   } catch (error) {

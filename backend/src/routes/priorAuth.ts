@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, AuthedRequest } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { randomUUID } from 'crypto';
 
@@ -28,7 +28,7 @@ const updatePriorAuthSchema = z.object({
 });
 
 // Get all prior auth requests
-router.get('/', async (req, res, next) => {
+router.get('/', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { patientId, status, providerId } = req.query;
@@ -73,7 +73,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // Get single prior auth request
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
@@ -100,7 +100,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // Create new prior auth request
-router.post('/', async (req, res, next) => {
+router.post('/', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user?.id;
@@ -155,14 +155,14 @@ router.post('/', async (req, res, next) => {
     res.status(201).json(result.rows[0]);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: 'Validation error', details: error.errors });
+      return res.status(400).json({ error: 'Validation error', details: error.issues });
     }
     next(error);
   }
 });
 
 // Update prior auth request
-router.patch('/:id', async (req, res, next) => {
+router.patch('/:id', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
@@ -236,14 +236,14 @@ router.patch('/:id', async (req, res, next) => {
     res.json(result.rows[0]);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: 'Validation error', details: error.errors });
+      return res.status(400).json({ error: 'Validation error', details: error.issues });
     }
     next(error);
   }
 });
 
 // Delete prior auth request
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
@@ -264,7 +264,7 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 // Generate prior auth form (PDF-ready HTML)
-router.get('/:id/form', async (req, res, next) => {
+router.get('/:id/form', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
@@ -318,7 +318,7 @@ router.get('/:id/form', async (req, res, next) => {
 });
 
 // Submit prior auth to payer (mock integration)
-router.post('/:id/submit', async (req, res, next) => {
+router.post('/:id/submit', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
@@ -429,7 +429,7 @@ router.post('/:id/submit', async (req, res, next) => {
 });
 
 // Upload supporting document
-router.post('/:id/documents', async (req, res, next) => {
+router.post('/:id/documents', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user?.id;
@@ -490,7 +490,7 @@ router.post('/:id/documents', async (req, res, next) => {
 });
 
 // Check status with payer
-router.get('/:id/status', async (req, res, next) => {
+router.get('/:id/status', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { id } = req.params;
@@ -563,7 +563,7 @@ router.get('/:id/status', async (req, res, next) => {
 });
 
 // Webhook endpoint for payer responses (mock)
-router.post('/webhook/payer-response', async (req, res, next) => {
+router.post('/webhook/payer-response', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
     const { authNumber, status, insuranceAuthNumber, reason, additionalData } = req.body;

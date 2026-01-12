@@ -113,9 +113,9 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
   }, [formData.vendor_id]);
 
   useEffect(() => {
-    if (formData.order_set_id) {
+    if (formData.order_set_id && Array.isArray(orderSets)) {
       const selectedSet = orderSets.find(set => set.id === formData.order_set_id);
-      if (selectedSet && selectedSet.tests) {
+      if (selectedSet && Array.isArray(selectedSet.tests)) {
         setSelectedTests(selectedSet.tests);
         setFormData(prev => ({
           ...prev,
@@ -132,7 +132,8 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
       });
       if (response.ok) {
         const data = await response.json();
-        setPatients(data.patients || data);
+        const patientData = data.patients || data;
+        setPatients(Array.isArray(patientData) ? patientData : []);
       }
     } catch (err) {
       console.error('Error fetching patients:', err);
@@ -146,7 +147,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
       });
       if (response.ok) {
         const data = await response.json();
-        setProviders(data);
+        setProviders(Array.isArray(data) ? data : []);
       }
     } catch (err) {
       console.error('Error fetching providers:', err);
@@ -160,7 +161,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
       });
       if (response.ok) {
         const data = await response.json();
-        setVendors(data);
+        setVendors(Array.isArray(data) ? data : []);
       }
     } catch (err) {
       console.error('Error fetching vendors:', err);
@@ -174,7 +175,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
       });
       if (response.ok) {
         const data = await response.json();
-        setOrderSets(data);
+        setOrderSets(Array.isArray(data) ? data : []);
       }
     } catch (err) {
       console.error('Error fetching order sets:', err);
@@ -189,7 +190,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
       );
       if (response.ok) {
         const data = await response.json();
-        setAvailableTests(data);
+        setAvailableTests(Array.isArray(data) ? data : []);
       }
     } catch (err) {
       console.error('Error fetching test catalog:', err);
@@ -197,20 +198,22 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
   };
 
   const handleAddTest = (test: LabTest) => {
-    if (!selectedTests.find(t => t.id === test.id)) {
+    if (Array.isArray(selectedTests) && !selectedTests.find(t => t.id === test.id)) {
       setSelectedTests([...selectedTests, test]);
       setFormData(prev => ({
         ...prev,
-        tests: [...prev.tests, test.id]
+        tests: Array.isArray(prev.tests) ? [...prev.tests, test.id] : [test.id]
       }));
     }
   };
 
   const handleRemoveTest = (testId: string) => {
-    setSelectedTests(selectedTests.filter(t => t.id !== testId));
+    if (Array.isArray(selectedTests)) {
+      setSelectedTests(selectedTests.filter(t => t.id !== testId));
+    }
     setFormData(prev => ({
       ...prev,
-      tests: prev.tests.filter(id => id !== testId)
+      tests: Array.isArray(prev.tests) ? prev.tests.filter(id => id !== testId) : []
     }));
   };
 
@@ -222,7 +225,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
       return;
     }
 
-    if (formData.tests.length === 0) {
+    if (!Array.isArray(formData.tests) || formData.tests.length === 0) {
       setError('Please select at least one test');
       return;
     }

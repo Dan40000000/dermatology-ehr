@@ -830,7 +830,7 @@ async function seed() {
       await pool.query(
         `insert into cpt_codes(id, code, description, category, default_fee_cents, is_common)
          values ($1,$2,$3,$4,$5,$6)
-         on conflict (id) do nothing`,
+         on conflict (code) do nothing`,
         [randomUUID(), cpt.code, cpt.description, cpt.category, cpt.fee, cpt.common],
       );
     }
@@ -972,7 +972,7 @@ async function seed() {
       await pool.query(
         `insert into icd10_codes(id, code, description, category, is_common)
          values ($1,$2,$3,$4,$5)
-         on conflict (id) do nothing`,
+         on conflict (code) do nothing`,
         [randomUUID(), icd.code, icd.description, icd.category, icd.common],
       );
     }

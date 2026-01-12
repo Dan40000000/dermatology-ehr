@@ -287,7 +287,7 @@ fhirRouter.get("/Observation/:id", requireFHIRAuth, requireFHIRScope("Observatio
     const tenantId = req.fhirAuth!.tenantId;
 
     // Parse ID to extract vital ID
-    const vitalId = id.split("-").slice(0, -1).join("-");
+    const vitalId = id!.split("-").slice(0, -1).join("-");
 
     const dbVital = await fetchVitalWithContext(vitalId, tenantId);
 
@@ -383,7 +383,7 @@ fhirRouter.get("/Condition/:id", requireFHIRAuth, requireFHIRScope("Condition", 
     const { id } = req.params;
     const tenantId = req.fhirAuth!.tenantId;
 
-    const dbDiagnosis = await fetchDiagnosisWithContext(id, tenantId);
+    const dbDiagnosis = await fetchDiagnosisWithContext(id!, tenantId);
 
     if (!dbDiagnosis) {
       return res.status(404).json(
@@ -391,7 +391,7 @@ fhirRouter.get("/Condition/:id", requireFHIRAuth, requireFHIRScope("Condition", 
       );
     }
 
-    await logFHIRAccess(req, "Condition", id, "read");
+    await logFHIRAccess(req, "Condition", id!, "read");
     return res.json(mapDiagnosisToFHIRCondition(dbDiagnosis));
   } catch (error) {
     console.error("Error fetching condition:", error);
@@ -470,14 +470,14 @@ fhirRouter.get(
       const { id } = req.params;
       const tenantId = req.fhirAuth!.tenantId;
 
-      const allergy = await fetchAllergyWithContext(id, tenantId);
+      const allergy = await fetchAllergyWithContext(id!, tenantId);
       if (!allergy) {
         return res.status(404).json(
           createOperationOutcome("error", "not-found", `AllergyIntolerance with id ${id} not found`)
         );
       }
 
-      await logFHIRAccess(req, "AllergyIntolerance", id, "read");
+      await logFHIRAccess(req, "AllergyIntolerance", id!, "read");
       return res.json(mapAllergyToFHIR(allergy));
     } catch (error) {
       console.error("Error fetching allergy:", error);
@@ -801,7 +801,7 @@ fhirRouter.get("/Procedure/:id", requireFHIRAuth, requireFHIRScope("Procedure", 
     const { id } = req.params;
     const tenantId = req.fhirAuth!.tenantId;
 
-    const dbCharge = await fetchChargeWithContext(id, tenantId);
+    const dbCharge = await fetchChargeWithContext(id!, tenantId);
 
     if (!dbCharge) {
       return res.status(404).json(
@@ -809,7 +809,7 @@ fhirRouter.get("/Procedure/:id", requireFHIRAuth, requireFHIRScope("Procedure", 
       );
     }
 
-    await logFHIRAccess(req, "Procedure", id, "read");
+    await logFHIRAccess(req, "Procedure", id!, "read");
     return res.json(mapChargeToProcedure(dbCharge));
   } catch (error) {
     console.error("Error fetching procedure:", error);

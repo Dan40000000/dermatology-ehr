@@ -37,12 +37,12 @@ router.post(
 
       // Run CDS checks
       const alerts = await clinicalDecisionSupportService.runCDSChecks({
-        patientId,
+        patientId: patientId!,
         encounterId: encounterId || undefined,
         tenantId,
       });
 
-      await auditLog(tenantId, userId, "cds_check", "patient", patientId);
+      await auditLog(tenantId, userId, "cds_check", "patient", patientId!);
 
       res.json({
         alerts,
@@ -65,7 +65,7 @@ router.get("/alerts/:patientId", requireAuth, async (req: AuthedRequest, res) =>
     const tenantId = req.user!.tenantId;
 
     const alerts = await clinicalDecisionSupportService.getPatientAlerts(
-      patientId,
+      patientId!,
       tenantId
     );
 
@@ -148,9 +148,9 @@ router.post(
       const tenantId = req.user!.tenantId;
       const userId = req.user!.id;
 
-      await clinicalDecisionSupportService.dismissAlert(alertId, userId, tenantId);
+      await clinicalDecisionSupportService.dismissAlert(alertId!, userId, tenantId);
 
-      await auditLog(tenantId, userId, "cds_alert_dismiss", "cds_alert", alertId);
+      await auditLog(tenantId, userId, "cds_alert_dismiss", "cds_alert", alertId!);
 
       res.json({ success: true });
     } catch (error) {

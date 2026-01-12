@@ -175,7 +175,7 @@ router.get("/threads", requireAuth, async (req: AuthedRequest, res) => {
     const countResult = await pool.query(countQuery, countParams);
     const total = parseInt(countResult.rows[0].total);
 
-    await auditLog(tenantId, userId, "patient_message_threads_list", "patient_message_thread", null);
+    await auditLog(tenantId, userId, "patient_message_threads_list", "patient_message_thread", userId);
 
     res.json({
       threads: result.rows,
@@ -251,7 +251,7 @@ router.get("/threads/:id", requireAuth, async (req: AuthedRequest, res) => {
       [threadId]
     );
 
-    await auditLog(tenantId, userId, "patient_message_thread_view", "patient_message_thread", threadId);
+    await auditLog(tenantId, userId, "patient_message_thread_view", "patient_message_thread", threadId!);
 
     res.json({
       thread,
@@ -268,7 +268,7 @@ router.post("/threads", requireAuth, async (req: AuthedRequest, res) => {
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
-    const userName = req.user!.name;
+    const userName = req.user!.fullName;
 
     const parsed = createThreadSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -376,7 +376,7 @@ router.put("/threads/:id", requireAuth, async (req: AuthedRequest, res) => {
       return res.status(404).json({ error: "Thread not found" });
     }
 
-    await auditLog(tenantId, userId, "patient_message_thread_update", "patient_message_thread", threadId);
+    await auditLog(tenantId, userId, "patient_message_thread_update", "patient_message_thread", threadId!);
 
     res.json({ success: true });
   } catch (error) {
@@ -390,7 +390,7 @@ router.post("/threads/:id/messages", requireAuth, async (req: AuthedRequest, res
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
-    const userName = req.user!.name;
+    const userName = req.user!.fullName;
     const threadId = req.params.id;
 
     const parsed = sendMessageSchema.safeParse(req.body);
@@ -471,7 +471,7 @@ router.post("/threads/:id/close", requireAuth, async (req: AuthedRequest, res) =
       return res.status(404).json({ error: "Thread not found" });
     }
 
-    await auditLog(tenantId, userId, "patient_message_thread_close", "patient_message_thread", threadId);
+    await auditLog(tenantId, userId, "patient_message_thread_close", "patient_message_thread", threadId!);
 
     res.json({ success: true });
   } catch (error) {
@@ -498,7 +498,7 @@ router.post("/threads/:id/reopen", requireAuth, async (req: AuthedRequest, res) 
       return res.status(404).json({ error: "Thread not found" });
     }
 
-    await auditLog(tenantId, userId, "patient_message_thread_reopen", "patient_message_thread", threadId);
+    await auditLog(tenantId, userId, "patient_message_thread_reopen", "patient_message_thread", threadId!);
 
     res.json({ success: true });
   } catch (error) {
@@ -650,7 +650,7 @@ router.get("/attachments/:id", requireAuth, async (req: AuthedRequest, res) => {
 
     const attachment = result.rows[0];
 
-    await auditLog(tenantId, userId, "patient_message_attachment_download", "patient_message_attachment", attachmentId);
+    await auditLog(tenantId, userId, "patient_message_attachment_download", "patient_message_attachment", attachmentId!);
 
     res.download(attachment.file_path, attachment.original_filename);
   } catch (error) {

@@ -58,6 +58,8 @@ export function PatientsPage() {
 
   // Filter and sort patients
   const filteredPatients = useMemo(() => {
+    if (!Array.isArray(patients)) return [];
+
     let result = [...patients];
 
     // Status filter (if we have status field in patient data)
@@ -68,8 +70,9 @@ export function PatientsPage() {
     if (debouncedSearch.trim()) {
       const query = debouncedSearch.toLowerCase();
       result = result.filter((p) => {
-        const fullName = `${p.firstName} ${p.lastName}`.toLowerCase();
-        const reverseName = `${p.lastName} ${p.firstName}`.toLowerCase();
+        if (!p) return false;
+        const fullName = `${p.firstName || ''} ${p.lastName || ''}`.toLowerCase();
+        const reverseName = `${p.lastName || ''} ${p.firstName || ''}`.toLowerCase();
         const mrn = (p.mrn || '').toLowerCase();
         const phone = (p.phone || '').replace(/\D/g, '');
         const searchPhone = debouncedSearch.replace(/\D/g, '');
@@ -87,6 +90,8 @@ export function PatientsPage() {
 
     // Sort
     result.sort((a, b) => {
+      if (!a || !b) return 0;
+
       let aVal: string | number | null = null;
       let bVal: string | number | null = null;
 
@@ -106,6 +111,8 @@ export function PatientsPage() {
         case 'dateOfBirth':
           aVal = a.dateOfBirth ? new Date(a.dateOfBirth).getTime() : 0;
           bVal = b.dateOfBirth ? new Date(b.dateOfBirth).getTime() : 0;
+          if (isNaN(aVal as number)) aVal = 0;
+          if (isNaN(bVal as number)) bVal = 0;
           break;
         case 'phone':
           aVal = a.phone || '';
@@ -118,6 +125,8 @@ export function PatientsPage() {
         case 'lastVisit':
           aVal = a.lastVisit ? new Date(a.lastVisit).getTime() : 0;
           bVal = b.lastVisit ? new Date(b.lastVisit).getTime() : 0;
+          if (isNaN(aVal as number)) aVal = 0;
+          if (isNaN(bVal as number)) bVal = 0;
           break;
       }
 

@@ -204,7 +204,12 @@ export class AINoteDraftingService {
       throw new Error(`OpenAI API error: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as any;
+
+    if (!data.choices || !data.choices[0]?.message?.content) {
+      throw new Error('Invalid response from OpenAI API');
+    }
+
     const content = data.choices[0].message.content;
 
     // Parse structured response
@@ -243,7 +248,12 @@ export class AINoteDraftingService {
       throw new Error(`Anthropic API error: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as any;
+
+    if (!data.content || !data.content[0]?.text) {
+      throw new Error('Invalid response from Anthropic API');
+    }
+
     const content = data.content[0].text;
 
     return this.parseNoteDraft(content);
@@ -381,11 +391,11 @@ Age/Sex: ${this.calculateAge(patientContext.date_of_birth)}/${patientContext.sex
     const examMatch = text.match(/(?:Exam|Physical Exam)[:\n]+(.*?)(?=\n\n|Assessment|$)/is);
     const apMatch = text.match(/(?:Assessment|A\/P|Assessment and Plan)[:\n]+(.*?)$/is);
 
-    if (ccMatch) sections.chiefComplaint = ccMatch[1].trim();
-    if (hpiMatch) sections.hpi = hpiMatch[1].trim();
-    if (rosMatch) sections.ros = rosMatch[1].trim();
-    if (examMatch) sections.exam = examMatch[1].trim();
-    if (apMatch) sections.assessmentPlan = apMatch[1].trim();
+    if (ccMatch && ccMatch[1]) sections.chiefComplaint = ccMatch[1].trim();
+    if (hpiMatch && hpiMatch[1]) sections.hpi = hpiMatch[1].trim();
+    if (rosMatch && rosMatch[1]) sections.ros = rosMatch[1].trim();
+    if (examMatch && examMatch[1]) sections.exam = examMatch[1].trim();
+    if (apMatch && apMatch[1]) sections.assessmentPlan = apMatch[1].trim();
 
     return sections;
   }

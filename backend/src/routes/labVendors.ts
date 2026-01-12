@@ -3,9 +3,9 @@
  * Manage lab vendors, test catalog, and order sets
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import { pool } from '../db/pool';
-import { requireAuth } from '../middleware/auth';
+import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { logger } from '../lib/logger';
 
 const router = Router();
@@ -17,7 +17,7 @@ router.use(requireAuth);
  * GET /api/lab-vendors
  * Get all lab vendors
  */
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', async (req: AuthedRequest, res: Response) => {
   try {
     const { active_only = 'true', vendor_type } = req.query;
 
@@ -55,7 +55,7 @@ router.get('/', async (req: Request, res: Response) => {
  * GET /api/lab-vendors/catalog
  * Get lab test catalog with filtering
  */
-router.get('/catalog', async (req: Request, res: Response) => {
+router.get('/catalog', async (req: AuthedRequest, res: Response) => {
   try {
     const { vendor_id, category, subcategory, search, active_only = 'true' } = req.query;
 
@@ -119,7 +119,7 @@ router.get('/catalog', async (req: Request, res: Response) => {
  * GET /api/lab-vendors/order-sets
  * Get lab order sets
  */
-router.get('/order-sets', async (req: Request, res: Response) => {
+router.get('/order-sets', async (req: AuthedRequest, res: Response) => {
   try {
     const { category, active_only = 'true' } = req.query;
 
@@ -174,7 +174,7 @@ router.get('/order-sets', async (req: Request, res: Response) => {
  * GET /api/lab-vendors/categories
  * Get available test categories
  */
-router.get('/categories', async (req: Request, res: Response) => {
+router.get('/categories', async (req: AuthedRequest, res: Response) => {
   try {
     const result = await pool.query(
       `SELECT DISTINCT category, COUNT(*) as test_count
@@ -196,7 +196,7 @@ router.get('/categories', async (req: Request, res: Response) => {
  * POST /api/lab-vendors/order-sets
  * Create a custom lab order set
  */
-router.post('/order-sets', async (req: Request, res: Response) => {
+router.post('/order-sets', async (req: AuthedRequest, res: Response) => {
   const client = await pool.connect();
 
   try {

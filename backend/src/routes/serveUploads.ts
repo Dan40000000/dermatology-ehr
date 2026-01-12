@@ -2,7 +2,7 @@ import { Router } from "express";
 import path from "path";
 import fs from "fs";
 import jwt from "jsonwebtoken";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { env } from "../config/env";
 import { auditLog } from "../services/audit";
 
@@ -23,7 +23,7 @@ function verifyToken(token: string): { key: string; tenantId: string; actorId: s
 
 export const serveUploadsRouter = Router();
 
-serveUploadsRouter.post("/sign", requireAuth, async (req, res) => {
+serveUploadsRouter.post("/sign", requireAuth, async (req: AuthedRequest, res) => {
   const { key } = req.body || {};
   if (!key) return res.status(400).json({ error: "Missing key" });
   const token = signKey(key, req.user!.tenantId, req.user!.id);

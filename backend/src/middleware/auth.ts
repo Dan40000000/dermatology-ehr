@@ -5,6 +5,7 @@ import { AuthenticatedRequestUser } from "../types";
 
 export interface AuthedRequest extends Request {
   user?: AuthenticatedRequestUser;
+  tenantId?: string;
 }
 
 export function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
@@ -20,6 +21,7 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
       return res.status(403).json({ error: "Invalid tenant" });
     }
     req.user = decoded;
+    req.tenantId = tenantId;
     return next();
   } catch (err) {
     return res.status(401).json({ error: "Invalid token" });

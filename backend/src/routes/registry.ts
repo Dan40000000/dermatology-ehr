@@ -10,7 +10,7 @@ const cohortSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   status: z.enum(["active", "inactive"]).optional(),
-  criteria: z.record(z.any()).optional(),
+  criteria: z.record(z.string(), z.any()).optional(),
 });
 
 const updateCohortSchema = cohortSchema.partial();

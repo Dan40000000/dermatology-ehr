@@ -36,9 +36,12 @@ export interface Patient {
   city?: string;
   state?: string;
   zip?: string;
-  insurance?: PatientInsurance;
-  allergies?: string[];
-  alerts?: string[];
+  // Backend returns string, but may be parsed as object
+  insurance?: PatientInsurance | string;
+  // Backend returns string, but may be parsed as array
+  allergies?: string[] | string;
+  // Backend may not return this field, or may return string
+  alerts?: string[] | string;
   medications?: string;
   lastVisit?: string;
   createdAt: string;

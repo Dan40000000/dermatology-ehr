@@ -140,22 +140,25 @@ export function ClaimsPage() {
   };
 
   const filteredClaims = claims.filter((claim) => {
+    if (!claim) return false;
     if (statusFilter !== 'all' && claim.status !== statusFilter) return false;
     if (searchTerm) {
       const search = searchTerm.toLowerCase();
       const patientName = getPatientName(claim.patientId).toLowerCase();
+      const claimNumber = (claim.claimNumber || '').toLowerCase();
+      const providerName = (claim.providerName || '').toLowerCase();
       return (
-        claim.claimNumber.toLowerCase().includes(search) ||
+        claimNumber.includes(search) ||
         patientName.includes(search) ||
-        claim.providerName?.toLowerCase().includes(search)
+        providerName.includes(search)
       );
     }
     return true;
   });
 
-  const totalClaimAmount = filteredClaims.reduce((sum, c) => sum + c.totalCents, 0);
-  const paidClaims = filteredClaims.filter((c) => c.status === 'paid');
-  const submittedClaims = filteredClaims.filter((c) => c.status === 'submitted');
+  const totalClaimAmount = filteredClaims.reduce((sum, c) => sum + (c?.totalCents || 0), 0);
+  const paidClaims = filteredClaims.filter((c) => c && c.status === 'paid');
+  const submittedClaims = filteredClaims.filter((c) => c && c.status === 'submitted');
 
   if (loading) {
     return (

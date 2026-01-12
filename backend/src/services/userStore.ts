@@ -1,7 +1,7 @@
 import { pool } from "../db/pool";
 import { TenantUser } from "../types";
 
-const DEFAULT_PASSWORD = "Password123!";
+const DEFAULT_PASSWORD = process.env.DEFAULT_USER_PASSWORD || "Password123!";
 
 export const userStore = {
   async findByEmailAndTenant(email: string, tenantId: string): Promise<TenantUser | undefined> {

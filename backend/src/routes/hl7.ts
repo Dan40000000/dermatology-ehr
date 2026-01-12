@@ -250,7 +250,7 @@ hl7Router.get("/messages/:id", requireAuth, async (req: AuthedRequest, res: Resp
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const messageId = req.params.id;
+    const messageId = req.params.id!;
     const message = await getMessageById(messageId, tenantId);
 
     if (!message) {
@@ -275,7 +275,7 @@ hl7Router.post("/messages/:id/reprocess", requireAuth, async (req: AuthedRequest
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const messageId = req.params.id;
+    const messageId = req.params.id!;
 
     await retryFailedMessage(messageId, tenantId);
 
@@ -323,29 +323,6 @@ hl7Router.get("/statistics", requireAuth, async (req: AuthedRequest, res: Respon
 
 /**
  * Legacy endpoints for backwards compatibility
+ * All message types should use the main /inbound endpoint
+ * These endpoints are deprecated and will be removed in a future version
  */
-
-// ADT - Admission/Discharge/Transfer messages
-hl7Router.post("/adt", requireAuth, async (req: AuthedRequest, res: Response) => {
-  // Forward to main inbound endpoint
-  req.url = "/inbound";
-  return hl7Router.handle(req, res);
-});
-
-// SIU - Scheduling Information Unsolicited
-hl7Router.post("/siu", requireAuth, async (req: AuthedRequest, res: Response) => {
-  req.url = "/inbound";
-  return hl7Router.handle(req, res);
-});
-
-// DFT - Detailed Financial Transaction
-hl7Router.post("/dft", requireAuth, async (req: AuthedRequest, res: Response) => {
-  req.url = "/inbound";
-  return hl7Router.handle(req, res);
-});
-
-// ORU - Observation Result
-hl7Router.post("/oru", requireAuth, async (req: AuthedRequest, res: Response) => {
-  req.url = "/inbound";
-  return hl7Router.handle(req, res);
-});

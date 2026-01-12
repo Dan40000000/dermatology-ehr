@@ -59,12 +59,13 @@ healthRouter.get("/detailed", async (_req, res) => {
 
   // CPU check
   const cpuUsage = os.loadavg();
+  const cpus = os.cpus();
   health.checks.cpu = {
-    status: cpuUsage[0] < os.cpus().length ? 'healthy' : 'warning',
-    loadAverage1m: cpuUsage[0].toFixed(2),
-    loadAverage5m: cpuUsage[1].toFixed(2),
-    loadAverage15m: cpuUsage[2].toFixed(2),
-    cores: os.cpus().length,
+    status: (cpuUsage[0] || 0) < cpus.length ? 'healthy' : 'warning',
+    loadAverage1m: cpuUsage[0]?.toFixed(2),
+    loadAverage5m: cpuUsage[1]?.toFixed(2),
+    loadAverage15m: cpuUsage[2]?.toFixed(2),
+    cores: cpus.length,
   };
 
   health.responseTime = Date.now() - startTime;

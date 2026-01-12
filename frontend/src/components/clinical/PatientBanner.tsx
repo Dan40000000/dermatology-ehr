@@ -35,8 +35,30 @@ export function PatientBanner({
   }, [patient.firstName, patient.lastName]);
 
   const fullName = `${patient.lastName}, ${patient.firstName}`;
-  const hasAllergies = patient.allergies && patient.allergies.length > 0;
-  const hasAlerts = patient.alerts && patient.alerts.length > 0;
+
+  // Handle allergies - backend may return string instead of array
+  const allergiesArray = useMemo(() => {
+    if (Array.isArray(patient.allergies)) {
+      return patient.allergies;
+    }
+    if (typeof patient.allergies === 'string' && patient.allergies.trim() !== '') {
+      return patient.allergies.split(',').map(a => a.trim());
+    }
+    return [];
+  }, [patient.allergies]);
+  const hasAllergies = allergiesArray.length > 0;
+
+  // Handle alerts - backend may return string instead of array, or undefined
+  const alertsArray = useMemo(() => {
+    if (Array.isArray(patient.alerts)) {
+      return patient.alerts;
+    }
+    if (typeof patient.alerts === 'string' && patient.alerts.trim() !== '') {
+      return patient.alerts.split(',').map(a => a.trim());
+    }
+    return [];
+  }, [patient.alerts]);
+  const hasAlerts = alertsArray.length > 0;
 
   if (compact) {
     return (
@@ -49,7 +71,7 @@ export function PatientBanner({
           </span>
         </div>
         {hasAllergies && (
-          <span className="allergy-badge" title={patient.allergies?.join(', ')}>
+          <span className="allergy-badge" title={allergiesArray.join(', ')}>
             Allergies
           </span>
         )}
@@ -115,14 +137,14 @@ export function PatientBanner({
             <div className="alert-section allergy">
               <span className="alert-icon"></span>
               <span className="alert-label">Allergies:</span>
-              <span className="alert-content">{patient.allergies?.join(', ')}</span>
+              <span className="alert-content">{allergiesArray.join(', ')}</span>
             </div>
           )}
           {hasAlerts && (
             <div className="alert-section warning">
               <span className="alert-icon"></span>
               <span className="alert-label">Alerts:</span>
-              <span className="alert-content">{patient.alerts?.join(', ')}</span>
+              <span className="alert-content">{alertsArray.join(', ')}</span>
             </div>
           )}
         </div>
@@ -133,9 +155,13 @@ export function PatientBanner({
         <div className="patient-insurance-strip">
           <span className="insurance-label">Insurance:</span>
           <span className="insurance-value">
-            {patient.insurance.planName} ({patient.insurance.memberId})
+            {typeof patient.insurance === 'object' && patient.insurance.planName
+              ? `${patient.insurance.planName} (${patient.insurance.memberId})`
+              : typeof patient.insurance === 'string'
+                ? patient.insurance
+                : 'On file'}
           </span>
-          {patient.insurance.copay && (
+          {typeof patient.insurance === 'object' && patient.insurance.copay && (
             <span className="insurance-copay">Copay: ${patient.insurance.copay}</span>
           )}
         </div>

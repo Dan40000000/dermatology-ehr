@@ -376,7 +376,10 @@ export async function getAvailableDatesInMonth(
       });
 
       if (slots.length > 0) {
-        availableDates.push(date.toISOString().split("T")[0]);
+        const dateString = date.toISOString().split("T")[0];
+        if (dateString) {
+          availableDates.push(dateString);
+        }
       }
     }
   }

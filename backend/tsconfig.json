@@ -46,5 +46,6 @@
     "resolveJsonModule": true,
     "moduleResolution": "node16"
   },
+  "include": ["src/**/*"],
   "exclude": ["**/__tests__/**", "**/*.test.ts", "**/*.spec.ts"]
 }

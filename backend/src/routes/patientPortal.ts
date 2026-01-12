@@ -161,7 +161,7 @@ patientPortalRouter.post(
         message: "Account created successfully. Please verify your email.",
         accountId,
         // Remove this in production - only send via email
-        verificationToken: env.nodeEnv === 'development' ? verificationToken : undefined
+        verificationToken: process.env.NODE_ENV === 'development' ? verificationToken : undefined
       });
     } catch (error) {
       console.error("Registration error:", error);
@@ -471,7 +471,7 @@ patientPortalRouter.post(
       return res.json({
         message: "If an account exists with this email, a password reset link has been sent.",
         // Remove this in production - only send via email
-        resetToken: env.nodeEnv === 'development' && result.rows.length > 0 ? resetToken : undefined
+        resetToken: process.env.NODE_ENV === 'development' && result.rows.length > 0 ? resetToken : undefined
       });
     } catch (error) {
       console.error("Forgot password error:", error);

@@ -28,7 +28,7 @@ export function DiagnosisSearchModal({ isOpen, onClose, onSelect, providerId }: 
     if (isOpen && session && providerId) {
       setLoadingFrequent(true);
       fetchSuggestedDiagnoses(session.tenantId, session.accessToken, providerId, 10)
-        .then((res) => setFrequentlyUsed(res.suggestions))
+        .then((res) => setFrequentlyUsed(Array.isArray(res.suggestions) ? res.suggestions : []))
         .catch((err) => {
           console.error('Failed to load frequent diagnoses:', err);
           setFrequentlyUsed([]);
@@ -43,7 +43,7 @@ export function DiagnosisSearchModal({ isOpen, onClose, onSelect, providerId }: 
     setSearching(true);
     try {
       const res = await searchICD10Codes(session.tenantId, session.accessToken, searchQuery);
-      setSearchResults(res.codes || []);
+      setSearchResults(Array.isArray(res.codes) ? res.codes : []);
     } catch (err: any) {
       showError(err.message || 'Failed to search diagnoses');
     } finally {

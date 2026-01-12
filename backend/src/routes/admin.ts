@@ -15,7 +15,7 @@ router.use(requireRoles(["admin"]));
 
 // List facilities
 router.get("/facilities", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
 
   const result = await pool.query(
     `SELECT id, name, address, phone, is_active as "isActive", created_at as "createdAt"
@@ -30,7 +30,7 @@ router.get("/facilities", async (req: AuthedRequest, res) => {
 
 // Create facility
 router.post("/facilities", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
   const { name, address, phone } = req.body;
 
   if (!name) {
@@ -49,7 +49,7 @@ router.post("/facilities", async (req: AuthedRequest, res) => {
 
 // Update facility
 router.put("/facilities/:id", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const { name, address, phone, isActive } = req.body;
 
@@ -68,7 +68,7 @@ router.put("/facilities/:id", async (req: AuthedRequest, res) => {
 
 // Delete facility
 router.delete("/facilities/:id", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
   // Check if facility has rooms
@@ -93,7 +93,7 @@ router.delete("/facilities/:id", async (req: AuthedRequest, res) => {
 
 // List rooms
 router.get("/rooms", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
 
   const result = await pool.query(
     `SELECT r.id, r.name, r.facility_id as "facilityId", r.room_type as "roomType",
@@ -111,7 +111,7 @@ router.get("/rooms", async (req: AuthedRequest, res) => {
 
 // Create room
 router.post("/rooms", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
   const { name, facilityId, roomType } = req.body;
 
   if (!name || !facilityId) {
@@ -130,7 +130,7 @@ router.post("/rooms", async (req: AuthedRequest, res) => {
 
 // Update room
 router.put("/rooms/:id", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const { name, facilityId, roomType, isActive } = req.body;
 
@@ -149,7 +149,7 @@ router.put("/rooms/:id", async (req: AuthedRequest, res) => {
 
 // Delete room
 router.delete("/rooms/:id", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
   await pool.query(
@@ -164,7 +164,7 @@ router.delete("/rooms/:id", async (req: AuthedRequest, res) => {
 
 // List providers
 router.get("/providers", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
 
   const result = await pool.query(
     `SELECT id, full_name as "fullName", specialty, npi, tax_id as "taxId",
@@ -180,7 +180,7 @@ router.get("/providers", async (req: AuthedRequest, res) => {
 
 // Create provider
 router.post("/providers", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
   const { fullName, specialty, npi } = req.body;
 
   if (!fullName) {
@@ -199,7 +199,7 @@ router.post("/providers", async (req: AuthedRequest, res) => {
 
 // Update provider
 router.put("/providers/:id", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const { fullName, specialty, npi, isActive } = req.body;
 
@@ -218,7 +218,7 @@ router.put("/providers/:id", async (req: AuthedRequest, res) => {
 
 // Delete provider
 router.delete("/providers/:id", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
   await pool.query(
@@ -233,7 +233,7 @@ router.delete("/providers/:id", async (req: AuthedRequest, res) => {
 
 // List users
 router.get("/users", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
 
   const result = await pool.query(
     `SELECT id, email, full_name as "fullName", role, created_at as "createdAt"
@@ -248,7 +248,7 @@ router.get("/users", async (req: AuthedRequest, res) => {
 
 // Create user
 router.post("/users", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
   const { email, fullName, role, password } = req.body;
 
   if (!email || !fullName || !password) {
@@ -279,7 +279,7 @@ router.post("/users", async (req: AuthedRequest, res) => {
 
 // Update user
 router.put("/users/:id", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
   const { email, fullName, role, password } = req.body;
 
@@ -320,7 +320,7 @@ router.put("/users/:id", async (req: AuthedRequest, res) => {
 
 // Delete user
 router.delete("/users/:id", async (req: AuthedRequest, res) => {
-  const tenantId = req.tenantId!;
+  const tenantId = req.user!.tenantId;
   const { id } = req.params;
 
   // Prevent deleting yourself

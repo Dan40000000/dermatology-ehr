@@ -185,7 +185,7 @@ async function transcribeWithWhisper(
     throw new Error(`Whisper API error: ${response.status} - ${errorText}`);
   }
 
-  const whisperResult = await response.json();
+  const whisperResult = await response.json() as any;
   logger.info('Whisper transcription completed');
 
   // Process Whisper output into our format
@@ -531,7 +531,7 @@ async function generateNoteWithClaude(
     throw new Error(`Claude API error: ${response.status} - ${errorText}`);
   }
 
-  const result = await response.json();
+  const result = await response.json() as any;
   const noteText = result.content[0].text;
 
   return parseAIGeneratedNote(noteText, segments, agentConfig);
@@ -591,7 +591,7 @@ async function generateNoteWithGPT4(
     throw new Error(`GPT-4 API error: ${response.status} - ${errorText}`);
   }
 
-  const result = await response.json();
+  const result = await response.json() as any;
   const noteText = result.choices[0].message.content;
 
   return parseAIGeneratedNote(noteText, segments, agentConfig);
@@ -860,7 +860,7 @@ function calculateDueDate(interval: string): string {
   const dueDate = new Date();
   const match = interval.match(/(\d+)(?:-(\d+))?\s*(day|week|month)s?/i);
 
-  if (match) {
+  if (match && match[1] && match[3]) {
     // Use the lower bound of the range
     const amount = parseInt(match[1], 10);
     const unit = match[3].toLowerCase();
@@ -881,7 +881,7 @@ function calculateDueDate(interval: string): string {
     dueDate.setDate(dueDate.getDate() + 14);
   }
 
-  return dueDate.toISOString().split('T')[0];
+  return dueDate.toISOString().split('T')[0]!;
 }
 
 /**
@@ -1046,7 +1046,7 @@ function generatePlan(doctorStatements: string[]): string {
 
 function extractICD10Codes(transcript: string): Array<{ code: string; description: string; confidence: number }> {
   // Simulate intelligent code extraction based on keywords
-  const codes = [];
+  const codes: Array<{ code: string; description: string; confidence: number }> = [];
 
   if (transcript.toLowerCase().includes('contact dermatitis') || transcript.toLowerCase().includes('detergent')) {
     codes.push({ code: 'L23.9', description: 'Allergic contact dermatitis, unspecified cause', confidence: 0.94 });
@@ -1056,7 +1056,7 @@ function extractICD10Codes(transcript: string): Array<{ code: string; descriptio
     codes.push({ code: 'L29.9', description: 'Pruritus, unspecified', confidence: 0.88 });
   }
 
-  return codes.length > 0 ? codes : [COMMON_DERM_ICD10[3]]; // Default to dermatitis
+  return codes.length > 0 ? codes : [COMMON_DERM_ICD10[3]!]; // Default to dermatitis
 }
 
 function extractCPTCodes(transcript: string): Array<{ code: string; description: string; confidence: number }> {

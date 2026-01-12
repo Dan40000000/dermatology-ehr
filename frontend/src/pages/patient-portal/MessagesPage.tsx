@@ -41,9 +41,10 @@ export function PatientPortalMessagesPage() {
         }
       );
       const data = await response.json();
-      setThreads(data.threads || []);
+      setThreads(Array.isArray(data.threads) ? data.threads : []);
     } catch (error) {
       console.error('Error fetching threads:', error);
+      setThreads([]);
     } finally {
       setLoading(false);
     }

@@ -402,7 +402,7 @@ async function isPatientOptedOut(tenantId: string, patientId: string, client: an
 function extractKeyword(messageBody: string): string {
   const trimmed = messageBody.trim();
   const firstWord = trimmed.split(/\s+/)[0];
-  return firstWord.toUpperCase();
+  return firstWord ? firstWord.toUpperCase() : '';
 }
 
 /**

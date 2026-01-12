@@ -157,13 +157,13 @@ export function AnalyticsPage() {
       ]);
 
       setKpis(kpisRes);
-      setAppointmentsTrend(appointmentsTrendRes.data || []);
-      setRevenueTrend(revenueTrendRes.data || []);
-      setTopDiagnoses(topDiagnosesRes.data || []);
-      setTopProcedures(topProceduresRes.data || []);
-      setProviderStats(providerProductivityRes.data || []);
+      setAppointmentsTrend(Array.isArray(appointmentsTrendRes.data) ? appointmentsTrendRes.data : []);
+      setRevenueTrend(Array.isArray(revenueTrendRes.data) ? revenueTrendRes.data : []);
+      setTopDiagnoses(Array.isArray(topDiagnosesRes.data) ? topDiagnosesRes.data : []);
+      setTopProcedures(Array.isArray(topProceduresRes.data) ? topProceduresRes.data : []);
+      setProviderStats(Array.isArray(providerProductivityRes.data) ? providerProductivityRes.data : []);
       setDemographics(demographicsRes);
-      setAppointmentTypes(appointmentTypesRes.data || []);
+      setAppointmentTypes(Array.isArray(appointmentTypesRes.data) ? appointmentTypesRes.data : []);
 
       if (isRefresh) {
         showSuccess('Dashboard refreshed');
@@ -610,7 +610,7 @@ export function AnalyticsPage() {
 
           {/* Patient Demographics - Age Groups */}
           <Panel title="Patient Demographics - Age Groups">
-            {!demographics || demographics.ageGroups.length === 0 ? (
+            {!demographics || !Array.isArray(demographics.ageGroups) || demographics.ageGroups.length === 0 ? (
               <div className="empty-chart">
                 <p className="muted">No demographics data available</p>
               </div>
@@ -686,19 +686,22 @@ export function AnalyticsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {providerStats.map((provider) => (
-                      <tr key={provider.id}>
-                        <td>{provider.provider_name}</td>
-                        <td>{provider.patients_seen}</td>
-                        <td>{provider.appointments}</td>
-                        <td>{formatCurrency(provider.revenue_cents)}</td>
-                        <td>
-                          {provider.patients_seen > 0
-                            ? formatCurrency(provider.revenue_cents / provider.patients_seen)
-                            : '$0.00'}
-                        </td>
-                      </tr>
-                    ))}
+                    {providerStats.map((provider) => {
+                      if (!provider) return null;
+                      return (
+                        <tr key={provider.id}>
+                          <td>{provider.provider_name || 'Unknown'}</td>
+                          <td>{provider.patients_seen || 0}</td>
+                          <td>{provider.appointments || 0}</td>
+                          <td>{formatCurrency(provider.revenue_cents || 0)}</td>
+                          <td>
+                            {provider.patients_seen > 0
+                              ? formatCurrency(Math.round((provider.revenue_cents || 0) / provider.patients_seen))
+                              : '$0.00'}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -293,11 +293,14 @@ export function NotesPage() {
               style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #d1d5db' }}
             >
               <option value="all">All Providers</option>
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.fullName}
-                </option>
-              ))}
+              {Array.isArray(providers) && providers.map((p) => {
+                if (!p) return null;
+                return (
+                  <option key={p.id} value={p.id}>
+                    {p.fullName || 'Unknown'}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -311,11 +314,14 @@ export function NotesPage() {
               style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #d1d5db' }}
             >
               <option value="all">All Patients</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
-                </option>
-              ))}
+              {Array.isArray(patients) && patients.map((p) => {
+                if (!p) return null;
+                return (
+                  <option key={p.id} value={p.id}>
+                    {p.lastName || ''}, {p.firstName || ''}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -506,45 +512,47 @@ export function NotesPage() {
                   </td>
                 </tr>
               ) : (
-                filteredNotes.map((note) => (
-                  <tr key={note.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={{ padding: '0.75rem 1rem' }}>
-                      <input
-                        type="checkbox"
-                        checked={selectedNotes.has(note.id)}
-                        onChange={() => handleSelectNote(note.id)}
-                        disabled={note.status === 'signed'}
-                        style={{ cursor: note.status === 'signed' ? 'not-allowed' : 'pointer' }}
-                      />
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#111827' }}>
-                      {note.patientLastName}, {note.patientFirstName}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#111827' }}>
-                      {note.providerName}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#111827' }}>
-                      {note.chiefComplaint || '—'}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#111827' }}>
-                      {note.visitCode || '—'}
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem' }}>
-                      <span
-                        style={{
-                          padding: '0.25rem 0.75rem',
-                          borderRadius: '9999px',
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                        }}
-                        className={getStatusBadgeColor(note.status)}
-                      >
-                        {note.status}
-                      </span>
-                    </td>
-                    <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#6b7280' }}>
-                      {new Date(note.createdAt).toLocaleDateString()}
-                    </td>
+                filteredNotes.map((note) => {
+                  if (!note) return null;
+                  return (
+                    <tr key={note.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '0.75rem 1rem' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedNotes.has(note.id)}
+                          onChange={() => handleSelectNote(note.id)}
+                          disabled={note.status === 'signed'}
+                          style={{ cursor: note.status === 'signed' ? 'not-allowed' : 'pointer' }}
+                        />
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#111827' }}>
+                        {note.patientLastName || ''}, {note.patientFirstName || ''}
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#111827' }}>
+                        {note.providerName || '—'}
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#111827' }}>
+                        {note.chiefComplaint || '—'}
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#111827' }}>
+                        {note.visitCode || '—'}
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem' }}>
+                        <span
+                          style={{
+                            padding: '0.25rem 0.75rem',
+                            borderRadius: '9999px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                          }}
+                          className={getStatusBadgeColor(note.status)}
+                        >
+                          {note.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', fontSize: '0.875rem', color: '#6b7280' }}>
+                        {note.createdAt ? new Date(note.createdAt).toLocaleDateString() : '—'}
+                      </td>
                     <td style={{ padding: '0.75rem 1rem' }}>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button
@@ -599,7 +607,8 @@ export function NotesPage() {
                       </div>
                     </td>
                   </tr>
-                ))
+                )
+              })
               )}
             </tbody>
           </table>

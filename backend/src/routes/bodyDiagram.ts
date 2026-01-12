@@ -105,7 +105,7 @@ bodyDiagramRouter.get("/patient/:patientId/markings", requireAuth, async (req: A
       [tenantId, patientId]
     );
 
-    await auditLog(tenantId, req.user!.id, "body_diagram_view", "patient", patientId);
+    await auditLog(tenantId, req.user!.id, "body_diagram_view", "patient", patientId!);
     res.json({ markings: result.rows });
   } catch (error: any) {
     console.error("Error fetching patient markings:", error);
@@ -296,11 +296,7 @@ bodyDiagramRouter.post("/markings", requireAuth, requireRoles(["provider", "ma",
       ]
     );
 
-    await auditLog(tenantId, userId, "body_marking_create", "body_marking", id, {
-      patientId: data.patientId,
-      markingType: data.markingType,
-      locationCode: data.locationCode,
-    });
+    await auditLog(tenantId, userId, "body_marking_create", "body_marking", id);
 
     res.status(201).json({ id });
   } catch (error: any) {
@@ -439,7 +435,7 @@ bodyDiagramRouter.put("/markings/:id", requireAuth, requireRoles(["provider", "m
       values
     );
 
-    await auditLog(tenantId, userId, "body_marking_update", "body_marking", id);
+    await auditLog(tenantId, userId, "body_marking_update", "body_marking", id!);
 
     res.json({ ok: true });
   } catch (error: any) {
@@ -466,9 +462,7 @@ bodyDiagramRouter.delete("/markings/:id", requireAuth, requireRoles(["provider",
       return res.status(404).json({ error: "Marking not found" });
     }
 
-    await auditLog(tenantId, userId, "body_marking_delete", "body_marking", id, {
-      patientId: result.rows[0].patientId,
-    });
+    await auditLog(tenantId, userId, "body_marking_delete", "body_marking", id!);
 
     res.json({ ok: true });
   } catch (error: any) {

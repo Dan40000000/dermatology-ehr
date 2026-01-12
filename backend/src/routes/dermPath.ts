@@ -5,7 +5,7 @@
 
 import { Router, Request, Response } from 'express';
 import { pool } from '../db/pool';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, AuthedRequest } from '../middleware/auth';
 import { logger } from '../lib/logger';
 import { DermPathParser } from '../services/dermPathParser';
 
@@ -18,7 +18,7 @@ router.use(requireAuth);
  * GET /api/dermpath/reports
  * Get dermatopathology reports
  */
-router.get('/reports', async (req: Request, res: Response) => {
+router.get('/reports', async (req: AuthedRequest, res: Response) => {
   try {
     const { patient_id, from_date, to_date } = req.query;
 
@@ -72,7 +72,7 @@ router.get('/reports', async (req: Request, res: Response) => {
  * GET /api/dermpath/reports/:id
  * Get a specific dermatopathology report
  */
-router.get('/reports/:id', async (req: Request, res: Response) => {
+router.get('/reports/:id', async (req: AuthedRequest, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -121,7 +121,7 @@ router.get('/reports/:id', async (req: Request, res: Response) => {
  * POST /api/dermpath/reports
  * Create a dermatopathology report
  */
-router.post('/reports', async (req: Request, res: Response) => {
+router.post('/reports', async (req: AuthedRequest, res: Response) => {
   const client = await pool.connect();
 
   try {
@@ -221,7 +221,7 @@ router.post('/reports', async (req: Request, res: Response) => {
  * POST /api/dermpath/parse
  * Parse a dermpath report from free text
  */
-router.post('/parse', async (req: Request, res: Response) => {
+router.post('/parse', async (req: AuthedRequest, res: Response) => {
   try {
     const { report_text } = req.body;
 
@@ -250,7 +250,7 @@ router.post('/parse', async (req: Request, res: Response) => {
  * GET /api/dermpath/cultures
  * Get culture results
  */
-router.get('/cultures', async (req: Request, res: Response) => {
+router.get('/cultures', async (req: AuthedRequest, res: Response) => {
   try {
     const { patient_id, culture_type } = req.query;
 
@@ -298,7 +298,7 @@ router.get('/cultures', async (req: Request, res: Response) => {
  * POST /api/dermpath/cultures
  * Create a culture result
  */
-router.post('/cultures', async (req: Request, res: Response) => {
+router.post('/cultures', async (req: AuthedRequest, res: Response) => {
   try {
     const {
       lab_order_id,
@@ -359,7 +359,7 @@ router.post('/cultures', async (req: Request, res: Response) => {
  * GET /api/dermpath/patch-tests
  * Get patch test results
  */
-router.get('/patch-tests', async (req: Request, res: Response) => {
+router.get('/patch-tests', async (req: AuthedRequest, res: Response) => {
   try {
     const { patient_id } = req.query;
 
@@ -415,7 +415,7 @@ router.get('/patch-tests', async (req: Request, res: Response) => {
  * POST /api/dermpath/patch-tests
  * Create a patch test
  */
-router.post('/patch-tests', async (req: Request, res: Response) => {
+router.post('/patch-tests', async (req: AuthedRequest, res: Response) => {
   const client = await pool.connect();
 
   try {
@@ -486,7 +486,7 @@ router.post('/patch-tests', async (req: Request, res: Response) => {
  * PATCH /api/dermpath/patch-tests/:id/reading
  * Record a patch test reading
  */
-router.patch('/patch-tests/:id/reading', async (req: Request, res: Response) => {
+router.patch('/patch-tests/:id/reading', async (req: AuthedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { reading_type, reading_date, reading_by, allergen_readings } = req.body;

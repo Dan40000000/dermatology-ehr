@@ -54,8 +54,9 @@ export function DrugSearchAutocomplete({
           category,
           20
         );
-        setResults(data.drugs);
-        setIsOpen(data.drugs.length > 0);
+        const drugs = Array.isArray(data.drugs) ? data.drugs : [];
+        setResults(drugs);
+        setIsOpen(drugs.length > 0);
       } catch (error) {
         console.error('Error searching drugs:', error);
         setResults([]);
@@ -91,7 +92,7 @@ export function DrugSearchAutocomplete({
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
-        setSelectedIndex(prev => (prev < results.length - 1 ? prev + 1 : prev));
+        setSelectedIndex(prev => (Array.isArray(results) && prev < results.length - 1 ? prev + 1 : prev));
         break;
       case 'ArrowUp':
         e.preventDefault();
@@ -99,7 +100,7 @@ export function DrugSearchAutocomplete({
         break;
       case 'Enter':
         e.preventDefault();
-        if (selectedIndex >= 0 && results[selectedIndex]) {
+        if (selectedIndex >= 0 && Array.isArray(results) && results[selectedIndex]) {
           handleSelect(results[selectedIndex]);
         }
         break;
@@ -179,7 +180,7 @@ export function DrugSearchAutocomplete({
         )}
       </div>
 
-      {isOpen && results.length > 0 && (
+      {isOpen && Array.isArray(results) && results.length > 0 && (
         <div
           ref={dropdownRef}
           style={{

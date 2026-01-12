@@ -660,7 +660,7 @@ prescriptionsRouter.get(
         return res.status(404).json({ error: 'Patient not found' });
       }
 
-      const benefits = await getPatientBenefits(patientId, tenantId);
+      const benefits = await getPatientBenefits(patientId!, tenantId);
 
       if (!benefits) {
         return res.status(404).json({ error: 'No pharmacy benefits found for patient' });
@@ -703,18 +703,15 @@ prescriptionsRouter.post(
         return res.status(400).json({ error: 'Pharmacy NCPDP ID is required' });
       }
 
-      // Forward to new endpoint
-      req.body = {
-        prescriptionId: id,
-        pharmacyNcpdp: prescription.pharmacy_ncpdp || prescription.ncpdp_id,
-      };
-
-      // Call the send-erx logic inline
-      return prescriptionsRouter.handle(
-        { ...req, url: '/send-erx', method: 'POST' } as any,
-        res,
-        () => {}
-      );
+      // Redirect to the new endpoint
+      return res.status(200).json({
+        message: 'Please use /api/prescriptions/send-erx endpoint instead',
+        redirectTo: '/api/prescriptions/send-erx',
+        body: {
+          prescriptionId: id,
+          pharmacyNcpdp: prescription.pharmacy_ncpdp || prescription.ncpdp_id,
+        }
+      });
     } catch (error) {
       console.error('Error sending prescription:', error);
       return res.status(500).json({ error: 'Failed to send prescription' });

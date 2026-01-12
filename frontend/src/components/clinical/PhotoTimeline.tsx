@@ -20,6 +20,10 @@ export function PhotoTimeline({ photos, getPhotoUrl, onPhotoClick }: PhotoTimeli
   const groupPhotos = (): GroupedPhotos[] => {
     const groups: { [key: string]: Photo[] } = {};
 
+    if (!Array.isArray(photos)) {
+      return [];
+    }
+
     photos.forEach((photo) => {
       let key: string;
 
@@ -146,7 +150,7 @@ export function PhotoTimeline({ photos, getPhotoUrl, onPhotoClick }: PhotoTimeli
                         <div className="photo-description">{photo.description}</div>
                       )}
 
-                      {photo.annotations && photo.annotations.shapes.length > 0 && (
+                      {photo.annotations && Array.isArray(photo.annotations.shapes) && photo.annotations.shapes.length > 0 && (
                         <div className="photo-annotations-indicator">
                           <span className="annotation-icon">✎</span>
                           {photo.annotations.shapes.length} annotations

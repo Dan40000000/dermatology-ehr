@@ -1,6 +1,5 @@
 databases:
   - name: derm-db
-    plan: free
     databaseName: derm_db
     user: derm_user
 
@@ -8,7 +7,6 @@ services:
   # Backend API
   - type: web
     name: derm-api
-    plan: free
     runtime: node
     rootDir: backend
     buildCommand: npm install && npm run build
@@ -46,7 +44,6 @@ services:
   # Frontend
   - type: web
     name: derm-frontend
-    plan: free
     runtime: static
     rootDir: frontend
     buildCommand: npm install && npm run build

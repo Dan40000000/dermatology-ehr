@@ -995,10 +995,16 @@ async function seed() {
   }
 }
 
-seed()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    // eslint-disable-next-line no-console
-    console.error("Seed failed", err);
-    process.exit(1);
-  });
+// Export seed function for programmatic use
+export { seed as runSeed };
+
+// Run if executed directly
+if (require.main === module) {
+  seed()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error("Seed failed", err);
+      process.exit(1);
+    });
+}

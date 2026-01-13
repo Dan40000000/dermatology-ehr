@@ -2151,14 +2151,20 @@ async function run() {
   }
 }
 
-run()
-  .then(() => {
-    // eslint-disable-next-line no-console
-    console.log("Migrations complete");
-    process.exit(0);
-  })
-  .catch((err) => {
-    // eslint-disable-next-line no-console
-    console.error("Migration failed", err);
-    process.exit(1);
-  });
+// Export run function for programmatic use
+export { run as runMigrations };
+
+// Run if executed directly
+if (require.main === module) {
+  run()
+    .then(() => {
+      // eslint-disable-next-line no-console
+      console.log("Migrations complete");
+      process.exit(0);
+    })
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error("Migration failed", err);
+      process.exit(1);
+    });
+}

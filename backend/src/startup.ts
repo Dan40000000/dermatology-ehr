@@ -1,29 +1,31 @@
-import { execSync } from "child_process";
+import { runMigrations } from "./db/migrate";
+import { runSeed } from "./db/seed";
 
 async function startup() {
-  console.log("Running database migrations...");
+  console.log("=== Database Initialization ===");
+
   try {
-    // Run migrations
-    execSync("node dist/db/migrate.js", { stdio: "inherit" });
+    console.log("Running database migrations...");
+    await runMigrations();
     console.log("Migrations complete.");
   } catch (err) {
-    console.error("Migration failed:", err);
-    // Don't exit - migrations might already be applied
+    console.error("Migration error (may already be applied):", (err as Error).message);
   }
 
-  console.log("Running database seed...");
   try {
-    // Run seed
-    execSync("node dist/db/seed.js", { stdio: "inherit" });
+    console.log("Running database seed...");
+    await runSeed();
     console.log("Seed complete.");
   } catch (err) {
-    console.error("Seed failed:", err);
-    // Don't exit - seed might already be applied
+    console.error("Seed error (may already be applied):", (err as Error).message);
   }
 
-  console.log("Starting server...");
-  // Import and run the main server
+  console.log("=== Starting Server ===");
+  // Import server after DB is ready
   require("./index");
 }
 
-startup();
+startup().catch((err) => {
+  console.error("Startup failed:", err);
+  process.exit(1);
+});

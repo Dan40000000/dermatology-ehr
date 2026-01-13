@@ -94,6 +94,9 @@ import { waitlistAutoFillService } from "./services/waitlistAutoFillService";
 
 const app = express();
 
+// Trust proxy for Railway/cloud deployments (required for rate limiting behind reverse proxy)
+app.set('trust proxy', 1);
+
 // Security middleware (apply early in the chain)
 app.use(securityHeaders);
 app.use(cookieParser());

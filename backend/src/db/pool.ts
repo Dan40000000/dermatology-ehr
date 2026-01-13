@@ -19,7 +19,7 @@ export const pool = new Pool({
   max: 20, // Maximum number of connections in the pool
   min: 2, // Minimum number of connections to keep alive
   idleTimeoutMillis: 30000, // Close idle connections after 30 seconds
-  connectionTimeoutMillis: 10000, // Timeout when acquiring connection (10 seconds)
+  connectionTimeoutMillis: 30000, // Timeout when acquiring connection (30 seconds - increased for Railway)
 
   // Query timeout
   statement_timeout: 30000, // Abort queries that take longer than 30 seconds

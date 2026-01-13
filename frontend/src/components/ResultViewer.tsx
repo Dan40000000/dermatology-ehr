@@ -87,7 +87,7 @@ const ResultViewer: React.FC<ResultViewerProps> = ({ result }) => {
     try {
       setLoadingTrends(true);
       const response = await fetch(
-        `http://localhost:3000/api/lab-results/trends/${result.patient_id}/${result.test_code}`,
+        `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-results/trends/${result.patient_id}/${result.test_code}`,
         { credentials: 'include' }
       );
 

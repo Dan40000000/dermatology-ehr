@@ -35,7 +35,7 @@ export const CannedResponseSelector: FC<CannedResponseSelectorProps> = ({
 
     try {
       const response = await fetch(
-        `http://localhost:4000/api/canned-responses?activeOnly=true`,
+        `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/canned-responses?activeOnly=true`,
         {
           headers: {
             Authorization: `Bearer ${session.accessToken}`,

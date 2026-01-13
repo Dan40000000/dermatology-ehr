@@ -34,7 +34,7 @@ interface User {
   email: string;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
 const TENANT_HEADER_NAME = "x-tenant-id";
 
 export function AuditLogPage() {

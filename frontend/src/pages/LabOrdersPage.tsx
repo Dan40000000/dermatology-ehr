@@ -76,7 +76,7 @@ const LabOrdersPage: React.FC = () => {
       if (statusFilter) params.append('status', statusFilter);
       if (vendorFilter) params.append('vendor_id', vendorFilter);
 
-      const response = await fetch(`http://localhost:3000/api/lab-orders?${params}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-orders?${params}`, {
         credentials: 'include'
       });
 
@@ -117,7 +117,7 @@ const LabOrdersPage: React.FC = () => {
 
   const handleSubmitOrder = async (orderId: string) => {
     try {
-      const response = await fetch(`http://localhost:3000/api/lab-orders/${orderId}/submit`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-orders/${orderId}/submit`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' }

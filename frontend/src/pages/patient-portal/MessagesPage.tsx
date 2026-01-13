@@ -32,7 +32,7 @@ export function PatientPortalMessagesPage() {
     setLoading(true);
     try {
       const response = await fetch(
-        `http://localhost:4000/api/patient-portal/messages/threads?${filter !== 'all' ? `category=${filter}` : ''}`,
+        `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/patient-portal/messages/threads?${filter !== 'all' ? `category=${filter}` : ''}`,
         {
           headers: {
             Authorization: `Bearer ${localStorage.getItem('patientToken')}`,

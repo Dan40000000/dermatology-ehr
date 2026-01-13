@@ -127,7 +127,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
 
   const fetchPatients = async () => {
     try {
-      const response = await fetch('http://localhost:3000/api/patients?limit=100', {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/patients?limit=100`, {
         credentials: 'include'
       });
       if (response.ok) {
@@ -142,7 +142,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
 
   const fetchProviders = async () => {
     try {
-      const response = await fetch('http://localhost:3000/api/providers', {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/providers`, {
         credentials: 'include'
       });
       if (response.ok) {
@@ -156,7 +156,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
 
   const fetchVendors = async () => {
     try {
-      const response = await fetch('http://localhost:3000/api/lab-vendors', {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-vendors`, {
         credentials: 'include'
       });
       if (response.ok) {
@@ -170,7 +170,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
 
   const fetchOrderSets = async () => {
     try {
-      const response = await fetch('http://localhost:3000/api/lab-vendors/order-sets', {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-vendors/order-sets`, {
         credentials: 'include'
       });
       if (response.ok) {
@@ -185,7 +185,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
   const fetchTestCatalog = async (vendorId: string) => {
     try {
       const response = await fetch(
-        `http://localhost:3000/api/lab-vendors/catalog?vendor_id=${vendorId}`,
+        `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-vendors/catalog?vendor_id=${vendorId}`,
         { credentials: 'include' }
       );
       if (response.ok) {
@@ -234,7 +234,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:3000/api/lab-orders', {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-orders`, {
         method: 'POST',
         credentials: 'include',
         headers: {

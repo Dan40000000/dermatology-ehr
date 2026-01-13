@@ -89,7 +89,7 @@ const LabResultsPage: React.FC = () => {
       if (abnormalOnly) params.append('abnormal_only', 'true');
       if (criticalOnly) params.append('critical_only', 'true');
 
-      const response = await fetch(`http://localhost:3000/api/lab-results?${params}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-results?${params}`, {
         credentials: 'include'
       });
 
@@ -106,7 +106,7 @@ const LabResultsPage: React.FC = () => {
 
   const fetchCriticalNotifications = async () => {
     try {
-      const response = await fetch('http://localhost:3000/api/lab-results/critical', {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-results/critical`, {
         credentials: 'include'
       });
 
@@ -122,7 +122,7 @@ const LabResultsPage: React.FC = () => {
   const handleAcknowledgeCritical = async (notificationId: string) => {
     try {
       const response = await fetch(
-        `http://localhost:3000/api/lab-results/critical/${notificationId}/acknowledge`,
+        `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-results/critical/${notificationId}/acknowledge`,
         {
           method: 'POST',
           credentials: 'include',

@@ -2,11 +2,54 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
-import { fetchOrders, fetchPatients, createOrder, updateOrderStatus } from '../api';
-import type { Order, Patient } from '../types';
+import { fetchOrders, fetchPatients, fetchProviders, createOrder, updateOrderStatus } from '../api';
+import type { Order, Patient, Provider } from '../types';
 
-type LabFilter = 'all' | 'pending' | 'in-progress' | 'completed';
+// Main tab type
+type MainTab = 'path' | 'lab';
 
+// Sub-tab type
+type SubTab = 'pending-results' | 'pending-plan' | 'completed' | 'unresolved';
+
+// Filter state interface
+interface FilterState {
+  provider: string;
+  patient: string;
+  facility: 'preferred' | 'all';
+  preferredFacility: string;
+  entryDateStart: string;
+  entryDateEnd: string;
+  resultsDateStart: string;
+  resultsDateEnd: string;
+}
+
+// Path/Lab result interface
+interface PathLabResult extends Order {
+  facility?: string;
+  ddx?: string;
+  procedure?: string;
+  location?: string;
+  results?: string;
+  resultsProcessed?: string;
+  photos?: string[];
+  entryDate?: string;
+}
+
+// Common dermatology procedures
+const COMMON_DERM_PROCEDURES = [
+  'Shave Biopsy',
+  'Punch Biopsy',
+  'Excisional Biopsy',
+  'Incisional Biopsy',
+  'Fine Needle Aspiration',
+  'Scraping/KOH Prep',
+  'Bacterial Culture',
+  'Fungal Culture',
+  'Viral Culture',
+  'Tissue Culture',
+];
+
+// Common lab tests
 const COMMON_DERM_LABS = [
   { name: 'CBC with Differential', code: '85025' },
   { name: 'Comprehensive Metabolic Panel', code: '80053' },
@@ -33,22 +76,40 @@ export function LabsPage() {
   const { showSuccess, showError } = useToast();
 
   const [loading, setLoading] = useState(true);
-  const [labOrders, setLabOrders] = useState<Order[]>([]);
+  const [pathResults, setPathResults] = useState<PathLabResult[]>([]);
+  const [labResults, setLabResults] = useState<PathLabResult[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
-  const [filter, setFilter] = useState<LabFilter>('all');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedLabs, setSelectedLabs] = useState<Set<string>>(new Set());
+  const [providers, setProviders] = useState<Provider[]>([]);
 
-  const [showNewLabModal, setShowNewLabModal] = useState(false);
-  const [showResultsModal, setShowResultsModal] = useState(false);
-  const [selectedLab, setSelectedLab] = useState<Order | null>(null);
+  const [mainTab, setMainTab] = useState<MainTab>('path');
+  const [subTab, setSubTab] = useState<SubTab>('pending-results');
+
+  const [filters, setFilters] = useState<FilterState>({
+    provider: '',
+    patient: '',
+    facility: 'preferred',
+    preferredFacility: '',
+    entryDateStart: '',
+    entryDateEnd: '',
+    resultsDateStart: '',
+    resultsDateEnd: '',
+  });
+
+  const [sortField, setSortField] = useState<string>('createdAt');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+
+  const [showManualEntryModal, setShowManualEntryModal] = useState(false);
   const [creating, setCreating] = useState(false);
 
-  const [newLab, setNewLab] = useState({
+  const [newEntry, setNewEntry] = useState({
     patientId: '',
+    type: 'path' as 'path' | 'lab',
+    procedure: '',
     tests: [] as string[],
-    priority: 'routine' as 'stat' | 'urgent' | 'routine',
-    fasting: false,
+    facility: '',
+    ddx: '',
+    location: '',
     notes: '',
   });
 
@@ -57,16 +118,24 @@ export function LabsPage() {
 
     setLoading(true);
     try {
-      const [ordersRes, patientsRes] = await Promise.all([
+      const [ordersRes, patientsRes, providersRes] = await Promise.all([
         fetchOrders(session.tenantId, session.accessToken),
         fetchPatients(session.tenantId, session.accessToken),
+        fetchProviders(session.tenantId, session.accessToken),
       ]);
 
-      const labs = (ordersRes.orders || []).filter((o: Order) => o.type === 'lab');
-      setLabOrders(labs);
+      const allOrders = (ordersRes.orders || []) as PathLabResult[];
+
+      // Separate path and lab orders
+      const paths = allOrders.filter((o: PathLabResult) => o.type === 'pathology' || o.type === 'path');
+      const labs = allOrders.filter((o: PathLabResult) => o.type === 'lab' || o.type === 'laboratory');
+
+      setPathResults(paths);
+      setLabResults(labs);
       setPatients(patientsRes.patients || []);
+      setProviders(providersRes.providers || []);
     } catch (err: any) {
-      showError(err.message || 'Failed to load lab orders');
+      showError(err.message || 'Failed to load data');
     } finally {
       setLoading(false);
     }
@@ -76,37 +145,51 @@ export function LabsPage() {
     loadData();
   }, [loadData]);
 
-  const handleCreateLab = async () => {
-    if (!session || !newLab.patientId || newLab.tests.length === 0) {
-      showError('Please select patient and at least one test');
+  const handleCreateEntry = async () => {
+    if (!session || !newEntry.patientId) {
+      showError('Please select a patient');
+      return;
+    }
+
+    if (newEntry.type === 'path' && !newEntry.procedure) {
+      showError('Please specify a procedure');
+      return;
+    }
+
+    if (newEntry.type === 'lab' && newEntry.tests.length === 0) {
+      showError('Please select at least one test');
       return;
     }
 
     setCreating(true);
     try {
-      const details = newLab.tests.join('\n') + (newLab.fasting ? '\n\n** FASTING REQUIRED **' : '');
+      const details = newEntry.type === 'path'
+        ? newEntry.procedure
+        : newEntry.tests.join('\n');
 
       await createOrder(session.tenantId, session.accessToken, {
-        patientId: newLab.patientId,
-        type: 'lab',
+        patientId: newEntry.patientId,
+        type: newEntry.type === 'path' ? 'pathology' : 'lab',
         details,
-        priority: newLab.priority,
-        notes: newLab.notes,
+        notes: newEntry.notes,
         status: 'pending',
       });
 
-      showSuccess('Lab order created');
-      setShowNewLabModal(false);
-      setNewLab({
+      showSuccess(`${newEntry.type === 'path' ? 'Pathology' : 'Lab'} entry created`);
+      setShowManualEntryModal(false);
+      setNewEntry({
         patientId: '',
+        type: 'path',
+        procedure: '',
         tests: [],
-        priority: 'routine',
-        fasting: false,
+        facility: '',
+        ddx: '',
+        location: '',
         notes: '',
       });
       loadData();
     } catch (err: any) {
-      showError(err.message || 'Failed to create lab order');
+      showError(err.message || 'Failed to create entry');
     } finally {
       setCreating(false);
     }
@@ -124,8 +207,126 @@ export function LabsPage() {
     }
   };
 
+  const getPatientName = (patientId: string) => {
+    const patient = patients.find((p) => p.id === patientId);
+    return patient ? `${patient.lastName}, ${patient.firstName}` : 'Unknown';
+  };
+
+  const getProviderName = (providerId: string) => {
+    const provider = providers.find((p) => p.id === providerId);
+    return provider ? provider.fullName || provider.name : 'Unknown';
+  };
+
+  const applyFilters = () => {
+    const currentData = mainTab === 'path' ? pathResults : labResults;
+
+    let filtered = currentData.filter((item) => {
+      // Filter by sub-tab status
+      if (subTab === 'pending-results' && item.status !== 'pending') return false;
+      if (subTab === 'pending-plan' && item.status !== 'in-progress') return false;
+      if (subTab === 'completed' && item.status !== 'completed') return false;
+      if (subTab === 'unresolved' && item.status !== 'cancelled') return false;
+
+      // Filter by provider
+      if (filters.provider && item.providerId !== filters.provider) return false;
+
+      // Filter by patient
+      if (filters.patient && item.patientId !== filters.patient) return false;
+
+      // Filter by entry date
+      if (filters.entryDateStart && new Date(item.createdAt) < new Date(filters.entryDateStart)) return false;
+      if (filters.entryDateEnd && new Date(item.createdAt) > new Date(filters.entryDateEnd)) return false;
+
+      return true;
+    });
+
+    return filtered;
+  };
+
+  const sortData = (data: PathLabResult[]) => {
+    return [...data].sort((a, b) => {
+      let aVal: any = a[sortField as keyof PathLabResult];
+      let bVal: any = b[sortField as keyof PathLabResult];
+
+      // Handle patient name sorting
+      if (sortField === 'patient') {
+        aVal = getPatientName(a.patientId);
+        bVal = getPatientName(b.patientId);
+      }
+
+      // Handle date sorting
+      if (sortField === 'createdAt' || sortField === 'entryDate') {
+        aVal = new Date(aVal || 0).getTime();
+        bVal = new Date(bVal || 0).getTime();
+      }
+
+      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+  };
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const toggleItemSelection = (itemId: string) => {
+    const newSelected = new Set(selectedItems);
+    if (newSelected.has(itemId)) {
+      newSelected.delete(itemId);
+    } else {
+      newSelected.add(itemId);
+    }
+    setSelectedItems(newSelected);
+  };
+
+  const toggleSelectAll = () => {
+    const displayedData = sortData(applyFilters());
+    if (selectedItems.size === displayedData.length) {
+      setSelectedItems(new Set());
+    } else {
+      setSelectedItems(new Set(displayedData.map((item) => item.id)));
+    }
+  };
+
+  const clearFilters = () => {
+    setFilters({
+      provider: '',
+      patient: '',
+      facility: 'preferred',
+      preferredFacility: '',
+      entryDateStart: '',
+      entryDateEnd: '',
+      resultsDateStart: '',
+      resultsDateEnd: '',
+    });
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleMoveToUnresolved = async () => {
+    if (selectedItems.size === 0) return;
+
+    try {
+      for (const itemId of selectedItems) {
+        await handleStatusChange(itemId, 'cancelled');
+      }
+      setSelectedItems(new Set());
+      showSuccess(`Moved ${selectedItems.size} item(s) to unresolved`);
+    } catch (err: any) {
+      showError('Failed to move items to unresolved');
+    }
+  };
+
   const toggleTest = (testName: string) => {
-    setNewLab((prev) => ({
+    setNewEntry((prev) => ({
       ...prev,
       tests: prev.tests.includes(testName)
         ? prev.tests.filter((t) => t !== testName)
@@ -133,139 +334,24 @@ export function LabsPage() {
     }));
   };
 
-  const getPatientName = (patientId: string) => {
-    const patient = patients.find((p) => p.id === patientId);
-    return patient ? `${patient.lastName}, ${patient.firstName}` : 'Unknown';
-  };
+  const filteredData = sortData(applyFilters());
 
-  const filteredLabs = labOrders.filter((lab) => {
-    if (filter !== 'all' && lab.status !== filter) return false;
-    if (searchTerm) {
-      const patientName = getPatientName(lab.patientId).toLowerCase();
-      const details = (lab.details || '').toLowerCase();
-      if (
-        !patientName.includes(searchTerm.toLowerCase()) &&
-        !details.includes(searchTerm.toLowerCase())
-      ) {
-        return false;
-      }
-    }
-    return true;
-  });
-
-  const toggleLabSelection = (labId: string) => {
-    const newSelected = new Set(selectedLabs);
-    if (newSelected.has(labId)) {
-      newSelected.delete(labId);
-    } else {
-      newSelected.add(labId);
-    }
-    setSelectedLabs(newSelected);
-  };
-
-  const toggleSelectAll = () => {
-    if (selectedLabs.size === filteredLabs.length) {
-      setSelectedLabs(new Set());
-    } else {
-      setSelectedLabs(new Set(filteredLabs.map((l) => l.id)));
-    }
-  };
-
-  // Stats
-  const pendingCount = labOrders.filter((l) => l.status === 'pending').length;
-  const inProgressCount = labOrders.filter((l) => l.status === 'in-progress' || l.status === 'ordered').length;
-  const completedCount = labOrders.filter((l) => l.status === 'completed').length;
-  const statCount = labOrders.filter((l) => l.priority === 'stat' && l.status !== 'completed').length;
+  // Count by sub-tab
+  const currentData = mainTab === 'path' ? pathResults : labResults;
+  const pendingResultsCount = currentData.filter((i) => i.status === 'pending').length;
+  const pendingPlanCount = currentData.filter((i) => i.status === 'in-progress').length;
+  const completedCount = currentData.filter((i) => i.status === 'completed').length;
+  const unresolvedCount = currentData.filter((i) => i.status === 'cancelled').length;
 
   return (
-    <div className="labs-page" style={{
+    <div style={{
       background: 'linear-gradient(135deg, #fb7185 0%, #f43f5e 100%)',
       minHeight: 'calc(100vh - 200px)',
       padding: '1.5rem',
       borderRadius: '12px',
       boxShadow: '0 20px 60px rgba(251, 113, 133, 0.3)',
     }}>
-      {/* Action Bar */}
-      <div className="ema-action-bar" style={{
-        background: 'rgba(255, 255, 255, 0.95)',
-        borderRadius: '12px',
-        padding: '1rem',
-        marginBottom: '1rem',
-        display: 'flex',
-        gap: '0.75rem',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-        backdropFilter: 'blur(10px)',
-      }}>
-        <button type="button" onClick={() => setShowNewLabModal(true)} style={{
-          padding: '0.75rem 1.25rem',
-          background: 'linear-gradient(135deg, #fb7185 0%, #f43f5e 100%)',
-          color: '#ffffff',
-          border: 'none',
-          borderRadius: '8px',
-          fontSize: '0.875rem',
-          fontWeight: 700,
-          cursor: 'pointer',
-          boxShadow: '0 4px 12px rgba(251, 113, 133, 0.4)',
-          transition: 'all 0.3s ease',
-        }}>
-          <span style={{ marginRight: '0.5rem' }}>+</span>
-          New Lab Order
-        </button>
-        <button type="button" disabled={selectedLabs.size === 0} style={{
-          padding: '0.75rem 1.25rem',
-          background: selectedLabs.size === 0 ? '#d1d5db' : '#ffffff',
-          color: selectedLabs.size === 0 ? '#9ca3af' : '#f43f5e',
-          border: '2px solid #fb7185',
-          borderRadius: '8px',
-          fontSize: '0.875rem',
-          fontWeight: 600,
-          cursor: selectedLabs.size === 0 ? 'not-allowed' : 'pointer',
-          transition: 'all 0.3s ease',
-        }}>
-          Print Requisition
-        </button>
-        <button type="button" disabled={selectedLabs.size === 0} style={{
-          padding: '0.75rem 1.25rem',
-          background: selectedLabs.size === 0 ? '#d1d5db' : '#ffffff',
-          color: selectedLabs.size === 0 ? '#9ca3af' : '#f43f5e',
-          border: '2px solid #fb7185',
-          borderRadius: '8px',
-          fontSize: '0.875rem',
-          fontWeight: 600,
-          cursor: selectedLabs.size === 0 ? 'not-allowed' : 'pointer',
-          transition: 'all 0.3s ease',
-        }}>
-          Send to Lab
-        </button>
-        <button type="button" style={{
-          padding: '0.75rem 1.25rem',
-          background: '#ffffff',
-          color: '#f43f5e',
-          border: '2px solid #fb7185',
-          borderRadius: '8px',
-          fontSize: '0.875rem',
-          fontWeight: 600,
-          cursor: 'pointer',
-          transition: 'all 0.3s ease',
-        }}>
-          Review Results
-        </button>
-        <button type="button" onClick={loadData} style={{
-          padding: '0.75rem 1.25rem',
-          background: '#ffffff',
-          color: '#f43f5e',
-          border: '2px solid #fb7185',
-          borderRadius: '8px',
-          fontSize: '0.875rem',
-          fontWeight: 600,
-          cursor: 'pointer',
-          transition: 'all 0.3s ease',
-        }}>
-          Refresh
-        </button>
-      </div>
-
-      {/* Section Header */}
+      {/* Page Header */}
       <div style={{
         background: 'rgba(255, 255, 255, 0.95)',
         borderRadius: '12px',
@@ -285,352 +371,581 @@ export function LabsPage() {
         }}>Pathology & Lab Orders</h1>
       </div>
 
-      {/* Stats Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
-        <div
-          onClick={() => setFilter('pending')}
-          style={{
-            cursor: 'pointer',
-            background: 'rgba(255, 255, 255, 0.95)',
-            borderRadius: '12px',
-            padding: '1.5rem',
-            boxShadow: filter === 'pending' ? '0 8px 32px rgba(251, 113, 133, 0.4)' : '0 4px 16px rgba(0, 0, 0, 0.1)',
-            backdropFilter: 'blur(10px)',
-            border: filter === 'pending' ? '2px solid #fb7185' : '2px solid transparent',
-            transition: 'all 0.3s ease',
-          }}
-        >
-          <div style={{
-            fontSize: '2.5rem',
-            fontWeight: 700,
-            background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-            marginBottom: '0.5rem',
-          }}>{pendingCount}</div>
-          <div style={{ color: '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>Pending</div>
+      {/* Main Tabs: Path / Lab */}
+      <div style={{
+        background: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: '12px 12px 0 0',
+        marginBottom: '0',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+        backdropFilter: 'blur(10px)',
+      }}>
+        <div className="ema-tabs" style={{
+          display: 'flex',
+          borderBottom: '2px solid #e5e7eb',
+          padding: '0 1rem',
+        }}>
+          <button
+            type="button"
+            className={`ema-tab ${mainTab === 'path' ? 'active' : ''}`}
+            onClick={() => {
+              setMainTab('path');
+              setSelectedItems(new Set());
+            }}
+            style={{
+              padding: '1rem 1.5rem',
+              background: mainTab === 'path' ? 'linear-gradient(135deg, #fb7185 0%, #f43f5e 100%)' : 'transparent',
+              color: mainTab === 'path' ? '#ffffff' : '#6b7280',
+              border: 'none',
+              borderBottom: mainTab === 'path' ? '3px solid #f43f5e' : '3px solid transparent',
+              fontSize: '0.95rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+              borderRadius: '8px 8px 0 0',
+            }}
+          >
+            Path
+          </button>
+          <button
+            type="button"
+            className={`ema-tab ${mainTab === 'lab' ? 'active' : ''}`}
+            onClick={() => {
+              setMainTab('lab');
+              setSelectedItems(new Set());
+            }}
+            style={{
+              padding: '1rem 1.5rem',
+              background: mainTab === 'lab' ? 'linear-gradient(135deg, #fb7185 0%, #f43f5e 100%)' : 'transparent',
+              color: mainTab === 'lab' ? '#ffffff' : '#6b7280',
+              border: 'none',
+              borderBottom: mainTab === 'lab' ? '3px solid #f43f5e' : '3px solid transparent',
+              fontSize: '0.95rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+              borderRadius: '8px 8px 0 0',
+            }}
+          >
+            Lab
+          </button>
         </div>
-        <div
-          onClick={() => setFilter('in-progress')}
-          style={{
-            cursor: 'pointer',
-            background: 'rgba(255, 255, 255, 0.95)',
-            borderRadius: '12px',
-            padding: '1.5rem',
-            boxShadow: filter === 'in-progress' ? '0 8px 32px rgba(251, 113, 133, 0.4)' : '0 4px 16px rgba(0, 0, 0, 0.1)',
-            backdropFilter: 'blur(10px)',
-            border: filter === 'in-progress' ? '2px solid #fb7185' : '2px solid transparent',
-            transition: 'all 0.3s ease',
-          }}
-        >
-          <div style={{
-            fontSize: '2.5rem',
-            fontWeight: 700,
-            background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-            marginBottom: '0.5rem',
-          }}>{inProgressCount}</div>
-          <div style={{ color: '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>In Progress</div>
-        </div>
-        <div
-          onClick={() => setFilter('completed')}
-          style={{
-            cursor: 'pointer',
-            background: 'rgba(255, 255, 255, 0.95)',
-            borderRadius: '12px',
-            padding: '1.5rem',
-            boxShadow: filter === 'completed' ? '0 8px 32px rgba(251, 113, 133, 0.4)' : '0 4px 16px rgba(0, 0, 0, 0.1)',
-            backdropFilter: 'blur(10px)',
-            border: filter === 'completed' ? '2px solid #fb7185' : '2px solid transparent',
-            transition: 'all 0.3s ease',
-          }}
-        >
-          <div style={{
-            fontSize: '2.5rem',
-            fontWeight: 700,
-            background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-            marginBottom: '0.5rem',
-          }}>{completedCount}</div>
-          <div style={{ color: '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>Completed</div>
-        </div>
-        <div
-          style={{
-            background: statCount > 0 ? 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)' : 'rgba(255, 255, 255, 0.95)',
-            borderRadius: '12px',
-            padding: '1.5rem',
-            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.1)',
-            backdropFilter: 'blur(10px)',
-            transition: 'all 0.3s ease',
-          }}
-        >
-          <div style={{
-            fontSize: '2.5rem',
-            fontWeight: 700,
-            color: statCount > 0 ? '#ffffff' : '#6b7280',
-            marginBottom: '0.5rem',
-          }}>{statCount}</div>
-          <div style={{ color: statCount > 0 ? '#ffffff' : '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>STAT Orders</div>
+
+        {/* Sub-Tabs */}
+        <div style={{
+          display: 'flex',
+          gap: '0.5rem',
+          padding: '0.75rem 1rem',
+          background: '#f9fafb',
+          borderBottom: '1px solid #e5e7eb',
+        }}>
+          <button
+            type="button"
+            onClick={() => setSubTab('pending-results')}
+            style={{
+              padding: '0.5rem 1rem',
+              background: subTab === 'pending-results' ? '#ffffff' : 'transparent',
+              border: subTab === 'pending-results' ? '2px solid #fb7185' : '2px solid transparent',
+              borderRadius: '6px',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              color: subTab === 'pending-results' ? '#f43f5e' : '#6b7280',
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+            }}
+          >
+            Pending Results
+            <span style={{
+              marginLeft: '0.5rem',
+              padding: '0.125rem 0.5rem',
+              background: subTab === 'pending-results' ? '#fb7185' : '#e5e7eb',
+              color: subTab === 'pending-results' ? '#ffffff' : '#6b7280',
+              borderRadius: '12px',
+              fontSize: '0.75rem',
+              fontWeight: 700,
+            }}>
+              {pendingResultsCount}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('pending-plan')}
+            style={{
+              padding: '0.5rem 1rem',
+              background: subTab === 'pending-plan' ? '#ffffff' : 'transparent',
+              border: subTab === 'pending-plan' ? '2px solid #fb7185' : '2px solid transparent',
+              borderRadius: '6px',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              color: subTab === 'pending-plan' ? '#f43f5e' : '#6b7280',
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+            }}
+          >
+            Pending Plan Completion
+            <span style={{
+              marginLeft: '0.5rem',
+              padding: '0.125rem 0.5rem',
+              background: subTab === 'pending-plan' ? '#fb7185' : '#e5e7eb',
+              color: subTab === 'pending-plan' ? '#ffffff' : '#6b7280',
+              borderRadius: '12px',
+              fontSize: '0.75rem',
+              fontWeight: 700,
+            }}>
+              {pendingPlanCount}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('completed')}
+            style={{
+              padding: '0.5rem 1rem',
+              background: subTab === 'completed' ? '#ffffff' : 'transparent',
+              border: subTab === 'completed' ? '2px solid #fb7185' : '2px solid transparent',
+              borderRadius: '6px',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              color: subTab === 'completed' ? '#f43f5e' : '#6b7280',
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+            }}
+          >
+            Completed
+            <span style={{
+              marginLeft: '0.5rem',
+              padding: '0.125rem 0.5rem',
+              background: subTab === 'completed' ? '#fb7185' : '#e5e7eb',
+              color: subTab === 'completed' ? '#ffffff' : '#6b7280',
+              borderRadius: '12px',
+              fontSize: '0.75rem',
+              fontWeight: 700,
+            }}>
+              {completedCount}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('unresolved')}
+            style={{
+              padding: '0.5rem 1rem',
+              background: subTab === 'unresolved' ? '#ffffff' : 'transparent',
+              border: subTab === 'unresolved' ? '2px solid #fb7185' : '2px solid transparent',
+              borderRadius: '6px',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              color: subTab === 'unresolved' ? '#f43f5e' : '#6b7280',
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+            }}
+          >
+            Unresolved
+            <span style={{
+              marginLeft: '0.5rem',
+              padding: '0.125rem 0.5rem',
+              background: subTab === 'unresolved' ? '#fb7185' : '#e5e7eb',
+              color: subTab === 'unresolved' ? '#ffffff' : '#6b7280',
+              borderRadius: '12px',
+              fontSize: '0.75rem',
+              fontWeight: 700,
+            }}>
+              {unresolvedCount}
+            </span>
+          </button>
         </div>
       </div>
 
-      {/* Filter Panel */}
-      <div className="ema-filter-panel">
-        <div className="ema-filter-row">
+      {/* Filter Section */}
+      <div className="ema-filter-panel" style={{
+        background: 'rgba(255, 255, 255, 0.95)',
+        padding: '1.5rem',
+        marginBottom: '0',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.1)',
+      }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
           <div className="ema-filter-group">
-            <label className="ema-filter-label">Search</label>
-            <input
-              type="text"
-              className="ema-filter-input"
-              placeholder="Search labs..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-
-          <div className="ema-filter-group">
-            <label className="ema-filter-label">Status</label>
+            <label className="ema-filter-label">Provider</label>
             <select
               className="ema-filter-select"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value as LabFilter)}
+              value={filters.provider}
+              onChange={(e) => setFilters({ ...filters, provider: e.target.value })}
+              style={{ width: '100%' }}
             >
-              <option value="all">All Statuses</option>
-              <option value="pending">Pending</option>
-              <option value="in-progress">In Progress</option>
-              <option value="completed">Completed</option>
+              <option value="">All Providers</option>
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.fullName || p.name}
+                </option>
+              ))}
             </select>
           </div>
 
           <div className="ema-filter-group">
-            <label className="ema-filter-label">&nbsp;</label>
-            <button
-              type="button"
-              className="ema-filter-btn secondary"
-              onClick={() => {
-                setFilter('all');
-                setSearchTerm('');
-              }}
+            <label className="ema-filter-label">Patient</label>
+            <select
+              className="ema-filter-select"
+              value={filters.patient}
+              onChange={(e) => setFilters({ ...filters, patient: e.target.value })}
+              style={{ width: '100%' }}
             >
-              Clear Filters
-            </button>
+              <option value="">All Patients</option>
+              {patients.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.lastName}, {p.firstName}
+                </option>
+              ))}
+            </select>
           </div>
+
+          <div className="ema-filter-group">
+            <label className="ema-filter-label">Facility</label>
+            <div className="ema-radio-group" style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem' }}>
+              <label className="ema-radio" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  type="radio"
+                  checked={filters.facility === 'preferred'}
+                  onChange={() => setFilters({ ...filters, facility: 'preferred' })}
+                />
+                <span>Preferred</span>
+              </label>
+              <label className="ema-radio" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  type="radio"
+                  checked={filters.facility === 'all'}
+                  onChange={() => setFilters({ ...filters, facility: 'all' })}
+                />
+                <span>All</span>
+              </label>
+            </div>
+            {filters.facility === 'preferred' && (
+              <select
+                className="ema-filter-select"
+                value={filters.preferredFacility}
+                onChange={(e) => setFilters({ ...filters, preferredFacility: e.target.value })}
+                style={{ width: '100%' }}
+              >
+                <option value="">Select Facility...</option>
+                <option value="dermpath-diagnostics">DermPath Diagnostics</option>
+                <option value="quest-diagnostics">Quest Diagnostics</option>
+                <option value="labcorp">LabCorp</option>
+                <option value="sonic-healthcare">Sonic Healthcare</option>
+              </select>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+          <div className="ema-filter-group">
+            <label className="ema-filter-label">Entry Date Range</label>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <input
+                type="date"
+                className="ema-filter-input"
+                value={filters.entryDateStart}
+                onChange={(e) => setFilters({ ...filters, entryDateStart: e.target.value })}
+                style={{ flex: 1 }}
+              />
+              <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>to</span>
+              <input
+                type="date"
+                className="ema-filter-input"
+                value={filters.entryDateEnd}
+                onChange={(e) => setFilters({ ...filters, entryDateEnd: e.target.value })}
+                style={{ flex: 1 }}
+              />
+            </div>
+          </div>
+
+          <div className="ema-filter-group">
+            <label className="ema-filter-label">Results Processed Date Range</label>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <input
+                type="date"
+                className="ema-filter-input"
+                value={filters.resultsDateStart}
+                onChange={(e) => setFilters({ ...filters, resultsDateStart: e.target.value })}
+                style={{ flex: 1 }}
+              />
+              <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>to</span>
+              <input
+                type="date"
+                className="ema-filter-input"
+                value={filters.resultsDateEnd}
+                onChange={(e) => setFilters({ ...filters, resultsDateEnd: e.target.value })}
+                style={{ flex: 1 }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+          <button type="button" className="ema-filter-btn" onClick={() => {}}>
+            Apply Filter
+          </button>
+          <button type="button" className="ema-filter-btn secondary" onClick={clearFilters}>
+            Clear Filter
+          </button>
         </div>
       </div>
 
-      {/* Labs Table */}
+      {/* Action Buttons */}
+      <div className="ema-action-bar" style={{
+        background: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: '0',
+        padding: '1rem',
+        marginBottom: '0',
+        display: 'flex',
+        gap: '0.75rem',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.1)',
+      }}>
+        <button
+          type="button"
+          onClick={() => setShowManualEntryModal(true)}
+          style={{
+            padding: '0.75rem 1.25rem',
+            background: 'linear-gradient(135deg, #fb7185 0%, #f43f5e 100%)',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+            fontWeight: 700,
+            cursor: 'pointer',
+            boxShadow: '0 4px 12px rgba(251, 113, 133, 0.4)',
+            transition: 'all 0.3s ease',
+          }}
+        >
+          <span style={{ marginRight: '0.5rem' }}>+</span>
+          Add Manual Entry
+        </button>
+        <button
+          type="button"
+          onClick={handlePrint}
+          style={{
+            padding: '0.75rem 1.25rem',
+            background: '#ffffff',
+            color: '#f43f5e',
+            border: '2px solid #fb7185',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+          }}
+        >
+          Print Table
+        </button>
+        <button
+          type="button"
+          onClick={handleMoveToUnresolved}
+          disabled={selectedItems.size === 0}
+          style={{
+            padding: '0.75rem 1.25rem',
+            background: selectedItems.size === 0 ? '#d1d5db' : '#ffffff',
+            color: selectedItems.size === 0 ? '#9ca3af' : '#f43f5e',
+            border: '2px solid #fb7185',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+            fontWeight: 600,
+            cursor: selectedItems.size === 0 ? 'not-allowed' : 'pointer',
+            transition: 'all 0.3s ease',
+          }}
+        >
+          Move to Unresolved
+        </button>
+        <button
+          type="button"
+          onClick={loadData}
+          style={{
+            padding: '0.75rem 1.25rem',
+            background: '#ffffff',
+            color: '#f43f5e',
+            border: '2px solid #fb7185',
+            borderRadius: '8px',
+            fontSize: '0.875rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+          }}
+        >
+          Refresh
+        </button>
+      </div>
+
+      {/* Data Table */}
       {loading ? (
         <div style={{ padding: '1rem' }}>
           <Skeleton variant="card" height={400} />
         </div>
-      ) : filteredLabs.length === 0 ? (
-        <div
-          style={{
-            textAlign: 'center',
-            padding: '3rem',
-            background: '#ffffff',
-            margin: '1rem',
-            borderRadius: '8px',
-            border: '1px solid #e5e7eb',
-          }}
-        >
-          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🧪</div>
-          <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No Lab Orders Found</h3>
+      ) : filteredData.length === 0 ? (
+        <div style={{
+          textAlign: 'center',
+          padding: '3rem',
+          background: '#ffffff',
+          margin: '0',
+          borderRadius: '0 0 12px 12px',
+          border: '1px solid #e5e7eb',
+        }}>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>
+            {mainTab === 'path' ? '🔬' : '🧪'}
+          </div>
+          <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>
+            No {mainTab === 'path' ? 'Pathology' : 'Lab'} Results Found
+          </h3>
           <p style={{ color: '#6b7280', margin: 0 }}>
-            {filter !== 'all' ? 'Try adjusting your filters' : 'Create your first lab order'}
+            Try adjusting your filters or add a new entry
           </p>
         </div>
       ) : (
-        <table className="ema-table">
-          <thead>
-            <tr>
-              <th style={{ width: '40px' }}>
-                <input
-                  type="checkbox"
-                  checked={selectedLabs.size === filteredLabs.length && filteredLabs.length > 0}
-                  onChange={toggleSelectAll}
-                />
-              </th>
-              <th>Patient</th>
-              <th>Tests</th>
-              <th>Priority</th>
-              <th>Status</th>
-              <th>Ordered</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredLabs.map((lab) => {
-              const tests = (lab.details || '').split('\n').filter((t) => t && !t.startsWith('**'));
-              return (
-                <tr
-                  key={lab.id}
-                  style={{
-                    background:
-                      lab.priority === 'stat'
-                        ? '#fef2f2'
-                        : lab.status === 'completed'
-                        ? '#f0fdf4'
-                        : undefined,
-                  }}
-                >
+        <div style={{
+          background: '#ffffff',
+          borderRadius: '0 0 12px 12px',
+          overflow: 'hidden',
+        }}>
+          <table className="ema-table">
+            <thead>
+              <tr>
+                <th style={{ width: '40px' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedItems.size === filteredData.length && filteredData.length > 0}
+                    onChange={toggleSelectAll}
+                  />
+                </th>
+                <th onClick={() => handleSort('createdAt')} style={{ cursor: 'pointer' }}>
+                  Date
+                  {sortField === 'createdAt' && (
+                    <span className="sort-icon">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                  )}
+                </th>
+                <th onClick={() => handleSort('patient')} style={{ cursor: 'pointer' }}>
+                  Patient
+                  {sortField === 'patient' && (
+                    <span className="sort-icon">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                  )}
+                </th>
+                <th>Facility</th>
+                <th>Ddx</th>
+                <th>Procedure</th>
+                <th>Location</th>
+                <th>Results</th>
+                <th>Results Processed</th>
+                <th>Photos</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredData.map((item) => (
+                <tr key={item.id}>
                   <td>
                     <input
                       type="checkbox"
-                      checked={selectedLabs.has(lab.id)}
-                      onChange={() => toggleLabSelection(lab.id)}
+                      checked={selectedItems.has(item.id)}
+                      onChange={() => toggleItemSelection(item.id)}
                     />
+                  </td>
+                  <td style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                    {new Date(item.createdAt).toLocaleDateString()}
                   </td>
                   <td>
                     <a href="#" className="ema-patient-link">
-                      {getPatientName(lab.patientId)}
+                      {getPatientName(item.patientId)}
                     </a>
                   </td>
-                  <td>
-                    <div style={{ maxWidth: '300px' }}>
-                      {tests.slice(0, 3).map((test, i) => (
-                        <div key={i} style={{ fontSize: '0.875rem' }}>
-                          {test}
-                        </div>
-                      ))}
-                      {tests.length > 3 && (
-                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                          +{tests.length - 3} more
-                        </div>
-                      )}
-                    </div>
+                  <td style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+                    {item.facility || '--'}
+                  </td>
+                  <td style={{ fontSize: '0.875rem', color: '#374151' }}>
+                    {item.ddx || '--'}
+                  </td>
+                  <td style={{ fontSize: '0.875rem', color: '#374151' }}>
+                    {item.details || item.procedure || '--'}
+                  </td>
+                  <td style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+                    {item.location || '--'}
                   </td>
                   <td>
                     <span
-                      style={{
-                        background:
-                          lab.priority === 'stat'
-                            ? '#dc2626'
-                            : lab.priority === 'urgent'
-                            ? '#f59e0b'
-                            : '#e5e7eb',
-                        color: lab.priority === 'stat' || lab.priority === 'urgent' ? '#ffffff' : '#374151',
-                        padding: '0.25rem 0.5rem',
-                        borderRadius: '4px',
-                        fontSize: '0.75rem',
-                        fontWeight: 600,
-                      }}
+                      className={`ema-status ${item.status === 'completed' ? 'established' : 'pending'}`}
                     >
-                      {lab.priority === 'stat' ? 'STAT' : lab.priority === 'urgent' ? 'Urgent' : 'Routine'}
-                    </span>
-                  </td>
-                  <td>
-                    <span
-                      className={`ema-status ${
-                        lab.status === 'completed'
-                          ? 'established'
-                          : lab.status === 'in-progress' || lab.status === 'ordered'
-                          ? 'pending'
-                          : 'pending'
-                      }`}
-                    >
-                      {lab.status}
+                      {item.results || item.status}
                     </span>
                   </td>
                   <td style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                    {new Date(lab.createdAt).toLocaleDateString()}
+                    {item.resultsProcessed ? new Date(item.resultsProcessed).toLocaleDateString() : '--'}
                   </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: '0.25rem' }}>
-                      {lab.status === 'pending' && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleStatusChange(lab.id, 'in-progress')}
-                            style={{
-                              padding: '0.25rem 0.5rem',
-                              background: '#3b82f6',
-                              color: '#ffffff',
-                              border: 'none',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              fontSize: '0.75rem',
-                            }}
-                          >
-                            Collected
-                          </button>
-                          <button
-                            type="button"
-                            style={{
-                              padding: '0.25rem 0.5rem',
-                              background: '#f3f4f6',
-                              border: '1px solid #d1d5db',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              fontSize: '0.75rem',
-                            }}
-                          >
-                            Print
-                          </button>
-                        </>
-                      )}
-                      {(lab.status === 'in-progress' || lab.status === 'ordered') && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedLab(lab);
-                            setShowResultsModal(true);
-                          }}
-                          style={{
-                            padding: '0.25rem 0.5rem',
-                            background: '#10b981',
-                            color: '#ffffff',
-                            border: 'none',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '0.75rem',
-                          }}
-                        >
-                          Results
-                        </button>
-                      )}
-                      {lab.status === 'completed' && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedLab(lab);
-                            setShowResultsModal(true);
-                          }}
-                          style={{
-                            padding: '0.25rem 0.5rem',
-                            background: '#f3f4f6',
-                            border: '1px solid #d1d5db',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '0.75rem',
-                          }}
-                        >
-                          View
-                        </button>
-                      )}
-                    </div>
+                  <td style={{ textAlign: 'center' }}>
+                    {item.photos && item.photos.length > 0 ? (
+                      <span style={{
+                        padding: '0.25rem 0.5rem',
+                        background: '#e0f2fe',
+                        color: '#0369a1',
+                        borderRadius: '4px',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                      }}>
+                        {item.photos.length}
+                      </span>
+                    ) : (
+                      <span style={{ color: '#9ca3af', fontSize: '0.875rem' }}>--</span>
+                    )}
                   </td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
+
+          {/* Total Results */}
+          <div style={{
+            padding: '1rem',
+            borderTop: '2px solid #e5e7eb',
+            background: '#f9fafb',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}>
+            <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151' }}>
+              Total Results: {filteredData.length}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+              {selectedItems.size > 0 && `${selectedItems.size} item(s) selected`}
+            </div>
+          </div>
+        </div>
       )}
 
-      {/* New Lab Modal */}
-      <Modal isOpen={showNewLabModal} title="New Lab Order" onClose={() => setShowNewLabModal(false)} size="lg">
+      {/* Manual Entry Modal */}
+      <Modal
+        isOpen={showManualEntryModal}
+        title="Add Manual Entry"
+        onClose={() => setShowManualEntryModal(false)}
+        size="lg"
+      >
         <div className="modal-form">
           <div className="form-row">
             <div className="form-field">
+              <label>Type *</label>
+              <div style={{ display: 'flex', gap: '1rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    checked={newEntry.type === 'path'}
+                    onChange={() => setNewEntry({ ...newEntry, type: 'path', tests: [] })}
+                  />
+                  Pathology
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    checked={newEntry.type === 'lab'}
+                    onChange={() => setNewEntry({ ...newEntry, type: 'lab', procedure: '' })}
+                  />
+                  Lab
+                </label>
+              </div>
+            </div>
+
+            <div className="form-field">
               <label>Patient *</label>
               <select
-                value={newLab.patientId}
-                onChange={(e) => setNewLab((prev) => ({ ...prev, patientId: e.target.value }))}
+                value={newEntry.patientId}
+                onChange={(e) => setNewEntry({ ...newEntry, patientId: e.target.value })}
               >
                 <option value="">Select patient...</option>
                 {patients.map((p) => (
@@ -640,29 +955,51 @@ export function LabsPage() {
                 ))}
               </select>
             </div>
-
-            <div className="form-field">
-              <label>Priority</label>
-              <select
-                value={newLab.priority}
-                onChange={(e) =>
-                  setNewLab((prev) => ({
-                    ...prev,
-                    priority: e.target.value as 'stat' | 'urgent' | 'routine',
-                  }))
-                }
-              >
-                <option value="routine">Routine</option>
-                <option value="urgent">Urgent</option>
-                <option value="stat">STAT</option>
-              </select>
-            </div>
           </div>
 
-          <div className="form-field">
-            <label>Select Tests * ({newLab.tests.length} selected)</label>
-            <div
-              style={{
+          {newEntry.type === 'path' ? (
+            <>
+              <div className="form-field">
+                <label>Procedure *</label>
+                <select
+                  value={newEntry.procedure}
+                  onChange={(e) => setNewEntry({ ...newEntry, procedure: e.target.value })}
+                >
+                  <option value="">Select procedure...</option>
+                  {COMMON_DERM_PROCEDURES.map((proc) => (
+                    <option key={proc} value={proc}>
+                      {proc}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-row">
+                <div className="form-field">
+                  <label>Location</label>
+                  <input
+                    type="text"
+                    value={newEntry.location}
+                    onChange={(e) => setNewEntry({ ...newEntry, location: e.target.value })}
+                    placeholder="e.g., Left forearm, scalp, etc."
+                  />
+                </div>
+
+                <div className="form-field">
+                  <label>Differential Diagnosis</label>
+                  <input
+                    type="text"
+                    value={newEntry.ddx}
+                    onChange={(e) => setNewEntry({ ...newEntry, ddx: e.target.value })}
+                    placeholder="e.g., BCC, SCC, melanoma"
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="form-field">
+              <label>Select Tests * ({newEntry.tests.length} selected)</label>
+              <div style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(2, 1fr)',
                 gap: '0.5rem',
@@ -671,150 +1008,75 @@ export function LabsPage() {
                 padding: '0.5rem',
                 border: '1px solid #e5e7eb',
                 borderRadius: '4px',
-              }}
-            >
-              {COMMON_DERM_LABS.map((test) => (
-                <label
-                  key={test.code}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    padding: '0.5rem',
-                    background: newLab.tests.includes(test.name) ? '#e0f2fe' : '#f9fafb',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={newLab.tests.includes(test.name)}
-                    onChange={() => toggleTest(test.name)}
-                  />
-                  <span>{test.name}</span>
-                </label>
-              ))}
+              }}>
+                {COMMON_DERM_LABS.map((test) => (
+                  <label
+                    key={test.code}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.5rem',
+                      background: newEntry.tests.includes(test.name) ? '#fce7f3' : '#f9fafb',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={newEntry.tests.includes(test.name)}
+                      onChange={() => toggleTest(test.name)}
+                    />
+                    <span>{test.name}</span>
+                  </label>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
-          <div style={{ marginTop: '1rem' }}>
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                cursor: 'pointer',
-              }}
+          <div className="form-field">
+            <label>Facility</label>
+            <select
+              value={newEntry.facility}
+              onChange={(e) => setNewEntry({ ...newEntry, facility: e.target.value })}
             >
-              <input
-                type="checkbox"
-                checked={newLab.fasting}
-                onChange={(e) => setNewLab((prev) => ({ ...prev, fasting: e.target.checked }))}
-              />
-              Fasting Required
-            </label>
+              <option value="">Select facility...</option>
+              <option value="dermpath-diagnostics">DermPath Diagnostics</option>
+              <option value="quest-diagnostics">Quest Diagnostics</option>
+              <option value="labcorp">LabCorp</option>
+              <option value="sonic-healthcare">Sonic Healthcare</option>
+            </select>
           </div>
 
-          <div className="form-field" style={{ marginTop: '1rem' }}>
+          <div className="form-field">
             <label>Notes</label>
             <textarea
-              value={newLab.notes}
-              onChange={(e) => setNewLab((prev) => ({ ...prev, notes: e.target.value }))}
-              placeholder="Additional instructions..."
-              rows={2}
+              value={newEntry.notes}
+              onChange={(e) => setNewEntry({ ...newEntry, notes: e.target.value })}
+              placeholder="Additional notes..."
+              rows={3}
             />
           </div>
         </div>
 
         <div className="modal-footer">
-          <button type="button" className="btn-secondary" onClick={() => setShowNewLabModal(false)}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setShowManualEntryModal(false)}
+          >
             Cancel
           </button>
-          <button type="button" className="btn-primary" onClick={handleCreateLab} disabled={creating}>
-            {creating ? 'Creating...' : 'Create Lab Order'}
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={handleCreateEntry}
+            disabled={creating}
+          >
+            {creating ? 'Creating...' : 'Create Entry'}
           </button>
         </div>
-      </Modal>
-
-      {/* Results Modal */}
-      <Modal
-        isOpen={showResultsModal}
-        title="Lab Results"
-        onClose={() => {
-          setShowResultsModal(false);
-          setSelectedLab(null);
-        }}
-        size="lg"
-      >
-        {selectedLab && (
-          <div style={{ padding: '1rem' }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                marginBottom: '1rem',
-                padding: '0.75rem',
-                background: '#f9fafb',
-                borderRadius: '4px',
-              }}
-            >
-              <div>
-                <strong>Patient:</strong> {getPatientName(selectedLab.patientId)}
-              </div>
-              <div>
-                <strong>Ordered:</strong> {new Date(selectedLab.createdAt).toLocaleDateString()}
-              </div>
-            </div>
-
-            <div className="ema-section-header" style={{ marginBottom: '0.5rem' }}>
-              Tests Ordered
-            </div>
-            <table className="ema-table">
-              <thead>
-                <tr>
-                  <th>Test</th>
-                  <th>Result</th>
-                  <th>Reference</th>
-                  <th>Flag</th>
-                </tr>
-              </thead>
-              <tbody>
-                {selectedLab.details?.split('\n').filter((l) => l && !l.startsWith('**')).map((line, i) => (
-                  <tr key={i}>
-                    <td>{line}</td>
-                    <td style={{ color: '#6b7280' }}>-- pending --</td>
-                    <td style={{ color: '#6b7280', fontSize: '0.875rem' }}>--</td>
-                    <td>--</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            {(selectedLab.status === 'in-progress' || selectedLab.status === 'ordered') && (
-              <div style={{ marginTop: '1rem', textAlign: 'right' }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleStatusChange(selectedLab.id, 'completed');
-                    setShowResultsModal(false);
-                    setSelectedLab(null);
-                  }}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: '#10b981',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Mark Complete
-                </button>
-              </div>
-            )}
-          </div>
-        )}
       </Modal>
     </div>
   );

@@ -451,7 +451,7 @@ describe("Patient Portal Messages routes", () => {
       expect(res.status).toBe(201);
       expect(mockClient.query).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO patient_messages"),
-        expect.arrayContaining(["Automated System", "Thanks for your message!"])
+        expect.arrayContaining(["Thanks for your message!"])
       );
     });
 

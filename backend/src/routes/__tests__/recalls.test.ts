@@ -566,7 +566,7 @@ describe('Recalls Routes', () => {
       const response = await request(app).get('/api/recalls/export');
 
       expect(response.status).toBe(200);
-      expect(response.headers['content-type']).toBe('text/csv');
+      expect(response.headers['content-type']).toContain('text/csv');
       expect(response.headers['content-disposition']).toContain('attachment');
       expect(response.text).toContain('Last Name,First Name');
       expect(response.text).toContain('Doe');

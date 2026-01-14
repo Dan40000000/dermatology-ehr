@@ -47,7 +47,7 @@ describe('RxHistory Routes', () => {
       const mockHistory = [
         {
           id: 'rx-1',
-          patient_id: 'patient-123',
+          patient_id: '123e4567-e89b-12d3-a456-426614174000',
           medication_name: 'Tretinoin 0.05% Cream',
           generic_name: 'tretinoin',
           ndc: '12345-678-90',
@@ -67,16 +67,16 @@ describe('RxHistory Routes', () => {
       ];
 
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] }) // Patient check
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] }) // Patient check
         .mockResolvedValueOnce({ rows: mockHistory }); // Rx history
 
       getRxHistoryMock.mockResolvedValueOnce({
         messageId: 'RXHIST-msg-123',
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         medications: [],
       });
 
-      const response = await request(app).get('/api/rx-history/patient-123');
+      const response = await request(app).get('/api/rx-history/123e4567-e89b-12d3-a456-426614174000');
 
       expect(response.status).toBe(200);
       expect(response.body.rxHistory).toHaveLength(1);
@@ -96,16 +96,16 @@ describe('RxHistory Routes', () => {
 
     it('should filter by date range', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] })
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] })
         .mockResolvedValueOnce({ rows: [] });
 
       getRxHistoryMock.mockResolvedValueOnce({
         messageId: 'RXHIST-msg-123',
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         medications: [],
       });
 
-      const response = await request(app).get('/api/rx-history/patient-123').query({
+      const response = await request(app).get('/api/rx-history/123e4567-e89b-12d3-a456-426614174000').query({
         startDate: '2024-01-01',
         endDate: '2024-01-31',
       });
@@ -113,62 +113,62 @@ describe('RxHistory Routes', () => {
       expect(response.status).toBe(200);
       expect(queryMock).toHaveBeenCalledWith(
         expect.stringContaining('rh.fill_date >='),
-        expect.arrayContaining(['patient-123', 'tenant-123', '2024-01-01', '2024-01-31'])
+        expect.arrayContaining(['123e4567-e89b-12d3-a456-426614174000', 'tenant-123', '2024-01-01', '2024-01-31'])
       );
     });
 
     it('should filter by pharmacy', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] })
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] })
         .mockResolvedValueOnce({ rows: [] });
 
       getRxHistoryMock.mockResolvedValueOnce({
         messageId: 'RXHIST-msg-123',
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         medications: [],
       });
 
-      const response = await request(app).get('/api/rx-history/patient-123').query({
+      const response = await request(app).get('/api/rx-history/123e4567-e89b-12d3-a456-426614174000').query({
         pharmacyId: 'pharmacy-456',
       });
 
       expect(response.status).toBe(200);
       expect(queryMock).toHaveBeenCalledWith(
         expect.stringContaining('rh.pharmacy_id ='),
-        expect.arrayContaining(['patient-123', 'tenant-123', 'pharmacy-456'])
+        expect.arrayContaining(['123e4567-e89b-12d3-a456-426614174000', 'tenant-123', 'pharmacy-456'])
       );
     });
 
     it('should filter by source', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] })
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] })
         .mockResolvedValueOnce({ rows: [] });
 
       getRxHistoryMock.mockResolvedValueOnce({
         messageId: 'RXHIST-msg-123',
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         medications: [],
       });
 
-      const response = await request(app).get('/api/rx-history/patient-123').query({
+      const response = await request(app).get('/api/rx-history/123e4567-e89b-12d3-a456-426614174000').query({
         source: 'manual',
       });
 
       expect(response.status).toBe(200);
       expect(queryMock).toHaveBeenCalledWith(
         expect.stringContaining('rh.source ='),
-        expect.arrayContaining(['patient-123', 'tenant-123', 'manual'])
+        expect.arrayContaining(['123e4567-e89b-12d3-a456-426614174000', 'tenant-123', 'manual'])
       );
     });
 
     it('should handle Surescripts service errors gracefully', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] })
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] })
         .mockResolvedValueOnce({ rows: [] });
 
       getRxHistoryMock.mockRejectedValueOnce(new Error('Surescripts API error'));
 
-      const response = await request(app).get('/api/rx-history/patient-123');
+      const response = await request(app).get('/api/rx-history/123e4567-e89b-12d3-a456-426614174000');
 
       expect(response.status).toBe(200);
       expect(response.body.surescriptsMessageId).toBeUndefined();
@@ -197,11 +197,11 @@ describe('RxHistory Routes', () => {
       ];
 
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] }) // Patient check
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] }) // Patient check
         .mockResolvedValueOnce({ rows: mockSummary }); // Summary
 
       const response = await request(app).get(
-        '/api/rx-history/patient/patient-123/summary'
+        '/api/rx-history/patient/123e4567-e89b-12d3-a456-426614174000/summary'
       );
 
       expect(response.status).toBe(200);
@@ -223,11 +223,11 @@ describe('RxHistory Routes', () => {
 
     it('should return empty summary when no history exists', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] })
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] })
         .mockResolvedValueOnce({ rows: [] });
 
       const response = await request(app).get(
-        '/api/rx-history/patient/patient-123/summary'
+        '/api/rx-history/patient/123e4567-e89b-12d3-a456-426614174000/summary'
       );
 
       expect(response.status).toBe(200);
@@ -238,12 +238,12 @@ describe('RxHistory Routes', () => {
   describe('POST /api/rx-history', () => {
     it('should create manual rx history record', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] }) // Patient check
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] }) // Patient check
         .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // Insert
 
       const rxData = {
-        patientId: 'patient-123',
-        pharmacyId: 'pharmacy-456',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
+        pharmacyId: '00000000-0000-0000-0000-000000000456',
         pharmacyNcpdp: '1234567',
         pharmacyName: 'CVS Pharmacy',
         medicationName: 'Hydrocortisone 1% Cream',
@@ -272,8 +272,8 @@ describe('RxHistory Routes', () => {
         expect.arrayContaining([
           'rx-history-uuid-123',
           'tenant-123',
-          'patient-123',
-          'pharmacy-456',
+          '123e4567-e89b-12d3-a456-426614174000',
+          '00000000-0000-0000-0000-000000000456',
           '1234567',
           'CVS Pharmacy',
           'Hydrocortisone 1% Cream',
@@ -284,7 +284,7 @@ describe('RxHistory Routes', () => {
 
     it('should validate required fields', async () => {
       const response = await request(app).post('/api/rx-history').send({
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         // Missing required fields
       });
 
@@ -295,7 +295,7 @@ describe('RxHistory Routes', () => {
       queryMock.mockResolvedValueOnce({ rows: [] });
 
       const rxData = {
-        patientId: 'patient-999',
+        patientId: '999e4567-e89b-12d3-a456-426614174999',
         medicationName: 'Test Med',
         quantity: 30,
         fillDate: '2024-01-20',
@@ -309,11 +309,11 @@ describe('RxHistory Routes', () => {
 
     it('should default quantity unit to "each"', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] })
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] })
         .mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
       const rxData = {
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         medicationName: 'Test Med',
         quantity: 30,
         fillDate: '2024-01-20',
@@ -333,7 +333,7 @@ describe('RxHistory Routes', () => {
     it('should import rx history from Surescripts', async () => {
       const mockSurescriptsData = {
         messageId: 'RXHIST-import-123',
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         medications: [
           {
             medicationName: 'Tretinoin 0.05% Cream',
@@ -372,7 +372,7 @@ describe('RxHistory Routes', () => {
       };
 
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] }) // Patient check
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] }) // Patient check
         .mockResolvedValueOnce({ rows: [] }) // Duplicate check for med 1
         .mockResolvedValueOnce({ rows: [{ id: 'pharmacy-1' }] }) // Pharmacy lookup 1
         .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Insert med 1
@@ -383,7 +383,7 @@ describe('RxHistory Routes', () => {
       getRxHistoryMock.mockResolvedValueOnce(mockSurescriptsData);
 
       const response = await request(app).post(
-        '/api/rx-history/import-surescripts/patient-123'
+        '/api/rx-history/import-surescripts/123e4567-e89b-12d3-a456-426614174000'
       );
 
       expect(response.status).toBe(200);
@@ -391,13 +391,13 @@ describe('RxHistory Routes', () => {
       expect(response.body.importedCount).toBe(2);
       expect(response.body.messageId).toBe('RXHIST-import-123');
       expect(response.body.totalAvailable).toBe(2);
-      expect(getRxHistoryMock).toHaveBeenCalledWith('patient-123', 'tenant-123');
+      expect(getRxHistoryMock).toHaveBeenCalledWith('123e4567-e89b-12d3-a456-426614174000', 'tenant-123');
     });
 
     it('should skip duplicate medications', async () => {
       const mockSurescriptsData = {
         messageId: 'RXHIST-import-456',
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         medications: [
           {
             medicationName: 'Tretinoin 0.05% Cream',
@@ -413,13 +413,13 @@ describe('RxHistory Routes', () => {
       };
 
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] })
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] }) // Patient check
         .mockResolvedValueOnce({ rows: [{ id: 'rx-existing' }] }); // Duplicate found
 
       getRxHistoryMock.mockResolvedValueOnce(mockSurescriptsData);
 
       const response = await request(app).post(
-        '/api/rx-history/import-surescripts/patient-123'
+        '/api/rx-history/import-surescripts/123e4567-e89b-12d3-a456-426614174000'
       );
 
       expect(response.status).toBe(200);
@@ -439,11 +439,11 @@ describe('RxHistory Routes', () => {
     });
 
     it('should handle Surescripts service errors', async () => {
-      queryMock.mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] });
+      queryMock.mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] });
       getRxHistoryMock.mockRejectedValueOnce(new Error('Surescripts API error'));
 
       const response = await request(app).post(
-        '/api/rx-history/import-surescripts/patient-123'
+        '/api/rx-history/import-surescripts/123e4567-e89b-12d3-a456-426614174000'
       );
 
       expect(response.status).toBe(500);
@@ -453,7 +453,7 @@ describe('RxHistory Routes', () => {
     it('should handle pharmacy not found in database', async () => {
       const mockSurescriptsData = {
         messageId: 'RXHIST-import-789',
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         medications: [
           {
             medicationName: 'Test Med',
@@ -469,7 +469,7 @@ describe('RxHistory Routes', () => {
       };
 
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] })
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] })
         .mockResolvedValueOnce({ rows: [] }) // Duplicate check
         .mockResolvedValueOnce({ rows: [] }) // Pharmacy not found
         .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // Insert with null pharmacy
@@ -477,7 +477,7 @@ describe('RxHistory Routes', () => {
       getRxHistoryMock.mockResolvedValueOnce(mockSurescriptsData);
 
       const response = await request(app).post(
-        '/api/rx-history/import-surescripts/patient-123'
+        '/api/rx-history/import-surescripts/123e4567-e89b-12d3-a456-426614174000'
       );
 
       expect(response.status).toBe(200);

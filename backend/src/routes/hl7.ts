@@ -325,4 +325,71 @@ hl7Router.get("/statistics", requireAuth, async (req: AuthedRequest, res: Respon
  * Legacy endpoints for backwards compatibility
  * All message types should use the main /inbound endpoint
  * These endpoints are deprecated and will be removed in a future version
+ *
+ * Note: These legacy endpoints don't require authentication for backwards compatibility
+ * They accept messages without tenant validation (tenant determined from message content)
  */
+
+// Helper function for legacy endpoints - processes HL7 without auth
+const legacyHL7Handler = async (req: Request, res: Response) => {
+  try {
+    // Extract message from request body
+    let rawMessage: string;
+    if (typeof req.body === "string") {
+      rawMessage = req.body;
+    } else if (req.body.message) {
+      rawMessage = req.body.message;
+    } else {
+      return res.status(400).json({ error: "Missing HL7 message in request body" });
+    }
+
+    // Parse the message to extract metadata (including potential tenant info)
+    const parsed = parseHL7Message(rawMessage);
+    const validation = validateHL7Message(parsed);
+
+    if (!validation.valid) {
+      const nackMessage = generateACK(parsed, "AR");
+      return res.status(400).json({
+        error: "HL7 message validation failed",
+        validationErrors: validation.errors,
+        ack: nackMessage,
+      });
+    }
+
+    // For legacy endpoints, we'll use a default tenant or extract from message
+    // In production, this would come from the message headers or a configured mapping
+    const tenantId = "default"; // TODO: Extract from message routing info
+
+    // Enqueue the message
+    const messageId = await enqueueHL7Message(rawMessage, tenantId);
+
+    // Return success with ACK
+    const ackMessage = generateACK(parsed, "AA");
+    res.status(200).json({
+      success: true,
+      messageId,
+      messageType: parsed.messageType,
+      messageControlId: parsed.messageControlId,
+      status: "queued",
+      ack: ackMessage,
+    });
+  } catch (error) {
+    console.error("Error processing legacy HL7 message:", error);
+    res.status(500).json({
+      error: "Internal server error",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
+
+// ADT - Patient Administration Messages
+hl7Router.post("/adt", legacyHL7Handler);
+
+// SIU - Scheduling Information Unsolicited
+hl7Router.post("/siu", legacyHL7Handler);
+
+// DFT - Detailed Financial Transaction
+hl7Router.post("/dft", legacyHL7Handler);
+
+// ORU - Observation Result (lab results)
+hl7Router.post("/oru", legacyHL7Handler);

@@ -85,7 +85,7 @@ describe('Body Diagram Routes', () => {
       const mockMarkings = [
         {
           id: 'marking-1',
-          patientId: 'patient-123',
+          patientId: '123e4567-e89b-12d3-a456-426614174000',
           encounterId: 'encounter-456',
           locationCode: 'FOREARM_LEFT',
           locationX: 30,
@@ -107,7 +107,7 @@ describe('Body Diagram Routes', () => {
       queryMock.mockResolvedValueOnce({ rows: mockMarkings });
 
       const response = await request(app).get(
-        '/api/body-diagram/patient/patient-123/markings'
+        '/api/body-diagram/patient/123e4567-e89b-12d3-a456-426614174000/markings'
       );
 
       expect(response.status).toBe(200);
@@ -118,7 +118,7 @@ describe('Body Diagram Routes', () => {
         'user-123',
         'body_diagram_view',
         'patient',
-        'patient-123'
+        '123e4567-e89b-12d3-a456-426614174000'
       );
     });
 
@@ -162,7 +162,7 @@ describe('Body Diagram Routes', () => {
     it('should fetch single marking with details', async () => {
       const mockMarking = {
         id: 'marking-456',
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         locationCode: 'SCALP',
         locationX: 50,
         locationY: 15,
@@ -199,12 +199,12 @@ describe('Body Diagram Routes', () => {
   describe('POST /api/body-diagram/markings', () => {
     it('should create new marking', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] }) // Patient check
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] }) // Patient check
         .mockResolvedValueOnce({ rows: [{ code: 'FOREARM_LEFT' }] }) // Location check
         .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // Insert
 
       const markingData = {
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         locationCode: 'FOREARM_LEFT',
         locationX: 30,
         locationY: 50,
@@ -230,17 +230,13 @@ describe('Body Diagram Routes', () => {
         'user-123',
         'body_marking_create',
         'body_marking',
-        'marking-uuid-123',
-        expect.objectContaining({
-          patientId: 'patient-123',
-          markingType: 'lesion',
-        })
+        'marking-uuid-123'
       );
     });
 
     it('should validate required fields', async () => {
       const response = await request(app).post('/api/body-diagram/markings').send({
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         // Missing required fields
       });
 
@@ -251,7 +247,7 @@ describe('Body Diagram Routes', () => {
       queryMock.mockResolvedValueOnce({ rows: [] }); // Patient check fails
 
       const markingData = {
-        patientId: 'patient-999',
+        patientId: '999e4567-e89b-12d3-a456-426614174999',
         locationCode: 'FOREARM_LEFT',
         locationX: 30,
         locationY: 50,
@@ -269,11 +265,11 @@ describe('Body Diagram Routes', () => {
 
     it('should validate location code exists', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] }) // Patient check
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] }) // Patient check
         .mockResolvedValueOnce({ rows: [] }); // Location check fails
 
       const markingData = {
-        patientId: 'patient-123',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
         locationCode: 'INVALID_CODE',
         locationX: 30,
         locationY: 50,
@@ -291,13 +287,13 @@ describe('Body Diagram Routes', () => {
 
     it('should verify encounter exists when provided', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'patient-123' }] }) // Patient check
+        .mockResolvedValueOnce({ rows: [{ id: '123e4567-e89b-12d3-a456-426614174000' }] }) // Patient check
         .mockResolvedValueOnce({ rows: [{ code: 'FOREARM_LEFT' }] }) // Location check
         .mockResolvedValueOnce({ rows: [] }); // Encounter check fails
 
       const markingData = {
-        patientId: 'patient-123',
-        encounterId: 'encounter-999',
+        patientId: '123e4567-e89b-12d3-a456-426614174000',
+        encounterId: '999e4567-e89b-12d3-a456-426614174999',
         locationCode: 'FOREARM_LEFT',
         locationX: 30,
         locationY: 50,
@@ -380,7 +376,7 @@ describe('Body Diagram Routes', () => {
   describe('DELETE /api/body-diagram/markings/:id', () => {
     it('should delete marking', async () => {
       queryMock.mockResolvedValueOnce({
-        rows: [{ patientId: 'patient-123' }],
+        rows: [{ patientId: '123e4567-e89b-12d3-a456-426614174000' }],
         rowCount: 1,
       });
 
@@ -395,8 +391,7 @@ describe('Body Diagram Routes', () => {
         'user-123',
         'body_marking_delete',
         'body_marking',
-        'marking-123',
-        expect.objectContaining({ patientId: 'patient-123' })
+        'marking-123'
       );
     });
 

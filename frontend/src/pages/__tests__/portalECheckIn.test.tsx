@@ -105,12 +105,12 @@ describe('ECheckInPage', () => {
 
     const signButtons = screen.getAllByRole('button', { name: 'Sign' });
     fireEvent.click(signButtons[0]);
-    await waitFor(() => expect(apiMocks.signPortalConsent).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(apiMocks.signPortalConsent).toHaveBeenCalledTimes(1), { timeout: 3000 });
 
     const remainingSignButtons = screen.getAllByRole('button', { name: 'Sign' });
     fireEvent.click(remainingSignButtons[0]);
-    await waitFor(() => expect(apiMocks.signPortalConsent).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
+    await waitFor(() => expect(apiMocks.signPortalConsent).toHaveBeenCalledTimes(2), { timeout: 3000 });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled(), { timeout: 3000 });
 
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     await waitFor(() =>

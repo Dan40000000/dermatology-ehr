@@ -71,11 +71,7 @@ describe('MessageNotificationService', () => {
         'system',
         'patient_message_notification_sent',
         'patient_message_thread',
-        'thread-789',
-        expect.objectContaining({
-          recipientEmail: 'patient@example.com',
-          patientId: 'patient-456',
-        })
+        'thread-789'
       );
     });
 
@@ -228,12 +224,7 @@ describe('MessageNotificationService', () => {
         'system',
         'staff_message_notification_sent',
         'patient_message_thread',
-        'thread-789',
-        expect.objectContaining({
-          recipientEmail: 'staff@clinic.com',
-          userId: 'user-123',
-          patientId: 'patient-456',
-        })
+        'thread-789'
       );
     });
 

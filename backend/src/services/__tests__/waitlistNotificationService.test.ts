@@ -72,12 +72,14 @@ describe('WaitlistNotificationService', () => {
     it('should send SMS notification successfully', async () => {
       // Mock rate limit check - allowed
       mockClient.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
         .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // Hourly check
         .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // Daily check
         .mockResolvedValueOnce({ rows: [] }) // Last notification check
         .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Insert notification
         .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Update with Twilio SID
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // Update waitlist
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Update waitlist
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
       mockTwilioService.sendSMS.mockResolvedValueOnce({
         sid: 'SM123456',
@@ -101,8 +103,9 @@ describe('WaitlistNotificationService', () => {
 
     it('should reject notification when hourly limit exceeded', async () => {
       mockClient.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
         .mockResolvedValueOnce({ rows: [{ count: '2' }] }) // Hourly limit exceeded
-        .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // Daily check (won't reach)
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
       const result = await sendWaitlistNotification(mockParams, mockTwilioService);
 
@@ -120,8 +123,10 @@ describe('WaitlistNotificationService', () => {
 
     it('should reject notification when daily limit exceeded', async () => {
       mockClient.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
         .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // Hourly check
-        .mockResolvedValueOnce({ rows: [{ count: '4' }] }); // Daily limit exceeded
+        .mockResolvedValueOnce({ rows: [{ count: '4' }] }) // Daily limit exceeded
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
       const result = await sendWaitlistNotification(mockParams, mockTwilioService);
 
@@ -134,9 +139,11 @@ describe('WaitlistNotificationService', () => {
       const recentTime = new Date(Date.now() - 30 * 60 * 1000); // 30 minutes ago
 
       mockClient.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
         .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // Hourly check
         .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // Daily check
-        .mockResolvedValueOnce({ rows: [{ created_at: recentTime }] }); // Last notification
+        .mockResolvedValueOnce({ rows: [{ created_at: recentTime }] }) // Last notification
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
       const result = await sendWaitlistNotification(mockParams, mockTwilioService);
 
@@ -147,11 +154,13 @@ describe('WaitlistNotificationService', () => {
 
     it('should handle Twilio SMS failure', async () => {
       mockClient.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
         .mockResolvedValueOnce({ rows: [{ count: '0' }] })
         .mockResolvedValueOnce({ rows: [{ count: '0' }] })
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // Update notification to failed
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Insert notification
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Update notification to failed
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
       mockTwilioService.sendSMS.mockRejectedValueOnce(new Error('Twilio error'));
 
@@ -171,12 +180,14 @@ describe('WaitlistNotificationService', () => {
 
     it('should log email notification when email provided', async () => {
       mockClient.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
         .mockResolvedValueOnce({ rows: [{ count: '0' }] })
         .mockResolvedValueOnce({ rows: [{ count: '0' }] })
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Insert notification
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Update with Twilio SID
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Update waitlist
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
       mockTwilioService.sendSMS.mockResolvedValueOnce({ sid: 'SM123' } as any);
 
@@ -212,12 +223,14 @@ describe('WaitlistNotificationService', () => {
       };
 
       mockClient.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
         .mockResolvedValueOnce({ rows: [{ count: '1' }] }) // Hourly
         .mockResolvedValueOnce({ rows: [{ count: '2' }] }) // Daily
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+        .mockResolvedValueOnce({ rows: [] }) // Last notification check
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Insert notification
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Update with Twilio SID
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Update waitlist
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
       mockTwilioService.sendSMS.mockResolvedValueOnce({ sid: 'SM123' } as any);
 
@@ -250,10 +263,12 @@ describe('WaitlistNotificationService', () => {
       };
 
       mockClient.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
         .mockResolvedValueOnce({ rows: [mockPatient] }) // Find patient
         .mockResolvedValueOnce({ rows: [mockNotification] }) // Find notification
         .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Update notification
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // Update waitlist
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Update waitlist
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
       const result = await processWaitlistSMSReply(
         'tenant-123',
@@ -298,10 +313,12 @@ describe('WaitlistNotificationService', () => {
       for (const reply of ['YES', 'yes', 'Y', 'y', 'ACCEPT', 'accept']) {
         jest.clearAllMocks();
         mockClient.query
+          .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
           .mockResolvedValueOnce({ rows: [mockPatient] })
           .mockResolvedValueOnce({ rows: [mockNotification] })
           .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-          .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+          .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+          .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
         const result = await processWaitlistSMSReply('tenant-123', '+15551234567', reply);
 
@@ -323,9 +340,11 @@ describe('WaitlistNotificationService', () => {
       };
 
       mockClient.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
         .mockResolvedValueOnce({ rows: [mockPatient] })
         .mockResolvedValueOnce({ rows: [mockNotification] })
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // Update notification
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
       const result = await processWaitlistSMSReply('tenant-123', '+15551234567', 'NO');
 
@@ -344,7 +363,10 @@ describe('WaitlistNotificationService', () => {
     });
 
     it('should return not matched for unknown patient', async () => {
-      mockClient.query.mockResolvedValueOnce({ rows: [] });
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
+        .mockResolvedValueOnce({ rows: [] }) // Find patient - not found
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
       const result = await processWaitlistSMSReply(
         'tenant-123',
@@ -362,7 +384,10 @@ describe('WaitlistNotificationService', () => {
         last_name: 'Brown',
       };
 
-      mockClient.query.mockResolvedValueOnce({ rows: [mockPatient] });
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
+        .mockResolvedValueOnce({ rows: [mockPatient] })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
       const result = await processWaitlistSMSReply(
         'tenant-123',
@@ -381,8 +406,10 @@ describe('WaitlistNotificationService', () => {
       };
 
       mockClient.query
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // BEGIN
         .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [] }); // No notification found
+        .mockResolvedValueOnce({ rows: [] }) // No notification found
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // COMMIT
 
       const result = await processWaitlistSMSReply('tenant-123', '+15551234567', 'YES');
 

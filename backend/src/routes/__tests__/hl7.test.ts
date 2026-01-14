@@ -8,7 +8,10 @@ import * as audit from "../../services/audit";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.user = { id: "user-1", tenantId: "tenant-1" };
+    // Only set user if not already set (allows tests to override)
+    if (!req.user) {
+      req.user = { id: "user-1", tenantId: "tenant-1" };
+    }
     return next();
   },
   AuthedRequest: {},

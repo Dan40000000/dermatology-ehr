@@ -55,6 +55,7 @@ const jwtSignMock = jwt.sign as jest.Mock;
 const tenantHeader = "x-tenant-id";
 
 beforeEach(() => {
+  process.env.NODE_ENV = "development";
   queryMock.mockReset();
   hashMock.mockReset();
   compareMock.mockReset();

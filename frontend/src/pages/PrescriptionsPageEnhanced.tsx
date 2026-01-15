@@ -24,9 +24,9 @@ import {
 import type { Order, Patient } from '../types';
 import { PARequestModal, PAStatusBadge, PADetailModal, DrugInteractionChecker } from '../components/prescriptions';
 
-type RxFilter = 'all' | 'pending' | 'ordered' | 'completed' | 'cancelled';
-type TabType = 'prescriptions' | 'refills' | 'changeRequests';
-type ERxStatus = 'pending' | 'success' | 'error';
+type RxFilter = 'all' | 'pending' | 'ordered' | 'completed' | 'cancelled' | 'printed' | 'voided';
+type TabType = 'prescriptions' | 'epa' | 'refills' | 'refillsDenied' | 'changeRequests' | 'auditConfirm';
+type ERxStatus = 'any' | 'pending' | 'success' | 'error';
 
 const COMMON_DERM_MEDS = [
   { name: 'Tretinoin 0.025% cream', category: 'Retinoid' },
@@ -91,11 +91,19 @@ export function PrescriptionsPageEnhanced() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRx, setSelectedRx] = useState<Set<string>>(new Set());
 
-  // Enhanced filter states
+  // Enhanced filter states - matching EMA Rx page
+  const [providerFilter, setProviderFilter] = useState('');
+  const [patientFilter, setPatientFilter] = useState('');
+  const [visitFilter, setVisitFilter] = useState('');
+  const [dobFilter, setDobFilter] = useState('');
   const [writtenDateFrom, setWrittenDateFrom] = useState('');
   const [writtenDateTo, setWrittenDateTo] = useState('');
-  const [erxStatusFilter, setErxStatusFilter] = useState<ERxStatus | ''>('');
+  const [erxStatusFilter, setErxStatusFilter] = useState<ERxStatus>('any');
   const [controlledSubstanceFilter, setControlledSubstanceFilter] = useState(false);
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [recordsPerPage, setRecordsPerPage] = useState(25);
 
   const [showNewRxModal, setShowNewRxModal] = useState(false);
   const [showDenyModal, setShowDenyModal] = useState(false);
@@ -446,9 +454,13 @@ export function PrescriptionsPageEnhanced() {
   const clearFilters = () => {
     setFilter('all');
     setSearchTerm('');
+    setProviderFilter('');
+    setPatientFilter('');
+    setVisitFilter('');
+    setDobFilter('');
     setWrittenDateFrom('');
     setWrittenDateTo('');
-    setErxStatusFilter('');
+    setErxStatusFilter('any');
     setControlledSubstanceFilter(false);
   };
 
@@ -459,13 +471,25 @@ export function PrescriptionsPageEnhanced() {
   const refillPendingCount = refillRequests.filter((r) => r.status === 'pending').length;
   const changePendingCount = changeRequests.filter((r) => r.status === 'pending_review').length;
 
+  // Pagination calculations
+  const totalRecords = filteredRx.length;
+  const totalPages = Math.ceil(totalRecords / recordsPerPage);
+  const startIndex = (currentPage - 1) * recordsPerPage;
+  const endIndex = startIndex + recordsPerPage;
+  const paginatedRx = filteredRx.slice(startIndex, endIndex);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, searchTerm, providerFilter, patientFilter, writtenDateFrom, writtenDateTo, erxStatusFilter, controlledSubstanceFilter]);
+
   return (
     <div className="prescriptions-page" style={{
       background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 50%, #ddd6fe 100%)',
       minHeight: '100vh',
       padding: '1.5rem'
     }}>
-      {/* Action Bar */}
+      {/* Action Bar - Enhanced with Icons */}
       <div className="ema-action-bar" style={{
         background: 'linear-gradient(90deg, #8b5cf6 0%, #7c3aed 100%)',
         padding: '1rem 1.5rem',
@@ -496,8 +520,8 @@ export function PrescriptionsPageEnhanced() {
           e.currentTarget.style.transform = 'translateY(0)';
           e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
         }}>
-          <span className="icon" style={{ fontSize: '1.2rem' }}>+</span>
-          New Prescription
+          <span style={{ fontSize: '1.2rem' }}>➕</span>
+          Add New Rx
         </button>
         <button type="button" className="ema-action-btn" disabled={selectedRx.size === 0} onClick={handleBulkSendErx} style={{
           background: selectedRx.size === 0 ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.95)',
@@ -512,8 +536,17 @@ export function PrescriptionsPageEnhanced() {
           display: 'flex',
           alignItems: 'center',
           gap: '0.5rem'
+        }} onMouseEnter={(e) => {
+          if (selectedRx.size > 0) {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+          }
+        }} onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
         }}>
-          <span className="icon" style={{ fontSize: '1.1rem' }}>ePrescribe Selected ({selectedRx.size})</span>
+          <span style={{ fontSize: '1.1rem' }}>📧</span>
+          ePrescribe Selected {selectedRx.size > 0 && `(${selectedRx.size})`}
         </button>
         <button type="button" className="ema-action-btn" disabled={selectedRx.size === 0} onClick={handleBulkRefill} style={{
           background: selectedRx.size === 0 ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.95)',
@@ -528,8 +561,17 @@ export function PrescriptionsPageEnhanced() {
           display: 'flex',
           alignItems: 'center',
           gap: '0.5rem'
+        }} onMouseEnter={(e) => {
+          if (selectedRx.size > 0) {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+          }
+        }} onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
         }}>
-          Refill Selected ({selectedRx.size})
+          <span style={{ fontSize: '1.1rem' }}>🔄</span>
+          Refill Selected {selectedRx.size > 0 && `(${selectedRx.size})`}
         </button>
         <button type="button" className="ema-action-btn" disabled={selectedRx.size === 0} onClick={handleBulkPrint} style={{
           background: selectedRx.size === 0 ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.95)',
@@ -544,30 +586,17 @@ export function PrescriptionsPageEnhanced() {
           display: 'flex',
           alignItems: 'center',
           gap: '0.5rem'
-        }}>
-          Print Selected ({selectedRx.size})
-        </button>
-        <button type="button" className="ema-action-btn" onClick={loadData} style={{
-          background: 'rgba(255,255,255,0.95)',
-          border: '2px solid rgba(255,255,255,0.4)',
-          padding: '0.75rem 1.25rem',
-          borderRadius: '8px',
-          fontWeight: 600,
-          color: '#7c3aed',
-          cursor: 'pointer',
-          transition: 'all 0.3s ease',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem'
         }} onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'translateY(-2px)';
-          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+          if (selectedRx.size > 0) {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+          }
         }} onMouseLeave={(e) => {
           e.currentTarget.style.transform = 'translateY(0)';
           e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
         }}>
-          Refresh
+          <span style={{ fontSize: '1.1rem' }}>🖨️</span>
+          Print Selected {selectedRx.size > 0 && `(${selectedRx.size})`}
         </button>
       </div>
 
@@ -589,16 +618,17 @@ export function PrescriptionsPageEnhanced() {
         Prescriptions (eRx)
       </div>
 
-      {/* Tabs */}
+      {/* Enhanced Tabs - EMA Style */}
       <div style={{
         display: 'flex',
-        gap: '1rem',
+        gap: '0.5rem',
         padding: '1rem 1.5rem',
         background: 'rgba(255,255,255,0.9)',
         borderRadius: '10px',
         marginBottom: '1.5rem',
         boxShadow: '0 2px 8px rgba(139, 92, 246, 0.15)',
-        border: '2px solid #c4b5fd'
+        border: '2px solid #c4b5fd',
+        overflowX: 'auto'
       }}>
         <button
           type="button"
@@ -606,15 +636,35 @@ export function PrescriptionsPageEnhanced() {
           style={{
             padding: '0.5rem 1rem',
             border: 'none',
-            borderBottom: activeTab === 'prescriptions' ? '2px solid #0369a1' : '2px solid transparent',
-            background: 'transparent',
-            color: activeTab === 'prescriptions' ? '#0369a1' : '#6b7280',
-            fontWeight: activeTab === 'prescriptions' ? 600 : 400,
+            borderBottom: activeTab === 'prescriptions' ? '3px solid #7c3aed' : '3px solid transparent',
+            background: activeTab === 'prescriptions' ? 'rgba(124, 58, 237, 0.1)' : 'transparent',
+            color: activeTab === 'prescriptions' ? '#7c3aed' : '#6b7280',
+            fontWeight: activeTab === 'prescriptions' ? 700 : 500,
             cursor: 'pointer',
             fontSize: '0.875rem',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.2s ease',
           }}
         >
-          All Prescriptions
+          Rx
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('epa')}
+          style={{
+            padding: '0.5rem 1rem',
+            border: 'none',
+            borderBottom: activeTab === 'epa' ? '3px solid #7c3aed' : '3px solid transparent',
+            background: activeTab === 'epa' ? 'rgba(124, 58, 237, 0.1)' : 'transparent',
+            color: activeTab === 'epa' ? '#7c3aed' : '#6b7280',
+            fontWeight: activeTab === 'epa' ? 700 : 500,
+            cursor: 'pointer',
+            fontSize: '0.875rem',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.2s ease',
+          }}
+        >
+          ePA
         </button>
         <button
           type="button"
@@ -622,15 +672,35 @@ export function PrescriptionsPageEnhanced() {
           style={{
             padding: '0.5rem 1rem',
             border: 'none',
-            borderBottom: activeTab === 'refills' ? '2px solid #0369a1' : '2px solid transparent',
-            background: 'transparent',
-            color: activeTab === 'refills' ? '#0369a1' : '#6b7280',
-            fontWeight: activeTab === 'refills' ? 600 : 400,
+            borderBottom: activeTab === 'refills' ? '3px solid #7c3aed' : '3px solid transparent',
+            background: activeTab === 'refills' ? 'rgba(124, 58, 237, 0.1)' : 'transparent',
+            color: activeTab === 'refills' ? '#7c3aed' : '#6b7280',
+            fontWeight: activeTab === 'refills' ? 700 : 500,
             cursor: 'pointer',
             fontSize: '0.875rem',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.2s ease',
           }}
         >
-          Refill Requests {refillPendingCount > 0 && `(${refillPendingCount})`}
+          Refill Req. {refillPendingCount > 0 && `(${refillPendingCount})`}
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('refillsDenied')}
+          style={{
+            padding: '0.5rem 1rem',
+            border: 'none',
+            borderBottom: activeTab === 'refillsDenied' ? '3px solid #7c3aed' : '3px solid transparent',
+            background: activeTab === 'refillsDenied' ? 'rgba(124, 58, 237, 0.1)' : 'transparent',
+            color: activeTab === 'refillsDenied' ? '#7c3aed' : '#6b7280',
+            fontWeight: activeTab === 'refillsDenied' ? 700 : 500,
+            cursor: 'pointer',
+            fontSize: '0.875rem',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.2s ease',
+          }}
+        >
+          Refill Req. Denied with New Rx to follow
         </button>
         <button
           type="button"
@@ -638,15 +708,35 @@ export function PrescriptionsPageEnhanced() {
           style={{
             padding: '0.5rem 1rem',
             border: 'none',
-            borderBottom: activeTab === 'changeRequests' ? '2px solid #0369a1' : '2px solid transparent',
-            background: 'transparent',
-            color: activeTab === 'changeRequests' ? '#0369a1' : '#6b7280',
-            fontWeight: activeTab === 'changeRequests' ? 600 : 400,
+            borderBottom: activeTab === 'changeRequests' ? '3px solid #7c3aed' : '3px solid transparent',
+            background: activeTab === 'changeRequests' ? 'rgba(124, 58, 237, 0.1)' : 'transparent',
+            color: activeTab === 'changeRequests' ? '#7c3aed' : '#6b7280',
+            fontWeight: activeTab === 'changeRequests' ? 700 : 500,
             cursor: 'pointer',
             fontSize: '0.875rem',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.2s ease',
           }}
         >
           Rx Change Requests {changePendingCount > 0 && `(${changePendingCount})`}
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('auditConfirm')}
+          style={{
+            padding: '0.5rem 1rem',
+            border: 'none',
+            borderBottom: activeTab === 'auditConfirm' ? '3px solid #7c3aed' : '3px solid transparent',
+            background: activeTab === 'auditConfirm' ? 'rgba(124, 58, 237, 0.1)' : 'transparent',
+            color: activeTab === 'auditConfirm' ? '#7c3aed' : '#6b7280',
+            fontWeight: activeTab === 'auditConfirm' ? 700 : 500,
+            cursor: 'pointer',
+            fontSize: '0.875rem',
+            whiteSpace: 'nowrap',
+            transition: 'all 0.2s ease',
+          }}
+        >
+          Rx Audit Confirmation
         </button>
       </div>
 
@@ -756,93 +846,278 @@ export function PrescriptionsPageEnhanced() {
         </div>
       )}
 
-      {/* Enhanced Filter Panel */}
+      {/* Enhanced Filter Panel - EMA Style Rx Management */}
       {activeTab === 'prescriptions' && (
-        <div className="ema-filter-panel">
-          <div className="ema-filter-row">
+        <div style={{
+          background: '#ffffff',
+          padding: '1.5rem',
+          borderRadius: '10px',
+          marginBottom: '1.5rem',
+          boxShadow: '0 2px 8px rgba(139, 92, 246, 0.15)',
+          border: '2px solid #c4b5fd'
+        }}>
+          <h3 style={{
+            margin: '0 0 1rem 0',
+            fontSize: '1rem',
+            fontWeight: 700,
+            color: '#7c3aed',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}>
+            <span style={{ fontSize: '1.2rem' }}>🔍</span>
+            Rx Management Filter Panel
+          </h3>
+
+          {/* Row 1: Provider, Written Date From */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
             <div className="ema-filter-group">
-              <label className="ema-filter-label">Search</label>
+              <label className="ema-filter-label">Provider</label>
               <input
                 type="text"
                 className="ema-filter-input"
-                placeholder="Search prescriptions..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Last, First"
+                value={providerFilter}
+                onChange={(e) => setProviderFilter(e.target.value)}
+                style={{
+                  padding: '0.625rem 0.875rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  width: '100%'
+                }}
               />
             </div>
 
+            <div className="ema-filter-group">
+              <label className="ema-filter-label">Written Date From *</label>
+              <input
+                type="date"
+                className="ema-filter-input"
+                value={writtenDateFrom}
+                onChange={(e) => setWrittenDateFrom(e.target.value)}
+                style={{
+                  padding: '0.625rem 0.875rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  width: '100%'
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Row 2: Status, Written Date To */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
             <div className="ema-filter-group">
               <label className="ema-filter-label">Status</label>
               <select
                 className="ema-filter-select"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value as RxFilter)}
+                style={{
+                  padding: '0.625rem 0.875rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  width: '100%',
+                  background: '#ffffff'
+                }}
               >
-                <option value="all">All Statuses</option>
+                <option value="all">Any</option>
                 <option value="pending">Pending</option>
-                <option value="ordered">Sent</option>
-                <option value="completed">Filled</option>
-                <option value="cancelled">Cancelled</option>
+                <option value="printed">Printed</option>
+                <option value="ordered">eRx</option>
+                <option value="voided">Voided</option>
+                <option value="cancelled">Canceled eRx</option>
               </select>
             </div>
 
             <div className="ema-filter-group">
-              <label htmlFor="erx-status-filter" className="ema-filter-label">eRx Status</label>
-              <select
-                id="erx-status-filter"
-                className="ema-filter-select"
-                value={erxStatusFilter}
-                onChange={(e) => setErxStatusFilter(e.target.value as ERxStatus | '')}
-              >
-                <option value="">All</option>
-                <option value="pending">Pending</option>
-                <option value="success">Success</option>
-                <option value="error">Error</option>
-              </select>
-            </div>
-
-            <div className="ema-filter-group">
-              <label className="ema-filter-label">Written Date (From)</label>
-              <input
-                type="date"
-                className="ema-filter-input"
-                value={writtenDateFrom}
-                onChange={(e) => setWrittenDateFrom(e.target.value)}
-              />
-            </div>
-
-            <div className="ema-filter-group">
-              <label className="ema-filter-label">Written Date (To)</label>
+              <label className="ema-filter-label">Written Date To</label>
               <input
                 type="date"
                 className="ema-filter-input"
                 value={writtenDateTo}
                 onChange={(e) => setWrittenDateTo(e.target.value)}
+                style={{
+                  padding: '0.625rem 0.875rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  width: '100%'
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Row 3: Patient, Visit */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
+            <div className="ema-filter-group">
+              <label className="ema-filter-label">Patient</label>
+              <input
+                type="text"
+                className="ema-filter-input"
+                placeholder="Last, First"
+                value={patientFilter}
+                onChange={(e) => setPatientFilter(e.target.value)}
+                style={{
+                  padding: '0.625rem 0.875rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  width: '100%'
+                }}
               />
             </div>
 
             <div className="ema-filter-group">
-              <label className="ema-filter-label">
-                <input
-                  type="checkbox"
-                  checked={controlledSubstanceFilter}
-                  onChange={(e) => setControlledSubstanceFilter(e.target.checked)}
-                  style={{ marginRight: '0.5rem' }}
-                />
-                Controlled Substances Only
-              </label>
+              <label className="ema-filter-label">Visit</label>
+              <select
+                className="ema-filter-select"
+                value={visitFilter}
+                onChange={(e) => setVisitFilter(e.target.value)}
+                style={{
+                  padding: '0.625rem 0.875rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  width: '100%',
+                  background: '#ffffff'
+                }}
+              >
+                <option value="">All Visits</option>
+                <option value="office">Office Visit</option>
+                <option value="telehealth">Telehealth</option>
+                <option value="followup">Follow-up</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Row 4: eRx Status, Date of Birth */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
+            <div className="ema-filter-group">
+              <label htmlFor="erx-status-filter" className="ema-filter-label">eRx</label>
+              <select
+                id="erx-status-filter"
+                className="ema-filter-select"
+                value={erxStatusFilter}
+                onChange={(e) => setErxStatusFilter(e.target.value as ERxStatus)}
+                style={{
+                  padding: '0.625rem 0.875rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  width: '100%',
+                  background: '#ffffff'
+                }}
+              >
+                <option value="any">Any</option>
+                <option value="pending">Pending</option>
+                <option value="error">Errors</option>
+                <option value="success">Success</option>
+              </select>
             </div>
 
             <div className="ema-filter-group">
-              <label className="ema-filter-label">&nbsp;</label>
-              <button
-                type="button"
-                className="ema-filter-btn secondary"
-                onClick={clearFilters}
-              >
-                Clear Filters
-              </button>
+              <label className="ema-filter-label">Date of Birth</label>
+              <input
+                type="date"
+                className="ema-filter-input"
+                value={dobFilter}
+                onChange={(e) => setDobFilter(e.target.value)}
+                style={{
+                  padding: '0.625rem 0.875rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  width: '100%'
+                }}
+              />
             </div>
+          </div>
+
+          {/* Row 5: Controlled Substance checkbox */}
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              color: '#374151',
+              cursor: 'pointer'
+            }}>
+              <input
+                type="checkbox"
+                checked={controlledSubstanceFilter}
+                onChange={(e) => setControlledSubstanceFilter(e.target.checked)}
+                style={{
+                  width: '1.125rem',
+                  height: '1.125rem',
+                  cursor: 'pointer'
+                }}
+              />
+              Controlled Substance
+            </label>
+          </div>
+
+          {/* Action Buttons */}
+          <div style={{ display: 'flex', gap: '1rem', paddingTop: '0.5rem' }}>
+            <button
+              type="button"
+              onClick={() => {
+                // Apply filters logic (already happens through state)
+                showSuccess('Filters applied');
+              }}
+              style={{
+                padding: '0.625rem 1.5rem',
+                background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                fontWeight: 600,
+                fontSize: '0.875rem',
+                cursor: 'pointer',
+                boxShadow: '0 2px 4px rgba(124, 58, 237, 0.3)',
+                transition: 'all 0.2s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-1px)';
+                e.currentTarget.style.boxShadow = '0 4px 8px rgba(124, 58, 237, 0.4)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = '0 2px 4px rgba(124, 58, 237, 0.3)';
+              }}
+            >
+              Apply Filters
+            </button>
+            <button
+              type="button"
+              onClick={clearFilters}
+              style={{
+                padding: '0.625rem 1.5rem',
+                background: '#ffffff',
+                color: '#6b7280',
+                border: '2px solid #d1d5db',
+                borderRadius: '6px',
+                fontWeight: 600,
+                fontSize: '0.875rem',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#f9fafb';
+                e.currentTarget.style.borderColor = '#9ca3af';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = '#ffffff';
+                e.currentTarget.style.borderColor = '#d1d5db';
+              }}
+            >
+              Clear Filters
+            </button>
           </div>
         </div>
       )}
@@ -870,194 +1145,437 @@ export function PrescriptionsPageEnhanced() {
             </p>
           </div>
         ) : (
-          <table className="ema-table">
-            <thead>
-              <tr>
-                <th style={{ width: '40px' }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedRx.size === filteredRx.length && filteredRx.length > 0}
-                    onChange={toggleSelectAll}
-                  />
-                </th>
-                <th>Patient</th>
-                <th>Medication</th>
-                <th>Sig</th>
-                <th>Qty / Refills</th>
-                <th>Status</th>
-                <th>PA Status</th>
-                <th>Audit</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRx.map((rx) => {
-                const lines = (rx.details || '').split('\n');
-                const medication = lines[0] || '';
-                const qty = lines.find((l) => l.startsWith('Qty:'))?.replace('Qty: ', '') || '';
-                const sig = lines.find((l) => l.startsWith('Sig:'))?.replace('Sig: ', '') || '';
-                const refills = lines.find((l) => l.startsWith('Refills:'))?.replace('Refills: ', '') || '0';
-                const paRequest = getPAStatusForRx(rx.id);
-
-                return (
-                  <tr
-                    key={rx.id}
-                    style={{
-                      background: rx.status === 'completed' ? '#f0fdf4' : undefined,
-                    }}
-                  >
-                    <td>
+          <>
+            <div style={{
+              background: '#ffffff',
+              borderRadius: '10px',
+              boxShadow: '0 2px 8px rgba(139, 92, 246, 0.15)',
+              border: '2px solid #c4b5fd',
+              overflow: 'hidden'
+            }}>
+              <table className="ema-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: '40px' }}>
                       <input
                         type="checkbox"
-                        checked={selectedRx.has(rx.id)}
-                        onChange={() => toggleRxSelection(rx.id)}
+                        checked={selectedRx.size === paginatedRx.length && paginatedRx.length > 0}
+                        onChange={toggleSelectAll}
                       />
-                    </td>
+                    </th>
+                    <th>Patient</th>
+                    <th>Drug</th>
+                    <th>Written On</th>
+                    <th>Last Update</th>
+                    <th>Written By</th>
+                    <th>Status</th>
+                    <th>Additional Detail</th>
+                    <th>ePA Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedRx.map((rx) => {
+                    const lines = (rx.details || '').split('\n');
+                    const medication = lines[0] || '';
+                    const qty = lines.find((l) => l.startsWith('Qty:'))?.replace('Qty: ', '') || '';
+                    const sig = lines.find((l) => l.startsWith('Sig:'))?.replace('Sig: ', '') || '';
+                    const refills = lines.find((l) => l.startsWith('Refills:'))?.replace('Refills: ', '') || '0';
+                    const paRequest = getPAStatusForRx(rx.id);
+
+                    return (
+                      <tr
+                        key={rx.id}
+                        style={{
+                          background: rx.status === 'completed' ? '#f0fdf4' : undefined,
+                        }}
+                      >
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedRx.has(rx.id)}
+                            onChange={() => toggleRxSelection(rx.id)}
+                          />
+                        </td>
+                        <td>
+                          <a href="#" className="ema-patient-link" style={{
+                            color: '#0369a1',
+                            textDecoration: 'none',
+                            fontWeight: 600
+                          }}>
+                            {getPatientName(rx.patientId)}
+                          </a>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 600, color: '#111827' }}>{medication}</div>
+                          <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                            Qty: {qty} | Refills: {refills}
+                          </div>
+                        </td>
+                        <td style={{ fontSize: '0.875rem', color: '#374151' }}>
+                          {new Date(rx.createdAt).toLocaleDateString()}
+                        </td>
+                        <td style={{ fontSize: '0.875rem', color: '#374151' }}>
+                          {new Date(rx.updatedAt || rx.createdAt).toLocaleDateString()}
+                        </td>
+                        <td style={{ fontSize: '0.875rem', color: '#374151' }}>
+                          Dr. {session?.userName || 'Provider'}
+                        </td>
+                        <td>
+                          <span
+                            className={`ema-status ${
+                              rx.status === 'completed'
+                                ? 'established'
+                                : rx.status === 'ordered'
+                                ? 'pending'
+                                : rx.status === 'cancelled'
+                                ? 'cancelled'
+                                : 'pending'
+                            }`}
+                            style={{
+                              padding: '0.375rem 0.75rem',
+                              borderRadius: '6px',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              textTransform: 'capitalize'
+                            }}
+                          >
+                            {rx.status}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                          {sig}
+                        </td>
+                        <td>
+                          {paRequest ? (
+                            <div
+                              style={{ cursor: 'pointer' }}
+                              onClick={() => handleViewPADetail(paRequest.id)}
+                              title="Click to view PA details"
+                            >
+                              <PAStatusBadge status={paRequest.status} size="sm" />
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleRequestPA(rx)}
+                              style={{
+                                padding: '0.375rem 0.625rem',
+                                background: '#eff6ff',
+                                color: '#3b82f6',
+                                border: '1px solid #3b82f6',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                              }}
+                            >
+                              Request PA
+                            </button>
+                          )}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
+                            {rx.status === 'pending' && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSendErx(rx)}
+                                  style={{
+                                    padding: '0.375rem 0.625rem',
+                                    background: 'linear-gradient(135deg, #0369a1, #0284c7)',
+                                    color: '#ffffff',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  Send eRx
+                                </button>
+                                <button
+                                  type="button"
+                                  style={{
+                                    padding: '0.375rem 0.625rem',
+                                    background: '#ffffff',
+                                    color: '#6b7280',
+                                    border: '1px solid #d1d5db',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  Print
+                                </button>
+                              </>
+                            )}
+                            {rx.status === 'ordered' && (
+                              <button
+                                type="button"
+                                style={{
+                                  padding: '0.375rem 0.625rem',
+                                  background: '#ffffff',
+                                  color: '#6b7280',
+                                  border: '1px solid #d1d5db',
+                                  borderRadius: '6px',
+                                  cursor: 'pointer',
+                                  fontSize: '0.75rem',
+                                  fontWeight: 600,
+                                }}
+                              >
+                                Resend
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination Controls */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '1rem 1.5rem',
+              background: '#ffffff',
+              borderRadius: '10px',
+              marginTop: '1rem',
+              boxShadow: '0 2px 8px rgba(139, 92, 246, 0.15)',
+              border: '2px solid #c4b5fd',
+              flexWrap: 'wrap',
+              gap: '1rem'
+            }}>
+              {/* Total Counter */}
+              <div style={{
+                fontSize: '0.875rem',
+                fontWeight: 600,
+                color: '#374151'
+              }}>
+                Total Matching Rx: <span style={{ color: '#7c3aed', fontWeight: 700 }}>{totalRecords}</span>
+              </div>
+
+              {/* Pagination Info & Controls */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '1rem',
+                flexWrap: 'wrap'
+              }}>
+                {/* Records per page */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}>
+                  <label style={{
+                    fontSize: '0.875rem',
+                    fontWeight: 600,
+                    color: '#374151'
+                  }}>
+                    Records per page:
+                  </label>
+                  <select
+                    value={recordsPerPage}
+                    onChange={(e) => {
+                      setRecordsPerPage(Number(e.target.value));
+                      setCurrentPage(1);
+                    }}
+                    style={{
+                      padding: '0.375rem 0.75rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '0.875rem',
+                      background: '#ffffff',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                </div>
+
+                {/* Page info */}
+                <div style={{
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  color: '#374151'
+                }}>
+                  Page {currentPage} of {totalPages || 1}
+                </div>
+
+                {/* Navigation buttons */}
+                <div style={{
+                  display: 'flex',
+                  gap: '0.5rem'
+                }}>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(1)}
+                    disabled={currentPage === 1}
+                    style={{
+                      padding: '0.375rem 0.75rem',
+                      background: currentPage === 1 ? '#f3f4f6' : '#ffffff',
+                      color: currentPage === 1 ? '#9ca3af' : '#374151',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    First
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                    disabled={currentPage === 1}
+                    style={{
+                      padding: '0.375rem 0.75rem',
+                      background: currentPage === 1 ? '#f3f4f6' : '#ffffff',
+                      color: currentPage === 1 ? '#9ca3af' : '#374151',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                    disabled={currentPage === totalPages || totalPages === 0}
+                    style={{
+                      padding: '0.375rem 0.75rem',
+                      background: currentPage === totalPages || totalPages === 0 ? '#f3f4f6' : '#ffffff',
+                      color: currentPage === totalPages || totalPages === 0 ? '#9ca3af' : '#374151',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      cursor: currentPage === totalPages || totalPages === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Next
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={currentPage === totalPages || totalPages === 0}
+                    style={{
+                      padding: '0.375rem 0.75rem',
+                      background: currentPage === totalPages || totalPages === 0 ? '#f3f4f6' : '#ffffff',
+                      color: currentPage === totalPages || totalPages === 0 ? '#9ca3af' : '#374151',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      cursor: currentPage === totalPages || totalPages === 0 ? 'not-allowed' : 'pointer',
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Last
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        ))}
+
+      {/* ePA (electronic Prior Authorization) Tab */}
+      {activeTab === 'epa' &&
+        (loading ? (
+          <div style={{ padding: '1rem' }}>
+            <Skeleton variant="card" height={400} />
+          </div>
+        ) : paRequests.length === 0 ? (
+          <div
+            style={{
+              textAlign: 'center',
+              padding: '3rem',
+              background: '#ffffff',
+              margin: '1rem',
+              borderRadius: '8px',
+              border: '1px solid #e5e7eb',
+            }}
+          >
+            <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No Prior Authorization Requests</h3>
+            <p style={{ color: '#6b7280', margin: 0 }}>All PA requests have been processed</p>
+          </div>
+        ) : (
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '10px',
+            boxShadow: '0 2px 8px rgba(139, 92, 246, 0.15)',
+            border: '2px solid #c4b5fd',
+            overflow: 'hidden'
+          }}>
+            <table className="ema-table">
+              <thead>
+                <tr>
+                  <th>Patient</th>
+                  <th>Drug</th>
+                  <th>Provider</th>
+                  <th>Request Date</th>
+                  <th>Status</th>
+                  <th>Insurance</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paRequests.map((pa) => (
+                  <tr key={pa.id}>
                     <td>
-                      <a href="#" className="ema-patient-link">
-                        {getPatientName(rx.patientId)}
+                      <a href="#" className="ema-patient-link" style={{
+                        color: '#0369a1',
+                        textDecoration: 'none',
+                        fontWeight: 600
+                      }}>
+                        {pa.patientName || 'Unknown Patient'}
                       </a>
                     </td>
                     <td>
-                      <div style={{ fontWeight: 500 }}>{medication}</div>
+                      <div style={{ fontWeight: 600 }}>{pa.medication_name || 'Unknown Medication'}</div>
                     </td>
-                    <td style={{ fontSize: '0.875rem', color: '#6b7280' }}>{sig}</td>
-                    <td style={{ fontSize: '0.875rem' }}>
-                      {qty} / {refills} refills
+                    <td>{pa.provider_name || 'Dr. Provider'}</td>
+                    <td style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+                      {new Date(pa.created_at).toLocaleDateString()}
                     </td>
                     <td>
-                      <span
-                        className={`ema-status ${
-                          rx.status === 'completed'
-                            ? 'established'
-                            : rx.status === 'ordered'
-                            ? 'pending'
-                            : rx.status === 'cancelled'
-                            ? 'cancelled'
-                            : 'pending'
-                        }`}
+                      <PAStatusBadge status={pa.status} size="md" />
+                    </td>
+                    <td style={{ fontSize: '0.875rem' }}>{pa.insurance_name || 'N/A'}</td>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => handleViewPADetail(pa.id)}
+                        style={{
+                          padding: '0.375rem 0.75rem',
+                          background: '#7c3aed',
+                          color: '#ffffff',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                        }}
                       >
-                        {rx.status}
-                      </span>
-                    </td>
-                    <td>
-                      {paRequest ? (
-                        <div
-                          style={{ cursor: 'pointer' }}
-                          onClick={() => handleViewPADetail(paRequest.id)}
-                          title="Click to view PA details"
-                        >
-                          <PAStatusBadge status={paRequest.status} size="sm" />
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleRequestPA(rx)}
-                          style={{
-                            padding: '0.25rem 0.5rem',
-                            background: '#eff6ff',
-                            color: '#3b82f6',
-                            border: '1px solid #3b82f6',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '0.75rem',
-                            fontWeight: 500,
-                          }}
-                        >
-                          Request PA
-                        </button>
-                      )}
-                    </td>
-                    <td>
-                      {(rx as any).audit_confirmed_at ? (
-                        <span
-                          style={{
-                            fontSize: '0.75rem',
-                            color: '#059669',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.25rem',
-                          }}
-                        >
-                          Confirmed
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleAuditConfirm(rx)}
-                          style={{
-                            padding: '0.25rem 0.5rem',
-                            background: '#f3f4f6',
-                            border: '1px solid #d1d5db',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '0.75rem',
-                          }}
-                        >
-                          Confirm
-                        </button>
-                      )}
-                    </td>
-                    <td style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                      {new Date(rx.createdAt).toLocaleDateString()}
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '0.25rem' }}>
-                        {rx.status === 'pending' && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => handleSendErx(rx)}
-                              style={{
-                                padding: '0.25rem 0.5rem',
-                                background: '#0369a1',
-                                color: '#ffffff',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer',
-                                fontSize: '0.75rem',
-                              }}
-                            >
-                              Send eRx
-                            </button>
-                            <button
-                              type="button"
-                              style={{
-                                padding: '0.25rem 0.5rem',
-                                background: '#f3f4f6',
-                                border: '1px solid #d1d5db',
-                                borderRadius: '4px',
-                                cursor: 'pointer',
-                                fontSize: '0.75rem',
-                              }}
-                            >
-                              Print
-                            </button>
-                          </>
-                        )}
-                        {rx.status === 'ordered' && (
-                          <button
-                            type="button"
-                            style={{
-                              padding: '0.25rem 0.5rem',
-                              background: '#f3f4f6',
-                              border: '1px solid #d1d5db',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              fontSize: '0.75rem',
-                            }}
-                          >
-                            Resend
-                          </button>
-                        )}
-                      </div>
+                        View Details
+                      </button>
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ))}
 
       {/* Refill Requests Table */}
@@ -1081,113 +1599,158 @@ export function PrescriptionsPageEnhanced() {
             <p style={{ color: '#6b7280', margin: 0 }}>All refill requests have been processed</p>
           </div>
         ) : (
-          <table className="ema-table">
-            <thead>
-              <tr>
-                <th>Patient</th>
-                <th>Drug</th>
-                <th>Requested Date</th>
-                <th>Original Rx Date</th>
-                <th>Provider</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {refillRequests.map((refill) => (
-                <tr key={refill.id}>
-                  <td>
-                    <a href="#" className="ema-patient-link">
-                      {refill.patientFirstName} {refill.patientLastName}
-                    </a>
-                  </td>
-                  <td>
-                    <div style={{ fontWeight: 500 }}>{refill.medication_name}</div>
-                    {refill.strength && <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{refill.strength}</div>}
-                  </td>
-                  <td style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-                    {new Date(refill.requested_date).toLocaleDateString()}
-                  </td>
-                  <td style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-                    {refill.original_rx_date ? new Date(refill.original_rx_date).toLocaleDateString() : 'N/A'}
-                  </td>
-                  <td>{refill.providerName || 'N/A'}</td>
-                  <td>
-                    <span
-                      className={`ema-status ${
-                        refill.status === 'approved'
-                          ? 'established'
-                          : refill.status === 'denied'
-                          ? 'cancelled'
-                          : 'pending'
-                      }`}
-                    >
-                      {refill.status}
-                    </span>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
-                      {refill.status === 'pending' && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleApproveRefill(refill.id)}
-                            style={{
-                              padding: '0.25rem 0.5rem',
-                              background: '#10b981',
-                              color: '#ffffff',
-                              border: 'none',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              fontSize: '0.75rem',
-                            }}
-                          >
-                            Approve
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedPrescription(refill);
-                              setShowDenyModal(true);
-                            }}
-                            style={{
-                              padding: '0.25rem 0.5rem',
-                              background: '#dc2626',
-                              color: '#ffffff',
-                              border: 'none',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              fontSize: '0.75rem',
-                            }}
-                          >
-                            Deny
-                          </button>
-                          <button
-                            type="button"
-                            style={{
-                              padding: '0.25rem 0.5rem',
-                              background: '#f3f4f6',
-                              border: '1px solid #d1d5db',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              fontSize: '0.75rem',
-                            }}
-                          >
-                            View Original
-                          </button>
-                        </>
-                      )}
-                      {refill.status === 'denied' && refill.denial_reason && (
-                        <span style={{ fontSize: '0.75rem', color: '#dc2626' }}>
-                          {refill.denial_reason}
-                        </span>
-                      )}
-                    </div>
-                  </td>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '10px',
+            boxShadow: '0 2px 8px rgba(139, 92, 246, 0.15)',
+            border: '2px solid #c4b5fd',
+            overflow: 'hidden'
+          }}>
+            <table className="ema-table">
+              <thead>
+                <tr>
+                  <th>Patient</th>
+                  <th>Drug</th>
+                  <th>Requested Date</th>
+                  <th>Original Rx Date</th>
+                  <th>Provider</th>
+                  <th>Status</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {refillRequests.map((refill) => (
+                  <tr key={refill.id}>
+                    <td>
+                      <a href="#" className="ema-patient-link" style={{
+                        color: '#0369a1',
+                        textDecoration: 'none',
+                        fontWeight: 600
+                      }}>
+                        {refill.patientFirstName} {refill.patientLastName}
+                      </a>
+                    </td>
+                    <td>
+                      <div style={{ fontWeight: 600, color: '#111827' }}>{refill.medication_name}</div>
+                      {refill.strength && <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{refill.strength}</div>}
+                    </td>
+                    <td style={{ fontSize: '0.875rem', color: '#374151' }}>
+                      {new Date(refill.requested_date).toLocaleDateString()}
+                    </td>
+                    <td style={{ fontSize: '0.875rem', color: '#374151' }}>
+                      {refill.original_rx_date ? new Date(refill.original_rx_date).toLocaleDateString() : 'N/A'}
+                    </td>
+                    <td style={{ fontSize: '0.875rem' }}>{refill.providerName || 'N/A'}</td>
+                    <td>
+                      <span
+                        className={`ema-status ${
+                          refill.status === 'approved'
+                            ? 'established'
+                            : refill.status === 'denied'
+                            ? 'cancelled'
+                            : 'pending'
+                        }`}
+                        style={{
+                          padding: '0.375rem 0.75rem',
+                          borderRadius: '6px',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          textTransform: 'capitalize'
+                        }}
+                      >
+                        {refill.status}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
+                        {refill.status === 'pending' && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveRefill(refill.id)}
+                              style={{
+                                padding: '0.375rem 0.625rem',
+                                background: 'linear-gradient(135deg, #10b981, #059669)',
+                                color: '#ffffff',
+                                border: 'none',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                              }}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedPrescription(refill);
+                                setShowDenyModal(true);
+                              }}
+                              style={{
+                                padding: '0.375rem 0.625rem',
+                                background: 'linear-gradient(135deg, #dc2626, #b91c1c)',
+                                color: '#ffffff',
+                                border: 'none',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                              }}
+                            >
+                              Deny
+                            </button>
+                            <button
+                              type="button"
+                              style={{
+                                padding: '0.375rem 0.625rem',
+                                background: '#ffffff',
+                                color: '#6b7280',
+                                border: '1px solid #d1d5db',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                              }}
+                            >
+                              View Original
+                            </button>
+                          </>
+                        )}
+                        {refill.status === 'denied' && refill.denial_reason && (
+                          <span style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 500 }}>
+                            {refill.denial_reason}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+
+      {/* Refill Requests Denied with New Rx to Follow Tab */}
+      {activeTab === 'refillsDenied' &&
+        (loading ? (
+          <div style={{ padding: '1rem' }}>
+            <Skeleton variant="card" height={400} />
+          </div>
+        ) : (
+          <div
+            style={{
+              textAlign: 'center',
+              padding: '3rem',
+              background: '#ffffff',
+              margin: '1rem',
+              borderRadius: '8px',
+              border: '1px solid #e5e7eb',
+            }}
+          >
+            <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No Denied Refill Requests</h3>
+            <p style={{ color: '#6b7280', margin: 0 }}>Denied refill requests requiring new prescriptions will appear here</p>
+          </div>
         ))}
 
       {/* Rx Change Requests Table */}
@@ -1211,112 +1774,247 @@ export function PrescriptionsPageEnhanced() {
             <p style={{ color: '#6b7280', margin: 0 }}>All change requests have been processed</p>
           </div>
         ) : (
-          <table className="ema-table">
-            <thead>
-              <tr>
-                <th>Patient</th>
-                <th>Original Drug</th>
-                <th>Requested Change</th>
-                <th>Pharmacy</th>
-                <th>Request Date</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {changeRequests.map((change) => (
-                <tr key={change.id}>
-                  <td>
-                    <a href="#" className="ema-patient-link">
-                      {change.patientFirstName} {change.patientLastName}
-                    </a>
-                  </td>
-                  <td>
-                    <div style={{ fontWeight: 500 }}>{change.original_drug}</div>
-                    {change.original_strength && (
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{change.original_strength}</div>
-                    )}
-                  </td>
-                  <td>
-                    <div style={{ fontWeight: 500 }}>{change.change_type}</div>
-                    {change.requested_drug && (
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                        {change.requested_drug} {change.requested_strength}
-                      </div>
-                    )}
-                    {change.change_reason && (
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280', fontStyle: 'italic' }}>
-                        Reason: {change.change_reason}
-                      </div>
-                    )}
-                  </td>
-                  <td>{change.pharmacy_name || 'N/A'}</td>
-                  <td style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-                    {new Date(change.request_date).toLocaleDateString()}
-                  </td>
-                  <td>
-                    <span
-                      className={`ema-status ${
-                        change.status === 'approved' || change.status === 'approved_with_modification'
-                          ? 'established'
-                          : change.status === 'denied'
-                          ? 'cancelled'
-                          : 'pending'
-                      }`}
-                    >
-                      {change.status.replace('_', ' ')}
-                    </span>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
-                      {change.status === 'pending_review' && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleApproveChange(change.id)}
-                            style={{
-                              padding: '0.25rem 0.5rem',
-                              background: '#10b981',
-                              color: '#ffffff',
-                              border: 'none',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              fontSize: '0.75rem',
-                            }}
-                          >
-                            Approve
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedPrescription(change);
-                              setShowDenyChangeModal(true);
-                            }}
-                            style={{
-                              padding: '0.25rem 0.5rem',
-                              background: '#dc2626',
-                              color: '#ffffff',
-                              border: 'none',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              fontSize: '0.75rem',
-                            }}
-                          >
-                            Deny
-                          </button>
-                        </>
-                      )}
-                      {change.response_notes && (
-                        <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                          {change.response_notes}
-                        </span>
-                      )}
-                    </div>
-                  </td>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '10px',
+            boxShadow: '0 2px 8px rgba(139, 92, 246, 0.15)',
+            border: '2px solid #c4b5fd',
+            overflow: 'hidden'
+          }}>
+            <table className="ema-table">
+              <thead>
+                <tr>
+                  <th>Patient</th>
+                  <th>Original Drug</th>
+                  <th>Requested Change</th>
+                  <th>Pharmacy</th>
+                  <th>Request Date</th>
+                  <th>Status</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {changeRequests.map((change) => (
+                  <tr key={change.id}>
+                    <td>
+                      <a href="#" className="ema-patient-link" style={{
+                        color: '#0369a1',
+                        textDecoration: 'none',
+                        fontWeight: 600
+                      }}>
+                        {change.patientFirstName} {change.patientLastName}
+                      </a>
+                    </td>
+                    <td>
+                      <div style={{ fontWeight: 600, color: '#111827' }}>{change.original_drug}</div>
+                      {change.original_strength && (
+                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{change.original_strength}</div>
+                      )}
+                    </td>
+                    <td>
+                      <div style={{ fontWeight: 600, color: '#374151' }}>{change.change_type}</div>
+                      {change.requested_drug && (
+                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                          {change.requested_drug} {change.requested_strength}
+                        </div>
+                      )}
+                      {change.change_reason && (
+                        <div style={{ fontSize: '0.75rem', color: '#6b7280', fontStyle: 'italic' }}>
+                          Reason: {change.change_reason}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ fontSize: '0.875rem' }}>{change.pharmacy_name || 'N/A'}</td>
+                    <td style={{ fontSize: '0.875rem', color: '#374151' }}>
+                      {new Date(change.request_date).toLocaleDateString()}
+                    </td>
+                    <td>
+                      <span
+                        className={`ema-status ${
+                          change.status === 'approved' || change.status === 'approved_with_modification'
+                            ? 'established'
+                            : change.status === 'denied'
+                            ? 'cancelled'
+                            : 'pending'
+                        }`}
+                        style={{
+                          padding: '0.375rem 0.75rem',
+                          borderRadius: '6px',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          textTransform: 'capitalize'
+                        }}
+                      >
+                        {change.status.replace('_', ' ')}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
+                        {change.status === 'pending_review' && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveChange(change.id)}
+                              style={{
+                                padding: '0.375rem 0.625rem',
+                                background: 'linear-gradient(135deg, #10b981, #059669)',
+                                color: '#ffffff',
+                                border: 'none',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                              }}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedPrescription(change);
+                                setShowDenyChangeModal(true);
+                              }}
+                              style={{
+                                padding: '0.375rem 0.625rem',
+                                background: 'linear-gradient(135deg, #dc2626, #b91c1c)',
+                                color: '#ffffff',
+                                border: 'none',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                              }}
+                            >
+                              Deny
+                            </button>
+                          </>
+                        )}
+                        {change.response_notes && (
+                          <span style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 500 }}>
+                            {change.response_notes}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+
+      {/* Rx Audit Confirmation Tab */}
+      {activeTab === 'auditConfirm' &&
+        (loading ? (
+          <div style={{ padding: '1rem' }}>
+            <Skeleton variant="card" height={400} />
+          </div>
+        ) : (
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '10px',
+            boxShadow: '0 2px 8px rgba(139, 92, 246, 0.15)',
+            border: '2px solid #c4b5fd',
+            overflow: 'hidden'
+          }}>
+            <table className="ema-table">
+              <thead>
+                <tr>
+                  <th>Patient</th>
+                  <th>Drug</th>
+                  <th>Written On</th>
+                  <th>Provider</th>
+                  <th>Status</th>
+                  <th>Audit Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {prescriptions
+                  .filter((rx) => !(rx as any).audit_confirmed_at)
+                  .slice(0, 50)
+                  .map((rx) => {
+                    const lines = (rx.details || '').split('\n');
+                    const medication = lines[0] || '';
+
+                    return (
+                      <tr key={rx.id}>
+                        <td>
+                          <a href="#" className="ema-patient-link" style={{
+                            color: '#0369a1',
+                            textDecoration: 'none',
+                            fontWeight: 600
+                          }}>
+                            {getPatientName(rx.patientId)}
+                          </a>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{medication}</div>
+                        </td>
+                        <td style={{ fontSize: '0.875rem', color: '#374151' }}>
+                          {new Date(rx.createdAt).toLocaleDateString()}
+                        </td>
+                        <td style={{ fontSize: '0.875rem' }}>Dr. {session?.userName || 'Provider'}</td>
+                        <td>
+                          <span
+                            className={`ema-status ${
+                              rx.status === 'completed'
+                                ? 'established'
+                                : rx.status === 'ordered'
+                                ? 'pending'
+                                : rx.status === 'cancelled'
+                                ? 'cancelled'
+                                : 'pending'
+                            }`}
+                          >
+                            {rx.status}
+                          </span>
+                        </td>
+                        <td>
+                          <span style={{
+                            padding: '0.375rem 0.75rem',
+                            borderRadius: '6px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            background: '#fef3c7',
+                            color: '#b45309'
+                          }}>
+                            Pending Audit
+                          </span>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            onClick={() => handleAuditConfirm(rx)}
+                            style={{
+                              padding: '0.375rem 0.75rem',
+                              background: 'linear-gradient(135deg, #10b981, #059669)',
+                              color: '#ffffff',
+                              border: 'none',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                            }}
+                          >
+                            Confirm Audit
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+            {prescriptions.filter((rx) => !(rx as any).audit_confirmed_at).length === 0 && (
+              <div style={{
+                textAlign: 'center',
+                padding: '2rem',
+                color: '#6b7280'
+              }}>
+                All prescriptions have been audited
+              </div>
+            )}
+          </div>
         ))}
 
       {/* New Rx Modal */}

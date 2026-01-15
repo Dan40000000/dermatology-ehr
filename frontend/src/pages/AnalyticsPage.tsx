@@ -419,32 +419,51 @@ export function AnalyticsPage() {
                 <path d="M8 17v-3" />
               </svg>
             </div>
-            <div>
-              <h2>Financial Reports</h2>
+            <div className="section-header-content">
+              <div className="section-title-row">
+                <h2>Financial Reports</h2>
+                <button className="external-link-btn" title="Open external dashboard">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                    <polyline points="15 3 21 3 21 9" />
+                    <line x1="10" y1="14" x2="21" y2="3" />
+                  </svg>
+                </button>
+              </div>
               <p>View a graphical display of several key metrics, critical for the management of your practice</p>
             </div>
           </div>
 
           <div className="analytics-feature-section">
-            <div className="section-icon">
-              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="1.5">
-                <circle cx="12" cy="12" r="10" />
-                <polyline points="12 6 12 12 16 14" />
-              </svg>
+            <div className="feature-section-header">
+              <div className="section-icon-large">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="1.5">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+              </div>
+              <h3>Real-Time Financial Reports</h3>
             </div>
-            <h3>Real-Time Financial Reports</h3>
-            <div className="feature-list">
-              <div className="feature-item">
-                <strong>Charges</strong> - View all the charges in the system for a specific time period.
+            <div className="feature-list-two-column">
+              <div className="feature-column">
+                <div className="feature-item">
+                  <strong>Charges</strong>
+                  <span>View all the charges in the system for a specific time period.</span>
+                </div>
+                <div className="feature-item">
+                  <strong>Outstanding Charges</strong>
+                  <span>View all the outstanding line items charges for a specific time period.</span>
+                </div>
               </div>
-              <div className="feature-item">
-                <strong>Payments Received</strong> - Summarize all payments received for a specific time period.
-              </div>
-              <div className="feature-item">
-                <strong>Outstanding Charges</strong> - View all the outstanding line items charges for a specific time period.
-              </div>
-              <div className="feature-item">
-                <strong>Refunds Issued</strong> - Summarize all refunds issued for a specific time period.
+              <div className="feature-column">
+                <div className="feature-item">
+                  <strong>Payments Received</strong>
+                  <span>Summarize all payments received for a specific time period.</span>
+                </div>
+                <div className="feature-item">
+                  <strong>Refunds Issued</strong>
+                  <span>Summarize all refunds issued for a specific time period.</span>
+                </div>
               </div>
             </div>
           </div>
@@ -459,14 +478,20 @@ export function AnalyticsPage() {
                 <path d="M9 2v4M15 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" />
               </svg>
             </div>
-            <div>
+            <div className="section-header-content">
               <h2>Data Explorer</h2>
               <p>View clinical data sets and create custom reports for your practice.</p>
             </div>
           </div>
 
           <div className="analytics-link-box">
-            <button className="analytics-learn-more">Analytics 2.0: Click to Learn More.</button>
+            <div className="link-box-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" strokeWidth="2">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+              </svg>
+            </div>
+            <p className="link-box-description">Explore advanced analytics features and create custom reports tailored to your practice needs.</p>
+            <button className="analytics-learn-more">Analytics 2.0: Click to Learn More</button>
           </div>
         </div>
       )}
@@ -483,14 +508,21 @@ export function AnalyticsPage() {
                 <polyline points="10 9 9 9 8 9" />
               </svg>
             </div>
-            <div>
+            <div className="section-header-content">
               <h2>Compliance Reports</h2>
               <p>View Compliance and Specialized Registry reports for your practice.</p>
             </div>
           </div>
 
           <div className="analytics-link-box">
-            <button className="analytics-learn-more">Analytics 2.0: Click to Learn More.</button>
+            <div className="link-box-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
+            </div>
+            <p className="link-box-description">Access comprehensive compliance tracking and specialized registry reporting tools.</p>
+            <button className="analytics-learn-more">Analytics 2.0: Click to Learn More</button>
           </div>
         </div>
       )}
@@ -505,14 +537,21 @@ export function AnalyticsPage() {
                 <line x1="12" y1="22.08" x2="12" y2="12" />
               </svg>
             </div>
-            <div>
+            <div className="section-header-content">
               <h2>Inventory</h2>
               <p>View your practice's Inventory Management data and create custom reports.</p>
             </div>
           </div>
 
           <div className="analytics-link-box">
-            <button className="analytics-learn-more">Analytics 2.0: Click to Learn More.</button>
+            <div className="link-box-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2">
+                <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                <polyline points="9 22 9 12 15 12 15 22" />
+              </svg>
+            </div>
+            <p className="link-box-description">Monitor inventory levels, track usage patterns, and generate detailed inventory reports.</p>
+            <button className="analytics-learn-more">Analytics 2.0: Click to Learn More</button>
           </div>
         </div>
       )}
@@ -793,8 +832,19 @@ export function AnalyticsPage() {
           flex-shrink: 0;
         }
 
+        .section-header-content {
+          flex: 1;
+        }
+
+        .section-title-row {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          margin-bottom: 0.5rem;
+        }
+
         .analytics-section-header h2 {
-          margin: 0 0 0.5rem 0;
+          margin: 0;
           color: #1f2937;
           font-size: 1.5rem;
         }
@@ -804,65 +854,140 @@ export function AnalyticsPage() {
           color: #6b7280;
         }
 
+        .external-link-btn {
+          background: transparent;
+          border: none;
+          color: #8b5cf6;
+          cursor: pointer;
+          padding: 0.25rem;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 6px;
+          transition: all 0.2s ease;
+        }
+
+        .external-link-btn:hover {
+          background: #faf5ff;
+          color: #7c3aed;
+          transform: scale(1.1);
+        }
+
         .analytics-feature-section {
           background: white;
           border-radius: 12px;
           padding: 3rem;
           box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-          text-align: center;
           margin-bottom: 2rem;
         }
 
-        .analytics-feature-section h3 {
-          margin: 1rem 0 2rem 0;
-          font-size: 1.5rem;
-          color: #1f2937;
+        .feature-section-header {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          margin-bottom: 3rem;
         }
 
-        .feature-list {
+        .section-icon-large {
+          margin-bottom: 1rem;
+        }
+
+        .analytics-feature-section h3 {
+          margin: 0;
+          font-size: 1.75rem;
+          color: #1f2937;
+          font-weight: 600;
+        }
+
+        .feature-list-two-column {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+          grid-template-columns: 1fr 1fr;
+          gap: 2rem;
+        }
+
+        @media (max-width: 768px) {
+          .feature-list-two-column {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        .feature-column {
+          display: flex;
+          flex-direction: column;
           gap: 1.5rem;
-          text-align: left;
         }
 
         .feature-item {
-          padding: 1.25rem;
+          padding: 1.5rem;
           background: linear-gradient(135deg, #faf5ff 0%, #f5f3ff 100%);
-          border-radius: 8px;
-          border-left: 3px solid #8b5cf6;
+          border-radius: 10px;
+          border-left: 4px solid #8b5cf6;
+          transition: all 0.3s ease;
+          cursor: pointer;
+        }
+
+        .feature-item:hover {
+          transform: translateX(4px);
+          box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
+          border-left-color: #7c3aed;
         }
 
         .feature-item strong {
           color: #7c3aed;
           display: block;
           margin-bottom: 0.5rem;
+          font-size: 1.1rem;
+          font-weight: 600;
+        }
+
+        .feature-item span {
+          color: #4b5563;
+          line-height: 1.6;
+          display: block;
         }
 
         .analytics-link-box {
           background: white;
           border-radius: 12px;
-          padding: 3rem;
+          padding: 4rem 3rem;
           text-align: center;
           box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 1.5rem;
+        }
+
+        .link-box-icon {
+          opacity: 0.8;
+        }
+
+        .link-box-description {
+          max-width: 600px;
+          margin: 0;
+          color: #6b7280;
+          font-size: 1.05rem;
+          line-height: 1.6;
         }
 
         .analytics-learn-more {
-          padding: 1rem 2rem;
+          padding: 1rem 2.5rem;
           background: white;
           border: 2px solid #7c3aed;
-          border-radius: 8px;
+          border-radius: 10px;
           color: #7c3aed;
           font-weight: 600;
+          font-size: 1rem;
           cursor: pointer;
           transition: all 0.3s ease;
+          margin-top: 0.5rem;
         }
 
         .analytics-learn-more:hover {
           background: #7c3aed;
           color: white;
           transform: translateY(-2px);
-          box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3);
+          box-shadow: 0 6px 16px rgba(124, 58, 237, 0.3);
         }
 
         .kpi-cards {

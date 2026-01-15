@@ -62,6 +62,14 @@ export function DatePresets({ onDateRangeChange }: DatePresetsProps) {
     }
   };
 
+  const clearFilter = () => {
+    setActivePreset('');
+    setShowCustom(false);
+    setCustomStart('');
+    setCustomEnd('');
+    onDateRangeChange('', '');
+  };
+
   return (
     <div className="date-presets" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
       <label style={{ fontWeight: '600', color: '#4b5563' }}>Service Date:</label>
@@ -167,6 +175,25 @@ export function DatePresets({ onDateRangeChange }: DatePresetsProps) {
       >
         Custom Range
       </button>
+
+      {activePreset && (
+        <button
+          type="button"
+          onClick={clearFilter}
+          style={{
+            padding: '0.5rem 1rem',
+            border: '1px solid #d1d5db',
+            borderRadius: '6px',
+            background: 'white',
+            color: '#dc2626',
+            cursor: 'pointer',
+            fontSize: '0.875rem',
+            fontWeight: '600',
+          }}
+        >
+          Clear Filter
+        </button>
+      )}
 
       {showCustom && (
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>

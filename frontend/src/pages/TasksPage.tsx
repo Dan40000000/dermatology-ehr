@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, ExportButtons } from '../components/ui';
@@ -25,6 +26,7 @@ type ViewMode = 'kanban' | 'list';
 export function TasksPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -48,6 +50,34 @@ export function TasksPage() {
     priority: '',
     assignedTo: '',
   });
+
+  // Read tab from URL and apply appropriate filters
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'received') {
+      // Tasks assigned to current user
+      setFilters((prev) => ({
+        ...prev,
+        assignedTo: 'me',
+        status: prev.status === 'completed' ? '' : prev.status // Clear completed filter when switching to received
+      }));
+    } else if (tab === 'sent') {
+      // Tasks created by current user but assigned to others
+      setFilters((prev) => ({
+        ...prev,
+        assignedTo: 'sent',
+        status: prev.status === 'completed' ? '' : prev.status // Clear completed filter when switching to sent
+      }));
+    } else if (tab === 'completed') {
+      // Completed tasks
+      setFilters((prev) => ({
+        ...prev,
+        status: 'completed',
+        assignedTo: prev.assignedTo === 'sent' ? '' : prev.assignedTo // Clear sent filter when switching to completed
+      }));
+    }
+    // Don't do anything if no tab - let user manage filters manually
+  }, [searchParams]);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -224,6 +254,12 @@ export function TasksPage() {
         return false;
       }
     }
+    // Handle "sent" filter - tasks created by current user but assigned to others
+    if (filters.assignedTo === 'sent') {
+      if (task.createdBy !== session?.user?.id || task.assignedTo === session?.user?.id) {
+        return false;
+      }
+    }
     return true;
   });
 
@@ -357,7 +393,10 @@ export function TasksPage() {
             border: '2px solid rgba(255,255,255,0.4)',
             transition: 'all 0.3s ease'
           }}
-          onClick={() => setFilters((prev) => ({ ...prev, status: '' }))}
+          onClick={() => {
+            setSearchParams({});
+            setFilters((prev) => ({ ...prev, status: '', assignedTo: '' }));
+          }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
             e.currentTarget.style.boxShadow = '0 8px 20px rgba(16, 185, 129, 0.4)';
@@ -381,7 +420,10 @@ export function TasksPage() {
             border: '2px solid rgba(255,255,255,0.4)',
             transition: 'all 0.3s ease'
           }}
-          onClick={() => setFilters((prev) => ({ ...prev, status: 'todo' }))}
+          onClick={() => {
+            setSearchParams({});
+            setFilters((prev) => ({ ...prev, status: 'todo', assignedTo: '' }));
+          }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
             e.currentTarget.style.boxShadow = '0 8px 20px rgba(16, 185, 129, 0.4)';
@@ -405,7 +447,10 @@ export function TasksPage() {
             border: '2px solid rgba(255,255,255,0.4)',
             transition: 'all 0.3s ease'
           }}
-          onClick={() => setFilters((prev) => ({ ...prev, status: 'in_progress' }))}
+          onClick={() => {
+            setSearchParams({});
+            setFilters((prev) => ({ ...prev, status: 'in_progress', assignedTo: '' }));
+          }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
             e.currentTarget.style.boxShadow = '0 8px 20px rgba(16, 185, 129, 0.4)';
@@ -429,7 +474,10 @@ export function TasksPage() {
             border: '2px solid rgba(255,255,255,0.4)',
             transition: 'all 0.3s ease'
           }}
-          onClick={() => setFilters((prev) => ({ ...prev, assignedTo: 'overdue' }))}
+          onClick={() => {
+            setSearchParams({});
+            setFilters((prev) => ({ ...prev, assignedTo: 'overdue', status: '' }));
+          }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
             e.currentTarget.style.boxShadow = overdueCount > 0 ? '0 8px 20px rgba(220, 38, 38, 0.4)' : '0 8px 20px rgba(16, 185, 129, 0.4)';
@@ -453,7 +501,10 @@ export function TasksPage() {
             border: '2px solid rgba(255,255,255,0.4)',
             transition: 'all 0.3s ease'
           }}
-          onClick={() => setFilters((prev) => ({ ...prev, assignedTo: 'me' }))}
+          onClick={() => {
+            setSearchParams({ tab: 'received' });
+            setFilters((prev) => ({ ...prev, assignedTo: 'me', status: '' }));
+          }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
             e.currentTarget.style.boxShadow = '0 8px 20px rgba(16, 185, 129, 0.4)';
@@ -537,7 +588,10 @@ export function TasksPage() {
           {(filters.search || filters.category || filters.priority || filters.assignedTo) && (
             <button
               type="button"
-              onClick={() => setFilters({ search: '', status: '', category: '', priority: '', assignedTo: '' })}
+              onClick={() => {
+                setSearchParams({});
+                setFilters({ search: '', status: '', category: '', priority: '', assignedTo: '' });
+              }}
               style={{
                 padding: '0.5rem 1rem',
                 background: '#f3f4f6',

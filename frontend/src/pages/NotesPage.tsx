@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
   fetchNotes,
@@ -14,6 +15,7 @@ import {
 
 export function NotesPage() {
   const { user, accessToken, tenantId } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [notes, setNotes] = useState<Note[]>([]);
   const [providers, setProviders] = useState<any[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
@@ -21,12 +23,52 @@ export function NotesPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Filters
-  const [statusFilter, setStatusFilter] = useState<'draft' | 'preliminary' | 'final' | 'signed' | 'all'>('all');
+  // Map URL tab parameter to status filter
+  const getStatusFromTab = (tab: string | null): 'draft' | 'preliminary' | 'final' | 'signed' | 'all' => {
+    switch (tab) {
+      case 'finalized':
+        // "My Finalized" shows signed notes
+        return 'signed';
+      case 'prelim':
+        return 'preliminary';
+      case 'unsigned':
+        // "Unsigned" shows only final notes (not signed)
+        return 'final';
+      default:
+        return 'all';
+    }
+  };
+
+  // Map status filter to tab parameter
+  const getTabFromStatus = (status: string): string | null => {
+    switch (status) {
+      case 'final':
+        return 'unsigned';
+      case 'preliminary':
+        return 'prelim';
+      case 'signed':
+        return 'finalized';
+      default:
+        return null;
+    }
+  };
+
+  // Initialize filters from URL
+  const urlTab = searchParams.get('tab');
+  const [statusFilter, setStatusFilter] = useState<'draft' | 'preliminary' | 'final' | 'signed' | 'all'>(
+    getStatusFromTab(urlTab)
+  );
   const [providerFilter, setProviderFilter] = useState<string>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [patientFilter, setPatientFilter] = useState<string>('all');
+
+  // Update status filter when URL changes
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    const newStatus = getStatusFromTab(tab);
+    setStatusFilter(newStatus);
+  }, [searchParams]);
 
   // Bulk operations
   const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set());
@@ -272,7 +314,17 @@ export function NotesPage() {
             </label>
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
+              onChange={(e) => {
+                const newStatus = e.target.value as any;
+                setStatusFilter(newStatus);
+                // Update URL to reflect the new filter
+                const tab = getTabFromStatus(newStatus);
+                if (tab) {
+                  setSearchParams({ tab });
+                } else {
+                  setSearchParams({});
+                }
+              }}
               style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #d1d5db' }}
             >
               <option value="all">All Statuses</option>
@@ -373,6 +425,7 @@ export function NotesPage() {
               setPatientFilter('all');
               setStartDate('');
               setEndDate('');
+              setSearchParams({}); // Clear URL params
             }}
             style={{
               padding: '0.5rem 1rem',

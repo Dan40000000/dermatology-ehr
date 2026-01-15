@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton } from '../components/ui';
@@ -9,7 +9,7 @@ import { PatientPaymentPortal } from '../components/financials/PatientPaymentPor
 import { PremiumAnalytics } from '../components/financials/PremiumAnalytics';
 import { FeeScheduleManager } from '../components/financials/FeeScheduleManager';
 
-type TabType = 'dashboard' | 'claims' | 'payments' | 'analytics' | 'fees' | 'statements' | 'reports';
+type TabType = 'dashboard' | 'bills' | 'payments' | 'analytics' | 'fees' | 'statements' | 'reports';
 
 interface TabConfig {
   key: TabType;
@@ -19,8 +19,8 @@ interface TabConfig {
 }
 
 const TABS: TabConfig[] = [
-  { key: 'dashboard', label: 'RCM Dashboard', icon: '', description: 'Key metrics & A/R overview' },
-  { key: 'claims', label: 'Claims', icon: '', description: 'Submit & track insurance claims' },
+  { key: 'dashboard', label: 'Overview', icon: '', description: 'Key metrics & A/R overview' },
+  { key: 'bills', label: 'Bills', icon: '', description: 'Patient billing & statements' },
   { key: 'payments', label: 'Payments', icon: '', description: 'Patient payments & plans' },
   { key: 'analytics', label: 'Analytics', icon: '', description: 'Premium analytics & reports' },
   { key: 'fees', label: 'Fee Schedule', icon: '', description: 'Manage fees & contracts' },
@@ -32,10 +32,16 @@ export function FinancialsHub() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Get active tab from URL, default to 'dashboard' if not specified
+  const tabFromUrl = searchParams.get('tab') as TabType | null;
+  const activeTab = tabFromUrl && ['dashboard', 'bills', 'payments', 'analytics', 'fees', 'statements', 'reports'].includes(tabFromUrl)
+    ? tabFromUrl
+    : 'dashboard';
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -49,11 +55,21 @@ export function FinancialsHub() {
     loadData();
   }, [loadData]);
 
+  // Handler to change tabs and update URL
+  const handleTabChange = (tab: TabType) => {
+    if (tab === 'dashboard') {
+      // Remove tab parameter for dashboard (default view)
+      setSearchParams({});
+    } else {
+      setSearchParams({ tab });
+    }
+  };
+
   const handleDrillDown = (metric: string) => {
     showSuccess(`Drilling down into: ${metric}`);
     // Navigate to specific views based on metric
-    if (metric === 'claims-queue') setActiveTab('claims');
-    if (metric === 'ar-aging') setActiveTab('analytics');
+    if (metric === 'claims-queue') navigate('/claims');
+    if (metric === 'ar-aging') handleTabChange('analytics');
   };
 
   const handleClaimSelect = (claimId: string) => {
@@ -154,7 +170,7 @@ export function FinancialsHub() {
             Quick Actions
           </button>
           <button
-            onClick={() => setActiveTab('reports')}
+            onClick={() => handleTabChange('reports')}
             style={{
               padding: '0.6rem 1.2rem',
               background: '#059669',
@@ -207,7 +223,7 @@ export function FinancialsHub() {
               {TABS.map(tab => (
                 <button
                   key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
+                  onClick={() => handleTabChange(tab.key)}
                   style={{
                     padding: sidebarCollapsed ? '0.75rem' : '0.75rem 1rem',
                     background: activeTab === tab.key ? '#f0fdf4' : 'transparent',
@@ -292,17 +308,174 @@ export function FinancialsHub() {
             minHeight: 'calc(100vh - 140px)',
             boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
           }}>
-            {/* Dashboard Tab */}
+            {/* Dashboard Tab (Overview) */}
             {activeTab === 'dashboard' && (
               <RCMDashboard onDrillDown={handleDrillDown} />
             )}
 
-            {/* Claims Tab */}
-            {activeTab === 'claims' && (
-              <ClaimsManagement
-                onClaimSelect={handleClaimSelect}
-                onSubmitClaims={(ids) => showSuccess(`Submitted ${ids.length} claims`)}
-              />
+            {/* Bills Tab */}
+            {activeTab === 'bills' && (
+              <div>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '2rem',
+                }}>
+                  <div>
+                    <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#111827', marginBottom: '0.25rem' }}>
+                      Patient Bills
+                    </h2>
+                    <p style={{ color: '#6b7280', fontSize: '0.9rem' }}>
+                      View and manage patient billing
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <button style={{
+                      padding: '0.75rem 1.25rem',
+                      background: 'white',
+                      color: '#374151',
+                      border: '2px solid #d1d5db',
+                      borderRadius: '8px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                    }}>
+                      Export
+                    </button>
+                    <button style={{
+                      padding: '0.75rem 1.25rem',
+                      background: '#059669',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                    }}>
+                      Create Bill
+                    </button>
+                  </div>
+                </div>
+
+                {/* Bill Summary Cards */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, 1fr)',
+                  gap: '1.5rem',
+                  marginBottom: '2rem',
+                }}>
+                  <div style={{
+                    background: '#f0fdf4',
+                    borderRadius: '12px',
+                    padding: '1.5rem',
+                    border: '2px solid #bbf7d0',
+                  }}>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#065f46', marginBottom: '0.5rem' }}>
+                      Outstanding
+                    </h3>
+                    <div style={{ fontSize: '1.75rem', fontWeight: '700', color: '#059669' }}>
+                      $42,500
+                    </div>
+                    <p style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.5rem' }}>
+                      127 bills pending
+                    </p>
+                  </div>
+                  <div style={{
+                    background: '#fef3c7',
+                    borderRadius: '12px',
+                    padding: '1.5rem',
+                    border: '2px solid #fde68a',
+                  }}>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#92400e', marginBottom: '0.5rem' }}>
+                      Overdue
+                    </h3>
+                    <div style={{ fontSize: '1.75rem', fontWeight: '700', color: '#f59e0b' }}>
+                      $18,500
+                    </div>
+                    <p style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.5rem' }}>
+                      34 bills overdue
+                    </p>
+                  </div>
+                  <div style={{
+                    background: '#f0f9ff',
+                    borderRadius: '12px',
+                    padding: '1.5rem',
+                    border: '2px solid #bae6fd',
+                  }}>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#0369a1', marginBottom: '0.5rem' }}>
+                      Paid This Month
+                    </h3>
+                    <div style={{ fontSize: '1.75rem', fontWeight: '700', color: '#0ea5e9' }}>
+                      $32,450
+                    </div>
+                    <p style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.5rem' }}>
+                      89 bills paid
+                    </p>
+                  </div>
+                </div>
+
+                {/* Recent Bills Table */}
+                <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#374151', marginBottom: '1rem' }}>
+                  Recent Bills
+                </h3>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #e5e7eb', background: '#f9fafb' }}>
+                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Bill ID</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Patient</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Date</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'right' }}>Amount</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'right' }}>Balance</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'center' }}>Status</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'center' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { id: 'BILL-2026-001', patient: 'John Smith', date: '2026-01-14', amount: 25000, balance: 25000, status: 'outstanding' },
+                      { id: 'BILL-2026-002', patient: 'Sarah Johnson', date: '2026-01-14', amount: 18500, balance: 0, status: 'paid' },
+                      { id: 'BILL-2026-003', patient: 'Mike Davis', date: '2026-01-13', amount: 32000, balance: 15000, status: 'partial' },
+                      { id: 'BILL-2025-089', patient: 'Emily Brown', date: '2025-12-28', amount: 22000, balance: 22000, status: 'overdue' },
+                    ].map(bill => (
+                      <tr key={bill.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{bill.id}</td>
+                        <td style={{ padding: '0.75rem', fontWeight: '600' }}>{bill.patient}</td>
+                        <td style={{ padding: '0.75rem', color: '#6b7280' }}>{bill.date}</td>
+                        <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600' }}>
+                          ${(bill.amount / 100).toLocaleString()}
+                        </td>
+                        <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600', color: bill.balance === 0 ? '#059669' : '#374151' }}>
+                          ${(bill.balance / 100).toLocaleString()}
+                        </td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                          <span style={{
+                            padding: '0.25rem 0.75rem',
+                            borderRadius: '20px',
+                            fontSize: '0.75rem',
+                            fontWeight: '600',
+                            background: bill.status === 'paid' ? '#dcfce7' : bill.status === 'overdue' ? '#fee2e2' : bill.status === 'partial' ? '#fef3c7' : '#f3f4f6',
+                            color: bill.status === 'paid' ? '#166534' : bill.status === 'overdue' ? '#991b1b' : bill.status === 'partial' ? '#92400e' : '#374151',
+                          }}>
+                            {bill.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                          <button style={{
+                            padding: '0.4rem 0.75rem',
+                            background: 'white',
+                            color: '#374151',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            fontSize: '0.8rem',
+                            cursor: 'pointer',
+                          }}>
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
 
             {/* Payments Tab */}

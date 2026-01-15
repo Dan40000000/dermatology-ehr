@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
@@ -20,14 +21,21 @@ const ORDER_TYPES: { value: OrderType; label: string; icon: string }[] = [
 export function OrdersPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [orders, setOrders] = useState<Order[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
-  const [filter, setFilter] = useState<OrderFilter>('all');
   const [typeFilter, setTypeFilter] = useState<OrderType | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
+
+  // Get filter from URL parameter, default to 'all'
+  const tabParam = searchParams.get('tab');
+  const filter: OrderFilter =
+    tabParam === 'pending' || tabParam === 'in-progress' || tabParam === 'completed' || tabParam === 'cancelled'
+      ? tabParam
+      : 'all';
 
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -38,6 +46,18 @@ export function OrdersPage() {
     priority: 'routine' as 'stat' | 'urgent' | 'routine',
     notes: '',
   });
+
+  // Function to update filter and URL
+  const updateFilter = (newFilter: OrderFilter) => {
+    if (newFilter === 'all') {
+      // Remove the tab parameter for 'all'
+      searchParams.delete('tab');
+      setSearchParams(searchParams);
+    } else {
+      // Set the tab parameter
+      setSearchParams({ tab: newFilter });
+    }
+  };
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -263,7 +283,7 @@ export function OrdersPage() {
       {/* Stats Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
         <div
-          onClick={() => setFilter('pending')}
+          onClick={() => updateFilter('pending')}
           style={{
             cursor: 'pointer',
             background: 'rgba(255, 255, 255, 0.95)',
@@ -287,7 +307,7 @@ export function OrdersPage() {
           <div style={{ color: '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>Pending</div>
         </div>
         <div
-          onClick={() => setFilter('in-progress')}
+          onClick={() => updateFilter('in-progress')}
           style={{
             cursor: 'pointer',
             background: 'rgba(255, 255, 255, 0.95)',
@@ -311,7 +331,7 @@ export function OrdersPage() {
           <div style={{ color: '#6b7280', fontSize: '0.875rem', fontWeight: 600 }}>In Progress</div>
         </div>
         <div
-          onClick={() => setFilter('completed')}
+          onClick={() => updateFilter('completed')}
           style={{
             cursor: 'pointer',
             background: 'rgba(255, 255, 255, 0.95)',
@@ -373,7 +393,7 @@ export function OrdersPage() {
             <select
               className="ema-filter-select"
               value={filter}
-              onChange={(e) => setFilter(e.target.value as OrderFilter)}
+              onChange={(e) => updateFilter(e.target.value as OrderFilter)}
             >
               <option value="all">All Statuses</option>
               <option value="pending">Pending</option>
@@ -405,7 +425,7 @@ export function OrdersPage() {
               type="button"
               className="ema-filter-btn secondary"
               onClick={() => {
-                setFilter('all');
+                updateFilter('all');
                 setTypeFilter('all');
                 setSearchTerm('');
               }}

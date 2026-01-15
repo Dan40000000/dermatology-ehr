@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
@@ -80,6 +81,7 @@ const COMMON_DERM_LABS = [
 export function LabsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [pathResults, setPathResults] = useState<PathLabResult[]>([]);
@@ -163,6 +165,23 @@ export function LabsPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Handle URL query parameters on initial load
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam) {
+      if (tabParam.startsWith('lab-')) {
+        // Extract the sub-tab portion (e.g., 'lab-completed' -> 'completed')
+        const subTabValue = tabParam.substring(4) as SubTab;
+        setMainTab('lab');
+        setSubTab(subTabValue);
+      } else {
+        // Use the tab directly as subTab (e.g., 'pending-results')
+        setMainTab('path');
+        setSubTab(tabParam as SubTab);
+      }
+    }
+  }, [searchParams]);
 
   const handleCreateEntry = async () => {
     if (!session || !newEntry.patientId) {
@@ -465,6 +484,8 @@ export function LabsPage() {
             onClick={() => {
               setMainTab('path');
               setSelectedItems(new Set());
+              // Update URL with current sub-tab
+              setSearchParams({ tab: subTab });
             }}
             style={{
               padding: '1rem 1.5rem',
@@ -487,6 +508,8 @@ export function LabsPage() {
             onClick={() => {
               setMainTab('lab');
               setSelectedItems(new Set());
+              // Update URL with lab- prefix
+              setSearchParams({ tab: `lab-${subTab}` });
             }}
             style={{
               padding: '1rem 1.5rem',
@@ -515,7 +538,10 @@ export function LabsPage() {
         }}>
           <button
             type="button"
-            onClick={() => setSubTab('pending-results')}
+            onClick={() => {
+              setSubTab('pending-results');
+              setSearchParams({ tab: mainTab === 'lab' ? 'lab-pending-results' : 'pending-results' });
+            }}
             style={{
               padding: '0.5rem 1rem',
               background: subTab === 'pending-results' ? '#ffffff' : 'transparent',
@@ -543,7 +569,10 @@ export function LabsPage() {
           </button>
           <button
             type="button"
-            onClick={() => setSubTab('pending-plan')}
+            onClick={() => {
+              setSubTab('pending-plan');
+              setSearchParams({ tab: mainTab === 'lab' ? 'lab-pending-plan' : 'pending-plan' });
+            }}
             style={{
               padding: '0.5rem 1rem',
               background: subTab === 'pending-plan' ? '#ffffff' : 'transparent',
@@ -571,7 +600,10 @@ export function LabsPage() {
           </button>
           <button
             type="button"
-            onClick={() => setSubTab('completed')}
+            onClick={() => {
+              setSubTab('completed');
+              setSearchParams({ tab: mainTab === 'lab' ? 'lab-completed' : 'completed' });
+            }}
             style={{
               padding: '0.5rem 1rem',
               background: subTab === 'completed' ? '#ffffff' : 'transparent',
@@ -599,7 +631,10 @@ export function LabsPage() {
           </button>
           <button
             type="button"
-            onClick={() => setSubTab('unresolved')}
+            onClick={() => {
+              setSubTab('unresolved');
+              setSearchParams({ tab: mainTab === 'lab' ? 'lab-unresolved' : 'unresolved' });
+            }}
             style={{
               padding: '0.5rem 1rem',
               background: subTab === 'unresolved' ? '#ffffff' : 'transparent',

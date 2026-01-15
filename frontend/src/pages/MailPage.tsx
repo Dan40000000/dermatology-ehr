@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
@@ -27,6 +28,7 @@ type MailSection = 'intramail' | 'direct-mail';
 export function MailPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [threads, setThreads] = useState<MessageThreadPreview[]>([]);
@@ -34,7 +36,6 @@ export function MailPage() {
   const [messages, setMessages] = useState<MessageThreadMessage[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [folder, setFolder] = useState<MailFolder>('inbox');
   const [mailSection, setMailSection] = useState<MailSection>('intramail');
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(true);
@@ -50,12 +51,26 @@ export function MailPage() {
   const [composeCc, setComposeCc] = useState<string>('');
   const [allowSearchPatients, setAllowSearchPatients] = useState(false);
 
+  // Get folder from URL or default to 'inbox'
+  const tabParam = searchParams.get('tab');
+  const actionParam = searchParams.get('action');
+  const folder: MailFolder = (tabParam === 'sent' || tabParam === 'drafts' || tabParam === 'archived')
+    ? tabParam
+    : 'inbox';
+
   const [newThread, setNewThread] = useState<CreateThreadData>({
     subject: '',
     patientId: '',
     participantIds: [],
     message: '',
   });
+
+  // Handle URL parameters - open compose modal if action=compose
+  useEffect(() => {
+    if (actionParam === 'compose') {
+      setShowComposeModal(true);
+    }
+  }, [actionParam]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -143,6 +158,10 @@ export function MailPage() {
         participantIds: [],
         message: '',
       });
+      // Clear the action parameter from URL
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('action');
+      setSearchParams(newParams);
       loadThreads();
       setSelectedThread(null);
     } catch (err: any) {
@@ -279,7 +298,10 @@ export function MailPage() {
         <div style={{ padding: '0.5rem 0' }}>
           <button
             type="button"
-            onClick={() => setShowComposeModal(true)}
+            onClick={() => {
+              setSearchParams({ action: 'compose' });
+              setShowComposeModal(true);
+            }}
             style={{
               display: 'block',
               width: 'calc(100% - 1rem)',
@@ -311,7 +333,7 @@ export function MailPage() {
           <button
             type="button"
             onClick={() => {
-              setFolder('inbox');
+              setSearchParams({ tab: 'inbox' });
               setSelectedThread(null);
             }}
             style={{
@@ -345,7 +367,7 @@ export function MailPage() {
           <button
             type="button"
             onClick={() => {
-              setFolder('sent');
+              setSearchParams({ tab: 'sent' });
               setSelectedThread(null);
             }}
             style={{
@@ -379,7 +401,7 @@ export function MailPage() {
           <button
             type="button"
             onClick={() => {
-              setFolder('archived');
+              setSearchParams({ tab: 'archived' });
               setSelectedThread(null);
             }}
             style={{
@@ -854,6 +876,10 @@ export function MailPage() {
             participantIds: [],
             message: '',
           });
+          // Clear the action parameter from URL
+          const newParams = new URLSearchParams(searchParams);
+          newParams.delete('action');
+          setSearchParams(newParams);
         }}
         size="lg"
       >
@@ -1005,6 +1031,10 @@ export function MailPage() {
                 participantIds: [],
                 message: '',
               });
+              // Clear the action parameter from URL
+              const newParams = new URLSearchParams(searchParams);
+              newParams.delete('action');
+              setSearchParams(newParams);
             }}
             style={{
               padding: '0.5rem 1rem',

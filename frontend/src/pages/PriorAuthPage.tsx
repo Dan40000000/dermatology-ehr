@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import {
@@ -59,6 +60,7 @@ const URGENCY_CONFIG: Record<string, { label: string; color: string; bgColor: st
 export function PriorAuthPage() {
   const { session } = useAuth();
   const { showSuccess, showError, showInfo } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [priorAuths, setPriorAuths] = useState<PriorAuth[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
@@ -66,6 +68,26 @@ export function PriorAuthPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedPA, setSelectedPA] = useState<PriorAuth | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+
+  // Handle URL parameters on initial load and when they change
+  useEffect(() => {
+    const action = searchParams.get('action');
+    const status = searchParams.get('status');
+
+    // Handle action parameter (e.g., action=new)
+    if (action === 'new') {
+      setShowCreateModal(true);
+      // Remove action param after opening modal to prevent re-opening on navigation
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('action');
+      setSearchParams(newParams, { replace: true });
+    }
+
+    // Handle status parameter (e.g., status=pending or status=approved)
+    if (status && ['pending', 'approved', 'denied', 'submitted', 'draft', 'more_info_needed'].includes(status)) {
+      setSelectedStatus(status);
+    }
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     if (session) {
@@ -185,7 +207,10 @@ export function PriorAuthPage() {
           </div>
           <button
             className="epa-attention-btn"
-            onClick={() => setSelectedStatus('pending')}
+            onClick={() => {
+              setSelectedStatus('pending');
+              setSearchParams({ status: 'pending' }, { replace: true });
+            }}
           >
             Review Now
           </button>
@@ -196,7 +221,10 @@ export function PriorAuthPage() {
       <div className="epa-status-cards">
         <div
           className={`epa-status-card ${selectedStatus === 'all' ? 'active' : ''}`}
-          onClick={() => setSelectedStatus('all')}
+          onClick={() => {
+            setSelectedStatus('all');
+            setSearchParams({}, { replace: true });
+          }}
         >
           <div className="epa-status-card-count">{statusCounts.all}</div>
           <div className="epa-status-card-label">All Requests</div>
@@ -205,7 +233,10 @@ export function PriorAuthPage() {
           <div
             key={key}
             className={`epa-status-card ${selectedStatus === key ? 'active' : ''}`}
-            onClick={() => setSelectedStatus(key)}
+            onClick={() => {
+              setSelectedStatus(key);
+              setSearchParams({ status: key }, { replace: true });
+            }}
             style={{
               '--status-color': config.color,
               '--status-bg': config.bgColor,

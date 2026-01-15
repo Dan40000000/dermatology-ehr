@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
@@ -71,6 +72,7 @@ const CHANGE_TYPES = [
 export function PrescriptionsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('prescriptions');
@@ -154,6 +156,28 @@ export function PrescriptionsPage() {
     loadData();
   }, [loadData]);
 
+  // Handle URL parameters on page load
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    const action = searchParams.get('action');
+
+    // Handle tab parameter
+    if (tab === 'refills') {
+      setActiveTab('refills');
+    } else if (tab === 'pending') {
+      setActiveTab('prescriptions');
+      setFilter('pending');
+    } else if (tab) {
+      // If there's an unrecognized tab, default to prescriptions
+      setActiveTab('prescriptions');
+    }
+
+    // Handle action parameter
+    if (action === 'new') {
+      setShowNewRxModal(true);
+    }
+  }, [searchParams]);
+
   const handleCreateRx = async () => {
     if (!session || !newRx.patientId || !newRx.medication) {
       showError('Please fill in required fields');
@@ -174,6 +198,10 @@ export function PrescriptionsPage() {
 
       showSuccess('Prescription created');
       setShowNewRxModal(false);
+      // Remove action parameter from URL when closing modal
+      const params = new URLSearchParams(searchParams);
+      params.delete('action');
+      setSearchParams(params);
       setNewRx({
         patientId: '',
         medication: '',
@@ -471,7 +499,10 @@ export function PrescriptionsPage() {
       }}>
         <button
           type="button"
-          onClick={() => setActiveTab('prescriptions')}
+          onClick={() => {
+            setActiveTab('prescriptions');
+            setSearchParams({});
+          }}
           style={{
             padding: '0.5rem 1rem',
             border: 'none',
@@ -487,7 +518,10 @@ export function PrescriptionsPage() {
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('refills')}
+          onClick={() => {
+            setActiveTab('refills');
+            setSearchParams({ tab: 'refills' });
+          }}
           style={{
             padding: '0.5rem 1rem',
             border: 'none',
@@ -518,7 +552,10 @@ export function PrescriptionsPage() {
               transition: 'all 0.3s ease',
               opacity: filter === 'all' ? 1 : 0.8
             }}
-            onClick={() => setFilter('all')}
+            onClick={() => {
+              setFilter('all');
+              setSearchParams({});
+            }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = 'translateY(-4px)';
               e.currentTarget.style.boxShadow = '0 8px 20px rgba(139, 92, 246, 0.4)';
@@ -543,7 +580,10 @@ export function PrescriptionsPage() {
               transition: 'all 0.3s ease',
               opacity: filter === 'pending' ? 1 : 0.8
             }}
-            onClick={() => setFilter('pending')}
+            onClick={() => {
+              setFilter('pending');
+              setSearchParams({ tab: 'pending' });
+            }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = 'translateY(-4px)';
               e.currentTarget.style.boxShadow = '0 8px 20px rgba(139, 92, 246, 0.4)';
@@ -568,7 +608,10 @@ export function PrescriptionsPage() {
               transition: 'all 0.3s ease',
               opacity: filter === 'ordered' ? 1 : 0.8
             }}
-            onClick={() => setFilter('ordered')}
+            onClick={() => {
+              setFilter('ordered');
+              setSearchParams({});
+            }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = 'translateY(-4px)';
               e.currentTarget.style.boxShadow = '0 8px 20px rgba(139, 92, 246, 0.4)';
@@ -593,7 +636,10 @@ export function PrescriptionsPage() {
               transition: 'all 0.3s ease',
               opacity: filter === 'completed' ? 1 : 0.8
             }}
-            onClick={() => setFilter('completed')}
+            onClick={() => {
+              setFilter('completed');
+              setSearchParams({});
+            }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = 'translateY(-4px)';
               e.currentTarget.style.boxShadow = '0 8px 20px rgba(16, 185, 129, 0.4)';
@@ -629,7 +675,19 @@ export function PrescriptionsPage() {
               <select
                 className="ema-filter-select"
                 value={filter}
-                onChange={(e) => setFilter(e.target.value as RxFilter)}
+                onChange={(e) => {
+                  const newFilter = e.target.value as RxFilter;
+                  setFilter(newFilter);
+                  // Update URL based on filter
+                  if (newFilter === 'pending') {
+                    setSearchParams({ tab: 'pending' });
+                  } else if (newFilter === 'all') {
+                    setSearchParams({});
+                  } else {
+                    // For other filters, just clear URL params
+                    setSearchParams({});
+                  }
+                }}
               >
                 <option value="all">All Statuses</option>
                 <option value="pending">Pending</option>
@@ -647,6 +705,7 @@ export function PrescriptionsPage() {
                 onClick={() => {
                   setFilter('all');
                   setSearchTerm('');
+                  setSearchParams({});
                 }}
               >
                 Clear Filters
@@ -1017,7 +1076,13 @@ export function PrescriptionsPage() {
         ))}
 
       {/* New Rx Modal */}
-      <Modal isOpen={showNewRxModal} title="New Prescription" onClose={() => setShowNewRxModal(false)} size="lg">
+      <Modal isOpen={showNewRxModal} title="New Prescription" onClose={() => {
+        setShowNewRxModal(false);
+        // Remove action parameter from URL when closing modal
+        const params = new URLSearchParams(searchParams);
+        params.delete('action');
+        setSearchParams(params);
+      }} size="lg">
         <div className="modal-form">
           <div className="form-field">
             <label>Patient *</label>
@@ -1119,7 +1184,13 @@ export function PrescriptionsPage() {
         </div>
 
         <div className="modal-footer">
-          <button type="button" className="btn-secondary" onClick={() => setShowNewRxModal(false)}>
+          <button type="button" className="btn-secondary" onClick={() => {
+            setShowNewRxModal(false);
+            // Remove action parameter from URL when closing modal
+            const params = new URLSearchParams(searchParams);
+            params.delete('action');
+            setSearchParams(params);
+          }}>
             Cancel
           </button>
           <button type="button" className="btn-primary" onClick={handleCreateRx} disabled={sending}>

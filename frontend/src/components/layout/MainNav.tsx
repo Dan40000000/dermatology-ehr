@@ -126,7 +126,7 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Labs',
+    label: 'Labs/Path',
     path: '/labs',
     module: 'labs',
     dropdown: [

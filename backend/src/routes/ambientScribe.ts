@@ -139,10 +139,9 @@ router.post('/recordings/start', requireAuth, requireRoles(['provider', 'ma', 'a
     await pool.query(
       `INSERT INTO ambient_recordings (
         id, tenant_id, encounter_id, patient_id, provider_id,
-        recording_status, consent_obtained, consent_timestamp, consent_method,
-        is_encrypted, contains_phi
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10)`,
-      [recordingId, tenantId, encounterId || null, patientId, providerId, 'recording', true, consentMethod || 'verbal', false, true]
+        status, started_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+      [recordingId, tenantId, encounterId || null, patientId, providerId, 'recording']
     );
 
     await auditLog(tenantId, req.user?.id || null, 'ambient_recording_start', 'ambient_recording', recordingId);

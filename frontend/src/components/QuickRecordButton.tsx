@@ -15,12 +15,14 @@ import { useToast } from '../contexts/ToastContext';
 import {
   startAmbientRecording,
   uploadAmbientRecording,
+  fetchProviders,
 } from '../api';
 
 interface QuickRecordButtonProps {
   patientId: string;
   patientName: string;
   encounterId?: string;
+  providerId?: string;
   onRecordingComplete?: (recordingId: string) => void;
 }
 
@@ -28,6 +30,7 @@ export function QuickRecordButton({
   patientId,
   patientName,
   encounterId,
+  providerId: propProviderId,
   onRecordingComplete
 }: QuickRecordButtonProps) {
   const { session } = useAuth();
@@ -37,11 +40,25 @@ export function QuickRecordButton({
   const [isUploading, setIsUploading] = useState(false);
   const [duration, setDuration] = useState(0);
   const [recordingId, setRecordingId] = useState<string | null>(null);
+  const [defaultProviderId, setDefaultProviderId] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+
+  // Fetch default provider on mount if not provided
+  useEffect(() => {
+    if (!propProviderId && session) {
+      fetchProviders(session.tenantId, session.accessToken)
+        .then(res => {
+          if (res.providers && res.providers.length > 0) {
+            setDefaultProviderId(res.providers[0].id);
+          }
+        })
+        .catch(err => console.error('Failed to fetch providers:', err));
+    }
+  }, [propProviderId, session]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -63,6 +80,13 @@ export function QuickRecordButton({
   };
 
   const startRecording = async () => {
+    const effectiveProviderId = propProviderId || defaultProviderId;
+
+    if (!effectiveProviderId) {
+      showError('No provider available. Please try again in a moment.');
+      return;
+    }
+
     try {
       // Create recording session on server first
       const result = await startAmbientRecording(
@@ -71,7 +95,7 @@ export function QuickRecordButton({
         {
           encounterId,
           patientId,
-          providerId: session!.userId,
+          providerId: effectiveProviderId,
           consentObtained: true,
           consentMethod: 'verbal' // Assume verbal consent
         }

@@ -68,11 +68,10 @@ prescriptionsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
         pat.first_name as "patientFirstName",
         pat.last_name as "patientLastName",
         prov.full_name as "providerName",
-        pharm.name as "pharmacyName"
+        null as "pharmacyName"
       from prescriptions p
       left join patients pat on p.patient_id = pat.id
       left join providers prov on p.provider_id = prov.id
-      left join pharmacies pharm on p.pharmacy_id = pharm.id
       where p.tenant_id = $1
     `;
 
@@ -164,11 +163,10 @@ prescriptionsRouter.get('/refill-requests', requireAuth, async (req: AuthedReque
         pat.first_name as "patientFirstName",
         pat.last_name as "patientLastName",
         prov.full_name as "providerName",
-        pharm.name as "pharmacyName"
+        null as "pharmacyName"
       from prescriptions p
       left join patients pat on p.patient_id = pat.id
       left join providers prov on p.provider_id = prov.id
-      left join pharmacies pharm on p.pharmacy_id = pharm.id
       where p.tenant_id = $1 and p.refill_status is not null
     `;
 
@@ -210,11 +208,10 @@ prescriptionsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) => 
         pat.first_name as "patientFirstName",
         pat.last_name as "patientLastName",
         prov.full_name as "providerName",
-        pharm.name as "pharmacyName"
+        null as "pharmacyName"
       from prescriptions p
       left join patients pat on p.patient_id = pat.id
       left join providers prov on p.provider_id = prov.id
-      left join pharmacies pharm on p.pharmacy_id = pharm.id
       where p.id = $1 and p.tenant_id = $2`,
       [id, tenantId]
     );
@@ -240,10 +237,9 @@ prescriptionsRouter.get('/patient/:patientId', requireAuth, async (req: AuthedRe
       `select
         p.*,
         prov.full_name as "providerName",
-        pharm.name as "pharmacyName"
+        null as "pharmacyName"
       from prescriptions p
       left join providers prov on p.provider_id = prov.id
-      left join pharmacies pharm on p.pharmacy_id = pharm.id
       where p.patient_id = $1 and p.tenant_id = $2
       order by p.created_at desc`,
       [patientId, tenantId]

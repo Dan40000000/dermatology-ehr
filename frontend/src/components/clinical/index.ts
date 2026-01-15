@@ -5,3 +5,4 @@ export { TemplateSelector } from './TemplateSelector';
 export { PhotoAnnotator } from './PhotoAnnotator';
 export { PhotoComparison } from './PhotoComparison';
 export { PhotoTimeline } from './PhotoTimeline';
+export { ClinicalTrendsTab } from './ClinicalTrendsTab';

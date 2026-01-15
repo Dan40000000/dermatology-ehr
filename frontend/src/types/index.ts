@@ -21,21 +21,194 @@ export interface PatientInsurance {
   copay?: number;
 }
 
+export type PolicyType =
+  | 'EPO'
+  | 'Group Health Plan (GHP)'
+  | 'HMO'
+  | 'IPA'
+  | 'Medicare Advantage'
+  | 'PPO'
+  | 'POS'
+  | 'Commercial - Other'
+  | 'ACA Exchange'
+  | 'CHAMPVA'
+  | 'CHIP'
+  | 'FECA'
+  | 'Medicare'
+  | 'Medicaid'
+  | 'Tricare'
+  | 'Government - Other';
+
+export type EligibilityStatus = 'Unknown/Error' | 'Active' | 'Inactive';
+
+export type RelationshipToInsured = 'Self' | 'Spouse' | 'Child' | 'Other';
+
+export interface InsurancePolicy {
+  payer?: string;
+  planName?: string;
+  policyNumber?: string;
+  groupNumber?: string;
+  policyType?: PolicyType;
+  notes?: string;
+  requiresReferralAuth?: boolean;
+  requiresInPatientPreCert?: boolean;
+  requiresOutPatientPreAuth?: boolean;
+  patientNameOnCard?: string;
+  usePatientName?: boolean;
+  signatureOnFile?: boolean;
+  relationshipToInsured?: RelationshipToInsured;
+  policyHolderLastName?: string;
+  policyHolderFirstName?: string;
+  policyHolderMiddle?: string;
+  policyHolderDob?: string;
+  policyHolderSsn?: string;
+  eligibilityStatus?: EligibilityStatus;
+  copayAmount?: number;
+  coinsurancePercent?: number;
+  deductible?: number;
+  remainingDeductible?: number;
+  outOfPocket?: number;
+  remainingOutOfPocket?: number;
+  policyEffectiveDate?: string;
+  policyEndDate?: string;
+  cardFrontUrl?: string;
+  cardBackUrl?: string;
+}
+
+export interface PayerContact {
+  contactType?: 'Customer Service' | 'Claims' | 'Appeals' | 'Precertification';
+  phone?: string;
+  fax?: string;
+  email?: string;
+  address?: string;
+}
+
+export interface PatientInsuranceDetails {
+  primary?: InsurancePolicy;
+  secondary?: InsurancePolicy;
+  payerContacts?: PayerContact[];
+}
+
 export interface Patient {
   id: string;
   tenantId: string;
+
+  // Basic Name Information
+  prefix?: string;
   firstName: string;
+  middleName?: string;
   lastName: string;
+  suffix?: string;
+  preferredName?: string;
+  previousName?: string;
+
+  // Basic Demographics
   dob?: string;
   dateOfBirth?: string; // Alias for dob
   sex?: 'M' | 'F' | 'O';
   mrn?: string;
+  ssn?: string;
+
+  // Driver's License
+  driversLicenseNumber?: string;
+  driversLicenseState?: string;
+
+  // Marital Status
+  maritalStatus?: 'Single' | 'Married' | 'Divorced' | 'Widowed' | 'Separated' | 'Domestic Partner';
+
+  // Required For Meaningful Use
+  cityOfBirth?: string;
+  stateOfBirth?: string;
+  zipOfBirth?: string;
+  countryOfBirth?: string;
+  birthSex?: 'M' | 'F' | 'O';
+  sexualOrientation?: string;
+  language?: string;
+  ethnicGroup?: string;
+  tribalAffiliation?: string;
+  genderIdentity?: string;
+  patientPreferredPronoun?: string;
+  race?: string;
+  deceasedStatus?: boolean;
+
+  // Contact Information
   phone?: string;
+  homePhone?: string;
+  workPhone?: string;
+  mobilePhone?: string;
+  preferredPhone?: 'home' | 'work' | 'mobile';
+  preferredContactMethod?: 'phone' | 'email' | 'text' | 'mail';
+  okToLeaveDetailedMessage?: boolean;
   email?: string;
+  alternateEmail?: string;
+  emailOptIn?: boolean;
+
+  // Primary Address
   address?: string;
+  addressLine2?: string;
   city?: string;
   state?: string;
   zip?: string;
+  country?: string;
+  county?: string;
+
+  // Spouse Contact
+  spouseName?: string;
+  spousePhone?: string;
+
+  // Caretaker Contact
+  caretakerName?: string;
+  caretakerPhone?: string;
+
+  // Point of Contact
+  pocName?: string;
+  pocRelationship?: string;
+  pocAddress?: string;
+  pocCity?: string;
+  pocState?: string;
+  pocZip?: string;
+  pocCountry?: string;
+  pocPhone?: string;
+
+  // Previous Address
+  previousAddress?: string;
+  previousAddressLine2?: string;
+  previousCity?: string;
+  previousState?: string;
+  previousZip?: string;
+  previousCountry?: string;
+  previousCounty?: string;
+  previousAddressStartDate?: string;
+  previousAddressEndDate?: string;
+
+  // Seasonal Address
+  seasonalAddress?: string;
+  seasonalAddressLine2?: string;
+  seasonalCity?: string;
+  seasonalState?: string;
+  seasonalZip?: string;
+  seasonalCountry?: string;
+  seasonalStartDate?: string;
+  seasonalEndDate?: string;
+
+  // Employment Information
+  employerName?: string;
+  employmentStatus?: 'Employed' | 'Unemployed' | 'Retired' | 'Student' | 'Disabled' | 'Self-Employed';
+  occupation?: string;
+  industry?: string;
+  employmentStartDate?: string;
+  employmentEndDate?: string;
+
+  // Emergency Contact (existing)
+  emergencyContactName?: string;
+  emergencyContactRelationship?: string;
+  emergencyContactPhone?: string;
+
+  // Pharmacy (existing)
+  pharmacyName?: string;
+  pharmacyPhone?: string;
+  pharmacyAddress?: string;
+
   // Backend returns string, but may be parsed as object
   insurance?: PatientInsurance | string;
   // Backend returns string, but may be parsed as array
@@ -45,6 +218,8 @@ export interface Patient {
   medications?: string;
   lastVisit?: string;
   createdAt: string;
+  // New insurance details
+  insuranceDetails?: PatientInsuranceDetails;
 }
 
 // Registry Types

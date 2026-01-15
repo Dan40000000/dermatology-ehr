@@ -4,19 +4,24 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
 import { PatientBanner, BodyMap } from '../components/clinical';
+import { ClinicalTrendsTab } from '../components/clinical/ClinicalTrendsTab';
 import type { Lesion } from '../components/clinical';
+import { TasksTab } from '../components/patient';
+import { RxHistoryTab } from '../components/RxHistoryTab';
 import {
   fetchPatient,
   fetchEncounters,
   fetchAppointments,
   fetchDocuments,
   fetchPhotos,
+  fetchPrescriptionsEnhanced,
+  fetchTasks,
   API_BASE_URL,
   TENANT_HEADER_NAME,
 } from '../api';
-import type { Patient, Encounter, Appointment, Document, Photo } from '../types';
+import type { Patient, Encounter, Appointment, Document, Photo, Prescription, Task } from '../types';
 
-type TabId = 'overview' | 'demographics' | 'insurance' | 'medical-history' | 'encounters' | 'appointments' | 'documents' | 'photos';
+type TabId = 'overview' | 'demographics' | 'insurance' | 'medical-history' | 'clinical-trends' | 'encounters' | 'appointments' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks';
 
 export function PatientDetailPage() {
   const { patientId } = useParams<{ patientId: string }>();
@@ -30,6 +35,8 @@ export function PatientDetailPage() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [photos, setPhotos] = useState<Photo[]>([]);
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [bodyMapView, setBodyMapView] = useState<'anterior' | 'posterior'>('anterior');
   const [showFaceSheet, setShowFaceSheet] = useState(false);
@@ -69,12 +76,14 @@ export function PatientDetailPage() {
 
     setLoading(true);
     try {
-      const [patientRes, encountersRes, appointmentsRes, documentsRes, photosRes] = await Promise.all([
+      // Core data fetches - these must succeed
+      const [patientRes, encountersRes, appointmentsRes, documentsRes, photosRes, tasksRes] = await Promise.all([
         fetchPatient(session.tenantId, session.accessToken, patientId),
         fetchEncounters(session.tenantId, session.accessToken),
-        fetchAppointments(session.tenantId, session.accessToken),
+        fetchAppointments(session.tenantId, session.accessToken, patientId),
         fetchDocuments(session.tenantId, session.accessToken),
         fetchPhotos(session.tenantId, session.accessToken),
+        fetchTasks(session.tenantId, session.accessToken),
       ]);
 
       if (patientRes.patient) {
@@ -88,15 +97,26 @@ export function PatientDetailPage() {
       setEncounters(
         (encountersRes.encounters || []).filter((e: Encounter) => e.patientId === patientId)
       );
-      setAppointments(
-        (appointmentsRes.appointments || []).filter((a: Appointment) => a.patientId === patientId)
-      );
+      // Appointments are already filtered by patientId at the API level
+      setAppointments(appointmentsRes.appointments || []);
       setDocuments(
         (documentsRes.documents || []).filter((d: Document) => d.patientId === patientId)
       );
       setPhotos(
         (photosRes.photos || []).filter((p: Photo) => p.patientId === patientId)
       );
+      setTasks(
+        (tasksRes.tasks || []).filter((t: Task) => t.patientId === patientId)
+      );
+
+      // Optional prescriptions fetch - don't fail the page load if this fails
+      try {
+        const prescriptionsRes = await fetchPrescriptionsEnhanced(session.tenantId, session.accessToken, { patientId });
+        setPrescriptions(prescriptionsRes.prescriptions || []);
+      } catch (rxErr) {
+        console.warn('Failed to load prescriptions:', rxErr);
+        setPrescriptions([]);
+      }
     } catch (err: any) {
       if (err.message === 'Patient not found') {
         showError('Patient not found');
@@ -166,10 +186,14 @@ export function PatientDetailPage() {
     { id: 'demographics', label: 'Demographics', icon: '' },
     { id: 'insurance', label: 'Insurance', icon: '' },
     { id: 'medical-history', label: 'Medical History', icon: '' },
+    { id: 'clinical-trends', label: 'Clinical Trends', icon: '📊' },
     { id: 'encounters', label: 'Encounters', icon: '', count: encounters.length },
     { id: 'appointments', label: 'Appointments', icon: '', count: appointments.length },
+    { id: 'rx-history', label: 'Rx History', icon: '', count: prescriptions.length },
     { id: 'documents', label: 'Documents', icon: '', count: documents.length },
     { id: 'photos', label: 'Photos', icon: '', count: photos.length },
+    { id: 'tasks', label: 'Tasks', icon: '✓', count: tasks.filter(t => t.status !== 'completed').length },
+    { id: 'timeline', label: 'Timeline', icon: '', count: encounters.length + appointments.length + documents.length + photos.length },
   ];
 
   return (
@@ -665,6 +689,10 @@ export function PatientDetailPage() {
           />
         )}
 
+        {activeTab === 'clinical-trends' && (
+          <ClinicalTrendsTab patientId={patientId!} />
+        )}
+
         {activeTab === 'documents' && (
           <DocumentsTab
             documents={documents}
@@ -677,6 +705,27 @@ export function PatientDetailPage() {
             photos={photos}
             onUpload={() => alert('Photo upload feature coming soon')}
             onView={(photo) => setSelectedPhoto(photo)}
+          />
+        )}
+
+        {activeTab === 'rx-history' && (
+          <RxHistoryTab
+            prescriptions={prescriptions}
+            onRefresh={loadPatientData}
+          />
+        )}
+
+        {activeTab === 'tasks' && patientId && (
+          <TasksTab patientId={patientId} />
+        )}
+
+        {activeTab === 'timeline' && (
+          <TimelineTab
+            patient={patient}
+            encounters={encounters}
+            appointments={appointments}
+            documents={documents}
+            photos={photos}
           />
         )}
       </div>
@@ -903,7 +952,24 @@ function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => 
 
 // Insurance Tab Component
 function InsuranceTab({ patient, onEdit }: { patient: Patient; onEdit: () => void }) {
-  const insuranceData = (patient as any).insuranceDetails || {};
+  // Use patient's direct insurance fields, falling back to insuranceDetails for legacy data
+  const insuranceDetails = (patient as any).insuranceDetails || {};
+  const insuranceData = {
+    primaryCarrier: (patient as any).insurance || insuranceDetails.primaryCarrier,
+    primaryPolicyNumber: (patient as any).insuranceId || insuranceDetails.primaryPolicyNumber,
+    primaryGroupNumber: (patient as any).insuranceGroupNumber || insuranceDetails.primaryGroupNumber,
+    primarySubscriberName: insuranceDetails.primarySubscriberName,
+    primaryRelationship: insuranceDetails.primaryRelationship,
+    primaryEffectiveDate: insuranceDetails.primaryEffectiveDate,
+    secondaryCarrier: insuranceDetails.secondaryCarrier,
+    secondaryPolicyNumber: insuranceDetails.secondaryPolicyNumber,
+    secondaryGroupNumber: insuranceDetails.secondaryGroupNumber,
+    secondarySubscriberName: insuranceDetails.secondarySubscriberName,
+    secondaryRelationship: insuranceDetails.secondaryRelationship,
+    secondaryEffectiveDate: insuranceDetails.secondaryEffectiveDate,
+    cardFrontUrl: insuranceDetails.cardFrontUrl,
+    cardBackUrl: insuranceDetails.cardBackUrl,
+  };
 
   return (
     <div style={{ maxWidth: '1200px' }}>
@@ -1684,5 +1750,451 @@ function EditProblemModal({ isOpen, onClose }: any) {
         Close
       </button>
     </Modal>
+  );
+}
+
+// Timeline Tab Component
+interface TimelineEvent {
+  id: string;
+  type: 'encounter' | 'appointment' | 'document' | 'photo';
+  date: string;
+  title: string;
+  description: string;
+  status?: string;
+  icon: string;
+  iconColor: string;
+  data: Encounter | Appointment | Document | Photo;
+}
+
+function TimelineTab({
+  patient,
+  encounters,
+  appointments,
+  documents,
+  photos,
+}: {
+  patient: Patient;
+  encounters: Encounter[];
+  appointments: Appointment[];
+  documents: Document[];
+  photos: Photo[];
+}) {
+  const [selectedFilters, setSelectedFilters] = useState<Set<string>>(
+    new Set(['encounter', 'appointment', 'document', 'photo'])
+  );
+
+  // Build timeline events from all data sources
+  const allEvents: TimelineEvent[] = [
+    ...encounters.map((enc): TimelineEvent => ({
+      id: `enc-${enc.id}`,
+      type: 'encounter',
+      date: enc.createdAt,
+      title: 'Encounter',
+      description: enc.chiefComplaint || 'No chief complaint recorded',
+      status: enc.status,
+      icon: '🏥',
+      iconColor: '#0369a1',
+      data: enc,
+    })),
+    ...appointments.map((appt): TimelineEvent => ({
+      id: `appt-${appt.id}`,
+      type: 'appointment',
+      date: appt.scheduledStart,
+      title: appt.appointmentTypeName || 'Appointment',
+      description: `${appt.providerName || 'Provider'}${appt.locationName ? ` at ${appt.locationName}` : ''}`,
+      status: appt.status,
+      icon: '📅',
+      iconColor: '#059669',
+      data: appt,
+    })),
+    ...documents.map((doc): TimelineEvent => ({
+      id: `doc-${doc.id}`,
+      type: 'document',
+      date: doc.createdAt,
+      title: 'Document Uploaded',
+      description: doc.title,
+      status: doc.category || 'General',
+      icon: '📄',
+      iconColor: '#7c3aed',
+      data: doc,
+    })),
+    ...photos.map((photo): TimelineEvent => ({
+      id: `photo-${photo.id}`,
+      type: 'photo',
+      date: photo.createdAt,
+      title: 'Photo Uploaded',
+      description: photo.description || photo.bodyLocation || 'Clinical photo',
+      icon: '📷',
+      iconColor: '#dc2626',
+      data: photo,
+    })),
+  ];
+
+  // Sort by date (newest first)
+  const sortedEvents = allEvents
+    .filter((event) => selectedFilters.has(event.type))
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const toggleFilter = (filterType: string) => {
+    const newFilters = new Set(selectedFilters);
+    if (newFilters.has(filterType)) {
+      newFilters.delete(filterType);
+    } else {
+      newFilters.add(filterType);
+    }
+    setSelectedFilters(newFilters);
+  };
+
+  const getStatusBadgeStyle = (status?: string) => {
+    if (!status) return { background: '#f3f4f6', color: '#6b7280' };
+
+    const statusLower = status.toLowerCase();
+    if (statusLower === 'signed' || statusLower === 'completed') {
+      return { background: '#d1fae5', color: '#065f46' };
+    }
+    if (statusLower === 'draft' || statusLower === 'scheduled' || statusLower === 'pending') {
+      return { background: '#dbeafe', color: '#1e40af' };
+    }
+    if (statusLower === 'cancelled' || statusLower === 'inactive') {
+      return { background: '#fee2e2', color: '#991b1b' };
+    }
+    return { background: '#f3f4f6', color: '#6b7280' };
+  };
+
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffTime = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) {
+      return `Today at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } else if (diffDays === 1) {
+      return `Yesterday at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } else if (diffDays < 7) {
+      return `${diffDays} days ago`;
+    } else {
+      return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+  };
+
+  const filterButtons = [
+    { type: 'encounter', label: 'Encounters', icon: '🏥', color: '#0369a1', count: encounters.length },
+    { type: 'appointment', label: 'Appointments', icon: '📅', color: '#059669', count: appointments.length },
+    { type: 'document', label: 'Documents', icon: '📄', color: '#7c3aed', count: documents.length },
+    { type: 'photo', label: 'Photos', icon: '📷', color: '#dc2626', count: photos.length },
+  ];
+
+  return (
+    <div style={{ maxWidth: '1200px' }}>
+      <div className="ema-section-header" style={{ marginBottom: '1.5rem' }}>
+        Patient Timeline
+      </div>
+
+      {/* Filter Controls */}
+      <div style={{
+        background: '#f9fafb',
+        border: '1px solid #e5e7eb',
+        borderRadius: '8px',
+        padding: '1rem',
+        marginBottom: '1.5rem'
+      }}>
+        <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151', marginBottom: '0.75rem' }}>
+          Filter by Type
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          {filterButtons.map((filter) => (
+            <button
+              key={filter.type}
+              type="button"
+              onClick={() => toggleFilter(filter.type)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.5rem 1rem',
+                background: selectedFilters.has(filter.type) ? filter.color : '#ffffff',
+                color: selectedFilters.has(filter.type) ? '#ffffff' : '#374151',
+                border: `2px solid ${filter.color}`,
+                borderRadius: '20px',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+                fontWeight: 500,
+                transition: 'all 0.2s'
+              }}
+            >
+              <span>{filter.icon}</span>
+              <span>{filter.label}</span>
+              <span style={{
+                background: selectedFilters.has(filter.type) ? 'rgba(255, 255, 255, 0.3)' : '#f3f4f6',
+                color: selectedFilters.has(filter.type) ? '#ffffff' : '#6b7280',
+                padding: '0.125rem 0.5rem',
+                borderRadius: '10px',
+                fontSize: '0.75rem',
+                fontWeight: 600
+              }}>
+                {filter.count}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Timeline Events */}
+      {sortedEvents.length === 0 ? (
+        <div style={{
+          background: '#f9fafb',
+          border: '1px dashed #d1d5db',
+          borderRadius: '8px',
+          padding: '3rem',
+          textAlign: 'center'
+        }}>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📋</div>
+          <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No activity found</h3>
+          <p style={{ color: '#6b7280', margin: 0 }}>
+            {selectedFilters.size === 0
+              ? 'Select at least one filter to view timeline events'
+              : 'No events match the selected filters'}
+          </p>
+        </div>
+      ) : (
+        <div style={{ position: 'relative' }}>
+          {/* Vertical timeline line */}
+          <div style={{
+            position: 'absolute',
+            left: '24px',
+            top: '0',
+            bottom: '0',
+            width: '2px',
+            background: '#e5e7eb'
+          }} />
+
+          {/* Timeline events */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {sortedEvents.map((event, index) => (
+              <div
+                key={event.id}
+                style={{
+                  display: 'flex',
+                  gap: '1rem',
+                  position: 'relative'
+                }}
+              >
+                {/* Icon with colored circle */}
+                <div style={{
+                  position: 'relative',
+                  zIndex: 1,
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  paddingTop: '0.25rem'
+                }}>
+                  <div style={{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '50%',
+                    background: event.iconColor,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '1.5rem',
+                    border: '4px solid #ffffff',
+                    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)'
+                  }}>
+                    {event.icon}
+                  </div>
+                </div>
+
+                {/* Event content card */}
+                <div style={{
+                  flex: 1,
+                  background: '#f9fafb',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '8px',
+                  padding: '1rem',
+                  transition: 'box-shadow 0.2s',
+                  cursor: event.type === 'encounter' ? 'pointer' : 'default'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.boxShadow = 'none';
+                }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem' }}>
+                        <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: '#374151' }}>
+                          {event.title}
+                        </h3>
+                        {event.status && (
+                          <span style={{
+                            ...getStatusBadgeStyle(event.status),
+                            padding: '0.25rem 0.5rem',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            textTransform: 'capitalize'
+                          }}>
+                            {event.status}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
+                        {formatDate(event.date)}
+                      </div>
+                    </div>
+
+                    {/* Type badge */}
+                    <div style={{
+                      padding: '0.25rem 0.5rem',
+                      background: event.iconColor,
+                      color: '#ffffff',
+                      borderRadius: '4px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      textTransform: 'capitalize'
+                    }}>
+                      {event.type}
+                    </div>
+                  </div>
+
+                  <p style={{ margin: 0, color: '#6b7280', fontSize: '0.875rem' }}>
+                    {event.description}
+                  </p>
+
+                  {/* Event-specific details */}
+                  {event.type === 'encounter' && (
+                    <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #e5e7eb' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem', fontSize: '0.75rem' }}>
+                        <div>
+                          <span style={{ color: '#9ca3af' }}>Provider: </span>
+                          <span style={{ color: '#374151', fontWeight: 500 }}>
+                            {(event.data as any).providerName || 'Unknown'}
+                          </span>
+                        </div>
+                        {(event.data as Encounter).assessmentPlan && (
+                          <div style={{ gridColumn: '1 / -1' }}>
+                            <span style={{ color: '#9ca3af' }}>A&P: </span>
+                            <span style={{ color: '#374151' }}>
+                              {(event.data as Encounter).assessmentPlan}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {event.type === 'appointment' && (
+                    <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #e5e7eb' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem', fontSize: '0.75rem' }}>
+                        <div>
+                          <span style={{ color: '#9ca3af' }}>Time: </span>
+                          <span style={{ color: '#374151', fontWeight: 500 }}>
+                            {new Date((event.data as Appointment).scheduledStart).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                        </div>
+                        <div>
+                          <span style={{ color: '#9ca3af' }}>Duration: </span>
+                          <span style={{ color: '#374151', fontWeight: 500 }}>
+                            {(event.data as Appointment).durationMinutes || 30} min
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {event.type === 'document' && (
+                    <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #e5e7eb' }}>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                          type="button"
+                          onClick={() => window.open((event.data as Document).url, '_blank')}
+                          style={{
+                            padding: '0.375rem 0.75rem',
+                            background: '#0369a1',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '0.75rem',
+                            fontWeight: 500
+                          }}
+                        >
+                          View Document
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {event.type === 'photo' && (
+                    <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #e5e7eb' }}>
+                      <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                        <img
+                          src={(event.data as Photo).url}
+                          alt={event.description}
+                          style={{
+                            width: '80px',
+                            height: '80px',
+                            objectFit: 'cover',
+                            borderRadius: '4px',
+                            border: '1px solid #e5e7eb'
+                          }}
+                        />
+                        <div style={{ flex: 1, fontSize: '0.75rem' }}>
+                          {(event.data as Photo).bodyLocation && (
+                            <div style={{ marginBottom: '0.25rem' }}>
+                              <span style={{ color: '#9ca3af' }}>Location: </span>
+                              <span style={{ color: '#374151', fontWeight: 500 }}>
+                                {(event.data as Photo).bodyLocation}
+                              </span>
+                            </div>
+                          )}
+                          <div>
+                            <span style={{ color: '#9ca3af' }}>Uploaded by: </span>
+                            <span style={{ color: '#374151', fontWeight: 500 }}>
+                              {(event.data as any).uploadedBy || 'System'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Summary Stats */}
+      <div style={{
+        marginTop: '2rem',
+        padding: '1rem',
+        background: '#f9fafb',
+        border: '1px solid #e5e7eb',
+        borderRadius: '8px'
+      }}>
+        <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151', marginBottom: '0.75rem' }}>
+          Activity Summary
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+          {filterButtons.map((filter) => (
+            <div key={filter.type} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '2rem', marginBottom: '0.25rem' }}>{filter.icon}</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: 600, color: filter.color }}>
+                {filter.count}
+              </div>
+              <div style={{ fontSize: '0.75rem', color: '#6b7280', textTransform: 'capitalize' }}>
+                {filter.label}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }

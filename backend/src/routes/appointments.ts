@@ -45,8 +45,9 @@ export const appointmentsRouter = Router();
 
 appointmentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
-  const result = await pool.query(
-    `select a.id,
+  const patientId = req.query.patientId as string | undefined;
+
+  let query = `select a.id,
             a.scheduled_start as "scheduledStart",
             a.scheduled_end as "scheduledEnd",
             a.status,
@@ -64,11 +65,18 @@ appointmentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
      join providers pr on pr.id = a.provider_id
      join locations l on l.id = a.location_id
      join appointment_types at on at.id = a.appointment_type_id
-     where a.tenant_id = $1
-     order by a.scheduled_start asc
-     limit 50`,
-    [tenantId],
-  );
+     where a.tenant_id = $1`;
+
+  const params: any[] = [tenantId];
+
+  if (patientId) {
+    query += ` and a.patient_id = $2`;
+    params.push(patientId);
+  }
+
+  query += ` order by a.scheduled_start asc limit 50`;
+
+  const result = await pool.query(query, params);
   return res.json({ appointments: result.rows });
 });
 

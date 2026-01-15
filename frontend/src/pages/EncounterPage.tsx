@@ -26,6 +26,7 @@ import {
   getSuperbillUrl,
   generateAiNoteDraft,
   fetchNoteTemplates,
+  fetchProviders,
 } from '../api';
 import type { Patient, Encounter, Vitals, Order, EncounterDiagnosis, Charge, ICD10Code, CPTCode } from '../types';
 import type { NoteTemplate, AINoteDraft } from '../api';
@@ -85,7 +86,7 @@ export function EncounterPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
 
-  const isNew = encounterId === 'new';
+  const isNew = !encounterId || encounterId === 'new';
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -129,6 +130,9 @@ export function EncounterPage() {
   const [aiTemplateLoading, setAiTemplateLoading] = useState(false);
   const [aiTemplateError, setAiTemplateError] = useState<string | null>(null);
 
+  // Providers for encounter creation
+  const [providers, setProviders] = useState<{ id: string; fullName: string }[]>([]);
+
   // Form data
   const [vitalsForm, setVitalsForm] = useState<VitalsFormData>({
     heightCm: '',
@@ -162,9 +166,10 @@ export function EncounterPage() {
 
     setLoading(true);
     try {
-      const [patientsRes, encountersRes] = await Promise.all([
+      const [patientsRes, encountersRes, providersRes] = await Promise.all([
         fetchPatients(session.tenantId, session.accessToken),
         fetchEncounters(session.tenantId, session.accessToken),
+        fetchProviders(session.tenantId, session.accessToken),
       ]);
 
       const foundPatient = (patientsRes.patients || []).find(
@@ -176,6 +181,7 @@ export function EncounterPage() {
         return;
       }
       setPatient(foundPatient);
+      setProviders(providersRes.providers || []);
 
       if (!isNew && encounterId) {
         const foundEncounter = (encountersRes.encounters || []).find(
@@ -239,12 +245,15 @@ export function EncounterPage() {
   const handleSave = async () => {
     if (!session || !patientId) return;
 
+    // Use the first available provider, or fall back to session user id
+    const providerId = providers.length > 0 ? providers[0].id : session.user.id;
+
     setSaving(true);
     try {
       if (isNew) {
         const payload: Record<string, string> = {
           patientId,
-          providerId: session.user.id,
+          providerId,
         };
         if (encounter.chiefComplaint) payload.chiefComplaint = encounter.chiefComplaint;
         if (encounter.hpi) payload.hpi = encounter.hpi;

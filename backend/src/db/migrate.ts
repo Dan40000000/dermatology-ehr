@@ -2453,6 +2453,16 @@ Consider age-appropriate treatments and include family counseling points.',
     update orders set priority = 'normal' where priority is null;
     `,
   },
+  {
+    name: "037_patient_extended_fields",
+    sql: `
+    -- Add missing patient demographic fields
+    alter table patients add column if not exists primary_care_physician text;
+    alter table patients add column if not exists referral_source text;
+    alter table patients add column if not exists insurance_id text;
+    alter table patients add column if not exists insurance_group_number text;
+    `,
+  },
 ];
 
 async function ensureMigrationsTable() {

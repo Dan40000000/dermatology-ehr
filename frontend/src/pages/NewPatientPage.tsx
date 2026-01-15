@@ -100,6 +100,8 @@ export function NewPatientPage() {
     setSaving(true);
     try {
       // Format data to match backend schema (flat structure)
+      // Map sex value: "male" -> "M", "female" -> "F", "other" -> "O"
+      const sexMap: Record<string, string> = { male: 'M', female: 'F', other: 'O' };
       const result = await createPatient(session.tenantId, session.accessToken, {
         firstName: formData.firstName,
         lastName: formData.lastName,
@@ -115,6 +117,17 @@ export function NewPatientPage() {
           : undefined,
         allergies: formData.allergies || undefined,
         medications: undefined,
+        // Additional fields for complete patient record
+        sex: formData.sex ? sexMap[formData.sex] : undefined,
+        ssn: formData.ssn || undefined,
+        emergencyContactName: formData.emergencyContactName || undefined,
+        emergencyContactRelationship: formData.emergencyContactRelation || undefined,
+        emergencyContactPhone: formData.emergencyContactPhone || undefined,
+        pharmacyName: formData.preferredPharmacy || undefined,
+        primaryCarePhysician: formData.primaryCarePhysician || undefined,
+        referralSource: formData.referralSource || undefined,
+        insuranceId: formData.insuranceId || undefined,
+        insuranceGroupNumber: formData.insuranceGroupNumber || undefined,
       });
 
       showSuccess('Patient created successfully');

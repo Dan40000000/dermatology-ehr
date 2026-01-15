@@ -80,8 +80,11 @@ export async function fetchPatient(tenantId: string, accessToken: string, patien
   return res.json();
 }
 
-export async function fetchAppointments(tenantId: string, accessToken: string) {
-  const res = await fetch(`${API_BASE}/api/appointments`, {
+export async function fetchAppointments(tenantId: string, accessToken: string, patientId?: string) {
+  const url = patientId
+    ? `${API_BASE}/api/appointments?patientId=${encodeURIComponent(patientId)}`
+    : `${API_BASE}/api/appointments`;
+  const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       [TENANT_HEADER]: tenantId,
@@ -372,14 +375,6 @@ export async function fetchAnalytics(tenantId: string, accessToken: string) {
     headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
   });
   if (!res.ok) throw new Error("Failed to load analytics");
-  return res.json();
-}
-
-export async function fetchVitals(tenantId: string, accessToken: string) {
-  const res = await fetch(`${API_BASE}/api/vitals`, {
-    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
-  });
-  if (!res.ok) throw new Error("Failed to load vitals");
   return res.json();
 }
 
@@ -5881,6 +5876,74 @@ export async function updateReferral(tenantId: string, accessToken: string, refe
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to update referral');
+  }
+  return res.json();
+}
+
+// ================================================
+// VITALS API
+// ================================================
+
+export interface Vital {
+  id: string;
+  patientId: string;
+  encounterId?: string;
+  heightCm?: number;
+  weightKg?: number;
+  bpSystolic?: number;
+  bpDiastolic?: number;
+  pulse?: number;
+  tempC?: number;
+  respiratoryRate?: number;
+  o2Saturation?: number;
+  recordedById?: string;
+  recordedAt: string;
+  createdAt: string;
+}
+
+export async function fetchVitals(tenantId: string, accessToken: string, patientId?: string) {
+  const url = patientId
+    ? `${API_BASE}/api/vitals?patientId=${encodeURIComponent(patientId)}`
+    : `${API_BASE}/api/vitals`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to load vitals');
+  return res.json();
+}
+
+export async function createVital(
+  tenantId: string,
+  accessToken: string,
+  data: {
+    patientId: string;
+    encounterId?: string;
+    heightCm?: number;
+    weightKg?: number;
+    bpSystolic?: number;
+    bpDiastolic?: number;
+    pulse?: number;
+    tempC?: number;
+    respiratoryRate?: number;
+    o2Saturation?: number;
+    recordedAt?: string;
+  }
+) {
+  const res = await fetch(`${API_BASE}/api/vitals/write`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to create vital');
   }
   return res.json();
 }

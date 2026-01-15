@@ -16,7 +16,7 @@ const createPatientSchema = z.object({
     .string()
     .optional()
     .refine((v) => !v || v.replace(/\D/g, "").length >= 10, { message: "Invalid phone" }),
-  email: z.string().email().optional(),
+  email: z.string().email().optional().or(z.literal('')),
   address: z.string().optional(),
   city: z.string().optional(),
   state: z.string().max(2).optional(),
@@ -24,6 +24,19 @@ const createPatientSchema = z.object({
   insurance: z.string().optional(),
   allergies: z.string().optional(),
   medications: z.string().optional(),
+  // Additional fields for complete patient record
+  sex: z.enum(['M', 'F', 'O']).optional(),
+  ssn: z.string().max(4).optional(),
+  emergencyContactName: z.string().optional(),
+  emergencyContactRelationship: z.string().optional(),
+  emergencyContactPhone: z.string().optional(),
+  pharmacyName: z.string().optional(),
+  pharmacyPhone: z.string().optional(),
+  pharmacyAddress: z.string().optional(),
+  primaryCarePhysician: z.string().optional(),
+  referralSource: z.string().optional(),
+  insuranceId: z.string().optional(),
+  insuranceGroupNumber: z.string().optional(),
 });
 
 export const patientsRouter = Router();
@@ -47,12 +60,30 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
   }
   const id = crypto.randomUUID();
   const tenantId = req.user!.tenantId;
-  const { firstName, lastName, dob, phone, email, address, city, state, zip, insurance, allergies, medications } = parsed.data;
+  const {
+    firstName, lastName, dob, phone, email, address, city, state, zip,
+    insurance, allergies, medications, sex, ssn,
+    emergencyContactName, emergencyContactRelationship, emergencyContactPhone,
+    pharmacyName, pharmacyPhone, pharmacyAddress,
+    primaryCarePhysician, referralSource, insuranceId, insuranceGroupNumber
+  } = parsed.data;
 
   await pool.query(
-    `insert into patients(id, tenant_id, first_name, last_name, dob, phone, email, address, city, state, zip, insurance, allergies, medications)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-    [id, tenantId, firstName, lastName, dob || null, phone || null, email || null, address || null, city || null, state || null, zip || null, insurance || null, allergies || null, medications || null],
+    `insert into patients(
+      id, tenant_id, first_name, last_name, dob, phone, email, address, city, state, zip,
+      insurance, allergies, medications, sex, ssn,
+      emergency_contact_name, emergency_contact_relationship, emergency_contact_phone,
+      pharmacy_name, pharmacy_phone, pharmacy_address,
+      primary_care_physician, referral_source, insurance_id, insurance_group_number
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
+    [
+      id, tenantId, firstName, lastName, dob || null, phone || null, email || null,
+      address || null, city || null, state || null, zip || null,
+      insurance || null, allergies || null, medications || null, sex || null, ssn || null,
+      emergencyContactName || null, emergencyContactRelationship || null, emergencyContactPhone || null,
+      pharmacyName || null, pharmacyPhone || null, pharmacyAddress || null,
+      primaryCarePhysician || null, referralSource || null, insuranceId || null, insuranceGroupNumber || null
+    ],
   );
   return res.status(201).json({ id });
 });
@@ -72,6 +103,10 @@ patientsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
               pharmacy_name as "pharmacyName",
               pharmacy_phone as "pharmacyPhone",
               pharmacy_address as "pharmacyAddress",
+              insurance_id as "insuranceId",
+              insurance_group_number as "insuranceGroupNumber",
+              primary_care_physician as "primaryCarePhysician",
+              referral_source as "referralSource",
               created_at as "createdAt", updated_at as "updatedAt"
        from patients where id = $1 and tenant_id = $2`,
       [id, tenantId],

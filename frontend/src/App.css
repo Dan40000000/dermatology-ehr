@@ -1772,7 +1772,7 @@ pre {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 10000; /* Must be higher than nav dropdown (9999) */
   padding: 1rem;
   animation: fadeIn 0.2s ease;
 }
@@ -7455,7 +7455,7 @@ pre {
   background: #ffffff;
   border-radius: 0 0 8px 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.08);
-  z-index: 99999;
+  z-index: 9999; /* Below modals (10000+) but above content */
   padding: 0.5rem 0;
   animation: dropdownFadeIn 0.15s ease;
 }

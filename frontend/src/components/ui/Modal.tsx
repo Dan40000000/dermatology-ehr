@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ModalProps {
   isOpen: boolean;
@@ -64,7 +65,8 @@ export function Modal({
     full: 'modal-full',
   };
 
-  return (
+  // Render via portal to escape any stacking context issues
+  return createPortal(
     <div className="modal-overlay" onClick={onClose} role="presentation">
       <div
         className={`modal ${sizeClasses[size]}`}
@@ -95,6 +97,7 @@ export function Modal({
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-footer">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -7288,6 +7288,32 @@ pre {
   color: #d1d5db;
 }
 
+/* === EMA Navigation Wrapper (handles horizontal scroll) === */
+.ema-nav-wrapper {
+  background: #0369a1;
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.3) transparent;
+}
+
+.ema-nav-wrapper::-webkit-scrollbar {
+  height: 6px;
+}
+
+.ema-nav-wrapper::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.1);
+}
+
+.ema-nav-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.3);
+  border-radius: 3px;
+}
+
+.ema-nav-wrapper::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.5);
+}
+
 /* === EMA Main Navigation Bar (Light Blue) === */
 .ema-nav {
   display: flex;
@@ -7296,29 +7322,9 @@ pre {
   color: #ffffff;
   padding: 0 0.5rem;
   min-height: 44px;
-  overflow-x: auto; /* Enable horizontal scrolling within the nav */
-  overflow-y: visible; /* Allow dropdowns to show */
-  scrollbar-width: thin; /* Show a thin scrollbar for usability */
-  scrollbar-color: rgba(255,255,255,0.3) transparent;
+  min-width: max-content; /* Ensure nav extends to fit all items */
   position: relative;
-  z-index: 9999;
-}
-
-.ema-nav::-webkit-scrollbar {
-  height: 6px;
-}
-
-.ema-nav::-webkit-scrollbar-track {
-  background: rgba(0,0,0,0.1);
-}
-
-.ema-nav::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.3);
-  border-radius: 3px;
-}
-
-.ema-nav::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.5);
+  z-index: 100;
 }
 
 /* Nav item container for dropdown support */
@@ -7427,6 +7433,7 @@ pre {
 }
 
 /* === Navigation Dropdown Menus === */
+/* Dropdown rendered inside nav (fallback) */
 .ema-nav-dropdown {
   position: absolute;
   top: 100%;
@@ -7439,6 +7446,18 @@ pre {
   padding: 0.5rem 0;
   animation: dropdownFadeIn 0.15s ease;
   margin-top: 0;
+}
+
+/* Dropdown rendered via portal (escapes scroll container) */
+.ema-nav-dropdown-portal {
+  position: fixed;
+  min-width: 220px;
+  background: #ffffff;
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  z-index: 99999;
+  padding: 0.5rem 0;
+  animation: dropdownFadeIn 0.15s ease;
 }
 
 .ema-nav-dropdown-item {

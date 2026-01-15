@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchUnreadCount } from '../../api';
@@ -461,18 +462,23 @@ export function MainNav() {
   const { session, user } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
+  const navItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const userRole = user?.role;
 
   // Filter nav items based on user role
   const filteredNavItems = navItems.filter(item => canAccessModule(userRole, item.module));
 
-  // Simple hover handlers - no timeouts needed since events are on the container
-  const handleMouseEnter = (itemPath: string) => {
+  // Hover handlers with position tracking for portal dropdown
+  const handleMouseEnter = (itemPath: string, element: HTMLDivElement) => {
     setHoveredItem(itemPath);
+    const rect = element.getBoundingClientRect();
+    setDropdownPos({ top: rect.bottom, left: rect.left });
   };
 
   const handleMouseLeave = () => {
     setHoveredItem(null);
+    setDropdownPos(null);
   };
 
   const loadUnreadCount = useCallback(async () => {
@@ -504,90 +510,106 @@ export function MainNav() {
 
   return (
     <>
-      {/* Main Navigation Bar */}
-      <nav className="ema-nav" role="navigation" aria-label="Main navigation">
-        {filteredNavItems.map((item) => (
-          <div
-            key={item.path}
-            className="ema-nav-item"
-            onMouseEnter={() => item.dropdown && handleMouseEnter(item.path)}
-            onMouseLeave={handleMouseLeave}
-          >
-            <NavLink
-              to={item.path}
-              className={`ema-nav-link ${isActive(item.path) ? 'active' : ''}`}
-              aria-current={isActive(item.path) ? 'page' : undefined}
-              aria-haspopup={item.dropdown ? 'true' : undefined}
-              aria-expanded={item.dropdown && hoveredItem === item.path ? 'true' : 'false'}
+      {/* Main Navigation Bar - wrapper handles scroll, nav handles background */}
+      <div className="ema-nav-wrapper">
+        <nav className="ema-nav" role="navigation" aria-label="Main navigation">
+          {filteredNavItems.map((item) => (
+            <div
+              key={item.path}
+              className="ema-nav-item"
+              ref={(el) => { if (el) navItemRefs.current.set(item.path, el); }}
+              onMouseEnter={(e) => item.dropdown && handleMouseEnter(item.path, e.currentTarget)}
+              onMouseLeave={handleMouseLeave}
             >
-              {item.label}
-              {item.dropdown && (
-                <span className="dropdown-arrow">▼</span>
-              )}
-              {item.path === '/mail' && unreadCount > 0 && (
-                <span
-                  style={{
-                    marginLeft: '0.5rem',
-                    background: '#ef4444',
-                    color: '#ffffff',
-                    borderRadius: '9999px',
-                    padding: '0.125rem 0.5rem',
-                    fontSize: '0.75rem',
-                    fontWeight: 700,
-                    minWidth: '1.25rem',
-                    textAlign: 'center',
-                    display: 'inline-block',
-                  }}
-                  aria-label={`${unreadCount} unread messages`}
-                  role="status"
-                >
-                  {unreadCount}
-                </span>
-              )}
-            </NavLink>
+              <NavLink
+                to={item.path}
+                className={`ema-nav-link ${isActive(item.path) ? 'active' : ''}`}
+                aria-current={isActive(item.path) ? 'page' : undefined}
+                aria-haspopup={item.dropdown ? 'true' : undefined}
+                aria-expanded={item.dropdown && hoveredItem === item.path ? 'true' : 'false'}
+              >
+                {item.label}
+                {item.dropdown && (
+                  <span className="dropdown-arrow">▼</span>
+                )}
+                {item.path === '/mail' && unreadCount > 0 && (
+                  <span
+                    style={{
+                      marginLeft: '0.5rem',
+                      background: '#ef4444',
+                      color: '#ffffff',
+                      borderRadius: '9999px',
+                      padding: '0.125rem 0.5rem',
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      minWidth: '1.25rem',
+                      textAlign: 'center',
+                      display: 'inline-block',
+                    }}
+                    aria-label={`${unreadCount} unread messages`}
+                    role="status"
+                  >
+                    {unreadCount}
+                  </span>
+                )}
+              </NavLink>
+            </div>
+          ))}
+        </nav>
+      </div>
 
-            {item.dropdown && hoveredItem === item.path && (
-              <div className="ema-nav-dropdown" role="menu">
-                {(() => {
-                  const sections = new Set(item.dropdown.map(d => d.section).filter(Boolean));
-                  if (sections.size > 0) {
-                    // Group by sections
-                    return Array.from(sections).map((section) => (
-                      <div key={section} className="ema-nav-dropdown-section">
-                        <div className="ema-nav-dropdown-section-title">{section}</div>
-                        {item.dropdown!
-                          .filter(d => d.section === section)
-                          .map((dropdownItem) => (
-                            <NavLink
-                              key={dropdownItem.path}
-                              to={dropdownItem.path}
-                              className="ema-nav-dropdown-item"
-                              role="menuitem"
-                            >
-                              {dropdownItem.label}
-                            </NavLink>
-                          ))}
-                      </div>
-                    ));
-                  } else {
-                    // No sections, render flat list
-                    return item.dropdown.map((dropdownItem) => (
-                      <NavLink
-                        key={dropdownItem.path}
-                        to={dropdownItem.path}
-                        className="ema-nav-dropdown-item"
-                        role="menuitem"
-                      >
-                        {dropdownItem.label}
-                      </NavLink>
-                    ));
-                  }
-                })()}
-              </div>
-            )}
-          </div>
-        ))}
-      </nav>
+      {/* Dropdown rendered via portal to escape scroll container */}
+      {hoveredItem && dropdownPos && (() => {
+        const item = filteredNavItems.find(i => i.path === hoveredItem);
+        if (!item?.dropdown) return null;
+
+        return createPortal(
+          <div
+            className="ema-nav-dropdown-portal"
+            style={{ top: dropdownPos.top, left: dropdownPos.left }}
+            onMouseEnter={() => setHoveredItem(hoveredItem)}
+            onMouseLeave={handleMouseLeave}
+            role="menu"
+          >
+            {(() => {
+              const sections = new Set(item.dropdown.map(d => d.section).filter(Boolean));
+              if (sections.size > 0) {
+                return Array.from(sections).map((section) => (
+                  <div key={section} className="ema-nav-dropdown-section">
+                    <div className="ema-nav-dropdown-section-title">{section}</div>
+                    {item.dropdown!
+                      .filter(d => d.section === section)
+                      .map((dropdownItem) => (
+                        <NavLink
+                          key={dropdownItem.path}
+                          to={dropdownItem.path}
+                          className="ema-nav-dropdown-item"
+                          role="menuitem"
+                          onClick={() => setHoveredItem(null)}
+                        >
+                          {dropdownItem.label}
+                        </NavLink>
+                      ))}
+                  </div>
+                ));
+              } else {
+                return item.dropdown.map((dropdownItem) => (
+                  <NavLink
+                    key={dropdownItem.path}
+                    to={dropdownItem.path}
+                    className="ema-nav-dropdown-item"
+                    role="menuitem"
+                    onClick={() => setHoveredItem(null)}
+                  >
+                    {dropdownItem.label}
+                  </NavLink>
+                ));
+              }
+            })()}
+          </div>,
+          document.body
+        );
+      })()}
 
       {/* Recalls Secondary Nav */}
       <nav className="ema-subnav" role="navigation" aria-label="Secondary navigation">

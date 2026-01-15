@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
@@ -26,6 +27,7 @@ export function DocumentsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -34,6 +36,7 @@ export function DocumentsPage() {
   const [categoryFilter, setCategoryFilter] = useState<DocCategory>('all');
   const [selectedPatient, setSelectedPatient] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [recentFilter, setRecentFilter] = useState(false);
 
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -68,6 +71,24 @@ export function DocumentsPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Handle query parameters on page load
+  useEffect(() => {
+    const action = searchParams.get('action');
+    const filter = searchParams.get('filter');
+
+    // Handle action=upload
+    if (action === 'upload') {
+      setShowUploadModal(true);
+    }
+
+    // Handle filter=recent
+    if (filter === 'recent') {
+      setRecentFilter(true);
+    } else {
+      setRecentFilter(false);
+    }
+  }, [searchParams]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -118,6 +139,12 @@ export function DocumentsPage() {
         description: '',
         file: null,
       });
+      // Clear the action parameter from URL
+      if (searchParams.get('action') === 'upload') {
+        const params = new URLSearchParams(searchParams);
+        params.delete('action');
+        setSearchParams(params);
+      }
       loadData();
     } catch (err: any) {
       showError(err.message || 'Failed to upload document');
@@ -141,6 +168,15 @@ export function DocumentsPage() {
   const filteredDocuments = documents.filter((doc) => {
     if (categoryFilter !== 'all' && doc.category !== categoryFilter) return false;
     if (selectedPatient !== 'all' && doc.patientId !== selectedPatient) return false;
+
+    // Filter for recent documents (last 7 days)
+    if (recentFilter) {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      const docDate = new Date(doc.createdAt);
+      if (docDate < sevenDaysAgo) return false;
+    }
+
     if (searchTerm) {
       const patientName = getPatientName(doc.patientId).toLowerCase();
       const title = (doc.title || '').toLowerCase();
@@ -219,7 +255,12 @@ export function DocumentsPage() {
         }}>Document Management</h1>
         <button
           type="button"
-          onClick={() => setShowUploadModal(true)}
+          onClick={() => {
+            setShowUploadModal(true);
+            const params = new URLSearchParams(searchParams);
+            params.set('action', 'upload');
+            setSearchParams(params);
+          }}
           style={{
             padding: '0.75rem 1.5rem',
             background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
@@ -270,7 +311,12 @@ export function DocumentsPage() {
             Upload attachments (images, scans, etc) and associate them with patients or add to the fax queue.
           </p>
           <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <button onClick={() => setShowUploadModal(true)} style={{
+            <button onClick={() => {
+              setShowUploadModal(true);
+              const params = new URLSearchParams(searchParams);
+              params.set('action', 'upload');
+              setSearchParams(params);
+            }} style={{
               flex: 1,
               padding: '0.75rem',
               background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
@@ -477,17 +523,42 @@ export function DocumentsPage() {
         <div className="filter-tabs">
           <button
             type="button"
-            className={`filter-tab ${categoryFilter === 'all' ? 'active' : ''}`}
-            onClick={() => setCategoryFilter('all')}
+            className={`filter-tab ${categoryFilter === 'all' && !recentFilter ? 'active' : ''}`}
+            onClick={() => {
+              setCategoryFilter('all');
+              setRecentFilter(false);
+              const params = new URLSearchParams(searchParams);
+              params.delete('filter');
+              setSearchParams(params);
+            }}
           >
             All
+          </button>
+          <button
+            type="button"
+            className={`filter-tab ${recentFilter ? 'active' : ''}`}
+            onClick={() => {
+              setRecentFilter(true);
+              setCategoryFilter('all');
+              const params = new URLSearchParams(searchParams);
+              params.set('filter', 'recent');
+              setSearchParams(params);
+            }}
+          >
+            Recent (7 days)
           </button>
           {DOC_CATEGORIES.map((cat) => (
             <button
               key={cat.value}
               type="button"
               className={`filter-tab ${categoryFilter === cat.value ? 'active' : ''}`}
-              onClick={() => setCategoryFilter(cat.value)}
+              onClick={() => {
+                setCategoryFilter(cat.value);
+                setRecentFilter(false);
+                const params = new URLSearchParams(searchParams);
+                params.delete('filter');
+                setSearchParams(params);
+              }}
             >
               {cat.icon} {cat.label}
             </button>
@@ -528,7 +599,12 @@ export function DocumentsPage() {
             <button
               type="button"
               className="btn-primary"
-              onClick={() => setShowUploadModal(true)}
+              onClick={() => {
+                setShowUploadModal(true);
+                const params = new URLSearchParams(searchParams);
+                params.set('action', 'upload');
+                setSearchParams(params);
+              }}
             >
               Upload Document
             </button>
@@ -618,6 +694,12 @@ export function DocumentsPage() {
             description: '',
             file: null,
           });
+          // Clear the action parameter from URL when closing modal
+          if (searchParams.get('action') === 'upload') {
+            const params = new URLSearchParams(searchParams);
+            params.delete('action');
+            setSearchParams(params);
+          }
         }}
         size="lg"
       >

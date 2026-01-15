@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal, ExportButtons } from '../components/ui';
@@ -29,6 +29,7 @@ import type { Appointment, Provider, Location, AppointmentType, Availability, Pa
 
 export function SchedulePage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
 
@@ -40,14 +41,24 @@ export function SchedulePage() {
   const [availability, setAvailability] = useState<Availability[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
 
-  // Schedule state
+  // Schedule state - Initialize from URL parameter or localStorage
   const [dayOffset, setDayOffset] = useState(() => {
     const stored = Number(localStorage.getItem('sched:dayOffset') || 0);
     return Number.isNaN(stored) ? 0 : stored;
   });
-  const [viewMode, setViewMode] = useState<'day' | 'week'>(() =>
-    (localStorage.getItem('sched:viewMode') as 'day' | 'week') || 'day'
-  );
+
+  // Initialize view mode from URL query parameter, fallback to localStorage, then 'day'
+  const [viewMode, setViewMode] = useState<'day' | 'week' | 'month'>(() => {
+    const urlView = searchParams.get('view');
+    if (urlView === 'day' || urlView === 'week' || urlView === 'month') {
+      return urlView;
+    }
+    const stored = localStorage.getItem('sched:viewMode');
+    if (stored === 'day' || stored === 'week' || stored === 'month') {
+      return stored as 'day' | 'week' | 'month';
+    }
+    return 'day';
+  });
   const [providerFilter, setProviderFilter] = useState(() => localStorage.getItem('sched:provider') || 'all');
   const [typeFilter, setTypeFilter] = useState(() => localStorage.getItem('sched:type') || 'all');
   const [locationFilter, setLocationFilter] = useState('all');
@@ -102,13 +113,34 @@ export function SchedulePage() {
     startTime?: string;
   } | undefined>(undefined);
 
-  // Save filter state
+  // Sync view mode from URL query parameter changes
+  useEffect(() => {
+    const urlView = searchParams.get('view');
+    if (urlView === 'day' || urlView === 'week' || urlView === 'month') {
+      setViewMode(urlView);
+    } else if (!urlView) {
+      // If no view parameter, default to 'day' (matches /schedule without params)
+      setViewMode('day');
+    }
+  }, [searchParams]);
+
+  // Save filter state and sync view mode to URL
   useEffect(() => {
     localStorage.setItem('sched:provider', providerFilter);
     localStorage.setItem('sched:type', typeFilter);
     localStorage.setItem('sched:dayOffset', String(dayOffset));
     localStorage.setItem('sched:viewMode', viewMode);
-  }, [providerFilter, typeFilter, dayOffset, viewMode]);
+
+    // Update URL to reflect current view mode (for bookmarking)
+    const currentView = searchParams.get('view');
+    if (viewMode === 'day' && currentView !== null && currentView !== 'day') {
+      // Remove view param for default 'day' view to match /schedule
+      setSearchParams({});
+    } else if (viewMode !== 'day' && currentView !== viewMode) {
+      // Set view param for week/month views
+      setSearchParams({ view: viewMode });
+    }
+  }, [providerFilter, typeFilter, dayOffset, viewMode, searchParams, setSearchParams]);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -646,6 +678,13 @@ export function SchedulePage() {
                 onClick={() => setViewMode('week')}
               >
                 Week
+              </button>
+              <button
+                type="button"
+                className={`view-mode-btn ${viewMode === 'month' ? 'active' : ''}`}
+                onClick={() => setViewMode('month')}
+              >
+                Month
               </button>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
@@ -19,6 +20,7 @@ import { PhotoTimeline } from '../components/clinical/PhotoTimeline';
 
 type ViewMode = 'grid' | 'list' | 'timeline' | 'comparison';
 type PhotoCategory = 'all' | 'clinical' | 'dermoscopy' | 'before-after' | 'other';
+type PhotoFilter = 'all' | 'recent';
 
 const BODY_REGIONS = [
   'Face', 'Scalp', 'Neck', 'Chest', 'Back', 'Abdomen',
@@ -31,12 +33,14 @@ export function PhotosPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [categoryFilter, setCategoryFilter] = useState<PhotoCategory>('all');
+  const [photoFilter, setPhotoFilter] = useState<PhotoFilter>('all');
   const [selectedPatient, setSelectedPatient] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -81,6 +85,24 @@ export function PhotosPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Handle URL query parameters on page load and changes
+  useEffect(() => {
+    const action = searchParams.get('action');
+    const filter = searchParams.get('filter');
+
+    // Handle action parameter (e.g., action=upload)
+    if (action === 'upload') {
+      setShowUploadModal(true);
+    }
+
+    // Handle filter parameter (e.g., filter=recent)
+    if (filter === 'recent') {
+      setPhotoFilter('recent');
+    } else if (!filter) {
+      setPhotoFilter('all');
+    }
+  }, [searchParams]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -136,6 +158,10 @@ export function PhotosPage() {
         file: null,
         previewUrl: '',
       });
+      // Remove action parameter from URL after successful upload
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('action');
+      setSearchParams(newParams);
       loadData();
     } catch (err: any) {
       showError(err.message || 'Failed to upload photo');
@@ -208,6 +234,15 @@ export function PhotosPage() {
   const filteredPhotos = photos.filter((photo) => {
     if (categoryFilter !== 'all' && photo.category !== categoryFilter) return false;
     if (selectedPatient !== 'all' && photo.patientId !== selectedPatient) return false;
+
+    // Filter by recent (photos from last 30 days)
+    if (photoFilter === 'recent') {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const photoDate = new Date(photo.createdAt);
+      if (photoDate < thirtyDaysAgo) return false;
+    }
+
     if (searchTerm) {
       const patientName = getPatientName(photo.patientId).toLowerCase();
       const desc = (photo.description || '').toLowerCase();
@@ -259,7 +294,10 @@ export function PhotosPage() {
         <button
           type="button"
           className="btn-primary"
-          onClick={() => setShowUploadModal(true)}
+          onClick={() => {
+            setShowUploadModal(true);
+            setSearchParams({ action: 'upload' });
+          }}
         >
           + Upload Photo
         </button>
@@ -288,6 +326,26 @@ export function PhotosPage() {
                 {p.lastName}, {p.firstName}
               </option>
             ))}
+          </select>
+        </div>
+
+        <div className="filter-group">
+          <label>Time:</label>
+          <select
+            value={photoFilter}
+            onChange={(e) => {
+              const newFilter = e.target.value as PhotoFilter;
+              setPhotoFilter(newFilter);
+              // Update URL to reflect the filter change
+              if (newFilter === 'recent') {
+                setSearchParams({ filter: 'recent' });
+              } else {
+                setSearchParams({});
+              }
+            }}
+          >
+            <option value="all">All Photos</option>
+            <option value="recent">Recent (30 days)</option>
           </select>
         </div>
 
@@ -357,7 +415,10 @@ export function PhotosPage() {
             <button
               type="button"
               className="btn-primary"
-              onClick={() => setShowUploadModal(true)}
+              onClick={() => {
+                setShowUploadModal(true);
+                setSearchParams({ action: 'upload' });
+              }}
             >
               Upload Photo
             </button>
@@ -487,6 +548,10 @@ export function PhotosPage() {
             file: null,
             previewUrl: '',
           });
+          // Remove action parameter from URL when closing
+          const newParams = new URLSearchParams(searchParams);
+          newParams.delete('action');
+          setSearchParams(newParams);
         }}
         size="lg"
       >

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Modal, Button, Skeleton } from '../components/ui';
@@ -18,6 +19,7 @@ type TabType = 'inbox' | 'sent';
 export function DirectMessagingPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [activeTab, setActiveTab] = useState<TabType>('inbox');
   const [loading, setLoading] = useState(true);
@@ -60,6 +62,24 @@ export function DirectMessagingPage() {
     notes: '',
     isFavorite: false,
   });
+
+  // Initialize from URL parameters
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    const action = searchParams.get('action');
+
+    // Set active tab based on URL
+    if (tab === 'sent') {
+      setActiveTab('sent');
+    } else {
+      setActiveTab('inbox');
+    }
+
+    // Open compose modal if action=compose
+    if (action === 'compose') {
+      setShowComposeModal(true);
+    }
+  }, [searchParams]);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -119,6 +139,10 @@ export function DirectMessagingPage() {
         body: '',
         attachments: [],
       });
+      // Remove action parameter from URL after sending
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('action');
+      setSearchParams(newParams);
       loadData();
     } catch (err: any) {
       showError(err.message || 'Failed to send message');
@@ -183,6 +207,10 @@ export function DirectMessagingPage() {
     }));
     setShowContactsModal(false);
     setShowComposeModal(true);
+    // Ensure action=compose is in the URL
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set('action', 'compose');
+    setSearchParams(newParams);
   };
 
   const getFilteredMessages = () => {
@@ -253,7 +281,15 @@ export function DirectMessagingPage() {
           <Button onClick={() => setShowContactsModal(true)} variant="secondary">
             Provider Directory
           </Button>
-          <Button onClick={() => setShowComposeModal(true)} variant="primary">
+          <Button
+            onClick={() => {
+              setShowComposeModal(true);
+              const newParams = new URLSearchParams(searchParams);
+              newParams.set('action', 'compose');
+              setSearchParams(newParams);
+            }}
+            variant="primary"
+          >
             + Compose Message
           </Button>
         </div>
@@ -346,6 +382,7 @@ export function DirectMessagingPage() {
               onClick={() => {
                 setActiveTab('inbox');
                 setUnreadOnlyFilter(false);
+                setSearchParams({});
               }}
               style={{
                 padding: '0.5rem 1.5rem',
@@ -365,6 +402,7 @@ export function DirectMessagingPage() {
               onClick={() => {
                 setActiveTab('sent');
                 setUnreadOnlyFilter(false);
+                setSearchParams({ tab: 'sent' });
               }}
               style={{
                 padding: '0.5rem 1.5rem',
@@ -560,6 +598,10 @@ export function DirectMessagingPage() {
             body: '',
             attachments: [],
           });
+          // Remove action parameter from URL when closing compose modal
+          const newParams = new URLSearchParams(searchParams);
+          newParams.delete('action');
+          setSearchParams(newParams);
         }}
         size="lg"
       >
@@ -732,6 +774,10 @@ export function DirectMessagingPage() {
                 body: '',
                 attachments: [],
               });
+              // Remove action parameter from URL
+              const newParams = new URLSearchParams(searchParams);
+              newParams.delete('action');
+              setSearchParams(newParams);
             }}
             variant="secondary"
           >

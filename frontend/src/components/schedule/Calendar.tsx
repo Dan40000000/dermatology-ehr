@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { Appointment, Provider, Availability } from '../../types';
+import { MonthView } from './MonthView';
 
 interface TimeBlock {
   id: string;
@@ -17,7 +18,7 @@ interface TimeBlock {
 
 interface CalendarProps {
   currentDate: Date;
-  viewMode: 'day' | 'week';
+  viewMode: 'day' | 'week' | 'month';
   appointments: Appointment[];
   providers: Provider[];
   availability: Availability[];
@@ -287,6 +288,29 @@ export function Calendar({
     const period = hour < 12 ? 'AM' : 'PM';
     return `${h}:${m} ${period}`;
   };
+
+  // Handle day click in month view - switch to day view for that date
+  const handleDayClick = (date: Date) => {
+    // This will be handled by parent component (SchedulePage)
+    // For now, just select the first available provider and open new appointment
+    if (providers.length > 0) {
+      onSlotClick(providers[0].id, date, 9, 0); // Default to 9:00 AM
+    }
+  };
+
+  // If month view, render MonthView component
+  if (viewMode === 'month') {
+    return (
+      <MonthView
+        currentDate={currentDate}
+        appointments={appointments}
+        providers={providers}
+        selectedAppointment={selectedAppointment}
+        onAppointmentClick={onAppointmentClick}
+        onDayClick={handleDayClick}
+      />
+    );
+  }
 
   return (
     <>

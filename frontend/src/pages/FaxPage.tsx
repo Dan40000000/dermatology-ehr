@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Modal, Button, Skeleton } from '../components/ui';
@@ -55,6 +56,8 @@ interface FaxStats {
 export function FaxPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const [activeTab, setActiveTab] = useState<TabType>('inbox');
   const [loading, setLoading] = useState(true);
@@ -124,6 +127,25 @@ export function FaxPage() {
     loadData();
   }, [loadData]);
 
+  // Handle URL query parameters on page load and changes
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    const actionParam = searchParams.get('action');
+
+    // Set active tab based on URL parameter
+    if (tabParam === 'sent') {
+      setActiveTab('outbox');
+    } else if (!tabParam) {
+      // Default to inbox if no tab parameter
+      setActiveTab('inbox');
+    }
+
+    // Open send fax modal if action=send is present
+    if (actionParam === 'send') {
+      setShowSendModal(true);
+    }
+  }, [searchParams]);
+
   const handleSendFax = async () => {
     if (!session) return;
     if (!sendForm.recipientNumber || !sendForm.subject) {
@@ -150,6 +172,11 @@ export function FaxPage() {
         documentIds: [],
         pages: 1,
       });
+
+      // Remove action=send from URL when fax is sent
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('action');
+      setSearchParams(newParams, { replace: true });
 
       // Reload after 2 seconds to see status update
       setTimeout(loadData, 2000);
@@ -379,7 +406,11 @@ export function FaxPage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <div style={{ display: 'flex', gap: '1rem' }}>
               <button
-                onClick={() => setActiveTab('inbox')}
+                onClick={() => {
+                  setActiveTab('inbox');
+                  // Update URL to /fax (no query params for inbox)
+                  navigate('/fax', { replace: true });
+                }}
                 style={{
                   padding: '0.5rem 1rem',
                   border: 'none',
@@ -393,7 +424,11 @@ export function FaxPage() {
                 Inbox {stats && `(${stats.inboundTotal})`}
               </button>
               <button
-                onClick={() => setActiveTab('outbox')}
+                onClick={() => {
+                  setActiveTab('outbox');
+                  // Update URL to /fax?tab=sent
+                  navigate('/fax?tab=sent', { replace: true });
+                }}
                 style={{
                   padding: '0.5rem 1rem',
                   border: 'none',
@@ -414,7 +449,13 @@ export function FaxPage() {
                   Simulate Incoming
                 </Button>
               )}
-              <Button onClick={() => setShowSendModal(true)}>
+              <Button onClick={() => {
+                setShowSendModal(true);
+                // Add action=send to URL when opening modal
+                const newParams = new URLSearchParams(searchParams);
+                newParams.set('action', 'send');
+                setSearchParams(newParams, { replace: true });
+              }}>
                 Send Fax
               </Button>
             </div>
@@ -724,7 +765,13 @@ export function FaxPage() {
       {/* Send Fax Modal */}
       <Modal
         isOpen={showSendModal}
-        onClose={() => setShowSendModal(false)}
+        onClose={() => {
+          setShowSendModal(false);
+          // Remove action=send from URL when closing modal
+          const newParams = new URLSearchParams(searchParams);
+          newParams.delete('action');
+          setSearchParams(newParams, { replace: true });
+        }}
         title="Send Fax"
         size="lg"
       >
@@ -879,7 +926,13 @@ export function FaxPage() {
           </div>
 
           <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
-            <Button variant="outline" onClick={() => setShowSendModal(false)} disabled={sending}>
+            <Button variant="outline" onClick={() => {
+              setShowSendModal(false);
+              // Remove action=send from URL when canceling
+              const newParams = new URLSearchParams(searchParams);
+              newParams.delete('action');
+              setSearchParams(newParams, { replace: true });
+            }} disabled={sending}>
               Cancel
             </Button>
             <Button onClick={handleSendFax} disabled={sending}>

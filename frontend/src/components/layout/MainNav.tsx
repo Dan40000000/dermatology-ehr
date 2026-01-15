@@ -18,19 +18,66 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { label: 'Home', path: '/home', module: 'home' },
-  { label: 'Schedule', path: '/schedule', module: 'schedule' },
-  { label: 'OfficeFlow', path: '/office-flow', module: 'office_flow' },
-  { label: 'Appt Flow', path: '/appt-flow', module: 'appt_flow' },
-  { label: 'Waitlist', path: '/waitlist', module: 'waitlist' },
+  {
+    label: 'Home',
+    path: '/home',
+    module: 'home',
+    dropdown: [
+      { label: 'Dashboard', path: '/home' },
+      { label: 'Quick Actions', path: '/home?section=actions' },
+    ]
+  },
+  {
+    label: 'Schedule',
+    path: '/schedule',
+    module: 'schedule',
+    dropdown: [
+      { label: 'Calendar View', path: '/schedule' },
+      { label: 'Day View', path: '/schedule?view=day' },
+      { label: 'Week View', path: '/schedule?view=week' },
+      { label: 'Month View', path: '/schedule?view=month' },
+    ]
+  },
+  {
+    label: 'OfficeFlow',
+    path: '/office-flow',
+    module: 'office_flow',
+    dropdown: [
+      { label: 'All Patients', path: '/office-flow' },
+      { label: 'Waiting Room', path: '/office-flow?status=waiting' },
+      { label: 'In Exam', path: '/office-flow?status=in-exam' },
+      { label: 'Checkout', path: '/office-flow?status=checkout' },
+    ]
+  },
+  {
+    label: 'Appt Flow',
+    path: '/appt-flow',
+    module: 'appt_flow',
+    dropdown: [
+      { label: 'Today\'s Appointments', path: '/appt-flow' },
+      { label: 'Upcoming', path: '/appt-flow?filter=upcoming' },
+      { label: 'Completed', path: '/appt-flow?filter=completed' },
+    ]
+  },
+  {
+    label: 'Waitlist',
+    path: '/waitlist',
+    module: 'waitlist',
+    dropdown: [
+      { label: 'Active Waitlist', path: '/waitlist' },
+      { label: 'Add to Waitlist', path: '/waitlist?action=add' },
+      { label: 'History', path: '/waitlist?tab=history' },
+    ]
+  },
   {
     label: 'Patients',
     path: '/patients',
     module: 'patients',
     dropdown: [
+      { label: 'Patient List', path: '/patients' },
       { label: 'Register Patient', path: '/patients/register' },
-      { label: 'Advanced Patient Search', path: '/patients?advanced=true' },
-      { label: 'Patient Handout Library', path: '/handouts' },
+      { label: 'Advanced Search', path: '/patients?advanced=true' },
+      { label: 'Handout Library', path: '/handouts' },
       { label: 'Reports', path: '/patients/reports' },
     ]
   },
@@ -42,6 +89,7 @@ const navItems: NavItem[] = [
       { label: 'All Notes', path: '/notes' },
       { label: 'My Finalized', path: '/notes?tab=finalized' },
       { label: 'Prelim', path: '/notes?tab=prelim' },
+      { label: 'Unsigned', path: '/notes?tab=unsigned' },
     ]
   },
   {
@@ -51,32 +99,63 @@ const navItems: NavItem[] = [
     dropdown: [
       { label: 'All Orders', path: '/orders' },
       { label: 'Pending', path: '/orders?tab=pending' },
+      { label: 'In Progress', path: '/orders?tab=in-progress' },
       { label: 'Completed', path: '/orders?tab=completed' },
     ]
   },
-  { label: 'Rx', path: '/rx', module: 'rx' },
-  { label: 'ePA', path: '/prior-auth', module: 'epa' },
+  {
+    label: 'Rx',
+    path: '/rx',
+    module: 'rx',
+    dropdown: [
+      { label: 'All Prescriptions', path: '/rx' },
+      { label: 'New Rx', path: '/rx?action=new' },
+      { label: 'Refill Requests', path: '/rx?tab=refills' },
+      { label: 'Pending', path: '/rx?tab=pending' },
+    ]
+  },
+  {
+    label: 'ePA',
+    path: '/prior-auth',
+    module: 'epa',
+    dropdown: [
+      { label: 'All Prior Auths', path: '/prior-auth' },
+      { label: 'New Request', path: '/prior-auth?action=new' },
+      { label: 'Pending', path: '/prior-auth?status=pending' },
+      { label: 'Approved', path: '/prior-auth?status=approved' },
+    ]
+  },
   {
     label: 'Labs',
     path: '/labs',
     module: 'labs',
     dropdown: [
       { label: 'Pending Results', path: '/labs?tab=pending-results', section: 'PATH' },
-      { label: 'Pending Plan Completion', path: '/labs?tab=pending-plan', section: 'PATH' },
+      { label: 'Pending Plan', path: '/labs?tab=pending-plan', section: 'PATH' },
       { label: 'Completed', path: '/labs?tab=completed', section: 'PATH' },
       { label: 'Unresolved', path: '/labs?tab=unresolved', section: 'PATH' },
       { label: 'Pending Results', path: '/labs?tab=lab-pending-results', section: 'LAB' },
-      { label: 'Pending Plan Completion', path: '/labs?tab=lab-pending-plan', section: 'LAB' },
+      { label: 'Pending Plan', path: '/labs?tab=lab-pending-plan', section: 'LAB' },
       { label: 'Completed', path: '/labs?tab=lab-completed', section: 'LAB' },
       { label: 'Unresolved', path: '/labs?tab=lab-unresolved', section: 'LAB' },
     ]
   },
-  { label: 'Text Messages', path: '/text-messages', module: 'text_messages' },
+  {
+    label: 'Text Messages',
+    path: '/text-messages',
+    module: 'text_messages',
+    dropdown: [
+      { label: 'All Messages', path: '/text-messages' },
+      { label: 'Unread', path: '/text-messages?filter=unread' },
+      { label: 'Sent', path: '/text-messages?filter=sent' },
+    ]
+  },
   {
     label: 'Tasks',
     path: '/tasks',
     module: 'tasks',
     dropdown: [
+      { label: 'All Tasks', path: '/tasks' },
       { label: 'Received', path: '/tasks?tab=received' },
       { label: 'Sent', path: '/tasks?tab=sent' },
       { label: 'Completed', path: '/tasks?tab=completed' },
@@ -90,53 +169,291 @@ const navItems: NavItem[] = [
       { label: 'Inbox', path: '/mail?tab=inbox' },
       { label: 'Sent', path: '/mail?tab=sent' },
       { label: 'Drafts', path: '/mail?tab=drafts' },
+      { label: 'Compose', path: '/mail?action=compose' },
     ]
   },
-  { label: 'Direct', path: '/direct', module: 'direct' },
-  { label: 'Fax', path: '/fax', module: 'fax' },
-  { label: 'Documents', path: '/documents', module: 'documents' },
-  { label: 'Photos', path: '/photos', module: 'photos' },
-  { label: 'Body Diagram', path: '/body-diagram', module: 'body_diagram' },
-  { label: 'Handouts', path: '/handouts', module: 'handouts' },
-  { label: 'Reminders', path: '/reminders', module: 'reminders' },
-  { label: 'Recalls', path: '/recalls', module: 'recalls' },
+  {
+    label: 'Direct',
+    path: '/direct',
+    module: 'direct',
+    dropdown: [
+      { label: 'Inbox', path: '/direct' },
+      { label: 'Sent', path: '/direct?tab=sent' },
+      { label: 'Compose', path: '/direct?action=compose' },
+    ]
+  },
+  {
+    label: 'Fax',
+    path: '/fax',
+    module: 'fax',
+    dropdown: [
+      { label: 'Inbox', path: '/fax' },
+      { label: 'Sent', path: '/fax?tab=sent' },
+      { label: 'Send Fax', path: '/fax?action=send' },
+    ]
+  },
+  {
+    label: 'Documents',
+    path: '/documents',
+    module: 'documents',
+    dropdown: [
+      { label: 'All Documents', path: '/documents' },
+      { label: 'Upload', path: '/documents?action=upload' },
+      { label: 'Recent', path: '/documents?filter=recent' },
+    ]
+  },
+  {
+    label: 'Photos',
+    path: '/photos',
+    module: 'photos',
+    dropdown: [
+      { label: 'All Photos', path: '/photos' },
+      { label: 'Upload', path: '/photos?action=upload' },
+      { label: 'Recent', path: '/photos?filter=recent' },
+    ]
+  },
+  {
+    label: 'Body Diagram',
+    path: '/body-diagram',
+    module: 'body_diagram',
+    dropdown: [
+      { label: 'Body Map', path: '/body-diagram' },
+      { label: 'Lesion Tracker', path: '/body-diagram?view=lesions' },
+    ]
+  },
+  {
+    label: 'Handouts',
+    path: '/handouts',
+    module: 'handouts',
+    dropdown: [
+      { label: 'Browse Library', path: '/handouts' },
+      { label: 'Assigned', path: '/handouts?tab=assigned' },
+      { label: 'Custom', path: '/handouts?tab=custom' },
+    ]
+  },
+  {
+    label: 'Reminders',
+    path: '/reminders',
+    module: 'reminders',
+    dropdown: [
+      { label: 'All Reminders', path: '/reminders' },
+      { label: 'Create Reminder', path: '/reminders?action=new' },
+      { label: 'Upcoming', path: '/reminders?filter=upcoming' },
+    ]
+  },
+  {
+    label: 'Recalls',
+    path: '/recalls',
+    module: 'recalls',
+    dropdown: [
+      { label: 'All Recalls', path: '/recalls' },
+      { label: 'Due Today', path: '/recalls?filter=today' },
+      { label: 'Overdue', path: '/recalls?filter=overdue' },
+      { label: 'Completed', path: '/recalls?filter=completed' },
+    ]
+  },
   {
     label: 'Analytics',
     path: '/analytics',
     module: 'analytics',
     dropdown: [
       { label: 'Dashboard', path: '/analytics' },
-      { label: 'Reports', path: '/analytics?tab=reports' },
-      { label: 'Clinical/Operational', path: '/analytics?tab=clinical-operational' },
+      { label: 'Financial Reports', path: '/analytics?tab=financial' },
+      { label: 'Clinical Reports', path: '/analytics?tab=clinical' },
+      { label: 'Operational', path: '/analytics?tab=operational' },
     ]
   },
-  { label: 'Reports', path: '/reports', module: 'reports' },
-  { label: 'Quality', path: '/quality', module: 'quality' },
-  { label: 'Registry', path: '/registry', module: 'registry' },
-  { label: 'Referrals', path: '/referrals', module: 'referrals' },
-  { label: 'Forms', path: '/forms', module: 'forms' },
-  { label: 'Protocols', path: '/protocols', module: 'protocols' },
-  { label: 'Templates', path: '/templates', module: 'templates' },
-  { label: 'Preferences', path: '/preferences', module: 'preferences' },
-  { label: 'Help', path: '/help', module: 'help' },
-  { label: 'Telehealth', path: '/telehealth', module: 'telehealth' },
-  { label: 'Inventory', path: '/inventory', module: 'inventory' },
+  {
+    label: 'Reports',
+    path: '/reports',
+    module: 'reports',
+    dropdown: [
+      { label: 'All Reports', path: '/reports' },
+      { label: 'Appointments', path: '/reports?type=appointments' },
+      { label: 'Financial', path: '/reports?type=financial' },
+      { label: 'Clinical', path: '/reports?type=clinical' },
+      { label: 'Productivity', path: '/reports?type=productivity' },
+    ]
+  },
+  {
+    label: 'Quality',
+    path: '/quality',
+    module: 'quality',
+    dropdown: [
+      { label: 'Quality Dashboard', path: '/quality' },
+      { label: 'MIPS Measures', path: '/quality?tab=mips' },
+      { label: 'Performance', path: '/quality?tab=performance' },
+    ]
+  },
+  {
+    label: 'Registry',
+    path: '/registry',
+    module: 'registry',
+    dropdown: [
+      { label: 'Patient Registry', path: '/registry' },
+      { label: 'Disease Registries', path: '/registry?tab=disease' },
+      { label: 'Add Entry', path: '/registry?action=add' },
+    ]
+  },
+  {
+    label: 'Referrals',
+    path: '/referrals',
+    module: 'referrals',
+    dropdown: [
+      { label: 'All Referrals', path: '/referrals' },
+      { label: 'Incoming', path: '/referrals?tab=incoming' },
+      { label: 'Outgoing', path: '/referrals?tab=outgoing' },
+      { label: 'New Referral', path: '/referrals?action=new' },
+    ]
+  },
+  {
+    label: 'Forms',
+    path: '/forms',
+    module: 'forms',
+    dropdown: [
+      { label: 'All Forms', path: '/forms' },
+      { label: 'Consent Forms', path: '/forms?type=consent' },
+      { label: 'Intake Forms', path: '/forms?type=intake' },
+    ]
+  },
+  {
+    label: 'Protocols',
+    path: '/protocols',
+    module: 'protocols',
+    dropdown: [
+      { label: 'All Protocols', path: '/protocols' },
+      { label: 'Clinical Protocols', path: '/protocols?type=clinical' },
+      { label: 'Administrative', path: '/protocols?type=admin' },
+    ]
+  },
+  {
+    label: 'Templates',
+    path: '/templates',
+    module: 'templates',
+    dropdown: [
+      { label: 'All Templates', path: '/templates' },
+      { label: 'Note Templates', path: '/templates?type=notes' },
+      { label: 'Letter Templates', path: '/templates?type=letters' },
+      { label: 'Create New', path: '/templates?action=new' },
+    ]
+  },
+  {
+    label: 'Preferences',
+    path: '/preferences',
+    module: 'preferences',
+    dropdown: [
+      { label: 'User Settings', path: '/preferences' },
+      { label: 'Notifications', path: '/preferences?tab=notifications' },
+      { label: 'Display', path: '/preferences?tab=display' },
+    ]
+  },
+  {
+    label: 'Help',
+    path: '/help',
+    module: 'help',
+    dropdown: [
+      { label: 'Help Center', path: '/help' },
+      { label: 'Keyboard Shortcuts', path: '/help?section=shortcuts' },
+      { label: 'Documentation', path: '/help?section=docs' },
+      { label: 'Contact Support', path: '/help?section=support' },
+    ]
+  },
+  {
+    label: 'Telehealth',
+    path: '/telehealth',
+    module: 'telehealth',
+    dropdown: [
+      { label: 'Virtual Visits', path: '/telehealth' },
+      { label: 'Upcoming', path: '/telehealth?filter=upcoming' },
+      { label: 'Start Visit', path: '/telehealth?action=start' },
+    ]
+  },
+  {
+    label: 'Inventory',
+    path: '/inventory',
+    module: 'inventory',
+    dropdown: [
+      { label: 'All Items', path: '/inventory' },
+      { label: 'Low Stock', path: '/inventory?filter=low-stock' },
+      { label: 'Add Item', path: '/inventory?action=add' },
+      { label: 'Usage Report', path: '/inventory?tab=usage' },
+    ]
+  },
   {
     label: 'Financials',
     path: '/financials',
     module: 'financials',
     dropdown: [
+      { label: 'Overview', path: '/financials' },
       { label: 'Bills', path: '/financials?tab=bills' },
+      { label: 'Payments', path: '/financials?tab=payments' },
       { label: 'Claims', path: '/claims' },
       { label: 'Quotes', path: '/quotes' },
     ]
   },
-  { label: 'Claims', path: '/claims', module: 'claims' },
-  { label: 'Clearinghouse', path: '/clearinghouse', module: 'clearinghouse' },
-  { label: 'Fee Schedules', path: '/admin/fee-schedules', module: 'admin' },
-  { label: 'Quotes', path: '/quotes', module: 'quotes' },
-  { label: 'Audit Log', path: '/admin/audit-log', module: 'admin' },
-  { label: 'Admin', path: '/admin', module: 'admin' },
+  {
+    label: 'Claims',
+    path: '/claims',
+    module: 'claims',
+    dropdown: [
+      { label: 'All Claims', path: '/claims' },
+      { label: 'Pending', path: '/claims?status=pending' },
+      { label: 'Submitted', path: '/claims?status=submitted' },
+      { label: 'Denied', path: '/claims?status=denied' },
+    ]
+  },
+  {
+    label: 'Clearinghouse',
+    path: '/clearinghouse',
+    module: 'clearinghouse',
+    dropdown: [
+      { label: 'Dashboard', path: '/clearinghouse' },
+      { label: 'Submissions', path: '/clearinghouse?tab=submissions' },
+      { label: 'Responses', path: '/clearinghouse?tab=responses' },
+    ]
+  },
+  {
+    label: 'Fee Schedules',
+    path: '/admin/fee-schedules',
+    module: 'admin',
+    dropdown: [
+      { label: 'All Schedules', path: '/admin/fee-schedules' },
+      { label: 'Add Schedule', path: '/admin/fee-schedules?action=add' },
+    ]
+  },
+  {
+    label: 'Quotes',
+    path: '/quotes',
+    module: 'quotes',
+    dropdown: [
+      { label: 'All Quotes', path: '/quotes' },
+      { label: 'Create Quote', path: '/quotes?action=new' },
+      { label: 'Pending', path: '/quotes?status=pending' },
+    ]
+  },
+  {
+    label: 'Audit Log',
+    path: '/admin/audit-log',
+    module: 'admin',
+    dropdown: [
+      { label: 'All Activity', path: '/admin/audit-log' },
+      { label: 'Recent', path: '/admin/audit-log?filter=recent' },
+      { label: 'By User', path: '/admin/audit-log?filter=user' },
+    ]
+  },
+  {
+    label: 'Admin',
+    path: '/admin',
+    module: 'admin',
+    dropdown: [
+      { label: 'Admin Dashboard', path: '/admin' },
+      { label: 'Users', path: '/admin?tab=users' },
+      { label: 'Settings', path: '/admin?tab=settings' },
+      { label: 'Fee Schedules', path: '/admin/fee-schedules' },
+      { label: 'AI Agents', path: '/admin/ai-agents' },
+      { label: 'Audit Log', path: '/admin/audit-log' },
+    ]
+  },
 ];
 
 export function MainNav() {

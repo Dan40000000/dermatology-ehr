@@ -7295,7 +7295,10 @@ pre {
   padding: 0 0.5rem;
   min-height: 44px;
   overflow-x: auto;
+  overflow-y: visible;
   scrollbar-width: none;
+  position: relative;
+  z-index: 100;
 }
 
 .ema-nav::-webkit-scrollbar {
@@ -7307,6 +7310,11 @@ pre {
   position: relative;
   display: flex;
   align-items: stretch;
+  z-index: 101;
+}
+
+.ema-nav-item:hover {
+  z-index: 200;
 }
 
 .ema-nav-link {

@@ -234,6 +234,8 @@ body {
   background: var(--white);
   border-radius: var(--radius-xl);
   border: 1px solid var(--gray-200);
+  position: relative;
+  z-index: 1;
   box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
@@ -7294,11 +7296,10 @@ pre {
   color: #ffffff;
   padding: 0 0.5rem;
   min-height: 44px;
-  overflow-x: auto;
-  overflow-y: visible;
+  overflow: visible;
   scrollbar-width: none;
   position: relative;
-  z-index: 100;
+  z-index: 9999;
 }
 
 .ema-nav::-webkit-scrollbar {
@@ -7310,11 +7311,6 @@ pre {
   position: relative;
   display: flex;
   align-items: stretch;
-  z-index: 101;
-}
-
-.ema-nav-item:hover {
-  z-index: 200;
 }
 
 .ema-nav-link {
@@ -7420,11 +7416,11 @@ pre {
   position: absolute;
   top: 100%;
   left: 0;
-  min-width: 200px;
+  min-width: 220px;
   background: #ffffff;
   border-radius: 0 0 8px 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05);
-  z-index: 1000;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  z-index: 99999;
   padding: 0.5rem 0;
   animation: dropdownFadeIn 0.15s ease;
   margin-top: 0;

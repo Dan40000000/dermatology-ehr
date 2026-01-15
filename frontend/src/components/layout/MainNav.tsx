@@ -461,46 +461,18 @@ export function MainNav() {
   const { session, user } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
-  const [enterTimeout, setEnterTimeout] = useState<NodeJS.Timeout | null>(null);
-  const [leaveTimeout, setLeaveTimeout] = useState<NodeJS.Timeout | null>(null);
   const userRole = user?.role;
 
   // Filter nav items based on user role
   const filteredNavItems = navItems.filter(item => canAccessModule(userRole, item.module));
 
-  const handleMouseEnter = (itemPath: string, hasDropdown: boolean) => {
-    // Clear any pending leave timeout
-    if (leaveTimeout) {
-      clearTimeout(leaveTimeout);
-      setLeaveTimeout(null);
-    }
-
-    if (!hasDropdown) return;
-
-    // Clear any pending enter timeout
-    if (enterTimeout) {
-      clearTimeout(enterTimeout);
-    }
-
-    // Show dropdown after short delay (50ms for responsiveness)
-    const timeout = setTimeout(() => {
-      setHoveredItem(itemPath);
-    }, 50);
-    setEnterTimeout(timeout);
+  // Simple hover handlers - no timeouts needed since events are on the container
+  const handleMouseEnter = (itemPath: string) => {
+    setHoveredItem(itemPath);
   };
 
   const handleMouseLeave = () => {
-    // Clear any pending enter timeout
-    if (enterTimeout) {
-      clearTimeout(enterTimeout);
-      setEnterTimeout(null);
-    }
-
-    // Delay hiding dropdown so user can move to it
-    const timeout = setTimeout(() => {
-      setHoveredItem(null);
-    }, 150);
-    setLeaveTimeout(timeout);
+    setHoveredItem(null);
   };
 
   const loadUnreadCount = useCallback(async () => {
@@ -538,7 +510,7 @@ export function MainNav() {
           <div
             key={item.path}
             className="ema-nav-item"
-            onMouseEnter={() => handleMouseEnter(item.path, !!item.dropdown)}
+            onMouseEnter={() => item.dropdown && handleMouseEnter(item.path)}
             onMouseLeave={handleMouseLeave}
           >
             <NavLink

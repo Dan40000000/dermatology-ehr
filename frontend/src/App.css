@@ -7296,14 +7296,29 @@ pre {
   color: #ffffff;
   padding: 0 0.5rem;
   min-height: 44px;
-  overflow: visible;
-  scrollbar-width: none;
+  overflow-x: auto; /* Enable horizontal scrolling within the nav */
+  overflow-y: visible; /* Allow dropdowns to show */
+  scrollbar-width: thin; /* Show a thin scrollbar for usability */
+  scrollbar-color: rgba(255,255,255,0.3) transparent;
   position: relative;
   z-index: 9999;
 }
 
 .ema-nav::-webkit-scrollbar {
-  display: none;
+  height: 6px;
+}
+
+.ema-nav::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.1);
+}
+
+.ema-nav::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.3);
+  border-radius: 3px;
+}
+
+.ema-nav::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.5);
 }
 
 /* Nav item container for dropdown support */

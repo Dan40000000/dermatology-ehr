@@ -36,14 +36,8 @@ export function useAppointmentsByDate(date: Date) {
     queryKey: queryKeys.appointments.byDate(dateString),
     queryFn: async () => {
       if (!session) throw new Error('Not authenticated');
-      const result = await fetchAppointments(session.tenantId, session.accessToken);
-      const appointments = result.appointments || [];
-
-      // Filter by date
-      return appointments.filter((appt: any) => {
-        const apptDate = new Date(appt.scheduledStart).toISOString().split('T')[0];
-        return apptDate === dateString;
-      });
+      const result = await fetchAppointments(session.tenantId, session.accessToken, { date: dateString });
+      return result.appointments || [];
     },
     enabled: !!session,
   });

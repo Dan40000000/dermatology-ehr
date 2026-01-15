@@ -197,3 +197,53 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
     return res.status(500).json({ error: 'Failed to update patient' });
   }
 });
+
+// DELETE patient by ID (admin only)
+patientsRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    // First check if patient exists
+    const checkResult = await pool.query(
+      `SELECT id, first_name, last_name FROM patients WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    const patient = checkResult.rows[0];
+
+    // Delete related records first (due to foreign key constraints)
+    // Delete appointments
+    await pool.query(`DELETE FROM appointments WHERE patient_id = $1 AND tenant_id = $2`, [id, tenantId]);
+
+    // Delete encounters
+    await pool.query(`DELETE FROM encounters WHERE patient_id = $1 AND tenant_id = $2`, [id, tenantId]);
+
+    // Delete documents
+    await pool.query(`DELETE FROM documents WHERE patient_id = $1 AND tenant_id = $2`, [id, tenantId]);
+
+    // Delete photos
+    await pool.query(`DELETE FROM photos WHERE patient_id = $1 AND tenant_id = $2`, [id, tenantId]);
+
+    // Delete tasks
+    await pool.query(`DELETE FROM tasks WHERE patient_id = $1 AND tenant_id = $2`, [id, tenantId]);
+
+    // Delete messages
+    await pool.query(`DELETE FROM messages WHERE patient_id = $1 AND tenant_id = $2`, [id, tenantId]);
+
+    // Finally delete the patient
+    await pool.query(`DELETE FROM patients WHERE id = $1 AND tenant_id = $2`, [id, tenantId]);
+
+    return res.json({
+      success: true,
+      message: `Patient ${patient.first_name} ${patient.last_name} has been deleted`
+    });
+  } catch (error) {
+    console.error('Error deleting patient:', error);
+    return res.status(500).json({ error: 'Failed to delete patient' });
+  }
+});

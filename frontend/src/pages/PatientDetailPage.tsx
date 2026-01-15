@@ -17,6 +17,7 @@ import {
   fetchPhotos,
   fetchPrescriptionsEnhanced,
   fetchTasks,
+  deletePatient,
   API_BASE_URL,
   TENANT_HEADER_NAME,
 } from '../api';
@@ -28,7 +29,7 @@ export function PatientDetailPage() {
   const { patientId } = useParams<{ patientId: string }>();
   const navigate = useNavigate();
   const { session } = useAuth();
-  const { showError } = useToast();
+  const { showError, showSuccess } = useToast();
 
   const [loading, setLoading] = useState(true);
   const [patient, setPatient] = useState<Patient | null>(null);
@@ -49,6 +50,8 @@ export function PatientDetailPage() {
   const [editMedicationOpen, setEditMedicationOpen] = useState(false);
   const [editProblemOpen, setEditProblemOpen] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Mock lesions for demo
   const [lesions] = useState<Lesion[]>([
@@ -81,7 +84,7 @@ export function PatientDetailPage() {
       const [patientRes, encountersRes, appointmentsRes, documentsRes, photosRes, tasksRes] = await Promise.all([
         fetchPatient(session.tenantId, session.accessToken, patientId),
         fetchEncounters(session.tenantId, session.accessToken),
-        fetchAppointments(session.tenantId, session.accessToken, patientId),
+        fetchAppointments(session.tenantId, session.accessToken, { patientId }),
         fetchDocuments(session.tenantId, session.accessToken),
         fetchPhotos(session.tenantId, session.accessToken),
         fetchTasks(session.tenantId, session.accessToken),
@@ -144,6 +147,22 @@ export function PatientDetailPage() {
 
   const handleViewEncounter = (encounterId: string) => {
     navigate(`/patients/${patientId}/encounter/${encounterId}`);
+  };
+
+  const handleDeletePatient = async () => {
+    if (!session || !patientId || !patient) return;
+
+    setIsDeleting(true);
+    try {
+      await deletePatient(session.tenantId, session.accessToken, patientId);
+      showSuccess(`Patient ${patient.firstName} ${patient.lastName} has been deleted`);
+      setShowDeleteConfirm(false);
+      navigate('/patients');
+    } catch (error: any) {
+      showError(error.message || 'Failed to delete patient');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   if (loading) {
@@ -249,7 +268,53 @@ export function PatientDetailPage() {
           <span className="icon"></span>
           Refresh
         </button>
+        {session?.user?.role === 'admin' && (
+          <button
+            type="button"
+            className="ema-action-btn"
+            onClick={() => setShowDeleteConfirm(true)}
+            style={{ marginLeft: 'auto', color: '#dc2626' }}
+          >
+            <span className="icon">🗑</span>
+            Delete Patient
+          </button>
+        )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        title="Delete Patient"
+      >
+        <div style={{ padding: '1rem' }}>
+          <p style={{ marginBottom: '1rem', color: '#374151' }}>
+            Are you sure you want to delete <strong>{patient.firstName} {patient.lastName}</strong>?
+          </p>
+          <p style={{ marginBottom: '1.5rem', color: '#dc2626', fontSize: '0.875rem' }}>
+            This will permanently delete all associated records including appointments, encounters, documents, photos, and tasks. This action cannot be undone.
+          </p>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              className="ema-action-btn"
+              onClick={() => setShowDeleteConfirm(false)}
+              disabled={isDeleting}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="ema-action-btn"
+              onClick={handleDeletePatient}
+              disabled={isDeleting}
+              style={{ background: '#dc2626', color: 'white' }}
+            >
+              {isDeleting ? 'Deleting...' : 'Delete Patient'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Section Header */}
       <div className="ema-section-header">

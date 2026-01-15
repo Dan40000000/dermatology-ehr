@@ -314,23 +314,27 @@ patientPortalRouter.post(
         [sessionId, account.id, sessionToken, req.ip, req.get('user-agent'), expiresAt]
       );
 
-      // Log successful login
-      await pool.query(
-        `INSERT INTO audit_log (id, tenant_id, user_id, action, resource_type, resource_id, ip_address, user_agent, severity, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          crypto.randomUUID(),
-          tenantId,
-          account.id,
-          'patient_portal_login',
-          'patient_portal_account',
-          account.patient_id,
-          req.ip,
-          req.get('user-agent'),
-          'info',
-          'success'
-        ]
-      );
+      // Log successful login (non-blocking - don't fail login if audit fails)
+      try {
+        await pool.query(
+          `INSERT INTO audit_log (id, tenant_id, action, resource_type, resource_id, ip_address, user_agent, severity, status, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [
+            crypto.randomUUID(),
+            tenantId,
+            'patient_portal_login',
+            'patient_portal_account',
+            account.patient_id,
+            req.ip,
+            req.get('user-agent'),
+            'info',
+            'success',
+            JSON.stringify({ accountId: account.id, email: account.email })
+          ]
+        );
+      } catch (auditError) {
+        console.warn('Failed to log portal login audit:', auditError);
+      }
 
       return res.json({
         sessionToken,

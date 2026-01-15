@@ -114,8 +114,24 @@ export function SchedulePage() {
     if (!session) return;
     setLoading(true);
     try {
+      // Calculate date range: always start from today, end 60 days from selected date
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const selectedDate = new Date();
+      selectedDate.setDate(selectedDate.getDate() + dayOffset);
+      selectedDate.setHours(0, 0, 0, 0);
+
+      // Always start from today (hide past appointments), end 60 days from selected date
+      const endDate = new Date(selectedDate);
+      endDate.setDate(endDate.getDate() + 60);
+
+      const formatDate = (d: Date) => d.toISOString().split('T')[0];
+
       const [apptRes, provRes, locRes, typeRes, availRes, patRes, timeBlocksRes] = await Promise.all([
-        fetchAppointments(session.tenantId, session.accessToken),
+        fetchAppointments(session.tenantId, session.accessToken, {
+          startDate: formatDate(today),
+          endDate: formatDate(endDate),
+        }),
         fetchProviders(session.tenantId, session.accessToken),
         fetchLocations(session.tenantId, session.accessToken),
         fetchAppointmentTypes(session.tenantId, session.accessToken),
@@ -135,7 +151,7 @@ export function SchedulePage() {
     } finally {
       setLoading(false);
     }
-  }, [session, showError]);
+  }, [session, showError, dayOffset]);
 
   useEffect(() => {
     loadData();

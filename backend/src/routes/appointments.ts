@@ -46,6 +46,9 @@ export const appointmentsRouter = Router();
 appointmentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const patientId = req.query.patientId as string | undefined;
+  const date = req.query.date as string | undefined; // YYYY-MM-DD format
+  const startDate = req.query.startDate as string | undefined;
+  const endDate = req.query.endDate as string | undefined;
 
   let query = `select a.id,
             a.scheduled_start as "scheduledStart",
@@ -68,13 +71,35 @@ appointmentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
      where a.tenant_id = $1`;
 
   const params: any[] = [tenantId];
+  let paramIndex = 2;
 
   if (patientId) {
-    query += ` and a.patient_id = $2`;
+    query += ` and a.patient_id = $${paramIndex}`;
     params.push(patientId);
+    paramIndex++;
   }
 
-  query += ` order by a.scheduled_start asc limit 50`;
+  // Filter by specific date (returns appointments for that day)
+  if (date) {
+    query += ` and DATE(a.scheduled_start) = $${paramIndex}::date`;
+    params.push(date);
+    paramIndex++;
+  } else if (startDate && endDate) {
+    // Filter by date range
+    query += ` and DATE(a.scheduled_start) >= $${paramIndex}::date`;
+    params.push(startDate);
+    paramIndex++;
+    query += ` and DATE(a.scheduled_start) <= $${paramIndex}::date`;
+    params.push(endDate);
+    paramIndex++;
+  } else if (startDate) {
+    // Just start date - get everything from that date forward
+    query += ` and DATE(a.scheduled_start) >= $${paramIndex}::date`;
+    params.push(startDate);
+    paramIndex++;
+  }
+
+  query += ` order by a.scheduled_start asc limit 200`;
 
   const result = await pool.query(query, params);
   return res.json({ appointments: result.rows });

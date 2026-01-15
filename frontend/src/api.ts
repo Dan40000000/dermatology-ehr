@@ -80,10 +80,35 @@ export async function fetchPatient(tenantId: string, accessToken: string, patien
   return res.json();
 }
 
-export async function fetchAppointments(tenantId: string, accessToken: string, patientId?: string) {
-  const url = patientId
-    ? `${API_BASE}/api/appointments?patientId=${encodeURIComponent(patientId)}`
-    : `${API_BASE}/api/appointments`;
+export async function deletePatient(tenantId: string, accessToken: string, patientId: string) {
+  const res = await fetch(`${API_BASE}/api/patients/${patientId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to delete patient' }));
+    throw new Error(error.error || 'Failed to delete patient');
+  }
+  return res.json();
+}
+
+export async function fetchAppointments(
+  tenantId: string,
+  accessToken: string,
+  options?: { patientId?: string; date?: string; startDate?: string; endDate?: string }
+) {
+  const params = new URLSearchParams();
+  if (options?.patientId) params.append('patientId', options.patientId);
+  if (options?.date) params.append('date', options.date);
+  if (options?.startDate) params.append('startDate', options.startDate);
+  if (options?.endDate) params.append('endDate', options.endDate);
+
+  const queryString = params.toString();
+  const url = queryString ? `${API_BASE}/api/appointments?${queryString}` : `${API_BASE}/api/appointments`;
+
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${accessToken}`,

@@ -249,7 +249,7 @@ patientPortalDataRouter.get("/appointments", async (req: PatientPortalRequest, r
 
 /**
  * GET /api/patient-portal-data/visits
- * Get released visit summaries
+ * Get released visit summaries (patient-facing summaries from ambient notes)
  */
 patientPortalDataRouter.get("/visits", async (req: PatientPortalRequest, res) => {
   try {
@@ -257,19 +257,20 @@ patientPortalDataRouter.get("/visits", async (req: PatientPortalRequest, res) =>
     const tenantId = req.patient!.tenantId;
 
     const result = await pool.query(
-      `SELECT vs.id, vs.visit_date as "visitDate",
-              vs.chief_complaint as "chiefComplaint",
-              vs.diagnoses, vs.procedures, vs.medications,
-              vs.follow_up_instructions as "followUpInstructions",
-              vs.next_appointment_date as "nextAppointmentDate",
-              vs.released_at as "releasedAt",
-              pr.name as "providerName",
-              pr.specialty as "providerSpecialty"
+      `SELECT vs.id,
+              vs.visit_date as "visitDate",
+              vs.provider_name as "providerName",
+              vs.summary_text as "summaryText",
+              vs.symptoms_discussed as "symptomsDiscussed",
+              vs.diagnosis_shared as "diagnosisShared",
+              vs.treatment_plan as "treatmentPlan",
+              vs.next_steps as "nextSteps",
+              vs.follow_up_date as "followUpDate",
+              vs.shared_at as "sharedAt"
        FROM visit_summaries vs
-       JOIN providers pr ON vs.provider_id = pr.id
        WHERE vs.patient_id = $1
        AND vs.tenant_id = $2
-       AND vs.is_released = true
+       AND vs.shared_at IS NOT NULL
        ORDER BY vs.visit_date DESC
        LIMIT 50`,
       [patientId, tenantId]
@@ -278,6 +279,42 @@ patientPortalDataRouter.get("/visits", async (req: PatientPortalRequest, res) =>
     return res.json({ visits: result.rows });
   } catch (error) {
     console.error("Get visits error:", error);
+    return res.status(500).json({ error: "Failed to get visit summaries" });
+  }
+});
+
+/**
+ * GET /api/patient-portal-data/visit-summaries
+ * Alternative endpoint for visit summaries (same as /visits for clarity)
+ */
+patientPortalDataRouter.get("/visit-summaries", async (req: PatientPortalRequest, res) => {
+  try {
+    const patientId = req.patient!.patientId;
+    const tenantId = req.patient!.tenantId;
+
+    const result = await pool.query(
+      `SELECT vs.id,
+              vs.visit_date as "visitDate",
+              vs.provider_name as "providerName",
+              vs.summary_text as "summaryText",
+              vs.symptoms_discussed as "symptomsDiscussed",
+              vs.diagnosis_shared as "diagnosisShared",
+              vs.treatment_plan as "treatmentPlan",
+              vs.next_steps as "nextSteps",
+              vs.follow_up_date as "followUpDate",
+              vs.shared_at as "sharedAt"
+       FROM visit_summaries vs
+       WHERE vs.patient_id = $1
+       AND vs.tenant_id = $2
+       AND vs.shared_at IS NOT NULL
+       ORDER BY vs.visit_date DESC
+       LIMIT 50`,
+      [patientId, tenantId]
+    );
+
+    return res.json({ summaries: result.rows });
+  } catch (error) {
+    console.error("Get visit summaries error:", error);
     return res.status(500).json({ error: "Failed to get visit summaries" });
   }
 });

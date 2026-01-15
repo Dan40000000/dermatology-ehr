@@ -998,4 +998,273 @@ async function processNoteGeneration(
   }
 }
 
+// ============================================================================
+// PATIENT SUMMARY ENDPOINTS
+// ============================================================================
+
+/**
+ * POST /api/ambient/notes/:noteId/generate-patient-summary
+ * Generate and save a patient-friendly summary from an approved note
+ */
+router.post('/notes/:noteId/generate-patient-summary', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
+  try {
+    const noteId = req.params.noteId;
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+
+    // Get the note with patient and provider info
+    const noteResult = await pool.query(
+      `SELECT
+        n.*,
+        r.patient_id,
+        r.provider_id,
+        p.first_name || ' ' || p.last_name as patient_name,
+        pr.full_name as provider_name,
+        e.encounter_date
+      FROM ambient_generated_notes n
+      JOIN ambient_transcripts t ON t.id = n.transcript_id
+      JOIN ambient_recordings r ON r.id = t.recording_id
+      JOIN patients p ON p.id = r.patient_id
+      JOIN providers pr ON pr.id = r.provider_id
+      LEFT JOIN encounters e ON e.id = n.encounter_id
+      WHERE n.id = $1 AND n.tenant_id = $2`,
+      [noteId, tenantId]
+    );
+
+    if (noteResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    const note = noteResult.rows[0];
+
+    // Check if note is approved
+    if (note.review_status !== 'approved') {
+      return res.status(400).json({ error: 'Note must be approved before generating patient summary' });
+    }
+
+    // Generate patient-friendly summary
+    const visitDate = note.encounter_date || new Date();
+
+    // Extract symptoms from HPI
+    const symptomsDiscussed: string[] = [];
+    if (note.hpi) {
+      const hpiLower = note.hpi.toLowerCase();
+      if (hpiLower.includes('rash')) symptomsDiscussed.push('Rash');
+      if (hpiLower.includes('itch') || hpiLower.includes('pruritus')) symptomsDiscussed.push('Itching');
+      if (hpiLower.includes('pain')) symptomsDiscussed.push('Pain');
+      if (hpiLower.includes('swell')) symptomsDiscussed.push('Swelling');
+      if (hpiLower.includes('red') || hpiLower.includes('erythema')) symptomsDiscussed.push('Redness');
+    }
+
+    // Extract diagnosis from assessment
+    let diagnosisShared = '';
+    if (note.assessment) {
+      // Take first line or first diagnosis
+      const firstLine = note.assessment.split('\n')[0];
+      diagnosisShared = firstLine.replace(/^\d+\.\s*/, '').split('-')[0].trim();
+    }
+
+    // Generate patient-friendly summary text
+    const summaryText = generatePatientFriendlySummary(note);
+
+    // Extract treatment plan
+    let treatmentPlan = '';
+    if (note.plan) {
+      const planLines = note.plan.split('\n').filter(line => line.trim());
+      treatmentPlan = planLines.slice(0, 5).join('\n'); // Take first few lines
+    }
+
+    // Extract next steps and follow-up
+    let nextSteps = '';
+    let followUpDate = null;
+    if (note.follow_up_tasks && Array.isArray(note.follow_up_tasks)) {
+      const tasks = note.follow_up_tasks.map((t: any) => t.task).join('\n');
+      nextSteps = tasks;
+
+      // Extract follow-up date if available
+      const followUpTask = note.follow_up_tasks.find((t: any) => t.dueDate);
+      if (followUpTask) {
+        followUpDate = followUpTask.dueDate;
+      }
+    }
+
+    // Create visit summary record
+    const summaryId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO visit_summaries (
+        id, tenant_id, patient_id, encounter_id, ambient_note_id,
+        visit_date, provider_name, summary_text, symptoms_discussed,
+        diagnosis_shared, treatment_plan, next_steps, follow_up_date,
+        generated_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [
+        summaryId,
+        tenantId,
+        note.patient_id,
+        note.encounter_id || null,
+        noteId,
+        visitDate,
+        note.provider_name,
+        summaryText,
+        symptomsDiscussed,
+        diagnosisShared,
+        treatmentPlan,
+        nextSteps,
+        followUpDate,
+        userId
+      ]
+    );
+
+    await auditLog(tenantId, userId || null, 'patient_summary_generated', 'visit_summary', summaryId);
+
+    res.status(201).json({
+      summaryId,
+      message: 'Patient summary generated successfully'
+    });
+  } catch (error: any) {
+    console.error('Generate patient summary error:', error);
+    res.status(500).json({ error: 'Failed to generate patient summary' });
+  }
+});
+
+/**
+ * GET /api/ambient/patient-summaries/:patientId
+ * Get all summaries for a patient (provider view)
+ */
+router.get('/patient-summaries/:patientId', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const patientId = req.params.patientId;
+    const tenantId = req.user!.tenantId;
+
+    // Verify patient exists and belongs to tenant
+    const patientCheck = await pool.query(
+      'SELECT id FROM patients WHERE id = $1 AND tenant_id = $2',
+      [patientId, tenantId]
+    );
+
+    if (patientCheck.rowCount === 0) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    const result = await pool.query(
+      `SELECT
+        vs.id,
+        vs.visit_date as "visitDate",
+        vs.provider_name as "providerName",
+        vs.summary_text as "summaryText",
+        vs.symptoms_discussed as "symptomsDiscussed",
+        vs.diagnosis_shared as "diagnosisShared",
+        vs.treatment_plan as "treatmentPlan",
+        vs.next_steps as "nextSteps",
+        vs.follow_up_date as "followUpDate",
+        vs.shared_at as "sharedAt",
+        vs.created_at as "createdAt",
+        u.name as "generatedByName"
+      FROM visit_summaries vs
+      LEFT JOIN users u ON u.id = vs.generated_by
+      WHERE vs.patient_id = $1 AND vs.tenant_id = $2
+      ORDER BY vs.visit_date DESC`,
+      [patientId, tenantId]
+    );
+
+    res.json({ summaries: result.rows });
+  } catch (error: any) {
+    console.error('Get patient summaries error:', error);
+    res.status(500).json({ error: 'Failed to get patient summaries' });
+  }
+});
+
+/**
+ * POST /api/ambient/patient-summaries/:summaryId/share
+ * Share a summary with the patient (sets shared_at timestamp)
+ */
+router.post('/patient-summaries/:summaryId/share', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
+  try {
+    const summaryId = req.params.summaryId;
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+
+    const result = await pool.query(
+      `UPDATE visit_summaries
+       SET shared_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND tenant_id = $2
+       RETURNING id`,
+      [summaryId, tenantId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Summary not found' });
+    }
+
+    await auditLog(tenantId, userId || null, 'patient_summary_shared', 'visit_summary', summaryId);
+
+    res.json({ success: true, message: 'Summary shared with patient' });
+  } catch (error: any) {
+    console.error('Share patient summary error:', error);
+    res.status(500).json({ error: 'Failed to share patient summary' });
+  }
+});
+
+/**
+ * Helper function to generate patient-friendly summary
+ */
+function generatePatientFriendlySummary(note: any): string {
+  const sections: string[] = [];
+
+  // Introduction
+  sections.push('Visit Summary');
+  sections.push('');
+
+  // What was discussed
+  if (note.chief_complaint) {
+    sections.push('What We Discussed:');
+    sections.push(simplifyMedicalText(note.chief_complaint));
+    sections.push('');
+  }
+
+  // What we found
+  if (note.physical_exam) {
+    sections.push('What We Found:');
+    sections.push(simplifyMedicalText(note.physical_exam));
+    sections.push('');
+  }
+
+  // What it means
+  if (note.assessment) {
+    sections.push('What It Means:');
+    sections.push(simplifyMedicalText(note.assessment));
+    sections.push('');
+  }
+
+  // What to do
+  if (note.plan) {
+    sections.push('What To Do:');
+    sections.push(simplifyMedicalText(note.plan));
+    sections.push('');
+  }
+
+  return sections.join('\n');
+}
+
+/**
+ * Helper function to simplify medical terminology for patients
+ */
+function simplifyMedicalText(text: string): string {
+  // Remove medical jargon and simplify
+  let simplified = text
+    .replace(/\berythematous\b/gi, 'red')
+    .replace(/\bpruritic\b/gi, 'itchy')
+    .replace(/\bbilateral\b/gi, 'both sides')
+    .replace(/\bvesicular\b/gi, 'blistered')
+    .replace(/\bpapular\b/gi, 'bumpy')
+    .replace(/\bmacular\b/gi, 'flat')
+    .replace(/\bhpi\b/gi, 'history')
+    .replace(/\bBID\b/g, 'twice daily')
+    .replace(/\bTID\b/g, 'three times daily')
+    .replace(/\bQHS\b/g, 'at bedtime')
+    .replace(/\bPO\b/g, 'by mouth');
+
+  return simplified;
+}
+
 export default router;

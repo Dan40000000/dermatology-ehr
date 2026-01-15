@@ -4694,6 +4694,18 @@ export interface AmbientGeneratedNote {
   mentionedMedications: Array<{ name: string; dosage: string; frequency: string; confidence: number }>;
   mentionedAllergies: Array<{ allergen: string; reaction: string; confidence: number }>;
   followUpTasks: Array<{ task: string; priority: string; dueDate?: string; confidence: number }>;
+  differentialDiagnoses?: Array<{
+    condition: string;
+    confidence: number;
+    reasoning: string;
+    icd10Code: string;
+  }>;
+  recommendedTests?: Array<{
+    testName: string;
+    rationale: string;
+    urgency: 'routine' | 'soon' | 'urgent';
+    cptCode?: string;
+  }>;
   overallConfidence: number;
   sectionConfidence: any;
   reviewStatus: 'pending' | 'in_review' | 'approved' | 'rejected' | 'regenerating';

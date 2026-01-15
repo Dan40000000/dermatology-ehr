@@ -7,6 +7,19 @@ import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { LoginPage } from '../pages/LoginPage';
 import { HomePage } from '../pages/HomePage';
 
+// Patient Portal pages
+import { PatientPortalAuthProvider } from '../contexts/PatientPortalAuthContext';
+import {
+  PortalLoginPage,
+  PortalRegisterPage,
+  PortalDashboardPage,
+  PortalAppointmentsPage,
+  PortalVisitSummariesPage,
+  PortalDocumentsPage,
+  PortalHealthRecordPage,
+  PortalProfilePage,
+} from '../pages/patient-portal';
+
 // Lazy load all other pages for better performance
 const SchedulePage = lazy(() => import('../pages/SchedulePage').then(m => ({ default: m.SchedulePage })));
 const PatientsPage = lazy(() => import('../pages/PatientsPage').then(m => ({ default: m.PatientsPage })));
@@ -85,6 +98,28 @@ export const router = createBrowserRouter([
   {
     path: '/login',
     element: <LoginPage />,
+  },
+  // Patient Portal Routes
+  {
+    path: '/portal',
+    element: (
+      <PatientPortalAuthProvider>
+        <Suspense fallback={<PageLoader />}>
+          <div />
+        </Suspense>
+      </PatientPortalAuthProvider>
+    ),
+    children: [
+      { path: 'login', element: <PortalLoginPage /> },
+      { path: 'register', element: <PortalRegisterPage /> },
+      { path: 'dashboard', element: <PortalDashboardPage /> },
+      { path: 'appointments', element: <PortalAppointmentsPage /> },
+      { path: 'visits', element: <PortalVisitSummariesPage /> },
+      { path: 'documents', element: <PortalDocumentsPage /> },
+      { path: 'health-record', element: <PortalHealthRecordPage /> },
+      { path: 'profile', element: <PortalProfilePage /> },
+      { index: true, element: <Navigate to="/portal/login" replace /> },
+    ],
   },
   {
     path: '/',

@@ -98,6 +98,28 @@ export interface TranscriptionResult {
   duration: number;
 }
 
+export interface DifferentialDiagnosis {
+  condition: string;
+  confidence: number;
+  reasoning: string;
+  icd10Code: string;
+}
+
+export interface RecommendedTest {
+  testName: string;
+  rationale: string;
+  urgency: 'routine' | 'soon' | 'urgent';
+  cptCode?: string;
+}
+
+export interface PatientSummary {
+  whatWeDiscussed: string;
+  yourConcerns: string[];
+  diagnosis?: string;
+  treatmentPlan: string;
+  followUp: string;
+}
+
 export interface ClinicalNote {
   chiefComplaint: string;
   hpi: string;
@@ -114,6 +136,9 @@ export interface ClinicalNote {
     assessment: number;
     plan: number;
   };
+  differentialDiagnoses: DifferentialDiagnosis[];
+  recommendedTests: RecommendedTest[];
+  patientSummary: PatientSummary;
 }
 
 export interface ExtractedData {
@@ -636,6 +661,29 @@ Please generate a structured clinical note in the following JSON format:
     "physicalExam": 0.92,
     "assessment": 0.88,
     "plan": 0.90
+  },
+  "differentialDiagnoses": [
+    {
+      "condition": "Name of condition",
+      "confidence": 0.0-1.0,
+      "reasoning": "Brief clinical reasoning for this diagnosis",
+      "icd10Code": "Suggested ICD-10 code"
+    }
+  ],
+  "recommendedTests": [
+    {
+      "testName": "Name of test/procedure",
+      "rationale": "Why recommended based on conversation",
+      "urgency": "routine" | "soon" | "urgent",
+      "cptCode": "Suggested CPT code if applicable"
+    }
+  ],
+  "patientSummary": {
+    "whatWeDiscussed": "Simple description of what was discussed during the visit",
+    "yourConcerns": ["List of symptoms/concerns the patient mentioned"],
+    "diagnosis": "Patient-friendly explanation of the diagnosis (if diagnosis made)",
+    "treatmentPlan": "What to do next in simple, patient-friendly terms",
+    "followUp": "When to return for follow-up"
   }
 }
 
@@ -648,6 +696,25 @@ REQUIREMENTS:
 - Create follow-up tasks based on provider instructions
 - Provide confidence scores for each section
 - Be thorough but concise
+
+DIFFERENTIAL_DIAGNOSES (array of 2-5 possible conditions):
+- Rank by confidence level based on clinical presentation
+- Provide clear clinical reasoning for each differential
+- Include appropriate ICD-10 codes for billing consideration
+- Consider common dermatologic conditions and mimickers
+
+RECOMMENDED_TESTS (array of relevant tests):
+- Base recommendations on clinical findings and differentials
+- Specify urgency level appropriate to presentation
+- Include CPT codes where applicable for billing
+- Consider cost-effectiveness and clinical necessity
+
+PATIENT_SUMMARY (patient-friendly language):
+- Use simple, non-technical terms a patient can understand
+- Clearly list what the patient told you about their symptoms
+- Explain the diagnosis in plain language if one was made
+- Provide actionable treatment steps in everyday language
+- Clearly state when they need to come back
 
 Return ONLY the JSON object, no additional text.`;
 }
@@ -732,7 +799,16 @@ function buildConfigurablePrompt(
     suggestedCpt: [{ code: '99213', description: 'E/M code', confidence: 0.90 }],
     medications: [{ name: 'Medication', dosage: 'Dosage', frequency: 'Frequency', confidence: 0.90 }],
     allergies: [{ allergen: 'Allergen', reaction: 'Reaction', confidence: 0.90 }],
-    followUpTasks: [{ task: 'Task', priority: 'medium', dueDate: '2024-01-01', confidence: 0.90 }]
+    followUpTasks: [{ task: 'Task', priority: 'medium', dueDate: '2024-01-01', confidence: 0.90 }],
+    differentialDiagnoses: [{ condition: 'Condition', confidence: 0.90, reasoning: 'Reasoning', icd10Code: 'X00.0' }],
+    recommendedTests: [{ testName: 'Test', rationale: 'Rationale', urgency: 'routine', cptCode: '00000' }],
+    patientSummary: {
+      whatWeDiscussed: 'Discussion summary',
+      yourConcerns: ['Concern 1'],
+      diagnosis: 'Diagnosis explanation',
+      treatmentPlan: 'Treatment plan',
+      followUp: 'Follow-up timing'
+    }
   };
 
   // Append additional context
@@ -807,7 +883,15 @@ function parseAIGeneratedNote(
       suggestedCpt: parsed.suggestedCpt || [],
       medications: parsed.medications || [],
       allergies: parsed.allergies || [],
-      followUpTasks: parsed.followUpTasks || []
+      followUpTasks: parsed.followUpTasks || [],
+      differentialDiagnoses: parsed.differentialDiagnoses || [],
+      recommendedTests: parsed.recommendedTests || [],
+      patientSummary: parsed.patientSummary || {
+        whatWeDiscussed: '',
+        yourConcerns: [],
+        treatmentPlan: '',
+        followUp: ''
+      }
     };
 
     // If agent config has custom sections, include those as well
@@ -924,7 +1008,10 @@ function mockGenerateClinicalNoteSync(segments: TranscriptionSegment[]): Clinica
       physicalExam: 0.90,
       assessment: 0.87,
       plan: 0.91
-    }
+    },
+    differentialDiagnoses: generateDifferentialDiagnoses(transcriptText),
+    recommendedTests: generateRecommendedTests(transcriptText),
+    patientSummary: generatePatientSummary(patientStatements, doctorStatements)
   };
 
   // Extract structured data
@@ -1117,6 +1204,147 @@ function extractFollowUpTasks(doctorStatements: string[]): Array<{ task: string;
   }
 
   return tasks;
+}
+
+function generateDifferentialDiagnoses(transcript: string): DifferentialDiagnosis[] {
+  const text = transcript.toLowerCase();
+  const differentials: DifferentialDiagnosis[] = [];
+
+  // Primary diagnosis based on conversation context
+  if (text.includes('contact dermatitis') || text.includes('detergent') || text.includes('new laundry')) {
+    differentials.push({
+      condition: 'Allergic contact dermatitis',
+      confidence: 0.92,
+      reasoning: 'Symmetric erythematous rash on bilateral forearms with temporal relationship to new laundry detergent exposure. Classic presentation of Type IV hypersensitivity reaction.',
+      icd10Code: 'L23.9'
+    });
+
+    // Secondary differentials
+    differentials.push({
+      condition: 'Irritant contact dermatitis',
+      confidence: 0.75,
+      reasoning: 'Similar presentation to allergic contact dermatitis but typically less pruritic. Could be chemical irritation rather than true allergy.',
+      icd10Code: 'L24.9'
+    });
+
+    differentials.push({
+      condition: 'Atopic dermatitis exacerbation',
+      confidence: 0.65,
+      reasoning: 'Pruritic eczematous rash with stress as aggravating factor. However, acute onset and clear trigger favor contact dermatitis.',
+      icd10Code: 'L20.9'
+    });
+
+    differentials.push({
+      condition: 'Dermatophytosis (tinea corporis)',
+      confidence: 0.45,
+      reasoning: 'Less likely given bilateral symmetric presentation and clear exposure history. Fungal infection would typically have raised borders and central clearing.',
+      icd10Code: 'B35.4'
+    });
+  } else if (text.includes('rash')) {
+    // Generic rash differentials
+    differentials.push({
+      condition: 'Contact dermatitis, unspecified',
+      confidence: 0.85,
+      reasoning: 'Pruritic rash presentation consistent with inflammatory dermatitis.',
+      icd10Code: 'L25.9'
+    });
+
+    differentials.push({
+      condition: 'Dermatitis, unspecified',
+      confidence: 0.75,
+      reasoning: 'Non-specific inflammatory skin condition requiring further evaluation.',
+      icd10Code: 'L30.9'
+    });
+
+    differentials.push({
+      condition: 'Pruritus, unspecified',
+      confidence: 0.70,
+      reasoning: 'Primary symptom is itching with visible skin changes.',
+      icd10Code: 'L29.9'
+    });
+  }
+
+  return differentials;
+}
+
+function generateRecommendedTests(transcript: string): RecommendedTest[] {
+  const text = transcript.toLowerCase();
+  const tests: RecommendedTest[] = [];
+
+  if (text.includes('contact dermatitis') || text.includes('rash')) {
+    // For contact dermatitis case
+    if (text.includes('recurrent') || text.includes('patch test')) {
+      tests.push({
+        testName: 'Patch testing (TRUE Test or expanded panel)',
+        rationale: 'Comprehensive allergen identification for recurrent or persistent contact dermatitis. Helps identify specific allergens beyond suspected detergent.',
+        urgency: 'routine',
+        cptCode: '95044'
+      });
+    }
+
+    // Consider if not improving
+    if (text.includes('not better') || text.includes('worse') || text.includes('spreading')) {
+      tests.push({
+        testName: 'Skin biopsy with histopathology',
+        rationale: 'Rule out other inflammatory conditions if rash does not respond to standard treatment or has atypical features.',
+        urgency: 'soon',
+        cptCode: '11100'
+      });
+
+      tests.push({
+        testName: 'Potassium hydroxide (KOH) preparation',
+        rationale: 'Rule out superficial fungal infection if clinical response to corticosteroids is poor.',
+        urgency: 'soon',
+        cptCode: '87220'
+      });
+    }
+
+    // Baseline assessment
+    tests.push({
+      testName: 'Photography for medical record',
+      rationale: 'Document baseline appearance for comparison at follow-up visit to assess treatment response.',
+      urgency: 'routine',
+      cptCode: '96904'
+    });
+  }
+
+  // Add routine tests if indicated by other conversation elements
+  if (text.includes('infection') || text.includes('fever')) {
+    tests.push({
+      testName: 'Bacterial culture and sensitivity',
+      rationale: 'Rule out secondary bacterial infection if signs of impetiginization are present.',
+      urgency: 'soon',
+      cptCode: '87070'
+    });
+  }
+
+  return tests;
+}
+
+function generatePatientSummary(patientStatements: string[], doctorStatements: string[]): PatientSummary {
+  // Extract patient concerns
+  const concerns: string[] = [];
+  const patientText = patientStatements.join(' ').toLowerCase();
+
+  if (patientText.includes('rash')) concerns.push('Rash on both arms');
+  if (patientText.includes('itchy') || patientText.includes('itch')) concerns.push('Severe itching');
+  if (patientText.includes('worse at night')) concerns.push('Symptoms getting worse at night');
+  if (patientText.includes('scaly') || patientText.includes('red')) concerns.push('Red, scaly appearance of skin');
+
+  // Ensure at least one concern
+  if (concerns.length === 0) {
+    concerns.push('Skin problem on arms');
+  }
+
+  const summary: PatientSummary = {
+    whatWeDiscussed: 'We talked about the rash on your arms that started about 2 weeks ago. You mentioned it began after using a new laundry detergent and has been very itchy, especially at night.',
+    yourConcerns: concerns,
+    diagnosis: 'You have allergic contact dermatitis, which is an allergic skin reaction to something that touched your skin. In your case, it appears to be caused by the new laundry detergent you started using. This is a common condition and should improve once you stop using the product that caused it.',
+    treatmentPlan: 'Stop using the new laundry detergent right away and go back to your old one. I prescribed a prescription-strength steroid cream (triamcinolone) to apply twice daily to the rash for 2 weeks, and an allergy pill (cetirizine) to take at bedtime to help with itching. Use gentle soaps, take warm (not hot) showers, and apply a fragrance-free moisturizer twice daily. Try not to scratch the rash even though it itches.',
+    followUp: 'Come back to see me in 3 weeks so we can check how the rash is healing. If the rash isn\'t better in 1 week or if it gets worse, call the office right away.'
+  };
+
+  return summary;
 }
 
 /**

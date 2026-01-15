@@ -308,6 +308,106 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
               );
             })}
 
+            {/* Differential Diagnoses Section */}
+            {note.differentialDiagnoses && note.differentialDiagnoses.length > 0 && (
+              <div className="border border-purple-200 rounded-lg overflow-hidden mt-6">
+                <div className="px-4 py-3 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-200">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-gray-900 flex items-center">
+                      <span className="mr-2">🔬</span>
+                      Differential Diagnoses (AI Recommendations)
+                    </h3>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1 italic">
+                    For provider reference only - not shared with patient
+                  </p>
+                </div>
+                <div className="p-4 bg-white space-y-3">
+                  {note.differentialDiagnoses.map((diagnosis, idx) => {
+                    const confidencePercent = diagnosis.confidence * 100;
+                    const confidenceColorClass =
+                      confidencePercent > 80 ? 'bg-green-500' :
+                      confidencePercent >= 50 ? 'bg-yellow-500' :
+                      'bg-red-500';
+
+                    return (
+                      <div key={idx} className="border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start mb-2">
+                          <h4 className="font-bold text-gray-900">{diagnosis.condition}</h4>
+                          <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded">
+                            {diagnosis.icd10Code}
+                          </span>
+                        </div>
+
+                        {/* Confidence Bar */}
+                        <div className="mb-2">
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="text-xs font-medium text-gray-600">Confidence</span>
+                            <span className="text-xs font-bold text-gray-900">{confidencePercent.toFixed(0)}%</span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div
+                              className={`h-2 rounded-full ${confidenceColorClass}`}
+                              style={{ width: `${confidencePercent}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        <p className="text-sm text-gray-700">{diagnosis.reasoning}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Recommended Tests Section */}
+            {note.recommendedTests && note.recommendedTests.length > 0 && (
+              <div className="border border-purple-200 rounded-lg overflow-hidden mt-6">
+                <div className="px-4 py-3 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-200">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-gray-900 flex items-center">
+                      <span className="mr-2">🧪</span>
+                      Recommended Tests
+                    </h3>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1 italic">
+                    For provider reference only - not shared with patient
+                  </p>
+                </div>
+                <div className="p-4 bg-white space-y-3">
+                  {note.recommendedTests.map((test, idx) => {
+                    const urgencyConfig = {
+                      routine: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Routine' },
+                      soon: { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Soon' },
+                      urgent: { bg: 'bg-red-100', text: 'text-red-700', label: 'Urgent' }
+                    };
+                    const config = urgencyConfig[test.urgency];
+
+                    return (
+                      <div key={idx} className="border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start mb-2">
+                          <h4 className="font-bold text-gray-900">{test.testName}</h4>
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-1 ${config.bg} ${config.text} text-xs font-medium rounded`}>
+                              {config.label}
+                            </span>
+                            {test.cptCode && (
+                              <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded">
+                                {test.cptCode}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <p className="text-sm text-gray-700">{test.rationale}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Action Buttons */}
             {note.reviewStatus === 'pending' && (
               <div className="flex space-x-3 pt-4 border-t">

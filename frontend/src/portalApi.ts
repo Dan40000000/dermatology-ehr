@@ -689,3 +689,36 @@ export async function uploadPortalInsuranceCard(
   if (!res.ok) throw new Error('Failed to upload insurance card');
   return res.json();
 }
+
+// ============================================================================
+// PORTAL VISIT SUMMARIES
+// ============================================================================
+
+export interface VisitSummary {
+  id: string;
+  visitDate: string;
+  providerName: string;
+  summaryText: string;
+  symptomsDiscussed: string[];
+  diagnosisShared?: string;
+  treatmentPlan?: string;
+  nextSteps?: string;
+  followUpDate?: string;
+  createdAt: string;
+}
+
+// Get visit summaries for the patient
+export async function fetchPortalVisitSummaries(
+  tenantId: string,
+  portalToken: string
+): Promise<{ summaries: VisitSummary[] }> {
+  const res = await fetch(`${API_BASE}/api/patient-portal/visit-summaries`, {
+    headers: {
+      Authorization: `Bearer ${portalToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch visit summaries');
+  return res.json();
+}

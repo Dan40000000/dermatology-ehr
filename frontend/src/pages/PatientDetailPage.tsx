@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
 import { PatientBanner, BodyMap } from '../components/clinical';
+import { QuickRecordButton } from '../components/QuickRecordButton';
 import { ClinicalTrendsTab } from '../components/clinical/ClinicalTrendsTab';
 import type { Lesion } from '../components/clinical';
 import { TasksTab } from '../components/patient';
@@ -203,6 +204,24 @@ export function PatientDetailPage() {
         patient={patient}
         onStartEncounter={handleStartEncounter}
       />
+
+      {/* Quick Record Button for AI Scribe */}
+      <div style={{ padding: '16px 24px', background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', borderBottom: '1px solid #bbf7d0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', maxWidth: '1200px', margin: '0 auto' }}>
+          <QuickRecordButton
+            patientId={patient.id}
+            patientName={`${patient.firstName} ${patient.lastName}`}
+            onRecordingComplete={(recordingId) => {
+              console.log('Recording complete:', recordingId);
+              // Navigate to review the generated note
+              navigate(`/ambient-scribe?recording=${recordingId}`);
+            }}
+          />
+          <div style={{ fontSize: '14px', color: '#166534' }}>
+            <strong>AI Scribe:</strong> Click to start recording your appointment. The AI will transcribe and generate clinical notes.
+          </div>
+        </div>
+      </div>
 
       {/* Action Bar */}
       <div className="ema-action-bar">

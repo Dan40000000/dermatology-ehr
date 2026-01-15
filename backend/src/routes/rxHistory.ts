@@ -365,7 +365,7 @@ rxHistoryRouter.delete(
         [id, tenantId]
       );
 
-      if (result.rows.length === 0) {
+      if (result.rowCount === 0) {
         return res.status(404).json({ error: 'Rx history record not found' });
       }
 

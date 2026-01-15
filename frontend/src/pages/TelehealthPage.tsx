@@ -4,12 +4,14 @@ import {
   createTelehealthSession,
   fetchTelehealthSessions,
   fetchTelehealthSession,
+  fetchTelehealthStats,
   updateSessionStatus,
   fetchWaitingRoom,
   callPatientFromWaitingRoom,
   fetchProviders,
   fetchPatients,
   type TelehealthSession,
+  type TelehealthStats,
   type WaitingRoomEntry,
 } from '../api';
 import { Button } from '../components/ui/Button';
@@ -19,6 +21,8 @@ import { DataTable } from '../components/ui/DataTable';
 import VideoRoom from '../components/telehealth/VideoRoom';
 import VirtualWaitingRoom from '../components/telehealth/VirtualWaitingRoom';
 import TelehealthNotes from '../components/telehealth/TelehealthNotes';
+import TelehealthStatsCards from '../components/telehealth/TelehealthStatsCards';
+import TelehealthFilters, { type FilterValues, DERMATOLOGY_REASONS } from '../components/telehealth/TelehealthFilters';
 import '../styles/telehealth.css';
 
 type ViewMode = 'list' | 'waiting-room' | 'video' | 'notes';
@@ -31,6 +35,7 @@ const TelehealthPage: React.FC = () => {
 
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [sessions, setSessions] = useState<TelehealthSession[]>([]);
+  const [filteredSessions, setFilteredSessions] = useState<TelehealthSession[]>([]);
   const [waitingRoom, setWaitingRoom] = useState<WaitingRoomEntry[]>([]);
   const [currentSession, setCurrentSession] = useState<TelehealthSession | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,12 +43,34 @@ const TelehealthPage: React.FC = () => {
   const [showLicenseWarning, setShowLicenseWarning] = useState(false);
   const [licenseWarningMessage, setLicenseWarningMessage] = useState('');
 
+  // Stats
+  const [stats, setStats] = useState<TelehealthStats>({
+    myInProgress: 0,
+    myCompleted: 0,
+    myUnreadMessages: 0,
+    unassignedCases: 0,
+  });
+  const [activeStatsFilter, setActiveStatsFilter] = useState<string | null>(null);
+
+  // Filters
+  const [filters, setFilters] = useState<FilterValues>({
+    datePreset: 'alltime',
+    startDate: '',
+    endDate: '',
+    status: '',
+    assignedTo: '',
+    physician: '',
+    reason: '',
+    myUnreadOnly: false,
+  });
+
   // New session form
   const [newSessionForm, setNewSessionForm] = useState({
     patientId: '',
     providerId: user?.id || '',
     patientState: '',
     recordingConsent: false,
+    reason: '',
   });
 
   const [providers, setProviders] = useState<any[]>([]);
@@ -61,24 +88,72 @@ const TelehealthPage: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    // Load data when filters change
+    loadData();
+  }, [filters]);
+
+  useEffect(() => {
+    // Apply filtering logic
+    applyFilters();
+  }, [sessions, activeStatsFilter]);
+
   const loadData = async () => {
     if (!tenantId || !accessToken) {
       setLoading(false);
       return;
     }
     try {
-      const [sessionsData, waitingRoomData] = await Promise.all([
-        fetchTelehealthSessions(tenantId, accessToken),
+      const filterParams: any = {};
+      if (filters.startDate) filterParams.startDate = filters.startDate;
+      if (filters.endDate) filterParams.endDate = filters.endDate;
+      if (filters.status) filterParams.status = filters.status;
+      if (filters.assignedTo) filterParams.assignedTo = filters.assignedTo;
+      if (filters.physician) filterParams.physicianId = filters.physician;
+      if (filters.reason) filterParams.reason = filters.reason;
+      if (filters.myUnreadOnly) filterParams.myUnreadOnly = true;
+
+      const [sessionsData, waitingRoomData, statsData] = await Promise.all([
+        fetchTelehealthSessions(tenantId, accessToken, filterParams),
         fetchWaitingRoom(tenantId, accessToken),
+        fetchTelehealthStats(tenantId, accessToken, {
+          startDate: filters.startDate,
+          endDate: filters.endDate,
+        }),
       ]);
 
       setSessions(sessionsData);
       setWaitingRoom(waitingRoomData);
+      setStats(statsData);
       setLoading(false);
     } catch (error) {
       console.error('Failed to load telehealth data:', error);
       setLoading(false);
     }
+  };
+
+  const applyFilters = () => {
+    let filtered = [...sessions];
+
+    // Apply stats card filter
+    if (activeStatsFilter) {
+      switch (activeStatsFilter) {
+        case 'in_progress':
+          filtered = filtered.filter((s) => s.status === 'in_progress');
+          break;
+        case 'completed':
+          filtered = filtered.filter((s) => s.status === 'completed');
+          break;
+        case 'unread':
+          // Filter for unread messages when implemented
+          break;
+        case 'unassigned':
+          filtered = filtered.filter((s) => !s.assigned_to || s.assigned_to === null);
+          break;
+      }
+    }
+
+    setFilteredSessions(filtered);
   };
 
   const loadProvidersAndPatients = async () => {
@@ -106,6 +181,7 @@ const TelehealthPage: React.FC = () => {
         providerId: parseInt(newSessionForm.providerId),
         patientState: newSessionForm.patientState,
         recordingConsent: newSessionForm.recordingConsent,
+        reason: newSessionForm.reason || undefined,
       });
 
       setSessions([sessionData, ...sessions]);
@@ -115,6 +191,7 @@ const TelehealthPage: React.FC = () => {
         providerId: user?.id || '',
         patientState: '',
         recordingConsent: false,
+        reason: '',
       });
 
       alert('Telehealth session created successfully! Send the session link to the patient.');
@@ -129,6 +206,19 @@ const TelehealthPage: React.FC = () => {
         alert('Failed to create session: ' + error.message);
       }
     }
+  };
+
+  const handleStatsCardClick = (filterId: string) => {
+    if (activeStatsFilter === filterId) {
+      setActiveStatsFilter(null);
+    } else {
+      setActiveStatsFilter(filterId);
+    }
+  };
+
+  const handleFiltersChange = (newFilters: FilterValues) => {
+    setFilters(newFilters);
+    setActiveStatsFilter(null); // Clear stats filter when using manual filters
   };
 
   const handleJoinSession = async (teleSession: TelehealthSession) => {
@@ -254,31 +344,14 @@ const TelehealthPage: React.FC = () => {
       </div>
 
       {/* Current Telehealth Stats */}
-      <div className="telehealth-stats-section">
-        <h2>Current Telehealth Stats</h2>
-        <div className="telehealth-stats">
-          <div className="telehealth-stat-card in-progress">
-            <div className="stat-value">
-              {sessions.filter(s => s.status === 'in_progress').length}
-            </div>
-            <div className="stat-label">My cases in progress</div>
-          </div>
-          <div className="telehealth-stat-card completed">
-            <div className="stat-value">
-              {sessions.filter(s => s.status === 'completed').length}
-            </div>
-            <div className="stat-label">My completed cases</div>
-          </div>
-          <div className="telehealth-stat-card unread">
-            <div className="stat-value">0</div>
-            <div className="stat-label">My unread messages</div>
-          </div>
-          <div className="telehealth-stat-card unassigned">
-            <div className="stat-value">0</div>
-            <div className="stat-label">Unassigned Cases</div>
-          </div>
-        </div>
-      </div>
+      <TelehealthStatsCards
+        stats={stats}
+        onCardClick={handleStatsCardClick}
+        activeFilter={activeStatsFilter}
+      />
+
+      {/* Filters */}
+      <TelehealthFilters filters={filters} onChange={handleFiltersChange} providers={providers} />
 
       {/* Waiting Room Queue */}
       {waitingRoom.length > 0 && (
@@ -326,16 +399,26 @@ const TelehealthPage: React.FC = () => {
                 `${row.patient_first_name} ${row.patient_last_name}`,
             },
             {
+              key: 'reason',
+              label: 'Reason',
+              render: (row: TelehealthSession) => row.reason || '-',
+            },
+            {
               key: 'provider',
-              label: 'Provider',
-              render: (row: TelehealthSession) => row.provider_name || 'Unknown',
+              label: 'Physician',
+              render: (row: TelehealthSession) => row.physician_name || row.provider_name || 'Unknown',
+            },
+            {
+              key: 'assigned',
+              label: 'Assigned To',
+              render: (row: TelehealthSession) => row.assigned_to_name || '-',
             },
             {
               key: 'status',
               label: 'Status',
               render: (row: TelehealthSession) => (
                 <span className={getStatusClass(row.status)}>
-                  {row.status}
+                  {row.status === 'scheduled' ? 'New Visit' : row.status.replace('_', ' ')}
                 </span>
               ),
             },
@@ -343,11 +426,6 @@ const TelehealthPage: React.FC = () => {
               key: 'state',
               label: 'State',
               render: (row: TelehealthSession) => row.patient_state,
-            },
-            {
-              key: 'consent',
-              label: 'Recording Consent',
-              render: (row: TelehealthSession) => (row.recording_consent ? 'Yes' : 'No'),
             },
             {
               key: 'created',
@@ -391,7 +469,7 @@ const TelehealthPage: React.FC = () => {
               ),
             },
           ]}
-          data={sessions}
+          data={filteredSessions}
           keyExtractor={(row) => row.id}
           emptyMessage="No telehealth sessions found"
         />
@@ -454,6 +532,22 @@ const TelehealthPage: React.FC = () => {
                 <option value="IL">Illinois</option>
                 <option value="PA">Pennsylvania</option>
                 <option value="OH">Ohio</option>
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="reason-for-visit">Reason for Visit</label>
+              <select
+                id="reason-for-visit"
+                value={newSessionForm.reason}
+                onChange={(e) => setNewSessionForm({ ...newSessionForm, reason: e.target.value })}
+              >
+                <option value="">Select reason...</option>
+                {DERMATOLOGY_REASONS.map((reason) => (
+                  <option key={reason} value={reason}>
+                    {reason}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -542,108 +636,6 @@ const TelehealthPage: React.FC = () => {
           color: #047857;
         }
 
-        .telehealth-stats-section {
-          margin-bottom: 2rem;
-        }
-
-        .telehealth-stats-section h2 {
-          margin: 0 0 1rem 0;
-          padding: 0.75rem 1rem;
-          background: linear-gradient(135deg, #6ee7b7 0%, #34d399 100%);
-          color: white;
-          border-radius: 8px;
-          font-size: 1.125rem;
-        }
-
-        .telehealth-stats {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-          gap: 1.25rem;
-          animation: fadeIn 0.5s ease-out 0.1s both;
-        }
-
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-            transform: scale(0.95);
-          }
-          to {
-            opacity: 1;
-            transform: scale(1);
-          }
-        }
-
-        .telehealth-stat-card {
-          background: white;
-          border-radius: 12px;
-          padding: 2rem 1.5rem;
-          text-align: center;
-          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-          transition: all 0.3s ease;
-          border: 2px solid transparent;
-          position: relative;
-          overflow: hidden;
-        }
-
-        .telehealth-stat-card::before {
-          content: '';
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          height: 4px;
-        }
-
-        .telehealth-stat-card.in-progress {
-          border-color: #059669;
-        }
-
-        .telehealth-stat-card.in-progress::before {
-          background: linear-gradient(90deg, #059669, #10b981);
-        }
-
-        .telehealth-stat-card.completed {
-          border-color: #059669;
-        }
-
-        .telehealth-stat-card.completed::before {
-          background: linear-gradient(90deg, #059669, #10b981);
-        }
-
-        .telehealth-stat-card.unread {
-          border-color: #059669;
-        }
-
-        .telehealth-stat-card.unread::before {
-          background: linear-gradient(90deg, #059669, #10b981);
-        }
-
-        .telehealth-stat-card.unassigned {
-          border-color: #059669;
-        }
-
-        .telehealth-stat-card.unassigned::before {
-          background: linear-gradient(90deg, #059669, #10b981);
-        }
-
-        .telehealth-stat-card:hover {
-          transform: translateY(-4px);
-          box-shadow: 0 8px 16px rgba(5, 150, 105, 0.2);
-        }
-
-        .telehealth-stat-card .stat-value {
-          font-size: 3rem;
-          font-weight: bold;
-          color: #065f46;
-          line-height: 1;
-          margin-bottom: 0.5rem;
-        }
-
-        .telehealth-stat-card .stat-label {
-          font-size: 0.875rem;
-          color: #059669;
-          font-weight: 500;
-        }
 
         .waiting-room-section {
           background: white;

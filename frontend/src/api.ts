@@ -746,6 +746,60 @@ export const fetchTaskComments = (tenantId: string, accessToken: string, taskId:
 export const addTaskComment = (tenantId: string, accessToken: string, taskId: string, comment: string) =>
   authedPost(tenantId, accessToken, `/api/tasks/${taskId}/comments`, { comment });
 
+// Task Templates API
+export const fetchTaskTemplates = (tenantId: string, accessToken: string) =>
+  fetch(`${API_BASE}/api/task-templates`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  }).then((res) => {
+    if (!res.ok) throw new Error("Failed to fetch task templates");
+    return res.json();
+  });
+
+export const createTaskTemplate = (tenantId: string, accessToken: string, data: any) =>
+  authedPost(tenantId, accessToken, "/api/task-templates", data);
+
+export const updateTaskTemplate = (tenantId: string, accessToken: string, id: string, data: any) =>
+  fetch(`${API_BASE}/api/task-templates/${id}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  }).then((res) => {
+    if (!res.ok) throw new Error("Failed to update task template");
+    return res.json();
+  });
+
+export const deleteTaskTemplate = (tenantId: string, accessToken: string, id: string) =>
+  fetch(`${API_BASE}/api/task-templates/${id}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  }).then((res) => {
+    if (!res.ok) throw new Error("Failed to delete task template");
+    return res.json();
+  });
+
+export const createTaskFromTemplate = (
+  tenantId: string,
+  accessToken: string,
+  templateId: string,
+  data: {
+    patientId?: string;
+    encounterId?: string;
+    assignedTo?: string;
+    dueDate?: string;
+  }
+) =>
+  authedPost(tenantId, accessToken, `/api/task-templates/${templateId}/create-task`, data);
+
 export const createMessage = (tenantId: string, accessToken: string, data: any) =>
   authedPost(tenantId, accessToken, "/api/messages", data);
 
@@ -1243,6 +1297,10 @@ export interface PatientRecall {
   contactMethod?: string;
   notes?: string;
   appointmentId?: string;
+  doctorNotes?: string;
+  preferredContactMethod?: 'email' | 'sms' | 'phone' | 'mail' | 'portal';
+  notifiedOn?: string;
+  notificationCount?: number;
   createdAt: string;
   updatedAt: string;
   // Joined fields
@@ -1508,6 +1566,53 @@ export async function fetchRecallStats(
     },
   });
   if (!res.ok) throw new Error("Failed to load recall stats");
+  return res.json();
+}
+
+export interface ReminderNotificationHistory {
+  id: string;
+  tenantId: string;
+  recallId: string;
+  patientId: string;
+  notificationType: 'email' | 'sms' | 'phone' | 'portal';
+  sentAt: string;
+  status: 'sent' | 'delivered' | 'failed' | 'bounced';
+  messageContent?: string;
+  errorMessage?: string;
+  sentBy?: string;
+  sentByName?: string;
+  createdAt: string;
+}
+
+export async function bulkNotifyRecalls(
+  tenantId: string,
+  accessToken: string,
+  data: {
+    recallIds: string[];
+    notificationType: 'email' | 'sms' | 'phone' | 'portal';
+    messageTemplate?: string;
+  }
+): Promise<{
+  total: number;
+  successful: number;
+  failed: number;
+  errors: Array<{ recallId: string; error: string }>;
+}> {
+  return authedPost(tenantId, accessToken, `/api/recalls/bulk-notify`, data);
+}
+
+export async function fetchRecallNotificationHistory(
+  tenantId: string,
+  accessToken: string,
+  recallId: string
+): Promise<{ history: ReminderNotificationHistory[] }> {
+  const res = await fetch(`${API_BASE}/api/recalls/${recallId}/notification-history`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error("Failed to load notification history");
   return res.json();
 }
 
@@ -2331,6 +2436,253 @@ export async function confirmAudit(
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to confirm audit');
   }
+  return res.json();
+}
+
+// Fetch refill requests from new dedicated table
+export async function fetchRefillRequestsNew(
+  tenantId: string,
+  accessToken: string,
+  filters?: { status?: string; patientId?: string; providerId?: string }
+): Promise<{ refillRequests: any[] }> {
+  const params = new URLSearchParams();
+  if (filters?.status) params.append('status', filters.status);
+  if (filters?.patientId) params.append('patientId', filters.patientId);
+  if (filters?.providerId) params.append('providerId', filters.providerId);
+  const query = params.toString();
+
+  const res = await fetch(`${API_BASE}/api/refill-requests${query ? `?${query}` : ''}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch refill requests');
+  return res.json();
+}
+
+// Approve refill request
+export async function approveRefillRequest(
+  tenantId: string,
+  accessToken: string,
+  refillRequestId: string
+): Promise<{ success: boolean; message: string; newPrescriptionId?: string }> {
+  const res = await fetch(`${API_BASE}/api/refill-requests/${refillRequestId}/approve`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to approve refill request');
+  }
+  return res.json();
+}
+
+// Deny refill request
+export async function denyRefillRequest(
+  tenantId: string,
+  accessToken: string,
+  refillRequestId: string,
+  denialReason: string,
+  denialNotes?: string
+): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/api/refill-requests/${refillRequestId}/deny`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify({ denialReason, denialNotes }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to deny refill request');
+  }
+  return res.json();
+}
+
+// Fetch Rx change requests
+export async function fetchRxChangeRequests(
+  tenantId: string,
+  accessToken: string,
+  filters?: { status?: string; patientId?: string; providerId?: string; pharmacyId?: string }
+): Promise<{ rxChangeRequests: any[] }> {
+  const params = new URLSearchParams();
+  if (filters?.status) params.append('status', filters.status);
+  if (filters?.patientId) params.append('patientId', filters.patientId);
+  if (filters?.providerId) params.append('providerId', filters.providerId);
+  if (filters?.pharmacyId) params.append('pharmacyId', filters.pharmacyId);
+  const query = params.toString();
+
+  const res = await fetch(`${API_BASE}/api/rx-change-requests${query ? `?${query}` : ''}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch Rx change requests');
+  return res.json();
+}
+
+// Approve Rx change request
+export async function approveRxChangeRequest(
+  tenantId: string,
+  accessToken: string,
+  changeRequestId: string,
+  data?: { responseNotes?: string; approvedAlternativeDrug?: string; approvedAlternativeStrength?: string }
+): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/api/rx-change-requests/${changeRequestId}/approve`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data || {}),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to approve change request');
+  }
+  return res.json();
+}
+
+// Deny Rx change request
+export async function denyRxChangeRequest(
+  tenantId: string,
+  accessToken: string,
+  changeRequestId: string,
+  responseNotes: string
+): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/api/rx-change-requests/${changeRequestId}/deny`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify({ responseNotes }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to deny change request');
+  }
+  return res.json();
+}
+
+// Bulk send eRx
+export async function bulkSendErx(
+  tenantId: string,
+  accessToken: string,
+  prescriptionIds: string[]
+): Promise<{ success: boolean; batchId: string; successCount: number; failureCount: number; results: any }> {
+  const res = await fetch(`${API_BASE}/api/prescriptions/bulk/send-erx`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify({ prescriptionIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to send bulk eRx');
+  }
+  return res.json();
+}
+
+// Bulk print prescriptions
+export async function bulkPrintRx(
+  tenantId: string,
+  accessToken: string,
+  prescriptionIds: string[]
+): Promise<{ success: boolean; batchId: string; totalCount: number; message: string }> {
+  const res = await fetch(`${API_BASE}/api/prescriptions/bulk/print`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify({ prescriptionIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to print prescriptions');
+  }
+  return res.json();
+}
+
+// Bulk refill prescriptions
+export async function bulkRefillRx(
+  tenantId: string,
+  accessToken: string,
+  prescriptionIds: string[]
+): Promise<{ success: boolean; batchId: string; successCount: number; failureCount: number; results: any }> {
+  const res = await fetch(`${API_BASE}/api/prescriptions/bulk/refill`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify({ prescriptionIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to create bulk refills');
+  }
+  return res.json();
+}
+
+// Fetch prescriptions with enhanced filtering
+export async function fetchPrescriptionsEnhanced(
+  tenantId: string,
+  accessToken: string,
+  filters?: {
+    patientId?: string;
+    status?: string;
+    erxStatus?: string;
+    isControlled?: boolean;
+    writtenDateFrom?: string;
+    writtenDateTo?: string;
+    providerId?: string;
+    search?: string;
+  }
+): Promise<{ prescriptions: any[] }> {
+  const params = new URLSearchParams();
+  if (filters?.patientId) params.append('patientId', filters.patientId);
+  if (filters?.status) params.append('status', filters.status);
+  if (filters?.erxStatus) params.append('erxStatus', filters.erxStatus);
+  if (filters?.isControlled !== undefined) params.append('isControlled', String(filters.isControlled));
+  if (filters?.writtenDateFrom) params.append('writtenDateFrom', filters.writtenDateFrom);
+  if (filters?.writtenDateTo) params.append('writtenDateTo', filters.writtenDateTo);
+  if (filters?.providerId) params.append('providerId', filters.providerId);
+  if (filters?.search) params.append('search', filters.search);
+  const query = params.toString();
+
+  const res = await fetch(`${API_BASE}/api/prescriptions${query ? `?${query}` : ''}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch prescriptions');
   return res.json();
 }
 
@@ -3567,11 +3919,22 @@ export interface TelehealthSession {
   screen_sharing_enabled: boolean;
   connection_quality?: string;
   reconnection_count: number;
+  reason?: string;
+  assigned_to?: number;
   created_at: string;
   updated_at: string;
   patient_first_name?: string;
   patient_last_name?: string;
   provider_name?: string;
+  assigned_to_name?: string;
+  physician_name?: string;
+}
+
+export interface TelehealthStats {
+  myInProgress: number;
+  myCompleted: number;
+  myUnreadMessages: number;
+  unassignedCases: number;
 }
 
 export interface WaitingRoomEntry {
@@ -3712,6 +4075,31 @@ export interface EducationalContent {
   updated_at: string;
 }
 
+// Stats
+export async function fetchTelehealthStats(
+  tenantId: string,
+  accessToken: string,
+  params?: {
+    startDate?: string;
+    endDate?: string;
+  }
+): Promise<TelehealthStats> {
+  const queryParams = new URLSearchParams();
+  if (params?.startDate) queryParams.append('startDate', params.startDate);
+  if (params?.endDate) queryParams.append('endDate', params.endDate);
+  const query = queryParams.toString();
+
+  const res = await fetch(`${API_BASE}/api/telehealth/stats${query ? `?${query}` : ''}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch telehealth stats');
+  return res.json();
+}
+
 // Session Management
 export async function createTelehealthSession(
   tenantId: string,
@@ -3722,6 +4110,8 @@ export async function createTelehealthSession(
     patientState: string;
     appointmentId?: number;
     recordingConsent?: boolean;
+    reason?: string;
+    assignedTo?: number;
   }
 ): Promise<TelehealthSession> {
   const res = await fetch(`${API_BASE}/api/telehealth/sessions`, {
@@ -3766,6 +4156,10 @@ export async function fetchTelehealthSessions(
     patientId?: string;
     startDate?: string;
     endDate?: string;
+    reason?: string;
+    assignedTo?: string;
+    physicianId?: string;
+    myUnreadOnly?: boolean;
   }
 ): Promise<TelehealthSession[]> {
   const queryParams = new URLSearchParams();
@@ -3774,6 +4168,10 @@ export async function fetchTelehealthSessions(
   if (params?.patientId) queryParams.append('patientId', params.patientId);
   if (params?.startDate) queryParams.append('startDate', params.startDate);
   if (params?.endDate) queryParams.append('endDate', params.endDate);
+  if (params?.reason) queryParams.append('reason', params.reason);
+  if (params?.assignedTo) queryParams.append('assignedTo', params.assignedTo);
+  if (params?.physicianId) queryParams.append('physicianId', params.physicianId);
+  if (params?.myUnreadOnly) queryParams.append('myUnreadOnly', 'true');
   const query = queryParams.toString();
 
   const res = await fetch(`${API_BASE}/api/telehealth/sessions${query ? `?${query}` : ''}`, {

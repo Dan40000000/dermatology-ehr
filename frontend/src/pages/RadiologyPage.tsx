@@ -3,7 +3,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
 import { fetchOrders, fetchPatients, createOrder, updateOrderStatus } from '../api';
-import type { Order, Patient } from '../types';
+import type { Order, Patient, ResultFlagType } from '../types';
+import { ResultFlagBadge, ResultFlagSelect } from '../components/ResultFlagBadge';
 
 type ImagingFilter = 'all' | 'pending' | 'scheduled' | 'completed';
 
@@ -332,18 +333,21 @@ export function RadiologyPage() {
               }}>{getModalityIcon(img.details)}</div>
 
               <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0891b2' }}>{getPatientName(img.patientId)}</span>
-                  <span style={{
-                    padding: '0.25rem 0.75rem',
-                    borderRadius: '9999px',
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    background: img.status === 'completed' ? '#d1fae5' : img.status === 'ordered' ? '#dbeafe' : '#fef3c7',
-                    color: img.status === 'completed' ? '#059669' : img.status === 'ordered' ? '#2563eb' : '#d97706',
-                  }}>
-                    {img.status === 'ordered' ? 'scheduled' : img.status}
-                  </span>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <ResultFlagBadge flag={img.resultFlag} size="sm" />
+                    <span style={{
+                      padding: '0.25rem 0.75rem',
+                      borderRadius: '9999px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      background: img.status === 'completed' ? '#d1fae5' : img.status === 'ordered' ? '#dbeafe' : '#fef3c7',
+                      color: img.status === 'completed' ? '#059669' : img.status === 'ordered' ? '#2563eb' : '#d97706',
+                    }}>
+                      {img.status === 'ordered' ? 'scheduled' : img.status}
+                    </span>
+                  </div>
                 </div>
 
                 <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151', marginBottom: '0.25rem' }}>

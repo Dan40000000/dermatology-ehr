@@ -22,7 +22,19 @@ const createPharmacySchema = z.object({
   acceptsErx: z.boolean().optional().default(true),
 });
 
-const updatePharmacySchema = createPharmacySchema.partial();
+const updatePharmacySchema = z.object({
+  ncpdpId: z.string().optional(),
+  name: z.string().min(1).optional(),
+  phone: z.string().optional(),
+  fax: z.string().optional(),
+  street: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().max(2).optional(),
+  zip: z.string().optional(),
+  isPreferred: z.boolean().optional(),
+  is24Hour: z.boolean().optional(),
+  acceptsErx: z.boolean().optional(),
+});
 
 // GET /api/pharmacies/search - Enhanced search pharmacies
 pharmaciesRouter.get('/search', requireAuth, async (req: AuthedRequest, res) => {

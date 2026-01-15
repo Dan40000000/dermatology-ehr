@@ -30,6 +30,7 @@ router.get('/', async (req: AuthedRequest, res: Response) => {
         pr.first_name || ' ' || pr.last_name as ordering_provider_name,
         lv.name as vendor_name,
         lv.vendor_type,
+        rfp.first_name || ' ' || rfp.last_name as result_flag_updated_by_name,
         (
           SELECT json_agg(
             json_build_object(
@@ -52,6 +53,7 @@ router.get('/', async (req: AuthedRequest, res: Response) => {
       JOIN patients p ON lo.patient_id = p.id
       JOIN providers pr ON lo.ordering_provider_id = pr.id
       JOIN lab_vendors lv ON lo.vendor_id = lv.id
+      LEFT JOIN providers rfp ON lo.result_flag_updated_by = rfp.id
       WHERE lo.tenant_id = $1
     `;
 

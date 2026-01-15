@@ -189,13 +189,11 @@ describe("Consent Forms routes", () => {
         ])
       );
       expect(auditLogMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          tenantId: "tenant-1",
-          userId: "user-1",
-          resourceType: "consent_form",
-          resourceId: "mock-uuid-1234",
-          action: "create",
-        })
+        "tenant-1",
+        "user-1",
+        "consent_form_create",
+        "consent_form",
+        "mock-uuid-1234"
       );
     });
 
@@ -282,10 +280,11 @@ describe("Consent Forms routes", () => {
         expect.arrayContaining(["Updated Form", false, "tenant-1", "form-1"])
       );
       expect(auditLogMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: "update",
-          resourceId: "form-1",
-        })
+        "tenant-1",
+        "user-1",
+        "consent_form_update",
+        "consent_form",
+        "form-1"
       );
     });
 
@@ -358,10 +357,11 @@ describe("Consent Forms routes", () => {
         ["form-1", "tenant-1"]
       );
       expect(auditLogMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: "deactivate",
-          resourceId: "form-1",
-        })
+        "tenant-1",
+        "user-1",
+        "consent_form_deactivate",
+        "consent_form",
+        "form-1"
       );
     });
 

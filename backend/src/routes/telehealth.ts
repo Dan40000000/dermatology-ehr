@@ -8,6 +8,58 @@ const router = Router();
 router.use(requireAuth);
 
 // ============================================
+// STATS AND ANALYTICS
+// ============================================
+
+// Get telehealth stats
+router.get("/stats", async (req: AuthedRequest, res: Response) => {
+  const tenantId = req.user!.tenantId;
+  const userId = req.user!.id;
+  const { startDate, endDate } = req.query;
+
+  try {
+    let dateFilter = "";
+    const params: any[] = [tenantId, userId];
+    let paramCount = 2;
+
+    if (startDate) {
+      dateFilter += ` AND ts.created_at >= $${++paramCount}`;
+      params.push(startDate);
+    }
+
+    if (endDate) {
+      dateFilter += ` AND ts.created_at <= $${++paramCount}`;
+      params.push(endDate);
+    }
+
+    // Get stats for the current provider
+    const statsQuery = `
+      SELECT
+        COUNT(CASE WHEN ts.status = 'in_progress' THEN 1 END) as in_progress_count,
+        COUNT(CASE WHEN ts.status = 'completed' THEN 1 END) as completed_count,
+        COUNT(CASE WHEN ts.status IN ('scheduled', 'waiting') AND ts.provider_id IS NULL THEN 1 END) as unassigned_count
+      FROM telehealth_sessions ts
+      WHERE ts.tenant_id = $1 AND (ts.provider_id = $2 OR ts.assigned_to = $2)${dateFilter}
+    `;
+
+    const statsResult = await pool.query(statsQuery, params);
+
+    // Get unread messages count (placeholder - implement when messaging is added)
+    const unreadCount = 0;
+
+    res.json({
+      myInProgress: parseInt(statsResult.rows[0].in_progress_count) || 0,
+      myCompleted: parseInt(statsResult.rows[0].completed_count) || 0,
+      myUnreadMessages: unreadCount,
+      unassignedCases: parseInt(statsResult.rows[0].unassigned_count) || 0,
+    });
+  } catch (error) {
+    console.error("Error fetching telehealth stats:", error);
+    res.status(500).json({ error: "Failed to fetch stats" });
+  }
+});
+
+// ============================================
 // SESSION MANAGEMENT
 // ============================================
 
@@ -20,6 +72,8 @@ router.post(
     body("providerId").isInt(),
     body("patientState").isString().isLength({ min: 2, max: 2 }),
     body("recordingConsent").optional().isBoolean(),
+    body("reason").optional().isString(),
+    body("assignedTo").optional().isInt(),
   ],
   async (req: AuthedRequest, res: Response) => {
     const errors = validationResult(req);
@@ -28,7 +82,7 @@ router.post(
     }
 
     const tenantId = req.user!.tenantId;
-    const { appointmentId, patientId, providerId, patientState, recordingConsent } = req.body;
+    const { appointmentId, patientId, providerId, patientState, recordingConsent, reason, assignedTo } = req.body;
 
     try {
       // Verify state licensing
@@ -54,8 +108,8 @@ router.post(
         `INSERT INTO telehealth_sessions
          (tenant_id, appointment_id, patient_id, provider_id, session_token, room_name,
           patient_state, provider_licensed_states, state_licensing_verified,
-          recording_consent, recording_consent_timestamp, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, $10, 'scheduled')
+          recording_consent, recording_consent_timestamp, status, reason, assigned_to)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, $10, 'scheduled', $11, $12)
          RETURNING *`,
         [
           tenantId,
@@ -68,6 +122,8 @@ router.post(
           [patientState],
           recordingConsent || false,
           recordingConsent ? new Date() : null,
+          reason || null,
+          assignedTo || providerId,
         ]
       );
 
@@ -118,16 +174,20 @@ router.get("/sessions/:id", async (req: AuthedRequest, res: Response) => {
 // List sessions
 router.get("/sessions", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
-  const { status, providerId, patientId, startDate, endDate } = req.query;
+  const { status, providerId, patientId, startDate, endDate, reason, assignedTo, physicianId, myUnreadOnly } = req.query;
 
   try {
     let queryText = `
       SELECT ts.*,
              p.first_name as patient_first_name, p.last_name as patient_last_name,
-             pr.name as provider_name
+             pr.name as provider_name,
+             assigned.name as assigned_to_name,
+             physician.name as physician_name
       FROM telehealth_sessions ts
       LEFT JOIN patients p ON ts.patient_id = p.id
       LEFT JOIN providers pr ON ts.provider_id = pr.id
+      LEFT JOIN providers assigned ON ts.assigned_to = assigned.id
+      LEFT JOIN providers physician ON ts.provider_id = physician.id
       WHERE ts.tenant_id = $1
     `;
     const params: any[] = [tenantId];
@@ -156,6 +216,26 @@ router.get("/sessions", async (req: AuthedRequest, res: Response) => {
     if (endDate) {
       queryText += ` AND ts.created_at <= $${++paramCount}`;
       params.push(endDate);
+    }
+
+    if (reason) {
+      queryText += ` AND ts.reason = $${++paramCount}`;
+      params.push(reason);
+    }
+
+    if (assignedTo) {
+      queryText += ` AND ts.assigned_to = $${++paramCount}`;
+      params.push(assignedTo);
+    }
+
+    if (physicianId) {
+      queryText += ` AND ts.provider_id = $${++paramCount}`;
+      params.push(physicianId);
+    }
+
+    // myUnreadOnly filter would require messaging table - placeholder for now
+    if (myUnreadOnly === 'true') {
+      // Add filter when messaging is implemented
     }
 
     queryText += ` ORDER BY ts.created_at DESC LIMIT 100`;

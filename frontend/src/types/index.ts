@@ -225,17 +225,65 @@ export interface CreateVitalsData {
 }
 
 // Order Types
+export type OrderType =
+  | 'followup'
+  | 'infusion'
+  | 'injection'
+  | 'lab'
+  | 'pathology'
+  | 'radiology'
+  | 'referral'
+  | 'surgery'
+  | 'biopsy'
+  | 'imaging'
+  | 'procedure'
+  | 'rx';
+
+export type OrderStatus =
+  | 'open'
+  | 'sent'
+  | 'in-progress'
+  | 'closed'
+  | 'canceled'
+  | 'pending'
+  | 'draft'
+  | 'ordered'
+  | 'completed'
+  | 'cancelled';
+
+export type OrderPriority = 'normal' | 'high' | 'stat' | 'routine' | 'urgent';
+
+export type OrderGroupBy = 'none' | 'patient' | 'provider';
+
+// Result Flag Types
+export type ResultFlagType =
+  | 'benign'
+  | 'inconclusive'
+  | 'precancerous'
+  | 'cancerous'
+  | 'normal'
+  | 'abnormal'
+  | 'low'
+  | 'high'
+  | 'out_of_range'
+  | 'panic_value'
+  | 'none';
+
 export interface Order {
   id: string;
   tenantId: string;
   encounterId?: string;
   patientId: string;
   providerId: string;
+  providerName?: string;
   type: string;
-  status: 'pending' | 'draft' | 'ordered' | 'in-progress' | 'completed' | 'cancelled';
-  priority?: 'stat' | 'urgent' | 'routine';
+  status: OrderStatus;
+  priority?: OrderPriority;
   details?: string;
   notes?: string;
+  resultFlag?: ResultFlagType;
+  resultFlagUpdatedAt?: string;
+  resultFlagUpdatedBy?: string;
   createdAt: string;
 }
 
@@ -245,11 +293,32 @@ export interface CreateOrderData {
   providerId: string;
   type: string;
   details?: string;
+  priority?: OrderPriority;
+  status?: OrderStatus;
+  notes?: string;
+}
+
+export interface QuickFilter {
+  id: string;
+  name: string;
+  orderTypes: OrderType[];
+  statuses: OrderStatus[];
+  priorities: OrderPriority[];
+  searchTerm?: string;
+  groupBy?: OrderGroupBy;
+}
+
+export interface OrderFilters {
+  orderTypes: OrderType[];
+  statuses: OrderStatus[];
+  priorities: OrderPriority[];
+  searchTerm: string;
+  groupBy: OrderGroupBy;
 }
 
 // Task Types
 export type TaskStatus = 'todo' | 'in_progress' | 'completed' | 'cancelled';
-export type TaskPriority = 'low' | 'normal' | 'high';
+export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type TaskCategory =
   | 'patient-followup'
   | 'prior-auth'
@@ -274,6 +343,8 @@ export interface Task {
   dueAt?: string; // Deprecated, use dueDate
   assignedTo?: string;
   assignedToName?: string;
+  createdBy?: string;
+  createdByName?: string;
   completedAt?: string;
   completedBy?: string;
   createdAt: string;
@@ -313,8 +384,44 @@ export interface TaskFilters {
   status?: TaskStatus;
   category?: TaskCategory;
   assignedTo?: string;
+  createdBy?: string;
   priority?: TaskPriority;
   search?: string;
+  dueDateFrom?: string;
+  dueDateTo?: string;
+}
+
+export interface TaskTemplate {
+  id: string;
+  name: string;
+  title: string;
+  description?: string;
+  category?: TaskCategory;
+  priority: TaskPriority;
+  defaultAssignee?: string;
+  defaultAssigneeName?: string;
+  createdBy: string;
+  createdByName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTaskTemplateData {
+  name: string;
+  title: string;
+  description?: string;
+  category?: TaskCategory;
+  priority?: TaskPriority;
+  defaultAssignee?: string;
+}
+
+export interface UpdateTaskTemplateData {
+  name?: string;
+  title?: string;
+  description?: string;
+  category?: TaskCategory;
+  priority?: TaskPriority;
+  defaultAssignee?: string;
 }
 
 // Message Types
@@ -882,4 +989,190 @@ export interface UpdateBodyMarkingData {
   description?: string;
   treatmentNotes?: string;
   photoIds?: string[];
+}
+
+// Prescription/Rx Types
+export type PrescriptionStatus = 'pending' | 'sent' | 'transmitted' | 'error' | 'cancelled' | 'discontinued';
+export type ERxStatus = 'pending' | 'transmitting' | 'success' | 'error' | 'rejected';
+export type RefillStatus = 'pending' | 'approved' | 'denied' | 'change_requested';
+
+export interface Prescription {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  patientFirstName?: string;
+  patientLastName?: string;
+  encounterId?: string;
+  providerId: string;
+  providerName?: string;
+  medicationId?: string;
+  medicationName: string;
+  genericName?: string;
+  strength?: string;
+  dosageForm?: string;
+  sig: string;
+  quantity: number;
+  quantityUnit?: string;
+  refills: number;
+  daysSupply?: number;
+  pharmacyId?: string;
+  pharmacyName?: string;
+  pharmacyPhone?: string;
+  pharmacyAddress?: string;
+  pharmacyNcpdp?: string;
+  daw?: boolean;
+  isControlled?: boolean;
+  deaSchedule?: string;
+  status: PrescriptionStatus;
+  sentAt?: string;
+  transmittedAt?: string;
+  surescriptsMessageId?: string;
+  errorMessage?: string;
+  errorCode?: string;
+  filledAt?: string;
+  indication?: string;
+  notes?: string;
+  writtenDate?: string;
+  erxStatus?: ERxStatus;
+  erxErrorDetails?: string;
+  printCount?: number;
+  lastPrintedAt?: string;
+  refillStatus?: RefillStatus;
+  denialReason?: string;
+  changeRequestDetails?: any;
+  auditConfirmedAt?: string;
+  auditConfirmedBy?: string;
+  createdAt: string;
+  updatedAt?: string;
+  createdBy: string;
+  updatedBy?: string;
+}
+
+export interface RefillRequest {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  patientFirstName?: string;
+  patientLastName?: string;
+  originalPrescriptionId?: string;
+  medicationName: string;
+  strength?: string;
+  drugDescription?: string;
+  requestedDate: string;
+  originalRxDate?: string;
+  providerId?: string;
+  providerName?: string;
+  pharmacyId?: string;
+  pharmacyName?: string;
+  pharmacyNcpdp?: string;
+  status: 'pending' | 'approved' | 'denied';
+  reviewedBy?: string;
+  reviewedAt?: string;
+  denialReason?: string;
+  denialNotes?: string;
+  requestSource?: 'pharmacy' | 'patient' | 'portal';
+  requestMethod?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface RxChangeRequest {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  patientFirstName?: string;
+  patientLastName?: string;
+  originalPrescriptionId?: string;
+  originalDrug: string;
+  originalStrength?: string;
+  originalQuantity?: number;
+  originalSig?: string;
+  requestedDrug?: string;
+  requestedStrength?: string;
+  requestedQuantity?: number;
+  requestedSig?: string;
+  changeType: string;
+  changeReason?: string;
+  pharmacyId?: string;
+  pharmacyName: string;
+  pharmacyNcpdp?: string;
+  pharmacyPhone?: string;
+  requestDate: string;
+  status: 'pending_review' | 'approved' | 'denied' | 'approved_with_modification';
+  providerId?: string;
+  providerName?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  responseNotes?: string;
+  approvedAlternativeDrug?: string;
+  approvedAlternativeStrength?: string;
+  surescriptsMessageId?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface CreateRefillRequestData {
+  patientId: string;
+  originalPrescriptionId?: string;
+  medicationName: string;
+  strength?: string;
+  drugDescription?: string;
+  originalRxDate?: string;
+  providerId?: string;
+  pharmacyId?: string;
+  pharmacyName?: string;
+  requestSource?: 'pharmacy' | 'patient' | 'portal';
+  requestMethod?: string;
+  notes?: string;
+}
+
+export interface UpdateRefillRequestData {
+  status: 'pending' | 'approved' | 'denied';
+  denialReason?: string;
+  denialNotes?: string;
+  notes?: string;
+}
+
+export interface CreateRxChangeRequestData {
+  patientId: string;
+  originalPrescriptionId?: string;
+  originalDrug: string;
+  originalStrength?: string;
+  originalQuantity?: number;
+  originalSig?: string;
+  requestedDrug?: string;
+  requestedStrength?: string;
+  requestedQuantity?: number;
+  requestedSig?: string;
+  changeType: string;
+  changeReason?: string;
+  pharmacyId?: string;
+  pharmacyName: string;
+  pharmacyNcpdp?: string;
+  notes?: string;
+}
+
+export interface UpdateRxChangeRequestData {
+  status: 'pending_review' | 'approved' | 'denied' | 'approved_with_modification';
+  responseNotes?: string;
+  approvedAlternativeDrug?: string;
+  approvedAlternativeStrength?: string;
+}
+
+export interface BulkPrescriptionOperation {
+  prescriptionIds: string[];
+  operation: 'erx' | 'print' | 'refill';
+}
+
+export interface PrescriptionFilters {
+  status?: PrescriptionStatus;
+  erxStatus?: ERxStatus;
+  isControlled?: boolean;
+  writtenDateFrom?: string;
+  writtenDateTo?: string;
+  providerId?: string;
+  patientId?: string;
+  search?: string;
 }

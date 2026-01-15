@@ -13,6 +13,7 @@ const apiMocks = vi.hoisted(() => ({
   createTelehealthSession: vi.fn(),
   fetchTelehealthSessions: vi.fn(),
   fetchTelehealthSession: vi.fn(),
+  fetchTelehealthStats: vi.fn(),
   updateSessionStatus: vi.fn(),
   fetchWaitingRoom: vi.fn(),
   callPatientFromWaitingRoom: vi.fn(),
@@ -183,6 +184,12 @@ describe('TelehealthPage', () => {
         estimated_wait_minutes: 5,
       },
     ]);
+    apiMocks.fetchTelehealthStats.mockResolvedValue({
+      myInProgress: 1,
+      myCompleted: 1,
+      myUnreadMessages: 0,
+      unassignedCases: 0,
+    });
     apiMocks.fetchProviders.mockResolvedValue({ providers: [{ id: 1, fullName: 'Dr Demo' }] });
     apiMocks.fetchPatients.mockResolvedValue({ patients: [{ id: 10, firstName: 'Ana', lastName: 'Derm' }] });
     apiMocks.fetchTelehealthSession.mockResolvedValue(buildSession(1, 'in_progress'));
@@ -245,5 +252,44 @@ describe('TelehealthPage', () => {
     const notes = await screen.findByTestId('telehealth-notes');
     fireEvent.click(within(notes).getByRole('button', { name: 'Finalize Notes' }));
     await screen.findByText('Telehealth Video Consultations');
+  });
+
+  it('displays stats cards with correct values', async () => {
+    render(<TelehealthPage />);
+
+    await screen.findByText('Telehealth Video Consultations');
+
+    expect(screen.getByText('My Cases In Progress')).toBeInTheDocument();
+    expect(screen.getByText('My Completed Cases')).toBeInTheDocument();
+    expect(screen.getByText('My Unread Messages')).toBeInTheDocument();
+    expect(screen.getByText('Unassigned Cases')).toBeInTheDocument();
+
+    expect(apiMocks.fetchTelehealthStats).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      expect.any(Object)
+    );
+  });
+
+  it('renders filter controls', async () => {
+    render(<TelehealthPage />);
+
+    await screen.findByText('Telehealth Video Consultations');
+
+    expect(screen.getByLabelText('Date Range')).toBeInTheDocument();
+    expect(screen.getByLabelText('Status')).toBeInTheDocument();
+    expect(screen.getByLabelText('Reason for Visit')).toBeInTheDocument();
+    expect(screen.getByLabelText('Assigned To')).toBeInTheDocument();
+    expect(screen.getByLabelText('Physician')).toBeInTheDocument();
+  });
+
+  it('includes reason field in new session modal', async () => {
+    render(<TelehealthPage />);
+
+    await screen.findByText('Telehealth Video Consultations');
+    fireEvent.click(screen.getByRole('button', { name: '+ New Session' }));
+    const modal = await screen.findByTestId('modal-create-new-telehealth-session');
+
+    expect(within(modal).getByLabelText('Reason for Visit')).toBeInTheDocument();
   });
 });

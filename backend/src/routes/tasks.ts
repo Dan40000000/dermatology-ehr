@@ -11,7 +11,7 @@ const taskSchema = z.object({
   title: z.string(),
   description: z.string().optional(),
   category: z.string().optional(),
-  priority: z.enum(["low", "normal", "high"]).optional(),
+  priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
   status: z.enum(["todo", "in_progress", "completed", "cancelled"]).optional(),
   dueDate: z.string().optional(),
   assignedTo: z.string().optional(),
@@ -35,8 +35,11 @@ tasksRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const status = req.query.status as string | undefined;
   const category = req.query.category as string | undefined;
   const assignedTo = req.query.assignedTo as string | undefined;
+  const createdBy = req.query.createdBy as string | undefined;
   const priority = req.query.priority as string | undefined;
   const search = req.query.search as string | undefined;
+  const dueDateFrom = req.query.dueDateFrom as string | undefined;
+  const dueDateTo = req.query.dueDateTo as string | undefined;
   const sortBy = (req.query.sortBy as string) || "createdAt";
   const sortOrder = (req.query.sortOrder as string) || "desc";
 
@@ -71,9 +74,33 @@ tasksRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
     }
   }
 
+  if (createdBy) {
+    if (createdBy === "me") {
+      whereClauses.push(`t.created_by = $${paramIndex}`);
+      params.push(req.user!.id);
+      paramIndex++;
+    } else {
+      whereClauses.push(`t.created_by = $${paramIndex}`);
+      params.push(createdBy);
+      paramIndex++;
+    }
+  }
+
   if (priority) {
     whereClauses.push(`t.priority = $${paramIndex}`);
     params.push(priority);
+    paramIndex++;
+  }
+
+  if (dueDateFrom) {
+    whereClauses.push(`t.due_date >= $${paramIndex}`);
+    params.push(dueDateFrom);
+    paramIndex++;
+  }
+
+  if (dueDateTo) {
+    whereClauses.push(`t.due_date <= $${paramIndex}`);
+    params.push(dueDateTo);
     paramIndex++;
   }
 
@@ -111,14 +138,17 @@ tasksRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
       t.due_date as "dueDate",
       t.due_at as "dueAt",
       t.assigned_to as "assignedTo",
+      t.created_by as "createdBy",
       t.completed_at as "completedAt",
       t.completed_by as "completedBy",
       t.created_at as "createdAt",
       u.full_name as "assignedToName",
+      creator.full_name as "createdByName",
       p.first_name as "patientFirstName",
       p.last_name as "patientLastName"
     from tasks t
     left join users u on t.assigned_to = u.id
+    left join users creator on t.created_by = creator.id
     left join patients p on t.patient_id = p.id
     where ${whereClause}
     order by ${dbSortColumn} ${order}
@@ -141,8 +171,8 @@ tasksRouter.post("/", requireAuth, async (req: AuthedRequest, res) => {
   await pool.query(
     `insert into tasks(
       id, tenant_id, patient_id, encounter_id, title, description,
-      category, priority, status, due_date, due_at, assigned_to
-    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      category, priority, status, due_date, due_at, assigned_to, created_by
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     [
       id,
       tenantId,
@@ -156,6 +186,7 @@ tasksRouter.post("/", requireAuth, async (req: AuthedRequest, res) => {
       payload.dueDate || null,
       payload.dueDate || null, // Keep dueAt for backward compatibility
       payload.assignedTo || null,
+      req.user!.id,
     ],
   );
 

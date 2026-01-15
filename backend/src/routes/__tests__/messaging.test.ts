@@ -284,8 +284,11 @@ describe("Messaging routes", () => {
 
     it("should send message in thread", async () => {
       mockClient.query
-        .mockResolvedValueOnce({ rows: [{ id: "participant-1" }] })
-        .mockResolvedValueOnce({ rows: [] });
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({ rows: [{ id: "participant-1" }] }) // participant check
+        .mockResolvedValueOnce({ rows: [] }) // insert message
+        .mockResolvedValueOnce({ rows: [] }) // update thread timestamp
+        .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
       const res = await request(app)
         .post("/api/messaging/threads/thread-1/messages")
@@ -299,7 +302,10 @@ describe("Messaging routes", () => {
     });
 
     it("should return 403 when user is not a participant", async () => {
-      mockClient.query.mockResolvedValueOnce({ rows: [] });
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({ rows: [] }) // participant check - empty means not a participant
+        .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
       const res = await request(app)
         .post("/api/messaging/threads/thread-1/messages")
@@ -312,8 +318,11 @@ describe("Messaging routes", () => {
 
     it("should update thread timestamp", async () => {
       mockClient.query
-        .mockResolvedValueOnce({ rows: [{ id: "participant-1" }] })
-        .mockResolvedValueOnce({ rows: [] });
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({ rows: [{ id: "participant-1" }] }) // participant check
+        .mockResolvedValueOnce({ rows: [] }) // insert message
+        .mockResolvedValueOnce({ rows: [] }) // update thread timestamp
+        .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
       const res = await request(app)
         .post("/api/messaging/threads/thread-1/messages")
@@ -342,7 +351,10 @@ describe("Messaging routes", () => {
     });
 
     it("should handle database error", async () => {
-      mockClient.query.mockRejectedValueOnce(new Error("Database error"));
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockRejectedValueOnce(new Error("Database error")) // participant check fails
+        .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
       const res = await request(app)
         .post("/api/messaging/threads/thread-1/messages")

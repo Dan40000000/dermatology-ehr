@@ -49,7 +49,18 @@ const updatePrescriptionSchema = z.object({
 prescriptionsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
   try {
     const tenantId = req.user!.tenantId;
-    const { patientId, status, startDate, endDate, providerId } = req.query;
+    const {
+      patientId,
+      status,
+      startDate,
+      endDate,
+      providerId,
+      erxStatus,
+      isControlled,
+      writtenDateFrom,
+      writtenDateTo,
+      search
+    } = req.query;
 
     let query = `
       select
@@ -86,6 +97,28 @@ prescriptionsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
       paramIndex++;
     }
 
+    if (erxStatus) {
+      query += ` and p.erx_status = $${paramIndex}`;
+      params.push(erxStatus);
+      paramIndex++;
+    }
+
+    if (isControlled === 'true') {
+      query += ` and p.is_controlled = true`;
+    }
+
+    if (writtenDateFrom) {
+      query += ` and p.written_date >= $${paramIndex}`;
+      params.push(writtenDateFrom);
+      paramIndex++;
+    }
+
+    if (writtenDateTo) {
+      query += ` and p.written_date <= $${paramIndex}`;
+      params.push(writtenDateTo);
+      paramIndex++;
+    }
+
     if (startDate) {
       query += ` and p.created_at >= $${paramIndex}`;
       params.push(startDate);
@@ -95,6 +128,16 @@ prescriptionsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
     if (endDate) {
       query += ` and p.created_at <= $${paramIndex}`;
       params.push(endDate);
+      paramIndex++;
+    }
+
+    if (search) {
+      query += ` and (
+        p.medication_name ilike $${paramIndex} or
+        pat.first_name ilike $${paramIndex} or
+        pat.last_name ilike $${paramIndex}
+      )`;
+      params.push(`%${search}%`);
       paramIndex++;
     }
 
@@ -866,6 +909,313 @@ prescriptionsRouter.post(
     } catch (error) {
       console.error('Error confirming audit:', error);
       return res.status(500).json({ error: 'Failed to confirm audit' });
+    }
+  }
+);
+
+// POST /api/prescriptions/bulk/send-erx - Send multiple prescriptions electronically
+prescriptionsRouter.post(
+  '/bulk/send-erx',
+  requireAuth,
+  requireRoles(['admin', 'provider']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const { prescriptionIds } = req.body;
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+
+      if (!Array.isArray(prescriptionIds) || prescriptionIds.length === 0) {
+        return res.status(400).json({ error: 'prescriptionIds array is required' });
+      }
+
+      if (prescriptionIds.length > 50) {
+        return res.status(400).json({ error: 'Maximum 50 prescriptions can be sent at once' });
+      }
+
+      // Create batch operation record
+      const batchId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO prescription_batch_operations(
+          id, tenant_id, operation_type, prescription_ids, total_count,
+          initiated_by, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [batchId, tenantId, 'bulk_erx', prescriptionIds, prescriptionIds.length, userId, 'in_progress']
+      );
+
+      const results: {
+        success: string[];
+        failed: Array<{ id: any; error: string }>;
+      } = {
+        success: [],
+        failed: [],
+      };
+
+      // Process each prescription
+      for (const prescriptionId of prescriptionIds) {
+        try {
+          // Get prescription with pharmacy info
+          const result = await pool.query(
+            `SELECT p.*, pharm.ncpdp_id
+             FROM prescriptions p
+             LEFT JOIN pharmacies pharm ON p.pharmacy_id = pharm.id
+             WHERE p.id = $1 AND p.tenant_id = $2`,
+            [prescriptionId, tenantId]
+          );
+
+          if (result.rows.length === 0) {
+            results.failed.push({ id: prescriptionId, error: 'Prescription not found' });
+            continue;
+          }
+
+          const prescription = result.rows[0];
+
+          if (!prescription.ncpdp_id && !prescription.pharmacy_ncpdp) {
+            results.failed.push({ id: prescriptionId, error: 'No pharmacy NCPDP ID' });
+            continue;
+          }
+
+          if (prescription.status === 'cancelled') {
+            results.failed.push({ id: prescriptionId, error: 'Prescription is cancelled' });
+            continue;
+          }
+
+          if (prescription.status === 'sent' || prescription.status === 'transmitted') {
+            results.failed.push({ id: prescriptionId, error: 'Already sent' });
+            continue;
+          }
+
+          // Update status to sent (simulated)
+          await pool.query(
+            `UPDATE prescriptions
+             SET status = 'sent',
+                 erx_status = 'success',
+                 sent_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP,
+                 updated_by = $1
+             WHERE id = $2`,
+            [userId, prescriptionId]
+          );
+
+          // Log to audit
+          await pool.query(
+            `INSERT INTO prescription_audit_log(prescription_id, action, user_id, ip_address, metadata)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [prescriptionId, 'bulk_transmitted', userId, req.ip, JSON.stringify({ batchId })]
+          );
+
+          results.success.push(prescriptionId);
+        } catch (error: any) {
+          results.failed.push({ id: prescriptionId, error: error.message });
+        }
+      }
+
+      // Update batch operation
+      await pool.query(
+        `UPDATE prescription_batch_operations
+         SET status = $1,
+             success_count = $2,
+             failure_count = $3,
+             completed_at = CURRENT_TIMESTAMP,
+             error_log = $4
+         WHERE id = $5`,
+        [
+          results.failed.length === 0 ? 'completed' : (results.success.length > 0 ? 'partial_failure' : 'failed'),
+          results.success.length,
+          results.failed.length,
+          JSON.stringify(results.failed),
+          batchId
+        ]
+      );
+
+      return res.json({
+        success: true,
+        batchId,
+        totalCount: prescriptionIds.length,
+        successCount: results.success.length,
+        failureCount: results.failed.length,
+        results,
+      });
+    } catch (error) {
+      console.error('Error sending bulk eRx:', error);
+      return res.status(500).json({ error: 'Failed to send bulk prescriptions' });
+    }
+  }
+);
+
+// POST /api/prescriptions/bulk/print - Print multiple prescriptions
+prescriptionsRouter.post(
+  '/bulk/print',
+  requireAuth,
+  requireRoles(['admin', 'provider', 'ma']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const { prescriptionIds } = req.body;
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+
+      if (!Array.isArray(prescriptionIds) || prescriptionIds.length === 0) {
+        return res.status(400).json({ error: 'prescriptionIds array is required' });
+      }
+
+      if (prescriptionIds.length > 100) {
+        return res.status(400).json({ error: 'Maximum 100 prescriptions can be printed at once' });
+      }
+
+      // Create batch operation record
+      const batchId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO prescription_batch_operations(
+          id, tenant_id, operation_type, prescription_ids, total_count,
+          initiated_by, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [batchId, tenantId, 'bulk_print', prescriptionIds, prescriptionIds.length, userId, 'in_progress']
+      );
+
+      // Update print counts
+      await pool.query(
+        `UPDATE prescriptions
+         SET print_count = COALESCE(print_count, 0) + 1,
+             last_printed_at = CURRENT_TIMESTAMP,
+             last_printed_by = $1
+         WHERE id = ANY($2) AND tenant_id = $3`,
+        [userId, prescriptionIds, tenantId]
+      );
+
+      // Update batch operation
+      await pool.query(
+        `UPDATE prescription_batch_operations
+         SET status = 'completed',
+             success_count = $1,
+             completed_at = CURRENT_TIMESTAMP
+         WHERE id = $2`,
+        [prescriptionIds.length, batchId]
+      );
+
+      return res.json({
+        success: true,
+        batchId,
+        totalCount: prescriptionIds.length,
+        message: 'Prescriptions marked for printing',
+      });
+    } catch (error) {
+      console.error('Error printing bulk prescriptions:', error);
+      return res.status(500).json({ error: 'Failed to print prescriptions' });
+    }
+  }
+);
+
+// POST /api/prescriptions/bulk/refill - Create refills for multiple prescriptions
+prescriptionsRouter.post(
+  '/bulk/refill',
+  requireAuth,
+  requireRoles(['admin', 'provider']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const { prescriptionIds } = req.body;
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+
+      if (!Array.isArray(prescriptionIds) || prescriptionIds.length === 0) {
+        return res.status(400).json({ error: 'prescriptionIds array is required' });
+      }
+
+      if (prescriptionIds.length > 50) {
+        return res.status(400).json({ error: 'Maximum 50 prescriptions can be refilled at once' });
+      }
+
+      // Create batch operation record
+      const batchId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO prescription_batch_operations(
+          id, tenant_id, operation_type, prescription_ids, total_count,
+          initiated_by, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [batchId, tenantId, 'bulk_refill', prescriptionIds, prescriptionIds.length, userId, 'in_progress']
+      );
+
+      const results: {
+        success: Array<{ originalId: any; newId: string }>;
+        failed: Array<{ id: any; error: string }>;
+      } = {
+        success: [],
+        failed: [],
+      };
+
+      // Process each prescription
+      for (const prescriptionId of prescriptionIds) {
+        try {
+          // Get original prescription
+          const result = await pool.query(
+            'SELECT * FROM prescriptions WHERE id = $1 AND tenant_id = $2',
+            [prescriptionId, tenantId]
+          );
+
+          if (result.rows.length === 0) {
+            results.failed.push({ id: prescriptionId, error: 'Prescription not found' });
+            continue;
+          }
+
+          const original = result.rows[0];
+
+          if (original.refills <= 0) {
+            results.failed.push({ id: prescriptionId, error: 'No refills remaining' });
+            continue;
+          }
+
+          // Create new prescription (refill)
+          const newRxId = crypto.randomUUID();
+          await pool.query(
+            `INSERT INTO prescriptions(
+              id, tenant_id, patient_id, provider_id, medication_id, medication_name,
+              generic_name, strength, dosage_form, sig, quantity, quantity_unit,
+              refills, days_supply, pharmacy_id, pharmacy_name, pharmacy_ncpdp,
+              daw, is_controlled, dea_schedule, status, created_by, notes
+            ) SELECT
+              $1, tenant_id, patient_id, provider_id, medication_id, medication_name,
+              generic_name, strength, dosage_form, sig, quantity, quantity_unit,
+              refills - 1, days_supply, pharmacy_id, pharmacy_name, pharmacy_ncpdp,
+              daw, is_controlled, dea_schedule, 'pending', $2,
+              'Refill from batch operation ' || $3
+            FROM prescriptions
+            WHERE id = $4`,
+            [newRxId, userId, batchId, prescriptionId]
+          );
+
+          results.success.push({ originalId: prescriptionId, newId: newRxId });
+        } catch (error: any) {
+          results.failed.push({ id: prescriptionId, error: error.message });
+        }
+      }
+
+      // Update batch operation
+      await pool.query(
+        `UPDATE prescription_batch_operations
+         SET status = $1,
+             success_count = $2,
+             failure_count = $3,
+             completed_at = CURRENT_TIMESTAMP,
+             error_log = $4
+         WHERE id = $5`,
+        [
+          results.failed.length === 0 ? 'completed' : (results.success.length > 0 ? 'partial_failure' : 'failed'),
+          results.success.length,
+          results.failed.length,
+          JSON.stringify(results.failed),
+          batchId
+        ]
+      );
+
+      return res.json({
+        success: true,
+        batchId,
+        totalCount: prescriptionIds.length,
+        successCount: results.success.length,
+        failureCount: results.failed.length,
+        results,
+      });
+    } catch (error) {
+      console.error('Error creating bulk refills:', error);
+      return res.status(500).json({ error: 'Failed to create bulk refills' });
     }
   }
 );

@@ -3,7 +3,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
 import { fetchOrders, fetchPatients, fetchProviders, createOrder, updateOrderStatus } from '../api';
-import type { Order, Patient, Provider } from '../types';
+import { updateOrderResultFlag } from '../api/resultFlags';
+import type { Order, Patient, Provider, ResultFlagType } from '../types';
+import { ResultFlagBadge, ResultFlagSelect, ResultFlagFilter, QuickFilterButtons } from '../components/ResultFlagBadge';
 
 // Main tab type
 type MainTab = 'path' | 'lab';
@@ -21,6 +23,7 @@ interface FilterState {
   entryDateEnd: string;
   resultsDateStart: string;
   resultsDateEnd: string;
+  resultFlags: ResultFlagType[];
 }
 
 // Path/Lab result interface
@@ -33,6 +36,9 @@ interface PathLabResult extends Order {
   resultsProcessed?: string;
   photos?: string[];
   entryDate?: string;
+  resultFlag?: ResultFlagType;
+  resultFlagUpdatedAt?: string;
+  resultFlagUpdatedBy?: string;
 }
 
 // Common dermatology procedures
@@ -93,6 +99,19 @@ export function LabsPage() {
     entryDateEnd: '',
     resultsDateStart: '',
     resultsDateEnd: '',
+    resultFlags: [],
+  });
+
+  const [showFlagFilters, setShowFlagFilters] = useState(false);
+  const [showFlagUpdateModal, setShowFlagUpdateModal] = useState(false);
+  const [selectedItemForFlag, setSelectedItemForFlag] = useState<PathLabResult | null>(null);
+  const [updatingFlag, setUpdatingFlag] = useState(false);
+  const [flagUpdateData, setFlagUpdateData] = useState<{
+    resultFlag: ResultFlagType;
+    changeReason: string;
+  }>({
+    resultFlag: 'none',
+    changeReason: '',
   });
 
   const [sortField, setSortField] = useState<string>('createdAt');
@@ -237,6 +256,12 @@ export function LabsPage() {
       if (filters.entryDateStart && new Date(item.createdAt) < new Date(filters.entryDateStart)) return false;
       if (filters.entryDateEnd && new Date(item.createdAt) > new Date(filters.entryDateEnd)) return false;
 
+      // Filter by result flags
+      if (filters.resultFlags.length > 0) {
+        const itemFlag = item.resultFlag || 'none';
+        if (!filters.resultFlags.includes(itemFlag)) return false;
+      }
+
       return true;
     });
 
@@ -304,7 +329,57 @@ export function LabsPage() {
       entryDateEnd: '',
       resultsDateStart: '',
       resultsDateEnd: '',
+      resultFlags: [],
     });
+  };
+
+  const handleQuickFilterCritical = () => {
+    setFilters({
+      ...filters,
+      resultFlags: ['cancerous', 'panic_value'],
+    });
+  };
+
+  const handleQuickFilterAbnormal = () => {
+    setFilters({
+      ...filters,
+      resultFlags: ['precancerous', 'abnormal', 'out_of_range'],
+    });
+  };
+
+  const handleOpenFlagModal = (item: PathLabResult) => {
+    setSelectedItemForFlag(item);
+    setFlagUpdateData({
+      resultFlag: item.resultFlag || 'none',
+      changeReason: '',
+    });
+    setShowFlagUpdateModal(true);
+  };
+
+  const handleUpdateFlag = async () => {
+    if (!session || !selectedItemForFlag) return;
+
+    setUpdatingFlag(true);
+    try {
+      await updateOrderResultFlag(
+        session.tenantId,
+        session.accessToken,
+        selectedItemForFlag.id,
+        {
+          resultFlag: flagUpdateData.resultFlag,
+          changeReason: flagUpdateData.changeReason || undefined,
+        }
+      );
+
+      showSuccess('Result flag updated successfully');
+      setShowFlagUpdateModal(false);
+      setSelectedItemForFlag(null);
+      loadData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to update result flag');
+    } finally {
+      setUpdatingFlag(false);
+    }
   };
 
   const handlePrint = () => {
@@ -676,6 +751,63 @@ export function LabsPage() {
           </div>
         </div>
 
+        {/* Result Flag Filters */}
+        <div className="ema-filter-group" style={{ marginTop: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <label className="ema-filter-label">Result Flags</label>
+            <button
+              type="button"
+              onClick={() => setShowFlagFilters(!showFlagFilters)}
+              style={{
+                padding: '0.25rem 0.75rem',
+                background: 'transparent',
+                color: '#f43f5e',
+                border: '1px solid #fb7185',
+                borderRadius: '4px',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              {showFlagFilters ? 'Hide' : 'Show'} Filters
+            </button>
+          </div>
+
+          {/* Quick Filter Buttons */}
+          <QuickFilterButtons
+            onFilterCritical={handleQuickFilterCritical}
+            onFilterAbnormal={handleQuickFilterAbnormal}
+            onClearFilters={() => setFilters({ ...filters, resultFlags: [] })}
+          />
+
+          {/* Selected flags display */}
+          {filters.resultFlags.length > 0 && (
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+              {filters.resultFlags.map((flag) => (
+                <ResultFlagBadge key={flag} flag={flag} size="sm" />
+              ))}
+            </div>
+          )}
+
+          {/* Detailed flag filters */}
+          {showFlagFilters && (
+            <div style={{
+              marginTop: '0.75rem',
+              padding: '1rem',
+              background: '#ffffff',
+              border: '2px solid #fb7185',
+              borderRadius: '8px',
+              maxHeight: '400px',
+              overflowY: 'auto',
+            }}>
+              <ResultFlagFilter
+                selectedFlags={filters.resultFlags}
+                onChange={(flags) => setFilters({ ...filters, resultFlags: flags })}
+              />
+            </div>
+          )}
+        </div>
+
         <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
           <button type="button" className="ema-filter-btn" onClick={() => {}}>
             Apply Filter
@@ -825,6 +957,7 @@ export function LabsPage() {
                 <th>Ddx</th>
                 <th>Procedure</th>
                 <th>Location</th>
+                <th>Result Flag</th>
                 <th>Results</th>
                 <th>Results Processed</th>
                 <th>Photos</th>
@@ -859,6 +992,27 @@ export function LabsPage() {
                   </td>
                   <td style={{ fontSize: '0.875rem', color: '#6b7280' }}>
                     {item.location || '--'}
+                  </td>
+                  <td>
+                    <div
+                      onClick={() => handleOpenFlagModal(item)}
+                      style={{
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                      }}
+                      title="Click to update result flag"
+                    >
+                      <ResultFlagBadge flag={item.resultFlag} size="sm" />
+                      <span style={{
+                        fontSize: '0.75rem',
+                        color: '#f43f5e',
+                        fontWeight: 600,
+                      }}>
+                        ✎
+                      </span>
+                    </div>
                   </td>
                   <td>
                     <span
@@ -909,6 +1063,91 @@ export function LabsPage() {
           </div>
         </div>
       )}
+
+      {/* Result Flag Update Modal */}
+      <Modal
+        isOpen={showFlagUpdateModal}
+        title="Update Result Flag"
+        onClose={() => {
+          setShowFlagUpdateModal(false);
+          setSelectedItemForFlag(null);
+        }}
+        size="md"
+      >
+        <div className="modal-form">
+          {selectedItemForFlag && (
+            <>
+              <div style={{ marginBottom: '1rem', padding: '1rem', background: '#f9fafb', borderRadius: '8px' }}>
+                <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>
+                  <strong>Patient:</strong> {getPatientName(selectedItemForFlag.patientId)}
+                </div>
+                <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>
+                  <strong>Type:</strong> {mainTab === 'path' ? 'Pathology' : 'Lab'}
+                </div>
+                <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+                  <strong>Procedure/Tests:</strong> {selectedItemForFlag.details || '--'}
+                </div>
+              </div>
+
+              <div className="form-field">
+                <label>Result Flag *</label>
+                <ResultFlagSelect
+                  value={flagUpdateData.resultFlag}
+                  onChange={(flag) => setFlagUpdateData({ ...flagUpdateData, resultFlag: flag })}
+                  placeholder="Select result flag..."
+                />
+              </div>
+
+              <div className="form-field">
+                <label>Change Reason (Optional)</label>
+                <textarea
+                  value={flagUpdateData.changeReason}
+                  onChange={(e) => setFlagUpdateData({ ...flagUpdateData, changeReason: e.target.value })}
+                  placeholder="Optional: Add a reason for this flag change..."
+                  rows={3}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '4px',
+                    fontSize: '0.875rem',
+                  }}
+                />
+              </div>
+
+              {selectedItemForFlag.resultFlag && selectedItemForFlag.resultFlag !== 'none' && (
+                <div style={{ padding: '0.75rem', background: '#fef3c7', borderRadius: '6px', marginTop: '0.75rem' }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#92400e', marginBottom: '0.25rem' }}>
+                    Current Flag:
+                  </div>
+                  <ResultFlagBadge flag={selectedItemForFlag.resultFlag} size="sm" />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setShowFlagUpdateModal(false);
+              setSelectedItemForFlag(null);
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={handleUpdateFlag}
+            disabled={updatingFlag}
+          >
+            {updatingFlag ? 'Updating...' : 'Update Flag'}
+          </button>
+        </div>
+      </Modal>
 
       {/* Manual Entry Modal */}
       <Modal

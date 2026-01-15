@@ -194,7 +194,11 @@ router.get('/due', async (req: AuthedRequest, res) => {
           SELECT COUNT(*)
           FROM reminder_log rl
           WHERE rl.recall_id = pr.id
-        ) as contact_attempts
+        ) as contact_attempts,
+        pr.doctor_notes,
+        pr.preferred_contact_method,
+        pr.notified_on,
+        pr.notification_count
       FROM patient_recalls pr
       JOIN patients p ON p.id = pr.patient_id
       LEFT JOIN recall_campaigns rc ON rc.id = pr.campaign_id
@@ -554,6 +558,139 @@ router.put('/patient/:patientId/preferences', async (req: AuthedRequest, res) =>
     res.json(updated);
   } catch (error: any) {
     console.error('Error updating patient preferences:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/recalls/bulk-notify
+ * Send bulk notifications to multiple patients
+ */
+router.post('/bulk-notify', async (req: AuthedRequest, res) => {
+  try {
+    const { tenantId, id: userId } = req.user!;
+    const { recallIds, notificationType, messageTemplate } = req.body;
+
+    if (!recallIds || !Array.isArray(recallIds) || recallIds.length === 0) {
+      return res.status(400).json({ error: 'Recall IDs are required' });
+    }
+
+    if (!notificationType) {
+      return res.status(400).json({ error: 'Notification type is required' });
+    }
+
+    const validTypes = ['email', 'sms', 'phone', 'portal'];
+    if (!validTypes.includes(notificationType)) {
+      return res.status(400).json({ error: 'Invalid notification type' });
+    }
+
+    const results = {
+      total: recallIds.length,
+      successful: 0,
+      failed: 0,
+      errors: [] as Array<{ recallId: string; error: string }>,
+    };
+
+    // Process each recall
+    for (const recallId of recallIds) {
+      try {
+        // Get recall details
+        const recallResult = await pool.query<PatientRecall>(
+          `SELECT pr.*, p.first_name, p.last_name, p.email, p.phone
+           FROM patient_recalls pr
+           JOIN patients p ON p.id = pr.patient_id
+           WHERE pr.id = $1 AND pr.tenant_id = $2`,
+          [recallId, tenantId]
+        );
+
+        if (recallResult.rows.length === 0) {
+          results.failed++;
+          results.errors.push({ recallId, error: 'Recall not found' });
+          continue;
+        }
+
+        const recall = recallResult.rows[0]!;
+
+        // Check if patient can be contacted via this method
+        const canContact = await canContactPatient(tenantId, recall.patientId, notificationType as any);
+
+        if (!canContact.canContact) {
+          results.failed++;
+          results.errors.push({ recallId, error: canContact.reason || 'Cannot contact patient' });
+          continue;
+        }
+
+        // Create notification message
+        const messageContent = messageTemplate || `Reminder: You have a scheduled appointment coming up.`;
+
+        // Log the reminder
+        await logReminder(
+          tenantId,
+          recall.patientId,
+          recallId,
+          notificationType as any,
+          messageContent,
+          userId
+        );
+
+        // Update recall record
+        await pool.query(
+          `UPDATE patient_recalls
+           SET notified_on = NOW(),
+               notification_count = COALESCE(notification_count, 0) + 1,
+               status = CASE WHEN status = 'pending' THEN 'contacted' ELSE status END,
+               updated_at = NOW()
+           WHERE id = $1 AND tenant_id = $2`,
+          [recallId, tenantId]
+        );
+
+        // Create notification history entry
+        const notificationId = randomUUID();
+        await pool.query(
+          `INSERT INTO reminder_notification_history (
+            id, tenant_id, recall_id, patient_id, notification_type, status, message_content, sent_by
+          ) VALUES ($1, $2, $3, $4, $5, 'sent', $6, $7)`,
+          [notificationId, tenantId, recallId, recall.patientId, notificationType, messageContent, userId]
+        );
+
+        results.successful++;
+      } catch (err: any) {
+        console.error(`Error notifying recall ${recallId}:`, err);
+        results.failed++;
+        results.errors.push({ recallId, error: err.message || 'Unknown error' });
+      }
+    }
+
+    res.json(results);
+  } catch (error: any) {
+    console.error('Error in bulk notify:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/recalls/:id/notification-history
+ * Get notification history for a specific recall
+ */
+router.get('/:id/notification-history', async (req: AuthedRequest, res) => {
+  try {
+    const { tenantId } = req.user!;
+    const { id } = req.params;
+
+    const result = await pool.query(
+      `SELECT
+        rnh.*,
+        u.full_name as sent_by_name
+      FROM reminder_notification_history rnh
+      LEFT JOIN users u ON rnh.sent_by = u.id
+      WHERE rnh.recall_id = $1 AND rnh.tenant_id = $2
+      ORDER BY rnh.sent_at DESC`,
+      [id, tenantId]
+    );
+
+    res.json({ history: result.rows });
+  } catch (error: any) {
+    console.error('Error fetching notification history:', error);
     res.status(500).json({ error: error.message });
   }
 });

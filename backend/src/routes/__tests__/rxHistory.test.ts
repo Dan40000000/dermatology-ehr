@@ -243,7 +243,7 @@ describe('RxHistory Routes', () => {
 
       const rxData = {
         patientId: '123e4567-e89b-12d3-a456-426614174000',
-        pharmacyId: '00000000-0000-0000-0000-000000000456',
+        pharmacyId: '456e7890-e89b-12d3-a456-426614174456',
         pharmacyNcpdp: '1234567',
         pharmacyName: 'CVS Pharmacy',
         medicationName: 'Hydrocortisone 1% Cream',
@@ -273,7 +273,7 @@ describe('RxHistory Routes', () => {
           'rx-history-uuid-123',
           'tenant-123',
           '123e4567-e89b-12d3-a456-426614174000',
-          '00000000-0000-0000-0000-000000000456',
+          '456e7890-e89b-12d3-a456-426614174456',
           '1234567',
           'CVS Pharmacy',
           'Hydrocortisone 1% Cream',

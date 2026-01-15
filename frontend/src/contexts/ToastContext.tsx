@@ -34,7 +34,7 @@ interface ToastContextValue {
   dismissAll: () => void;
 }
 
-const ToastContext = createContext<ToastContextValue | null>(null);
+export const ToastContext = createContext<ToastContextValue | null>(null);
 
 let toastId = 0;
 

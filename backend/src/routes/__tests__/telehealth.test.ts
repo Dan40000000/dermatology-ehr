@@ -99,6 +99,110 @@ describe("Telehealth routes", () => {
     expect(res.body.status).toBe("completed");
   });
 
+  it("GET /telehealth/stats returns statistics", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          in_progress_count: "5",
+          completed_count: "10",
+          unassigned_count: "2",
+        },
+      ],
+    });
+
+    const res = await request(app).get("/telehealth/stats");
+
+    expect(res.status).toBe(200);
+    expect(res.body.myInProgress).toBe(5);
+    expect(res.body.myCompleted).toBe(10);
+    expect(res.body.unassignedCases).toBe(2);
+    expect(res.body.myUnreadMessages).toBe(0);
+  });
+
+  it("GET /telehealth/stats supports date filtering", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          in_progress_count: "3",
+          completed_count: "7",
+          unassigned_count: "1",
+        },
+      ],
+    });
+
+    const res = await request(app)
+      .get("/telehealth/stats")
+      .query({ startDate: "2024-01-01", endDate: "2024-12-31" });
+
+    expect(res.status).toBe(200);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("ts.created_at >="),
+      expect.arrayContaining(["tenant-1", 101, "2024-01-01", "2024-12-31"])
+    );
+  });
+
+  it("POST /telehealth/sessions accepts reason and assignedTo", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "license-1" }] })
+      .mockResolvedValueOnce({ rows: [{ id: "session-1", reason: "Acne", assigned_to: 5 }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/telehealth/sessions").send({
+      patientId: 1,
+      providerId: 2,
+      patientState: "CO",
+      recordingConsent: true,
+      reason: "Acne",
+      assignedTo: 5,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.reason).toBe("Acne");
+    expect(res.body.assigned_to).toBe(5);
+  });
+
+  it("GET /telehealth/sessions filters by reason", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ id: "session-1", reason: "Rash" }],
+    });
+
+    const res = await request(app).get("/telehealth/sessions").query({ reason: "Rash" });
+
+    expect(res.status).toBe(200);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("ts.reason ="),
+      expect.arrayContaining(["tenant-1", "Rash"])
+    );
+  });
+
+  it("GET /telehealth/sessions filters by assignedTo", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ id: "session-1", assigned_to: 5 }],
+    });
+
+    const res = await request(app).get("/telehealth/sessions").query({ assignedTo: "5" });
+
+    expect(res.status).toBe(200);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("ts.assigned_to ="),
+      expect.arrayContaining(["tenant-1", "5"])
+    );
+  });
+
+  it("GET /telehealth/sessions filters by physician", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ id: "session-1", provider_id: 3 }],
+    });
+
+    const res = await request(app).get("/telehealth/sessions").query({ physicianId: "3" });
+
+    expect(res.status).toBe(200);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("ts.provider_id ="),
+      expect.arrayContaining(["tenant-1", "3"])
+    );
+  });
+
   it("POST /telehealth/waiting-room/join adds entry", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ count: "0" }] })

@@ -522,13 +522,24 @@ describe("Kiosk Routes", () => {
   });
 
   describe("POST /api/kiosk/checkin/:sessionId/signature", () => {
+    const validFormId = "00000000-0000-0000-0000-000000000001";
+
+    beforeEach(() => {
+      queryMock.mockReset();
+      queryMock.mockResolvedValue({ rows: [] });
+      validateSignatureDataMock.mockReset();
+      validateSignatureDataMock.mockReturnValue(true); // Default to valid signature
+      saveSignatureMock.mockReset();
+      saveSignatureMock.mockResolvedValue({ url: "https://example.com/sig.png", thumbnailUrl: "https://example.com/sig-thumb.png" });
+    });
+
     it("should save signature", async () => {
       queryMock
         .mockResolvedValueOnce({ rows: [{ patientId: "patient-1" }] })
         .mockResolvedValueOnce({
           rows: [
             {
-              id: "form-1",
+              id: validFormId,
               formContent: "Terms and conditions",
               version: "1.0",
             },
@@ -547,7 +558,7 @@ describe("Kiosk Routes", () => {
         .post("/api/kiosk/checkin/session-1/signature")
         .send({
           signatureData: "data:image/png;base64,abc",
-          consentFormId: "form-1",
+          consentFormId: validFormId,
         });
 
       expect(res.status).toBe(200);
@@ -575,7 +586,7 @@ describe("Kiosk Routes", () => {
         .post("/api/kiosk/checkin/session-1/signature")
         .send({
           signatureData: "invalid",
-          consentFormId: "form-1",
+          consentFormId: validFormId,
         });
 
       expect(res.status).toBe(400);
@@ -590,7 +601,7 @@ describe("Kiosk Routes", () => {
         .post("/api/kiosk/checkin/session-999/signature")
         .send({
           signatureData: "data:image/png;base64,abc",
-          consentFormId: "form-1",
+          consentFormId: "00000000-0000-0000-0000-000000000001",
         });
 
       expect(res.status).toBe(404);
@@ -607,7 +618,7 @@ describe("Kiosk Routes", () => {
         .post("/api/kiosk/checkin/session-1/signature")
         .send({
           signatureData: "data:image/png;base64,abc",
-          consentFormId: "form-999",
+          consentFormId: "00000000-0000-0000-0000-000000000999",
         });
 
       expect(res.status).toBe(404);
@@ -617,7 +628,7 @@ describe("Kiosk Routes", () => {
     it("should return 500 on save error", async () => {
       queryMock
         .mockResolvedValueOnce({ rows: [{ patientId: "patient-1" }] })
-        .mockResolvedValueOnce({ rows: [{ id: "form-1", formContent: "Terms", version: "1.0" }] });
+        .mockResolvedValueOnce({ rows: [{ id: "00000000-0000-0000-0000-000000000001", formContent: "Terms", version: "1.0" }] });
       validateSignatureDataMock.mockReturnValue(true);
       saveSignatureMock.mockRejectedValue(new Error("Save failed"));
 
@@ -625,7 +636,7 @@ describe("Kiosk Routes", () => {
         .post("/api/kiosk/checkin/session-1/signature")
         .send({
           signatureData: "data:image/png;base64,abc",
-          consentFormId: "form-1",
+          consentFormId: "00000000-0000-0000-0000-000000000001",
         });
 
       expect(res.status).toBe(500);
@@ -634,6 +645,11 @@ describe("Kiosk Routes", () => {
   });
 
   describe("POST /api/kiosk/checkin/:sessionId/complete", () => {
+    beforeEach(() => {
+      queryMock.mockReset();
+      queryMock.mockResolvedValue({ rows: [] });
+    });
+
     it("should complete checkin", async () => {
       queryMock
         .mockResolvedValueOnce({
@@ -682,6 +698,11 @@ describe("Kiosk Routes", () => {
   });
 
   describe("POST /api/kiosk/checkin/:sessionId/cancel", () => {
+    beforeEach(() => {
+      queryMock.mockReset();
+      queryMock.mockResolvedValue({ rows: [] });
+    });
+
     it("should cancel checkin", async () => {
       queryMock.mockResolvedValueOnce({ rows: [{ id: "session-1" }] });
 

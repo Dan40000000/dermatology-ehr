@@ -60,6 +60,7 @@ const TelehealthPage: React.FC = () => {
     status: '',
     assignedTo: '',
     physician: '',
+    patientSearch: '',
     reason: '',
     myUnreadOnly: false,
   });
@@ -110,6 +111,7 @@ const TelehealthPage: React.FC = () => {
       if (filters.status) filterParams.status = filters.status;
       if (filters.assignedTo) filterParams.assignedTo = filters.assignedTo;
       if (filters.physician) filterParams.physicianId = filters.physician;
+      if (filters.patientSearch) filterParams.patientSearch = filters.patientSearch;
       if (filters.reason) filterParams.reason = filters.reason;
       if (filters.myUnreadOnly) filterParams.myUnreadOnly = true;
 
@@ -219,6 +221,21 @@ const TelehealthPage: React.FC = () => {
   const handleFiltersChange = (newFilters: FilterValues) => {
     setFilters(newFilters);
     setActiveStatsFilter(null); // Clear stats filter when using manual filters
+  };
+
+  const handleClearFilters = () => {
+    setFilters({
+      datePreset: 'alltime',
+      startDate: '',
+      endDate: '',
+      status: '',
+      assignedTo: '',
+      physician: '',
+      patientSearch: '',
+      reason: '',
+      myUnreadOnly: false,
+    });
+    setActiveStatsFilter(null);
   };
 
   const handleJoinSession = async (teleSession: TelehealthSession) => {
@@ -350,8 +367,19 @@ const TelehealthPage: React.FC = () => {
         activeFilter={activeStatsFilter}
       />
 
+      {/* Telehealth Cases Section Header */}
+      <div className="section-header">
+        <h2>Telehealth Cases</h2>
+      </div>
+
       {/* Filters */}
-      <TelehealthFilters filters={filters} onChange={handleFiltersChange} providers={providers} />
+      <TelehealthFilters
+        filters={filters}
+        onChange={handleFiltersChange}
+        onClear={handleClearFilters}
+        providers={providers}
+        patients={patients}
+      />
 
       {/* Waiting Room Queue */}
       {waitingRoom.length > 0 && (
@@ -393,64 +421,47 @@ const TelehealthPage: React.FC = () => {
         <DataTable
           columns={[
             {
+              key: 'updated_at',
+              label: 'Last Updated',
+              sortable: true,
+              render: (row: TelehealthSession) =>
+                row.updated_at
+                  ? new Date(row.updated_at).toLocaleString()
+                  : new Date(row.created_at).toLocaleString(),
+            },
+            {
+              key: 'created_at',
+              label: 'Date Created',
+              sortable: true,
+              render: (row: TelehealthSession) => new Date(row.created_at).toLocaleString(),
+            },
+            {
               key: 'patient',
               label: 'Patient',
+              sortable: true,
               render: (row: TelehealthSession) =>
                 `${row.patient_first_name} ${row.patient_last_name}`,
             },
             {
-              key: 'reason',
-              label: 'Reason',
-              render: (row: TelehealthSession) => row.reason || '-',
-            },
-            {
-              key: 'provider',
-              label: 'Physician',
-              render: (row: TelehealthSession) => row.physician_name || row.provider_name || 'Unknown',
-            },
-            {
-              key: 'assigned',
+              key: 'assigned_to_name',
               label: 'Assigned To',
-              render: (row: TelehealthSession) => row.assigned_to_name || '-',
-            },
-            {
-              key: 'status',
-              label: 'Status',
-              render: (row: TelehealthSession) => (
-                <span className={getStatusClass(row.status)}>
-                  {row.status === 'scheduled' ? 'New Visit' : row.status.replace('_', ' ')}
-                </span>
-              ),
-            },
-            {
-              key: 'state',
-              label: 'State',
-              render: (row: TelehealthSession) => row.patient_state,
-            },
-            {
-              key: 'created',
-              label: 'Created',
-              render: (row: TelehealthSession) => new Date(row.created_at).toLocaleString(),
-            },
-            {
-              key: 'duration',
-              label: 'Duration',
-              render: (row: TelehealthSession) =>
-                row.duration_minutes ? `${row.duration_minutes} min` : '-',
+              sortable: true,
+              render: (row: TelehealthSession) => row.assigned_to_name || 'Unassigned',
             },
             {
               key: 'actions',
               label: 'Actions',
+              sortable: false,
               render: (row: TelehealthSession) => (
                 <div className="table-actions">
                   {row.status === 'scheduled' && (
                     <Button onClick={() => handleJoinSession(row)} variant="primary" size="sm">
-                      Start
+                      Start Session
                     </Button>
                   )}
                   {row.status === 'in_progress' && (
                     <Button onClick={() => handleJoinSession(row)} variant="primary" size="sm">
-                      Join
+                      Join Session
                     </Button>
                   )}
                   {row.status === 'completed' && (
@@ -470,9 +481,14 @@ const TelehealthPage: React.FC = () => {
             },
           ]}
           data={filteredSessions}
-          keyExtractor={(row) => row.id}
+          keyExtractor={(row) => row.id.toString()}
           emptyMessage="No telehealth sessions found"
         />
+
+        {/* Total Results Counter */}
+        <div className="total-results">
+          Total Results: <span className="count">{filteredSessions.length}</span>
+        </div>
       </div>
 
       {/* New Session Modal */}
@@ -603,7 +619,7 @@ const TelehealthPage: React.FC = () => {
       <style>{`
         .telehealth-page {
           padding: 1.5rem;
-          background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+          background: linear-gradient(135deg, #ecfeff 0%, #cffafe 100%);
           min-height: 100vh;
         }
 
@@ -628,12 +644,26 @@ const TelehealthPage: React.FC = () => {
 
         .telehealth-header h1 {
           margin: 0 0 0.5rem 0;
-          color: #065f46;
+          color: #0e7490;
         }
 
         .telehealth-header p {
           margin: 0;
-          color: #047857;
+          color: #0891b2;
+        }
+
+        .section-header {
+          margin-bottom: 1rem;
+        }
+
+        .section-header h2 {
+          margin: 0;
+          padding: 0.75rem 1rem;
+          background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+          color: white;
+          border-radius: 8px;
+          font-size: 1.125rem;
+          font-weight: 600;
         }
 
 
@@ -643,12 +673,12 @@ const TelehealthPage: React.FC = () => {
           padding: 1.5rem;
           margin-bottom: 2rem;
           box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-          border-left: 4px solid #10b981;
+          border-left: 4px solid #06b6d4;
         }
 
         .waiting-room-section h2 {
           margin: 0 0 1rem 0;
-          color: #065f46;
+          color: #0e7490;
         }
 
         .waiting-room-list {
@@ -662,9 +692,9 @@ const TelehealthPage: React.FC = () => {
           justify-content: space-between;
           align-items: center;
           padding: 1rem;
-          background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+          background: linear-gradient(135deg, #ecfeff 0%, #cffafe 100%);
           border-radius: 8px;
-          border: 1px solid #a7f3d0;
+          border: 1px solid #a5f3fc;
         }
 
         .waiting-room-entry-info {
@@ -674,7 +704,7 @@ const TelehealthPage: React.FC = () => {
         }
 
         .queue-position {
-          background: linear-gradient(135deg, #059669 0%, #047857 100%);
+          background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
           color: white;
           font-weight: bold;
           font-size: 1.25rem;
@@ -684,7 +714,7 @@ const TelehealthPage: React.FC = () => {
           align-items: center;
           justify-content: center;
           border-radius: 10px;
-          box-shadow: 0 2px 4px rgba(5, 150, 105, 0.3);
+          box-shadow: 0 2px 4px rgba(8, 145, 178, 0.3);
         }
 
         .waiting-room-entry-details {
@@ -695,12 +725,12 @@ const TelehealthPage: React.FC = () => {
 
         .patient-id {
           font-weight: 600;
-          color: #065f46;
+          color: #0e7490;
         }
 
         .join-time, .equipment-check {
           font-size: 0.875rem;
-          color: #047857;
+          color: #0891b2;
         }
 
         .waiting-room-entry-actions {
@@ -711,7 +741,7 @@ const TelehealthPage: React.FC = () => {
 
         .wait-time {
           font-size: 0.875rem;
-          color: #059669;
+          color: #0891b2;
           font-weight: 500;
         }
 
@@ -737,8 +767,8 @@ const TelehealthPage: React.FC = () => {
         }
 
         .session-status.in_progress {
-          background: #d1fae5;
-          color: #065f46;
+          background: #cffafe;
+          color: #0e7490;
         }
 
         .session-status.completed {
@@ -749,6 +779,21 @@ const TelehealthPage: React.FC = () => {
         .table-actions {
           display: flex;
           gap: 0.5rem;
+        }
+
+        .total-results {
+          margin-top: 1.5rem;
+          padding: 1rem;
+          text-align: center;
+          font-size: 0.875rem;
+          color: #475569;
+          border-top: 1px solid #e2e8f0;
+        }
+
+        .total-results .count {
+          font-weight: 700;
+          color: #0891b2;
+          font-size: 1rem;
         }
 
         .telehealth-modal-form {

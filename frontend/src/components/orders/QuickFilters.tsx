@@ -113,23 +113,42 @@ export function QuickFilters({ onLoadFilter, currentFilters }: QuickFiltersProps
         }}>
           My Quick Filters
         </h3>
-        <button
-          type="button"
-          onClick={() => setShowSaveDialog(true)}
-          style={{
-            padding: '0.375rem 0.75rem',
-            background: '#10b981',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '6px',
-            fontSize: '0.75rem',
-            fontWeight: 600,
-            cursor: 'pointer',
-            transition: 'all 0.2s',
-          }}
-        >
-          + Save Current Filter
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            type="button"
+            onClick={() => setShowSaveDialog(true)}
+            style={{
+              padding: '0.375rem 0.75rem',
+              background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+          >
+            New Filter
+          </button>
+          <button
+            type="button"
+            disabled={quickFilters.length === 0}
+            style={{
+              padding: '0.375rem 0.75rem',
+              background: quickFilters.length === 0 ? '#e5e7eb' : '#ffffff',
+              color: quickFilters.length === 0 ? '#9ca3af' : '#4f46e5',
+              border: '1px solid #d1d5db',
+              borderRadius: '6px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              cursor: quickFilters.length === 0 ? 'not-allowed' : 'pointer',
+              transition: 'all 0.2s',
+            }}
+          >
+            Edit
+          </button>
+        </div>
       </div>
 
       {quickFilters.length === 0 ? (
@@ -166,7 +185,7 @@ export function QuickFilters({ onLoadFilter, currentFilters }: QuickFiltersProps
                 style={{
                   background: 'none',
                   border: 'none',
-                  color: '#059669',
+                  color: '#4f46e5',
                   fontSize: '0.813rem',
                   fontWeight: 600,
                   cursor: 'pointer',
@@ -269,7 +288,7 @@ export function QuickFilters({ onLoadFilter, currentFilters }: QuickFiltersProps
                 disabled={!filterName.trim()}
                 style={{
                   padding: '0.5rem 1rem',
-                  background: filterName.trim() ? '#10b981' : '#d1d5db',
+                  background: filterName.trim() ? 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' : '#d1d5db',
                   color: '#fff',
                   border: 'none',
                   borderRadius: '6px',
@@ -343,7 +362,7 @@ export function QuickFilters({ onLoadFilter, currentFilters }: QuickFiltersProps
                 disabled={!filterName.trim()}
                 style={{
                   padding: '0.5rem 1rem',
-                  background: filterName.trim() ? '#10b981' : '#d1d5db',
+                  background: filterName.trim() ? 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)' : '#d1d5db',
                   color: '#fff',
                   border: 'none',
                   borderRadius: '6px',

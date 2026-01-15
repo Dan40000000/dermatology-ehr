@@ -7,6 +7,7 @@ export interface FilterValues {
   status: string;
   assignedTo: string;
   physician: string;
+  patientSearch: string;
   reason: string;
   myUnreadOnly: boolean;
 }
@@ -14,7 +15,9 @@ export interface FilterValues {
 interface TelehealthFiltersProps {
   filters: FilterValues;
   onChange: (filters: FilterValues) => void;
+  onClear: () => void;
   providers: Array<{ id: number; fullName?: string; name?: string }>;
+  patients: Array<{ id: number; firstName: string; lastName: string }>;
 }
 
 export const DERMATOLOGY_REASONS = [
@@ -51,7 +54,7 @@ export const DATE_PRESETS = [
   { value: 'custom', label: 'Custom Range' },
 ];
 
-const TelehealthFilters: React.FC<TelehealthFiltersProps> = ({ filters, onChange, providers }) => {
+const TelehealthFilters: React.FC<TelehealthFiltersProps> = ({ filters, onChange, onClear, providers, patients }) => {
   const handleDatePresetChange = (preset: string) => {
     const today = new Date();
     let startDate = '';
@@ -103,9 +106,11 @@ const TelehealthFilters: React.FC<TelehealthFiltersProps> = ({ filters, onChange
 
   return (
     <div className="telehealth-filters">
+      <h3 className="filters-title">Filter Telehealth Cases</h3>
+
       <div className="filters-row">
         <div className="filter-group">
-          <label htmlFor="datePreset">Date Range</label>
+          <label htmlFor="datePreset">Dates</label>
           <select
             id="datePreset"
             value={filters.datePreset}
@@ -122,7 +127,7 @@ const TelehealthFilters: React.FC<TelehealthFiltersProps> = ({ filters, onChange
         {filters.datePreset === 'custom' && (
           <>
             <div className="filter-group">
-              <label htmlFor="startDate">Start Date</label>
+              <label htmlFor="startDate">Date Created (From)</label>
               <input
                 id="startDate"
                 type="date"
@@ -131,7 +136,7 @@ const TelehealthFilters: React.FC<TelehealthFiltersProps> = ({ filters, onChange
               />
             </div>
             <div className="filter-group">
-              <label htmlFor="endDate">End Date</label>
+              <label htmlFor="endDate">Date Created (To)</label>
               <input
                 id="endDate"
                 type="date"
@@ -149,26 +154,10 @@ const TelehealthFilters: React.FC<TelehealthFiltersProps> = ({ filters, onChange
             value={filters.status}
             onChange={(e) => handleChange('status', e.target.value)}
           >
-            <option value="">All Statuses</option>
+            <option value="">Any</option>
             <option value="scheduled">New Visit</option>
             <option value="in_progress">In Progress</option>
             <option value="completed">Completed</option>
-          </select>
-        </div>
-
-        <div className="filter-group">
-          <label htmlFor="reason">Reason for Visit</label>
-          <select
-            id="reason"
-            value={filters.reason}
-            onChange={(e) => handleChange('reason', e.target.value)}
-          >
-            <option value="">All Reasons</option>
-            {DERMATOLOGY_REASONS.map((reason) => (
-              <option key={reason} value={reason}>
-                {reason}
-              </option>
-            ))}
           </select>
         </div>
 
@@ -204,16 +193,58 @@ const TelehealthFilters: React.FC<TelehealthFiltersProps> = ({ filters, onChange
           </select>
         </div>
 
-        <div className="filter-group checkbox-group">
-          <label>
-            <input
-              type="checkbox"
-              checked={filters.myUnreadOnly}
-              onChange={(e) => handleChange('myUnreadOnly', e.target.checked)}
-            />
-            <span>My Unread Only</span>
-          </label>
+        <div className="filter-group">
+          <label htmlFor="patientSearch">Patient</label>
+          <select
+            id="patientSearch"
+            value={filters.patientSearch}
+            onChange={(e) => handleChange('patientSearch', e.target.value)}
+          >
+            <option value="">All Patients</option>
+            {patients.map((patient) => (
+              <option key={patient.id} value={patient.id}>
+                {patient.firstName} {patient.lastName}
+              </option>
+            ))}
+          </select>
         </div>
+
+        <div className="filter-group">
+          <label htmlFor="reason">Reason</label>
+          <select
+            id="reason"
+            value={filters.reason}
+            onChange={(e) => handleChange('reason', e.target.value)}
+          >
+            <option value="">Any</option>
+            {DERMATOLOGY_REASONS.map((reason) => (
+              <option key={reason} value={reason}>
+                {reason}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="filter-group">
+          <label htmlFor="myUnreadOnly">My Unread Only</label>
+          <select
+            id="myUnreadOnly"
+            value={filters.myUnreadOnly ? 'yes' : 'no'}
+            onChange={(e) => handleChange('myUnreadOnly', e.target.value === 'yes')}
+          >
+            <option value="no">No</option>
+            <option value="yes">Yes</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="filters-actions">
+        <button className="filter-btn apply-btn" onClick={() => onChange(filters)}>
+          Apply Filters
+        </button>
+        <button className="filter-btn clear-btn" onClick={onClear}>
+          Clear Filters
+        </button>
       </div>
 
       <style>{`
@@ -225,11 +256,20 @@ const TelehealthFilters: React.FC<TelehealthFiltersProps> = ({ filters, onChange
           box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
         }
 
+        .filters-title {
+          margin: 0 0 1.25rem 0;
+          font-size: 1rem;
+          font-weight: 600;
+          color: #0e7490;
+          padding-bottom: 0.75rem;
+          border-bottom: 2px solid #e0f2fe;
+        }
+
         .filters-row {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
           gap: 1rem;
-          align-items: end;
+          margin-bottom: 1.25rem;
         }
 
         .filter-group {
@@ -241,45 +281,70 @@ const TelehealthFilters: React.FC<TelehealthFiltersProps> = ({ filters, onChange
         .filter-group label {
           font-weight: 500;
           font-size: 0.875rem;
-          color: #374151;
+          color: #475569;
         }
 
         .filter-group select,
         .filter-group input[type="date"] {
           padding: 0.625rem;
-          border: 1px solid #d1d5db;
+          border: 1px solid #cbd5e1;
           border-radius: 8px;
           font-size: 0.875rem;
           background: white;
-          transition: border-color 0.2s;
+          transition: all 0.2s;
+          cursor: pointer;
+        }
+
+        .filter-group select:hover,
+        .filter-group input[type="date"]:hover {
+          border-color: #0891b2;
         }
 
         .filter-group select:focus,
         .filter-group input[type="date"]:focus {
           outline: none;
-          border-color: #059669;
-          box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.1);
+          border-color: #0891b2;
+          box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.1);
         }
 
-        .checkbox-group {
+        .filters-actions {
           display: flex;
-          align-items: center;
-          padding-top: 0.25rem;
+          gap: 0.75rem;
+          justify-content: flex-end;
+          padding-top: 1rem;
+          border-top: 1px solid #e2e8f0;
         }
 
-        .checkbox-group label {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
+        .filter-btn {
+          padding: 0.625rem 1.5rem;
+          border-radius: 8px;
+          font-size: 0.875rem;
+          font-weight: 500;
           cursor: pointer;
-          font-weight: 400;
+          transition: all 0.2s;
+          border: none;
         }
 
-        .checkbox-group input[type="checkbox"] {
-          width: 1.125rem;
-          height: 1.125rem;
-          cursor: pointer;
-          accent-color: #059669;
+        .apply-btn {
+          background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+          color: white;
+        }
+
+        .apply-btn:hover {
+          background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
+          transform: translateY(-1px);
+          box-shadow: 0 4px 8px rgba(8, 145, 178, 0.2);
+        }
+
+        .clear-btn {
+          background: white;
+          color: #64748b;
+          border: 1px solid #cbd5e1;
+        }
+
+        .clear-btn:hover {
+          background: #f8fafc;
+          border-color: #94a3b8;
         }
       `}</style>
     </div>

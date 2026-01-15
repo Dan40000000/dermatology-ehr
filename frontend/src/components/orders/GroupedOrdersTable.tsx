@@ -113,41 +113,47 @@ export function GroupedOrdersTable({
 
   if (groupBy === 'none') {
     return (
-      <table className="ema-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ background: '#f9fafb', borderBottom: '2px solid #e5e7eb' }}>
-            <th style={{ width: '40px', padding: '0.75rem' }}>
-              <input
-                type="checkbox"
-                checked={selectedOrders.size === orders.length && orders.length > 0}
-                onChange={onToggleSelectAll}
-                style={{ cursor: 'pointer' }}
+      <div style={{ overflowX: 'auto' }}>
+        <table className="ema-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.813rem' }}>
+          <thead>
+            <tr style={{ background: '#f9fafb', borderBottom: '2px solid #e5e7eb' }}>
+              <th style={{ width: '40px', padding: '0.75rem' }}>
+                <input
+                  type="checkbox"
+                  checked={selectedOrders.size === orders.length && orders.length > 0}
+                  onChange={onToggleSelectAll}
+                  style={{ cursor: 'pointer' }}
+                />
+              </th>
+              <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Date</th>
+              <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Patient Name</th>
+              <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Number</th>
+              <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Name</th>
+              <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Provider</th>
+              <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Facility</th>
+              <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Perform At</th>
+              <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Due Date</th>
+              <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Scheduled Date</th>
+              <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Workflow Status</th>
+              <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((order) => (
+              <OrderRow
+                key={order.id}
+                order={order}
+                isSelected={selectedOrders.has(order.id)}
+                onToggle={onToggleOrder}
+                onStatusChange={onStatusChange}
+                getPatientName={getPatientName}
+                getPriorityStyle={getPriorityStyle}
+                getOrderTypeLabel={getOrderTypeLabel}
               />
-            </th>
-            <th style={{ textAlign: 'left', padding: '0.75rem' }}>Type</th>
-            <th style={{ textAlign: 'left', padding: '0.75rem' }}>Patient</th>
-            <th style={{ textAlign: 'left', padding: '0.75rem' }}>Details</th>
-            <th style={{ textAlign: 'left', padding: '0.75rem' }}>Priority</th>
-            <th style={{ textAlign: 'left', padding: '0.75rem' }}>Status</th>
-            <th style={{ textAlign: 'left', padding: '0.75rem' }}>Created</th>
-            <th style={{ textAlign: 'left', padding: '0.75rem' }}>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order) => (
-            <OrderRow
-              key={order.id}
-              order={order}
-              isSelected={selectedOrders.has(order.id)}
-              onToggle={onToggleOrder}
-              onStatusChange={onStatusChange}
-              getPatientName={getPatientName}
-              getPriorityStyle={getPriorityStyle}
-              getOrderTypeLabel={getOrderTypeLabel}
-            />
-          ))}
-        </tbody>
-      </table>
+            ))}
+          </tbody>
+        </table>
+      </div>
     );
   }
 
@@ -169,7 +175,7 @@ export function GroupedOrdersTable({
               onClick={() => toggleGroup(group.key)}
               style={{
                 padding: '1rem',
-                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)',
                 color: '#fff',
                 display: 'flex',
                 justifyContent: 'space-between',
@@ -192,43 +198,49 @@ export function GroupedOrdersTable({
             </div>
 
             {!isCollapsed && (
-              <table className="ema-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#f9fafb', borderBottom: '2px solid #e5e7eb' }}>
-                    <th style={{ width: '40px', padding: '0.75rem' }}>
-                      <input
-                        type="checkbox"
-                        checked={group.orders.every((o) => selectedOrders.has(o.id))}
-                        onChange={() => {
-                          group.orders.forEach((o) => onToggleOrder(o.id));
-                        }}
-                        style={{ cursor: 'pointer' }}
+              <div style={{ overflowX: 'auto' }}>
+                <table className="ema-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.813rem' }}>
+                  <thead>
+                    <tr style={{ background: '#f9fafb', borderBottom: '2px solid #e5e7eb' }}>
+                      <th style={{ width: '40px', padding: '0.75rem' }}>
+                        <input
+                          type="checkbox"
+                          checked={group.orders.every((o) => selectedOrders.has(o.id))}
+                          onChange={() => {
+                            group.orders.forEach((o) => onToggleOrder(o.id));
+                          }}
+                          style={{ cursor: 'pointer' }}
+                        />
+                      </th>
+                      <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Date</th>
+                      <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Patient Name</th>
+                      <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Number</th>
+                      <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Name</th>
+                      <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Provider</th>
+                      <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Facility</th>
+                      <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Perform At</th>
+                      <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Due Date</th>
+                      <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Scheduled Date</th>
+                      <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Workflow Status</th>
+                      <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.orders.map((order) => (
+                      <OrderRow
+                        key={order.id}
+                        order={order}
+                        isSelected={selectedOrders.has(order.id)}
+                        onToggle={onToggleOrder}
+                        onStatusChange={onStatusChange}
+                        getPatientName={getPatientName}
+                        getPriorityStyle={getPriorityStyle}
+                        getOrderTypeLabel={getOrderTypeLabel}
                       />
-                    </th>
-                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>Type</th>
-                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>Patient</th>
-                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>Details</th>
-                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>Priority</th>
-                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>Status</th>
-                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>Created</th>
-                    <th style={{ textAlign: 'left', padding: '0.75rem' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {group.orders.map((order) => (
-                    <OrderRow
-                      key={order.id}
-                      order={order}
-                      isSelected={selectedOrders.has(order.id)}
-                      onToggle={onToggleOrder}
-                      onStatusChange={onStatusChange}
-                      getPatientName={getPatientName}
-                      getPriorityStyle={getPriorityStyle}
-                      getOrderTypeLabel={getOrderTypeLabel}
-                    />
-                  ))}
-                </tbody>
-              </table>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         );
@@ -256,7 +268,6 @@ function OrderRow({
   getPriorityStyle,
   getOrderTypeLabel,
 }: OrderRowProps) {
-  const priorityStyle = getPriorityStyle(order.priority);
   const rowBackground =
     order.priority === 'stat'
       ? '#fef2f2'
@@ -264,119 +275,129 @@ function OrderRow({
       ? '#f0fdf4'
       : undefined;
 
+  // Generate mock order number from order ID
+  const orderNumber = `ORD-${order.id.substring(0, 8).toUpperCase()}`;
+
+  // Mock dates - in real implementation these would come from the order object
+  const dueDate = order.createdAt ? new Date(new Date(order.createdAt).getTime() + 7 * 24 * 60 * 60 * 1000) : null;
+  const scheduledDate = order.createdAt ? new Date(new Date(order.createdAt).getTime() + 3 * 24 * 60 * 60 * 1000) : null;
+
   return (
     <tr style={{ background: rowBackground, borderBottom: '1px solid #e5e7eb' }}>
       <td style={{ padding: '0.75rem' }}>
         <input type="checkbox" checked={isSelected} onChange={() => onToggle(order.id)} style={{ cursor: 'pointer' }} />
       </td>
-      <td style={{ padding: '0.75rem' }}>
-        <span
-          style={{
-            background: '#e0f2fe',
-            color: '#0369a1',
-            padding: '0.25rem 0.5rem',
-            borderRadius: '4px',
-            fontSize: '0.75rem',
-            display: 'inline-block',
-          }}
-        >
-          {getOrderTypeLabel(order.type)}
-        </span>
+      <td style={{ padding: '0.75rem', fontSize: '0.813rem', color: '#374151' }}>
+        {new Date(order.createdAt).toLocaleDateString()}
       </td>
       <td style={{ padding: '0.75rem' }}>
-        <a href="#" className="ema-patient-link" style={{ color: '#059669', textDecoration: 'none' }}>
+        <a href="#" className="ema-patient-link" style={{ color: '#4f46e5', textDecoration: 'none', fontWeight: 600, fontSize: '0.813rem' }}>
           {getPatientName(order.patientId)}
         </a>
       </td>
-      <td style={{ padding: '0.75rem', maxWidth: '250px' }}>
-        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={order.details}>
-          {order.details}
+      <td style={{ padding: '0.75rem', fontSize: '0.813rem', color: '#6b7280', fontFamily: 'monospace' }}>
+        {orderNumber}
+      </td>
+      <td style={{ padding: '0.75rem', fontSize: '0.813rem', color: '#374151' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span
+            style={{
+              background: '#e0e7ff',
+              color: '#4338ca',
+              padding: '0.125rem 0.5rem',
+              borderRadius: '4px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+            }}
+          >
+            {getOrderTypeLabel(order.type)}
+          </span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '150px' }} title={order.details}>
+            {order.details}
+          </span>
         </div>
+      </td>
+      <td style={{ padding: '0.75rem', fontSize: '0.813rem', color: '#374151' }}>
+        {order.providerName || 'Dr. Smith'}
+      </td>
+      <td style={{ padding: '0.75rem', fontSize: '0.813rem', color: '#6b7280' }}>
+        Main Clinic
+      </td>
+      <td style={{ padding: '0.75rem', fontSize: '0.813rem', color: '#6b7280' }}>
+        Lab
+      </td>
+      <td style={{ padding: '0.75rem', fontSize: '0.813rem', color: '#374151' }}>
+        {dueDate ? dueDate.toLocaleDateString() : '-'}
+      </td>
+      <td style={{ padding: '0.75rem', fontSize: '0.813rem', color: '#374151' }}>
+        {scheduledDate ? scheduledDate.toLocaleDateString() : '-'}
+      </td>
+      <td style={{ padding: '0.75rem' }}>
+        {order.priority === 'stat' ? (
+          <span
+            style={{
+              background: '#dc2626',
+              color: '#ffffff',
+              padding: '0.25rem 0.5rem',
+              borderRadius: '4px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              display: 'inline-block',
+            }}
+          >
+            STAT
+          </span>
+        ) : order.priority === 'high' || order.priority === 'urgent' ? (
+          <span
+            style={{
+              background: '#f59e0b',
+              color: '#ffffff',
+              padding: '0.25rem 0.5rem',
+              borderRadius: '4px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              display: 'inline-block',
+            }}
+          >
+            High
+          </span>
+        ) : (
+          <span style={{ fontSize: '0.813rem', color: '#6b7280' }}>Normal</span>
+        )}
       </td>
       <td style={{ padding: '0.75rem' }}>
         <span
           style={{
-            ...priorityStyle,
+            background:
+              order.status === 'completed' || order.status === 'closed'
+                ? '#d1fae5'
+                : order.status === 'in-progress'
+                ? '#dbeafe'
+                : order.status === 'sent'
+                ? '#e0e7ff'
+                : order.status === 'canceled' || order.status === 'cancelled'
+                ? '#fee2e2'
+                : '#fef3c7',
+            color:
+              order.status === 'completed' || order.status === 'closed'
+                ? '#065f46'
+                : order.status === 'in-progress'
+                ? '#1e40af'
+                : order.status === 'sent'
+                ? '#3730a3'
+                : order.status === 'canceled' || order.status === 'cancelled'
+                ? '#991b1b'
+                : '#92400e',
             padding: '0.25rem 0.5rem',
             borderRadius: '4px',
             fontSize: '0.75rem',
             fontWeight: 600,
             display: 'inline-block',
+            textTransform: 'capitalize',
           }}
-        >
-          {order.priority === 'stat' ? 'STAT' : order.priority === 'urgent' || order.priority === 'high' ? 'High' : 'Normal'}
-        </span>
-      </td>
-      <td style={{ padding: '0.75rem' }}>
-        <span
-          className={`ema-status ${
-            order.status === 'completed' || order.status === 'closed'
-              ? 'established'
-              : order.status === 'cancelled' || order.status === 'canceled'
-              ? 'cancelled'
-              : 'pending'
-          }`}
-          style={{ fontSize: '0.75rem' }}
         >
           {order.status}
         </span>
-      </td>
-      <td style={{ padding: '0.75rem', fontSize: '0.75rem', color: '#6b7280' }}>
-        {new Date(order.createdAt).toLocaleDateString()}
-      </td>
-      <td style={{ padding: '0.75rem' }}>
-        <div style={{ display: 'flex', gap: '0.25rem' }}>
-          {(order.status === 'pending' || order.status === 'open') && (
-            <>
-              <button
-                type="button"
-                onClick={() => onStatusChange(order.id, 'in-progress')}
-                style={{
-                  padding: '0.25rem 0.5rem',
-                  background: '#3b82f6',
-                  color: '#ffffff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '0.75rem',
-                }}
-              >
-                Start
-              </button>
-              <button
-                type="button"
-                onClick={() => onStatusChange(order.id, 'cancelled')}
-                style={{
-                  padding: '0.25rem 0.5rem',
-                  background: '#f3f4f6',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '0.75rem',
-                }}
-              >
-                Cancel
-              </button>
-            </>
-          )}
-          {order.status === 'in-progress' && (
-            <button
-              type="button"
-              onClick={() => onStatusChange(order.id, 'completed')}
-              style={{
-                padding: '0.25rem 0.5rem',
-                background: '#10b981',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '0.75rem',
-              }}
-            >
-              Complete
-            </button>
-          )}
-        </div>
       </td>
     </tr>
   );

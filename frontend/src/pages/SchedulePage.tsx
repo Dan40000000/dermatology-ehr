@@ -124,6 +124,13 @@ export function SchedulePage() {
     }
   }, [searchParams]);
 
+  // Auto-select first provider when switching to month view if "all" is selected
+  useEffect(() => {
+    if (viewMode === 'month' && providerFilter === 'all' && providers.length > 0) {
+      setProviderFilter(providers[0].id);
+    }
+  }, [viewMode, providers]);
+
   // Save filter state and sync view mode to URL
   useEffect(() => {
     localStorage.setItem('sched:provider', providerFilter);
@@ -594,13 +601,20 @@ export function SchedulePage() {
       <div className="ema-filter-panel">
         <div className="ema-filter-row">
           <div className="ema-filter-group">
-            <label className="ema-filter-label">Provider</label>
+            <label className="ema-filter-label">
+              Provider
+              {viewMode === 'month' && (
+                <span style={{ fontSize: '0.7rem', color: '#6b7280', marginLeft: '0.5rem' }}>
+                  (Month view: single provider)
+                </span>
+              )}
+            </label>
             <select
               className="ema-filter-select"
               value={providerFilter}
               onChange={(e) => setProviderFilter(e.target.value)}
             >
-              <option value="all">All Providers</option>
+              {viewMode !== 'month' && <option value="all">All Providers</option>}
               {providers.map((p) => (
                 <option key={p.id} value={p.id}>{p.fullName}</option>
               ))}

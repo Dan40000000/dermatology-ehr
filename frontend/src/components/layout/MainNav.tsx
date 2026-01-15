@@ -464,6 +464,7 @@ export function MainNav() {
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
   const navItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const userRole = user?.role;
 
   // Filter nav items based on user role
@@ -471,12 +472,34 @@ export function MainNav() {
 
   // Hover handlers with position tracking for portal dropdown
   const handleMouseEnter = (itemPath: string, element: HTMLDivElement) => {
+    // Cancel any pending close
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
     setHoveredItem(itemPath);
     const rect = element.getBoundingClientRect();
     setDropdownPos({ top: rect.bottom, left: rect.left });
   };
 
   const handleMouseLeave = () => {
+    // Delay closing to allow mouse to move to dropdown
+    closeTimeoutRef.current = setTimeout(() => {
+      setHoveredItem(null);
+      setDropdownPos(null);
+    }, 150);
+  };
+
+  const handleDropdownEnter = () => {
+    // Cancel close when entering dropdown
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+  };
+
+  const handleDropdownLeave = () => {
+    // Close when leaving dropdown
     setHoveredItem(null);
     setDropdownPos(null);
   };
@@ -500,6 +523,15 @@ export function MainNav() {
     const interval = setInterval(loadUnreadCount, 30000);
     return () => clearInterval(interval);
   }, [loadUnreadCount]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (closeTimeoutRef.current) {
+        clearTimeout(closeTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const isActive = (path: string) => {
     if (path === '/home') {
@@ -567,8 +599,8 @@ export function MainNav() {
           <div
             className="ema-nav-dropdown-portal"
             style={{ top: dropdownPos.top, left: dropdownPos.left }}
-            onMouseEnter={() => setHoveredItem(hoveredItem)}
-            onMouseLeave={handleMouseLeave}
+            onMouseEnter={handleDropdownEnter}
+            onMouseLeave={handleDropdownLeave}
             role="menu"
           >
             {(() => {

@@ -1069,7 +1069,7 @@ router.post('/notes/:noteId/generate-patient-summary', requireAuth, requireRoles
     // Extract treatment plan
     let treatmentPlan = '';
     if (note.plan) {
-      const planLines = note.plan.split('\n').filter(line => line.trim());
+      const planLines = note.plan.split('\n').filter((line: string) => line.trim());
       treatmentPlan = planLines.slice(0, 5).join('\n'); // Take first few lines
     }
 
@@ -1195,7 +1195,7 @@ router.post('/patient-summaries/:summaryId/share', requireAuth, requireRoles(['p
       return res.status(404).json({ error: 'Summary not found' });
     }
 
-    await auditLog(tenantId, userId || null, 'patient_summary_shared', 'visit_summary', summaryId);
+    await auditLog(tenantId, userId || '', 'patient_summary_shared', 'visit_summary', summaryId || '');
 
     res.json({ success: true, message: 'Summary shared with patient' });
   } catch (error: any) {

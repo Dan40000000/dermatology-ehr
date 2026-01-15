@@ -47,7 +47,7 @@ const TelehealthPage = lazy(() =>
   }))
 );
 const InventoryPage = lazy(() => import('../pages/InventoryPage').then(m => ({ default: m.InventoryPage })));
-const FinancialsPage = lazy(() => import('../pages/FinancialsPage').then(m => ({ default: m.FinancialsPage })));
+const FinancialsHub = lazy(() => import('../pages/FinancialsHub').then(m => ({ default: m.FinancialsHub })));
 const QuotesPage = lazy(() => import('../pages/QuotesPage').then(m => ({ default: m.QuotesPage })));
 const OfficeFlowPage = lazy(() => import('../pages/OfficeFlowPage').then(m => ({ default: m.OfficeFlowPage })));
 const AppointmentFlowPage = lazy(() => import('../pages/AppointmentFlowPage').then(m => ({ default: m.AppointmentFlowPage })));
@@ -170,7 +170,7 @@ export const router = createBrowserRouter([
       // Operations
       { path: 'telehealth', element: lazyWithSuspense(TelehealthPage) },
       { path: 'inventory', element: lazyWithSuspense(InventoryPage) },
-      { path: 'financials', element: lazyWithSuspense(FinancialsPage) },
+      { path: 'financials', element: lazyWithSuspense(FinancialsHub) },
       { path: 'claims', element: lazyWithSuspense(ClaimsPage) },
       { path: 'clearinghouse', element: lazyWithSuspense(ClearinghousePage) },
       { path: 'quotes', element: lazyWithSuspense(QuotesPage) },

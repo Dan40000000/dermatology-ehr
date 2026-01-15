@@ -23,7 +23,17 @@ const navItems: NavItem[] = [
   { label: 'OfficeFlow', path: '/office-flow', module: 'office_flow' },
   { label: 'Appt Flow', path: '/appt-flow', module: 'appt_flow' },
   { label: 'Waitlist', path: '/waitlist', module: 'waitlist' },
-  { label: 'Patients', path: '/patients', module: 'patients' },
+  {
+    label: 'Patients',
+    path: '/patients',
+    module: 'patients',
+    dropdown: [
+      { label: 'Register Patient', path: '/patients/register' },
+      { label: 'Advanced Patient Search', path: '/patients?advanced=true' },
+      { label: 'Patient Handout Library', path: '/handouts' },
+      { label: 'Reports', path: '/patients/reports' },
+    ]
+  },
   {
     label: 'Notes',
     path: '/notes',
@@ -134,28 +144,46 @@ export function MainNav() {
   const { session, user } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
-  const [hoverTimeout, setHoverTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [enterTimeout, setEnterTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [leaveTimeout, setLeaveTimeout] = useState<NodeJS.Timeout | null>(null);
   const userRole = user?.role;
 
   // Filter nav items based on user role
   const filteredNavItems = navItems.filter(item => canAccessModule(userRole, item.module));
 
-  const handleMouseEnter = (itemPath: string) => {
-    if (hoverTimeout) {
-      clearTimeout(hoverTimeout);
+  const handleMouseEnter = (itemPath: string, hasDropdown: boolean) => {
+    // Clear any pending leave timeout
+    if (leaveTimeout) {
+      clearTimeout(leaveTimeout);
+      setLeaveTimeout(null);
     }
+
+    if (!hasDropdown) return;
+
+    // Clear any pending enter timeout
+    if (enterTimeout) {
+      clearTimeout(enterTimeout);
+    }
+
+    // Show dropdown after short delay (50ms for responsiveness)
     const timeout = setTimeout(() => {
       setHoveredItem(itemPath);
-    }, 150);
-    setHoverTimeout(timeout);
+    }, 50);
+    setEnterTimeout(timeout);
   };
 
   const handleMouseLeave = () => {
-    if (hoverTimeout) {
-      clearTimeout(hoverTimeout);
-      setHoverTimeout(null);
+    // Clear any pending enter timeout
+    if (enterTimeout) {
+      clearTimeout(enterTimeout);
+      setEnterTimeout(null);
     }
-    setHoveredItem(null);
+
+    // Delay hiding dropdown so user can move to it
+    const timeout = setTimeout(() => {
+      setHoveredItem(null);
+    }, 150);
+    setLeaveTimeout(timeout);
   };
 
   const loadUnreadCount = useCallback(async () => {
@@ -193,7 +221,7 @@ export function MainNav() {
           <div
             key={item.path}
             className="ema-nav-item"
-            onMouseEnter={() => item.dropdown && handleMouseEnter(item.path)}
+            onMouseEnter={() => handleMouseEnter(item.path, !!item.dropdown)}
             onMouseLeave={handleMouseLeave}
           >
             <NavLink
@@ -204,6 +232,9 @@ export function MainNav() {
               aria-expanded={item.dropdown && hoveredItem === item.path ? 'true' : 'false'}
             >
               {item.label}
+              {item.dropdown && (
+                <span className="dropdown-arrow">▼</span>
+              )}
               {item.path === '/mail' && unreadCount > 0 && (
                 <span
                   style={{

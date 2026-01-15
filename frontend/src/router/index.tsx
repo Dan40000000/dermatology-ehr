@@ -102,6 +102,8 @@ export const router = createBrowserRouter([
       // Patients
       { path: 'patients', element: lazyWithSuspense(PatientsPage) },
       { path: 'patients/new', element: lazyWithSuspense(NewPatientPage) },
+      { path: 'patients/register', element: lazyWithSuspense(NewPatientPage) },
+      { path: 'patients/reports', element: lazyWithSuspense(ReportsPage) },
       { path: 'patients/:patientId', element: lazyWithSuspense(PatientDetailPage) },
       { path: 'patients/:patientId/face-sheet', element: lazyWithSuspense(FaceSheetPage) },
       { path: 'patients/:patientId/encounter/new', element: lazyWithSuspense(EncounterPage) },

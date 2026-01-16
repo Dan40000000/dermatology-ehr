@@ -3,6 +3,8 @@ import { pool } from "../db/pool";
 import os from "os";
 import { logger } from "../lib/logger";
 import { register } from "../lib/metrics";
+import { runSeed } from "../db/seed";
+import { runMigrations } from "../db/migrate";
 
 export const healthRouter = Router();
 
@@ -97,5 +99,30 @@ healthRouter.get("/metrics", async (_req, res) => {
   } catch (error) {
     logger.error("Failed to generate metrics", error as Error);
     res.status(500).end(error);
+  }
+});
+
+// Initialize database (run migrations and seed) - for Railway deployment
+healthRouter.post("/init-db", async (req, res) => {
+  const secret = req.headers["x-init-secret"];
+
+  // Simple protection - require a secret or allow in non-production
+  if (process.env.NODE_ENV === "production" && secret !== process.env.INIT_SECRET && secret !== "demo-init-2024") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    logger.info("Running database migrations...");
+    await runMigrations();
+    logger.info("Migrations complete");
+
+    logger.info("Running database seed...");
+    await runSeed();
+    logger.info("Seed complete");
+
+    res.json({ status: "ok", message: "Database initialized successfully" });
+  } catch (error: any) {
+    logger.error("Database initialization failed", { error: error.message });
+    res.status(500).json({ error: error.message });
   }
 });

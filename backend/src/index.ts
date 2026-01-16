@@ -242,7 +242,8 @@ if (process.env.NODE_ENV === 'production') {
   app.use(express.static(frontendPath));
 
   // Serve index.html for all non-API routes (SPA support)
-  app.get('*', (req, res, next) => {
+  // Express 5 requires '/*' instead of '*' for catch-all routes
+  app.get('/*', (req, res, next) => {
     if (req.path.startsWith('/api/')) {
       return next();
     }

@@ -549,6 +549,7 @@ async function seed() {
     const providers = [
       { id: "prov-demo", name: "Dr. Skin", specialty: "Dermatology" },
       { id: "prov-demo-2", name: "PA Riley", specialty: "Dermatology" },
+      { id: "prov-demo-3", name: "Dr. Martinez", specialty: "Dermatology" },
     ];
 
     for (const pr of providers) {
@@ -621,6 +622,12 @@ async function seed() {
       { provider: "prov-demo", day_of_week: 1, start_time: "09:00", end_time: "16:00" },
       { provider: "prov-demo", day_of_week: 3, start_time: "09:00", end_time: "16:00" },
       { provider: "prov-demo-2", day_of_week: 2, start_time: "10:00", end_time: "18:00" },
+      // Dr. Martinez: Monday-Friday, 8am-5pm
+      { provider: "prov-demo-3", day_of_week: 1, start_time: "08:00", end_time: "17:00" },
+      { provider: "prov-demo-3", day_of_week: 2, start_time: "08:00", end_time: "17:00" },
+      { provider: "prov-demo-3", day_of_week: 3, start_time: "08:00", end_time: "17:00" },
+      { provider: "prov-demo-3", day_of_week: 4, start_time: "08:00", end_time: "17:00" },
+      { provider: "prov-demo-3", day_of_week: 5, start_time: "08:00", end_time: "17:00" },
     ];
 
     for (const slot of availability) {
@@ -667,6 +674,83 @@ async function seed() {
         "scheduled",
       ],
     );
+
+    // Dr. Martinez appointments - spread across next 30 days
+    const martinezAppointments = [
+      // Patient IDs to use (mix of all patients)
+      "p-001", "p-002", "p-003", "p-004", "p-005", "p-006", "p-007", "p-008", "p-009", "p-010",
+      "p-011", "p-012", "p-013", "p-014", "p-015", "p-016", "p-017", "p-018", "p-019", "p-020",
+      "p-021", "p-022", "p-023", "p-024", "p-025", "p-026", "p-027", "p-028", "p-029", "p-030",
+    ];
+
+    // Appointment types to rotate through
+    const apptTypesForMartinez = [
+      { id: "appttype-demo", duration: 30 },  // Derm Consult
+      { id: "appttype-fu", duration: 20 },    // Follow Up
+      { id: "appttype-proc", duration: 45 },   // Procedure
+    ];
+
+    // Location IDs to rotate through
+    const locationIds = ["loc-demo", "loc-east", "loc-south"];
+
+    let apptCounter = 1;
+    let patientIndex = 0;
+
+    // Create appointments for next 30 days (weekdays only)
+    for (let dayOffset = 1; dayOffset <= 30; dayOffset++) {
+      const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+      const dayOfWeek = apptDate.getDay();
+
+      // Skip weekends (0 = Sunday, 6 = Saturday)
+      if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+
+      // 4-6 appointments per day - alternate the count
+      const apptsPerDay = dayOffset % 3 === 0 ? 4 : (dayOffset % 2 === 0 ? 6 : 5);
+
+      for (let apptNum = 0; apptNum < apptsPerDay; apptNum++) {
+        // Start at 8am, space appointments 1 hour apart
+        const hourOffset = 8 + apptNum;
+        const apptStart = new Date(apptDate);
+        apptStart.setHours(hourOffset, 0, 0, 0);
+
+        const apptTypeIndex = apptNum % apptTypesForMartinez.length;
+        const apptType = apptTypesForMartinez[apptTypeIndex];
+        const apptEnd = new Date(apptStart.getTime() + apptType.duration * 60 * 1000);
+
+        // Rotate through patients
+        const patientId = martinezAppointments[patientIndex % martinezAppointments.length];
+        patientIndex++;
+
+        // Rotate through locations
+        const locationForAppt = locationIds[(apptCounter + apptNum) % locationIds.length];
+
+        // Mix of statuses - most scheduled, some completed, few checked-in
+        let status = "scheduled";
+        if (dayOffset <= 7) {
+          // Past week - mix of completed and checked-in
+          status = apptNum % 3 === 0 ? "completed" : (apptNum % 5 === 0 ? "checked_in" : "scheduled");
+        }
+
+        await pool.query(
+          `insert into appointments(id, tenant_id, patient_id, provider_id, location_id, appointment_type_id, scheduled_start, scheduled_end, status)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           on conflict (id) do nothing`,
+          [
+            `appt-martinez-${String(apptCounter).padStart(3, "0")}`,
+            tenantId,
+            patientId,
+            "prov-demo-3",
+            locationForAppt,
+            apptType.id,
+            apptStart.toISOString(),
+            apptEnd.toISOString(),
+            status,
+          ],
+        );
+
+        apptCounter++;
+      }
+    }
 
     // encounters and vitals
     const encounterId = "enc-demo";

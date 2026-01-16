@@ -203,8 +203,13 @@ export function SchedulePage() {
       return;
     }
 
+    // Filter out cancelled appointments
+    const activeAppointments = appointments.filter(
+      (appt) => appt && appt.status !== 'cancelled'
+    );
+
     const grouped = new Map<string, any[]>();
-    appointments.forEach((appt) => {
+    activeAppointments.forEach((appt) => {
       if (!appt || !appt.providerId) return;
       const list = grouped.get(appt.providerId) || [];
       list.push(appt);
@@ -224,15 +229,17 @@ export function SchedulePage() {
         const current = sorted[i];
         const next = sorted[i + 1];
 
-        if (!current?.scheduledStart || !current?.scheduledEnd || !next?.scheduledStart) continue;
+        if (!current?.scheduledStart || !current?.scheduledEnd || !next?.scheduledStart || !next?.scheduledEnd) continue;
 
-        const start = new Date(current.scheduledStart).getTime();
-        const end = new Date(current.scheduledEnd).getTime();
+        const currentStart = new Date(current.scheduledStart).getTime();
+        const currentEnd = new Date(current.scheduledEnd).getTime();
         const nextStart = new Date(next.scheduledStart).getTime();
+        const nextEnd = new Date(next.scheduledEnd).getTime();
 
-        if (isNaN(start) || isNaN(end) || isNaN(nextStart)) continue;
+        if (isNaN(currentStart) || isNaN(currentEnd) || isNaN(nextStart) || isNaN(nextEnd)) continue;
 
-        if (start < nextStart && end > nextStart) {
+        // Check for proper overlap: appointments overlap if one starts before the other ends AND vice versa
+        if (currentStart < nextEnd && currentEnd > nextStart) {
           const providerName = current.providerName || 'Provider';
           const startLabel = new Date(current.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
           const key = `${providerName}-${startLabel}`;
@@ -748,9 +755,10 @@ export function SchedulePage() {
               currentDate={currentDate}
               viewMode={viewMode}
               appointments={appointments.filter((a) => {
+                const providerOk = providerFilter === 'all' || a.providerId === providerFilter;
                 const typeOk = typeFilter === 'all' || a.appointmentTypeId === typeFilter;
                 const locationOk = locationFilter === 'all' || a.locationId === locationFilter;
-                return typeOk && locationOk;
+                return providerOk && typeOk && locationOk;
               })}
               providers={providers.filter((p) => providerFilter === 'all' || p.id === providerFilter)}
               availability={availability}

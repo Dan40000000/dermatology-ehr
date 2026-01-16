@@ -181,8 +181,8 @@ healthRouter.post("/sync-data", async (req, res) => {
     // Insert appointments
     for (const a of appointments) {
       await pool.query(`
-        INSERT INTO appointments(id, tenant_id, patient_id, provider_id, location_id, appointment_type_id, scheduled_start, scheduled_end, status, notes, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        INSERT INTO appointments(id, tenant_id, patient_id, provider_id, location_id, appointment_type_id, scheduled_start, scheduled_end, status, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (id) DO UPDATE SET
           patient_id = EXCLUDED.patient_id,
           provider_id = EXCLUDED.provider_id,
@@ -191,11 +191,10 @@ healthRouter.post("/sync-data", async (req, res) => {
           scheduled_start = EXCLUDED.scheduled_start,
           scheduled_end = EXCLUDED.scheduled_end,
           status = EXCLUDED.status,
-          notes = EXCLUDED.notes,
           updated_at = EXCLUDED.updated_at
       `, [
         a.id, tenantId, a.patient_id, a.provider_id, a.location_id, a.appointment_type_id,
-        a.scheduled_start, a.scheduled_end, a.status, a.notes,
+        a.scheduled_start, a.scheduled_end, a.status,
         a.created_at || new Date().toISOString(), a.updated_at || new Date().toISOString()
       ]);
     }

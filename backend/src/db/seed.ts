@@ -638,6 +638,9 @@ async function seed() {
       );
     }
 
+    // Clear existing appointments to regenerate with fresh dates
+    await pool.query(`DELETE FROM appointments WHERE tenant_id = $1`, [tenantId]);
+
     const now = new Date();
     const start = new Date(now.getTime() + 60 * 60 * 1000);
     const end = new Date(start.getTime() + 30 * 60 * 1000);

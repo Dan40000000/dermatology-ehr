@@ -145,7 +145,14 @@ healthRouter.post("/sync-data", async (req, res) => {
 
     logger.info(`Syncing ${patients.length} patients and ${appointments.length} appointments...`);
 
-    // Clear existing data
+    // Clear existing data (in correct order due to foreign keys)
+    await pool.query(`DELETE FROM charges WHERE tenant_id = $1`, [tenantId]);
+    await pool.query(`DELETE FROM vitals WHERE tenant_id = $1`, [tenantId]);
+    await pool.query(`DELETE FROM photos WHERE tenant_id = $1`, [tenantId]);
+    await pool.query(`DELETE FROM documents WHERE tenant_id = $1`, [tenantId]);
+    await pool.query(`DELETE FROM tasks WHERE tenant_id = $1`, [tenantId]);
+    await pool.query(`DELETE FROM messages WHERE tenant_id = $1`, [tenantId]);
+    await pool.query(`DELETE FROM encounters WHERE tenant_id = $1`, [tenantId]);
     await pool.query(`DELETE FROM appointments WHERE tenant_id = $1`, [tenantId]);
     await pool.query(`DELETE FROM patients WHERE tenant_id = $1`, [tenantId]);
 

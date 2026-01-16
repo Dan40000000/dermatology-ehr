@@ -143,7 +143,7 @@ app.use((req, _res, next) => {
 });
 
 app.use("/health", healthRouter);
-app.use("/api/auth", authLimiter, authRouter);
+app.use("/api/auth", authRouter);
 app.use("/api/patients", patientsRouter);
 app.use("/api/appointments", appointmentsRouter);
 app.use("/api/providers", providersRouter);

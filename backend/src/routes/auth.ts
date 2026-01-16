@@ -18,7 +18,7 @@ const refreshSchema = z.object({
 
 export const authRouter = Router();
 
-authRouter.post("/login", rateLimit({ windowMs: 60_000, max: 20 }), async (req, res) => {
+authRouter.post("/login", async (req, res) => {
   try {
     const tenantId = req.header(env.tenantHeader);
     if (!tenantId) {

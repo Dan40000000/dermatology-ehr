@@ -6,3 +6,6 @@ buildCommand = "npm install --include=dev && npm run build"
 startCommand = "npm start"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
+# Disable healthcheck so deployment succeeds without waiting for DB
+healthcheckPath = ""
+healthcheckTimeout = 300

@@ -19,29 +19,34 @@ const refreshSchema = z.object({
 export const authRouter = Router();
 
 authRouter.post("/login", rateLimit({ windowMs: 60_000, max: 20 }), async (req, res) => {
-  const tenantId = req.header(env.tenantHeader);
-  if (!tenantId) {
-    return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
-  }
+  try {
+    const tenantId = req.header(env.tenantHeader);
+    if (!tenantId) {
+      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+    }
 
-  const parsed = loginSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.format() });
-  }
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
 
-  const { email, password } = parsed.data;
-  const user = await userStore.findByEmailAndTenant(email, tenantId);
-  if (!user) {
-    return res.status(401).json({ error: "Invalid credentials" });
-  }
+    const { email, password } = parsed.data;
+    const user = await userStore.findByEmailAndTenant(email, tenantId);
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
 
-  const ok = bcrypt.compareSync(password, user.passwordHash);
-  if (!ok) {
-    return res.status(401).json({ error: "Invalid credentials" });
-  }
+    const ok = bcrypt.compareSync(password, user.passwordHash);
+    if (!ok) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
 
-  const tokens = await issueTokens(user);
-  return res.json({ user: userStore.mask(user), tokens, tenantId });
+    const tokens = await issueTokens(user);
+    return res.json({ user: userStore.mask(user), tokens, tenantId });
+  } catch (err) {
+    console.error("Login error:", err);
+    return res.status(500).json({ error: "Login failed" });
+  }
 });
 
 authRouter.post("/refresh", async (req, res) => {

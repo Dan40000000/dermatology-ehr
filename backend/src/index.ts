@@ -236,20 +236,8 @@ app.use("/api/batches", batchesRouter);
 app.use("/api/bills", billsRouter);
 app.use("/api/financial-metrics", financialMetricsRouter);
 
-// Serve frontend static files in production
-if (process.env.NODE_ENV === 'production') {
-  const frontendPath = path.join(__dirname, '../../frontend/dist');
-  app.use(express.static(frontendPath));
-
-  // Serve index.html for all non-API routes (SPA support)
-  // Express 5 requires '/*' instead of '*' for catch-all routes
-  app.get('/*', (req, res, next) => {
-    if (req.path.startsWith('/api/')) {
-      return next();
-    }
-    res.sendFile(path.join(frontendPath, 'index.html'));
-  });
-}
+// Frontend is served by separate derm-frontend service on Railway
+// No need for backend to serve static files in production
 
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {

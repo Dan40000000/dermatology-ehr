@@ -153,22 +153,37 @@ export function SchedulePage() {
     if (!session) return;
     setLoading(true);
     try {
-      // Calculate date range: always start from today, end 60 days from selected date
+      // Calculate date range based on view mode
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const selectedDate = new Date();
       selectedDate.setDate(selectedDate.getDate() + dayOffset);
       selectedDate.setHours(0, 0, 0, 0);
 
-      // Always start from today (hide past appointments), end 60 days from selected date
-      const endDate = new Date(selectedDate);
-      endDate.setDate(endDate.getDate() + 60);
+      // Determine start and end dates based on view mode
+      let startDate: Date;
+      let endDate: Date;
+
+      if (viewMode === 'month') {
+        // For month view, get the first day of the selected month and extend to cover full month grid
+        startDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+        // Go back to include previous month days that appear in calendar grid
+        startDate.setDate(startDate.getDate() - 7);
+        // End date is last day of month + some buffer for next month days in grid
+        endDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+        endDate.setDate(endDate.getDate() + 14);
+      } else {
+        // For day/week view, start from today and end 60 days from selected date
+        startDate = today;
+        endDate = new Date(selectedDate);
+        endDate.setDate(endDate.getDate() + 60);
+      }
 
       const formatDate = (d: Date) => d.toISOString().split('T')[0];
 
       const [apptRes, provRes, locRes, typeRes, availRes, patRes, timeBlocksRes] = await Promise.all([
         fetchAppointments(session.tenantId, session.accessToken, {
-          startDate: formatDate(today),
+          startDate: formatDate(startDate),
           endDate: formatDate(endDate),
         }),
         fetchProviders(session.tenantId, session.accessToken),
@@ -190,7 +205,7 @@ export function SchedulePage() {
     } finally {
       setLoading(false);
     }
-  }, [session, showError, dayOffset]);
+  }, [session, showError, dayOffset, viewMode]);
 
   useEffect(() => {
     loadData();
@@ -662,7 +677,25 @@ export function SchedulePage() {
               <button
                 type="button"
                 className="ema-filter-btn secondary"
-                onClick={() => setDayOffset((d) => d - 1)}
+                onClick={() => {
+                  if (viewMode === 'month') {
+                    // Move back one month
+                    const current = new Date();
+                    current.setDate(current.getDate() + dayOffset);
+                    current.setMonth(current.getMonth() - 1);
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    current.setHours(0, 0, 0, 0);
+                    const diffDays = Math.round((current.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                    setDayOffset(diffDays);
+                  } else if (viewMode === 'week') {
+                    // Move back one week
+                    setDayOffset((d) => d - 7);
+                  } else {
+                    // Move back one day
+                    setDayOffset((d) => d - 1);
+                  }
+                }}
               >
                 ◀ Prev
               </button>
@@ -676,7 +709,25 @@ export function SchedulePage() {
               <button
                 type="button"
                 className="ema-filter-btn secondary"
-                onClick={() => setDayOffset((d) => d + 1)}
+                onClick={() => {
+                  if (viewMode === 'month') {
+                    // Move forward one month
+                    const current = new Date();
+                    current.setDate(current.getDate() + dayOffset);
+                    current.setMonth(current.getMonth() + 1);
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    current.setHours(0, 0, 0, 0);
+                    const diffDays = Math.round((current.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                    setDayOffset(diffDays);
+                  } else if (viewMode === 'week') {
+                    // Move forward one week
+                    setDayOffset((d) => d + 7);
+                  } else {
+                    // Move forward one day
+                    setDayOffset((d) => d + 1);
+                  }
+                }}
               >
                 Next ▶
               </button>

@@ -675,8 +675,8 @@ async function seed() {
       ],
     );
 
-    // Dr. Martinez appointments - spread across next 30 days
-    const martinezAppointments = [
+    // Dr. Martinez appointments - spread across next 3 months (90 days)
+    const martinezPatients = [
       // Patient IDs to use (mix of all patients)
       "p-001", "p-002", "p-003", "p-004", "p-005", "p-006", "p-007", "p-008", "p-009", "p-010",
       "p-011", "p-012", "p-013", "p-014", "p-015", "p-016", "p-017", "p-018", "p-019", "p-020",
@@ -693,42 +693,110 @@ async function seed() {
     // Location IDs to rotate through
     const locationIds = ["loc-demo", "loc-east", "loc-south"];
 
+    // Simple seeded random function for reproducible randomization
+    let randomSeed = 12345;
+    const seededRandom = () => {
+      randomSeed = (randomSeed * 1103515245 + 12345) & 0x7fffffff;
+      return randomSeed / 0x7fffffff;
+    };
+
     let apptCounter = 1;
     let patientIndex = 0;
 
-    // Create appointments for next 30 days (weekdays only)
-    for (let dayOffset = 1; dayOffset <= 30; dayOffset++) {
+    // Create appointments for next 90 days (3 months, weekdays only)
+    for (let dayOffset = 1; dayOffset <= 90; dayOffset++) {
       const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
       const dayOfWeek = apptDate.getDay();
 
       // Skip weekends (0 = Sunday, 6 = Saturday)
       if (dayOfWeek === 0 || dayOfWeek === 6) continue;
 
-      // 4-6 appointments per day - alternate the count
-      const apptsPerDay = dayOffset % 3 === 0 ? 4 : (dayOffset % 2 === 0 ? 6 : 5);
+      // Randomly skip some days (simulating PTO, conferences, etc.) - about 10% of days
+      if (seededRandom() < 0.1) continue;
+
+      // Random number of appointments per day (3-8)
+      const baseAppts = Math.floor(seededRandom() * 6) + 3; // 3-8 appointments
+
+      // Mondays and Fridays tend to be busier
+      const apptsPerDay = (dayOfWeek === 1 || dayOfWeek === 5)
+        ? Math.min(baseAppts + 2, 8)
+        : baseAppts;
+
+      // Random start times array (possible start hours: 8, 8:30, 9, 9:30, etc.)
+      const possibleStartMinutes = [0, 15, 30, 45];
+      let currentHour = 8;
+      let currentMinute = 0;
 
       for (let apptNum = 0; apptNum < apptsPerDay; apptNum++) {
-        // Start at 8am, space appointments 1 hour apart
-        const hourOffset = 8 + apptNum;
-        const apptStart = new Date(apptDate);
-        apptStart.setHours(hourOffset, 0, 0, 0);
+        // Add some random gaps between appointments (0-30 min extra)
+        const extraGap = Math.floor(seededRandom() * 3) * 15; // 0, 15, or 30 min gap
+        currentMinute += extraGap;
+        while (currentMinute >= 60) {
+          currentMinute -= 60;
+          currentHour++;
+        }
 
-        const apptTypeIndex = apptNum % apptTypesForMartinez.length;
-        const apptType = apptTypesForMartinez[apptTypeIndex];
+        // Don't schedule past 4pm (leave time for paperwork)
+        if (currentHour >= 16) break;
+
+        const apptStart = new Date(apptDate);
+        apptStart.setHours(currentHour, currentMinute, 0, 0);
+
+        // Weighted random appointment type
+        // 50% follow-ups, 35% consults, 15% procedures
+        const typeRoll = seededRandom();
+        let apptType: { id: string; duration: number };
+        if (typeRoll < 0.50) {
+          apptType = apptTypesForMartinez[1]!; // Follow Up (20 min)
+        } else if (typeRoll < 0.85) {
+          apptType = apptTypesForMartinez[0]!; // Derm Consult (30 min)
+        } else {
+          apptType = apptTypesForMartinez[2]!; // Procedure (45 min)
+        }
+
         const apptEnd = new Date(apptStart.getTime() + apptType.duration * 60 * 1000);
 
-        // Rotate through patients
-        const patientId = martinezAppointments[patientIndex % martinezAppointments.length];
-        patientIndex++;
+        // Move current time forward by appointment duration
+        currentMinute += apptType.duration;
+        while (currentMinute >= 60) {
+          currentMinute -= 60;
+          currentHour++;
+        }
 
-        // Rotate through locations
-        const locationForAppt = locationIds[(apptCounter + apptNum) % locationIds.length];
+        // Shuffle through patients (with some repeats - realistic follow-ups)
+        if (seededRandom() < 0.7) {
+          patientIndex++;
+        }
+        const patientId = martinezPatients[patientIndex % martinezPatients.length];
 
-        // Mix of statuses - most scheduled, some completed, few checked-in
+        // Location: mostly Main Clinic, occasional other locations
+        const locRoll = seededRandom();
+        let locationForAppt;
+        if (locRoll < 0.6) {
+          locationForAppt = locationIds[0]; // Main Clinic 60%
+        } else if (locRoll < 0.85) {
+          locationForAppt = locationIds[1]; // East Office 25%
+        } else {
+          locationForAppt = locationIds[2]; // South Campus 15%
+        }
+
+        // Mix of statuses based on how far in the future
         let status = "scheduled";
-        if (dayOffset <= 7) {
-          // Past week - mix of completed and checked-in
-          status = apptNum % 3 === 0 ? "completed" : (apptNum % 5 === 0 ? "checked_in" : "scheduled");
+        if (dayOffset <= 0) {
+          // Past - all completed
+          status = "completed";
+        } else if (dayOffset <= 3) {
+          // Very near future - some checked in or in progress
+          const statusRoll = seededRandom();
+          if (statusRoll < 0.2) status = "checked_in";
+          else if (statusRoll < 0.35) status = "in_room";
+          else if (statusRoll < 0.45) status = "with_provider";
+        } else if (dayOffset <= 14) {
+          // Next 2 weeks - rarely cancelled
+          if (seededRandom() < 0.05) status = "cancelled";
+        } else {
+          // Further out - more likely to be cancelled/rescheduled
+          if (seededRandom() < 0.08) status = "cancelled";
         }
 
         await pool.query(
@@ -736,7 +804,7 @@ async function seed() {
            values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
            on conflict (id) do nothing`,
           [
-            `appt-martinez-${String(apptCounter).padStart(3, "0")}`,
+            `appt-martinez-${String(apptCounter).padStart(4, "0")}`,
             tenantId,
             patientId,
             "prov-demo-3",

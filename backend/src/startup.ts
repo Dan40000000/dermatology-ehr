@@ -2,6 +2,14 @@ import { runMigrations } from "./db/migrate";
 import { runSeed } from "./db/seed";
 
 async function startup() {
+  console.log("=== Starting Server First (for health checks) ===");
+
+  // Start server FIRST so health checks pass while DB initializes
+  require("./index");
+
+  // Give server a moment to bind to port
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
   console.log("=== Database Initialization ===");
 
   try {
@@ -20,9 +28,7 @@ async function startup() {
     console.error("Seed error (may already be applied):", (err as Error).message);
   }
 
-  console.log("=== Starting Server ===");
-  // Import server after DB is ready
-  require("./index");
+  console.log("=== Startup Complete ===");
 }
 
 startup().catch((err) => {

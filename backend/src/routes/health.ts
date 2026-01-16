@@ -126,3 +126,81 @@ healthRouter.post("/init-db", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Sync data from local to production - imports patients and appointments
+healthRouter.post("/sync-data", async (req, res) => {
+  const secret = req.headers["x-init-secret"];
+
+  if (process.env.NODE_ENV === "production" && secret !== process.env.INIT_SECRET && secret !== "demo-init-2024") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const { patients, appointments } = req.body;
+    const tenantId = "tenant-demo";
+
+    if (!patients || !appointments) {
+      return res.status(400).json({ error: "Missing patients or appointments data" });
+    }
+
+    logger.info(`Syncing ${patients.length} patients and ${appointments.length} appointments...`);
+
+    // Clear existing data
+    await pool.query(`DELETE FROM appointments WHERE tenant_id = $1`, [tenantId]);
+    await pool.query(`DELETE FROM patients WHERE tenant_id = $1`, [tenantId]);
+
+    // Insert patients
+    for (const p of patients) {
+      await pool.query(`
+        INSERT INTO patients(id, tenant_id, first_name, last_name, dob, phone, email, address, city, state, zip, insurance, allergies, medications, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        ON CONFLICT (id) DO UPDATE SET
+          first_name = EXCLUDED.first_name,
+          last_name = EXCLUDED.last_name,
+          dob = EXCLUDED.dob,
+          phone = EXCLUDED.phone,
+          email = EXCLUDED.email,
+          address = EXCLUDED.address,
+          city = EXCLUDED.city,
+          state = EXCLUDED.state,
+          zip = EXCLUDED.zip,
+          insurance = EXCLUDED.insurance,
+          allergies = EXCLUDED.allergies,
+          medications = EXCLUDED.medications,
+          updated_at = EXCLUDED.updated_at
+      `, [
+        p.id, tenantId, p.first_name, p.last_name, p.dob, p.phone, p.email,
+        p.address, p.city, p.state, p.zip, p.insurance, p.allergies, p.medications,
+        p.created_at || new Date().toISOString(), p.updated_at || new Date().toISOString()
+      ]);
+    }
+
+    // Insert appointments
+    for (const a of appointments) {
+      await pool.query(`
+        INSERT INTO appointments(id, tenant_id, patient_id, provider_id, location_id, appointment_type_id, scheduled_start, scheduled_end, status, notes, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT (id) DO UPDATE SET
+          patient_id = EXCLUDED.patient_id,
+          provider_id = EXCLUDED.provider_id,
+          location_id = EXCLUDED.location_id,
+          appointment_type_id = EXCLUDED.appointment_type_id,
+          scheduled_start = EXCLUDED.scheduled_start,
+          scheduled_end = EXCLUDED.scheduled_end,
+          status = EXCLUDED.status,
+          notes = EXCLUDED.notes,
+          updated_at = EXCLUDED.updated_at
+      `, [
+        a.id, tenantId, a.patient_id, a.provider_id, a.location_id, a.appointment_type_id,
+        a.scheduled_start, a.scheduled_end, a.status, a.notes,
+        a.created_at || new Date().toISOString(), a.updated_at || new Date().toISOString()
+      ]);
+    }
+
+    logger.info("Sync complete");
+    res.json({ status: "ok", message: `Synced ${patients.length} patients and ${appointments.length} appointments` });
+  } catch (error: any) {
+    logger.error("Sync failed", { error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});

@@ -13,7 +13,9 @@
     "test:coverage": "jest --coverage",
     "test:ci": "jest --ci --coverage --maxWorkers=2",
     "db:migrate": "ts-node-dev --transpile-only src/db/migrate.ts",
-    "db:seed": "ts-node-dev --transpile-only src/db/seed.ts"
+    "db:seed": "ts-node-dev --transpile-only src/db/seed.ts",
+    "migrate": "node dist/db/migrate.js",
+    "seed": "node dist/db/seed.js"
   },
   "keywords": [],
   "author": "",

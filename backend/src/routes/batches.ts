@@ -26,7 +26,84 @@ const batchUpdateSchema = z.object({
 
 export const batchesRouter = Router();
 
-// List batches
+/**
+ * @swagger
+ * /api/batches:
+ *   get:
+ *     summary: List payment batches
+ *     description: Retrieve payment batches with optional filtering by type, status, and date range.
+ *     tags:
+ *       - Batches
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: query
+ *         name: batchType
+ *         schema:
+ *           type: string
+ *           enum: [payer, patient, mixed, deposit, eft]
+ *         description: Filter by batch type
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [open, closed, posted, reconciled, voided]
+ *         description: Filter by status
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter by start date
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter by end date
+ *     responses:
+ *       200:
+ *         description: List of payment batches
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 batches:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                         format: uuid
+ *                       batchNumber:
+ *                         type: string
+ *                       batchDate:
+ *                         type: string
+ *                         format: date
+ *                       batchType:
+ *                         type: string
+ *                       totalAmountCents:
+ *                         type: integer
+ *                       itemCount:
+ *                         type: integer
+ *                       status:
+ *                         type: string
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to retrieve batches
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 batchesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { batchType, status, startDate, endDate } = req.query;
@@ -80,7 +157,62 @@ batchesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   res.json({ batches: result.rows });
 });
 
-// Get single batch with associated payments
+/**
+ * @swagger
+ * /api/batches/{id}:
+ *   get:
+ *     summary: Get batch details
+ *     description: Retrieve a single batch with all associated payer and patient payments.
+ *     tags:
+ *       - Batches
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Batch ID
+ *     responses:
+ *       200:
+ *         description: Batch details with payments
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 batch:
+ *                   type: object
+ *                 payerPayments:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                 patientPayments:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Batch not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to retrieve batch
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 batchesRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const batchId = String(req.params.id);
@@ -139,7 +271,81 @@ batchesRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
   });
 });
 
-// Create batch
+/**
+ * @swagger
+ * /api/batches:
+ *   post:
+ *     summary: Create payment batch
+ *     description: Create a new payment batch for organizing payments. Requires provider, admin, or front desk role.
+ *     tags:
+ *       - Batches
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - batchDate
+ *               - batchType
+ *               - totalAmountCents
+ *             properties:
+ *               batchDate:
+ *                 type: string
+ *                 format: date
+ *               batchType:
+ *                 type: string
+ *                 enum: [payer, patient, mixed, deposit, eft]
+ *               totalAmountCents:
+ *                 type: integer
+ *               depositDate:
+ *                 type: string
+ *                 format: date
+ *               bankAccount:
+ *                 type: string
+ *               notes:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Batch created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: string
+ *                   format: uuid
+ *                 batchNumber:
+ *                   type: string
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to create batch
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 batchesRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = batchCreateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
@@ -179,7 +385,82 @@ batchesRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_d
   res.status(201).json({ id: batchId, batchNumber });
 });
 
-// Update batch
+/**
+ * @swagger
+ * /api/batches/{id}:
+ *   put:
+ *     summary: Update payment batch
+ *     description: Update an existing payment batch. Requires provider, admin, or front desk role.
+ *     tags:
+ *       - Batches
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Batch ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               batchDate:
+ *                 type: string
+ *                 format: date
+ *               totalAmountCents:
+ *                 type: integer
+ *               status:
+ *                 type: string
+ *                 enum: [open, closed, posted, reconciled, voided]
+ *               depositDate:
+ *                 type: string
+ *                 format: date
+ *               bankAccount:
+ *                 type: string
+ *               notes:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Batch updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *       400:
+ *         description: Validation error or no fields to update
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to update batch
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 batchesRouter.put("/:id", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = batchUpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
@@ -242,7 +523,54 @@ batchesRouter.put("/:id", requireAuth, requireRoles(["provider", "admin", "front
   res.json({ success: true });
 });
 
-// Close batch
+/**
+ * @swagger
+ * /api/batches/{id}/close:
+ *   post:
+ *     summary: Close payment batch
+ *     description: Close a batch, preventing further additions. Requires provider, admin, or front desk role.
+ *     tags:
+ *       - Batches
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Batch ID
+ *     responses:
+ *       200:
+ *         description: Batch closed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to close batch
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 batchesRouter.post("/:id/close", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const batchId = String(req.params.id);
@@ -261,7 +589,54 @@ batchesRouter.post("/:id/close", requireAuth, requireRoles(["provider", "admin",
   res.json({ success: true });
 });
 
-// Post batch
+/**
+ * @swagger
+ * /api/batches/{id}/post:
+ *   post:
+ *     summary: Post payment batch
+ *     description: Post a closed batch to the general ledger. Requires provider or admin role.
+ *     tags:
+ *       - Batches
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Batch ID
+ *     responses:
+ *       200:
+ *         description: Batch posted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin or provider role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to post batch
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 batchesRouter.post("/:id/post", requireAuth, requireRoles(["provider", "admin"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const batchId = String(req.params.id);
@@ -278,7 +653,60 @@ batchesRouter.post("/:id/post", requireAuth, requireRoles(["provider", "admin"])
   res.json({ success: true });
 });
 
-// Delete/void batch
+/**
+ * @swagger
+ * /api/batches/{id}:
+ *   delete:
+ *     summary: Delete or void payment batch
+ *     description: Delete empty batch or void batch with items. Admin only.
+ *     tags:
+ *       - Batches
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Batch ID
+ *     responses:
+ *       200:
+ *         description: Batch deleted or voided successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Batch not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to delete batch
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 batchesRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const batchId = String(req.params.id);

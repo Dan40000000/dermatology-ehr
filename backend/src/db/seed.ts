@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import { pool } from "./pool";
+import { seedProtocols } from "./seed-protocols";
 
 async function seed() {
   await pool.query("begin");
@@ -18,7 +19,7 @@ async function seed() {
       { id: "u-front", email: "frontdesk@demo.practice", role: "front_desk", fullName: "Front Desk" },
     ];
 
-    const passwordHash = bcrypt.hashSync("Password123!", 10);
+    const passwordHash = bcrypt.hashSync("Password123!", 12); // Dev/test only
     for (const u of users) {
       await pool.query(
         `insert into users(id, tenant_id, email, full_name, role, password_hash)
@@ -605,29 +606,382 @@ async function seed() {
     }
 
     const apptTypes = [
-      { id: "appttype-demo", name: "Derm Consult", duration: 30 },
-      { id: "appttype-fu", name: "Follow Up", duration: 20 },
-      { id: "appttype-proc", name: "Procedure", duration: 45 },
+      // Original basic types (keeping for backward compatibility with existing data)
+      {
+        id: "appttype-demo",
+        name: "Derm Consult",
+        duration: 30,
+        color: "#3B82F6",
+        category: "consultation",
+        description: "General dermatology consultation"
+      },
+      {
+        id: "appttype-fu",
+        name: "Follow Up",
+        duration: 20,
+        color: "#10B981",
+        category: "follow-up",
+        description: "Follow-up visit"
+      },
+      {
+        id: "appttype-proc",
+        name: "Procedure",
+        duration: 45,
+        color: "#F59E0B",
+        category: "procedure",
+        description: "General procedure"
+      },
+
+      // Comprehensive Medical Dermatology Appointment Types
+
+      // Cancer Screening & Evaluation
+      {
+        id: "appttype-fullbody-screening",
+        name: "Full Body Skin Cancer Screening",
+        duration: 45,
+        color: "#DC2626",
+        category: "screening",
+        description: "Comprehensive full body examination for skin cancer detection and prevention"
+      },
+      {
+        id: "appttype-melanoma-check",
+        name: "Melanoma Check/Follow-up",
+        duration: 30,
+        color: "#B91C1C",
+        category: "screening",
+        description: "Focused melanoma surveillance and follow-up examination"
+      },
+      {
+        id: "appttype-atypical-mole",
+        name: "Atypical Mole Evaluation",
+        duration: 30,
+        color: "#EA580C",
+        category: "screening",
+        description: "Detailed evaluation of dysplastic or atypical nevi"
+      },
+
+      // Biopsy & Surgical Procedures
+      {
+        id: "appttype-lesion-biopsy",
+        name: "Suspicious Lesion Biopsy",
+        duration: 30,
+        color: "#D97706",
+        category: "procedure",
+        description: "Skin biopsy of suspicious lesion for pathological evaluation"
+      },
+      {
+        id: "appttype-cyst-removal",
+        name: "Cyst Removal",
+        duration: 30,
+        color: "#CA8A04",
+        category: "procedure",
+        description: "Excision of epidermal or sebaceous cyst"
+      },
+      {
+        id: "appttype-mohs-consult",
+        name: "Mohs Surgery Consult",
+        duration: 45,
+        color: "#B45309",
+        category: "consultation",
+        description: "Pre-operative consultation for Mohs micrographic surgery"
+      },
+
+      // Treatment Procedures
+      {
+        id: "appttype-ak-treatment",
+        name: "Actinic Keratosis Treatment",
+        duration: 20,
+        color: "#F97316",
+        category: "procedure",
+        description: "Cryotherapy or other treatment for pre-cancerous lesions"
+      },
+      {
+        id: "appttype-wart-removal",
+        name: "Wart Removal",
+        duration: 15,
+        color: "#FB923C",
+        category: "procedure",
+        description: "Removal of common, plantar, or flat warts"
+      },
+      {
+        id: "appttype-skin-tag-removal",
+        name: "Skin Tag Removal",
+        duration: 15,
+        color: "#FDBA74",
+        category: "procedure",
+        description: "Removal of benign skin tags"
+      },
+
+      // Chronic Skin Conditions - Follow-up
+      {
+        id: "appttype-psoriasis-fu",
+        name: "Psoriasis Follow-up",
+        duration: 20,
+        color: "#8B5CF6",
+        category: "follow-up",
+        description: "Management and monitoring of psoriasis treatment"
+      },
+      {
+        id: "appttype-eczema-visit",
+        name: "Eczema/Dermatitis Visit",
+        duration: 20,
+        color: "#7C3AED",
+        category: "follow-up",
+        description: "Treatment and management of eczema or dermatitis"
+      },
+      {
+        id: "appttype-rosacea-treatment",
+        name: "Rosacea Treatment",
+        duration: 20,
+        color: "#6D28D9",
+        category: "follow-up",
+        description: "Management and treatment of rosacea"
+      },
+
+      // Acne Management
+      {
+        id: "appttype-acne-fu",
+        name: "Acne Follow-up",
+        duration: 15,
+        color: "#EC4899",
+        category: "follow-up",
+        description: "Follow-up visit for acne treatment and management"
+      },
+
+      // Specialized Evaluations
+      {
+        id: "appttype-hair-loss",
+        name: "Hair Loss Consultation",
+        duration: 30,
+        color: "#14B8A6",
+        category: "consultation",
+        description: "Evaluation and treatment planning for alopecia"
+      },
+      {
+        id: "appttype-nail-disorder",
+        name: "Nail Disorder Evaluation",
+        duration: 20,
+        color: "#0D9488",
+        category: "consultation",
+        description: "Diagnosis and treatment of nail conditions"
+      },
+
+      // Allergy & Testing
+      {
+        id: "appttype-patch-testing",
+        name: "Contact Dermatitis Patch Testing",
+        duration: 45,
+        color: "#06B6D4",
+        category: "testing",
+        description: "Patch testing to identify allergens causing contact dermatitis"
+      },
+
+      // Phototherapy
+      {
+        id: "appttype-phototherapy-fu",
+        name: "Phototherapy Follow-up",
+        duration: 15,
+        color: "#0EA5E9",
+        category: "follow-up",
+        description: "Follow-up visit during phototherapy treatment course"
+      },
+
+      // Cosmetic Dermatology Appointment Types (Pink/Purple tones)
+
+      // Botox & Injectable Treatments
+      {
+        id: "appttype-botox-consult",
+        name: "Botox Consultation",
+        duration: 30,
+        color: "#EC4899",
+        category: "cosmetic",
+        description: "Consultation for botulinum toxin treatment to reduce wrinkles and fine lines"
+      },
+      {
+        id: "appttype-botox-treatment",
+        name: "Botox Treatment",
+        duration: 30,
+        color: "#DB2777",
+        category: "cosmetic",
+        description: "Botulinum toxin injection treatment for facial rejuvenation"
+      },
+      {
+        id: "appttype-filler-consult",
+        name: "Dermal Filler Consultation",
+        duration: 30,
+        color: "#F472B6",
+        category: "cosmetic",
+        description: "Consultation for hyaluronic acid or other dermal filler treatments"
+      },
+      {
+        id: "appttype-filler-treatment",
+        name: "Dermal Filler Treatment",
+        duration: 45,
+        color: "#E879F9",
+        category: "cosmetic",
+        description: "Injectable dermal filler treatment for volume restoration and facial contouring"
+      },
+      {
+        id: "appttype-kybella",
+        name: "Kybella Treatment",
+        duration: 30,
+        color: "#C084FC",
+        category: "cosmetic",
+        description: "Kybella injection for reduction of submental fullness (double chin)"
+      },
+
+      // Chemical & Facial Treatments
+      {
+        id: "appttype-chemical-peel",
+        name: "Chemical Peel",
+        duration: 45,
+        color: "#C026D3",
+        category: "cosmetic",
+        description: "Chemical exfoliation treatment to improve skin texture and appearance"
+      },
+      {
+        id: "appttype-hydrafacial",
+        name: "Hydrafacial",
+        duration: 45,
+        color: "#F0ABFC",
+        category: "cosmetic",
+        description: "Multi-step facial treatment with cleansing, exfoliation, and hydration"
+      },
+      {
+        id: "appttype-microderm",
+        name: "Microdermabrasion",
+        duration: 30,
+        color: "#FCA5A5",
+        category: "cosmetic",
+        description: "Mechanical exfoliation treatment to improve skin texture and tone"
+      },
+
+      // Laser & Energy-Based Treatments
+      {
+        id: "appttype-microneedling",
+        name: "Microneedling",
+        duration: 60,
+        color: "#A855F7",
+        category: "cosmetic",
+        description: "Collagen induction therapy to improve skin texture, scars, and fine lines"
+      },
+      {
+        id: "appttype-laser-hair",
+        name: "Laser Hair Removal",
+        duration: 30,
+        color: "#9333EA",
+        category: "cosmetic",
+        description: "Laser treatment for permanent hair reduction"
+      },
+      {
+        id: "appttype-ipl",
+        name: "IPL Photofacial",
+        duration: 45,
+        color: "#7C3AED",
+        category: "cosmetic",
+        description: "Intense pulsed light treatment for sun damage, pigmentation, and redness"
+      },
+      {
+        id: "appttype-laser-resurface",
+        name: "Laser Skin Resurfacing",
+        duration: 60,
+        color: "#8B5CF6",
+        category: "cosmetic",
+        description: "Ablative or non-ablative laser treatment for skin rejuvenation"
+      },
+      {
+        id: "appttype-tattoo-removal",
+        name: "Laser Tattoo Removal",
+        duration: 30,
+        color: "#F87171",
+        category: "cosmetic",
+        description: "Q-switched laser treatment for tattoo removal"
+      },
+
+      // Specialized Cosmetic Treatments
+      {
+        id: "appttype-prp-hair",
+        name: "PRP Hair Restoration",
+        duration: 60,
+        color: "#D946EF",
+        category: "cosmetic",
+        description: "Platelet-rich plasma injections for hair loss and thinning"
+      },
+      {
+        id: "appttype-scar-treatment",
+        name: "Scar Treatment",
+        duration: 30,
+        color: "#FB7185",
+        category: "cosmetic",
+        description: "Treatment for acne scars, surgical scars, or other scar revision"
+      },
+
+      // Cosmetic Consultations & Follow-ups
+      {
+        id: "appttype-tattoo-consult",
+        name: "Tattoo Removal Consultation",
+        duration: 20,
+        color: "#FDA4AF",
+        category: "cosmetic",
+        description: "Initial consultation for laser tattoo removal treatment planning"
+      },
+      {
+        id: "appttype-cosmetic-consult",
+        name: "Cosmetic Consultation",
+        duration: 30,
+        color: "#FBB6CE",
+        category: "cosmetic",
+        description: "Comprehensive consultation for cosmetic dermatology services"
+      },
+      {
+        id: "appttype-cosmetic-fu",
+        name: "Follow-up Cosmetic",
+        duration: 15,
+        color: "#FBCFE8",
+        category: "cosmetic",
+        description: "Follow-up visit after cosmetic procedure or treatment"
+      },
     ];
 
     for (const at of apptTypes) {
       await pool.query(
-        `insert into appointment_types(id, tenant_id, name, duration_minutes)
-         values ($1,$2,$3,$4) on conflict (id) do nothing`,
-        [at.id, tenantId, at.name, at.duration],
+        `insert into appointment_types(id, tenant_id, name, duration_minutes, color, category, description)
+         values ($1,$2,$3,$4,$5,$6,$7)
+         on conflict (id) do update set
+           name = EXCLUDED.name,
+           duration_minutes = EXCLUDED.duration_minutes,
+           color = EXCLUDED.color,
+           category = EXCLUDED.category,
+           description = EXCLUDED.description`,
+        [at.id, tenantId, at.name, at.duration, at.color, at.category, at.description],
       );
     }
 
     const availability = [
-      { provider: "prov-demo", day_of_week: 1, start_time: "09:00", end_time: "16:00" },
-      { provider: "prov-demo", day_of_week: 3, start_time: "09:00", end_time: "16:00" },
-      { provider: "prov-demo-2", day_of_week: 2, start_time: "10:00", end_time: "18:00" },
-      // Dr. Martinez: Monday-Friday, 8am-5pm
+      // Dr. Skin (prov-demo): Monday-Friday, 8am-5pm
+      { provider: "prov-demo", day_of_week: 1, start_time: "08:00", end_time: "17:00" },
+      { provider: "prov-demo", day_of_week: 2, start_time: "08:00", end_time: "17:00" },
+      { provider: "prov-demo", day_of_week: 3, start_time: "08:00", end_time: "17:00" },
+      { provider: "prov-demo", day_of_week: 4, start_time: "08:00", end_time: "17:00" },
+      { provider: "prov-demo", day_of_week: 5, start_time: "08:00", end_time: "17:00" },
+      // PA Riley (prov-demo-2): Monday-Friday, 8am-6pm
+      { provider: "prov-demo-2", day_of_week: 1, start_time: "08:00", end_time: "18:00" },
+      { provider: "prov-demo-2", day_of_week: 2, start_time: "08:00", end_time: "18:00" },
+      { provider: "prov-demo-2", day_of_week: 3, start_time: "08:00", end_time: "18:00" },
+      { provider: "prov-demo-2", day_of_week: 4, start_time: "08:00", end_time: "18:00" },
+      { provider: "prov-demo-2", day_of_week: 5, start_time: "08:00", end_time: "18:00" },
+      // Dr. Martinez (prov-demo-3): Monday-Friday, 8am-5pm
       { provider: "prov-demo-3", day_of_week: 1, start_time: "08:00", end_time: "17:00" },
       { provider: "prov-demo-3", day_of_week: 2, start_time: "08:00", end_time: "17:00" },
       { provider: "prov-demo-3", day_of_week: 3, start_time: "08:00", end_time: "17:00" },
       { provider: "prov-demo-3", day_of_week: 4, start_time: "08:00", end_time: "17:00" },
       { provider: "prov-demo-3", day_of_week: 5, start_time: "08:00", end_time: "17:00" },
+      // Sarah Mitchell PA-C (prov-cosmetic-pa): Monday-Friday, 8am-5pm
+      { provider: "prov-cosmetic-pa", day_of_week: 1, start_time: "08:00", end_time: "17:00" },
+      { provider: "prov-cosmetic-pa", day_of_week: 2, start_time: "08:00", end_time: "17:00" },
+      { provider: "prov-cosmetic-pa", day_of_week: 3, start_time: "08:00", end_time: "17:00" },
+      { provider: "prov-cosmetic-pa", day_of_week: 4, start_time: "08:00", end_time: "17:00" },
+      { provider: "prov-cosmetic-pa", day_of_week: 5, start_time: "08:00", end_time: "17:00" },
     ];
 
     for (const slot of availability) {
@@ -639,6 +993,8 @@ async function seed() {
     }
 
     // Clear existing appointments to regenerate with fresh dates
+    // First clear dependent tables
+    await pool.query(`DELETE FROM appointment_status_history WHERE tenant_id = $1`, [tenantId]);
     await pool.query(`DELETE FROM appointments WHERE tenant_id = $1`, [tenantId]);
 
     const now = new Date();
@@ -678,6 +1034,141 @@ async function seed() {
       ],
     );
 
+    // Generate appointments for Dr. Skin (prov-demo) and PA Riley (prov-demo-2)
+    // Using similar logic to Dr. Martinez to ensure they have appointments on the schedule
+    const otherProviderPatients = [
+      "p-001", "p-002", "p-003", "p-004", "p-005", "p-006", "p-007", "p-008", "p-009", "p-010",
+      "p-demo", "p-demo-2",
+    ];
+
+    // Dr. Skin appointments - spread across next 60 days
+    let skinApptCounter = 1;
+    let skinPatientIndex = 0;
+    let skinRandomSeed = 67890;
+    const skinSeededRandom = () => {
+      skinRandomSeed = (skinRandomSeed * 1103515245 + 12345) & 0x7fffffff;
+      return skinRandomSeed / 0x7fffffff;
+    };
+
+    for (let dayOffset = 0; dayOffset <= 60; dayOffset++) {
+      const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+      const dayOfWeek = apptDate.getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip weekends
+      if (skinSeededRandom() < 0.15) continue; // Skip some days
+
+      const apptsPerDay = Math.floor(skinSeededRandom() * 5) + 4; // 4-8 appointments
+      let currentHour = 8;
+      let currentMinute = 0;
+
+      for (let apptNum = 0; apptNum < apptsPerDay; apptNum++) {
+        const extraGap = Math.floor(skinSeededRandom() * 2) * 15;
+        currentMinute += extraGap;
+        while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
+        if (currentHour >= 16) break;
+
+        const apptStart = new Date(apptDate);
+        apptStart.setHours(currentHour, currentMinute, 0, 0);
+
+        const typeRoll = skinSeededRandom();
+        let duration = typeRoll < 0.5 ? 20 : (typeRoll < 0.8 ? 30 : 45);
+        let apptTypeId = typeRoll < 0.5 ? "appttype-fu" : (typeRoll < 0.8 ? "appttype-demo" : "appttype-proc");
+
+        const apptEnd = new Date(apptStart.getTime() + duration * 60 * 1000);
+        currentMinute += duration;
+        while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
+
+        if (skinSeededRandom() < 0.7) skinPatientIndex++;
+        const patientId = otherProviderPatients[skinPatientIndex % otherProviderPatients.length];
+
+        let status = "scheduled";
+        if (dayOffset <= 0) status = "completed";
+        else if (dayOffset <= 3 && skinSeededRandom() < 0.3) status = "checked_in";
+        else if (dayOffset > 14 && skinSeededRandom() < 0.06) status = "cancelled";
+
+        await pool.query(
+          `insert into appointments(id, tenant_id, patient_id, provider_id, location_id, appointment_type_id, scheduled_start, scheduled_end, status)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           on conflict (id) do nothing`,
+          [
+            `appt-skin-${String(skinApptCounter).padStart(4, "0")}`,
+            tenantId,
+            patientId,
+            "prov-demo",
+            locationId,
+            apptTypeId,
+            apptStart.toISOString(),
+            apptEnd.toISOString(),
+            status,
+          ],
+        );
+        skinApptCounter++;
+      }
+    }
+
+    // PA Riley appointments - spread across next 60 days
+    let rileyApptCounter = 1;
+    let rileyPatientIndex = 0;
+    let rileyRandomSeed = 54321;
+    const rileySeededRandom = () => {
+      rileyRandomSeed = (rileyRandomSeed * 1103515245 + 12345) & 0x7fffffff;
+      return rileyRandomSeed / 0x7fffffff;
+    };
+
+    for (let dayOffset = 0; dayOffset <= 60; dayOffset++) {
+      const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+      const dayOfWeek = apptDate.getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip weekends
+      if (rileySeededRandom() < 0.12) continue; // Skip some days
+
+      const apptsPerDay = Math.floor(rileySeededRandom() * 6) + 5; // 5-10 appointments (PA sees more patients)
+      let currentHour = 8;
+      let currentMinute = 0;
+
+      for (let apptNum = 0; apptNum < apptsPerDay; apptNum++) {
+        const extraGap = Math.floor(rileySeededRandom() * 2) * 15;
+        currentMinute += extraGap;
+        while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
+        if (currentHour >= 17) break; // PA works until 6pm
+
+        const apptStart = new Date(apptDate);
+        apptStart.setHours(currentHour, currentMinute, 0, 0);
+
+        const typeRoll = rileySeededRandom();
+        let duration = typeRoll < 0.6 ? 20 : (typeRoll < 0.9 ? 30 : 45);
+        let apptTypeId = typeRoll < 0.6 ? "appttype-fu" : (typeRoll < 0.9 ? "appttype-demo" : "appttype-proc");
+
+        const apptEnd = new Date(apptStart.getTime() + duration * 60 * 1000);
+        currentMinute += duration;
+        while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
+
+        if (rileySeededRandom() < 0.7) rileyPatientIndex++;
+        const patientId = otherProviderPatients[rileyPatientIndex % otherProviderPatients.length];
+
+        let status = "scheduled";
+        if (dayOffset <= 0) status = "completed";
+        else if (dayOffset <= 3 && rileySeededRandom() < 0.25) status = "checked_in";
+        else if (dayOffset > 14 && rileySeededRandom() < 0.05) status = "cancelled";
+
+        await pool.query(
+          `insert into appointments(id, tenant_id, patient_id, provider_id, location_id, appointment_type_id, scheduled_start, scheduled_end, status)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           on conflict (id) do nothing`,
+          [
+            `appt-riley-${String(rileyApptCounter).padStart(4, "0")}`,
+            tenantId,
+            patientId,
+            "prov-demo-2",
+            locationId,
+            apptTypeId,
+            apptStart.toISOString(),
+            apptEnd.toISOString(),
+            status,
+          ],
+        );
+        rileyApptCounter++;
+      }
+    }
+
     // Dr. Martinez appointments - spread across next 3 months (90 days)
     const martinezPatients = [
       // Patient IDs to use (mix of all patients)
@@ -686,11 +1177,19 @@ async function seed() {
       "p-021", "p-022", "p-023", "p-024", "p-025", "p-026", "p-027", "p-028", "p-029", "p-030",
     ];
 
-    // Appointment types to rotate through
+    // Appointment types to rotate through (expanded with new dermatology types)
     const apptTypesForMartinez = [
-      { id: "appttype-demo", duration: 30 },  // Derm Consult
-      { id: "appttype-fu", duration: 20 },    // Follow Up
-      { id: "appttype-proc", duration: 45 },   // Procedure
+      { id: "appttype-demo", duration: 30 },                    // Derm Consult
+      { id: "appttype-fu", duration: 20 },                      // Follow Up
+      { id: "appttype-proc", duration: 45 },                    // Procedure
+      { id: "appttype-fullbody-screening", duration: 45 },      // Full Body Screening
+      { id: "appttype-melanoma-check", duration: 30 },          // Melanoma Check
+      { id: "appttype-lesion-biopsy", duration: 30 },           // Biopsy
+      { id: "appttype-psoriasis-fu", duration: 20 },            // Psoriasis
+      { id: "appttype-eczema-visit", duration: 20 },            // Eczema
+      { id: "appttype-acne-fu", duration: 15 },                 // Acne
+      { id: "appttype-ak-treatment", duration: 20 },            // AK Treatment
+      { id: "appttype-wart-removal", duration: 15 },            // Wart Removal
     ];
 
     // Location IDs to rotate through
@@ -706,8 +1205,8 @@ async function seed() {
     let apptCounter = 1;
     let patientIndex = 0;
 
-    // Create appointments for next 90 days (3 months, weekdays only)
-    for (let dayOffset = 1; dayOffset <= 90; dayOffset++) {
+    // Create appointments for next 90 days (3 months, weekdays only) - start from today
+    for (let dayOffset = 0; dayOffset <= 90; dayOffset++) {
       const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
       const dayOfWeek = apptDate.getDay();
 
@@ -745,16 +1244,29 @@ async function seed() {
         const apptStart = new Date(apptDate);
         apptStart.setHours(currentHour, currentMinute, 0, 0);
 
-        // Weighted random appointment type
-        // 50% follow-ups, 35% consults, 15% procedures
+        // Weighted random appointment type distribution
         const typeRoll = seededRandom();
         let apptType: { id: string; duration: number };
-        if (typeRoll < 0.50) {
+        if (typeRoll < 0.25) {
           apptType = apptTypesForMartinez[1]!; // Follow Up (20 min)
-        } else if (typeRoll < 0.85) {
+        } else if (typeRoll < 0.40) {
           apptType = apptTypesForMartinez[0]!; // Derm Consult (30 min)
+        } else if (typeRoll < 0.50) {
+          apptType = apptTypesForMartinez[3]!; // Full Body Screening (45 min)
+        } else if (typeRoll < 0.60) {
+          apptType = apptTypesForMartinez[4]!; // Melanoma Check (30 min)
+        } else if (typeRoll < 0.68) {
+          apptType = apptTypesForMartinez[5]!; // Lesion Biopsy (30 min)
+        } else if (typeRoll < 0.75) {
+          apptType = apptTypesForMartinez[6]!; // Psoriasis FU (20 min)
+        } else if (typeRoll < 0.82) {
+          apptType = apptTypesForMartinez[7]!; // Eczema Visit (20 min)
+        } else if (typeRoll < 0.88) {
+          apptType = apptTypesForMartinez[8]!; // Acne FU (15 min)
+        } else if (typeRoll < 0.94) {
+          apptType = apptTypesForMartinez[9]!; // AK Treatment (20 min)
         } else {
-          apptType = apptTypesForMartinez[2]!; // Procedure (45 min)
+          apptType = apptTypesForMartinez[10]!; // Wart Removal (15 min)
         }
 
         const apptEnd = new Date(apptStart.getTime() + apptType.duration * 60 * 1000);
@@ -820,6 +1332,134 @@ async function seed() {
         );
 
         apptCounter++;
+      }
+    }
+
+    // Sarah Mitchell, PA-C appointments - Cosmetic specialist, spread across next 60 days
+    const sarahPatients = [
+      "p-001", "p-002", "p-003", "p-004", "p-005", "p-006", "p-007", "p-008", "p-009", "p-010",
+      "p-011", "p-012", "p-013", "p-014", "p-015", "p-016", "p-017", "p-018", "p-019", "p-020",
+      "p-021", "p-022", "p-023", "p-024", "p-025", "p-026", "p-027", "p-028", "p-029", "p-030",
+    ];
+
+    // Cosmetic appointment types for Sarah Mitchell
+    const cosmeticApptTypes = [
+      { id: "appttype-botox-consult", duration: 30 },
+      { id: "appttype-botox-treatment", duration: 30 },
+      { id: "appttype-filler-consult", duration: 30 },
+      { id: "appttype-filler-treatment", duration: 45 },
+      { id: "appttype-chemical-peel", duration: 45 },
+      { id: "appttype-hydrafacial", duration: 45 },
+      { id: "appttype-microderm", duration: 30 },
+      { id: "appttype-microneedling", duration: 60 },
+      { id: "appttype-cosmetic-consult", duration: 30 },
+      { id: "appttype-cosmetic-fu", duration: 15 },
+      { id: "appttype-kybella", duration: 30 },
+      { id: "appttype-scar-treatment", duration: 30 },
+    ];
+
+    let sarahApptCounter = 1;
+    let sarahPatientIndex = 0;
+    let sarahRandomSeed = 98765;
+    const sarahSeededRandom = () => {
+      sarahRandomSeed = (sarahRandomSeed * 1103515245 + 12345) & 0x7fffffff;
+      return sarahRandomSeed / 0x7fffffff;
+    };
+
+    // Extended to 120 days (through May 2026) for comprehensive scheduling
+    for (let dayOffset = 0; dayOffset <= 120; dayOffset++) {
+      const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+      const dayOfWeek = apptDate.getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip weekends
+      if (sarahSeededRandom() < 0.1) continue; // Skip some days (PTO, etc.)
+
+      // Sarah sees 6-10 cosmetic patients per day (cosmetic procedures can be quicker)
+      const apptsPerDay = Math.floor(sarahSeededRandom() * 5) + 6;
+      let currentHour = 9; // Sarah starts at 9am
+      let currentMinute = 0;
+
+      for (let apptNum = 0; apptNum < apptsPerDay; apptNum++) {
+        // Add random gaps between appointments
+        const extraGap = Math.floor(sarahSeededRandom() * 2) * 15;
+        currentMinute += extraGap;
+        while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
+        if (currentHour >= 18) break; // Sarah works until 6pm
+
+        const apptStart = new Date(apptDate);
+        apptStart.setHours(currentHour, currentMinute, 0, 0);
+
+        // Weighted random cosmetic appointment type distribution
+        const typeRoll = sarahSeededRandom();
+        let apptType: { id: string; duration: number };
+        if (typeRoll < 0.25) {
+          apptType = cosmeticApptTypes[1]!; // Botox Treatment (most common)
+        } else if (typeRoll < 0.40) {
+          apptType = cosmeticApptTypes[3]!; // Filler Treatment
+        } else if (typeRoll < 0.50) {
+          apptType = cosmeticApptTypes[4]!; // Chemical Peel
+        } else if (typeRoll < 0.58) {
+          apptType = cosmeticApptTypes[5]!; // Hydrafacial
+        } else if (typeRoll < 0.65) {
+          apptType = cosmeticApptTypes[9]!; // Cosmetic Follow-up
+        } else if (typeRoll < 0.72) {
+          apptType = cosmeticApptTypes[8]!; // Cosmetic Consult
+        } else if (typeRoll < 0.78) {
+          apptType = cosmeticApptTypes[0]!; // Botox Consult
+        } else if (typeRoll < 0.84) {
+          apptType = cosmeticApptTypes[6]!; // Microdermabrasion
+        } else if (typeRoll < 0.90) {
+          apptType = cosmeticApptTypes[7]!; // Microneedling
+        } else if (typeRoll < 0.95) {
+          apptType = cosmeticApptTypes[10]!; // Kybella
+        } else {
+          apptType = cosmeticApptTypes[11]!; // Scar Treatment
+        }
+
+        const apptEnd = new Date(apptStart.getTime() + apptType.duration * 60 * 1000);
+        currentMinute += apptType.duration;
+        while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
+
+        // Shuffle through patients
+        if (sarahSeededRandom() < 0.7) sarahPatientIndex++;
+        const patientId = sarahPatients[sarahPatientIndex % sarahPatients.length];
+
+        // Location: Sarah works mostly at Main Clinic
+        const locRoll = sarahSeededRandom();
+        let locationForAppt = locRoll < 0.75 ? "loc-demo" : (locRoll < 0.9 ? "loc-east" : "loc-south");
+
+        // Status based on how far in the future
+        let status = "scheduled";
+        if (dayOffset <= 0) {
+          status = "completed";
+        } else if (dayOffset <= 3) {
+          const statusRoll = sarahSeededRandom();
+          if (statusRoll < 0.2) status = "checked_in";
+          else if (statusRoll < 0.35) status = "in_room";
+          else if (statusRoll < 0.45) status = "with_provider";
+        } else if (dayOffset <= 14 && sarahSeededRandom() < 0.05) {
+          status = "cancelled";
+        } else if (dayOffset > 14 && sarahSeededRandom() < 0.08) {
+          status = "cancelled";
+        }
+
+        await pool.query(
+          `insert into appointments(id, tenant_id, patient_id, provider_id, location_id, appointment_type_id, scheduled_start, scheduled_end, status)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           on conflict (id) do nothing`,
+          [
+            `appt-sarah-${String(sarahApptCounter).padStart(4, "0")}`,
+            tenantId,
+            patientId,
+            "prov-cosmetic-pa",
+            locationForAppt,
+            apptType.id,
+            apptStart.toISOString(),
+            apptEnd.toISOString(),
+            status,
+          ],
+        );
+
+        sarahApptCounter++;
       }
     }
 
@@ -1135,11 +1775,243 @@ async function seed() {
     // Create a default fee schedule for the demo tenant
     const feeScheduleId = "fee-schedule-demo";
     await pool.query(
-      `insert into fee_schedules(id, tenant_id, name, is_default)
-       values ($1,$2,$3,$4)
+      `insert into fee_schedules(id, tenant_id, name, is_default, description)
+       values ($1,$2,$3,$4,$5)
        on conflict (id) do nothing`,
-      [feeScheduleId, tenantId, "Standard Fee Schedule", true],
+      [feeScheduleId, tenantId, "Medical Dermatology Fee Schedule", true, "Comprehensive fee schedule for medical dermatology procedures"],
     );
+
+    // Seed comprehensive dermatology fee schedule items with 2025 realistic pricing
+    // Prices based on industry standards: https://integritydermatology.com, https://derrowdermatology.com
+    const feeScheduleItems = [
+      // ═══════════════════════════════════════════════════════════════════════════
+      // EVALUATION & MANAGEMENT - Office Visits
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "99202", description: "New patient office visit - straightforward (20 min)", category: "Office Visits", feeCents: 12500 },
+      { cptCode: "99203", description: "New patient office visit - low complexity (30 min)", category: "Office Visits", feeCents: 17500 },
+      { cptCode: "99204", description: "New patient office visit - moderate complexity (45 min)", category: "Office Visits", feeCents: 25000 },
+      { cptCode: "99205", description: "New patient office visit - high complexity (60 min)", category: "Office Visits", feeCents: 35000 },
+      { cptCode: "99211", description: "Established patient - minimal (5 min, nurse visit)", category: "Office Visits", feeCents: 3500 },
+      { cptCode: "99212", description: "Established patient - straightforward (10 min)", category: "Office Visits", feeCents: 8500 },
+      { cptCode: "99213", description: "Established patient - low complexity (15 min)", category: "Office Visits", feeCents: 12000 },
+      { cptCode: "99214", description: "Established patient - moderate complexity (25 min)", category: "Office Visits", feeCents: 17500 },
+      { cptCode: "99215", description: "Established patient - high complexity (40 min)", category: "Office Visits", feeCents: 27500 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // SKIN BIOPSIES
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "11102", description: "Tangential biopsy (shave), first lesion", category: "Biopsies", feeCents: 17500 },
+      { cptCode: "11103", description: "Tangential biopsy (shave), each additional lesion", category: "Biopsies", feeCents: 5500 },
+      { cptCode: "11104", description: "Punch biopsy, first lesion", category: "Biopsies", feeCents: 19500 },
+      { cptCode: "11105", description: "Punch biopsy, each additional lesion", category: "Biopsies", feeCents: 6500 },
+      { cptCode: "11106", description: "Incisional biopsy, first lesion", category: "Biopsies", feeCents: 27500 },
+      { cptCode: "11107", description: "Incisional biopsy, each additional lesion", category: "Biopsies", feeCents: 12500 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // SHAVE REMOVALS
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "11300", description: "Shave removal, trunk/arms/legs, ≤0.5 cm", category: "Shave Removals", feeCents: 12500 },
+      { cptCode: "11301", description: "Shave removal, trunk/arms/legs, 0.6-1.0 cm", category: "Shave Removals", feeCents: 15000 },
+      { cptCode: "11305", description: "Shave removal, scalp/neck/hands/feet, ≤0.5 cm", category: "Shave Removals", feeCents: 14500 },
+      { cptCode: "11306", description: "Shave removal, scalp/neck/hands/feet, 0.6-1.0 cm", category: "Shave Removals", feeCents: 17500 },
+      { cptCode: "11310", description: "Shave removal, face/ears/eyelids/nose/lips, ≤0.5 cm", category: "Shave Removals", feeCents: 17500 },
+      { cptCode: "11311", description: "Shave removal, face/ears/eyelids/nose/lips, 0.6-1.0 cm", category: "Shave Removals", feeCents: 22500 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // EXCISIONS - BENIGN LESIONS (Most common sizes)
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "11400", description: "Excision benign lesion, trunk/arms/legs, ≤0.5 cm", category: "Excisions - Benign", feeCents: 22500 },
+      { cptCode: "11401", description: "Excision benign lesion, trunk/arms/legs, 0.6-1.0 cm", category: "Excisions - Benign", feeCents: 30000 },
+      { cptCode: "11402", description: "Excision benign lesion, trunk/arms/legs, 1.1-2.0 cm", category: "Excisions - Benign", feeCents: 37500 },
+      { cptCode: "11420", description: "Excision benign lesion, scalp/neck/hands/feet, ≤0.5 cm", category: "Excisions - Benign", feeCents: 25000 },
+      { cptCode: "11421", description: "Excision benign lesion, scalp/neck/hands/feet, 0.6-1.0 cm", category: "Excisions - Benign", feeCents: 32500 },
+      { cptCode: "11440", description: "Excision benign lesion, face/ears/eyelids/nose/lips, ≤0.5 cm", category: "Excisions - Benign", feeCents: 30000 },
+      { cptCode: "11441", description: "Excision benign lesion, face/ears/eyelids/nose/lips, 0.6-1.0 cm", category: "Excisions - Benign", feeCents: 40000 },
+      { cptCode: "11442", description: "Excision benign lesion, face/ears/eyelids/nose/lips, 1.1-2.0 cm", category: "Excisions - Benign", feeCents: 50000 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // EXCISIONS - MALIGNANT LESIONS (Skin Cancer)
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "11600", description: "Excision malignant lesion, trunk/arms/legs, ≤0.5 cm", category: "Excisions - Malignant", feeCents: 35000 },
+      { cptCode: "11601", description: "Excision malignant lesion, trunk/arms/legs, 0.6-1.0 cm", category: "Excisions - Malignant", feeCents: 45000 },
+      { cptCode: "11602", description: "Excision malignant lesion, trunk/arms/legs, 1.1-2.0 cm", category: "Excisions - Malignant", feeCents: 57500 },
+      { cptCode: "11620", description: "Excision malignant lesion, scalp/neck/hands/feet, ≤0.5 cm", category: "Excisions - Malignant", feeCents: 40000 },
+      { cptCode: "11621", description: "Excision malignant lesion, scalp/neck/hands/feet, 0.6-1.0 cm", category: "Excisions - Malignant", feeCents: 52500 },
+      { cptCode: "11640", description: "Excision malignant lesion, face/ears/eyelids/nose/lips, ≤0.5 cm", category: "Excisions - Malignant", feeCents: 47500 },
+      { cptCode: "11641", description: "Excision malignant lesion, face/ears/eyelids/nose/lips, 0.6-1.0 cm", category: "Excisions - Malignant", feeCents: 60000 },
+      { cptCode: "11642", description: "Excision malignant lesion, face/ears/eyelids/nose/lips, 1.1-2.0 cm", category: "Excisions - Malignant", feeCents: 75000 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // DESTRUCTION PROCEDURES (Cryotherapy, Electrodessication)
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "17000", description: "Destruction premalignant lesion (AK), first lesion", category: "Destruction", feeCents: 17500 },
+      { cptCode: "17003", description: "Destruction premalignant lesion (AK), 2-14 lesions each", category: "Destruction", feeCents: 1000 },
+      { cptCode: "17004", description: "Destruction premalignant lesions (AK), 15 or more", category: "Destruction", feeCents: 32500 },
+      { cptCode: "17110", description: "Destruction benign lesions (warts, tags), up to 14", category: "Destruction", feeCents: 20000 },
+      { cptCode: "17111", description: "Destruction benign lesions (warts, tags), 15 or more", category: "Destruction", feeCents: 30000 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // MOHS MICROGRAPHIC SURGERY
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "17311", description: "Mohs surgery, head/neck/hands/feet, first stage", category: "Mohs Surgery", feeCents: 85000 },
+      { cptCode: "17312", description: "Mohs surgery, head/neck/hands/feet, each additional stage", category: "Mohs Surgery", feeCents: 55000 },
+      { cptCode: "17313", description: "Mohs surgery, trunk/arms/legs, first stage", category: "Mohs Surgery", feeCents: 75000 },
+      { cptCode: "17314", description: "Mohs surgery, trunk/arms/legs, each additional stage", category: "Mohs Surgery", feeCents: 47500 },
+      { cptCode: "17315", description: "Mohs surgery, each additional block after 5", category: "Mohs Surgery", feeCents: 12500 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // WOUND REPAIRS
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "12001", description: "Simple repair, trunk/extremities, ≤2.5 cm", category: "Repairs", feeCents: 17500 },
+      { cptCode: "12002", description: "Simple repair, trunk/extremities, 2.6-7.5 cm", category: "Repairs", feeCents: 25000 },
+      { cptCode: "12031", description: "Intermediate repair, scalp/trunk/extremities, ≤2.5 cm", category: "Repairs", feeCents: 32500 },
+      { cptCode: "12032", description: "Intermediate repair, scalp/trunk/extremities, 2.6-7.5 cm", category: "Repairs", feeCents: 45000 },
+      { cptCode: "12051", description: "Intermediate repair, face/ears/eyelids/nose/lips, ≤2.5 cm", category: "Repairs", feeCents: 45000 },
+      { cptCode: "12052", description: "Intermediate repair, face/ears/eyelids/nose/lips, 2.6-5.0 cm", category: "Repairs", feeCents: 60000 },
+      { cptCode: "13131", description: "Complex repair, face/hands/feet, 1.1-2.5 cm", category: "Repairs", feeCents: 70000 },
+      { cptCode: "13132", description: "Complex repair, face/hands/feet, 2.6-7.5 cm", category: "Repairs", feeCents: 95000 },
+      { cptCode: "13151", description: "Complex repair, eyelids/nose/ears/lips, 1.1-2.5 cm", category: "Repairs", feeCents: 85000 },
+      { cptCode: "13152", description: "Complex repair, eyelids/nose/ears/lips, 2.6-7.5 cm", category: "Repairs", feeCents: 115000 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // SKIN FLAPS & GRAFTS
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "14000", description: "Adjacent tissue transfer, trunk, ≤10 sq cm", category: "Flaps & Grafts", feeCents: 75000 },
+      { cptCode: "14001", description: "Adjacent tissue transfer, trunk, 10.1-30 sq cm", category: "Flaps & Grafts", feeCents: 95000 },
+      { cptCode: "14040", description: "Adjacent tissue transfer, face, ≤10 sq cm", category: "Flaps & Grafts", feeCents: 95000 },
+      { cptCode: "14041", description: "Adjacent tissue transfer, face, 10.1-30 sq cm", category: "Flaps & Grafts", feeCents: 120000 },
+      { cptCode: "15100", description: "Split-thickness skin graft, trunk/arms/legs", category: "Flaps & Grafts", feeCents: 85000 },
+      { cptCode: "15120", description: "Split-thickness skin graft, face/neck/hands/feet", category: "Flaps & Grafts", feeCents: 110000 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // INTRALESIONAL INJECTIONS
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "11900", description: "Intralesional injection (keloid, cyst), up to 7 lesions", category: "Injections", feeCents: 15000 },
+      { cptCode: "11901", description: "Intralesional injection (keloid, cyst), more than 7 lesions", category: "Injections", feeCents: 22500 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // PHOTOTHERAPY (Medical)
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "96910", description: "Photochemotherapy (PUVA)", category: "Phototherapy", feeCents: 17500 },
+      { cptCode: "96912", description: "Phototherapy (narrowband UVB)", category: "Phototherapy", feeCents: 12500 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // ALLERGY & PATCH TESTING
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "95044", description: "Patch test, each allergen (up to 80 applied)", category: "Patch Testing", feeCents: 1500 },
+      { cptCode: "95052", description: "Photo patch test", category: "Patch Testing", feeCents: 7500 },
+      { cptCode: "95024", description: "Intradermal allergy test, each allergen", category: "Patch Testing", feeCents: 1200 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // PATHOLOGY (Professional Component)
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "88305", description: "Surgical pathology, Level IV (skin biopsy)", category: "Pathology", feeCents: 12500 },
+      { cptCode: "88312", description: "Special stain (fungal, bacterial)", category: "Pathology", feeCents: 7500 },
+      { cptCode: "88342", description: "Immunohistochemistry, first antibody", category: "Pathology", feeCents: 15000 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // COSMETIC - NEUROTOXINS (Botox, Dysport, Xeomin)
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "64612", description: "Chemodenervation, muscle(s); forehead/glabella (Botox)", category: "Cosmetic - Neurotoxins", feeCents: 45000 },
+      { cptCode: "64615", description: "Chemodenervation, muscle(s); hyperhidrosis (Botox)", category: "Cosmetic - Neurotoxins", feeCents: 85000 },
+      { cptCode: "J0585", description: "Botulinum toxin type A (Botox), per unit", category: "Cosmetic - Neurotoxins", feeCents: 1400 },
+      { cptCode: "BOTOX-20", description: "Botox treatment, 20 units (crow's feet)", category: "Cosmetic - Neurotoxins", feeCents: 28000 },
+      { cptCode: "BOTOX-40", description: "Botox treatment, 40 units (forehead + glabella)", category: "Cosmetic - Neurotoxins", feeCents: 56000 },
+      { cptCode: "BOTOX-60", description: "Botox treatment, 60 units (full upper face)", category: "Cosmetic - Neurotoxins", feeCents: 84000 },
+      { cptCode: "J0586", description: "Abobotulinumtoxin A (Dysport), 5 units", category: "Cosmetic - Neurotoxins", feeCents: 500 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // COSMETIC - DERMAL FILLERS
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "FILLER-JUV", description: "Juvederm Ultra XC, 1 syringe (lips/nasolabial)", category: "Cosmetic - Fillers", feeCents: 75000 },
+      { cptCode: "FILLER-JUVP", description: "Juvederm Ultra Plus XC, 1 syringe (deep folds)", category: "Cosmetic - Fillers", feeCents: 80000 },
+      { cptCode: "FILLER-VOL", description: "Juvederm Voluma XC, 1 syringe (cheeks)", category: "Cosmetic - Fillers", feeCents: 95000 },
+      { cptCode: "FILLER-VOLB", description: "Juvederm Volbella XC, 1 syringe (fine lines/lips)", category: "Cosmetic - Fillers", feeCents: 70000 },
+      { cptCode: "FILLER-REST", description: "Restylane, 1 syringe", category: "Cosmetic - Fillers", feeCents: 72500 },
+      { cptCode: "FILLER-LYFT", description: "Restylane Lyft, 1 syringe (cheeks/hands)", category: "Cosmetic - Fillers", feeCents: 85000 },
+      { cptCode: "FILLER-KYSSE", description: "Restylane Kysse, 1 syringe (lips)", category: "Cosmetic - Fillers", feeCents: 75000 },
+      { cptCode: "FILLER-RAD", description: "Radiesse, 1.5mL syringe (volumizing)", category: "Cosmetic - Fillers", feeCents: 85000 },
+      { cptCode: "FILLER-SCUL", description: "Sculptra, 1 vial (collagen stimulator)", category: "Cosmetic - Fillers", feeCents: 95000 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // COSMETIC - CHEMICAL PEELS
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "15788", description: "Chemical peel, facial, epidermal (light)", category: "Cosmetic - Peels", feeCents: 15000 },
+      { cptCode: "15789", description: "Chemical peel, facial, dermal (medium)", category: "Cosmetic - Peels", feeCents: 35000 },
+      { cptCode: "15792", description: "Chemical peel, nonfacial", category: "Cosmetic - Peels", feeCents: 25000 },
+      { cptCode: "PEEL-GLOW", description: "Glycolic acid peel (superficial)", category: "Cosmetic - Peels", feeCents: 12500 },
+      { cptCode: "PEEL-JESSN", description: "Jessner's peel (medium depth)", category: "Cosmetic - Peels", feeCents: 20000 },
+      { cptCode: "PEEL-TCA", description: "TCA peel 20-35% (medium depth)", category: "Cosmetic - Peels", feeCents: 35000 },
+      { cptCode: "PEEL-VI", description: "VI Peel (proprietary blend)", category: "Cosmetic - Peels", feeCents: 35000 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // COSMETIC - LASER TREATMENTS
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "96920", description: "Laser treatment, inflammatory skin disease, <250 sq cm", category: "Cosmetic - Laser", feeCents: 25000 },
+      { cptCode: "96921", description: "Laser treatment, inflammatory skin disease, 250-500 sq cm", category: "Cosmetic - Laser", feeCents: 40000 },
+      { cptCode: "96922", description: "Laser treatment, inflammatory skin disease, >500 sq cm", category: "Cosmetic - Laser", feeCents: 55000 },
+      { cptCode: "LASER-IPL", description: "IPL photofacial (sun damage, redness)", category: "Cosmetic - Laser", feeCents: 35000 },
+      { cptCode: "LASER-VBEAM", description: "VBeam laser (rosacea, vessels)", category: "Cosmetic - Laser", feeCents: 45000 },
+      { cptCode: "LASER-FRAX", description: "Fraxel laser (resurfacing, scars)", category: "Cosmetic - Laser", feeCents: 125000 },
+      { cptCode: "LASER-CO2", description: "CO2 laser resurfacing (full face)", category: "Cosmetic - Laser", feeCents: 275000 },
+      { cptCode: "LASER-HAIR-S", description: "Laser hair removal, small area (upper lip, chin)", category: "Cosmetic - Laser", feeCents: 15000 },
+      { cptCode: "LASER-HAIR-M", description: "Laser hair removal, medium area (underarms, bikini)", category: "Cosmetic - Laser", feeCents: 25000 },
+      { cptCode: "LASER-HAIR-L", description: "Laser hair removal, large area (full legs, back)", category: "Cosmetic - Laser", feeCents: 45000 },
+      { cptCode: "LASER-TAT-S", description: "Laser tattoo removal, small (<3 sq in)", category: "Cosmetic - Laser", feeCents: 20000 },
+      { cptCode: "LASER-TAT-M", description: "Laser tattoo removal, medium (3-6 sq in)", category: "Cosmetic - Laser", feeCents: 35000 },
+      { cptCode: "LASER-TAT-L", description: "Laser tattoo removal, large (>6 sq in)", category: "Cosmetic - Laser", feeCents: 50000 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // COSMETIC - OTHER PROCEDURES
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "MICRO-NEED", description: "Microneedling (collagen induction therapy)", category: "Cosmetic - Other", feeCents: 35000 },
+      { cptCode: "MICRO-PRP", description: "Microneedling with PRP", category: "Cosmetic - Other", feeCents: 65000 },
+      { cptCode: "DERMAPLNE", description: "Dermaplaning", category: "Cosmetic - Other", feeCents: 15000 },
+      { cptCode: "HYDRAFACL", description: "HydraFacial treatment", category: "Cosmetic - Other", feeCents: 20000 },
+      { cptCode: "KYBELLA", description: "Kybella (deoxycholic acid), per vial", category: "Cosmetic - Other", feeCents: 60000 },
+      { cptCode: "SCLEROTHPY", description: "Sclerotherapy, spider veins (per session)", category: "Cosmetic - Other", feeCents: 35000 },
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // COSMETIC - CONSULTATIONS & PACKAGES
+      // ═══════════════════════════════════════════════════════════════════════════
+      { cptCode: "COSM-CONS", description: "Cosmetic consultation (new patient)", category: "Cosmetic - Consults", feeCents: 10000 },
+      { cptCode: "COSM-FU", description: "Cosmetic follow-up", category: "Cosmetic - Consults", feeCents: 0 },
+      { cptCode: "PKG-BOTOX3", description: "Botox package (3 treatments)", category: "Cosmetic - Packages", feeCents: 145000 },
+      { cptCode: "PKG-FILLER2", description: "Filler package (2 syringes)", category: "Cosmetic - Packages", feeCents: 135000 },
+      { cptCode: "PKG-LASER3", description: "IPL package (3 treatments)", category: "Cosmetic - Packages", feeCents: 90000 },
+    ];
+
+    // Insert all fee schedule items
+    for (const item of feeScheduleItems) {
+      await pool.query(
+        `insert into fee_schedule_items(id, fee_schedule_id, cpt_code, cpt_description, category, fee_cents)
+         values ($1,$2,$3,$4,$5,$6)
+         on conflict (fee_schedule_id, cpt_code) do update
+         set cpt_description = $4, category = $5, fee_cents = $6, updated_at = CURRENT_TIMESTAMP`,
+        [randomUUID(), feeScheduleId, item.cptCode, item.description, item.category, item.feeCents],
+      );
+    }
+
+    // Seed clinical protocols
+    await seedProtocols(tenantId, "u-provider");
+
+    // Seed patient portal accounts for testing
+    const portalPasswordHash = bcrypt.hashSync("Portal123!", 10); // Dev/test only
+    const portalAccounts = [
+      { patientId: "p-demo", email: "jamie.patient@example.com" },
+      { patientId: "p-demo-2", email: "sarah.smith@example.com" },
+      { patientId: "p-perry", email: "dan.perry@example.com" },
+    ];
+
+    for (const account of portalAccounts) {
+      await pool.query(
+        `INSERT INTO patient_portal_accounts (tenant_id, patient_id, email, password_hash, is_active, email_verified)
+         VALUES ($1, $2, $3, $4, true, true)
+         ON CONFLICT (tenant_id, email) DO NOTHING`,
+        [tenantId, account.patientId, account.email, portalPasswordHash]
+      );
+    }
+    console.log("Seeded patient portal accounts");
 
     await pool.query("commit");
     // eslint-disable-next-line no-console

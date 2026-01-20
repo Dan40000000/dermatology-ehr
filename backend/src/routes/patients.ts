@@ -4,6 +4,10 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { parsePagination, paginatedResponse } from "../middleware/pagination";
+import { parseFields, buildSelectClause } from "../middleware/fieldSelection";
+import { emitPatientUpdated } from "../websocket/emitter";
+import { logger } from "../lib/logger";
 
 const createPatientSchema = z.object({
   firstName: z.string().min(1).max(100),
@@ -41,18 +45,152 @@ const createPatientSchema = z.object({
 
 export const patientsRouter = Router();
 
+/**
+ * @swagger
+ * /api/patients:
+ *   get:
+ *     summary: List patients
+ *     description: Retrieve a paginated list of patients for the current tenant with optional field selection.
+ *     tags:
+ *       - Patients
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *           maximum: 100
+ *         description: Number of items per page
+ *       - in: query
+ *         name: fields
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of fields to return (e.g., id,firstName,lastName,email)
+ *     responses:
+ *       200:
+ *         description: Paginated list of patients
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Patient'
+ *                 meta:
+ *                   type: object
+ *                   properties:
+ *                     page:
+ *                       type: integer
+ *                     limit:
+ *                       type: integer
+ *                     total:
+ *                       type: integer
+ *                     totalPages:
+ *                       type: integer
+ *                     hasNext:
+ *                       type: boolean
+ *                     hasPrev:
+ *                       type: boolean
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 patientsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
-  const result = await pool.query(
-    `select id, first_name as "firstName", last_name as "lastName", dob, phone, email,
-            address, city, state, zip, insurance, allergies, medications,
-            created_at as "createdAt"
-     from patients where tenant_id = $1 order by created_at desc limit 50`,
-    [tenantId],
+  const { page, limit, offset } = parsePagination(req);
+  const selectedFields = parseFields(req);
+
+  // Build SELECT clause based on requested fields
+  const defaultFields = `id, first_name as "firstName", last_name as "lastName", dob as "dateOfBirth",
+                          mrn, phone, email, sex, address, city, state, zip, insurance, allergies, medications,
+                          created_at as "createdAt", updated_at as "updatedAt"`;
+
+  const selectClause = selectedFields
+    ? buildSelectClause(selectedFields, defaultFields)
+    : defaultFields;
+
+  // Get total count
+  const countResult = await pool.query(
+    `select count(*) from patients where tenant_id = $1`,
+    [tenantId]
   );
-  return res.json({ patients: result.rows });
+  const total = parseInt(countResult.rows[0].count);
+
+  // Get paginated data with last visit information
+  const result = await pool.query(
+    `select ${selectClause},
+       (select max(scheduled_start) from appointments
+        where appointments.patient_id = patients.id
+          and appointments.tenant_id = patients.tenant_id
+          and appointments.status = 'completed') as "lastVisit"
+     from patients where tenant_id = $1 order by created_at desc limit $2 offset $3`,
+    [tenantId, limit, offset],
+  );
+
+  return res.json(paginatedResponse(result.rows, total, page, limit));
 });
 
+/**
+ * @swagger
+ * /api/patients:
+ *   post:
+ *     summary: Create a new patient
+ *     description: Create a new patient record. Requires admin, ma, front_desk, or provider role.
+ *     tags:
+ *       - Patients
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CreatePatientRequest'
+ *     responses:
+ *       201:
+ *         description: Patient created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: string
+ *                   format: uuid
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk", "provider"]), async (req: AuthedRequest, res) => {
   const parsed = createPatientSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -88,7 +226,48 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
   return res.status(201).json({ id });
 });
 
-// GET single patient by ID
+/**
+ * @swagger
+ * /api/patients/{id}:
+ *   get:
+ *     summary: Get patient by ID
+ *     description: Retrieve a single patient's detailed information by ID.
+ *     tags:
+ *       - Patients
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Patient ID
+ *     responses:
+ *       200:
+ *         description: Patient details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 patient:
+ *                   $ref: '#/components/schemas/Patient'
+ *       404:
+ *         description: Patient not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to fetch patient
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 patientsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
   const { id } = req.params;
   const tenantId = req.user!.tenantId;
@@ -146,6 +325,63 @@ const updatePatientSchema = z.object({
   medications: z.string().optional(),
 });
 
+/**
+ * @swagger
+ * /api/patients/{id}:
+ *   put:
+ *     summary: Update patient
+ *     description: Update an existing patient's information. Requires admin, ma, front_desk, or provider role.
+ *     tags:
+ *       - Patients
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Patient ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/UpdatePatientRequest'
+ *     responses:
+ *       200:
+ *         description: Patient updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 id:
+ *                   type: string
+ *                   format: uuid
+ *       400:
+ *         description: Validation error or no fields to update
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Patient not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to update patient
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk", "provider"]), async (req: AuthedRequest, res) => {
   const { id } = req.params;
   const tenantId = req.user!.tenantId;
@@ -191,6 +427,35 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
       return res.status(404).json({ error: 'Patient not found' });
     }
 
+    // Emit WebSocket event for patient update
+    try {
+      const patientData = await pool.query(
+        `SELECT id, first_name, last_name, dob, phone, email, insurance
+         FROM patients
+         WHERE id = $1 AND tenant_id = $2`,
+        [id, tenantId]
+      );
+
+      if (patientData.rows.length > 0) {
+        const patient = patientData.rows[0];
+        emitPatientUpdated(tenantId, {
+          id: patient.id,
+          firstName: patient.first_name,
+          lastName: patient.last_name,
+          dob: patient.dob,
+          phone: patient.phone,
+          email: patient.email,
+          insurance: patient.insurance,
+          lastUpdated: new Date().toISOString(),
+        });
+      }
+    } catch (error: any) {
+      logger.error("Failed to emit patient updated event", {
+        error: error.message,
+        patientId: id,
+      });
+    }
+
     return res.json({ success: true, id: result.rows[0].id });
   } catch (error) {
     console.error('Error updating patient:', error);
@@ -198,7 +463,56 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
   }
 });
 
-// DELETE patient by ID (admin only)
+/**
+ * @swagger
+ * /api/patients/{id}:
+ *   delete:
+ *     summary: Delete patient
+ *     description: Delete a patient and all associated records (appointments, encounters, documents, etc.). Admin only.
+ *     tags:
+ *       - Patients
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Patient ID
+ *     responses:
+ *       200:
+ *         description: Patient deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *       404:
+ *         description: Patient not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to delete patient
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 patientsRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
   const { id } = req.params;
   const tenantId = req.user!.tenantId;
@@ -245,5 +559,438 @@ patientsRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async (req: 
   } catch (error) {
     console.error('Error deleting patient:', error);
     return res.status(500).json({ error: 'Failed to delete patient' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/patients/{id}/appointments:
+ *   get:
+ *     summary: Get patient appointments
+ *     description: Retrieve all appointments for a specific patient
+ *     tags:
+ *       - Patients
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Patient ID
+ *     responses:
+ *       200:
+ *         description: Patient appointments
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 appointments:
+ *                   type: array
+ */
+patientsRouter.get("/:id/appointments", requireAuth, async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    const result = await pool.query(
+      `SELECT a.id, a.patient_id as "patientId", a.provider_id as "providerId",
+              a.appointment_type_id as "appointmentTypeId", a.location_id as "locationId",
+              a.scheduled_start as "scheduledStart", a.scheduled_end as "scheduledEnd",
+              a.duration_minutes as "durationMinutes", a.status, a.chief_complaint as "chiefComplaint",
+              a.notes, a.created_at as "createdAt", a.updated_at as "updatedAt",
+              p.first_name || ' ' || p.last_name as "providerName",
+              at.name as "appointmentType"
+       FROM appointments a
+       LEFT JOIN providers p ON a.provider_id = p.id
+       LEFT JOIN appointment_types at ON a.appointment_type_id = at.id
+       WHERE a.patient_id = $1 AND a.tenant_id = $2
+       ORDER BY a.scheduled_start DESC`,
+      [id, tenantId]
+    );
+
+    return res.json({ appointments: result.rows });
+  } catch (error) {
+    console.error("Error fetching patient appointments:", error);
+    return res.status(500).json({ error: "Failed to fetch appointments" });
+  }
+});
+
+/**
+ * @swagger
+ * /api/patients/{id}/encounters:
+ *   get:
+ *     summary: Get patient encounters
+ *     description: Retrieve all encounters for a specific patient
+ */
+patientsRouter.get("/:id/encounters", requireAuth, async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    const result = await pool.query(
+      `SELECT e.id, e.patient_id as "patientId", e.provider_id as "providerId",
+              e.appointment_id as "appointmentId", e.encounter_date as "encounterDate",
+              e.chief_complaint as "chiefComplaint", e.hpi, e.ros, e.physical_exam as "physicalExam",
+              e.assessment_plan as "assessmentPlan", e.status, e.signed_at as "signedAt",
+              e.created_at as "createdAt", e.updated_at as "updatedAt",
+              p.first_name || ' ' || p.last_name as "providerName"
+       FROM encounters e
+       LEFT JOIN providers p ON e.provider_id = p.id
+       WHERE e.patient_id = $1 AND e.tenant_id = $2
+       ORDER BY e.encounter_date DESC`,
+      [id, tenantId]
+    );
+
+    return res.json({ encounters: result.rows });
+  } catch (error) {
+    console.error("Error fetching patient encounters:", error);
+    return res.status(500).json({ error: "Failed to fetch encounters" });
+  }
+});
+
+/**
+ * @swagger
+ * /api/patients/{id}/prescriptions:
+ *   get:
+ *     summary: Get patient prescriptions
+ *     description: Retrieve all prescriptions for a specific patient
+ */
+patientsRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+  const { status, includeInactive } = req.query;
+
+  try {
+    // Verify patient exists
+    const patientCheck = await pool.query(
+      'SELECT id FROM patients WHERE id = $1 AND tenant_id = $2',
+      [id, tenantId]
+    );
+    if (patientCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    let query = `
+      SELECT p.id, p.patient_id as "patientId", p.provider_id as "providerId",
+             p.encounter_id as "encounterId",
+             p.medication_name as "medicationName", p.generic_name as "genericName",
+             p.strength, p.dosage_form as "dosageForm", p.sig, p.quantity, p.quantity_unit as "quantityUnit",
+             p.refills, p.refills_remaining as "refillsRemaining", p.days_supply as "daysSupply",
+             p.status, p.is_controlled as "isControlled", p.dea_schedule as "deaSchedule",
+             p.pharmacy_id as "pharmacyId", p.pharmacy_name as "pharmacyName",
+             p.indication, p.notes,
+             p.written_date as "writtenDate", p.sent_at as "sentAt",
+             p.last_filled_date as "lastFilledDate",
+             p.created_at as "createdAt", p.updated_at as "updatedAt",
+             prov.full_name as "providerName",
+             ph.name as "pharmacyFullName", ph.phone as "pharmacyPhone",
+             e.created_at as "encounterDate"
+      FROM prescriptions p
+      LEFT JOIN providers prov ON p.provider_id = prov.id
+      LEFT JOIN pharmacies ph ON p.pharmacy_id = ph.id
+      LEFT JOIN encounters e ON p.encounter_id = e.id
+      WHERE p.patient_id = $1 AND p.tenant_id = $2
+    `;
+
+    const params: any[] = [id, tenantId];
+    let paramIndex = 3;
+
+    // Filter by status if provided
+    if (status) {
+      query += ` AND p.status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    } else if (includeInactive !== 'true') {
+      // By default, exclude cancelled and discontinued prescriptions
+      query += ` AND p.status NOT IN ('cancelled', 'discontinued')`;
+    }
+
+    query += ' ORDER BY p.created_at DESC';
+
+    const result = await pool.query(query, params);
+
+    // Group prescriptions by active vs inactive
+    const prescriptions = result.rows;
+    const active = prescriptions.filter(p =>
+      p.status !== 'cancelled' &&
+      p.status !== 'discontinued' &&
+      (p.refillsRemaining === null || p.refillsRemaining > 0)
+    );
+    const inactive = prescriptions.filter(p =>
+      p.status === 'cancelled' ||
+      p.status === 'discontinued' ||
+      (p.refillsRemaining !== null && p.refillsRemaining <= 0)
+    );
+
+    return res.json({
+      prescriptions: result.rows,
+      summary: {
+        total: prescriptions.length,
+        active: active.length,
+        inactive: inactive.length,
+        controlled: prescriptions.filter(p => p.isControlled).length,
+      }
+    });
+  } catch (error) {
+    console.error("Error fetching patient prescriptions:", error);
+    return res.status(500).json({ error: "Failed to fetch prescriptions" });
+  }
+});
+
+/**
+ * @swagger
+ * /api/patients/{id}/prior-auths:
+ *   get:
+ *     summary: Get patient prior authorizations
+ */
+patientsRouter.get("/:id/prior-auths", requireAuth, async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    const result = await pool.query(
+      `SELECT pa.id, pa.patient_id as "patientId", pa.prescription_id as "prescriptionId",
+              pa.medication_name as "medicationName", pa.status, pa.submitted_date as "submittedDate",
+              pa.decision_date as "decisionDate", pa.approval_number as "approvalNumber",
+              pa.denial_reason as "denialReason", pa.expires_at as "expiresAt",
+              pa.insurance_company as "insuranceCompany", pa.notes,
+              pa.created_at as "createdAt", pa.updated_at as "updatedAt",
+              p.medication_name as "prescriptionMedication"
+       FROM prior_auths pa
+       LEFT JOIN prescriptions p ON pa.prescription_id = p.id
+       WHERE pa.patient_id = $1 AND pa.tenant_id = $2
+       ORDER BY pa.submitted_date DESC`,
+      [id, tenantId]
+    );
+
+    return res.json({ priorAuths: result.rows });
+  } catch (error) {
+    console.error("Error fetching patient prior authorizations:", error);
+    return res.status(500).json({ error: "Failed to fetch prior authorizations" });
+  }
+});
+
+/**
+ * @swagger
+ * /api/patients/{id}/biopsies:
+ *   get:
+ *     summary: Get patient biopsies
+ */
+patientsRouter.get("/:id/biopsies", requireAuth, async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    const result = await pool.query(
+      `SELECT b.id, b.patient_id as "patientId", b.encounter_id as "encounterId",
+              b.lesion_id as "lesionId", b.specimen_type as "specimenType",
+              b.specimen_number as "specimenNumber", b.body_location as "bodyLocation",
+              b.clinical_description as "clinicalDescription", b.status,
+              b.ordered_at as "orderedAt", b.collected_at as "collectedAt",
+              b.sent_at as "sentAt", b.received_by_lab_at as "receivedByLabAt",
+              b.resulted_at as "resultedAt", b.reviewed_at as "reviewedAt",
+              b.path_lab as "pathLab", b.path_lab_case_number as "pathLabCaseNumber",
+              b.pathology_diagnosis as "pathologyDiagnosis",
+              b.pathology_report as "pathologyReport",
+              b.malignancy_type as "malignancyType", b.margins,
+              b.follow_up_action as "followUpAction",
+              b.created_at as "createdAt", b.updated_at as "updatedAt",
+              p.first_name || ' ' || p.last_name as "orderingProvider"
+       FROM biopsies b
+       LEFT JOIN providers p ON b.ordering_provider_id = p.id
+       WHERE b.patient_id = $1 AND b.tenant_id = $2
+       ORDER BY b.ordered_at DESC`,
+      [id, tenantId]
+    );
+
+    return res.json({ biopsies: result.rows });
+  } catch (error) {
+    console.error("Error fetching patient biopsies:", error);
+    return res.status(500).json({ error: "Failed to fetch biopsies" });
+  }
+});
+
+/**
+ * @swagger
+ * /api/patients/{id}/balance:
+ *   get:
+ *     summary: Get patient account balance
+ */
+patientsRouter.get("/:id/balance", requireAuth, async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    // Get total charges
+    const chargesResult = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) as total_charges
+       FROM charges
+       WHERE patient_id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+
+    // Get total payments
+    const paymentsResult = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) as total_payments
+       FROM patient_payments
+       WHERE patient_id = $1 AND tenant_id = $2 AND status != 'failed'`,
+      [id, tenantId]
+    );
+
+    // Get recent payments
+    const recentPaymentsResult = await pool.query(
+      `SELECT id, amount, payment_method as "paymentMethod",
+              payment_date as "paymentDate", status, notes,
+              created_at as "createdAt"
+       FROM patient_payments
+       WHERE patient_id = $1 AND tenant_id = $2
+       ORDER BY payment_date DESC
+       LIMIT 10`,
+      [id, tenantId]
+    );
+
+    // Get payment plans
+    const paymentPlansResult = await pool.query(
+      `SELECT id, total_amount as "totalAmount", amount_paid as "amountPaid",
+              monthly_payment as "monthlyPayment", status,
+              start_date as "startDate", created_at as "createdAt"
+       FROM payment_plans
+       WHERE patient_id = $1 AND tenant_id = $2
+       ORDER BY created_at DESC`,
+      [id, tenantId]
+    );
+
+    const totalCharges = parseFloat(chargesResult.rows[0].total_charges);
+    const totalPayments = parseFloat(paymentsResult.rows[0].total_payments);
+    const balance = totalCharges - totalPayments;
+
+    return res.json({
+      balance,
+      totalCharges,
+      totalPayments,
+      recentPayments: recentPaymentsResult.rows,
+      paymentPlans: paymentPlansResult.rows
+    });
+  } catch (error) {
+    console.error("Error fetching patient balance:", error);
+    return res.status(500).json({ error: "Failed to fetch balance" });
+  }
+});
+
+/**
+ * @swagger
+ * /api/patients/{id}/photos:
+ *   get:
+ *     summary: Get patient photos
+ */
+patientsRouter.get("/:id/photos", requireAuth, async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    const result = await pool.query(
+      `SELECT p.id, p.patient_id as "patientId", p.encounter_id as "encounterId",
+              p.lesion_id as "lesionId", p.photo_type as "photoType",
+              p.body_location as "bodyLocation", p.url, p.thumbnail_url as "thumbnailUrl",
+              p.caption, p.tags, p.captured_at as "capturedAt",
+              p.created_at as "createdAt", p.updated_at as "updatedAt"
+       FROM photos p
+       WHERE p.patient_id = $1 AND p.tenant_id = $2
+       ORDER BY p.captured_at DESC`,
+      [id, tenantId]
+    );
+
+    return res.json({ photos: result.rows });
+  } catch (error) {
+    console.error("Error fetching patient photos:", error);
+    return res.status(500).json({ error: "Failed to fetch photos" });
+  }
+});
+
+/**
+ * @swagger
+ * /api/patients/{id}/body-map:
+ *   get:
+ *     summary: Get patient body map with lesions
+ */
+patientsRouter.get("/:id/body-map", requireAuth, async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    const result = await pool.query(
+      `SELECT l.id, l.patient_id as "patientId", l.encounter_id as "encounterId",
+              l.body_region as "bodyRegion", l.body_location as "bodyLocation",
+              l.x_coord as "xCoord", l.y_coord as "yCoord",
+              l.lesion_type as "lesionType", l.description,
+              l.size_mm as "sizeMm", l.color, l.shape, l.texture,
+              l.diagnosis, l.status, l.first_noted as "firstNoted",
+              l.last_examined as "lastExamined",
+              l.created_at as "createdAt", l.updated_at as "updatedAt"
+       FROM lesions l
+       WHERE l.patient_id = $1 AND l.tenant_id = $2
+       ORDER BY l.created_at DESC`,
+      [id, tenantId]
+    );
+
+    return res.json({ lesions: result.rows });
+  } catch (error) {
+    console.error("Error fetching patient body map:", error);
+    return res.status(500).json({ error: "Failed to fetch body map" });
+  }
+});
+
+/**
+ * @swagger
+ * /api/patients/{id}/insurance:
+ *   get:
+ *     summary: Get patient insurance and eligibility status
+ */
+patientsRouter.get("/:id/insurance", requireAuth, async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    // Get patient insurance info
+    const patientResult = await pool.query(
+      `SELECT insurance, insurance_id as "insuranceId",
+              insurance_group_number as "insuranceGroupNumber"
+       FROM patients
+       WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+
+    if (patientResult.rows.length === 0) {
+      return res.status(404).json({ error: "Patient not found" });
+    }
+
+    // Get latest eligibility check
+    const eligibilityResult = await pool.query(
+      `SELECT id, status, checked_at as "checkedAt",
+              coverage_active as "coverageActive", copay, deductible,
+              deductible_remaining as "deductibleRemaining",
+              out_of_pocket_max as "outOfPocketMax",
+              out_of_pocket_remaining as "outOfPocketRemaining",
+              benefits, raw_response as "rawResponse",
+              created_at as "createdAt"
+       FROM insurance_eligibility
+       WHERE patient_id = $1 AND tenant_id = $2
+       ORDER BY checked_at DESC
+       LIMIT 1`,
+      [id, tenantId]
+    );
+
+    return res.json({
+      insurance: patientResult.rows[0],
+      eligibility: eligibilityResult.rows[0] || null
+    });
+  } catch (error) {
+    console.error("Error fetching patient insurance:", error);
+    return res.status(500).json({ error: "Failed to fetch insurance" });
   }
 });

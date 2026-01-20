@@ -7,7 +7,57 @@ import { createAuditLog } from "../services/audit";
 // Comprehensive audit log routes for HIPAA compliance
 export const auditRouter = Router();
 
-// Legacy appointment status history
+/**
+ * @swagger
+ * /api/audit/appointments:
+ *   get:
+ *     summary: Get appointment status history
+ *     description: Retrieve appointment status change history for audit purposes. Admin only.
+ *     tags:
+ *       - Audit
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     responses:
+ *       200:
+ *         description: Appointment status history
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 history:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                         format: uuid
+ *                       appointmentId:
+ *                         type: string
+ *                         format: uuid
+ *                       status:
+ *                         type: string
+ *                       changedBy:
+ *                         type: string
+ *                         format: uuid
+ *                       changedAt:
+ *                         type: string
+ *                         format: date-time
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 auditRouter.get("/appointments", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const result = await pool.query(
@@ -22,7 +72,42 @@ auditRouter.get("/appointments", requireAuth, requireRoles(["admin"]), async (re
   res.json({ history: result.rows });
 });
 
-// Legacy basic audit log
+/**
+ * @swagger
+ * /api/audit/log:
+ *   get:
+ *     summary: Get basic audit log
+ *     description: Retrieve basic audit log entries (limited to 200). Admin only.
+ *     tags:
+ *       - Audit
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     responses:
+ *       200:
+ *         description: Audit log entries
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 audit:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 auditRouter.get("/log", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const result = await pool.query(
@@ -34,7 +119,120 @@ auditRouter.get("/log", requireAuth, requireRoles(["admin"]), async (req: Authed
   res.json({ audit: result.rows });
 });
 
-// Main audit log endpoint with advanced filtering
+/**
+ * @swagger
+ * /api/audit:
+ *   get:
+ *     summary: Get detailed audit log
+ *     description: Retrieve comprehensive audit log with advanced filtering options for HIPAA compliance. Admin or compliance officer only.
+ *     tags:
+ *       - Audit
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: query
+ *         name: userId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Filter by user ID
+ *       - in: query
+ *         name: action
+ *         schema:
+ *           type: string
+ *         description: Filter by action type
+ *       - in: query
+ *         name: resourceType
+ *         schema:
+ *           type: string
+ *         description: Filter by resource type
+ *       - in: query
+ *         name: resourceId
+ *         schema:
+ *           type: string
+ *         description: Filter by resource ID
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter by start date
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Filter by end date
+ *       - in: query
+ *         name: ipAddress
+ *         schema:
+ *           type: string
+ *         description: Filter by IP address
+ *       - in: query
+ *         name: severity
+ *         schema:
+ *           type: string
+ *         description: Filter by severity level
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *         description: Filter by status
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search across multiple fields
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *         description: Maximum number of results
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *         description: Pagination offset
+ *     responses:
+ *       200:
+ *         description: Detailed audit log entries
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 auditLogs:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                 total:
+ *                   type: integer
+ *                 page:
+ *                   type: integer
+ *                 pageSize:
+ *                   type: integer
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin or compliance officer role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to retrieve audit log
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 auditRouter.get("/", requireAuth, requireRoles(["admin", "compliance_officer"]), async (req: AuthedRequest, res) => {
   try {
     const tenantId = req.user!.tenantId;

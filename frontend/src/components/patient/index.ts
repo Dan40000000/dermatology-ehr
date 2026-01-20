@@ -1,1 +1,10 @@
 export { TasksTab } from './TasksTab';
+export { PatientAppointmentsList } from './PatientAppointmentsList';
+export { PatientEncountersList } from './PatientEncountersList';
+export { PatientInsuranceCard } from './PatientInsuranceCard';
+export { PatientPrescriptionsList } from './PatientPrescriptionsList';
+export { PatientBalanceSummary } from './PatientBalanceSummary';
+export { PatientPriorAuthsList } from './PatientPriorAuthsList';
+export { PatientBiopsyHistory } from './PatientBiopsyHistory';
+export { PatientPhotoGallery } from './PatientPhotoGallery';
+export { PatientBodyMapPreview } from './PatientBodyMapPreview';

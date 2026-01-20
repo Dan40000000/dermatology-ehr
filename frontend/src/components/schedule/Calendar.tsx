@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import type { Appointment, Provider, Availability } from '../../types';
 import { MonthView } from './MonthView';
 
@@ -43,8 +43,21 @@ export function Calendar({
 }: CalendarProps) {
   const [hoveredTimeBlock, setHoveredTimeBlock] = useState<TimeBlock | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
+  const [currentTime, setCurrentTime] = useState(new Date());
 
-  // Time slots from 7am to 7pm in 5-minute increments
+  // Update current time every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000); // Update every minute
+    return () => clearInterval(interval);
+  }, []);
+
+  // Business hours: 8am to 5pm (8:00 - 17:00)
+  const BUSINESS_START_HOUR = 8;
+  const BUSINESS_END_HOUR = 17; // 5pm
+
+  // Time slots from 7am to 7pm in 5-minute increments (show full day, grey out non-business hours)
   const timeSlots = useMemo(() => {
     const slots = [];
     for (let hour = 7; hour < 19; hour++) {
@@ -78,31 +91,50 @@ export function Calendar({
 
   // Helper: Check if provider is available at this time
   const isProviderAvailable = (providerId: string, date: Date, hour: number, minute: number) => {
-    if (!Array.isArray(availability)) {
-      return false;
-    }
     const dayOfWeek = date.getDay();
+    const timeInMinutes = hour * 60 + minute;
+
+    // Default business hours: 8am-5pm (if no availability data is set up)
+    const defaultStartMinutes = BUSINESS_START_HOUR * 60; // 8am = 480 minutes
+    const defaultEndMinutes = BUSINESS_END_HOUR * 60; // 5pm = 1020 minutes
+
+    // Check if availability data exists
+    if (!Array.isArray(availability) || availability.length === 0) {
+      // No availability configured - default to business hours for weekdays (Mon-Fri)
+      if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+        return timeInMinutes >= defaultStartMinutes && timeInMinutes < defaultEndMinutes;
+      }
+      return false; // Weekends unavailable by default
+    }
+
     const providerAvail = availability.find(
       (a) => a.providerId === providerId && a.dayOfWeek === dayOfWeek
     );
 
-    if (!providerAvail) return false;
+    // If no specific availability for this provider/day, use default business hours on weekdays
+    if (!providerAvail) {
+      if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+        return timeInMinutes >= defaultStartMinutes && timeInMinutes < defaultEndMinutes;
+      }
+      return false;
+    }
 
-    const timeInMinutes = hour * 60 + minute;
-    const [startHour, startMinute] = (providerAvail.startTime || '00:00').split(':').map(Number);
-    const [endHour, endMinute] = (providerAvail.endTime || '00:00').split(':').map(Number);
+    const [startHour, startMinute] = (providerAvail.startTime || '08:00').split(':').map(Number);
+    const [endHour, endMinute] = (providerAvail.endTime || '17:00').split(':').map(Number);
     const startInMinutes = startHour * 60 + startMinute;
     const endInMinutes = endHour * 60 + endMinute;
 
     return timeInMinutes >= startInMinutes && timeInMinutes < endInMinutes;
   };
 
-  // Helper: Get appointments for a specific slot
+  // Helper: Get appointments for a specific slot (excludes cancelled appointments)
   const getAppointmentsForSlot = (providerId: string, date: Date, hour: number, minute: number) => {
     if (!Array.isArray(appointments)) {
       return [];
     }
     return appointments.filter((appt) => {
+      // Filter out cancelled appointments - they should not appear on schedule
+      if (appt.status === 'cancelled') return false;
       if (appt.providerId !== providerId) return false;
 
       const apptStart = new Date(appt.scheduledStart);
@@ -289,6 +321,39 @@ export function Calendar({
     return `${h}:${m} ${period}`;
   };
 
+  // Helper: Check if today is visible in the current view
+  const isTodayVisible = useMemo(() => {
+    const today = new Date();
+    return days.some(day =>
+      day.getDate() === today.getDate() &&
+      day.getMonth() === today.getMonth() &&
+      day.getFullYear() === today.getFullYear()
+    );
+  }, [days]);
+
+  // Helper: Calculate current time line position as percentage
+  const getCurrentTimePosition = () => {
+    const hour = currentTime.getHours();
+    const minute = currentTime.getMinutes();
+    const totalMinutesFromStart = (hour - 7) * 60 + minute; // 7am is start
+    const totalCalendarMinutes = 12 * 60; // 7am to 7pm = 12 hours
+
+    // Only show if within calendar range (7am - 7pm)
+    if (hour < 7 || hour >= 19) return null;
+
+    return (totalMinutesFromStart / totalCalendarMinutes) * 100;
+  };
+
+  // Helper: Get index of today in the days array (for week view)
+  const getTodayColumnIndex = () => {
+    const today = new Date();
+    return days.findIndex(day =>
+      day.getDate() === today.getDate() &&
+      day.getMonth() === today.getMonth() &&
+      day.getFullYear() === today.getFullYear()
+    );
+  };
+
   // Handle day click in month view - switch to day view for that date
   const handleDayClick = (date: Date) => {
     // This will be handled by parent component (SchedulePage)
@@ -342,7 +407,35 @@ export function Calendar({
       </div>
 
       {/* Grid with time column on left and provider/day columns */}
-      <div className="calendar-grid">
+      <div className="calendar-grid" style={{ position: 'relative' }}>
+        {/* Current time indicator line */}
+        {isTodayVisible && getCurrentTimePosition() !== null && (
+          <div
+            className="current-time-indicator"
+            style={{
+              position: 'absolute',
+              left: viewMode === 'day' ? '60px' : `calc(60px + ${getTodayColumnIndex()} * ${100 / days.length}%)`,
+              right: viewMode === 'day' ? '0' : `calc(${100 - (getTodayColumnIndex() + 1) * (100 / days.length)}%)`,
+              top: `${getCurrentTimePosition()}%`,
+              height: '2px',
+              backgroundColor: '#ef4444',
+              zIndex: 100,
+              pointerEvents: 'none',
+            }}
+          >
+            <div
+              style={{
+                position: 'absolute',
+                left: '-6px',
+                top: '-4px',
+                width: '10px',
+                height: '10px',
+                backgroundColor: '#ef4444',
+                borderRadius: '50%',
+              }}
+            />
+          </div>
+        )}
         {/* Time column */}
         <div className="calendar-time-column">
           {timeSlots.map(({ hour, minute }) => (

@@ -1,0 +1,91 @@
+{
+  "title": "Citas",
+  "schedule": "Agenda",
+  "newAppointment": "Nueva Cita",
+  "reschedule": "Reprogramar",
+  "cancelAppointment": "Cancelar Cita",
+  "fields": {
+    "patient": "Paciente",
+    "provider": "Proveedor",
+    "location": "Ubicación",
+    "appointmentType": "Tipo de Cita",
+    "date": "Fecha",
+    "startTime": "Hora de Inicio",
+    "endTime": "Hora de Fin",
+    "duration": "Duración",
+    "reason": "Motivo de Visita",
+    "notes": "Notas",
+    "status": "Estado",
+    "recurringAppointment": "Cita Recurrente"
+  },
+  "types": {
+    "newPatient": "Paciente Nuevo",
+    "followUp": "Seguimiento",
+    "consultation": "Consulta",
+    "procedure": "Procedimiento",
+    "telehealth": "Telesalud",
+    "annual": "Examen Anual",
+    "emergency": "Emergencia"
+  },
+  "status": {
+    "scheduled": "Programada",
+    "confirmed": "Confirmada",
+    "checkedIn": "Registrado",
+    "inProgress": "En Progreso",
+    "completed": "Completada",
+    "cancelled": "Cancelada",
+    "noShow": "No Asistió",
+    "rescheduled": "Reprogramada"
+  },
+  "views": {
+    "day": "Vista Diaria",
+    "week": "Vista Semanal",
+    "month": "Vista Mensual",
+    "list": "Vista de Lista"
+  },
+  "navigation": {
+    "today": "Hoy",
+    "prevDay": "Día Anterior",
+    "nextDay": "Día Siguiente",
+    "prevWeek": "Semana Anterior",
+    "nextWeek": "Semana Siguiente",
+    "prevMonth": "Mes Anterior",
+    "nextMonth": "Mes Siguiente"
+  },
+  "actions": {
+    "checkIn": "Registrar Entrada",
+    "startVisit": "Iniciar Visita",
+    "completeVisit": "Completar Visita",
+    "markNoShow": "Marcar No Asistió",
+    "sendReminder": "Enviar Recordatorio",
+    "printSchedule": "Imprimir Agenda"
+  },
+  "messages": {
+    "appointmentCreated": "Cita programada exitosamente",
+    "appointmentUpdated": "Cita actualizada exitosamente",
+    "appointmentCancelled": "Cita cancelada exitosamente",
+    "appointmentRescheduled": "Cita reprogramada exitosamente",
+    "noAppointments": "No se encontraron citas",
+    "loadingAppointments": "Cargando citas...",
+    "conflictDetected": "Conflicto de horario detectado",
+    "confirmCancel": "¿Está seguro de que desea cancelar esta cita?",
+    "confirmNoShow": "¿Marcar paciente como no asistió?"
+  },
+  "stats": {
+    "totalAppointments": "Total de Citas",
+    "scheduledAppointments": "Programadas",
+    "checkedInPatients": "Registrados",
+    "completedVisits": "Completadas"
+  },
+  "filters": {
+    "allProviders": "Todos los Proveedores",
+    "allTypes": "Todos los Tipos",
+    "allStatuses": "Todos los Estados",
+    "slotDuration": "Duración de Espacio (minutos)"
+  },
+  "conflicts": {
+    "title": "Conflictos de Horario",
+    "overlappingAppointments": "citas superpuestas",
+    "noConflicts": "No se detectaron citas superpuestas"
+  }
+}

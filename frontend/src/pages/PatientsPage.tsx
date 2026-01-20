@@ -45,7 +45,8 @@ export function PatientsPage() {
       setLoading(true);
       try {
         const res = await fetchPatients(session.tenantId, session.accessToken);
-        setPatients(res.patients || []);
+        // API returns { data: Patient[], meta: { page, limit, total, totalPages, hasNext, hasPrev } }
+        setPatients(res.data || []);
       } catch (err: any) {
         showError(err.message || 'Failed to load patients');
       } finally {

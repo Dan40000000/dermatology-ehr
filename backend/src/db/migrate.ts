@@ -1,4 +1,6 @@
 import { pool } from "./pool";
+import * as fs from "fs";
+import * as path from "path";
 
 const migrations: { name: string; sql: string }[] = [
   {
@@ -62,6 +64,8 @@ const migrations: { name: string; sql: string }[] = [
       tenant_id text not null references tenants(id),
       name text not null,
       duration_minutes int not null,
+      color text,
+      category text,
       created_at timestamptz default now()
     );
 
@@ -2462,6 +2466,325 @@ Consider age-appropriate treatments and include family counseling points.',
     alter table patients add column if not exists insurance_id text;
     alter table patients add column if not exists insurance_group_number text;
     `,
+  },
+  {
+    name: "038_add_patient_mrn",
+    sql: `
+    -- Add MRN (Medical Record Number) column
+    alter table patients add column if not exists mrn text;
+
+    -- Create index for fast MRN lookups
+    create index if not exists idx_patients_mrn on patients(mrn) where mrn is not null;
+
+    -- Add also missing fields from seed data
+    alter table patients add column if not exists address text;
+    alter table patients add column if not exists city text;
+    alter table patients add column if not exists state text;
+    alter table patients add column if not exists zip text;
+    alter table patients add column if not exists insurance text;
+    alter table patients add column if not exists allergies text;
+    alter table patients add column if not exists medications text;
+    `,
+  },
+  {
+    name: "039_appointment_types_enhancements",
+    sql: `
+    -- Add color column if not exists (for backward compatibility)
+    alter table appointment_types add column if not exists color text default '#3B82F6';
+
+    -- Add category column if not exists (for backward compatibility)
+    alter table appointment_types add column if not exists category text default 'general';
+
+    -- Add description column to appointment_types
+    alter table appointment_types add column if not exists description text;
+
+    -- Add is_active column to allow soft-deletion of appointment types
+    alter table appointment_types add column if not exists is_active boolean default true;
+
+    -- Create index for category lookups
+    create index if not exists idx_appointment_types_category on appointment_types(category);
+
+    -- Create index for active appointment types
+    create index if not exists idx_appointment_types_active on appointment_types(is_active);
+    `,
+  },
+  {
+    name: "040_body_map_markers",
+    sql: `
+    -- Body Map Markers for tracking procedures, treatments, and conditions on body diagrams
+    create table if not exists body_map_markers (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      patient_id text not null references patients(id),
+      encounter_id text references encounters(id),
+      marker_type text not null check (marker_type in ('lesion', 'procedure', 'condition', 'cosmetic', 'wound')),
+      sub_type text,
+      body_region text not null,
+      x_position numeric check (x_position >= 0 and x_position <= 100),
+      y_position numeric check (y_position >= 0 and y_position <= 100),
+      description text,
+      clinical_notes text,
+      status text default 'active' check (status in ('active', 'resolved', 'healed', 'removed')),
+      severity text check (severity in ('mild', 'moderate', 'severe')),
+      size_mm numeric,
+      date_identified date,
+      date_resolved date,
+      created_at timestamptz default now(),
+      updated_at timestamptz default now(),
+      created_by text references users(id)
+    );
+
+    -- Indexes for body_map_markers
+    create index idx_body_map_markers_tenant on body_map_markers(tenant_id);
+    create index idx_body_map_markers_patient on body_map_markers(patient_id);
+    create index idx_body_map_markers_encounter on body_map_markers(encounter_id);
+    create index idx_body_map_markers_type on body_map_markers(marker_type);
+    create index idx_body_map_markers_status on body_map_markers(status);
+    create index idx_body_map_markers_region on body_map_markers(body_region);
+    `,
+  },
+  {
+    name: "041_procedure_sites",
+    sql: `
+    -- Procedure Sites table for detailed procedure tracking
+    create table if not exists procedure_sites (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      patient_id text not null references patients(id),
+      encounter_id text references encounters(id),
+      body_map_marker_id text references body_map_markers(id) on delete set null,
+      procedure_type text not null check (procedure_type in (
+        'biopsy_shave', 'biopsy_punch', 'excision', 'mohs',
+        'cryotherapy', 'laser', 'injection', 'other'
+      )),
+      body_region text not null,
+      x_position numeric,
+      y_position numeric,
+      procedure_date date not null,
+      performed_by text references users(id),
+      clinical_indication text,
+      procedure_notes text,
+      pathology_status text default 'pending' check (pathology_status in (
+        'pending', 'benign', 'malignant', 'inconclusive', 'not_sent'
+      )),
+      pathology_result text,
+      pathology_date date,
+      sutures_count int,
+      suture_type text,
+      follow_up_needed boolean default false,
+      follow_up_date date,
+      follow_up_notes text,
+      complications text,
+      healing_status text check (healing_status in ('normal', 'delayed', 'infected', 'dehiscence')),
+      created_at timestamptz default now(),
+      updated_at timestamptz default now(),
+      created_by text references users(id)
+    );
+
+    -- Indexes for procedure_sites
+    create index idx_procedure_sites_tenant on procedure_sites(tenant_id);
+    create index idx_procedure_sites_patient on procedure_sites(patient_id);
+    create index idx_procedure_sites_encounter on procedure_sites(encounter_id);
+    create index idx_procedure_sites_marker on procedure_sites(body_map_marker_id);
+    create index idx_procedure_sites_type on procedure_sites(procedure_type);
+    create index idx_procedure_sites_pathology_status on procedure_sites(pathology_status);
+    create index idx_procedure_sites_procedure_date on procedure_sites(procedure_date);
+    create index idx_procedure_sites_follow_up on procedure_sites(follow_up_needed, follow_up_date);
+    `,
+  },
+  {
+    name: "041_chronic_conditions",
+    sql: `
+    -- Chronic Skin Conditions Tracking System
+    -- Enables tracking of chronic dermatological conditions over time with assessments and body region mapping
+
+    -- Main chronic conditions table
+    create table if not exists patient_skin_conditions (
+      id text primary key,
+      tenant_id text not null,
+      patient_id text not null references patients(id) on delete cascade,
+
+      -- Condition details
+      condition_type text not null, -- 'psoriasis', 'eczema', 'vitiligo', 'acne', 'rosacea', 'seborrheic_dermatitis'
+      body_regions text[], -- array of affected regions (e.g., ['elbow-right', 'knee-left', 'scalp'])
+
+      -- Severity and scoring
+      severity text, -- 'mild', 'moderate', 'severe'
+      pasi_score numeric(5,2), -- Psoriasis Area and Severity Index (0-72)
+      bsa_percentage numeric(5,2), -- Body Surface Area affected (0-100)
+
+      -- Timeline
+      onset_date date, -- When condition first started
+      diagnosis_date date, -- When officially diagnosed
+
+      -- Treatment tracking
+      current_treatment text, -- Current treatment plan/medications
+      treatment_response text, -- 'excellent', 'good', 'partial', 'poor', 'none'
+
+      -- Flare management
+      flare_triggers text[], -- Array of known triggers (e.g., ['stress', 'weather', 'diet'])
+      last_flare_date date, -- Most recent flare-up
+
+      -- Status
+      status text default 'active', -- 'active', 'controlled', 'remission'
+
+      -- Clinical notes
+      notes text,
+
+      -- Audit fields
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    -- Condition assessments table for tracking progression over time
+    create table if not exists condition_assessments (
+      id text primary key,
+      tenant_id text not null,
+      condition_id text not null references patient_skin_conditions(id) on delete cascade,
+      patient_id text not null references patients(id) on delete cascade,
+      encounter_id text references encounters(id) on delete set null,
+
+      -- Assessment details
+      assessment_date date not null,
+      severity_score numeric(5,2), -- Overall severity score for this assessment
+
+      -- Detailed body region tracking
+      affected_areas jsonb, -- { "elbow-right": {"severity": "moderate", "bsa": 5}, "knee-left": {...} }
+
+      -- PASI scoring components (for psoriasis)
+      pasi_score numeric(5,2),
+      pasi_head numeric(5,2),
+      pasi_trunk numeric(5,2),
+      pasi_upper_extremities numeric(5,2),
+      pasi_lower_extremities numeric(5,2),
+
+      -- Documentation
+      photo_ids text[], -- Array of photo IDs linked to this assessment
+
+      -- Treatment at time of assessment
+      treatment_at_time text,
+      treatment_adherence text, -- 'excellent', 'good', 'fair', 'poor'
+
+      -- Provider observations
+      provider_notes text,
+      clinical_impression text, -- 'improving', 'stable', 'worsening', 'flaring'
+
+      -- Next steps
+      follow_up_recommended boolean default false,
+      follow_up_weeks integer, -- Recommended follow-up in X weeks
+
+      -- Audit fields
+      assessed_by text references users(id),
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    -- Indexes for performance
+    create index if not exists idx_skin_conditions_patient on patient_skin_conditions(patient_id);
+    create index if not exists idx_skin_conditions_tenant on patient_skin_conditions(tenant_id);
+    create index if not exists idx_skin_conditions_condition_type on patient_skin_conditions(condition_type);
+    create index if not exists idx_skin_conditions_status on patient_skin_conditions(status);
+
+    create index if not exists idx_condition_assessments_condition on condition_assessments(condition_id);
+    create index if not exists idx_condition_assessments_patient on condition_assessments(patient_id);
+    create index if not exists idx_condition_assessments_encounter on condition_assessments(encounter_id);
+    create index if not exists idx_condition_assessments_date on condition_assessments(assessment_date);
+    create index if not exists idx_condition_assessments_tenant on condition_assessments(tenant_id);
+
+    -- Update triggers
+    create or replace function update_skin_condition_timestamp()
+    returns trigger as $$
+    begin
+      new.updated_at = now();
+      return new;
+    end;
+    $$ language plpgsql;
+
+    create trigger skin_condition_updated
+      before update on patient_skin_conditions
+      for each row
+      execute function update_skin_condition_timestamp();
+
+    create trigger condition_assessment_updated
+      before update on condition_assessments
+      for each row
+      execute function update_skin_condition_timestamp();
+
+    -- Comments for documentation
+    comment on table patient_skin_conditions is 'Tracks chronic skin conditions for patients over time';
+    comment on table condition_assessments is 'Individual assessments/check-ins for chronic conditions with detailed tracking';
+    comment on column patient_skin_conditions.condition_type is 'Type of chronic condition: psoriasis, eczema, vitiligo, acne, rosacea, seborrheic_dermatitis';
+    comment on column patient_skin_conditions.pasi_score is 'Psoriasis Area and Severity Index (PASI) score: 0-72 scale';
+    comment on column patient_skin_conditions.bsa_percentage is 'Body Surface Area affected as percentage: 0-100';
+    comment on column patient_skin_conditions.status is 'Current status: active, controlled, remission';
+    comment on column condition_assessments.affected_areas is 'JSON object mapping body regions to severity and BSA data';
+    comment on column condition_assessments.clinical_impression is 'Provider impression: improving, stable, worsening, flaring';
+    `,
+  },
+  {
+    name: "042_fee_schedule_enhancements",
+    sql: `
+    -- Add missing columns to fee_schedules and fee_schedule_items for better organization
+
+    -- Add description column to fee_schedules if it doesn't exist
+    alter table fee_schedules add column if not exists description text;
+
+    -- Modify fee_schedule_items to remove FK to cpt_codes and add direct cpt_code field
+    -- First, check if cpt_code_id column exists and migrate data if needed
+    do $$
+    begin
+      -- Add new columns if they don't exist
+      if not exists (select 1 from information_schema.columns
+                     where table_name = 'fee_schedule_items' and column_name = 'cpt_code') then
+        alter table fee_schedule_items add column cpt_code varchar(10);
+        alter table fee_schedule_items add column cpt_description text;
+
+        -- Migrate data from old structure if cpt_code_id exists
+        if exists (select 1 from information_schema.columns
+                   where table_name = 'fee_schedule_items' and column_name = 'cpt_code_id') then
+          update fee_schedule_items fsi
+          set cpt_code = c.code,
+              cpt_description = c.description
+          from cpt_codes c
+          where fsi.cpt_code_id = c.id;
+
+          -- Drop old foreign key constraint if it exists
+          alter table fee_schedule_items drop constraint if exists fee_schedule_items_cpt_code_id_fkey;
+          alter table fee_schedule_items drop column if exists cpt_code_id;
+        end if;
+      end if;
+
+      -- Add category column for organizing procedures
+      if not exists (select 1 from information_schema.columns
+                     where table_name = 'fee_schedule_items' and column_name = 'category') then
+        alter table fee_schedule_items add column category varchar(100);
+      end if;
+
+      -- Add updated_at column if it doesn't exist
+      if not exists (select 1 from information_schema.columns
+                     where table_name = 'fee_schedule_items' and column_name = 'updated_at') then
+        alter table fee_schedule_items add column updated_at timestamptz default now();
+      end if;
+    end $$;
+
+    -- Add unique constraint on (fee_schedule_id, cpt_code) if it doesn't exist
+    alter table fee_schedule_items drop constraint if exists unique_schedule_cpt;
+    create unique index if not exists unique_schedule_cpt on fee_schedule_items(fee_schedule_id, cpt_code);
+
+    -- Add indexes for better performance
+    create index if not exists idx_fee_schedule_items_category on fee_schedule_items(fee_schedule_id, category);
+    create index if not exists idx_fee_schedule_items_cpt on fee_schedule_items(fee_schedule_id, cpt_code);
+
+    -- Add comments for documentation
+    comment on column fee_schedules.description is 'Optional description of the fee schedule purpose';
+    comment on column fee_schedule_items.category is 'Procedure category for organization (e.g., Evaluation & Management, Biopsies, Excisions)';
+    comment on column fee_schedule_items.cpt_code is 'CPT procedure code';
+    comment on column fee_schedule_items.cpt_description is 'Description of the procedure';
+    `,
+  },
+  {
+    name: "067_disease_registries",
+    sql: fs.readFileSync(path.join(__dirname, "../../migrations/067_disease_registries.sql"), "utf8"),
   },
 ];
 

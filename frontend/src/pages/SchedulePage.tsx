@@ -198,7 +198,7 @@ export function SchedulePage() {
       setLocations(locRes.locations || []);
       setAppointmentTypes(typeRes.appointmentTypes || []);
       setAvailability(availRes.availability || []);
-      setPatients(patRes.patients || []);
+      setPatients(patRes.data || patRes.patients || []);
       setTimeBlocks(Array.isArray(timeBlocksRes) ? timeBlocksRes : []);
     } catch (err: any) {
       showError(err.message);
@@ -806,6 +806,8 @@ export function SchedulePage() {
               currentDate={currentDate}
               viewMode={viewMode}
               appointments={appointments.filter((a) => {
+                // Filter out cancelled appointments - they should not appear on the schedule
+                if (a.status === 'cancelled') return false;
                 const providerOk = providerFilter === 'all' || a.providerId === providerFilter;
                 const typeOk = typeFilter === 'all' || a.appointmentTypeId === typeFilter;
                 const locationOk = locationFilter === 'all' || a.locationId === locationFilter;

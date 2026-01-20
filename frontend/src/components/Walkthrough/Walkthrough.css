@@ -1,0 +1,586 @@
+/**
+ * Walkthrough System Styles
+ * Beautiful, animated styles for the tutorial system
+ */
+
+/* Overlay */
+.walkthrough-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 9998;
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Spotlight */
+.walkthrough-spotlight {
+  position: fixed;
+  border-radius: 8px;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.5),
+              0 0 0 9999px rgba(0, 0, 0, 0.7);
+  z-index: 9999;
+  pointer-events: none;
+  animation: pulse 2s ease-in-out infinite;
+  transition: all 0.3s ease-out;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.5),
+                0 0 0 9999px rgba(0, 0, 0, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(99, 102, 241, 0.8),
+                0 0 0 9999px rgba(0, 0, 0, 0.7);
+  }
+}
+
+/* Animated pointer */
+.walkthrough-pointer {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  animation: pointAndClick 2s ease-in-out infinite;
+  transform-origin: center center;
+}
+
+@keyframes pointAndClick {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.2) translateX(4px) translateY(4px);
+    opacity: 0.8;
+  }
+}
+
+/* Tooltip */
+.walkthrough-tooltip {
+  position: fixed;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3),
+              0 0 0 1px rgba(0, 0, 0, 0.1);
+  z-index: 10001;
+  max-width: 420px;
+  min-width: 320px;
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.walkthrough-tooltip-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px 20px 12px;
+  gap: 12px;
+}
+
+.walkthrough-tooltip-title-section {
+  flex: 1;
+}
+
+.walkthrough-tooltip-title {
+  margin: 0 0 4px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1.3;
+}
+
+.walkthrough-tooltip-step-counter {
+  display: inline-block;
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.walkthrough-close-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+  transition: color 0.2s;
+  flex-shrink: 0;
+}
+
+.walkthrough-close-btn:hover {
+  color: #475569;
+}
+
+/* Progress bar */
+.walkthrough-progress-bar {
+  height: 4px;
+  background: #e2e8f0;
+  margin: 0 20px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.walkthrough-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  transition: width 0.3s ease-out;
+  border-radius: 2px;
+}
+
+/* Content */
+.walkthrough-tooltip-content {
+  padding: 16px 20px;
+}
+
+.walkthrough-tooltip-content p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #475569;
+}
+
+.walkthrough-hint {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f1f5f9;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #334155;
+}
+
+.walkthrough-hint strong {
+  color: #1e293b;
+}
+
+/* Footer / Navigation */
+.walkthrough-tooltip-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-top: 1px solid #e2e8f0;
+  gap: 8px;
+}
+
+.walkthrough-nav-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+/* Buttons */
+.walkthrough-btn {
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  white-space: nowrap;
+}
+
+.walkthrough-btn-primary {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+.walkthrough-btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+}
+
+.walkthrough-btn-secondary {
+  background: white;
+  color: #6366f1;
+  border: 1px solid #e2e8f0;
+}
+
+.walkthrough-btn-secondary:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.walkthrough-btn-ghost {
+  background: transparent;
+  color: #64748b;
+}
+
+.walkthrough-btn-ghost:hover {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+/* Modal */
+.walkthrough-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10002;
+  padding: 20px;
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.walkthrough-modal {
+  background: white;
+  border-radius: 16px;
+  max-width: 600px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 25px 75px rgba(0, 0, 0, 0.3);
+  animation: modalSlideIn 0.4s ease-out;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.walkthrough-modal-header {
+  padding: 32px 32px 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.walkthrough-modal-header h2 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1.2;
+}
+
+.walkthrough-modal-content {
+  padding: 24px 32px;
+}
+
+.walkthrough-modal-description {
+  font-size: 16px;
+  line-height: 1.6;
+  color: #475569;
+  margin: 0 0 24px 0;
+}
+
+.walkthrough-modal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding: 20px;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.walkthrough-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.walkthrough-meta-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.walkthrough-meta-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.walkthrough-difficulty-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 12px;
+  color: white;
+  font-size: 13px;
+}
+
+.walkthrough-prerequisites {
+  margin-bottom: 24px;
+  padding: 16px;
+  background: #fef3c7;
+  border-left: 4px solid #f59e0b;
+  border-radius: 8px;
+}
+
+.walkthrough-prerequisites h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #92400e;
+}
+
+.walkthrough-prerequisites p {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #78350f;
+}
+
+.walkthrough-prerequisites ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #78350f;
+}
+
+.walkthrough-tips {
+  margin-bottom: 16px;
+}
+
+.walkthrough-tips h4 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.walkthrough-tips ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.walkthrough-modal-footer {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  padding: 20px 32px 32px;
+}
+
+/* Celebration Modal */
+.walkthrough-modal-celebration {
+  position: relative;
+  overflow: hidden;
+}
+
+.walkthrough-celebration-animation {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.walkthrough-confetti {
+  position: absolute;
+  font-size: 32px;
+  animation: confettiFall 3s ease-out infinite;
+}
+
+.walkthrough-confetti:nth-child(1) {
+  left: 10%;
+  animation-delay: 0s;
+}
+
+.walkthrough-confetti:nth-child(2) {
+  left: 30%;
+  animation-delay: 0.5s;
+}
+
+.walkthrough-confetti:nth-child(3) {
+  left: 50%;
+  animation-delay: 1s;
+}
+
+.walkthrough-confetti:nth-child(4) {
+  left: 70%;
+  animation-delay: 1.5s;
+}
+
+.walkthrough-confetti:nth-child(5) {
+  left: 90%;
+  animation-delay: 2s;
+}
+
+@keyframes confettiFall {
+  0% {
+    top: -10%;
+    transform: rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    top: 110%;
+    transform: rotate(360deg);
+    opacity: 0;
+  }
+}
+
+.walkthrough-completion-message {
+  font-size: 18px;
+  text-align: center;
+  color: #1e293b;
+  margin-bottom: 16px;
+}
+
+.walkthrough-time-spent {
+  text-align: center;
+  color: #64748b;
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+
+.walkthrough-achievement {
+  display: flex;
+  justify-content: center;
+  margin: 32px 0;
+}
+
+.walkthrough-badge {
+  text-align: center;
+  padding: 24px;
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(245, 158, 11, 0.2);
+}
+
+.walkthrough-badge-icon {
+  font-size: 64px;
+  margin-bottom: 12px;
+  animation: bounceIn 0.6s ease-out;
+}
+
+@keyframes bounceIn {
+  0% {
+    transform: scale(0);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.walkthrough-badge-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #92400e;
+}
+
+.walkthrough-next-steps {
+  margin-top: 24px;
+}
+
+.walkthrough-next-steps h4 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.walkthrough-next-steps p {
+  margin: 0 0 12px 0;
+  color: #475569;
+  font-size: 14px;
+}
+
+.walkthrough-next-steps ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+/* Tips Modal */
+.walkthrough-tips-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.walkthrough-tip-item {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  margin-bottom: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  align-items: flex-start;
+}
+
+.walkthrough-tip-item:last-child {
+  margin-bottom: 0;
+}
+
+.walkthrough-tip-number {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.walkthrough-tip-text {
+  flex: 1;
+  color: #475569;
+  font-size: 15px;
+  line-height: 1.6;
+  padding-top: 5px;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .walkthrough-tooltip {
+    max-width: calc(100vw - 40px);
+    min-width: calc(100vw - 40px);
+  }
+
+  .walkthrough-modal {
+    margin: 20px;
+  }
+
+  .walkthrough-tooltip-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .walkthrough-nav-buttons {
+    width: 100%;
+    justify-content: space-between;
+  }
+}

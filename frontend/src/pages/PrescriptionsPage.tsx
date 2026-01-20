@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -13,6 +13,10 @@ import {
   requestMedicationChange,
   confirmAudit,
   fetchPARequests,
+  checkPDMP,
+  getLastPDMPCheck,
+  fetchPatientMedicationHistory,
+  checkFormulary,
 } from '../api';
 import type { Order, Patient } from '../types';
 import { PARequestModal, PAStatusBadge, PADetailModal, DrugInteractionChecker } from '../components/prescriptions';
@@ -20,23 +24,163 @@ import { PARequestModal, PAStatusBadge, PADetailModal, DrugInteractionChecker } 
 type RxFilter = 'all' | 'pending' | 'ordered' | 'completed' | 'cancelled';
 type TabType = 'prescriptions' | 'refills';
 
-const COMMON_DERM_MEDS = [
-  { name: 'Tretinoin 0.025% cream', category: 'Retinoid' },
-  { name: 'Tretinoin 0.05% cream', category: 'Retinoid' },
-  { name: 'Hydrocortisone 2.5% cream', category: 'Steroid' },
-  { name: 'Triamcinolone 0.1% cream', category: 'Steroid' },
-  { name: 'Clobetasol 0.05% cream', category: 'Steroid' },
-  { name: 'Mupirocin 2% ointment', category: 'Antibiotic' },
-  { name: 'Clindamycin 1% gel', category: 'Antibiotic' },
-  { name: 'Doxycycline 100mg capsule', category: 'Antibiotic' },
-  { name: 'Ketoconazole 2% cream', category: 'Antifungal' },
-  { name: 'Terbinafine 1% cream', category: 'Antifungal' },
-  { name: 'Fluorouracil 5% cream', category: 'Chemotherapy' },
-  { name: 'Imiquimod 5% cream', category: 'Immunomodulator' },
-  { name: 'Tacrolimus 0.1% ointment', category: 'Immunomodulator' },
-  { name: 'Methotrexate 2.5mg tablet', category: 'Systemic' },
-  { name: 'Isotretinoin 40mg capsule', category: 'Systemic' },
+const DERM_MEDICATIONS = [
+  // TOPICAL CORTICOSTEROIDS - Class 1 (Super Potent)
+  { name: 'Clobetasol 0.05% cream', category: 'Topical Steroid (Class 1)' },
+  { name: 'Clobetasol 0.05% ointment', category: 'Topical Steroid (Class 1)' },
+  { name: 'Betamethasone dipropionate 0.05% ointment', category: 'Topical Steroid (Class 1)' },
+
+  // TOPICAL CORTICOSTEROIDS - Class 2 (Potent)
+  { name: 'Betamethasone dipropionate 0.05% cream', category: 'Topical Steroid (Class 2)' },
+  { name: 'Fluocinonide 0.05% cream', category: 'Topical Steroid (Class 2)' },
+  { name: 'Fluocinonide 0.05% ointment', category: 'Topical Steroid (Class 2)' },
+
+  // TOPICAL CORTICOSTEROIDS - Class 3-4 (Upper Mid-Strength)
+  { name: 'Triamcinolone 0.1% cream', category: 'Topical Steroid (Class 4)' },
+  { name: 'Triamcinolone 0.1% ointment', category: 'Topical Steroid (Class 4)' },
+  { name: 'Fluticasone 0.05% cream', category: 'Topical Steroid (Class 4)' },
+
+  // TOPICAL CORTICOSTEROIDS - Class 6-7 (Mild)
+  { name: 'Hydrocortisone 2.5% cream', category: 'Topical Steroid (Class 7)' },
+  { name: 'Hydrocortisone 2.5% ointment', category: 'Topical Steroid (Class 7)' },
+  { name: 'Hydrocortisone 1% cream', category: 'Topical Steroid (Class 7)' },
+
+  // TOPICAL RETINOIDS
+  { name: 'Tretinoin 0.025% cream', category: 'Topical Retinoid' },
+  { name: 'Tretinoin 0.05% cream', category: 'Topical Retinoid' },
+  { name: 'Tretinoin 0.1% cream', category: 'Topical Retinoid' },
+  { name: 'Tretinoin 0.025% gel', category: 'Topical Retinoid' },
+  { name: 'Tretinoin 0.05% gel', category: 'Topical Retinoid' },
+  { name: 'Tretinoin 0.1% gel', category: 'Topical Retinoid' },
+  { name: 'Adapalene 0.1% gel', category: 'Topical Retinoid' },
+  { name: 'Adapalene 0.3% gel', category: 'Topical Retinoid' },
+  { name: 'Tazarotene 0.05% cream', category: 'Topical Retinoid' },
+  { name: 'Tazarotene 0.1% cream', category: 'Topical Retinoid' },
+  { name: 'Tazarotene 0.05% gel', category: 'Topical Retinoid' },
+  { name: 'Tazarotene 0.1% gel', category: 'Topical Retinoid' },
+
+  // TOPICAL ANTIBIOTICS
+  { name: 'Mupirocin 2% ointment', category: 'Topical Antibiotic' },
+  { name: 'Clindamycin 1% solution', category: 'Topical Antibiotic' },
+  { name: 'Clindamycin 1% gel', category: 'Topical Antibiotic' },
+  { name: 'Clindamycin 1% lotion', category: 'Topical Antibiotic' },
+  { name: 'Erythromycin 2% solution', category: 'Topical Antibiotic' },
+  { name: 'Metronidazole 0.75% gel', category: 'Topical Antibiotic' },
+  { name: 'Metronidazole 1% gel', category: 'Topical Antibiotic' },
+  { name: 'Metronidazole 0.75% cream', category: 'Topical Antibiotic' },
+  { name: 'Metronidazole 1% cream', category: 'Topical Antibiotic' },
+
+  // ORAL ANTIBIOTICS
+  { name: 'Doxycycline 50mg capsule', category: 'Oral Antibiotic' },
+  { name: 'Doxycycline 100mg capsule', category: 'Oral Antibiotic' },
+  { name: 'Minocycline 50mg capsule', category: 'Oral Antibiotic' },
+  { name: 'Minocycline 100mg capsule', category: 'Oral Antibiotic' },
+  { name: 'Cephalexin 250mg capsule', category: 'Oral Antibiotic' },
+  { name: 'Cephalexin 500mg capsule', category: 'Oral Antibiotic' },
+  { name: 'Trimethoprim-sulfamethoxazole DS tablet', category: 'Oral Antibiotic' },
+
+  // SYSTEMIC MEDICATIONS
+  { name: 'Isotretinoin (Accutane) 10mg capsule', category: 'Systemic - Retinoid' },
+  { name: 'Isotretinoin (Accutane) 20mg capsule', category: 'Systemic - Retinoid' },
+  { name: 'Isotretinoin (Accutane) 40mg capsule', category: 'Systemic - Retinoid' },
+  { name: 'Methotrexate 2.5mg tablet', category: 'Systemic - Immunosuppressant' },
+  { name: 'Methotrexate 7.5mg tablet', category: 'Systemic - Immunosuppressant' },
+  { name: 'Methotrexate 10mg tablet', category: 'Systemic - Immunosuppressant' },
+  { name: 'Methotrexate 15mg tablet', category: 'Systemic - Immunosuppressant' },
+  { name: 'Prednisone 5mg tablet', category: 'Systemic - Corticosteroid' },
+  { name: 'Prednisone 10mg tablet', category: 'Systemic - Corticosteroid' },
+  { name: 'Prednisone 20mg tablet', category: 'Systemic - Corticosteroid' },
+  { name: 'Prednisone 50mg tablet', category: 'Systemic - Corticosteroid' },
+  { name: 'Hydroxychloroquine 200mg tablet', category: 'Systemic - Antimalarial' },
+  { name: 'Acitretin 10mg capsule', category: 'Systemic - Retinoid' },
+  { name: 'Acitretin 25mg capsule', category: 'Systemic - Retinoid' },
+
+  // BIOLOGICS
+  { name: 'Dupixent (dupilumab) injection', category: 'Biologic - IL-4/IL-13' },
+  { name: 'Humira (adalimumab) injection', category: 'Biologic - TNF Inhibitor' },
+  { name: 'Enbrel (etanercept) injection', category: 'Biologic - TNF Inhibitor' },
+  { name: 'Cosentyx (secukinumab) injection', category: 'Biologic - IL-17 Inhibitor' },
+  { name: 'Taltz (ixekizumab) injection', category: 'Biologic - IL-17 Inhibitor' },
+  { name: 'Skyrizi (risankizumab) injection', category: 'Biologic - IL-23 Inhibitor' },
+  { name: 'Tremfya (guselkumab) injection', category: 'Biologic - IL-23 Inhibitor' },
+
+  // ANTIFUNGALS - Oral
+  { name: 'Terbinafine 250mg tablet', category: 'Oral Antifungal' },
+  { name: 'Fluconazole 150mg tablet', category: 'Oral Antifungal' },
+  { name: 'Fluconazole 200mg tablet', category: 'Oral Antifungal' },
+  { name: 'Itraconazole 100mg capsule', category: 'Oral Antifungal' },
+
+  // ANTIFUNGALS - Topical
+  { name: 'Ketoconazole 2% cream', category: 'Topical Antifungal' },
+  { name: 'Ketoconazole 2% shampoo', category: 'Topical Antifungal' },
+  { name: 'Ciclopirox 8% nail lacquer', category: 'Topical Antifungal' },
+  { name: 'Terbinafine 1% cream', category: 'Topical Antifungal' },
+
+  // ANTIVIRALS
+  { name: 'Valacyclovir 500mg tablet', category: 'Oral Antiviral' },
+  { name: 'Valacyclovir 1g tablet', category: 'Oral Antiviral' },
+  { name: 'Acyclovir 400mg tablet', category: 'Oral Antiviral' },
+  { name: 'Acyclovir 800mg tablet', category: 'Oral Antiviral' },
+  { name: 'Famciclovir 250mg tablet', category: 'Oral Antiviral' },
+  { name: 'Famciclovir 500mg tablet', category: 'Oral Antiviral' },
+
+  // ANTIHISTAMINES
+  { name: 'Hydroxyzine 10mg tablet', category: 'Antihistamine' },
+  { name: 'Hydroxyzine 25mg tablet', category: 'Antihistamine' },
+  { name: 'Hydroxyzine 50mg tablet', category: 'Antihistamine' },
+  { name: 'Diphenhydramine 25mg capsule', category: 'Antihistamine' },
+  { name: 'Diphenhydramine 50mg capsule', category: 'Antihistamine' },
+  { name: 'Cetirizine 10mg tablet', category: 'Antihistamine' },
+  { name: 'Fexofenadine 180mg tablet', category: 'Antihistamine' },
+
+  // TOPICAL IMMUNOMODULATORS
+  { name: 'Tacrolimus 0.03% ointment', category: 'Topical Immunomodulator' },
+  { name: 'Tacrolimus 0.1% ointment', category: 'Topical Immunomodulator' },
+  { name: 'Pimecrolimus 1% cream', category: 'Topical Immunomodulator' },
+
+  // OTHER TOPICALS
+  { name: 'Calcipotriene 0.005% cream', category: 'Topical - Vitamin D Analog' },
+  { name: 'Calcipotriene 0.005% ointment', category: 'Topical - Vitamin D Analog' },
+  { name: 'Salicylic acid 6% cream', category: 'Topical - Keratolytic' },
+  { name: 'Urea 40% cream', category: 'Topical - Keratolytic/Moisturizer' },
+  { name: 'Imiquimod 5% cream', category: 'Topical - Immune Response Modifier' },
+  { name: '5-Fluorouracil 5% cream', category: 'Topical - Chemotherapy' },
+  { name: 'Benzoyl peroxide 5% gel', category: 'Topical - Antibacterial' },
+  { name: 'Benzoyl peroxide 10% gel', category: 'Topical - Antibacterial' },
+  { name: 'Azelaic acid 15% gel', category: 'Topical - Antibacterial/Keratolytic' },
+  { name: 'Azelaic acid 20% cream', category: 'Topical - Antibacterial/Keratolytic' },
 ];
+
+// Controlled substance schedules for PDMP checking
+const CONTROLLED_SUBSTANCES: Record<string, string> = {
+  'Hydrocodone': 'Schedule II',
+  'Oxycodone': 'Schedule II',
+  'Morphine': 'Schedule II',
+  'Fentanyl': 'Schedule II',
+  'Methylphenidate': 'Schedule II',
+  'Amphetamine': 'Schedule II',
+  'Codeine': 'Schedule III',
+  'Ketamine': 'Schedule III',
+  'Testosterone': 'Schedule III',
+  'Alprazolam': 'Schedule IV',
+  'Lorazepam': 'Schedule IV',
+  'Diazepam': 'Schedule IV',
+  'Clonazepam': 'Schedule IV',
+  'Zolpidem': 'Schedule IV',
+  'Tramadol': 'Schedule IV',
+  'Carisoprodol': 'Schedule IV',
+  'Phentermine': 'Schedule IV',
+};
+
+// Helper function to check if medication is controlled
+const isControlledSubstance = (medication: string): { isControlled: boolean; schedule?: string } => {
+  for (const [substance, schedule] of Object.entries(CONTROLLED_SUBSTANCES)) {
+    if (medication.toLowerCase().includes(substance.toLowerCase())) {
+      return { isControlled: true, schedule };
+    }
+  }
+  return { isControlled: false };
+};
 
 const FREQUENCIES = [
   'Once daily',
@@ -86,8 +230,23 @@ export function PrescriptionsPage() {
   const [showNewRxModal, setShowNewRxModal] = useState(false);
   const [showDenyModal, setShowDenyModal] = useState(false);
   const [showChangeModal, setShowChangeModal] = useState(false);
+  const [showRxHistoryModal, setShowRxHistoryModal] = useState(false);
   const [selectedPrescription, setSelectedPrescription] = useState<any>(null);
   const [sending, setSending] = useState(false);
+
+  // PDMP states
+  const [pdmpData, setPdmpData] = useState<any>(null);
+  const [showPDMPPanel, setShowPDMPPanel] = useState(false);
+  const [checkingPDMP, setCheckingPDMP] = useState(false);
+  const [lastPDMPCheck, setLastPDMPCheck] = useState<any>(null);
+
+  // Formulary states
+  const [formularyData, setFormularyData] = useState<any>(null);
+  const [checkingFormulary, setCheckingFormulary] = useState(false);
+
+  // Rx History states
+  const [rxHistoryData, setRxHistoryData] = useState<any>(null);
+  const [loadingRxHistory, setLoadingRxHistory] = useState(false);
 
   // PA Request states
   const [showPARequestModal, setShowPARequestModal] = useState(false);
@@ -106,6 +265,10 @@ export function PrescriptionsPage() {
     instructions: '',
     pharmacy: '',
   });
+
+  const [medicationSearch, setMedicationSearch] = useState('');
+  const [showMedicationDropdown, setShowMedicationDropdown] = useState(false);
+  const medicationDropdownRef = useRef<HTMLDivElement>(null);
 
   const [denyForm, setDenyForm] = useState({
     reason: '',
@@ -139,7 +302,7 @@ export function PrescriptionsPage() {
 
       const rxOrders = (ordersRes.orders || []).filter((o: Order) => o.type === 'rx');
       setPrescriptions(rxOrders);
-      setPatients(patientsRes.patients || []);
+      setPatients(patientsRes.data || patientsRes.patients || []);
       setPaRequests(paRequestsRes || []);
 
       if (activeTab === 'refills' && results[3]) {
@@ -155,6 +318,40 @@ export function PrescriptionsPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Handle click outside medication dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (medicationDropdownRef.current && !medicationDropdownRef.current.contains(event.target as Node)) {
+        setShowMedicationDropdown(false);
+      }
+    };
+
+    if (showMedicationDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [showMedicationDropdown]);
+
+  // Load last PDMP check when patient is selected
+  useEffect(() => {
+    if (newRx.patientId && session) {
+      loadLastPDMPCheck(newRx.patientId);
+    } else {
+      setLastPDMPCheck(null);
+    }
+  }, [newRx.patientId]);
+
+  // Check formulary when medication is selected
+  useEffect(() => {
+    if (newRx.medication && session) {
+      handleFormularyCheck(newRx.medication);
+    } else {
+      setFormularyData(null);
+    }
+  }, [newRx.medication]);
 
   // Handle URL parameters on page load
   useEffect(() => {
@@ -198,6 +395,8 @@ export function PrescriptionsPage() {
 
       showSuccess('Prescription created');
       setShowNewRxModal(false);
+      setMedicationSearch('');
+      setShowMedicationDropdown(false);
       // Remove action parameter from URL when closing modal
       const params = new URLSearchParams(searchParams);
       params.delete('action');
@@ -287,6 +486,72 @@ export function PrescriptionsPage() {
       loadData();
     } catch (err: any) {
       showError(err.message || 'Failed to confirm audit');
+    }
+  };
+
+  // PDMP Check handler
+  const handlePDMPCheck = async () => {
+    if (!session || !newRx.patientId || !newRx.medication) {
+      showError('Please select patient and medication first');
+      return;
+    }
+
+    setCheckingPDMP(true);
+    try {
+      const result = await checkPDMP(session.tenantId, session.accessToken, newRx.patientId, newRx.medication);
+      setPdmpData(result);
+      setShowPDMPPanel(true);
+      if (result.flags && result.flags.length > 0) {
+        showError(`PDMP Alert: ${result.flags.join(', ')}`);
+      } else {
+        showSuccess('PDMP check completed');
+      }
+    } catch (err: any) {
+      showError(err.message || 'Failed to check PDMP');
+    } finally {
+      setCheckingPDMP(false);
+    }
+  };
+
+  // Load last PDMP check when patient is selected
+  const loadLastPDMPCheck = async (patientId: string) => {
+    if (!session) return;
+    try {
+      const result = await getLastPDMPCheck(session.tenantId, session.accessToken, patientId);
+      setLastPDMPCheck(result.lastCheck);
+    } catch (err: any) {
+      console.error('Failed to load last PDMP check:', err);
+    }
+  };
+
+  // Formulary check handler
+  const handleFormularyCheck = async (medication: string) => {
+    if (!session) return;
+
+    setCheckingFormulary(true);
+    try {
+      const result = await checkFormulary(session.tenantId, session.accessToken, medication);
+      setFormularyData(result);
+    } catch (err: any) {
+      console.error('Failed to check formulary:', err);
+    } finally {
+      setCheckingFormulary(false);
+    }
+  };
+
+  // Rx History handler
+  const handleViewRxHistory = async (patientId: string) => {
+    if (!session) return;
+
+    setLoadingRxHistory(true);
+    setShowRxHistoryModal(true);
+    try {
+      const result = await fetchPatientMedicationHistory(session.tenantId, session.accessToken, patientId);
+      setRxHistoryData(result);
+    } catch (err: any) {
+      showError(err.message || 'Failed to load medication history');
+    } finally {
+      setLoadingRxHistory(false);
     }
   };
 
@@ -420,28 +685,38 @@ export function PrescriptionsPage() {
           <span className="icon" style={{ fontSize: '1.1rem' }}>🖨️</span>
           Print
         </button>
-        <button type="button" className="ema-action-btn" style={{
-          background: 'rgba(255,255,255,0.95)',
-          border: '2px solid rgba(255,255,255,0.4)',
-          padding: '0.75rem 1.25rem',
-          borderRadius: '8px',
-          fontWeight: 600,
-          color: '#7c3aed',
-          cursor: 'pointer',
-          transition: 'all 0.3s ease',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem'
-        }} onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'translateY(-2px)';
-          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-        }} onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'translateY(0)';
-          e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
-        }}>
+        <button
+          type="button"
+          className="ema-action-btn"
+          disabled={!newRx.patientId}
+          onClick={() => newRx.patientId && handleViewRxHistory(newRx.patientId)}
+          style={{
+            background: newRx.patientId ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.5)',
+            border: '2px solid rgba(255,255,255,0.4)',
+            padding: '0.75rem 1.25rem',
+            borderRadius: '8px',
+            fontWeight: 600,
+            color: newRx.patientId ? '#7c3aed' : '#9ca3af',
+            cursor: newRx.patientId ? 'pointer' : 'not-allowed',
+            transition: 'all 0.3s ease',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}
+          onMouseEnter={(e) => {
+            if (newRx.patientId) {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+            }
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+          }}
+        >
           <span className="icon" style={{ fontSize: '1.1rem' }}>📜</span>
-          Rx History
+          View Rx History
         </button>
         <button type="button" className="ema-action-btn" onClick={loadData} style={{
           background: 'rgba(255,255,255,0.95)',
@@ -788,7 +1063,26 @@ export function PrescriptionsPage() {
                       </a>
                     </td>
                     <td>
-                      <div style={{ fontWeight: 500 }}>{medication}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <div style={{ fontWeight: 500 }}>{medication}</div>
+                        {isControlledSubstance(medication).isControlled && (
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              padding: '0.125rem 0.5rem',
+                              background: '#fee2e2',
+                              color: '#dc2626',
+                              border: '1px solid #dc2626',
+                              borderRadius: '4px',
+                              fontSize: '0.7rem',
+                              fontWeight: 600,
+                            }}
+                            title={`PDMP Required - ${isControlledSubstance(medication).schedule}`}
+                          >
+                            {isControlledSubstance(medication).schedule}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td style={{ fontSize: '0.875rem', color: '#6b7280' }}>{sig}</td>
                     <td style={{ fontSize: '0.875rem' }}>
@@ -1078,6 +1372,8 @@ export function PrescriptionsPage() {
       {/* New Rx Modal */}
       <Modal isOpen={showNewRxModal} title="New Prescription" onClose={() => {
         setShowNewRxModal(false);
+        setMedicationSearch('');
+        setShowMedicationDropdown(false);
         // Remove action parameter from URL when closing modal
         const params = new URLSearchParams(searchParams);
         params.delete('action');
@@ -1101,22 +1397,325 @@ export function PrescriptionsPage() {
 
           <div className="form-field">
             <label>Medication *</label>
-            <select
-              value={newRx.medication}
-              onChange={(e) => setNewRx((prev) => ({ ...prev, medication: e.target.value }))}
-            >
-              <option value="">Select medication...</option>
-              {COMMON_DERM_MEDS.map((med) => (
-                <option key={med.name} value={med.name}>
-                  {med.name} ({med.category})
-                </option>
-              ))}
-            </select>
+            <div style={{ position: 'relative' }} ref={medicationDropdownRef}>
+              <input
+                type="text"
+                value={medicationSearch || newRx.medication}
+                onChange={(e) => {
+                  setMedicationSearch(e.target.value);
+                  setShowMedicationDropdown(true);
+                  if (!e.target.value) {
+                    setNewRx((prev) => ({ ...prev, medication: '' }));
+                  }
+                }}
+                onFocus={() => setShowMedicationDropdown(true)}
+                placeholder="Search or type medication name..."
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem'
+                }}
+              />
+              {showMedicationDropdown && medicationSearch && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    maxHeight: '300px',
+                    overflowY: 'auto',
+                    background: 'white',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    marginTop: '0.25rem',
+                    zIndex: 1000,
+                    boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+                  }}
+                >
+                  {DERM_MEDICATIONS.filter(med =>
+                    med.name.toLowerCase().includes(medicationSearch.toLowerCase()) ||
+                    med.category.toLowerCase().includes(medicationSearch.toLowerCase())
+                  ).slice(0, 50).map((med) => (
+                    <div
+                      key={med.name}
+                      onClick={() => {
+                        setNewRx((prev) => ({ ...prev, medication: med.name }));
+                        setMedicationSearch('');
+                        setShowMedicationDropdown(false);
+                      }}
+                      style={{
+                        padding: '0.75rem',
+                        cursor: 'pointer',
+                        borderBottom: '1px solid #f3f4f6',
+                        transition: 'background 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = '#f3f4f6';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'white';
+                      }}
+                    >
+                      <div style={{ fontWeight: 500, fontSize: '0.875rem' }}>{med.name}</div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
+                        {med.category}
+                      </div>
+                    </div>
+                  ))}
+                  {medicationSearch && DERM_MEDICATIONS.filter(med =>
+                    med.name.toLowerCase().includes(medicationSearch.toLowerCase()) ||
+                    med.category.toLowerCase().includes(medicationSearch.toLowerCase())
+                  ).length === 0 && (
+                    <div
+                      onClick={() => {
+                        setNewRx((prev) => ({ ...prev, medication: medicationSearch }));
+                        setMedicationSearch('');
+                        setShowMedicationDropdown(false);
+                      }}
+                      style={{
+                        padding: '0.75rem',
+                        cursor: 'pointer',
+                        borderBottom: '1px solid #f3f4f6',
+                        background: '#eff6ff'
+                      }}
+                    >
+                      <div style={{ fontWeight: 500, fontSize: '0.875rem', color: '#3b82f6' }}>
+                        Use custom medication: "{medicationSearch}"
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
+                        Click to add as a custom entry
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            {newRx.medication && (
+              <div style={{
+                marginTop: '0.5rem',
+                padding: '0.5rem',
+                background: '#f0fdf4',
+                border: '1px solid #10b981',
+                borderRadius: '4px',
+                fontSize: '0.875rem',
+                fontWeight: 500,
+                color: '#059669'
+              }}>
+                Selected: {newRx.medication}
+              </div>
+            )}
             <DrugInteractionChecker
               medicationName={newRx.medication}
               patientId={newRx.patientId}
             />
           </div>
+
+          {/* PDMP Check Panel */}
+          {newRx.medication && isControlledSubstance(newRx.medication).isControlled && (
+            <div style={{
+              background: '#fef2f2',
+              border: '2px solid #dc2626',
+              borderRadius: '8px',
+              padding: '1rem',
+              marginTop: '1rem'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '1.2rem' }}>⚠️</span>
+                  <strong style={{ color: '#dc2626' }}>Controlled Substance - PDMP Check Required</strong>
+                </div>
+                {isControlledSubstance(newRx.medication).schedule && (
+                  <span style={{
+                    padding: '0.25rem 0.75rem',
+                    background: '#dc2626',
+                    color: 'white',
+                    borderRadius: '6px',
+                    fontSize: '0.8rem',
+                    fontWeight: 600
+                  }}>
+                    {isControlledSubstance(newRx.medication).schedule}
+                  </span>
+                )}
+              </div>
+
+              {lastPDMPCheck && (
+                <div style={{ marginBottom: '0.75rem', fontSize: '0.875rem', color: '#374151' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span>✓</span>
+                    <span>Last PDMP Check: {new Date(lastPDMPCheck.checked_at).toLocaleString()}</span>
+                  </div>
+                  {lastPDMPCheck.risk_score && (
+                    <div style={{ marginTop: '0.25rem', marginLeft: '1.5rem' }}>
+                      Risk Score: <strong style={{
+                        color: lastPDMPCheck.risk_score === 'High' ? '#dc2626' :
+                               lastPDMPCheck.risk_score === 'Moderate' ? '#f59e0b' : '#059669'
+                      }}>{lastPDMPCheck.risk_score}</strong>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {pdmpData && showPDMPPanel && (
+                <div style={{
+                  background: 'white',
+                  border: '1px solid #fecaca',
+                  borderRadius: '6px',
+                  padding: '0.75rem',
+                  marginBottom: '0.75rem',
+                  fontSize: '0.875rem'
+                }}>
+                  <div style={{ fontWeight: 600, marginBottom: '0.5rem', color: '#dc2626' }}>
+                    PDMP Results:
+                  </div>
+                  <div style={{ display: 'grid', gap: '0.5rem' }}>
+                    <div>Risk Score: <strong style={{
+                      color: pdmpData.riskScore === 'High' ? '#dc2626' :
+                             pdmpData.riskScore === 'Moderate' ? '#f59e0b' : '#059669'
+                    }}>{pdmpData.riskScore}</strong></div>
+                    <div>Total Controlled Rx (6mo): <strong>{pdmpData.totalControlledRxLast6Months}</strong></div>
+                    {pdmpData.flags && pdmpData.flags.length > 0 && (
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <strong style={{ color: '#dc2626' }}>Flags:</strong>
+                        <ul style={{ margin: '0.25rem 0 0 1.5rem', padding: 0 }}>
+                          {pdmpData.flags.map((flag: string, idx: number) => (
+                            <li key={idx} style={{ color: '#dc2626' }}>{flag}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handlePDMPCheck}
+                disabled={checkingPDMP || !newRx.patientId}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  background: checkingPDMP ? '#9ca3af' : '#dc2626',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontWeight: 600,
+                  cursor: checkingPDMP || !newRx.patientId ? 'not-allowed' : 'pointer',
+                  fontSize: '0.875rem'
+                }}
+              >
+                {checkingPDMP ? 'Checking PDMP...' : 'Check State PDMP Database'}
+              </button>
+
+              <div style={{
+                marginTop: '0.75rem',
+                padding: '0.75rem',
+                background: '#fef3c7',
+                border: '1px solid #f59e0b',
+                borderRadius: '6px',
+                fontSize: '0.75rem',
+                color: '#92400e'
+              }}>
+                <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>EPCS Required</div>
+                <div>Electronic Prescribing of Controlled Substances (EPCS) requires two-factor authentication and DEA compliance.</div>
+              </div>
+            </div>
+          )}
+
+          {/* Formulary & Benefits Display */}
+          {newRx.medication && formularyData && (
+            <div style={{
+              background: formularyData.status === 'Preferred' ? '#f0fdf4' :
+                          formularyData.status === 'Non-Preferred' ? '#fef3c7' : '#fee2e2',
+              border: `2px solid ${formularyData.status === 'Preferred' ? '#10b981' :
+                                   formularyData.status === 'Non-Preferred' ? '#f59e0b' : '#ef4444'}`,
+              borderRadius: '8px',
+              padding: '1rem',
+              marginTop: '1rem'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                <strong style={{ fontSize: '0.95rem' }}>Insurance Formulary</strong>
+                <span style={{
+                  padding: '0.25rem 0.75rem',
+                  background: formularyData.status === 'Preferred' ? '#10b981' :
+                              formularyData.status === 'Non-Preferred' ? '#f59e0b' : '#ef4444',
+                  color: 'white',
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600
+                }}>
+                  {formularyData.status}
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gap: '0.5rem', fontSize: '0.875rem' }}>
+                {formularyData.copay && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Est. Patient Copay:</span>
+                    <strong>${formularyData.copay}</strong>
+                  </div>
+                )}
+
+                {formularyData.priorAuthRequired && (
+                  <div style={{
+                    padding: '0.5rem',
+                    background: '#fef3c7',
+                    border: '1px solid #f59e0b',
+                    borderRadius: '4px',
+                    color: '#92400e',
+                    fontSize: '0.8rem',
+                    fontWeight: 500
+                  }}>
+                    ⚠️ Prior Authorization Required
+                  </div>
+                )}
+
+                {formularyData.stepTherapyRequired && (
+                  <div style={{
+                    padding: '0.5rem',
+                    background: '#fef3c7',
+                    border: '1px solid #f59e0b',
+                    borderRadius: '4px',
+                    color: '#92400e',
+                    fontSize: '0.8rem',
+                    fontWeight: 500
+                  }}>
+                    ⚠️ Step Therapy Required
+                  </div>
+                )}
+
+                {formularyData.alternatives && formularyData.alternatives.length > 0 && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <div style={{ fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                      Preferred Alternatives:
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      {formularyData.alternatives.map((alt: any, idx: number) => (
+                        <div key={idx} style={{
+                          padding: '0.5rem',
+                          background: 'white',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '4px',
+                          fontSize: '0.8rem'
+                        }}>
+                          <div style={{ fontWeight: 500 }}>{alt.name}</div>
+                          {alt.copay && <div style={{ color: '#6b7280' }}>Copay: ${alt.copay}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {checkingFormulary && (
+                <div style={{ textAlign: 'center', padding: '1rem', color: '#6b7280' }}>
+                  Checking formulary...
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="form-row">
             <div className="form-field">
@@ -1186,6 +1785,8 @@ export function PrescriptionsPage() {
         <div className="modal-footer">
           <button type="button" className="btn-secondary" onClick={() => {
             setShowNewRxModal(false);
+            setMedicationSearch('');
+            setShowMedicationDropdown(false);
             // Remove action parameter from URL when closing modal
             const params = new URLSearchParams(searchParams);
             params.delete('action');
@@ -1309,6 +1910,130 @@ export function PrescriptionsPage() {
           }}
         />
       )}
+
+      {/* Rx History Modal */}
+      <Modal
+        isOpen={showRxHistoryModal}
+        title="Patient Medication History (Surescripts)"
+        onClose={() => {
+          setShowRxHistoryModal(false);
+          setRxHistoryData(null);
+        }}
+        size="lg"
+      >
+        {loadingRxHistory ? (
+          <div style={{ textAlign: 'center', padding: '2rem' }}>
+            <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>⏳</div>
+            <div>Loading medication history from Surescripts...</div>
+          </div>
+        ) : rxHistoryData ? (
+          <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
+            <div style={{
+              background: '#f3f4f6',
+              padding: '1rem',
+              borderRadius: '8px',
+              marginBottom: '1rem',
+              fontSize: '0.875rem'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                <strong>Total Prescriptions:</strong>
+                <span>{rxHistoryData.combinedCount || 0}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <strong>External Sources:</strong>
+                <span>{rxHistoryData.externalHistory?.length || 0}</span>
+              </div>
+            </div>
+
+            <h4 style={{ marginTop: '1.5rem', marginBottom: '1rem', color: '#374151' }}>
+              Recent Prescriptions from This System
+            </h4>
+            {rxHistoryData.prescriptions && rxHistoryData.prescriptions.length > 0 ? (
+              <div style={{ display: 'grid', gap: '0.75rem' }}>
+                {rxHistoryData.prescriptions.map((rx: any) => (
+                  <div
+                    key={rx.id}
+                    style={{
+                      background: 'white',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '6px',
+                      padding: '1rem'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                      <strong style={{ color: '#1f2937' }}>{rx.medication_name || 'Unknown'}</strong>
+                      <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                        {new Date(rx.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+                      {rx.strength && <div>Strength: {rx.strength}</div>}
+                      {rx.provider_name && <div>Prescriber: {rx.provider_name}</div>}
+                      {rx.pharmacy_name && <div>Pharmacy: {rx.pharmacy_name}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
+                No prescriptions found in this system
+              </div>
+            )}
+
+            <h4 style={{ marginTop: '1.5rem', marginBottom: '1rem', color: '#374151' }}>
+              External Medication History (Surescripts)
+            </h4>
+            {rxHistoryData.externalHistory && rxHistoryData.externalHistory.length > 0 ? (
+              <div style={{ display: 'grid', gap: '0.75rem' }}>
+                {rxHistoryData.externalHistory.map((rx: any, idx: number) => (
+                  <div
+                    key={idx}
+                    style={{
+                      background: '#eff6ff',
+                      border: '1px solid #3b82f6',
+                      borderRadius: '6px',
+                      padding: '1rem'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                      <strong style={{ color: '#1f2937' }}>{rx.medicationName || 'Unknown'}</strong>
+                      <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                        {rx.dateFilled ? new Date(rx.dateFilled).toLocaleDateString() : 'N/A'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+                      {rx.prescriber && <div>Prescriber: {rx.prescriber}</div>}
+                      {rx.pharmacy && <div>Pharmacy: {rx.pharmacy}</div>}
+                      {rx.status && <div>Status: {rx.status}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
+                No external medication history available
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
+            No data available
+          </div>
+        )}
+
+        <div className="modal-footer">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setShowRxHistoryModal(false);
+              setRxHistoryData(null);
+            }}
+          >
+            Close
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

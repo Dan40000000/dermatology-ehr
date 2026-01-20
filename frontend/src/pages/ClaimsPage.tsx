@@ -39,7 +39,8 @@ export function ClaimsPage() {
         fetchPatients(session.tenantId, session.accessToken),
       ]);
       setClaims(claimsRes.claims || []);
-      setPatients(patientsRes.patients || []);
+      // Handle both { patients: [...] } and { data: [...] } response formats
+      setPatients(patientsRes.patients || patientsRes.data || []);
     } catch (err: any) {
       showError(err.message || 'Failed to load data');
     } finally {

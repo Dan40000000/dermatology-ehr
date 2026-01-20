@@ -8,12 +8,73 @@ import { runMigrations } from "../db/migrate";
 
 export const healthRouter = Router();
 
-// Basic health check
+/**
+ * @swagger
+ * /health:
+ *   get:
+ *     summary: Basic health check
+ *     description: Returns a simple health status of the API.
+ *     tags:
+ *       - Health
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: API is healthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: ok
+ */
 healthRouter.get("/", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-// Detailed health check with dependencies
+/**
+ * @swagger
+ * /health/detailed:
+ *   get:
+ *     summary: Detailed health check
+ *     description: Returns comprehensive health information including database, memory, CPU, and disk status.
+ *     tags:
+ *       - Health
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: Detailed health status
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   enum: [healthy, unhealthy]
+ *                 timestamp:
+ *                   type: string
+ *                   format: date-time
+ *                 uptime:
+ *                   type: number
+ *                   description: Process uptime in seconds
+ *                 checks:
+ *                   type: object
+ *                   properties:
+ *                     database:
+ *                       type: object
+ *                     memory:
+ *                       type: object
+ *                     diskSpace:
+ *                       type: object
+ *                     cpu:
+ *                       type: object
+ *                 responseTime:
+ *                   type: number
+ *       503:
+ *         description: System is unhealthy
+ */
 healthRouter.get("/detailed", async (_req, res) => {
   const startTime = Date.now();
   const health: any = {
@@ -106,9 +167,12 @@ healthRouter.get("/metrics", async (_req, res) => {
 healthRouter.post("/init-db", async (req, res) => {
   const secret = req.headers["x-init-secret"];
 
-  // Simple protection - require a secret or allow in non-production
-  if (process.env.NODE_ENV === "production" && secret !== process.env.INIT_SECRET && secret !== "demo-init-2024") {
-    return res.status(403).json({ error: "Forbidden" });
+  // Simple protection - require a secret in production, or allow in non-production
+  if (process.env.NODE_ENV === "production") {
+    if (!process.env.INIT_SECRET || secret !== process.env.INIT_SECRET) {
+      logger.warn("Unauthorized database initialization attempt", { ip: req.ip });
+      return res.status(403).json({ error: "Forbidden" });
+    }
   }
 
   try {
@@ -131,8 +195,12 @@ healthRouter.post("/init-db", async (req, res) => {
 healthRouter.post("/sync-data", async (req, res) => {
   const secret = req.headers["x-init-secret"];
 
-  if (process.env.NODE_ENV === "production" && secret !== process.env.INIT_SECRET && secret !== "demo-init-2024") {
-    return res.status(403).json({ error: "Forbidden" });
+  // Require proper authentication in production
+  if (process.env.NODE_ENV === "production") {
+    if (!process.env.INIT_SECRET || secret !== process.env.INIT_SECRET) {
+      logger.warn("Unauthorized data sync attempt", { ip: req.ip });
+      return res.status(403).json({ error: "Forbidden" });
+    }
   }
 
   try {

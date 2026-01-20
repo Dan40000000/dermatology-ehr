@@ -8,6 +8,7 @@ import fs from "fs";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { NextFunction, Request, Response } from "express";
+import { notificationService } from "../services/integrations/notificationService";
 
 const router = Router();
 
@@ -266,7 +267,7 @@ router.post("/threads", requirePatientAuth, async (req: PatientAuthRequest, res)
       // Auto-assign priority based on category
       let priority = "normal";
       if (category === "medical") {
-        priority = "high";
+        priority = "urgent"; // Changed to urgent for medical messages
       } else if (category === "billing" || category === "general") {
         priority = "low";
       }
@@ -277,6 +278,25 @@ router.post("/threads", requirePatientAuth, async (req: PatientAuthRequest, res)
         VALUES ($1, $2, $3, $4, $5, $6, 'open', true, 'patient', false)`,
         [threadId, tenantId, patientId, subject, category, priority]
       );
+
+      // Send integration notification for urgent messages
+      if (priority === "urgent") {
+        try {
+          await notificationService.sendNotification({
+            tenantId,
+            notificationType: "urgent_message",
+            data: {
+              patientName,
+              messageSubject: subject,
+              messagePreview: messageText.substring(0, 150) + (messageText.length > 150 ? "..." : ""),
+              sentAt: new Date().toISOString(),
+            },
+          });
+        } catch (notifError) {
+          console.error("Failed to send urgent message notification:", notifError);
+          // Don't fail the message creation
+        }
+      }
 
       // Create first message
       const messageId = crypto.randomUUID();

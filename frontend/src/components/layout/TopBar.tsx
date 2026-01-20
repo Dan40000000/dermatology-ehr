@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../contexts/AuthContext';
 import { HelpModal } from '../HelpModal';
+import { LanguageSwitcher } from '../LanguageSwitcher';
 import { Modal } from '../ui';
 import type { Patient } from '../../types';
 
@@ -11,6 +13,7 @@ interface TopBarProps {
 }
 
 export function TopBar({ patients = [], onRefresh }: TopBarProps) {
+  const { t } = useTranslation('common');
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [searchValue, setSearchValue] = useState('');
@@ -87,22 +90,25 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
         </div>
 
         <div className="ema-header-right">
-          {user && (
-            <div className="ema-user-info" role="group" aria-label="User information">
-              <span className="ema-user-name" aria-label={`Logged in as ${user.fullName}`}>
-                {user.fullName}
-              </span>
-              <label htmlFor="role-select" className="sr-only">User role</label>
-              <select
-                id="role-select"
-                className="ema-role-select"
-                defaultValue={user.role}
-                aria-label="User role selector"
-              >
-                <option value={user.role}>Select {user.role}</option>
-              </select>
-            </div>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <LanguageSwitcher />
+            {user && (
+              <div className="ema-user-info" role="group" aria-label="User information">
+                <span className="ema-user-name" aria-label={`Logged in as ${user.fullName}`}>
+                  {user.fullName}
+                </span>
+                <label htmlFor="role-select" className="sr-only">User role</label>
+                <select
+                  id="role-select"
+                  className="ema-role-select"
+                  defaultValue={user.role}
+                  aria-label="User role selector"
+                >
+                  <option value={user.role}>Select {user.role}</option>
+                </select>
+              </div>
+            )}
+          </div>
           <nav className="ema-header-links" aria-label="User menu">
             <span className="ema-help-icon" aria-hidden="true"></span>
             <button

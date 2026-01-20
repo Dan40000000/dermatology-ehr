@@ -5,6 +5,7 @@ import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
 import { PatientBanner, BodyMap, TemplateSelector } from '../components/clinical';
 import { DiagnosisSearchModal, ProcedureSearchModal } from '../components/billing';
+import { EncounterPrescriptions } from '../components/prescriptions';
 import type { Lesion } from '../components/clinical';
 import {
   fetchPatients,
@@ -32,7 +33,7 @@ import type { Patient, Encounter, Vitals, Order, EncounterDiagnosis, Charge, ICD
 import type { NoteTemplate, AINoteDraft } from '../api';
 import { useAutosave } from '../hooks/useAutosave';
 
-type EncounterSection = 'note' | 'exam' | 'orders' | 'billing';
+type EncounterSection = 'note' | 'exam' | 'orders' | 'prescriptions' | 'billing';
 
 interface VitalsFormData {
   heightCm: string;
@@ -683,6 +684,7 @@ export function EncounterPage() {
     { id: 'note', label: 'Clinical Note', icon: '' },
     { id: 'exam', label: 'Skin Exam', icon: '' },
     { id: 'orders', label: 'Orders', icon: '' },
+    { id: 'prescriptions', label: 'Prescriptions', icon: '💊' },
     { id: 'billing', label: 'Billing', icon: '' },
   ];
 
@@ -1331,6 +1333,40 @@ export function EncounterPage() {
                   ))}
                 </tbody>
               </table>
+            )}
+          </div>
+        )}
+
+        {activeSection === 'prescriptions' && (
+          <div>
+            {!isNew && encounterId && patientId && (
+              <EncounterPrescriptions
+                encounterId={encounterId}
+                patientId={patientId}
+                readOnly={isLocked}
+              />
+            )}
+            {isNew && (
+              <div style={{
+                background: '#fef3c7',
+                border: '1px solid #f59e0b',
+                borderRadius: '8px',
+                padding: '1.5rem',
+                textAlign: 'center'
+              }}>
+                <p style={{ color: '#92400e', marginBottom: '0.5rem' }}>
+                  Please save the encounter first before adding prescriptions.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  className="ema-action-btn"
+                  style={{ marginTop: '0.5rem' }}
+                  disabled={saving}
+                >
+                  {saving ? 'Saving...' : 'Save Encounter'}
+                </button>
+              </div>
             )}
           </div>
         )}

@@ -16,8 +16,14 @@ import {
   fetchSMSConversation,
   sendSMSConversationMessage,
   markSMSConversationRead,
+  getSMSConsent,
+  recordSMSConsent,
+  revokeSMSConsent,
+  fetchSMSAuditLog,
+  exportSMSAuditLog,
+  fetchSMSAuditSummary,
 } from '../api';
-import type { SMSTemplate, ScheduledMessage, Patient, SMSConversation, SMSMessage } from '../api';
+import type { SMSTemplate, ScheduledMessage, Patient, SMSConversation, SMSMessage, SMSConsent, SMSAuditLog } from '../api';
 import '../styles/text-messages.css';
 
 interface PatientWithSMS extends Patient {
@@ -26,6 +32,8 @@ interface PatientWithSMS extends Patient {
   unreadCount?: number;
   smsOptIn?: boolean;
   smsOptInDate?: string;
+  hasConsent?: boolean;
+  consentExpiresDays?: number | null;
 }
 
 interface Message {
@@ -84,7 +92,7 @@ const formatTime = (dateStr: string) => {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
-type TabType = 'conversations' | 'templates' | 'bulk' | 'scheduled' | 'settings';
+type TabType = 'conversations' | 'templates' | 'bulk' | 'scheduled' | 'audit' | 'settings';
 
 export default function TextMessagesPage() {
   const { session } = useAuth();
@@ -116,6 +124,15 @@ export default function TextMessagesPage() {
   const [selectedPatients, setSelectedPatients] = useState<Set<string>>(new Set());
   const [bulkMessageText, setBulkMessageText] = useState('');
   const [bulkTemplateId, setBulkTemplateId] = useState<string>('');
+
+  // Consent
+  const [showConsentModal, setShowConsentModal] = useState(false);
+  const [patientConsent, setPatientConsent] = useState<{ [patientId: string]: { hasConsent: boolean; daysUntilExpiration?: number | null } }>({});
+
+  // Audit Log
+  const [auditLogs, setAuditLogs] = useState<SMSAuditLog[]>([]);
+  const [auditSummary, setAuditSummary] = useState<any>(null);
+  const [auditFilters, setAuditFilters] = useState<{ eventType?: string; startDate?: string; endDate?: string }>({});
 
   // Stats
   const totalUnread = patients.reduce((acc, p) => acc + (p.unreadCount || 0), 0);
@@ -184,6 +201,44 @@ export default function TextMessagesPage() {
     }
   }, [session, showError]);
 
+  const checkPatientConsent = useCallback(async (patientId: string) => {
+    if (!session) return;
+    try {
+      const consentData = await getSMSConsent(session.tenantId, session.accessToken, patientId);
+      setPatientConsent(prev => ({
+        ...prev,
+        [patientId]: {
+          hasConsent: consentData.hasConsent,
+          daysUntilExpiration: consentData.daysUntilExpiration,
+        },
+      }));
+      return consentData.hasConsent;
+    } catch (err: any) {
+      console.error('Failed to check consent:', err);
+      return false;
+    }
+  }, [session]);
+
+  const loadAuditLogs = useCallback(async () => {
+    if (!session) return;
+    try {
+      const response = await fetchSMSAuditLog(session.tenantId, session.accessToken, {
+        ...auditFilters,
+        limit: 100,
+      });
+      setAuditLogs(response.auditLogs);
+
+      const summary = await fetchSMSAuditSummary(session.tenantId, session.accessToken, {
+        startDate: auditFilters.startDate,
+        endDate: auditFilters.endDate,
+      });
+      setAuditSummary(summary);
+    } catch (err: any) {
+      console.error('Failed to load audit logs:', err);
+      showError(err.message || 'Failed to load audit logs');
+    }
+  }, [session, auditFilters, showError]);
+
   useEffect(() => {
     const loadInitialData = async () => {
       setLoading(true);
@@ -197,14 +252,19 @@ export default function TextMessagesPage() {
   useEffect(() => {
     if (activeTab === 'scheduled') {
       loadScheduledMessages();
+    } else if (activeTab === 'audit') {
+      loadAuditLogs();
     }
-  }, [activeTab, loadScheduledMessages]);
+  }, [activeTab, loadScheduledMessages, loadAuditLogs]);
 
   const loadConversation = async (patientId: string) => {
     if (!session) return;
     setSelectedPatientId(patientId);
 
     try {
+      // Check consent status first
+      await checkPatientConsent(patientId);
+
       // Load conversation from API
       const data = await fetchSMSConversation(session.tenantId, session.accessToken, patientId);
       setConversation(data);
@@ -221,6 +281,13 @@ export default function TextMessagesPage() {
 
   const sendMessage = async () => {
     if (!messageText.trim() || !selectedPatientId || !session) return;
+
+    // Check if patient has consent
+    const consent = patientConsent[selectedPatientId];
+    if (!consent?.hasConsent) {
+      setShowConsentModal(true);
+      return;
+    }
 
     setSending(true);
     try {
@@ -336,9 +403,41 @@ export default function TextMessagesPage() {
     showSuccess(optIn ? 'Patient opted in to SMS' : 'Patient opted out of SMS');
   };
 
+  const handleConsentSave = async (data: { consentMethod: 'verbal' | 'written' | 'electronic'; obtainedByName: string; expirationDate?: string; notes?: string }) => {
+    if (!session || !selectedPatientId) return;
+
+    try {
+      await recordSMSConsent(session.tenantId, session.accessToken, selectedPatientId, data);
+      await checkPatientConsent(selectedPatientId);
+      showSuccess('SMS consent recorded');
+      setShowConsentModal(false);
+    } catch (err: any) {
+      showError(err.message || 'Failed to record consent');
+    }
+  };
+
+  const handleExportAuditLog = async () => {
+    if (!session) return;
+
+    try {
+      const blob = await exportSMSAuditLog(session.tenantId, session.accessToken, auditFilters);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sms-audit-log-${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      showSuccess('Audit log exported');
+    } catch (err: any) {
+      showError(err.message || 'Failed to export audit log');
+    }
+  };
+
   const insertTemplate = (template: SMSTemplate) => {
     const patient = patients.find(p => p.id === selectedPatientId);
-    let body = template.body;
+    let body = template.messageBody || template.body;
     if (patient) {
       body = body.replace(/{patientName}/g, patient.firstName);
       body = body.replace(/{date}/g, new Date().toLocaleDateString());
@@ -404,6 +503,7 @@ export default function TextMessagesPage() {
             { id: 'templates', label: 'Templates' },
             { id: 'bulk', label: 'Bulk Send' },
             { id: 'scheduled', label: 'Scheduled' },
+            { id: 'audit', label: 'Audit Log' },
             { id: 'settings', label: 'Settings' },
           ].map(tab => (
             <button
@@ -493,10 +593,36 @@ export default function TextMessagesPage() {
                       {getInitials(selectedPatient.firstName, selectedPatient.lastName)}
                     </div>
                     <div className="sms-chat-header-info">
-                      <div className="sms-chat-header-name">{selectedPatient.firstName} {selectedPatient.lastName}</div>
+                      <div className="sms-chat-header-name">
+                        {selectedPatient.firstName} {selectedPatient.lastName}
+                        {patientConsent[selectedPatientId]?.hasConsent && (
+                          <span className="sms-consent-badge" title="SMS consent documented">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <circle cx="8" cy="8" r="7" fill="#22c55e"/>
+                              <path d="M5 8L7 10L11 6" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          </span>
+                        )}
+                        {patientConsent[selectedPatientId]?.daysUntilExpiration !== undefined &&
+                         patientConsent[selectedPatientId]?.daysUntilExpiration !== null &&
+                         patientConsent[selectedPatientId]!.daysUntilExpiration <= 30 && (
+                          <span className="sms-consent-warning" title={`Consent expires in ${patientConsent[selectedPatientId]?.daysUntilExpiration} days`}>
+                            Consent expires in {patientConsent[selectedPatientId]?.daysUntilExpiration} days
+                          </span>
+                        )}
+                      </div>
                       <div className="sms-chat-header-phone">{formatPhoneNumber(selectedPatient.phone || '')}</div>
                     </div>
                     <div className="sms-chat-header-actions">
+                      {!patientConsent[selectedPatientId]?.hasConsent && (
+                        <button
+                          className="btn-primary btn-sm"
+                          onClick={() => setShowConsentModal(true)}
+                          style={{ marginRight: '8px' }}
+                        >
+                          Record Consent
+                        </button>
+                      )}
                       <button
                         className="btn-secondary btn-sm"
                         onClick={() => setShowScheduleModal(true)}
@@ -540,6 +666,16 @@ export default function TextMessagesPage() {
 
                   {/* Input Area */}
                   <div className="sms-input-area">
+                    {/* PHI Warning Banner */}
+                    <div className="sms-phi-warning">
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M8 1L1 14H15L8 1Z" fill="#f59e0b" stroke="#f59e0b" strokeWidth="1"/>
+                        <path d="M8 6V9" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
+                        <circle cx="8" cy="11" r="0.5" fill="white"/>
+                      </svg>
+                      <span>Do not include PHI (diagnoses, lab results, sensitive info) in SMS messages</span>
+                    </div>
+
                     <div className="sms-input-row">
                       <button
                         className="sms-template-btn"
@@ -564,6 +700,7 @@ export default function TextMessagesPage() {
                         />
                         <div className="sms-char-count">
                           {charCount} / {smsSegments * 160} ({smsSegments} segment{smsSegments !== 1 ? 's' : ''})
+                          {charCount > 160 && <span className="sms-segment-warning"> (Multiple SMS segments)</span>}
                         </div>
                       </div>
                       <button
@@ -589,7 +726,7 @@ export default function TextMessagesPage() {
                               onClick={() => insertTemplate(tpl)}
                             >
                               <div className="sms-template-dropdown-name">{tpl.name}</div>
-                              <div className="sms-template-dropdown-preview">{tpl.body.substring(0, 50)}...</div>
+                              <div className="sms-template-dropdown-preview">{(tpl.messageBody || tpl.body).substring(0, 50)}...</div>
                             </div>
                           ))
                         )}
@@ -630,54 +767,64 @@ export default function TextMessagesPage() {
                 <p>Create templates to save time on common messages</p>
               </div>
             ) : (
-              <Panel title={`${templates.length} Templates`}>
-                <table className="sms-table">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Category</th>
-                      <th>Message Preview</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {templates.map(template => (
-                      <tr key={template.id}>
-                        <td className="strong">{template.name}</td>
-                        <td>
-                          <span className={`sms-category-badge ${template.category || 'general'}`}>
-                            {template.category || 'General'}
-                          </span>
-                        </td>
-                        <td className="sms-preview-cell">{template.body}</td>
-                        <td>
-                          <div className="sms-actions">
-                            <button
-                              className="btn-sm btn-secondary"
-                              onClick={() => {
-                                setEditingTemplate(template);
-                                setShowTemplateModal(true);
-                              }}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              className="btn-sm btn-danger"
-                              onClick={() => {
-                                if (confirm('Delete this template?')) {
-                                  handleDeleteTemplate(template.id);
-                                }
-                              }}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </Panel>
+              <>
+                {['appointment_reminders', 'follow_up_care', 'billing_payment', 'general_communication'].map(category => {
+                  const categoryTemplates = templates.filter(t => (t.category || 'general_communication') === category);
+                  if (categoryTemplates.length === 0) return null;
+
+                  const categoryLabels: { [key: string]: string } = {
+                    appointment_reminders: 'Appointment Reminders',
+                    follow_up_care: 'Follow-up Care',
+                    billing_payment: 'Billing/Payment',
+                    general_communication: 'General Communication',
+                  };
+
+                  return (
+                    <Panel key={category} title={`${categoryLabels[category]} (${categoryTemplates.length})`}>
+                      <table className="sms-table">
+                        <thead>
+                          <tr>
+                            <th>Name</th>
+                            <th>Message Preview</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {categoryTemplates.map(template => (
+                            <tr key={template.id}>
+                              <td className="strong">{template.name}</td>
+                              <td className="sms-preview-cell">{template.messageBody || template.body}</td>
+                              <td>
+                                <div className="sms-actions">
+                                  <button
+                                    className="btn-sm btn-secondary"
+                                    onClick={() => {
+                                      setEditingTemplate(template);
+                                      setShowTemplateModal(true);
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    className="btn-sm btn-danger"
+                                    onClick={() => {
+                                      if (confirm('Delete this template?')) {
+                                        handleDeleteTemplate(template.id);
+                                      }
+                                    }}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </Panel>
+                  );
+                })}
+              </>
             )}
           </div>
         )}
@@ -745,7 +892,7 @@ export default function TextMessagesPage() {
                     onChange={e => {
                       setBulkTemplateId(e.target.value);
                       const tpl = templates.find(t => t.id === e.target.value);
-                      if (tpl) setBulkMessageText(tpl.body);
+                      if (tpl) setBulkMessageText(tpl.messageBody || tpl.body);
                     }}
                     className="sms-select"
                   >
@@ -835,6 +982,135 @@ export default function TextMessagesPage() {
                             </button>
                           )}
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Panel>
+            )}
+          </div>
+        )}
+
+        {/* Audit Log Tab */}
+        {activeTab === 'audit' && (
+          <div className="sms-audit-tab">
+            <div className="sms-templates-header">
+              <h2>SMS Audit Log</h2>
+              <button
+                className="btn-primary"
+                onClick={handleExportAuditLog}
+              >
+                Export Audit Log (CSV)
+              </button>
+            </div>
+
+            {auditSummary && (
+              <Panel title="Summary Statistics">
+                <div className="sms-audit-summary">
+                  <div className="sms-audit-stat">
+                    <span className="sms-audit-stat-value">{auditSummary.messagesSent}</span>
+                    <span className="sms-audit-stat-label">Messages Sent</span>
+                  </div>
+                  <div className="sms-audit-stat">
+                    <span className="sms-audit-stat-value">{auditSummary.messagesReceived}</span>
+                    <span className="sms-audit-stat-label">Messages Received</span>
+                  </div>
+                  <div className="sms-audit-stat">
+                    <span className="sms-audit-stat-value">{auditSummary.consentsObtained}</span>
+                    <span className="sms-audit-stat-label">Consents Obtained</span>
+                  </div>
+                  <div className="sms-audit-stat">
+                    <span className="sms-audit-stat-value">{auditSummary.consentsRevoked}</span>
+                    <span className="sms-audit-stat-label">Consents Revoked</span>
+                  </div>
+                  <div className="sms-audit-stat">
+                    <span className="sms-audit-stat-value">{auditSummary.optOuts}</span>
+                    <span className="sms-audit-stat-label">Opt-Outs</span>
+                  </div>
+                  <div className="sms-audit-stat">
+                    <span className="sms-audit-stat-value">{auditSummary.uniquePatients}</span>
+                    <span className="sms-audit-stat-label">Unique Patients</span>
+                  </div>
+                </div>
+              </Panel>
+            )}
+
+            <Panel title="Filters">
+              <div className="sms-audit-filters">
+                <div className="sms-form-group">
+                  <label>Event Type</label>
+                  <select
+                    value={auditFilters.eventType || ''}
+                    onChange={e => setAuditFilters({ ...auditFilters, eventType: e.target.value || undefined })}
+                    className="sms-select"
+                  >
+                    <option value="">All Events</option>
+                    <option value="message_sent">Message Sent</option>
+                    <option value="message_received">Message Received</option>
+                    <option value="consent_obtained">Consent Obtained</option>
+                    <option value="consent_revoked">Consent Revoked</option>
+                    <option value="opt_out">Opt-Out</option>
+                  </select>
+                </div>
+                <div className="sms-form-group">
+                  <label>Start Date</label>
+                  <input
+                    type="date"
+                    value={auditFilters.startDate || ''}
+                    onChange={e => setAuditFilters({ ...auditFilters, startDate: e.target.value || undefined })}
+                    className="sms-input"
+                  />
+                </div>
+                <div className="sms-form-group">
+                  <label>End Date</label>
+                  <input
+                    type="date"
+                    value={auditFilters.endDate || ''}
+                    onChange={e => setAuditFilters({ ...auditFilters, endDate: e.target.value || undefined })}
+                    className="sms-input"
+                  />
+                </div>
+                <button
+                  className="btn-secondary"
+                  onClick={loadAuditLogs}
+                  style={{ marginTop: '24px' }}
+                >
+                  Apply Filters
+                </button>
+              </div>
+            </Panel>
+
+            {auditLogs.length === 0 ? (
+              <div className="sms-empty-state">
+                <h3>No audit log entries</h3>
+                <p>SMS activity will appear here</p>
+              </div>
+            ) : (
+              <Panel title={`Audit Log Entries (${auditLogs.length})`}>
+                <table className="sms-table">
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Event Type</th>
+                      <th>Patient</th>
+                      <th>Staff Member</th>
+                      <th>Message Preview</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditLogs.map(log => (
+                      <tr key={log.id}>
+                        <td>{new Date(log.createdAt).toLocaleString()}</td>
+                        <td>
+                          <span className={`sms-event-badge ${log.eventType}`}>
+                            {log.eventType.replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                        <td>{log.patientName}</td>
+                        <td>{log.userName || '-'}</td>
+                        <td className="sms-preview-cell">{log.messagePreview || '-'}</td>
+                        <td>{log.status || '-'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -959,6 +1235,19 @@ export default function TextMessagesPage() {
           onCancel={() => setShowScheduleModal(false)}
         />
       </Modal>
+
+      {/* Consent Modal */}
+      <Modal
+        isOpen={showConsentModal}
+        title="Record SMS Consent"
+        onClose={() => setShowConsentModal(false)}
+      >
+        <ConsentForm
+          patientName={selectedPatient ? `${selectedPatient.firstName} ${selectedPatient.lastName}` : ''}
+          onSave={handleConsentSave}
+          onCancel={() => setShowConsentModal(false)}
+        />
+      </Modal>
     </div>
   );
 }
@@ -997,14 +1286,13 @@ function TemplateForm({
         />
       </div>
       <div className="sms-form-group">
-        <label>Category</label>
-        <select value={category} onChange={e => setCategory(e.target.value)} className="sms-select">
+        <label>Category *</label>
+        <select value={category} onChange={e => setCategory(e.target.value)} className="sms-select" required>
           <option value="">Select category...</option>
-          <option value="appointment">Appointment</option>
-          <option value="reminder">Reminder</option>
-          <option value="results">Results</option>
-          <option value="billing">Billing</option>
-          <option value="general">General</option>
+          <option value="appointment_reminders">Appointment Reminders</option>
+          <option value="follow_up_care">Follow-up Care</option>
+          <option value="billing_payment">Billing/Payment</option>
+          <option value="general_communication">General Communication</option>
         </select>
       </div>
       <div className="sms-form-group">
@@ -1080,7 +1368,7 @@ function ScheduleForm({
             const tpl = templates.find(t => t.id === e.target.value);
             if (tpl) {
               const patient = patients.find(p => p.id === patientId);
-              let body = tpl.body;
+              let body = tpl.messageBody || tpl.body;
               if (patient) {
                 body = body.replace(/{patientName}/g, patient.firstName);
               }
@@ -1133,6 +1421,98 @@ function ScheduleForm({
         <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
         <button type="submit" className="btn-primary" disabled={!patientId || !messageBody.trim() || !scheduledDate}>
           Schedule Message
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// Consent Form Component
+function ConsentForm({
+  patientName,
+  onSave,
+  onCancel,
+}: {
+  patientName: string;
+  onSave: (data: { consentMethod: 'verbal' | 'written' | 'electronic'; obtainedByName: string; expirationDate?: string; notes?: string }) => void;
+  onCancel: () => void;
+}) {
+  const [consentMethod, setConsentMethod] = useState<'verbal' | 'written' | 'electronic'>('verbal');
+  const [obtainedByName, setObtainedByName] = useState('');
+  const [expirationDate, setExpirationDate] = useState('');
+  const [notes, setNotes] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!obtainedByName.trim()) return;
+    onSave({
+      consentMethod,
+      obtainedByName,
+      expirationDate: expirationDate || undefined,
+      notes: notes || undefined,
+    });
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <div className="sms-consent-info">
+        <p>Recording SMS consent for: <strong>{patientName}</strong></p>
+        <p className="muted">This consent authorizes sending SMS messages to the patient's phone number.</p>
+      </div>
+
+      <div className="sms-form-group">
+        <label>Consent Method *</label>
+        <select
+          value={consentMethod}
+          onChange={e => setConsentMethod(e.target.value as 'verbal' | 'written' | 'electronic')}
+          className="sms-select"
+          required
+        >
+          <option value="verbal">Verbal Consent</option>
+          <option value="written">Written Consent</option>
+          <option value="electronic">Electronic Consent</option>
+        </select>
+      </div>
+
+      <div className="sms-form-group">
+        <label>Staff Member Obtaining Consent *</label>
+        <input
+          type="text"
+          value={obtainedByName}
+          onChange={e => setObtainedByName(e.target.value)}
+          placeholder="Enter your name"
+          className="sms-input"
+          required
+        />
+      </div>
+
+      <div className="sms-form-group">
+        <label>Expiration Date (optional)</label>
+        <input
+          type="date"
+          value={expirationDate}
+          onChange={e => setExpirationDate(e.target.value)}
+          min={new Date().toISOString().split('T')[0]}
+          className="sms-input"
+        />
+        <span className="muted tiny">Leave blank for no expiration</span>
+      </div>
+
+      <div className="sms-form-group">
+        <label>Notes (optional)</label>
+        <textarea
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          placeholder="Any additional notes about consent..."
+          className="sms-textarea"
+          rows={3}
+        />
+      </div>
+
+      <div className="sms-modal-actions">
+        <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
+        <button type="submit" className="btn-primary" disabled={!obtainedByName.trim()}>
+          Record Consent
         </button>
       </div>
     </form>

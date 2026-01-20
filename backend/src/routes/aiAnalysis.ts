@@ -12,7 +12,67 @@ const router = express.Router();
  * Endpoints for AI-powered image analysis and clinical decision support
  */
 
-// Analyze a single photo
+/**
+ * @swagger
+ * /api/ai-analysis/analyze-photo/{photoId}:
+ *   post:
+ *     summary: Analyze a photo with AI
+ *     description: Perform AI-powered analysis on a clinical photo to detect skin lesions and assess risk.
+ *     tags:
+ *       - AI Analysis
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: photoId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Photo ID
+ *     responses:
+ *       200:
+ *         description: Analysis complete
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 analysisId:
+ *                   type: string
+ *                   format: uuid
+ *                 analysis:
+ *                   type: object
+ *                   properties:
+ *                     riskLevel:
+ *                       type: string
+ *                       enum: [low, moderate, high, critical]
+ *                     primaryFinding:
+ *                       type: string
+ *                     confidenceScore:
+ *                       type: number
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Photo not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to analyze photo
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post("/analyze-photo/:photoId", async (req, res) => {
   try {
     const { photoId } = req.params;
@@ -84,7 +144,51 @@ router.post("/analyze-photo/:photoId", async (req, res) => {
   }
 });
 
-// Get analysis results for a photo
+/**
+ * @swagger
+ * /api/ai-analysis/photo/{photoId}:
+ *   get:
+ *     summary: Get AI analysis for photo
+ *     description: Retrieve AI analysis results for a specific photo.
+ *     tags:
+ *       - AI Analysis
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: photoId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Photo ID
+ *     responses:
+ *       200:
+ *         description: Analysis results
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: No analysis found for this photo
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to retrieve analysis
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.get("/photo/:photoId", async (req, res) => {
   try {
     const { photoId } = req.params;
@@ -104,7 +208,61 @@ router.get("/photo/:photoId", async (req, res) => {
   }
 });
 
-// Batch analyze all unanalyzed photos for a patient
+/**
+ * @swagger
+ * /api/ai-analysis/batch-analyze/{patientId}:
+ *   post:
+ *     summary: Batch analyze patient photos
+ *     description: Analyze all unanalyzed photos for a patient with AI.
+ *     tags:
+ *       - AI Analysis
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: patientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Patient ID
+ *     responses:
+ *       200:
+ *         description: Batch analysis complete
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 analysisCount:
+ *                   type: integer
+ *                 analysisIds:
+ *                   type: array
+ *                   items:
+ *                     type: string
+ *                     format: uuid
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Patient not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to batch analyze photos
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post("/batch-analyze/:patientId", async (req, res) => {
   try {
     const { patientId } = req.params;
@@ -140,7 +298,56 @@ router.post("/batch-analyze/:patientId", async (req, res) => {
   }
 });
 
-// Get clinical decision support alerts
+/**
+ * @swagger
+ * /api/ai-analysis/cds-alerts:
+ *   get:
+ *     summary: Get CDS alerts
+ *     description: Retrieve clinical decision support alerts generated from AI analysis.
+ *     tags:
+ *       - AI Analysis
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: query
+ *         name: patientId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Filter by patient ID
+ *       - in: query
+ *         name: dismissed
+ *         schema:
+ *           type: boolean
+ *         description: Filter by dismissed status
+ *     responses:
+ *       200:
+ *         description: List of CDS alerts
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 alerts:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                 total:
+ *                   type: integer
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to retrieve alerts
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.get("/cds-alerts", async (req, res) => {
   try {
     const user = (req as any).user;
@@ -200,7 +407,54 @@ router.get("/cds-alerts", async (req, res) => {
   }
 });
 
-// Dismiss a CDS alert
+/**
+ * @swagger
+ * /api/ai-analysis/cds-alerts/{alertId}/dismiss:
+ *   post:
+ *     summary: Dismiss CDS alert
+ *     description: Dismiss a clinical decision support alert.
+ *     tags:
+ *       - AI Analysis
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: alertId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Alert ID
+ *     responses:
+ *       200:
+ *         description: Alert dismissed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Alert not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to dismiss alert
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post("/cds-alerts/:alertId/dismiss", async (req, res) => {
   try {
     const { alertId } = req.params;
@@ -227,7 +481,58 @@ router.post("/cds-alerts/:alertId/dismiss", async (req, res) => {
   }
 });
 
-// Get AI analysis statistics
+/**
+ * @swagger
+ * /api/ai-analysis/stats:
+ *   get:
+ *     summary: Get AI analysis statistics
+ *     description: Retrieve statistics about AI analyses and CDS alerts.
+ *     tags:
+ *       - AI Analysis
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     responses:
+ *       200:
+ *         description: Analysis statistics
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 analyses:
+ *                   type: object
+ *                   properties:
+ *                     totalAnalyses:
+ *                       type: integer
+ *                     highRiskCount:
+ *                       type: integer
+ *                     last30Days:
+ *                       type: integer
+ *                     avgConfidence:
+ *                       type: number
+ *                 alerts:
+ *                   type: object
+ *                   properties:
+ *                     totalAlerts:
+ *                       type: integer
+ *                     activeAlerts:
+ *                       type: integer
+ *                     criticalAlerts:
+ *                       type: integer
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to retrieve statistics
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.get("/stats", async (req, res) => {
   try {
     const user = (req as any).user;

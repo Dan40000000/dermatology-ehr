@@ -1,0 +1,16 @@
+# Playwright test artifacts
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Screenshots and videos
+screenshots/
+videos/
+traces/
+
+# Test state
+.auth/
+
+# OS files
+.DS_Store
+Thumbs.db

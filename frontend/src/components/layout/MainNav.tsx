@@ -51,23 +51,14 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Appt Flow',
-    path: '/appt-flow',
-    module: 'appt_flow',
+    label: 'Tasks',
+    path: '/tasks',
+    module: 'tasks',
     dropdown: [
-      { label: 'Today\'s Appointments', path: '/appt-flow' },
-      { label: 'Upcoming', path: '/appt-flow?filter=upcoming' },
-      { label: 'Completed', path: '/appt-flow?filter=completed' },
-    ]
-  },
-  {
-    label: 'Waitlist',
-    path: '/waitlist',
-    module: 'waitlist',
-    dropdown: [
-      { label: 'Active Waitlist', path: '/waitlist' },
-      { label: 'Add to Waitlist', path: '/waitlist?action=add' },
-      { label: 'History', path: '/waitlist?tab=history' },
+      { label: 'All Tasks', path: '/tasks' },
+      { label: 'Received', path: '/tasks?tab=received' },
+      { label: 'Sent', path: '/tasks?tab=sent' },
+      { label: 'Completed', path: '/tasks?tab=completed' },
     ]
   },
   {
@@ -152,17 +143,6 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Tasks',
-    path: '/tasks',
-    module: 'tasks',
-    dropdown: [
-      { label: 'All Tasks', path: '/tasks' },
-      { label: 'Received', path: '/tasks?tab=received' },
-      { label: 'Sent', path: '/tasks?tab=sent' },
-      { label: 'Completed', path: '/tasks?tab=completed' },
-    ]
-  },
-  {
     label: 'Mail',
     path: '/mail',
     module: 'mail',
@@ -214,15 +194,6 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Body Diagram',
-    path: '/body-diagram',
-    module: 'body_diagram',
-    dropdown: [
-      { label: 'Body Map', path: '/body-diagram' },
-      { label: 'Lesion Tracker', path: '/body-diagram?view=lesions' },
-    ]
-  },
-  {
     label: 'Handouts',
     path: '/handouts',
     module: 'handouts',
@@ -259,21 +230,22 @@ const navItems: NavItem[] = [
     module: 'analytics',
     dropdown: [
       { label: 'Dashboard', path: '/analytics' },
-      { label: 'Financial Reports', path: '/analytics?tab=financial' },
-      { label: 'Clinical Reports', path: '/analytics?tab=clinical' },
+      { label: 'Financial', path: '/analytics?tab=financial' },
+      { label: 'Revenue', path: '/analytics?tab=revenue' },
+      { label: 'Productivity', path: '/analytics?tab=productivity' },
       { label: 'Operational', path: '/analytics?tab=operational' },
     ]
   },
   {
-    label: 'Reports',
+    label: 'Patient Reports',
     path: '/reports',
     module: 'reports',
     dropdown: [
       { label: 'All Reports', path: '/reports' },
-      { label: 'Appointments', path: '/reports?type=appointments' },
-      { label: 'Financial', path: '/reports?type=financial' },
-      { label: 'Clinical', path: '/reports?type=clinical' },
-      { label: 'Productivity', path: '/reports?type=productivity' },
+      { label: 'Visit Summaries', path: '/reports?type=visits' },
+      { label: 'Clinical Notes', path: '/reports?type=clinical' },
+      { label: 'Lab Results', path: '/reports?type=labs' },
+      { label: 'Treatment History', path: '/reports?type=treatments' },
     ]
   },
   {

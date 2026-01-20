@@ -565,4 +565,83 @@ router.put(
   }
 );
 
+// GET /api/lesions/:id/biopsies - Get all biopsies for a lesion
+router.get("/:id/biopsies", requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const { id } = req.params;
+    const tenantId = req.user!.tenantId;
+
+    const biopsies = await pool.query(
+      `select
+        b.*,
+        ordering_pr.first_name || ' ' || ordering_pr.last_name as ordering_provider_name,
+        reviewing_pr.first_name || ' ' || reviewing_pr.last_name as reviewing_provider_name
+       from biopsies b
+       left join providers ordering_pr on b.ordering_provider_id = ordering_pr.id
+       left join providers reviewing_pr on b.reviewing_provider_id = reviewing_pr.id
+       where b.lesion_id = $1 and b.tenant_id = $2 and b.deleted_at is null
+       order by b.ordered_at desc`,
+      [id, tenantId]
+    );
+
+    res.json({ biopsies: biopsies.rows });
+  } catch (error) {
+    console.error("Get lesion biopsies error:", error);
+    res.status(500).json({ error: "Failed to retrieve biopsies" });
+  }
+});
+
+// GET /api/lesions/:id/photos - Get all photos for a lesion
+router.get("/:id/photos", requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const { id } = req.params;
+    const tenantId = req.user!.tenantId;
+
+    const photos = await pool.query(
+      `select
+        p.*,
+        u.first_name || ' ' || u.last_name as uploaded_by_name
+       from photos p
+       left join users u on p.uploaded_by = u.id
+       where p.lesion_id = $1 and p.tenant_id = $2 and p.is_deleted = false
+       order by p.created_at desc`,
+      [id, tenantId]
+    );
+
+    res.json({ photos: photos.rows });
+  } catch (error) {
+    console.error("Get lesion photos error:", error);
+    res.status(500).json({ error: "Failed to retrieve photos" });
+  }
+});
+
+// GET /api/lesions/:id/timeline - Get complete timeline for lesion
+router.get("/:id/timeline", requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const { id } = req.params;
+    const tenantId = req.user!.tenantId;
+
+    // Verify lesion belongs to tenant
+    const lesionCheck = await pool.query(
+      `select id from lesions where id = $1 and tenant_id = $2`,
+      [id, tenantId]
+    );
+
+    if (lesionCheck.rows.length === 0) {
+      return res.status(404).json({ error: "Lesion not found" });
+    }
+
+    // Get timeline using the database function
+    const timeline = await pool.query(
+      `select * from get_lesion_timeline($1)`,
+      [id]
+    );
+
+    res.json({ timeline: timeline.rows });
+  } catch (error) {
+    console.error("Get lesion timeline error:", error);
+    res.status(500).json({ error: "Failed to retrieve timeline" });
+  }
+});
+
 export default router;

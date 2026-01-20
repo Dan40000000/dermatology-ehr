@@ -1,0 +1,115 @@
+/**
+ * "Prior Authorization" Walkthrough
+ * Learn to request and track prior authorizations for medications
+ */
+
+import { Walkthrough } from '../types';
+
+export const priorAuthWalkthrough: Walkthrough = {
+  id: 'prior-auth',
+  title: 'Prior Authorization',
+  description: 'Learn how to request prior authorization for biologic medications and specialty treatments, upload supporting documentation, and track approval status.',
+  estimatedMinutes: 5,
+  difficulty: 'intermediate',
+  category: 'administrative',
+  icon: '📋',
+  prerequisites: ['first-patient'],
+  steps: [
+    {
+      id: 'intro',
+      title: 'Prior Authorization Process',
+      description: 'Prior authorizations are required by insurance companies for expensive medications like biologics. We\'ll walk through submitting a PA request with all required documentation.',
+      targetSelector: 'body',
+      position: 'center',
+    },
+    {
+      id: 'navigate-rx',
+      title: 'Go to Prescriptions',
+      description: 'Click on the "Rx" tab to access the prescription and prior authorization module.',
+      targetSelector: '.nav span:has-text("Rx")',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'select-patient',
+      title: 'Select Patient',
+      description: 'Choose the patient who needs the prior authorization for their medication.',
+      targetSelector: '.list-row:first-child',
+      position: 'right',
+      action: 'click',
+    },
+    {
+      id: 'create-order',
+      title: 'Create Medication Order',
+      description: 'Click "+ Order" to create a new prescription order. We\'ll specify that this requires prior authorization.',
+      targetSelector: 'details:has(summary:contains("Order"))',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'medication-details',
+      title: 'Enter Medication Information',
+      description: 'Enter the medication name (e.g., Dupixent, Stelara, Humira), strength, and dosing instructions. Be specific about frequency and route.',
+      targetSelector: 'input[placeholder*="Medication"]',
+      position: 'right',
+      action: 'type',
+      actionValue: 'Dupixent 300mg subcutaneous injection every 2 weeks',
+    },
+    {
+      id: 'diagnosis-code',
+      title: 'Add Diagnosis Code',
+      description: 'Include the ICD-10 diagnosis code that justifies the medication. For Dupixent, this might be L20.9 (Atopic dermatitis) or L21.0 (Seborrhea capitis).',
+      targetSelector: 'input[placeholder*="details"], textarea',
+      position: 'right',
+      action: 'type',
+      actionValue: 'ICD-10: L20.9 - Moderate to severe atopic dermatitis refractory to topical therapy',
+    },
+    {
+      id: 'clinical-justification',
+      title: 'Clinical Justification',
+      description: 'Provide detailed clinical justification: failed therapies, disease severity, DLQI score, and why this medication is medically necessary. Insurance reviewers will read this.',
+      targetSelector: 'textarea',
+      position: 'right',
+      action: 'type',
+      actionValue: 'Patient has severe atopic dermatitis covering >30% BSA. Failed topical steroids, tacrolimus, and phototherapy. DLQI score 24/30. Significant impact on quality of life.',
+    },
+    {
+      id: 'upload-photos',
+      title: 'Attach Supporting Documentation',
+      description: 'Upload clinical photos showing disease severity, DLQI questionnaire results, and documentation of failed therapies. Good documentation increases approval rates.',
+      targetSelector: '.panel:has(.panel-title:contains("Documents"))',
+      position: 'left',
+      action: 'wait',
+    },
+    {
+      id: 'submit-pa',
+      title: 'Submit Prior Auth Request',
+      description: 'Save the order and change status to "ordered". This automatically generates a prior authorization request to send to the insurance company.',
+      targetSelector: 'button:has-text("Save order")',
+      position: 'top',
+      action: 'click',
+    },
+    {
+      id: 'track-status',
+      title: 'Track PA Status',
+      description: 'Go to the Orders panel to monitor the prior auth status. Statuses include: pending, approved, denied, or more information needed. Follow up if no response in 3-5 days.',
+      targetSelector: '.panel:has(.panel-title:contains("Orders"))',
+      position: 'left',
+      action: 'wait',
+    },
+    {
+      id: 'handle-denial',
+      title: 'Appeal Process (If Needed)',
+      description: 'If denied, review the denial reason. You can submit an appeal with additional documentation or peer-to-peer review. Many denials are overturned on appeal.',
+      targetSelector: 'body',
+      position: 'center',
+    },
+    {
+      id: 'completion',
+      title: 'PA Workflow Complete!',
+      description: 'You\'ve learned the prior authorization process! Remember: thorough documentation, clinical photos, and detailed justification greatly increase approval rates. Check PA status daily.',
+      targetSelector: 'body',
+      position: 'center',
+    },
+  ],
+};

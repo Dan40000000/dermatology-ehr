@@ -30,8 +30,67 @@ const learnPairSchema = z.object({
 });
 
 /**
- * GET /api/adaptive/diagnoses/suggested
- * Get top diagnoses for a provider, sorted by adaptive score (frequency + recency)
+ * @swagger
+ * /api/adaptive/diagnoses/suggested:
+ *   get:
+ *     summary: Get suggested diagnoses for a provider
+ *     description: Retrieve top diagnoses sorted by adaptive score (frequency + recency) for a specific provider.
+ *     tags:
+ *       - Adaptive Learning
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: query
+ *         name: providerId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Provider ID (defaults to current user if not specified)
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Maximum number of suggestions to return
+ *     responses:
+ *       200:
+ *         description: List of suggested diagnoses
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 suggestions:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       icd10Code:
+ *                         type: string
+ *                       description:
+ *                         type: string
+ *                       category:
+ *                         type: string
+ *                       frequencyCount:
+ *                         type: integer
+ *                       lastUsed:
+ *                         type: string
+ *                         format: date-time
+ *                       adaptiveScore:
+ *                         type: number
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to fetch suggestions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 adaptiveLearningRouter.get("/diagnoses/suggested", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
@@ -75,8 +134,69 @@ adaptiveLearningRouter.get("/diagnoses/suggested", requireAuth, async (req: Auth
 });
 
 /**
- * GET /api/adaptive/procedures/suggested
- * Get top procedures for a provider, sorted by adaptive score
+ * @swagger
+ * /api/adaptive/procedures/suggested:
+ *   get:
+ *     summary: Get suggested procedures for a provider
+ *     description: Retrieve top procedures sorted by adaptive score (frequency + recency) for a specific provider.
+ *     tags:
+ *       - Adaptive Learning
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: query
+ *         name: providerId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Provider ID (defaults to current user if not specified)
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Maximum number of suggestions to return
+ *     responses:
+ *       200:
+ *         description: List of suggested procedures
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 suggestions:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       cptCode:
+ *                         type: string
+ *                       description:
+ *                         type: string
+ *                       category:
+ *                         type: string
+ *                       defaultFeeCents:
+ *                         type: integer
+ *                       frequencyCount:
+ *                         type: integer
+ *                       lastUsed:
+ *                         type: string
+ *                         format: date-time
+ *                       adaptiveScore:
+ *                         type: number
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to fetch suggestions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 adaptiveLearningRouter.get("/procedures/suggested", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
@@ -122,8 +242,75 @@ adaptiveLearningRouter.get("/procedures/suggested", requireAuth, async (req: Aut
 });
 
 /**
- * GET /api/adaptive/procedures/for-diagnosis/:icd10Code
- * Get procedures commonly paired with a specific diagnosis
+ * @swagger
+ * /api/adaptive/procedures/for-diagnosis/{icd10Code}:
+ *   get:
+ *     summary: Get procedures commonly paired with a diagnosis
+ *     description: Retrieve procedures frequently used with a specific diagnosis, sorted by adaptive score.
+ *     tags:
+ *       - Adaptive Learning
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: icd10Code
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ICD-10 diagnosis code
+ *       - in: query
+ *         name: providerId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Provider ID (defaults to current user if not specified)
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Maximum number of suggestions to return
+ *     responses:
+ *       200:
+ *         description: List of suggested procedures for the diagnosis
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 suggestions:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       cptCode:
+ *                         type: string
+ *                       description:
+ *                         type: string
+ *                       category:
+ *                         type: string
+ *                       defaultFeeCents:
+ *                         type: integer
+ *                       pairCount:
+ *                         type: integer
+ *                       lastUsed:
+ *                         type: string
+ *                         format: date-time
+ *                       adaptiveScore:
+ *                         type: number
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to fetch suggestions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 adaptiveLearningRouter.get("/procedures/for-diagnosis/:icd10Code", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
@@ -172,8 +359,65 @@ adaptiveLearningRouter.get("/procedures/for-diagnosis/:icd10Code", requireAuth, 
 });
 
 /**
- * POST /api/adaptive/learn/diagnosis
- * Manually record diagnosis usage (can be called directly or automatically)
+ * @swagger
+ * /api/adaptive/learn/diagnosis:
+ *   post:
+ *     summary: Record diagnosis usage
+ *     description: Manually record that a provider used a specific diagnosis code. Updates frequency tracking for adaptive learning. Requires provider or admin role.
+ *     tags:
+ *       - Adaptive Learning
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - providerId
+ *               - icd10Code
+ *             properties:
+ *               providerId:
+ *                 type: string
+ *                 format: uuid
+ *               icd10Code:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Usage recorded successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to record usage
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 adaptiveLearningRouter.post(
   "/learn/diagnosis",
@@ -199,8 +443,65 @@ adaptiveLearningRouter.post(
 );
 
 /**
- * POST /api/adaptive/learn/procedure
- * Manually record procedure usage
+ * @swagger
+ * /api/adaptive/learn/procedure:
+ *   post:
+ *     summary: Record procedure usage
+ *     description: Manually record that a provider used a specific procedure code. Updates frequency tracking for adaptive learning. Requires provider or admin role.
+ *     tags:
+ *       - Adaptive Learning
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - providerId
+ *               - cptCode
+ *             properties:
+ *               providerId:
+ *                 type: string
+ *                 format: uuid
+ *               cptCode:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Usage recorded successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to record usage
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 adaptiveLearningRouter.post(
   "/learn/procedure",
@@ -226,8 +527,68 @@ adaptiveLearningRouter.post(
 );
 
 /**
- * POST /api/adaptive/learn/pair
- * Manually record diagnosis-procedure pair
+ * @swagger
+ * /api/adaptive/learn/pair:
+ *   post:
+ *     summary: Record diagnosis-procedure pair
+ *     description: Manually record that a provider used a specific diagnosis and procedure together. Updates pairing tracking for adaptive learning. Requires provider or admin role.
+ *     tags:
+ *       - Adaptive Learning
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - providerId
+ *               - icd10Code
+ *               - cptCode
+ *             properties:
+ *               providerId:
+ *                 type: string
+ *                 format: uuid
+ *               icd10Code:
+ *                 type: string
+ *               cptCode:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Pair recorded successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to record pair
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 adaptiveLearningRouter.post(
   "/learn/pair",
@@ -253,8 +614,75 @@ adaptiveLearningRouter.post(
 );
 
 /**
- * GET /api/adaptive/stats/:providerId
- * Get provider learning statistics (for display purposes)
+ * @swagger
+ * /api/adaptive/stats/{providerId}:
+ *   get:
+ *     summary: Get provider learning statistics
+ *     description: Retrieve adaptive learning statistics for a provider including top diagnoses, procedures, and usage counts.
+ *     tags:
+ *       - Adaptive Learning
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: providerId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Provider ID
+ *     responses:
+ *       200:
+ *         description: Provider learning statistics
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 topDiagnoses:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       icd10Code:
+ *                         type: string
+ *                       frequencyCount:
+ *                         type: integer
+ *                       description:
+ *                         type: string
+ *                 topProcedures:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       cptCode:
+ *                         type: string
+ *                       frequencyCount:
+ *                         type: integer
+ *                       description:
+ *                         type: string
+ *                 stats:
+ *                   type: object
+ *                   properties:
+ *                     totalDiagnoses:
+ *                       type: integer
+ *                     totalProcedures:
+ *                       type: integer
+ *                     totalPairs:
+ *                       type: integer
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to fetch statistics
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 adaptiveLearningRouter.get("/stats/:providerId", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;

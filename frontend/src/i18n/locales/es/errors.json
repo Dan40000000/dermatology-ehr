@@ -1,0 +1,60 @@
+{
+  "general": {
+    "unknown": "Ocurrió un error desconocido",
+    "networkError": "Error de red. Por favor, verifique su conexión.",
+    "serverError": "Error del servidor. Por favor, intente más tarde.",
+    "notFound": "No se encontró el recurso solicitado",
+    "unauthorized": "No está autorizado para realizar esta acción",
+    "forbidden": "Acceso prohibido",
+    "timeout": "La solicitud expiró. Por favor, intente nuevamente."
+  },
+  "validation": {
+    "required": "Este campo es obligatorio",
+    "invalidEmail": "Dirección de correo electrónico inválida",
+    "invalidPhone": "Número de teléfono inválido",
+    "invalidDate": "Fecha inválida",
+    "invalidFormat": "Formato inválido",
+    "tooShort": "El valor es demasiado corto",
+    "tooLong": "El valor es demasiado largo",
+    "mustMatch": "Los valores deben coincidir",
+    "invalidRange": "El valor está fuera de rango"
+  },
+  "auth": {
+    "invalidCredentials": "Correo o contraseña inválidos",
+    "accountLocked": "La cuenta está bloqueada. Contacte al administrador.",
+    "sessionExpired": "Su sesión ha expirado. Por favor, inicie sesión nuevamente.",
+    "passwordTooWeak": "La contraseña es demasiado débil",
+    "passwordsDoNotMatch": "Las contraseñas no coinciden",
+    "emailAlreadyExists": "El correo electrónico ya existe",
+    "invalidToken": "Token inválido o expirado"
+  },
+  "data": {
+    "loadFailed": "Error al cargar los datos",
+    "saveFailed": "Error al guardar los datos",
+    "deleteFailed": "Error al eliminar los datos",
+    "updateFailed": "Error al actualizar los datos",
+    "exportFailed": "Error al exportar los datos",
+    "uploadFailed": "Error al subir el archivo",
+    "downloadFailed": "Error al descargar el archivo"
+  },
+  "appointments": {
+    "conflictDetected": "Conflicto de horario detectado",
+    "noAvailability": "No hay disponibilidad para la hora seleccionada",
+    "pastDate": "No se puede programar en el pasado",
+    "invalidDuration": "Duración de cita inválida",
+    "alreadyBooked": "El espacio horario ya está reservado"
+  },
+  "billing": {
+    "invalidAmount": "Monto inválido",
+    "paymentFailed": "Error al procesar el pago",
+    "claimError": "Error al enviar la reclamación",
+    "insufficientFunds": "Fondos insuficientes",
+    "cardDeclined": "Tarjeta rechazada"
+  },
+  "clinical": {
+    "encounterLocked": "El encuentro está bloqueado y no puede ser editado",
+    "invalidVitals": "Valores de signos vitales inválidos",
+    "missingDiagnosis": "Se requiere al menos un diagnóstico",
+    "signatureRequired": "Se requiere firma para completar la nota"
+  }
+}

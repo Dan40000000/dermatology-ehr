@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useAuth } from "../contexts/AuthContext";
 import {
   fetchClaims,
   submitClaimToClearinghouse,
@@ -11,17 +12,8 @@ import {
   fetchClosingReport,
 } from "../api";
 
-interface Session {
-  tenantId: string;
-  accessToken: string;
-  user: { id: string; email: string; role: string; fullName: string };
-}
-
-interface ClearinghousePageProps {
-  session: Session;
-}
-
-export function ClearinghousePage({ session }: ClearinghousePageProps) {
+export function ClearinghousePage() {
+  const { session } = useAuth();
   const [activeTab, setActiveTab] = useState<"submit" | "era" | "eft" | "reconcile" | "reports">("submit");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +52,8 @@ export function ClearinghousePage({ session }: ClearinghousePageProps) {
   }, [activeTab]);
 
   const loadInitialData = async () => {
+    if (!session) return;
+
     setLoading(true);
     setError(null);
     try {
@@ -89,6 +83,7 @@ export function ClearinghousePage({ session }: ClearinghousePageProps) {
   };
 
   const handleSubmitClaims = async () => {
+    if (!session) return;
     if (selectedClaims.size === 0) {
       setError("Please select at least one claim to submit");
       return;
@@ -115,6 +110,7 @@ export function ClearinghousePage({ session }: ClearinghousePageProps) {
   };
 
   const handleCheckClaimStatus = async (claimId: string) => {
+    if (!session) return;
     try {
       const status = await fetchClaimStatus(session.tenantId, session.accessToken, claimId);
       setClaimStatusMap(new Map(claimStatusMap.set(claimId, status)));
@@ -125,6 +121,7 @@ export function ClearinghousePage({ session }: ClearinghousePageProps) {
   };
 
   const handleViewERADetails = async (eraId: string) => {
+    if (!session) return;
     setLoading(true);
     try {
       const details = await fetchERADetails(session.tenantId, session.accessToken, eraId);
@@ -138,6 +135,7 @@ export function ClearinghousePage({ session }: ClearinghousePageProps) {
   };
 
   const handlePostERA = async (eraId: string) => {
+    if (!session) return;
     if (!confirm("Post this ERA to claims? This will create payments.")) return;
 
     setLoading(true);
@@ -155,6 +153,7 @@ export function ClearinghousePage({ session }: ClearinghousePageProps) {
   };
 
   const handleReconcile = async () => {
+    if (!session) return;
     if (!selectedERAForReconcile) {
       setError("Please select an ERA to reconcile");
       return;
@@ -186,6 +185,7 @@ export function ClearinghousePage({ session }: ClearinghousePageProps) {
   };
 
   const handleGenerateReport = async () => {
+    if (!session) return;
     setLoading(true);
     try {
       const report = await fetchClosingReport(session.tenantId, session.accessToken, reportDates);

@@ -227,28 +227,189 @@ prescriptionsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) => 
   }
 });
 
-// GET /api/prescriptions/patient/:patientId - Get patient's prescriptions
+// GET /api/patients/:patientId/prescriptions - Get patient's prescriptions with full details
 prescriptionsRouter.get('/patient/:patientId', requireAuth, async (req: AuthedRequest, res) => {
   try {
     const { patientId } = req.params;
     const tenantId = req.user!.tenantId;
+    const { includeRefills, includeDermTracking, status } = req.query;
+
+    // Verify patient belongs to tenant
+    const patientCheck = await pool.query(
+      'select id from patients where id = $1 and tenant_id = $2',
+      [patientId, tenantId]
+    );
+    if (patientCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    let query = `
+      select
+        p.*,
+        prov.full_name as "providerName",
+        prov.npi as "providerNpi",
+        pharm.name as "pharmacyName",
+        pharm.phone as "pharmacyPhone",
+        pharm.street as "pharmacyStreet",
+        pharm.city as "pharmacyCity",
+        pharm.state as "pharmacyState",
+        pharm.zip as "pharmacyZip",
+        e.created_at as "encounterDate",
+        e.chief_complaint as "encounterChiefComplaint"
+      from prescriptions p
+      left join providers prov on p.provider_id = prov.id
+      left join pharmacies pharm on p.pharmacy_id = pharm.id
+      left join encounters e on p.encounter_id = e.id
+      where p.patient_id = $1 and p.tenant_id = $2
+    `;
+
+    const params: any[] = [patientId, tenantId];
+    let paramIndex = 3;
+
+    if (status) {
+      query += ` and p.status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+
+    query += ' order by p.created_at desc';
+
+    const result = await pool.query(query, params);
+    const prescriptions = result.rows;
+
+    // Optionally include refill history for each prescription
+    if (includeRefills === 'true') {
+      for (const prescription of prescriptions) {
+        const refillsResult = await pool.query(
+          `select
+            r.*,
+            pharm.name as "pharmacyName"
+          from prescription_refills r
+          left join pharmacies pharm on r.pharmacy_id = pharm.id
+          where r.prescription_id = $1
+          order by r.filled_date desc`,
+          [prescription.id]
+        );
+        prescription.refills = refillsResult.rows;
+      }
+    }
+
+    // Optionally include dermatology-specific tracking
+    if (includeDermTracking === 'true') {
+      for (const prescription of prescriptions) {
+        const trackingResult = await pool.query(
+          `select * from derm_medication_tracking
+           where prescription_id = $1
+           order by created_at desc
+           limit 1`,
+          [prescription.id]
+        );
+        if (trackingResult.rows.length > 0) {
+          prescription.dermTracking = trackingResult.rows[0];
+        }
+      }
+    }
+
+    return res.json({ prescriptions });
+  } catch (error) {
+    console.error('Error fetching patient prescriptions:', error);
+    return res.status(500).json({ error: 'Failed to fetch patient prescriptions' });
+  }
+});
+
+// GET /api/encounters/:encounterId/prescriptions - Get prescriptions for an encounter
+prescriptionsRouter.get('/encounter/:encounterId', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const { encounterId } = req.params;
+    const tenantId = req.user!.tenantId;
+
+    // Verify encounter belongs to tenant
+    const encounterCheck = await pool.query(
+      'select id, patient_id from encounters where id = $1 and tenant_id = $2',
+      [encounterId, tenantId]
+    );
+    if (encounterCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Encounter not found' });
+    }
 
     const result = await pool.query(
       `select
         p.*,
         prov.full_name as "providerName",
-        null as "pharmacyName"
+        prov.npi as "providerNpi",
+        pharm.name as "pharmacyName",
+        pharm.phone as "pharmacyPhone"
       from prescriptions p
       left join providers prov on p.provider_id = prov.id
-      where p.patient_id = $1 and p.tenant_id = $2
+      left join pharmacies pharm on p.pharmacy_id = pharm.id
+      where p.encounter_id = $1 and p.tenant_id = $2
       order by p.created_at desc`,
-      [patientId, tenantId]
+      [encounterId, tenantId]
     );
 
     return res.json({ prescriptions: result.rows });
   } catch (error) {
-    console.error('Error fetching patient prescriptions:', error);
-    return res.status(500).json({ error: 'Failed to fetch patient prescriptions' });
+    console.error('Error fetching encounter prescriptions:', error);
+    return res.status(500).json({ error: 'Failed to fetch encounter prescriptions' });
+  }
+});
+
+// GET /api/prescriptions/:id/refill-history - Get refill history for a prescription
+prescriptionsRouter.get('/:id/refill-history', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const { id } = req.params;
+    const tenantId = req.user!.tenantId;
+
+    // Verify prescription belongs to tenant
+    const prescriptionCheck = await pool.query(
+      'select id, patient_id, medication_name, refills, refills_remaining from prescriptions where id = $1 and tenant_id = $2',
+      [id, tenantId]
+    );
+    if (prescriptionCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Prescription not found' });
+    }
+
+    const prescription = prescriptionCheck.rows[0];
+
+    // Get refill history
+    const refillsResult = await pool.query(
+      `select
+        r.*,
+        pharm.name as "pharmacyName",
+        pharm.phone as "pharmacyPhone",
+        pharm.street as "pharmacyStreet",
+        pharm.city as "pharmacyCity",
+        pharm.state as "pharmacyState",
+        prov.full_name as "filledByProviderName",
+        u.full_name as "filledByUserName"
+      from prescription_refills r
+      left join pharmacies pharm on r.pharmacy_id = pharm.id
+      left join providers prov on r.filled_by_provider_id = prov.id
+      left join users u on r.filled_by_user_id = u.id
+      where r.prescription_id = $1
+      order by r.filled_date desc`,
+      [id]
+    );
+
+    return res.json({
+      prescription: {
+        id: prescription.id,
+        patientId: prescription.patient_id,
+        medicationName: prescription.medication_name,
+        totalRefills: prescription.refills,
+        refillsRemaining: prescription.refills_remaining,
+      },
+      refills: refillsResult.rows,
+      summary: {
+        totalRefills: prescription.refills,
+        refillsUsed: refillsResult.rows.length,
+        refillsRemaining: prescription.refills_remaining,
+        lastFilledDate: refillsResult.rows.length > 0 ? refillsResult.rows[0].filled_date : null,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching refill history:', error);
+    return res.status(500).json({ error: 'Failed to fetch refill history' });
   }
 });
 

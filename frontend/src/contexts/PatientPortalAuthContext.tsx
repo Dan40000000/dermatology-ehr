@@ -6,6 +6,8 @@ interface Patient {
   firstName: string;
   lastName: string;
   email: string;
+  practicePhone?: string;
+  practiceName?: string;
 }
 
 interface PatientPortalAuthContextType {

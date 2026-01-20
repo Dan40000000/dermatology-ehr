@@ -1,0 +1,89 @@
+{
+  "title": "Facturación",
+  "charges": "Cargos",
+  "payments": "Pagos",
+  "claims": "Reclamaciones",
+  "statements": "Estados de Cuenta",
+  "fields": {
+    "chargeDate": "Fecha del Cargo",
+    "serviceDate": "Fecha de Servicio",
+    "cptCode": "Código CPT",
+    "icdCode": "Código CIE",
+    "description": "Descripción",
+    "amount": "Monto",
+    "units": "Unidades",
+    "modifier": "Modificador",
+    "placeOfService": "Lugar de Servicio",
+    "paymentMethod": "Método de Pago",
+    "paymentAmount": "Monto del Pago",
+    "paymentDate": "Fecha de Pago",
+    "referenceNumber": "Número de Referencia",
+    "insurancePayer": "Aseguradora Pagadora",
+    "patientResponsibility": "Responsabilidad del Paciente",
+    "copay": "Copago",
+    "deductible": "Deducible",
+    "coinsurance": "Coseguro",
+    "balance": "Saldo",
+    "adjustments": "Ajustes",
+    "writeOffs": "Condonaciones"
+  },
+  "status": {
+    "pending": "Pendiente",
+    "submitted": "Enviada",
+    "paid": "Pagada",
+    "partiallyPaid": "Parcialmente Pagada",
+    "denied": "Denegada",
+    "appealed": "Apelada",
+    "writeOff": "Condonada"
+  },
+  "paymentMethods": {
+    "cash": "Efectivo",
+    "check": "Cheque",
+    "creditCard": "Tarjeta de Crédito",
+    "debitCard": "Tarjeta de Débito",
+    "insurance": "Seguro",
+    "other": "Otro"
+  },
+  "actions": {
+    "addCharge": "Agregar Cargo",
+    "recordPayment": "Registrar Pago",
+    "submitClaim": "Enviar Reclamación",
+    "generateStatement": "Generar Estado de Cuenta",
+    "sendStatement": "Enviar Estado de Cuenta",
+    "viewStatement": "Ver Estado de Cuenta",
+    "printReceipt": "Imprimir Recibo",
+    "refund": "Procesar Reembolso"
+  },
+  "claims": {
+    "claimNumber": "Número de Reclamación",
+    "submissionDate": "Fecha de Envío",
+    "claimStatus": "Estado de Reclamación",
+    "adjudicationDate": "Fecha de Adjudicación",
+    "paidAmount": "Monto Pagado",
+    "denialReason": "Razón de Denegación",
+    "resubmit": "Reenviar",
+    "appeal": "Apelar"
+  },
+  "reports": {
+    "title": "Reportes Financieros",
+    "dailyReceipts": "Recibos Diarios",
+    "agingReport": "Reporte de Antigüedad",
+    "collectionsSummary": "Resumen de Cobros",
+    "payerAnalysis": "Análisis de Pagadores",
+    "revenueByProvider": "Ingresos por Proveedor",
+    "revenueByService": "Ingresos por Servicio"
+  },
+  "messages": {
+    "chargeCreated": "Cargo agregado exitosamente",
+    "paymentRecorded": "Pago registrado exitosamente",
+    "claimSubmitted": "Reclamación enviada exitosamente",
+    "statementGenerated": "Estado de cuenta generado exitosamente",
+    "refundProcessed": "Reembolso procesado exitosamente"
+  },
+  "stats": {
+    "totalRevenue": "Ingresos Totales",
+    "outstandingBalance": "Saldo Pendiente",
+    "collectionRate": "Tasa de Cobro",
+    "avgPaymentTime": "Tiempo Promedio de Pago"
+  }
+}

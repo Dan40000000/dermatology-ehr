@@ -1,0 +1,115 @@
+{
+  "title": "Clínico",
+  "encounter": "Encuentro",
+  "encounters": "Encuentros",
+  "newEncounter": "Nuevo Encuentro",
+  "chiefComplaint": "Motivo Principal de Consulta",
+  "hpi": "Historia de la Enfermedad Actual",
+  "ros": "Revisión de Sistemas",
+  "exam": "Examen Físico",
+  "assessment": "Evaluación",
+  "plan": "Plan",
+  "assessmentPlan": "Evaluación y Plan",
+  "vitals": {
+    "title": "Signos Vitales",
+    "bloodPressure": "Presión Arterial",
+    "systolic": "Sistólica",
+    "diastolic": "Diastólica",
+    "pulse": "Pulso",
+    "temperature": "Temperatura",
+    "height": "Estatura",
+    "weight": "Peso",
+    "bmi": "IMC",
+    "oxygenSaturation": "Saturación de Oxígeno",
+    "respiratoryRate": "Frecuencia Respiratoria",
+    "painScale": "Escala de Dolor (0-10)"
+  },
+  "skinExam": {
+    "title": "Examen Dermatológico",
+    "lesionType": "Tipo de Lesión",
+    "location": "Ubicación",
+    "size": "Tamaño",
+    "color": "Color",
+    "shape": "Forma",
+    "texture": "Textura",
+    "distribution": "Distribución",
+    "description": "Descripción",
+    "bodyMap": "Mapa Corporal"
+  },
+  "diagnosis": {
+    "title": "Diagnóstico",
+    "primary": "Diagnóstico Principal",
+    "secondary": "Diagnóstico Secundario",
+    "differential": "Diagnóstico Diferencial",
+    "icdCode": "Código CIE",
+    "description": "Descripción"
+  },
+  "procedures": {
+    "title": "Procedimientos",
+    "biopsy": "Biopsia",
+    "excision": "Escisión",
+    "cryotherapy": "Crioterapia",
+    "electrodessication": "Electrodesecación",
+    "phototherapy": "Fototerapia",
+    "laserTherapy": "Terapia Láser",
+    "injection": "Inyección",
+    "mohs": "Cirugía de Mohs",
+    "procedureDate": "Fecha del Procedimiento",
+    "procedureNotes": "Notas del Procedimiento",
+    "anesthesia": "Anestesia",
+    "complications": "Complicaciones"
+  },
+  "orders": {
+    "title": "Órdenes",
+    "labOrder": "Orden de Laboratorio",
+    "imagingOrder": "Orden de Imagenología",
+    "pathology": "Patología",
+    "referral": "Referencia",
+    "orderType": "Tipo de Orden",
+    "orderDetails": "Detalles de la Orden",
+    "orderDate": "Fecha de la Orden",
+    "results": "Resultados",
+    "pending": "Pendiente",
+    "completed": "Completada"
+  },
+  "templates": {
+    "title": "Plantillas de Notas",
+    "selectTemplate": "Seleccionar Plantilla",
+    "acne": "Visita por Acné",
+    "eczema": "Eczema/Dermatitis",
+    "psoriasis": "Psoriasis",
+    "skinCancer": "Detección de Cáncer de Piel",
+    "moleCheck": "Revisión de Lunares",
+    "rash": "Evaluación de Erupción",
+    "followUp": "Visita de Seguimiento",
+    "postOp": "Revisión Postoperatoria"
+  },
+  "photos": {
+    "title": "Fotos Clínicas",
+    "uploadPhoto": "Subir Foto",
+    "takePhoto": "Tomar Foto",
+    "bodyLocation": "Ubicación Corporal",
+    "viewComparison": "Ver Comparación",
+    "beforeAfter": "Antes/Después",
+    "annotations": "Anotaciones"
+  },
+  "status": {
+    "draft": "Borrador",
+    "signed": "Firmada",
+    "locked": "Bloqueada",
+    "amended": "Enmendada"
+  },
+  "actions": {
+    "saveNote": "Guardar Nota",
+    "signNote": "Firmar Nota",
+    "amendNote": "Enmendar Nota",
+    "printNote": "Imprimir Nota",
+    "exportPdf": "Exportar PDF"
+  },
+  "messages": {
+    "noteSaved": "Nota guardada exitosamente",
+    "noteSigned": "Nota firmada exitosamente",
+    "encounterLocked": "El encuentro está bloqueado; edición deshabilitada",
+    "templateApplied": "Plantilla aplicada exitosamente"
+  }
+}

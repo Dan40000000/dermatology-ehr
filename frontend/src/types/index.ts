@@ -304,6 +304,10 @@ export interface AppointmentType {
   tenantId: string;
   name: string;
   durationMinutes: number;
+  color?: string;
+  category?: string;
+  description?: string;
+  isActive?: boolean;
   createdAt: string;
 }
 
@@ -350,6 +354,8 @@ export interface Encounter {
   appointmentId?: string;
   patientId: string;
   providerId: string;
+  patientName?: string;
+  providerName?: string;
   status: 'draft' | 'finalized' | 'signed' | 'locked';
   chiefComplaint?: string;
   hpi?: string;
@@ -948,6 +954,7 @@ export interface FeeScheduleItem {
   feeScheduleId: string;
   cptCode: string;
   cptDescription?: string;
+  category?: string;
   feeCents: number;
   createdAt: string;
   updatedAt: string;

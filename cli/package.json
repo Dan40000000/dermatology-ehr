@@ -1,0 +1,55 @@
+{
+  "name": "@derm-app/cli",
+  "version": "1.0.0",
+  "description": "Command-line interface for managing the Dermatology App",
+  "main": "dist/index.js",
+  "bin": {
+    "derm": "./bin/derm.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "dermatology",
+    "cli",
+    "medical",
+    "healthcare"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "commander": "^12.1.0",
+    "chalk": "^4.1.2",
+    "ora": "^5.4.1",
+    "inquirer": "^8.2.6",
+    "cli-table3": "^0.6.5",
+    "dotenv": "^16.4.7",
+    "pg": "^8.16.3",
+    "bcryptjs": "^2.4.3",
+    "csv-parser": "^3.0.0",
+    "csv-writer": "^1.6.0",
+    "node-fetch": "^2.7.0",
+    "fs-extra": "^11.2.0",
+    "archiver": "^7.0.1",
+    "extract-zip": "^2.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.14",
+    "@types/inquirer": "^8.2.10",
+    "@types/pg": "^8.15.6",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/fs-extra": "^11.0.4",
+    "@types/archiver": "^6.0.2",
+    "@types/node-fetch": "^2.6.12",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

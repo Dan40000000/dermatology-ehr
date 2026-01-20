@@ -1,0 +1,77 @@
+{
+  "title": "患者",
+  "newPatient": "New Patient",
+  "patientList": "Patient List",
+  "patientDetails": "Patient Details",
+  "patientSearch": "Patient Search",
+  "searchPlaceholder": "Search by name, email, or phone...",
+  "fields": {
+    "firstName": "名",
+    "lastName": "姓",
+    "middleName": "Middle Name",
+    "dateOfBirth": "出生日期",
+    "gender": "性别",
+    "email": "电子邮件",
+    "phone": "电话",
+    "mobilePhone": "Mobile Phone",
+    "homePhone": "Home Phone",
+    "workPhone": "Work Phone",
+    "address": "地址",
+    "addressLine1": "Address Line 1",
+    "addressLine2": "Address Line 2",
+    "city": "城市",
+    "state": "州/省",
+    "zipCode": "邮政编码",
+    "country": "国家",
+    "emergencyContact": "Emergency Contact",
+    "emergencyPhone": "Emergency Phone",
+    "insuranceProvider": "Insurance Provider",
+    "insuranceId": "Insurance ID",
+    "policyNumber": "Policy Number",
+    "groupNumber": "Group Number",
+    "medicalHistory": "Medical History",
+    "allergies": "Allergies",
+    "medications": "Current Medications",
+    "primaryCarePhysician": "Primary Care Physician",
+    "referringPhysician": "Referring Physician"
+  },
+  "genders": {
+    "male": "Male",
+    "female": "Female",
+    "other": "Other",
+    "preferNotToSay": "Prefer not to say"
+  },
+  "tabs": {
+    "overview": "Overview",
+    "demographics": "Demographics",
+    "insurance": "Insurance",
+    "medicalHistory": "Medical History",
+    "appointments": "预约",
+    "encounters": "Encounters",
+    "documents": "文档",
+    "photos": "Photos",
+    "billing": "Billing",
+    "messages": "消息"
+  },
+  "actions": {
+    "addPatient": "Add Patient",
+    "editPatient": "Edit Patient",
+    "deletePatient": "Delete Patient",
+    "viewChart": "View Chart",
+    "scheduleAppointment": "Schedule Appointment",
+    "sendMessage": "Send Message",
+    "uploadDocument": "Upload Document"
+  },
+  "messages": {
+    "patientCreated": "Patient created successfully",
+    "patientUpdated": "Patient updated successfully",
+    "patientDeleted": "Patient deleted successfully",
+    "noPatients": "No patients found",
+    "loadingPatients": "Loading patients..."
+  },
+  "stats": {
+    "totalPatients": "Total Patients",
+    "newThisMonth": "New This Month",
+    "activePatients": "Active Patients"
+  }
+}

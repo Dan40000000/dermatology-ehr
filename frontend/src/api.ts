@@ -567,6 +567,55 @@ export async function fetchAppointmentTypesAnalytics(tenantId: string, accessTok
   return res.json();
 }
 
+// Enhanced analytics endpoints
+export async function fetchAnalyticsOverview(tenantId: string, accessToken: string, filter?: AnalyticsFilter) {
+  const res = await fetch(`${API_BASE}/api/analytics/overview${buildQuery(filter)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load analytics overview");
+  return res.json();
+}
+
+export async function fetchAppointmentAnalytics(tenantId: string, accessToken: string, filter?: AnalyticsFilter) {
+  const res = await fetch(`${API_BASE}/api/analytics/appointments${buildQuery(filter)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load appointment analytics");
+  return res.json();
+}
+
+export async function fetchRevenueAnalytics(tenantId: string, accessToken: string, filter?: AnalyticsFilter) {
+  const res = await fetch(`${API_BASE}/api/analytics/revenue${buildQuery(filter)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load revenue analytics");
+  return res.json();
+}
+
+export async function fetchPatientAnalytics(tenantId: string, accessToken: string, filter?: AnalyticsFilter) {
+  const res = await fetch(`${API_BASE}/api/analytics/patients${buildQuery(filter)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load patient analytics");
+  return res.json();
+}
+
+export async function fetchProviderAnalytics(tenantId: string, accessToken: string, filter?: AnalyticsFilter) {
+  const res = await fetch(`${API_BASE}/api/analytics/providers${buildQuery(filter)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load provider analytics");
+  return res.json();
+}
+
+export async function fetchQualityAnalytics(tenantId: string, accessToken: string, filter?: AnalyticsFilter) {
+  const res = await fetch(`${API_BASE}/api/analytics/quality${buildQuery(filter)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load quality analytics");
+  return res.json();
+}
+
 export const updateOrderStatus = (tenantId: string, accessToken: string, id: string, status: string) =>
   authedPost(tenantId, accessToken, `/api/orders/${id}/status`, { status });
 export const sendErx = (tenantId: string, accessToken: string, payload: any) =>
@@ -1053,6 +1102,23 @@ export async function updateClaimStatus(tenantId: string, accessToken: string, c
 
 export async function postClaimPayment(tenantId: string, accessToken: string, claimId: string, data: any) {
   return authedPost(tenantId, accessToken, `/api/claims/${claimId}/payments`, data);
+}
+
+export async function fetchClaimMetrics(tenantId: string, accessToken: string) {
+  return authedGet(tenantId, accessToken, "/api/claims/metrics");
+}
+
+export async function fetchDiagnosisCodes(
+  tenantId: string,
+  accessToken: string,
+  params?: { search?: string; category?: string; common?: boolean }
+) {
+  const queryParams = new URLSearchParams();
+  if (params?.search) queryParams.append("search", params.search);
+  if (params?.category) queryParams.append("category", params.category);
+  if (params?.common) queryParams.append("common", "true");
+  const query = queryParams.toString();
+  return authedGet(tenantId, accessToken, `/api/claims/diagnosis-codes${query ? `?${query}` : ""}`);
 }
 
 export function getSuperbillUrl(tenantId: string, accessToken: string, encounterId: string): string {
@@ -3724,6 +3790,201 @@ export async function markSMSConversationRead(
   return res.json();
 }
 
+// ============================================================================
+// SMS CONSENT API
+// ============================================================================
+
+export interface SMSConsent {
+  id: string;
+  patientId: string;
+  consentGiven: boolean;
+  consentDate: string;
+  consentMethod: 'verbal' | 'written' | 'electronic';
+  obtainedByUserId: string;
+  obtainedByName: string;
+  expirationDate?: string;
+  consentRevoked: boolean;
+  revokedDate?: string;
+  revokedReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getSMSConsent(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+): Promise<{ hasConsent: boolean; consent?: SMSConsent; daysUntilExpiration?: number | null }> {
+  const res = await fetch(`${API_BASE}/api/sms-consent/${patientId}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch SMS consent');
+  return res.json();
+}
+
+export async function recordSMSConsent(
+  tenantId: string,
+  accessToken: string,
+  patientId: string,
+  data: {
+    consentMethod: 'verbal' | 'written' | 'electronic';
+    obtainedByName: string;
+    expirationDate?: string;
+    notes?: string;
+  }
+): Promise<{ success: boolean; consentId: string }> {
+  const res = await fetch(`${API_BASE}/api/sms-consent/${patientId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to record SMS consent');
+  }
+  return res.json();
+}
+
+export async function revokeSMSConsent(
+  tenantId: string,
+  accessToken: string,
+  patientId: string,
+  reason?: string
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/sms-consent/${patientId}/revoke`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to revoke SMS consent');
+  }
+  return res.json();
+}
+
+// ============================================================================
+// SMS AUDIT LOG API
+// ============================================================================
+
+export interface SMSAuditLog {
+  id: string;
+  eventType: 'message_sent' | 'message_received' | 'consent_obtained' | 'consent_revoked' | 'opt_out';
+  patientId: string;
+  patientName: string;
+  userId?: string;
+  userName?: string;
+  messageId?: string;
+  messagePreview?: string;
+  direction?: 'inbound' | 'outbound';
+  status?: string;
+  metadata?: any;
+  createdAt: string;
+}
+
+export async function fetchSMSAuditLog(
+  tenantId: string,
+  accessToken: string,
+  filters?: {
+    patientId?: string;
+    eventType?: string;
+    startDate?: string;
+    endDate?: string;
+    limit?: number;
+    offset?: number;
+  }
+): Promise<{ auditLogs: SMSAuditLog[]; pagination: { total: number; limit: number; offset: number; hasMore: boolean } }> {
+  const params = new URLSearchParams();
+  if (filters?.patientId) params.append('patientId', filters.patientId);
+  if (filters?.eventType) params.append('eventType', filters.eventType);
+  if (filters?.startDate) params.append('startDate', filters.startDate);
+  if (filters?.endDate) params.append('endDate', filters.endDate);
+  if (filters?.limit) params.append('limit', filters.limit.toString());
+  if (filters?.offset) params.append('offset', filters.offset.toString());
+
+  const url = `${API_BASE}/api/sms-audit${params.toString() ? '?' + params.toString() : ''}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch SMS audit log');
+  return res.json();
+}
+
+export async function exportSMSAuditLog(
+  tenantId: string,
+  accessToken: string,
+  filters?: {
+    patientId?: string;
+    startDate?: string;
+    endDate?: string;
+  }
+): Promise<Blob> {
+  const params = new URLSearchParams();
+  if (filters?.patientId) params.append('patientId', filters.patientId);
+  if (filters?.startDate) params.append('startDate', filters.startDate);
+  if (filters?.endDate) params.append('endDate', filters.endDate);
+
+  const url = `${API_BASE}/api/sms-audit/export${params.toString() ? '?' + params.toString() : ''}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to export SMS audit log');
+  return res.blob();
+}
+
+export async function fetchSMSAuditSummary(
+  tenantId: string,
+  accessToken: string,
+  filters?: {
+    startDate?: string;
+    endDate?: string;
+  }
+): Promise<{
+  messagesSent: number;
+  messagesReceived: number;
+  consentsObtained: number;
+  consentsRevoked: number;
+  optOuts: number;
+  uniquePatients: number;
+}> {
+  const params = new URLSearchParams();
+  if (filters?.startDate) params.append('startDate', filters.startDate);
+  if (filters?.endDate) params.append('endDate', filters.endDate);
+
+  const url = `${API_BASE}/api/sms-audit/summary${params.toString() ? '?' + params.toString() : ''}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch SMS audit summary');
+  return res.json();
+}
+
 export async function getNearbyPharmacies(
   tenantId: string,
   accessToken: string,
@@ -5863,6 +6124,115 @@ export async function removeRegistryMember(
   return res.json();
 }
 
+// Disease Registry APIs
+export async function fetchRegistryDashboard(tenantId: string, accessToken: string) {
+  const res = await fetch(`${API_BASE}/api/disease-registry/dashboard`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error('Failed to load registry dashboard');
+  return res.json();
+}
+
+export async function fetchMelanomaRegistry(tenantId: string, accessToken: string) {
+  const res = await fetch(`${API_BASE}/api/disease-registry/melanoma`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error('Failed to load melanoma registry');
+  return res.json();
+}
+
+export async function saveMelanomaRegistryEntry(tenantId: string, accessToken: string, data: any) {
+  const res = await fetch(`${API_BASE}/api/disease-registry/melanoma`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to save melanoma registry entry');
+  }
+  return res.json();
+}
+
+export async function fetchPsoriasisRegistry(tenantId: string, accessToken: string) {
+  const res = await fetch(`${API_BASE}/api/disease-registry/psoriasis`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error('Failed to load psoriasis registry');
+  return res.json();
+}
+
+export async function savePsoriasisRegistryEntry(tenantId: string, accessToken: string, data: any) {
+  const res = await fetch(`${API_BASE}/api/disease-registry/psoriasis`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to save psoriasis registry entry');
+  }
+  return res.json();
+}
+
+export async function fetchAcneRegistry(tenantId: string, accessToken: string, onIsotretinoin?: boolean) {
+  const params = onIsotretinoin ? '?onIsotretinoin=true' : '';
+  const res = await fetch(`${API_BASE}/api/disease-registry/acne${params}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error('Failed to load acne registry');
+  return res.json();
+}
+
+export async function fetchChronicTherapyRegistry(tenantId: string, accessToken: string) {
+  const res = await fetch(`${API_BASE}/api/disease-registry/chronic-therapy`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error('Failed to load chronic therapy registry');
+  return res.json();
+}
+
+export async function saveChronicTherapyEntry(tenantId: string, accessToken: string, data: any) {
+  const res = await fetch(`${API_BASE}/api/disease-registry/chronic-therapy`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to save chronic therapy entry');
+  }
+  return res.json();
+}
+
+export async function fetchPasiHistory(tenantId: string, accessToken: string, patientId: string) {
+  const res = await fetch(`${API_BASE}/api/disease-registry/pasi-history/${patientId}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error('Failed to load PASI history');
+  return res.json();
+}
+
+export async function fetchRegistryAlerts(tenantId: string, accessToken: string) {
+  const res = await fetch(`${API_BASE}/api/disease-registry/alerts`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error('Failed to load registry alerts');
+  return res.json();
+}
+
 // Referral APIs
 export async function fetchReferrals(
   tenantId: string,
@@ -5984,3 +6354,582 @@ export async function createVital(
   }
   return res.json();
 }
+
+// ========================================
+// Patient-Specific Data Endpoints
+// ========================================
+
+export async function fetchPatientAppointments(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+) {
+  const res = await fetch(`${API_BASE}/api/patients/${patientId}/appointments`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch patient appointments');
+  return res.json();
+}
+
+export async function fetchPatientEncounters(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+) {
+  const res = await fetch(`${API_BASE}/api/patients/${patientId}/encounters`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch patient encounters');
+  return res.json();
+}
+
+export async function fetchPatientPrescriptions(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+) {
+  const res = await fetch(`${API_BASE}/api/patients/${patientId}/prescriptions`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch patient prescriptions');
+  return res.json();
+}
+
+export async function fetchPatientPriorAuths(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+) {
+  const res = await fetch(`${API_BASE}/api/patients/${patientId}/prior-auths`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch patient prior auths');
+  return res.json();
+}
+
+export async function fetchPatientBiopsies(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+) {
+  const res = await fetch(`${API_BASE}/api/patients/${patientId}/biopsies`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch patient biopsies');
+  return res.json();
+}
+
+export async function fetchPatientBalance(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+) {
+  const res = await fetch(`${API_BASE}/api/patients/${patientId}/balance`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch patient balance');
+  return res.json();
+}
+
+export async function fetchPatientPhotos(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+) {
+  const res = await fetch(`${API_BASE}/api/patients/${patientId}/photos`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch patient photos');
+  return res.json();
+}
+
+export async function fetchPatientBodyMap(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+) {
+  const res = await fetch(`${API_BASE}/api/patients/${patientId}/body-map`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch patient body map');
+  return res.json();
+}
+
+export async function fetchPatientInsurance(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+) {
+  const res = await fetch(`${API_BASE}/api/patients/${patientId}/insurance`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch patient insurance');
+  return res.json();
+}
+
+// ============================================================================
+// PDMP (Prescription Drug Monitoring Program) API
+// ============================================================================
+
+export async function checkPDMP(
+  tenantId: string,
+  accessToken: string,
+  patientId: string,
+  medication: string
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/pdmp/check`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify({ patientId, medication }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to check PDMP');
+  }
+  return res.json();
+}
+
+export async function getLastPDMPCheck(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/pdmp/patients/${patientId}/last-check`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch last PDMP check');
+  return res.json();
+}
+
+// ============================================================================
+// eRx Medication History API
+// ============================================================================
+
+export async function fetchPatientMedicationHistory(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/erx/patients/${patientId}/medication-history`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch medication history');
+  return res.json();
+}
+
+// ============================================================================
+// Default Export - Axios-like API Client
+// ============================================================================
+// This provides an axios-like interface for components that use `import api from '../api'`
+
+interface RequestConfig {
+  params?: Record<string, string | number | boolean | undefined>;
+  headers?: Record<string, string>;
+}
+
+interface ApiResponse<T = any> {
+  data: T;
+  status: number;
+  statusText: string;
+}
+
+function buildUrl(endpoint: string, params?: Record<string, any>): string {
+  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
+  if (!params) return url;
+
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      searchParams.append(key, String(value));
+    }
+  });
+  const queryString = searchParams.toString();
+  return queryString ? `${url}?${queryString}` : url;
+}
+
+function getAuthHeaders(): Record<string, string> {
+  // Get auth from localStorage if available
+  const stored = localStorage.getItem('auth');
+  if (stored) {
+    try {
+      const auth = JSON.parse(stored);
+      return {
+        'Authorization': `Bearer ${auth.accessToken}`,
+        [TENANT_HEADER]: auth.tenantId,
+      };
+    } catch (e) {
+      // ignore parse errors
+    }
+  }
+  return {};
+}
+
+const apiClient = {
+  async get<T = any>(endpoint: string, config?: RequestConfig): Promise<ApiResponse<T>> {
+    const url = buildUrl(endpoint, config?.params);
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+        ...config?.headers,
+      },
+      credentials: 'include',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error: any = new Error(data.error || `Request failed with status ${res.status}`);
+      error.response = { data, status: res.status, statusText: res.statusText };
+      throw error;
+    }
+    return { data, status: res.status, statusText: res.statusText };
+  },
+
+  async post<T = any>(endpoint: string, body?: any, config?: RequestConfig): Promise<ApiResponse<T>> {
+    const url = buildUrl(endpoint, config?.params);
+    const isFormData = body instanceof FormData;
+    const headers: Record<string, string> = {
+      ...getAuthHeaders(),
+      ...config?.headers,
+    };
+    if (!isFormData) {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: isFormData ? body : (body ? JSON.stringify(body) : undefined),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error: any = new Error(data.error || `Request failed with status ${res.status}`);
+      error.response = { data, status: res.status, statusText: res.statusText };
+      throw error;
+    }
+    return { data, status: res.status, statusText: res.statusText };
+  },
+
+  async put<T = any>(endpoint: string, body?: any, config?: RequestConfig): Promise<ApiResponse<T>> {
+    const url = buildUrl(endpoint, config?.params);
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+        ...config?.headers,
+      },
+      credentials: 'include',
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error: any = new Error(data.error || `Request failed with status ${res.status}`);
+      error.response = { data, status: res.status, statusText: res.statusText };
+      throw error;
+    }
+    return { data, status: res.status, statusText: res.statusText };
+  },
+
+  async patch<T = any>(endpoint: string, body?: any, config?: RequestConfig): Promise<ApiResponse<T>> {
+    const url = buildUrl(endpoint, config?.params);
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+        ...config?.headers,
+      },
+      credentials: 'include',
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error: any = new Error(data.error || `Request failed with status ${res.status}`);
+      error.response = { data, status: res.status, statusText: res.statusText };
+      throw error;
+    }
+    return { data, status: res.status, statusText: res.statusText };
+  },
+
+  async delete<T = any>(endpoint: string, config?: RequestConfig): Promise<ApiResponse<T>> {
+    const url = buildUrl(endpoint, config?.params);
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+        ...config?.headers,
+      },
+      credentials: 'include',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error: any = new Error(data.error || `Request failed with status ${res.status}`);
+      error.response = { data, status: res.status, statusText: res.statusText };
+      throw error;
+    }
+    return { data, status: res.status, statusText: res.statusText };
+  },
+};
+
+// ==================== PROTOCOLS API ====================
+
+export async function fetchProtocols(
+  tenantId: string,
+  accessToken: string,
+  params?: {
+    page?: number;
+    limit?: number;
+    category?: string;
+    status?: string;
+    type?: string;
+    search?: string;
+  }
+) {
+  const queryParams = new URLSearchParams();
+  if (params?.page) queryParams.append('page', params.page.toString());
+  if (params?.limit) queryParams.append('limit', params.limit.toString());
+  if (params?.category) queryParams.append('category', params.category);
+  if (params?.status) queryParams.append('status', params.status);
+  if (params?.type) queryParams.append('type', params.type);
+  if (params?.search) queryParams.append('search', params.search);
+
+  const query = queryParams.toString();
+  const url = `${API_BASE}/api/protocols${query ? `?${query}` : ''}`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    throw new Error('Failed to load protocols');
+  }
+  return res.json();
+}
+
+export async function fetchProtocol(tenantId: string, accessToken: string, protocolId: string) {
+  const res = await fetch(`${API_BASE}/api/protocols/${protocolId}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error('Protocol not found');
+    }
+    throw new Error('Failed to load protocol');
+  }
+  return res.json();
+}
+
+export async function createProtocol(
+  tenantId: string,
+  accessToken: string,
+  data: any
+) {
+  const res = await fetch(`${API_BASE}/api/protocols`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to create protocol' }));
+    throw new Error(error.error || 'Failed to create protocol');
+  }
+  return res.json();
+}
+
+export async function updateProtocol(
+  tenantId: string,
+  accessToken: string,
+  protocolId: string,
+  data: any
+) {
+  const res = await fetch(`${API_BASE}/api/protocols/${protocolId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to update protocol' }));
+    throw new Error(error.error || 'Failed to update protocol');
+  }
+  return res.json();
+}
+
+export async function deleteProtocol(tenantId: string, accessToken: string, protocolId: string) {
+  const res = await fetch(`${API_BASE}/api/protocols/${protocolId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to delete protocol' }));
+    throw new Error(error.error || 'Failed to delete protocol');
+  }
+  return res.json();
+}
+
+export async function applyProtocol(
+  tenantId: string,
+  accessToken: string,
+  data: {
+    protocol_id: string;
+    patient_id: string;
+    encounter_id?: string;
+    notes?: string;
+  }
+) {
+  const res = await fetch(`${API_BASE}/api/protocols/applications`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to apply protocol' }));
+    throw new Error(error.error || 'Failed to apply protocol');
+  }
+  return res.json();
+}
+
+export async function fetchPatientProtocols(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+) {
+  const res = await fetch(`${API_BASE}/api/protocols/applications/patient/${patientId}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    throw new Error('Failed to load patient protocols');
+  }
+  return res.json();
+}
+
+export async function completeProtocolStep(
+  tenantId: string,
+  accessToken: string,
+  applicationId: string,
+  data: {
+    step_id: string;
+    outcome?: string;
+    outcome_notes?: string;
+    orders_generated?: string[];
+  }
+) {
+  const res = await fetch(`${API_BASE}/api/protocols/applications/${applicationId}/complete-step`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to complete step' }));
+    throw new Error(error.error || 'Failed to complete step');
+  }
+  return res.json();
+}
+
+export async function updateProtocolApplication(
+  tenantId: string,
+  accessToken: string,
+  applicationId: string,
+  data: {
+    status?: string;
+    discontinuation_reason?: string;
+    notes?: string;
+  }
+) {
+  const res = await fetch(`${API_BASE}/api/protocols/applications/${applicationId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to update application' }));
+    throw new Error(error.error || 'Failed to update application');
+  }
+  return res.json();
+}
+
+export async function fetchProtocolStats(tenantId: string, accessToken: string) {
+  const res = await fetch(`${API_BASE}/api/protocols/stats/overview`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    throw new Error('Failed to load protocol statistics');
+  }
+  return res.json();
+}
+
+export default apiClient;

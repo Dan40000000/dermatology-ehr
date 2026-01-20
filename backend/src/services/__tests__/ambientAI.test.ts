@@ -1,0 +1,800 @@
+import { logger } from '../../lib/logger';
+import * as ambientAI from '../ambientAI';
+import fs from 'fs/promises';
+import FormData from 'form-data';
+
+jest.mock('../../lib/logger', () => ({
+  logger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
+}));
+
+jest.mock('fs/promises');
+jest.mock('form-data');
+
+// Mock global fetch
+global.fetch = jest.fn();
+
+describe('AmbientAI Service', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+  });
+
+  describe('transcribeAudio', () => {
+    const audioFilePath = '/tmp/test-audio.webm';
+    const durationSeconds = 120;
+
+    it('should use mock transcription when no API key configured', async () => {
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds);
+
+      expect(result).toHaveProperty('text');
+      expect(result).toHaveProperty('segments');
+      expect(result).toHaveProperty('speakers');
+      expect(result).toHaveProperty('speakerCount');
+      expect(result).toHaveProperty('confidence');
+      expect(result).toHaveProperty('wordCount');
+      expect(result).toHaveProperty('phiEntities');
+      expect(result).toHaveProperty('language');
+      expect(result).toHaveProperty('duration');
+      expect(result.duration).toBe(durationSeconds);
+      expect(logger.info).toHaveBeenCalledWith(
+        'Using mock transcription (no API key configured)'
+      );
+    });
+
+    it('should use OpenAI Whisper when API key available', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+
+      const mockAudioBuffer = Buffer.from('fake audio data');
+      (fs.readFile as jest.Mock).mockResolvedValueOnce(mockAudioBuffer);
+
+      const mockWhisperResponse = {
+        ok: true,
+        json: async () => ({
+          text: 'Transcribed text from Whisper',
+          segments: [
+            {
+              text: 'Transcribed text from Whisper',
+              start: 0,
+              end: 10,
+              confidence: 0.95,
+            },
+          ],
+          language: 'en',
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWhisperResponse);
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds);
+
+      expect(fs.readFile).toHaveBeenCalledWith(audioFilePath);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://api.openai.com/v1/audio/transcriptions',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-openai-key',
+          }),
+        })
+      );
+      expect(result.text).toBe('Transcribed text from Whisper');
+      expect(logger.info).toHaveBeenCalledWith(
+        'Transcribing audio with OpenAI Whisper',
+        expect.objectContaining({ durationSeconds })
+      );
+    });
+
+    it('should fallback to mock when Whisper API fails', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+
+      (fs.readFile as jest.Mock).mockResolvedValueOnce(Buffer.from('fake audio'));
+      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('API Error'));
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds);
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        'OpenAI Whisper transcription failed, falling back to mock',
+        expect.objectContaining({ error: 'API Error' })
+      );
+      expect(result.segments.length).toBeGreaterThan(0);
+    });
+
+    it('should handle Whisper non-ok response', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+
+      (fs.readFile as jest.Mock).mockResolvedValueOnce(Buffer.from('fake audio'));
+
+      const mockResponse = {
+        ok: false,
+        status: 400,
+        text: async () => 'Bad Request',
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds);
+
+      expect(result.segments.length).toBeGreaterThan(0);
+    });
+
+    it('should generate realistic mock conversation', async () => {
+      const result = await ambientAI.transcribeAudio(audioFilePath, 240);
+
+      expect(result.segments.length).toBeGreaterThan(5);
+      expect(result.speakerCount).toBe(2);
+      expect(result.speakers['speaker_0'].label).toBe('doctor');
+      expect(result.speakers['speaker_1'].label).toBe('patient');
+      expect(result.wordCount).toBeGreaterThan(0);
+    });
+
+    it('should detect PHI in transcription', async () => {
+      const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds);
+
+      expect(Array.isArray(result.phiEntities)).toBe(true);
+    });
+
+    it('should assign timestamps to segments', async () => {
+      const result = await ambientAI.transcribeAudio(audioFilePath, 100);
+
+      result.segments.forEach((segment) => {
+        expect(segment).toHaveProperty('start');
+        expect(segment).toHaveProperty('end');
+        expect(segment.end).toBeGreaterThan(segment.start);
+      });
+
+      const lastSegment = result.segments[result.segments.length - 1];
+      expect(lastSegment.end).toBeLessThanOrEqual(100 + 50);
+    });
+  });
+
+  describe('generateClinicalNote', () => {
+    const transcriptText = 'Patient presents with rash on arms for 2 weeks.';
+    const segments: ambientAI.TranscriptionSegment[] = [
+      {
+        speaker: 'speaker_0',
+        text: 'What brings you in today?',
+        start: 0,
+        end: 2,
+        confidence: 0.95,
+      },
+      {
+        speaker: 'speaker_1',
+        text: 'I have a rash on my arms.',
+        start: 2,
+        end: 5,
+        confidence: 0.93,
+      },
+    ];
+
+    it('should use mock note generation when no API key', async () => {
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(result).toHaveProperty('chiefComplaint');
+      expect(result).toHaveProperty('hpi');
+      expect(result).toHaveProperty('ros');
+      expect(result).toHaveProperty('physicalExam');
+      expect(result).toHaveProperty('assessment');
+      expect(result).toHaveProperty('plan');
+      expect(result).toHaveProperty('overallConfidence');
+      expect(result).toHaveProperty('sectionConfidence');
+      expect(result).toHaveProperty('suggestedIcd10');
+      expect(result).toHaveProperty('suggestedCpt');
+      expect(result).toHaveProperty('medications');
+      expect(result).toHaveProperty('allergies');
+      expect(result).toHaveProperty('followUpTasks');
+      expect(result).toHaveProperty('differentialDiagnoses');
+      expect(result).toHaveProperty('recommendedTests');
+      expect(result).toHaveProperty('patientSummary');
+      expect(logger.info).toHaveBeenCalledWith(
+        'Using mock note generation (no API key configured)'
+      );
+    });
+
+    it('should use Claude when Anthropic API key available', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+      const mockClaudeResponse = {
+        ok: true,
+        json: async () => ({
+          content: [
+            {
+              text: JSON.stringify({
+                chiefComplaint: 'Rash on arms',
+                hpi: 'Patient reports...',
+                ros: 'Negative except as noted',
+                physicalExam: 'Erythematous patches',
+                assessment: 'Contact dermatitis',
+                plan: 'Topical steroid',
+                sectionConfidence: {
+                  chiefComplaint: 0.95,
+                  hpi: 0.9,
+                  ros: 0.85,
+                  physicalExam: 0.92,
+                  assessment: 0.88,
+                  plan: 0.91,
+                },
+                suggestedIcd10: [],
+                suggestedCpt: [],
+                medications: [],
+                allergies: [],
+                followUpTasks: [],
+                differentialDiagnoses: [],
+                recommendedTests: [],
+                patientSummary: {
+                  whatWeDiscussed: 'Rash',
+                  yourConcerns: ['Itchy rash'],
+                  treatmentPlan: 'Use cream',
+                  followUp: '2 weeks',
+                },
+              }),
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockClaudeResponse);
+
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://api.anthropic.com/v1/messages',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'x-api-key': 'test-anthropic-key',
+          }),
+        })
+      );
+      expect(result.chiefComplaint).toBe('Rash on arms');
+      expect(logger.info).toHaveBeenCalledWith(
+        'Generating clinical note with Claude',
+        expect.any(Object)
+      );
+    });
+
+    it('should use GPT-4 when only OpenAI key available', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+
+      const mockGPT4Response = {
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  chiefComplaint: 'Rash',
+                  hpi: 'Details...',
+                  ros: 'Negative',
+                  physicalExam: 'Erythema',
+                  assessment: 'Dermatitis',
+                  plan: 'Treatment',
+                  sectionConfidence: {
+                    chiefComplaint: 0.9,
+                    hpi: 0.85,
+                    ros: 0.8,
+                    physicalExam: 0.87,
+                    assessment: 0.83,
+                    plan: 0.86,
+                  },
+                  suggestedIcd10: [],
+                  suggestedCpt: [],
+                  medications: [],
+                  allergies: [],
+                  followUpTasks: [],
+                  differentialDiagnoses: [],
+                  recommendedTests: [],
+                  patientSummary: {
+                    whatWeDiscussed: 'Rash',
+                    yourConcerns: ['Rash'],
+                    treatmentPlan: 'Cream',
+                    followUp: '2 weeks',
+                  },
+                }),
+              },
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockGPT4Response);
+
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://api.openai.com/v1/chat/completions',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-openai-key',
+          }),
+        })
+      );
+      expect(result.chiefComplaint).toBe('Rash');
+      expect(logger.info).toHaveBeenCalledWith(
+        'Generating clinical note with GPT-4',
+        expect.any(Object)
+      );
+    });
+
+    it('should use agent configuration when provided', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+      const agentConfig = {
+        id: 'config-123',
+        tenantId: 'tenant-123',
+        name: 'Custom Config',
+        aiModel: 'claude-opus-4',
+        temperature: 0.5,
+        maxTokens: 5000,
+        systemPrompt: 'Custom system prompt',
+        promptTemplate: 'Custom template {{transcript}}',
+        noteSections: ['chiefComplaint', 'assessment'],
+        sectionPrompts: {},
+        outputFormat: 'narrative',
+        verbosityLevel: 'detailed',
+        includeCodes: true,
+        terminologySet: {},
+        focusAreas: [],
+        defaultCptCodes: [],
+        defaultIcd10Codes: [],
+        taskTemplates: [],
+        isDefault: false,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const mockResponse = {
+        ok: true,
+        json: async () => ({
+          content: [
+            {
+              text: JSON.stringify({
+                chiefComplaint: 'Test',
+                assessment: 'Test',
+                sectionConfidence: { chiefComplaint: 0.9, assessment: 0.9 },
+                suggestedIcd10: [],
+                suggestedCpt: [],
+                medications: [],
+                allergies: [],
+                followUpTasks: [],
+                differentialDiagnoses: [],
+                recommendedTests: [],
+                patientSummary: {
+                  whatWeDiscussed: '',
+                  yourConcerns: [],
+                  treatmentPlan: '',
+                  followUp: '',
+                },
+              }),
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await ambientAI.generateClinicalNote(transcriptText, segments, agentConfig);
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.stringContaining('claude-opus-4'),
+        })
+      );
+    });
+
+    it('should handle API errors and fallback to mock', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('API Error'));
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(result).toHaveProperty('chiefComplaint');
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('should parse AI response with markdown code blocks', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+      const mockResponse = {
+        ok: true,
+        json: async () => ({
+          content: [
+            {
+              text: '```json\n{"chiefComplaint":"Test","sectionConfidence":{},"suggestedIcd10":[],"suggestedCpt":[],"medications":[],"allergies":[],"followUpTasks":[],"differentialDiagnoses":[],"recommendedTests":[],"patientSummary":{"whatWeDiscussed":"","yourConcerns":[],"treatmentPlan":"","followUp":""}}\n```',
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(result.chiefComplaint).toBe('Test');
+    });
+
+    it('should handle malformed JSON from AI', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+      const mockResponse = {
+        ok: true,
+        json: async () => ({
+          content: [{ text: 'Not valid JSON' }],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(result).toHaveProperty('chiefComplaint');
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('should calculate overall confidence from section scores', async () => {
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(result.overallConfidence).toBeGreaterThan(0);
+      expect(result.overallConfidence).toBeLessThanOrEqual(1);
+    });
+
+    it('should extract ICD-10 codes', async () => {
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(Array.isArray(result.suggestedIcd10)).toBe(true);
+    });
+
+    it('should extract CPT codes', async () => {
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(Array.isArray(result.suggestedCpt)).toBe(true);
+    });
+
+    it('should extract medications', async () => {
+      const medSegments: ambientAI.TranscriptionSegment[] = [
+        {
+          speaker: 'speaker_0',
+          text: 'I will prescribe triamcinolone 0.1% cream to apply twice daily.',
+          start: 0,
+          end: 5,
+          confidence: 0.95,
+        },
+      ];
+
+      const result = await ambientAI.generateClinicalNote(
+        'triamcinolone prescription',
+        medSegments
+      );
+
+      expect(Array.isArray(result.medications)).toBe(true);
+    });
+
+    it('should extract allergies', async () => {
+      const allergySegments: ambientAI.TranscriptionSegment[] = [
+        {
+          speaker: 'speaker_1',
+          text: 'I am allergic to penicillin, I get hives.',
+          start: 0,
+          end: 3,
+          confidence: 0.95,
+        },
+      ];
+
+      const result = await ambientAI.generateClinicalNote(
+        'penicillin allergy',
+        allergySegments
+      );
+
+      expect(Array.isArray(result.allergies)).toBe(true);
+    });
+
+    it('should extract follow-up tasks', async () => {
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(Array.isArray(result.followUpTasks)).toBe(true);
+    });
+
+    it('should generate differential diagnoses', async () => {
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(Array.isArray(result.differentialDiagnoses)).toBe(true);
+    });
+
+    it('should generate recommended tests', async () => {
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(Array.isArray(result.recommendedTests)).toBe(true);
+    });
+
+    it('should generate patient summary', async () => {
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(result.patientSummary).toHaveProperty('whatWeDiscussed');
+      expect(result.patientSummary).toHaveProperty('yourConcerns');
+      expect(result.patientSummary).toHaveProperty('treatmentPlan');
+      expect(result.patientSummary).toHaveProperty('followUp');
+      expect(Array.isArray(result.patientSummary.yourConcerns)).toBe(true);
+    });
+  });
+
+  describe('maskPHI', () => {
+    it('should mask phone numbers', () => {
+      const text = 'Call me at 555-123-4567 or 555.987.6543';
+      const phiEntities: ambientAI.PHIEntity[] = [
+        {
+          type: 'phone',
+          text: '555-123-4567',
+          start: 11,
+          end: 23,
+          masked_value: '***-***-****',
+        },
+        {
+          type: 'phone',
+          text: '555.987.6543',
+          start: 27,
+          end: 39,
+          masked_value: '***-***-****',
+        },
+      ];
+
+      const result = ambientAI.maskPHI(text, phiEntities);
+
+      expect(result).toContain('***-***-****');
+      expect(result).not.toContain('555-123-4567');
+      expect(result).not.toContain('555.987.6543');
+    });
+
+    it('should mask dates', () => {
+      const text = 'Date of birth is 01/15/1990';
+      const phiEntities: ambientAI.PHIEntity[] = [
+        {
+          type: 'date',
+          text: '01/15/1990',
+          start: 17,
+          end: 27,
+          masked_value: '**/**/****',
+        },
+      ];
+
+      const result = ambientAI.maskPHI(text, phiEntities);
+
+      expect(result).toContain('**/**/****');
+      expect(result).not.toContain('01/15/1990');
+    });
+
+    it('should return original text when no PHI entities', () => {
+      const text = 'No PHI here';
+      const result = ambientAI.maskPHI(text, []);
+
+      expect(result).toBe(text);
+    });
+
+    it('should mask multiple entities correctly', () => {
+      const text = 'John Doe, DOB 01/15/1990, phone 555-1234';
+      const phiEntities: ambientAI.PHIEntity[] = [
+        {
+          type: 'date',
+          text: '01/15/1990',
+          start: 14,
+          end: 24,
+          masked_value: '**/**/****',
+        },
+        {
+          type: 'phone',
+          text: '555-1234',
+          start: 32,
+          end: 40,
+          masked_value: '***-****',
+        },
+      ];
+
+      const result = ambientAI.maskPHI(text, phiEntities);
+
+      expect(result).toContain('**/**/****');
+      expect(result).toContain('***-****');
+    });
+  });
+
+  describe('Mock data generation', () => {
+    it('should generate realistic chief complaint', async () => {
+      const segments: ambientAI.TranscriptionSegment[] = [
+        {
+          speaker: 'speaker_1',
+          text: 'I have a rash on my arms that is very itchy.',
+          start: 0,
+          end: 3,
+          confidence: 0.95,
+        },
+      ];
+
+      const result = await ambientAI.generateClinicalNote('rash itchy arms', segments);
+
+      expect(result.chiefComplaint).toBeTruthy();
+      expect(result.chiefComplaint.length).toBeGreaterThan(0);
+    });
+
+    it('should generate HPI with OLDCARTS format', async () => {
+      const result = await ambientAI.generateClinicalNote('rash', []);
+
+      expect(result.hpi).toContain('ONSET');
+      expect(result.hpi).toContain('LOCATION');
+      expect(result.hpi).toContain('DURATION');
+      expect(result.hpi).toContain('CHARACTER');
+    });
+
+    it('should generate complete ROS', async () => {
+      const result = await ambientAI.generateClinicalNote('test', []);
+
+      expect(result.ros).toContain('CONSTITUTIONAL');
+      expect(result.ros).toContain('SKIN');
+    });
+
+    it('should generate physical exam with dermatologic terms', async () => {
+      const result = await ambientAI.generateClinicalNote('test', []);
+
+      expect(result.physicalExam).toBeTruthy();
+      expect(result.physicalExam.length).toBeGreaterThan(0);
+    });
+
+    it('should generate assessment with diagnosis', async () => {
+      const result = await ambientAI.generateClinicalNote('test', []);
+
+      expect(result.assessment).toBeTruthy();
+      expect(result.assessment.length).toBeGreaterThan(0);
+    });
+
+    it('should generate plan with medications and instructions', async () => {
+      const result = await ambientAI.generateClinicalNote('test', []);
+
+      expect(result.plan).toBeTruthy();
+      expect(result.plan.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Agent configuration integration', () => {
+    it('should use custom sections from config', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-key';
+
+      const config = {
+        id: 'config-123',
+        tenantId: 'tenant-123',
+        name: 'Custom',
+        aiModel: 'claude-3-5-sonnet-20241022',
+        temperature: 0.3,
+        maxTokens: 4000,
+        systemPrompt: 'System',
+        promptTemplate: 'Template {{transcript}}',
+        noteSections: ['customSection1', 'customSection2'],
+        sectionPrompts: {},
+        outputFormat: 'soap',
+        verbosityLevel: 'standard',
+        includeCodes: true,
+        terminologySet: {},
+        focusAreas: [],
+        defaultCptCodes: [],
+        defaultIcd10Codes: [],
+        taskTemplates: [],
+        isDefault: false,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const mockResponse = {
+        ok: true,
+        json: async () => ({
+          content: [
+            {
+              text: JSON.stringify({
+                customSection1: 'Content 1',
+                customSection2: 'Content 2',
+                sectionConfidence: {},
+                suggestedIcd10: [],
+                suggestedCpt: [],
+                medications: [],
+                allergies: [],
+                followUpTasks: [],
+                differentialDiagnoses: [],
+                recommendedTests: [],
+                patientSummary: {
+                  whatWeDiscussed: '',
+                  yourConcerns: [],
+                  treatmentPlan: '',
+                  followUp: '',
+                },
+              }),
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await ambientAI.generateClinicalNote('test', [], config);
+
+      expect(result).toHaveProperty('customSection1');
+      expect(result).toHaveProperty('customSection2');
+    });
+
+    it('should add task templates from config', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-key';
+
+      const config = {
+        id: 'config-123',
+        tenantId: 'tenant-123',
+        name: 'Config',
+        aiModel: 'claude-3-5-sonnet-20241022',
+        temperature: 0.3,
+        maxTokens: 4000,
+        systemPrompt: 'System',
+        promptTemplate: 'Template {{transcript}}',
+        noteSections: ['chiefComplaint'],
+        sectionPrompts: {},
+        outputFormat: 'soap',
+        verbosityLevel: 'standard',
+        includeCodes: true,
+        terminologySet: {},
+        focusAreas: [],
+        defaultCptCodes: [],
+        defaultIcd10Codes: [],
+        taskTemplates: [
+          {
+            task: 'Review labs',
+            priority: 'high',
+            daysFromVisit: 3,
+          },
+        ],
+        isDefault: false,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const mockResponse = {
+        ok: true,
+        json: async () => ({
+          content: [
+            {
+              text: JSON.stringify({
+                chiefComplaint: 'Test',
+                sectionConfidence: {},
+                suggestedIcd10: [],
+                suggestedCpt: [],
+                medications: [],
+                allergies: [],
+                followUpTasks: [],
+                differentialDiagnoses: [],
+                recommendedTests: [],
+                patientSummary: {
+                  whatWeDiscussed: '',
+                  yourConcerns: [],
+                  treatmentPlan: '',
+                  followUp: '',
+                },
+              }),
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await ambientAI.generateClinicalNote('test', [], config);
+
+      const reviewLabTask = result.followUpTasks.find((t) => t.task === 'Review labs');
+      expect(reviewLabTask).toBeDefined();
+      expect(reviewLabTask?.priority).toBe('high');
+    });
+  });
+});

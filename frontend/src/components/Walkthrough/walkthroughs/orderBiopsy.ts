@@ -1,0 +1,117 @@
+/**
+ * "Ordering a Biopsy" Walkthrough
+ * Learn to mark lesions, order biopsies, and track specimens
+ */
+
+import { Walkthrough } from '../types';
+
+export const orderBiopsyWalkthrough: Walkthrough = {
+  id: 'order-biopsy',
+  title: 'Ordering a Biopsy',
+  description: 'Master the biopsy workflow: mark lesions on the body map, order specimens, print labels, and track results through pathology.',
+  estimatedMinutes: 6,
+  difficulty: 'intermediate',
+  category: 'clinical',
+  icon: '🔬',
+  prerequisites: ['first-patient'],
+  steps: [
+    {
+      id: 'intro',
+      title: 'Biopsy Workflow Overview',
+      description: 'Ordering a biopsy involves several steps: documenting the lesion location, ordering the biopsy, labeling the specimen, and tracking it through pathology.',
+      targetSelector: 'body',
+      position: 'center',
+    },
+    {
+      id: 'open-patient',
+      title: 'Open Patient Chart',
+      description: 'First, navigate to the patient who needs a biopsy. You can use the patient search at the top or click on a scheduled appointment.',
+      targetSelector: '.list-row:first-child',
+      position: 'right',
+      action: 'click',
+    },
+    {
+      id: 'navigate-body-map',
+      title: 'Access Body Map',
+      description: 'Click on the "Document Mgmt" or "Photos" section to access the body diagram where you can mark lesion locations.',
+      targetSelector: '.nav span:nth-child(9)',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'mark-lesion-location',
+      title: 'Mark the Lesion',
+      description: 'Click on the body diagram where the lesion is located. This helps track which area was biopsied and makes it easy to identify the specimen.',
+      targetSelector: '.panel:has(.panel-title:contains("Photos"))',
+      position: 'right',
+      action: 'click',
+      actionValue: 'Right forearm',
+    },
+    {
+      id: 'lesion-details',
+      title: 'Enter Lesion Details',
+      description: 'Describe the lesion: size, color, borders, and any concerning features. This clinical description helps the pathologist.',
+      targetSelector: 'input',
+      position: 'right',
+      action: 'type',
+      actionValue: '8mm brown macule with irregular borders',
+    },
+    {
+      id: 'order-biopsy-type',
+      title: 'Order the Biopsy',
+      description: 'Click "+ Order" to create a biopsy order. Select the type of biopsy (shave, punch, excision) and specimen details.',
+      targetSelector: 'details:has(summary:contains("Order"))',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'select-specimen-type',
+      title: 'Select Specimen Type',
+      description: 'Choose the appropriate biopsy type. Common options include: shave biopsy, punch biopsy (3mm, 4mm, 5mm), or excisional biopsy.',
+      targetSelector: 'select',
+      position: 'right',
+      action: 'click',
+      actionValue: 'Punch biopsy 4mm',
+    },
+    {
+      id: 'clinical-description',
+      title: 'Clinical Description',
+      description: 'Enter a detailed clinical description and your clinical suspicion. This guides the pathologist on what to look for. Include differential diagnoses.',
+      targetSelector: 'input[placeholder*="details"], textarea',
+      position: 'right',
+      action: 'type',
+      actionValue: 'R forearm, 8mm brown macule with irregular borders. Clinical suspicion: atypical nevus vs melanoma in situ',
+    },
+    {
+      id: 'save-order',
+      title: 'Save the Order',
+      description: 'Click "Save order" to create the biopsy requisition. This generates a specimen number and requisition form.',
+      targetSelector: 'button:has-text("Save order")',
+      position: 'top',
+      action: 'click',
+    },
+    {
+      id: 'print-label',
+      title: 'Print Specimen Label',
+      description: 'The system generates a specimen label with patient info, specimen number, and barcode. Print this and attach it to the specimen container.',
+      targetSelector: '.panel:has(.panel-title:contains("Orders"))',
+      position: 'left',
+      action: 'wait',
+    },
+    {
+      id: 'track-specimen',
+      title: 'Track in Biopsy Tracker',
+      description: 'Navigate to "Path / Labs" to see your biopsy tracker. Here you can monitor specimen status: collected, sent to lab, resulted, or pending.',
+      targetSelector: '.nav span:nth-child(11)',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'completion',
+      title: 'Biopsy Workflow Complete!',
+      description: 'Great job! You now know how to mark lesions, order biopsies with proper clinical descriptions, and track specimens. Always check the biopsy tracker daily for new results.',
+      targetSelector: 'body',
+      position: 'center',
+    },
+  ],
+};

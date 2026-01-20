@@ -339,12 +339,34 @@ export async function generatePerformanceReport(): Promise<{
 
 /**
  * Run VACUUM ANALYZE on specified tables
+ * NOTE: Table names are validated against actual database tables to prevent SQL injection
  */
 export async function vacuumAnalyze(tables?: string[]): Promise<void> {
   try {
     if (tables && tables.length > 0) {
+      // Validate table names against actual database tables to prevent SQL injection
+      const validTablesResult = await pool.query(`
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
+      `);
+      const validTableNames = validTablesResult.rows.map(row => row.tablename);
+
       for (const table of tables) {
+        // Only allow alphanumeric characters and underscores
+        if (!/^[a-zA-Z0-9_]+$/.test(table)) {
+          logger.warn(`Invalid table name rejected: ${table}`);
+          continue;
+        }
+
+        // Verify table exists in database
+        if (!validTableNames.includes(table)) {
+          logger.warn(`Table not found, skipping: ${table}`);
+          continue;
+        }
+
         logger.info(`Running VACUUM ANALYZE on ${table}`);
+        // Now safe to use table name after validation
         await pool.query(`VACUUM ANALYZE ${table}`);
       }
     } else {

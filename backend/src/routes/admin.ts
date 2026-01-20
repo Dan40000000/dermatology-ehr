@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { pool } from "../db/pool";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { validatePasswordPolicy } from "../middleware/security";
 
 const router = Router();
 
@@ -255,6 +256,15 @@ router.post("/users", async (req: AuthedRequest, res) => {
     return res.status(400).json({ error: "Email, name, and password are required" });
   }
 
+  // Validate password strength
+  const passwordValidation = validatePasswordPolicy(password);
+  if (!passwordValidation.isValid) {
+    return res.status(400).json({
+      error: "Password does not meet security requirements",
+      details: passwordValidation.errors
+    });
+  }
+
   // Check if email already exists
   const existing = await pool.query(
     `SELECT id FROM users WHERE email = $1 AND tenant_id = $2`,
@@ -266,7 +276,7 @@ router.post("/users", async (req: AuthedRequest, res) => {
   }
 
   const id = randomUUID();
-  const passwordHash = bcrypt.hashSync(password, 10);
+  const passwordHash = bcrypt.hashSync(password, 12); // Increased to 12 rounds for better security
 
   await pool.query(
     `INSERT INTO users (id, tenant_id, email, full_name, role, password_hash)
@@ -301,8 +311,16 @@ router.put("/users/:id", async (req: AuthedRequest, res) => {
     values.push(role);
   }
   if (password) {
+    // Validate password strength
+    const passwordValidation = validatePasswordPolicy(password);
+    if (!passwordValidation.isValid) {
+      return res.status(400).json({
+        error: "Password does not meet security requirements",
+        details: passwordValidation.errors
+      });
+    }
     updates.push(`password_hash = $${paramIndex++}`);
-    values.push(bcrypt.hashSync(password, 10));
+    values.push(bcrypt.hashSync(password, 12)); // Increased to 12 rounds for better security
   }
 
   if (updates.length === 0) {

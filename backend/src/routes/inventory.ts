@@ -418,6 +418,172 @@ inventoryRouter.get("/stats/summary", requireAuth, async (req: AuthedRequest, re
   });
 });
 
+// ==================== PROCEDURE TEMPLATES ====================
+
+// Get all procedure templates
+inventoryRouter.get("/procedure-templates", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const { category } = req.query;
+
+  let query = `
+    SELECT
+      id,
+      procedure_name as "procedureName",
+      procedure_code as "procedureCode",
+      category,
+      description,
+      is_active as "isActive",
+      created_at as "createdAt"
+    FROM procedure_inventory_templates
+    WHERE tenant_id = $1
+  `;
+
+  const params: any[] = [tenantId];
+
+  if (category && typeof category === "string") {
+    params.push(category);
+    query += ` AND category = $${params.length}`;
+  }
+
+  query += ` ORDER BY category, procedure_name`;
+
+  const result = await pool.query(query, params);
+  res.json({ templates: result.rows });
+});
+
+// Get items for a specific procedure template
+inventoryRouter.get("/procedure-templates/:procedureName/items", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const { procedureName } = req.params;
+
+  const result = await pool.query(
+    `SELECT * FROM get_procedure_inventory_items($1, $2)`,
+    [tenantId, procedureName]
+  );
+
+  res.json({ items: result.rows });
+});
+
+// Record procedure-based inventory usage (batch)
+const procedureUsageSchema = z.object({
+  procedureName: z.string(),
+  patientId: z.string(),
+  providerId: z.string(),
+  encounterId: z.string().optional(),
+  appointmentId: z.string().optional(),
+  notes: z.string().optional(),
+  customItems: z.array(z.object({
+    itemId: z.string().uuid(),
+    quantityUsed: z.number().int().min(1),
+  })).optional(),
+});
+
+inventoryRouter.post(
+  "/procedure-usage",
+  requireAuth,
+  requireRoles(["admin", "provider", "ma"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = procedureUsageSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
+    const tenantId = req.user!.tenantId;
+    const payload = parsed.data;
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Get procedure template items
+      const templateItems = await client.query(
+        `SELECT * FROM get_procedure_inventory_items($1, $2)`,
+        [tenantId, payload.procedureName]
+      );
+
+      const usageIds: string[] = [];
+      const itemsUsed: any[] = [];
+
+      // Use template items or custom items
+      const itemsToUse = payload.customItems || templateItems.rows.map(row => ({
+        itemId: row.item_id,
+        quantityUsed: row.default_quantity,
+      }));
+
+      for (const item of itemsToUse) {
+        // Get current item info
+        const itemResult = await client.query(
+          `SELECT id, name, quantity, unit_cost_cents FROM inventory_items WHERE id = $1 AND tenant_id = $2`,
+          [item.itemId, tenantId]
+        );
+
+        if (!itemResult.rowCount) {
+          throw new Error(`Inventory item ${item.itemId} not found`);
+        }
+
+        const inventoryItem = itemResult.rows[0];
+
+        // Check if we have enough quantity
+        if (inventoryItem.quantity < item.quantityUsed) {
+          throw new Error(
+            `Insufficient inventory for ${inventoryItem.name}: only ${inventoryItem.quantity} units available`
+          );
+        }
+
+        // Insert usage record (trigger will automatically decrease inventory)
+        const result = await client.query(
+          `INSERT INTO inventory_usage(
+            tenant_id, item_id, quantity_used, unit_cost_cents,
+            patient_id, provider_id, encounter_id, appointment_id, notes, created_by
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          RETURNING id, used_at`,
+          [
+            tenantId,
+            item.itemId,
+            item.quantityUsed,
+            inventoryItem.unit_cost_cents,
+            payload.patientId,
+            payload.providerId,
+            payload.encounterId || null,
+            payload.appointmentId || null,
+            payload.notes || `Used in procedure: ${payload.procedureName}`,
+            req.user!.id,
+          ]
+        );
+
+        usageIds.push(result.rows[0].id);
+        itemsUsed.push({
+          itemId: item.itemId,
+          itemName: inventoryItem.name,
+          quantityUsed: item.quantityUsed,
+        });
+      }
+
+      await client.query("COMMIT");
+
+      await auditLog(
+        tenantId,
+        req.user!.id,
+        "inventory_procedure_usage",
+        "inventory_usage",
+        `Procedure: ${payload.procedureName}`
+      );
+
+      res.status(201).json({
+        usageIds,
+        itemsUsed,
+        message: `Recorded inventory usage for procedure: ${payload.procedureName}`,
+      });
+    } catch (error: any) {
+      await client.query("ROLLBACK");
+      if (error.message?.includes("Insufficient inventory") || error.message?.includes("not found")) {
+        return res.status(400).json({ error: error.message });
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+);
+
 // ==================== INVENTORY USAGE ENDPOINTS ====================
 
 const createUsageSchema = z.object({

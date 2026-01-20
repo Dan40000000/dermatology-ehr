@@ -1,15 +1,24 @@
-# Dermatology EHR Mobile App - AI Clinical Notes
+# Dermatology EHR Mobile App
 
-A React Native Expo mobile application for AI-powered clinical documentation in dermatology practices.
+A comprehensive React Native Expo mobile application for dermatology practices with full patient portal and provider functionality.
 
 ## Overview
 
-This mobile app allows doctors and physician assistants to:
-- Record patient encounters using voice
-- Automatically transcribe conversations with AI
-- Generate structured SOAP notes using AI
-- Review and edit AI-generated notes
-- Save notes directly to patient charts
+### Patient Portal Features
+- View and book appointments
+- Secure messaging with providers
+- View and pay bills
+- Access medical records and visit summaries
+- Biometric authentication (Face ID/Fingerprint)
+- Push notifications
+
+### Provider Features
+- Today's schedule and patient dashboard
+- Patient search and lookup
+- AI-powered voice note recording
+- Clinical note generation with OpenAI/Claude
+- Quick access to patient records
+- Photo capture for clinical documentation
 
 ## Features
 

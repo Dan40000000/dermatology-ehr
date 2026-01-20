@@ -1,0 +1,489 @@
+/**
+ * Tutorials Page Styles
+ */
+
+.tutorials-page {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 40px 24px;
+}
+
+/* Header */
+.tutorials-header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 32px;
+  margin-bottom: 40px;
+  align-items: start;
+}
+
+.tutorials-header-content h1 {
+  margin: 0 0 8px 0;
+  font-size: 36px;
+  font-weight: 800;
+  color: #1e293b;
+  line-height: 1.2;
+}
+
+.tutorials-subtitle {
+  margin: 0;
+  font-size: 16px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+/* Progress Card */
+.tutorials-progress-card {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  padding: 24px;
+  border-radius: 16px;
+  color: white;
+  min-width: 280px;
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.3);
+}
+
+.tutorials-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.tutorials-progress-label {
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.tutorials-progress-percentage {
+  font-size: 32px;
+  font-weight: 800;
+}
+
+.tutorials-progress-bar {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.tutorials-progress-fill {
+  height: 100%;
+  background: white;
+  border-radius: 4px;
+  transition: width 0.5s ease-out;
+}
+
+.tutorials-progress-stats {
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+/* Filters */
+.tutorials-filters {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 32px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.tutorials-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tutorials-filter-group label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.tutorials-filter-group select {
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  background: white;
+  color: #1e293b;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.tutorials-filter-group select:hover {
+  border-color: #cbd5e1;
+}
+
+.tutorials-filter-group select:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.tutorials-reset-btn {
+  margin-left: auto;
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tutorials-reset-btn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #475569;
+}
+
+/* Grid */
+.tutorials-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 24px;
+}
+
+/* Tutorial Card */
+.tutorial-card {
+  position: relative;
+  background: white;
+  border: 2px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 24px;
+  transition: all 0.3s;
+  display: flex;
+  flex-direction: column;
+}
+
+.tutorial-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
+  border-color: #cbd5e1;
+}
+
+.tutorial-card-completed {
+  background: linear-gradient(135deg, #f0fdf4, #dcfce7);
+  border-color: #86efac;
+}
+
+.tutorial-card-in-progress {
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  border-color: #fcd34d;
+}
+
+.tutorial-card-locked {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.tutorial-card-locked:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* Badge */
+.tutorial-badge {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tutorial-badge-completed {
+  background: #10b981;
+  color: white;
+}
+
+.tutorial-badge-progress {
+  background: #f59e0b;
+  color: white;
+}
+
+.tutorial-badge-locked {
+  background: #94a3b8;
+  color: white;
+}
+
+/* Icon */
+.tutorial-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+/* Content */
+.tutorial-content {
+  flex: 1;
+}
+
+.tutorial-title {
+  margin: 0 0 12px 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1.3;
+}
+
+.tutorial-description {
+  margin: 0 0 16px 0;
+  font-size: 14px;
+  color: #475569;
+  line-height: 1.6;
+}
+
+/* Meta */
+.tutorial-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.tutorial-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.tutorial-difficulty {
+  font-weight: 700;
+}
+
+/* Prerequisites */
+.tutorial-prerequisites {
+  background: #f8fafc;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.tutorial-prerequisites strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #1e293b;
+}
+
+.tutorial-prerequisites ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #64748b;
+}
+
+.tutorial-prerequisites li {
+  margin-bottom: 4px;
+}
+
+.tutorial-prerequisites li.completed {
+  color: #10b981;
+}
+
+/* Progress */
+.tutorial-progress {
+  margin-bottom: 16px;
+}
+
+.tutorial-progress-text {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.tutorial-progress-bar-mini {
+  height: 6px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.tutorial-progress-fill-mini {
+  height: 100%;
+  background: #f59e0b;
+  border-radius: 3px;
+  transition: width 0.3s ease-out;
+}
+
+/* Actions */
+.tutorial-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.tutorial-btn {
+  flex: 1;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  text-align: center;
+}
+
+.tutorial-btn-primary {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+.tutorial-btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+}
+
+.tutorial-btn-secondary {
+  background: white;
+  color: #6366f1;
+  border: 1px solid #e2e8f0;
+}
+
+.tutorial-btn-secondary:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.tutorial-btn-locked {
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.tutorial-btn-danger {
+  background: #ef4444;
+  color: white;
+}
+
+.tutorial-btn-danger:hover {
+  background: #dc2626;
+}
+
+/* Empty State */
+.tutorials-empty {
+  text-align: center;
+  padding: 80px 20px;
+  color: #94a3b8;
+}
+
+.tutorials-empty-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+}
+
+.tutorials-empty h3 {
+  margin: 0 0 8px 0;
+  color: #475569;
+  font-size: 20px;
+}
+
+.tutorials-empty p {
+  margin: 0;
+  font-size: 15px;
+}
+
+/* Modal */
+.tutorials-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10002;
+  padding: 20px;
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.tutorials-modal {
+  background: white;
+  border-radius: 16px;
+  padding: 32px;
+  max-width: 500px;
+  width: 100%;
+  box-shadow: 0 25px 75px rgba(0, 0, 0, 0.3);
+  animation: modalSlideIn 0.4s ease-out;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.tutorials-modal h3 {
+  margin: 0 0 16px 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.tutorials-modal p {
+  margin: 0 0 24px 0;
+  font-size: 15px;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.tutorials-modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .tutorials-grid {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .tutorials-header {
+    grid-template-columns: 1fr;
+  }
+
+  .tutorials-progress-card {
+    min-width: auto;
+  }
+
+  .tutorials-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tutorials-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tutorials-reset-btn {
+    margin-left: 0;
+  }
+}

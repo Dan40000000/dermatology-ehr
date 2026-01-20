@@ -4,7 +4,73 @@ import { AuthedRequest, requireAuth } from '../middleware/auth';
 
 export const medicationsRouter = Router();
 
-// GET /api/medications - Search medications
+/**
+ * @swagger
+ * /api/medications:
+ *   get:
+ *     summary: Search medications
+ *     description: Search for medications with optional filters for category and controlled status (limited to 50).
+ *     tags:
+ *       - Medications
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search by name, generic name, or brand name
+ *       - in: query
+ *         name: category
+ *         schema:
+ *           type: string
+ *         description: Filter by medication category
+ *       - in: query
+ *         name: controlled
+ *         schema:
+ *           type: string
+ *           enum: ['true', 'false']
+ *         description: Filter by controlled substance status
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *         description: Maximum number of results to return
+ *     responses:
+ *       200:
+ *         description: List of medications
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 medications:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                         format: uuid
+ *                       name:
+ *                         type: string
+ *                       genericName:
+ *                         type: string
+ *                       brandName:
+ *                         type: string
+ *                       category:
+ *                         type: string
+ *                       isControlled:
+ *                         type: boolean
+ *       500:
+ *         description: Failed to search medications
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 medicationsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
   try {
     const { search, category, controlled, limit = '50' } = req.query;
@@ -47,7 +113,36 @@ medicationsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
   }
 });
 
-// GET /api/medications/categories - Get all categories
+/**
+ * @swagger
+ * /api/medications/list/categories:
+ *   get:
+ *     summary: Get medication categories
+ *     description: Retrieve all distinct medication categories.
+ *     tags:
+ *       - Medications
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     responses:
+ *       200:
+ *         description: List of categories
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 categories:
+ *                   type: array
+ *                   items:
+ *                     type: string
+ *       500:
+ *         description: Failed to fetch categories
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 medicationsRouter.get('/list/categories', requireAuth, async (_req: AuthedRequest, res) => {
   try {
     const result = await pool.query(
@@ -61,7 +156,48 @@ medicationsRouter.get('/list/categories', requireAuth, async (_req: AuthedReques
   }
 });
 
-// GET /api/medications/:id - Get single medication
+/**
+ * @swagger
+ * /api/medications/{id}:
+ *   get:
+ *     summary: Get medication by ID
+ *     description: Retrieve a single medication's detailed information.
+ *     tags:
+ *       - Medications
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Medication ID
+ *     responses:
+ *       200:
+ *         description: Medication details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 medication:
+ *                   type: object
+ *       404:
+ *         description: Medication not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to fetch medication
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 medicationsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) => {
   try {
     const { id } = req.params;

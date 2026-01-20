@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Navigate } from 'react-router-dom';
+import { Navigate, Link } from 'react-router-dom';
 
 interface Facility {
   id: string;
@@ -358,6 +358,115 @@ export function AdminPage() {
           <p style={subtitleStyle}>Manage facilities, rooms, providers, and user accounts</p>
         </div>
 
+        {/* Quick Links */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+          gap: '1rem',
+          marginBottom: '2rem'
+        }}>
+          <Link to="/admin/analytics" style={{ textDecoration: 'none' }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
+              padding: '1.5rem',
+              borderRadius: '12px',
+              color: 'white',
+              cursor: 'pointer',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              boxShadow: '0 4px 6px rgba(139, 92, 246, 0.3)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = '0 8px 16px rgba(139, 92, 246, 0.4)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 6px rgba(139, 92, 246, 0.3)';
+            }}>
+              <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📊</div>
+              <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>Analytics Dashboard</div>
+              <div style={{ fontSize: '0.875rem', opacity: 0.9, marginTop: '0.25rem' }}>
+                View comprehensive practice metrics
+              </div>
+            </div>
+          </Link>
+          <Link to="/admin/audit-log" style={{ textDecoration: 'none' }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
+              padding: '1.5rem',
+              borderRadius: '12px',
+              color: 'white',
+              cursor: 'pointer',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              boxShadow: '0 4px 6px rgba(6, 182, 212, 0.3)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = '0 8px 16px rgba(6, 182, 212, 0.4)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 6px rgba(6, 182, 212, 0.3)';
+            }}>
+              <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📋</div>
+              <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>Audit Log</div>
+              <div style={{ fontSize: '0.875rem', opacity: 0.9, marginTop: '0.25rem' }}>
+                Review system activity
+              </div>
+            </div>
+          </Link>
+          <Link to="/admin/fee-schedules" style={{ textDecoration: 'none' }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+              padding: '1.5rem',
+              borderRadius: '12px',
+              color: 'white',
+              cursor: 'pointer',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              boxShadow: '0 4px 6px rgba(16, 185, 129, 0.3)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = '0 8px 16px rgba(16, 185, 129, 0.4)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 6px rgba(16, 185, 129, 0.3)';
+            }}>
+              <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>💰</div>
+              <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>Fee Schedules</div>
+              <div style={{ fontSize: '0.875rem', opacity: 0.9, marginTop: '0.25rem' }}>
+                Manage pricing
+              </div>
+            </div>
+          </Link>
+          <Link to="/admin/ai-agents" style={{ textDecoration: 'none' }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+              padding: '1.5rem',
+              borderRadius: '12px',
+              color: 'white',
+              cursor: 'pointer',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              boxShadow: '0 4px 6px rgba(245, 158, 11, 0.3)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = '0 8px 16px rgba(245, 158, 11, 0.4)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 6px rgba(245, 158, 11, 0.3)';
+            }}>
+              <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>🤖</div>
+              <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>AI Agents</div>
+              <div style={{ fontSize: '0.875rem', opacity: 0.9, marginTop: '0.25rem' }}>
+                Configure AI assistants
+              </div>
+            </div>
+          </Link>
+        </div>
+
         <div style={tabsContainerStyle}>
           {tabs.map((tab) => (
             <button
@@ -376,7 +485,7 @@ export function AdminPage() {
               {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
             </h2>
             <button onClick={openAddModal} style={btnPrimaryStyle}>
-              + Add {activeTab.slice(0, -1)}
+              + Add {activeTab === 'facilities' ? 'Facility' : activeTab.slice(0, -1)}
             </button>
           </div>
 

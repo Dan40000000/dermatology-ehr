@@ -273,7 +273,7 @@ router.get('/:id/items', requireAuth, async (req: AuthedRequest, res: Response) 
 router.put('/:id/items/:cptCode', requireAuth, requireRoles(['admin', 'billing']), async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id, cptCode } = req.params;
-  const { feeCents, cptDescription } = req.body;
+  const { feeCents, cptDescription, category } = req.body;
 
   if (feeCents === undefined || feeCents < 0) {
     return res.status(400).json({ error: 'Valid fee is required' });
@@ -292,12 +292,12 @@ router.put('/:id/items/:cptCode', requireAuth, requireRoles(['admin', 'billing']
 
     // Upsert the item
     const result = await pool.query(
-      `INSERT INTO fee_schedule_items (id, fee_schedule_id, cpt_code, cpt_description, fee_cents)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4)
+      `INSERT INTO fee_schedule_items (id, fee_schedule_id, cpt_code, cpt_description, category, fee_cents)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
        ON CONFLICT (fee_schedule_id, cpt_code)
-       DO UPDATE SET fee_cents = $4, cpt_description = $3, updated_at = CURRENT_TIMESTAMP
+       DO UPDATE SET fee_cents = $5, cpt_description = $3, category = $4, updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
-      [id, cptCode, cptDescription || null, feeCents]
+      [id, cptCode, cptDescription || null, category || null, feeCents]
     );
 
     res.json(result.rows[0]);
@@ -374,11 +374,11 @@ router.post('/:id/items/import', requireAuth, requireRoles(['admin', 'billing'])
         }
 
         await client.query(
-          `INSERT INTO fee_schedule_items (id, fee_schedule_id, cpt_code, cpt_description, fee_cents)
-           VALUES (gen_random_uuid(), $1, $2, $3, $4)
+          `INSERT INTO fee_schedule_items (id, fee_schedule_id, cpt_code, cpt_description, category, fee_cents)
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
            ON CONFLICT (fee_schedule_id, cpt_code)
-           DO UPDATE SET fee_cents = $4, cpt_description = $3, updated_at = CURRENT_TIMESTAMP`,
-          [id, item.cptCode, item.description || null, feeCents]
+           DO UPDATE SET fee_cents = $5, cpt_description = $3, category = $4, updated_at = CURRENT_TIMESTAMP`,
+          [id, item.cptCode, item.description || null, item.category || null, feeCents]
         );
 
         imported++;
@@ -422,17 +422,18 @@ router.get('/:id/export', requireAuth, async (req: AuthedRequest, res: Response)
     const scheduleName = checkResult.rows[0].name;
 
     const result = await pool.query(
-      `SELECT cpt_code, cpt_description, fee_cents FROM fee_schedule_items
-       WHERE fee_schedule_id = $1 ORDER BY cpt_code ASC`,
+      `SELECT cpt_code, category, cpt_description, fee_cents FROM fee_schedule_items
+       WHERE fee_schedule_id = $1 ORDER BY category ASC, cpt_code ASC`,
       [id]
     );
 
     // Generate CSV
-    let csv = 'CPT Code,Description,Fee\n';
+    let csv = 'CPT Code,Category,Description,Fee\n';
     for (const row of result.rows) {
       const fee = (row.fee_cents / 100).toFixed(2);
+      const category = row.category ? `"${row.category.replace(/"/g, '""')}"` : '';
       const description = row.cpt_description ? `"${row.cpt_description.replace(/"/g, '""')}"` : '';
-      csv += `${row.cpt_code},${description},${fee}\n`;
+      csv += `${row.cpt_code},${category},${description},${fee}\n`;
     }
 
     res.setHeader('Content-Type', 'text/csv');
@@ -1037,6 +1038,156 @@ router.delete('/packages/:id', requireAuth, requireRoles(['admin']), async (req:
     res.status(500).json({ error: 'Failed to delete service package' });
   } finally {
     client.release();
+  }
+});
+
+// ============================================
+// COSMETIC FEE SCHEDULES
+// ============================================
+
+// Get all cosmetic procedures with pricing
+router.get('/cosmetic/procedures', requireAuth, async (req: AuthedRequest, res: Response) => {
+  const tenantId = req.user!.tenantId;
+  const { category, feeScheduleId } = req.query;
+
+  try {
+    const result = await pool.query(
+      `SELECT * FROM get_cosmetic_fees_by_category($1, $2, $3)`,
+      [tenantId, category || null, feeScheduleId || null]
+    );
+
+    res.json({ procedures: result.rows });
+  } catch (error) {
+    console.error('Error fetching cosmetic procedures:', error);
+    res.status(500).json({ error: 'Failed to fetch cosmetic procedures' });
+  }
+});
+
+// Get cosmetic procedure categories
+router.get('/cosmetic/categories', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM cosmetic_procedure_categories WHERE is_active = true ORDER BY sort_order ASC`
+    );
+
+    res.json({ categories: result.rows });
+  } catch (error) {
+    console.error('Error fetching cosmetic categories:', error);
+    res.status(500).json({ error: 'Failed to fetch cosmetic categories' });
+  }
+});
+
+// Get cosmetic pricing view
+router.get('/cosmetic/pricing', requireAuth, async (req: AuthedRequest, res: Response) => {
+  const tenantId = req.user!.tenantId;
+  const { category, search } = req.query;
+
+  try {
+    let query = `
+      SELECT * FROM v_cosmetic_pricing
+      WHERE schedule_name IN (
+        SELECT name FROM fee_schedules WHERE tenant_id = $1
+      )
+    `;
+    const params: any[] = [tenantId];
+
+    if (category && typeof category === 'string') {
+      params.push(category);
+      query += ` AND category = $${params.length}`;
+    }
+
+    if (search && typeof search === 'string') {
+      params.push(`%${search.toLowerCase()}%`);
+      query += ` AND (LOWER(cpt_description) LIKE $${params.length} OR LOWER(cpt_code) LIKE $${params.length})`;
+    }
+
+    query += ` ORDER BY category, subcategory, cpt_description`;
+
+    const result = await pool.query(query, params);
+
+    res.json({ procedures: result.rows });
+  } catch (error) {
+    console.error('Error fetching cosmetic pricing:', error);
+    res.status(500).json({ error: 'Failed to fetch cosmetic pricing' });
+  }
+});
+
+// Update cosmetic procedure pricing
+router.put('/cosmetic/procedures/:cptCode', requireAuth, requireRoles(['admin', 'billing']), async (req: AuthedRequest, res: Response) => {
+  const tenantId = req.user!.tenantId;
+  const { cptCode } = req.params;
+  const {
+    feeScheduleId,
+    feeCents,
+    minPriceCents,
+    maxPriceCents,
+    cptDescription,
+    category,
+    subcategory,
+    units,
+    typicalUnits,
+    packageSessions,
+    notes
+  } = req.body;
+
+  if (!feeScheduleId) {
+    return res.status(400).json({ error: 'Fee schedule ID is required' });
+  }
+
+  try {
+    // Verify ownership
+    const checkResult = await pool.query(
+      `SELECT * FROM fee_schedules WHERE id = $1 AND tenant_id = $2`,
+      [feeScheduleId, tenantId]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Fee schedule not found' });
+    }
+
+    // Upsert the cosmetic procedure
+    const result = await pool.query(
+      `INSERT INTO fee_schedule_items (
+        id, fee_schedule_id, cpt_code, cpt_description, fee_cents,
+        category, subcategory, units, min_price_cents, max_price_cents,
+        typical_units, is_cosmetic, package_sessions, notes
+      )
+      VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11, $12)
+      ON CONFLICT (fee_schedule_id, cpt_code)
+      DO UPDATE SET
+        cpt_description = $3,
+        fee_cents = $4,
+        category = $5,
+        subcategory = $6,
+        units = $7,
+        min_price_cents = $8,
+        max_price_cents = $9,
+        typical_units = $10,
+        package_sessions = $11,
+        notes = $12,
+        is_cosmetic = true,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING *`,
+      [
+        feeScheduleId,
+        cptCode,
+        cptDescription || null,
+        feeCents || 0,
+        category || null,
+        subcategory || null,
+        units || null,
+        minPriceCents || null,
+        maxPriceCents || null,
+        typicalUnits || null,
+        packageSessions || null,
+        notes || null
+      ]
+    );
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating cosmetic procedure:', error);
+    res.status(500).json({ error: 'Failed to update cosmetic procedure' });
   }
 });
 

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import DOMPurify from 'dompurify';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
 import { SignaturePad } from '../../components/kiosk/SignaturePad';
 import '../../styles/kiosk.css';
@@ -246,7 +247,8 @@ export function KioskConsentFormsPage() {
             maxHeight: '400px',
           }}
         >
-          <div dangerouslySetInnerHTML={{ __html: currentForm.formContent }} />
+          {/* Sanitize HTML content to prevent XSS attacks */}
+          <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(currentForm.formContent) }} />
         </div>
 
         {!hasScrolledToBottom && (

@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { exportToCSV, exportToPDF, formatCurrency, formatDate } from '../utils/exportUtils';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
 
 type ReportType = 'appointments' | 'financial' | 'clinical' | 'patients' | 'productivity' | 'no-shows';
 
@@ -35,6 +38,7 @@ interface AppointmentType {
 }
 
 export default function ReportsPage() {
+  const { session } = useAuth();
   const [selectedReport, setSelectedReport] = useState<ReportType>('appointments');
   const [filters, setFilters] = useState<ReportFilters>({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -49,44 +53,44 @@ export default function ReportsPage() {
 
   // Fetch filter options
   useEffect(() => {
-    const token = localStorage.getItem('accessToken');
+    if (!session) return;
+
+    const headers = {
+      Authorization: `Bearer ${session.accessToken}`,
+      'x-tenant-id': session.tenantId,
+    };
 
     // Fetch providers
-    fetch('/api/reports/filters/providers', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    fetch(`${API_BASE}/api/reports/filters/providers`, { headers })
       .then((res) => res.json())
       .then((data) => setProviders(data.providers || []))
       .catch(console.error);
 
     // Fetch locations
-    fetch('/api/reports/filters/locations', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    fetch(`${API_BASE}/api/reports/filters/locations`, { headers })
       .then((res) => res.json())
       .then((data) => setLocations(data.locations || []))
       .catch(console.error);
 
     // Fetch appointment types
-    fetch('/api/reports/filters/appointment-types', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    fetch(`${API_BASE}/api/reports/filters/appointment-types`, { headers })
       .then((res) => res.json())
       .then((data) => setAppointmentTypes(data.appointmentTypes || []))
       .catch(console.error);
-  }, []);
+  }, [session]);
 
   const generateReport = async () => {
+    if (!session) return;
     setLoading(true);
-    const token = localStorage.getItem('accessToken');
 
     try {
-      const endpoint = `/api/reports/${selectedReport}`;
+      const endpoint = `${API_BASE}/api/reports/${selectedReport}`;
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${session.accessToken}`,
+          'x-tenant-id': session.tenantId,
         },
         body: JSON.stringify(filters),
       });
@@ -110,15 +114,16 @@ export default function ReportsPage() {
   };
 
   const handleExportCSV = async () => {
-    const token = localStorage.getItem('accessToken');
-    const endpoint = `/api/reports/${selectedReport}`;
+    if (!session) return;
+    const endpoint = `${API_BASE}/api/reports/${selectedReport}`;
 
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${session.accessToken}`,
+          'x-tenant-id': session.tenantId,
         },
         body: JSON.stringify({ ...filters, format: 'csv' }),
       });
@@ -741,7 +746,7 @@ export default function ReportsPage() {
                       <tr key={idx} style={{ borderBottom: '1px solid #e5e7eb' }}>
                         {selectedReport === 'appointments' && (
                           <>
-                            <td style={{ padding: '12px' }}>{row.date}</td>
+                            <td style={{ padding: '12px' }}>{formatDate(row.date)}</td>
                             <td style={{ padding: '12px' }}>{row.time}</td>
                             <td style={{ padding: '12px' }}>{row.patientName}</td>
                             <td style={{ padding: '12px' }}>{row.providerName}</td>

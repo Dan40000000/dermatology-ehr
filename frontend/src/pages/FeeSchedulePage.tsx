@@ -61,6 +61,7 @@ export function FeeSchedulePage() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('');
   const [scheduleToDelete, setScheduleToDelete] = useState<FeeSchedule | null>(null);
 
   // Check if user has permission
@@ -329,12 +330,20 @@ export function FeeSchedulePage() {
     }).format(cents / 100);
   };
 
+  // Get unique categories from schedule items
+  const categories = Array.from(new Set(scheduleItems.map(item => item.category).filter(Boolean))).sort();
+
   const filteredItems = scheduleItems.filter((item) => {
+    // Apply category filter
+    if (categoryFilter && item.category !== categoryFilter) return false;
+
+    // Apply search query
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
       item.cptCode.toLowerCase().includes(q) ||
-      (item.cptDescription && item.cptDescription.toLowerCase().includes(q))
+      (item.cptDescription && item.cptDescription.toLowerCase().includes(q)) ||
+      (item.category && item.category.toLowerCase().includes(q))
     );
   });
 
@@ -452,6 +461,19 @@ export function FeeSchedulePage() {
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="search-input"
                   />
+                  <select
+                    value={categoryFilter}
+                    onChange={(e) => setCategoryFilter(e.target.value)}
+                    className="category-filter"
+                    style={{ marginLeft: '8px', minWidth: '200px' }}
+                  >
+                    <option value="">All Categories</option>
+                    {categories.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="toolbar-right">
                   <button type="button" className="btn-secondary" onClick={() => setShowImportModal(true)}>
@@ -481,6 +503,7 @@ export function FeeSchedulePage() {
                     <thead>
                       <tr>
                         <th>CPT Code</th>
+                        <th>Category</th>
                         <th>Description</th>
                         <th>Fee</th>
                         <th>Actions</th>
@@ -489,9 +512,9 @@ export function FeeSchedulePage() {
                     <tbody>
                       {filteredItems.length === 0 ? (
                         <tr>
-                          <td colSpan={4} style={{ textAlign: 'center', padding: '40px' }}>
+                          <td colSpan={5} style={{ textAlign: 'center', padding: '40px' }}>
                             <p className="muted">
-                              {searchQuery ? 'No matching CPT codes found' : 'No fees defined yet'}
+                              {searchQuery || categoryFilter ? 'No matching CPT codes found' : 'No fees defined yet'}
                             </p>
                             <button
                               type="button"
@@ -510,6 +533,9 @@ export function FeeSchedulePage() {
                         filteredItems.map((item) => (
                           <tr key={item.id}>
                             <td className="strong">{item.cptCode}</td>
+                            <td>
+                              <span className="pill info tiny">{item.category || 'Uncategorized'}</span>
+                            </td>
                             <td className="muted">{item.cptDescription || '-'}</td>
                             <td>{formatCurrency(item.feeCents)}</td>
                             <td>

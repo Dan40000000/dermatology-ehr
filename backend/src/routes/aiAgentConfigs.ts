@@ -55,8 +55,59 @@ const updateConfigSchema = createConfigSchema.partial().extend({
 });
 
 /**
- * GET /api/ai-agent-configs
- * List all agent configurations for the tenant
+ * @swagger
+ * /api/ai-agent-configs:
+ *   get:
+ *     summary: List AI agent configurations
+ *     description: Retrieve all AI agent configurations for the tenant with optional filters.
+ *     tags:
+ *       - AI Agent Configs
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: query
+ *         name: activeOnly
+ *         schema:
+ *           type: boolean
+ *           default: true
+ *         description: Filter to only active configurations
+ *       - in: query
+ *         name: specialtyFocus
+ *         schema:
+ *           type: string
+ *           enum: [medical_derm, cosmetic, mohs, pediatric_derm, general]
+ *         description: Filter by specialty focus
+ *       - in: query
+ *         name: appointmentTypeId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Filter by appointment type
+ *     responses:
+ *       200:
+ *         description: List of AI agent configurations
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 configurations:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to list configurations
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 aiAgentConfigsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
   try {
@@ -77,8 +128,44 @@ aiAgentConfigsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
 });
 
 /**
- * GET /api/ai-agent-configs/default
- * Get the default configuration for the tenant
+ * @swagger
+ * /api/ai-agent-configs/default:
+ *   get:
+ *     summary: Get default AI agent configuration
+ *     description: Retrieve the default AI agent configuration for the tenant.
+ *     tags:
+ *       - AI Agent Configs
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     responses:
+ *       200:
+ *         description: Default configuration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 configuration:
+ *                   type: object
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: No default configuration found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to get default configuration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 aiAgentConfigsRouter.get('/default', requireAuth, async (req: AuthedRequest, res) => {
   try {
@@ -97,8 +184,58 @@ aiAgentConfigsRouter.get('/default', requireAuth, async (req: AuthedRequest, res
 });
 
 /**
- * GET /api/ai-agent-configs/for-appointment/:appointmentTypeId
- * Get the configuration for a specific appointment type
+ * @swagger
+ * /api/ai-agent-configs/for-appointment/{appointmentTypeId}:
+ *   get:
+ *     summary: Get configuration for appointment type
+ *     description: Retrieve the AI agent configuration for a specific appointment type.
+ *     tags:
+ *       - AI Agent Configs
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: appointmentTypeId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Appointment type ID
+ *     responses:
+ *       200:
+ *         description: Configuration for appointment type
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 configuration:
+ *                   type: object
+ *       400:
+ *         description: Appointment type ID is required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: No configuration found for this appointment type
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to get configuration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 aiAgentConfigsRouter.get('/for-appointment/:appointmentTypeId', requireAuth, async (req: AuthedRequest, res) => {
   try {
@@ -123,8 +260,58 @@ aiAgentConfigsRouter.get('/for-appointment/:appointmentTypeId', requireAuth, asy
 });
 
 /**
- * GET /api/ai-agent-configs/:id
- * Get a specific agent configuration
+ * @swagger
+ * /api/ai-agent-configs/{id}:
+ *   get:
+ *     summary: Get AI agent configuration by ID
+ *     description: Retrieve a specific AI agent configuration by its ID.
+ *     tags:
+ *       - AI Agent Configs
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Configuration ID
+ *     responses:
+ *       200:
+ *         description: Configuration details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 configuration:
+ *                   type: object
+ *       400:
+ *         description: Configuration ID is required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Configuration not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to get configuration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 aiAgentConfigsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) => {
   try {
@@ -149,8 +336,110 @@ aiAgentConfigsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) =>
 });
 
 /**
- * POST /api/ai-agent-configs
- * Create a new agent configuration (admin only)
+ * @swagger
+ * /api/ai-agent-configs:
+ *   post:
+ *     summary: Create AI agent configuration
+ *     description: Create a new AI agent configuration. Admin only.
+ *     tags:
+ *       - AI Agent Configs
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - systemPrompt
+ *               - promptTemplate
+ *               - noteSections
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 maxLength: 100
+ *               description:
+ *                 type: string
+ *                 maxLength: 500
+ *               isDefault:
+ *                 type: boolean
+ *               appointmentTypeId:
+ *                 type: string
+ *                 format: uuid
+ *               specialtyFocus:
+ *                 type: string
+ *                 enum: [medical_derm, cosmetic, mohs, pediatric_derm, general]
+ *               aiModel:
+ *                 type: string
+ *               temperature:
+ *                 type: number
+ *                 minimum: 0
+ *                 maximum: 1
+ *               maxTokens:
+ *                 type: integer
+ *                 minimum: 100
+ *                 maximum: 16000
+ *               systemPrompt:
+ *                 type: string
+ *                 minLength: 10
+ *               promptTemplate:
+ *                 type: string
+ *                 minLength: 10
+ *               noteSections:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               outputFormat:
+ *                 type: string
+ *                 enum: [soap, narrative, procedure_note]
+ *               verbosityLevel:
+ *                 type: string
+ *                 enum: [concise, standard, detailed]
+ *               includeCodes:
+ *                 type: boolean
+ *     responses:
+ *       201:
+ *         description: Configuration created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 configuration:
+ *                   type: object
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       409:
+ *         description: Configuration with this name already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to create configuration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 aiAgentConfigsRouter.post('/', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
   try {
@@ -191,8 +480,143 @@ aiAgentConfigsRouter.post('/', requireAuth, requireRoles(['admin']), async (req:
 });
 
 /**
- * PUT /api/ai-agent-configs/:id
- * Update an agent configuration (admin only)
+ * @swagger
+ * /api/ai-agent-configs/{id}:
+ *   put:
+ *     summary: Update AI agent configuration
+ *     description: Update an existing AI agent configuration. Admin only.
+ *     tags:
+ *       - AI Agent Configs
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Configuration ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               isActive:
+ *                 type: boolean
+ *               isDefault:
+ *                 type: boolean
+ *               systemPrompt:
+ *                 type: string
+ *               promptTemplate:
+ *                 type: string
+ *               noteSections:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: Configuration updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 configuration:
+ *                   type: object
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Configuration not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to update configuration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *   delete:
+ *     summary: Delete AI agent configuration
+ *     description: Delete (deactivate) an AI agent configuration. Admin only.
+ *     tags:
+ *       - AI Agent Configs
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Configuration ID
+ *     responses:
+ *       200:
+ *         description: Configuration deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *       400:
+ *         description: Configuration ID is required or cannot delete default
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Configuration not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to delete configuration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 aiAgentConfigsRouter.put('/:id', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
   try {
@@ -226,10 +650,6 @@ aiAgentConfigsRouter.put('/:id', requireAuth, requireRoles(['admin']), async (re
   }
 });
 
-/**
- * DELETE /api/ai-agent-configs/:id
- * Delete (deactivate) an agent configuration (admin only)
- */
 aiAgentConfigsRouter.delete('/:id', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
   try {
     const tenantId = req.user!.tenantId;
@@ -263,8 +683,82 @@ aiAgentConfigsRouter.delete('/:id', requireAuth, requireRoles(['admin']), async 
 });
 
 /**
- * POST /api/ai-agent-configs/:id/clone
- * Clone an existing configuration (admin only)
+ * @swagger
+ * /api/ai-agent-configs/{id}/clone:
+ *   post:
+ *     summary: Clone AI agent configuration
+ *     description: Clone an existing configuration with a new name. Admin only.
+ *     tags:
+ *       - AI Agent Configs
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Configuration ID to clone
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 minLength: 1
+ *     responses:
+ *       201:
+ *         description: Configuration cloned successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 configuration:
+ *                   type: object
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Original configuration not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       409:
+ *         description: Configuration with this name already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to clone configuration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 aiAgentConfigsRouter.post('/:id/clone', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
   try {
@@ -304,8 +798,60 @@ aiAgentConfigsRouter.post('/:id/clone', requireAuth, requireRoles(['admin']), as
 });
 
 /**
- * GET /api/ai-agent-configs/:id/versions
- * Get version history for a configuration
+ * @swagger
+ * /api/ai-agent-configs/{id}/versions:
+ *   get:
+ *     summary: Get configuration version history
+ *     description: Retrieve version history for an AI agent configuration. Admin only.
+ *     tags:
+ *       - AI Agent Configs
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Configuration ID
+ *     responses:
+ *       200:
+ *         description: Version history
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 versions:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *       400:
+ *         description: Configuration ID is required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to get version history
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 aiAgentConfigsRouter.get('/:id/versions', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
   try {
@@ -326,8 +872,69 @@ aiAgentConfigsRouter.get('/:id/versions', requireAuth, requireRoles(['admin']), 
 });
 
 /**
- * GET /api/ai-agent-configs/analytics
- * Get analytics for all configurations
+ * @swagger
+ * /api/ai-agent-configs/analytics/summary:
+ *   get:
+ *     summary: Get configuration analytics
+ *     description: Retrieve analytics for AI agent configurations. Admin only.
+ *     tags:
+ *       - AI Agent Configs
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: query
+ *         name: configId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Filter by configuration ID
+ *       - in: query
+ *         name: providerId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Filter by provider ID
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Start date for analytics range
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: End date for analytics range
+ *     responses:
+ *       200:
+ *         description: Analytics data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 analytics:
+ *                   type: object
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to get analytics
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 aiAgentConfigsRouter.get('/analytics/summary', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
   try {
@@ -349,8 +956,83 @@ aiAgentConfigsRouter.get('/analytics/summary', requireAuth, requireRoles(['admin
 });
 
 /**
- * POST /api/ai-agent-configs/:id/test
- * Test a configuration with sample transcript
+ * @swagger
+ * /api/ai-agent-configs/{id}/test:
+ *   post:
+ *     summary: Test AI agent configuration
+ *     description: Test a configuration with a sample transcript. Admin only.
+ *     tags:
+ *       - AI Agent Configs
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Configuration ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - sampleTranscript
+ *             properties:
+ *               sampleTranscript:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Test result
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 configName:
+ *                   type: string
+ *                 noteSections:
+ *                   type: array
+ *                   items:
+ *                     type: string
+ *                 previewPrompt:
+ *                   type: string
+ *                 message:
+ *                   type: string
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Admin role required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Configuration not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Failed to test configuration
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 aiAgentConfigsRouter.post('/:id/test', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
   try {

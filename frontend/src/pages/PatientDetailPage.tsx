@@ -9,6 +9,7 @@ import { ClinicalTrendsTab } from '../components/clinical/ClinicalTrendsTab';
 import type { Lesion } from '../components/clinical';
 import { TasksTab } from '../components/patient';
 import { RxHistoryTab } from '../components/RxHistoryTab';
+import { ActiveMedicationsCard } from '../components/prescriptions';
 import {
   fetchPatient,
   fetchEncounters,
@@ -80,14 +81,11 @@ export function PatientDetailPage() {
 
     setLoading(true);
     try {
-      // Core data fetches - these must succeed
-      const [patientRes, encountersRes, appointmentsRes, documentsRes, photosRes, tasksRes] = await Promise.all([
+      // Core data fetches - patient and encounters must succeed
+      const [patientRes, encountersRes, appointmentsRes] = await Promise.all([
         fetchPatient(session.tenantId, session.accessToken, patientId),
         fetchEncounters(session.tenantId, session.accessToken),
         fetchAppointments(session.tenantId, session.accessToken, { patientId }),
-        fetchDocuments(session.tenantId, session.accessToken),
-        fetchPhotos(session.tenantId, session.accessToken),
-        fetchTasks(session.tenantId, session.accessToken),
       ]);
 
       if (patientRes.patient) {
@@ -103,17 +101,38 @@ export function PatientDetailPage() {
       );
       // Appointments are already filtered by patientId at the API level
       setAppointments(appointmentsRes.appointments || []);
-      setDocuments(
-        (documentsRes.documents || []).filter((d: Document) => d.patientId === patientId)
-      );
-      setPhotos(
-        (photosRes.photos || []).filter((p: Photo) => p.patientId === patientId)
-      );
-      setTasks(
-        (tasksRes.tasks || []).filter((t: Task) => t.patientId === patientId)
-      );
 
-      // Optional prescriptions fetch - don't fail the page load if this fails
+      // Non-critical fetches - don't fail the page if these fail
+      try {
+        const documentsRes = await fetchDocuments(session.tenantId, session.accessToken);
+        setDocuments(
+          (documentsRes.documents || []).filter((d: Document) => d.patientId === patientId)
+        );
+      } catch (docErr) {
+        console.warn('Failed to load documents:', docErr);
+        setDocuments([]);
+      }
+
+      try {
+        const photosRes = await fetchPhotos(session.tenantId, session.accessToken);
+        setPhotos(
+          (photosRes.photos || []).filter((p: Photo) => p.patientId === patientId)
+        );
+      } catch (photoErr) {
+        console.warn('Failed to load photos:', photoErr);
+        setPhotos([]);
+      }
+
+      try {
+        const tasksRes = await fetchTasks(session.tenantId, session.accessToken);
+        setTasks(
+          (tasksRes.tasks || []).filter((t: Task) => t.patientId === patientId)
+        );
+      } catch (taskErr) {
+        console.warn('Failed to load tasks:', taskErr);
+        setTasks([]);
+      }
+
       try {
         const prescriptionsRes = await fetchPrescriptionsEnhanced(session.tenantId, session.accessToken, { patientId });
         setPrescriptions(prescriptionsRes.prescriptions || []);
@@ -567,6 +586,19 @@ export function PatientDetailPage() {
                   </div>
                 )}
               </div>
+
+              {/* Active Medications */}
+              {patientId && (
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <ActiveMedicationsCard
+                    patientId={patientId}
+                    onAddMedication={() => setActiveTab('rx-history')}
+                    onViewAll={() => setActiveTab('rx-history')}
+                    maxDisplay={5}
+                    showRefillAlerts={true}
+                  />
+                </div>
+              )}
 
               {/* Quick Actions */}
               <div>

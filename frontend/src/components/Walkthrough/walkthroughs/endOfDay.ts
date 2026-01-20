@@ -1,0 +1,120 @@
+/**
+ * "End of Day Tasks" Walkthrough
+ * Review unsigned notes, check results, prepare for tomorrow
+ */
+
+import { Walkthrough } from '../types';
+
+export const endOfDayWalkthrough: Walkthrough = {
+  id: 'end-of-day',
+  title: 'End of Day Tasks',
+  description: 'Learn the essential end-of-day workflow: sign all notes, review pending lab/biopsy results, respond to messages, and preview tomorrow\'s schedule.',
+  estimatedMinutes: 5,
+  difficulty: 'beginner',
+  category: 'administrative',
+  icon: '🌙',
+  steps: [
+    {
+      id: 'intro',
+      title: 'End of Day Checklist',
+      description: 'Before leaving for the day, it\'s important to complete these tasks: sign all notes, review results, check messages, and prepare for tomorrow. Let\'s go through each one.',
+      targetSelector: 'body',
+      position: 'center',
+    },
+    {
+      id: 'review-encounters',
+      title: 'Review Unsigned Notes',
+      description: 'Navigate to the Encounters panel to see all notes from today. Look for any with "draft" status that need to be signed before you leave.',
+      targetSelector: '.panel:has(.panel-title:contains("Encounters"))',
+      position: 'left',
+      action: 'wait',
+    },
+    {
+      id: 'sign-notes',
+      title: 'Sign All Notes',
+      description: 'Review each encounter and change the status to "signed". This finalizes the documentation and allows billing. Notes should be signed within 24 hours.',
+      targetSelector: 'select:has(option:contains("signed"))',
+      position: 'left',
+      action: 'click',
+    },
+    {
+      id: 'check-biopsy-results',
+      title: 'Check Biopsy Results',
+      description: 'Navigate to "Path / Labs" to review any new biopsy results. Critical findings should be addressed immediately, routine results can be reviewed and signed.',
+      targetSelector: '.nav span:has-text("Path")',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'review-results',
+      title: 'Review and Sign Results',
+      description: 'For each result, review the pathology report, determine if patient notification is needed, document your review, and sign the result. Flag any abnormal findings.',
+      targetSelector: '.panel:has(.panel-title:contains("Orders"))',
+      position: 'left',
+      action: 'wait',
+    },
+    {
+      id: 'action-abnormal',
+      title: 'Action Abnormal Results',
+      description: 'For abnormal results (melanoma, concerning dysplasia), create a task to call the patient and schedule follow-up. Don\'t delay acting on critical results.',
+      targetSelector: 'details:has(summary:contains("Task"))',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'check-messages',
+      title: 'Review Patient Messages',
+      description: 'Click on "Mail" to check for any patient messages or staff communications that need response. Try to respond to all messages within 24 hours.',
+      targetSelector: '.nav span:has-text("Mail")',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'respond-messages',
+      title: 'Respond to Messages',
+      description: 'Review each message and respond appropriately. Some may need clinical assessment, others just reassurance. Document all communications in the patient chart.',
+      targetSelector: '.panel:has(.panel-title:contains("Messages"))',
+      position: 'left',
+      action: 'wait',
+    },
+    {
+      id: 'review-tasks',
+      title: 'Check Task List',
+      description: 'Navigate to "Tasks" to see any pending items. Complete what you can today, defer non-urgent items, and make sure nothing critical is delayed.',
+      targetSelector: '.nav span:has-text("Tasks")',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'tomorrow-schedule',
+      title: 'Preview Tomorrow\'s Schedule',
+      description: 'Go to "Schedule" and look at tomorrow\'s appointments. Note any complex cases, new patients, or procedures that need preparation or special supplies.',
+      targetSelector: '.nav span:has-text("Schedule")',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'review-tomorrow',
+      title: 'Prepare for Tomorrow',
+      description: 'Review tomorrow\'s patient list. For any patients with complex histories, quickly review their chart now so you\'re prepared. Note any prior authorization needs.',
+      targetSelector: '.panel:has(.panel-title:contains("Schedule"))',
+      position: 'right',
+      action: 'wait',
+    },
+    {
+      id: 'final-check',
+      title: 'Final Dashboard Check',
+      description: 'Return to the dashboard and verify: all notes signed, all results reviewed, no urgent messages, no overdue tasks. If everything is clear, you\'re done!',
+      targetSelector: '.nav span:first-child',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'completion',
+      title: 'End of Day Complete!',
+      description: 'Excellent! You\'ve completed all end-of-day tasks. Making this a daily habit ensures quality care, proper documentation, and peace of mind. See you tomorrow!',
+      targetSelector: 'body',
+      position: 'center',
+    },
+  ],
+};

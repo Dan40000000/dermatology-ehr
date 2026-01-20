@@ -58,24 +58,26 @@ const COMMON_DERM_PROCEDURES = [
 
 // Common lab tests
 const COMMON_DERM_LABS = [
-  { name: 'CBC with Differential', code: '85025' },
-  { name: 'Comprehensive Metabolic Panel', code: '80053' },
-  { name: 'Liver Function Tests', code: '80076' },
+  { name: 'CBC with differential', code: '85025' },
+  { name: 'CMP (Comprehensive Metabolic Panel)', code: '80053' },
+  { name: 'LFTs (Liver Function Tests)', code: '80076' },
   { name: 'Lipid Panel', code: '80061' },
-  { name: 'ANA (Antinuclear Antibody)', code: '86038' },
-  { name: 'ESR (Sed Rate)', code: '85652' },
-  { name: 'CRP (C-Reactive Protein)', code: '86140' },
-  { name: 'Vitamin D, 25-Hydroxy', code: '82306' },
-  { name: 'TSH', code: '84443' },
-  { name: 'Zinc Level', code: '84630' },
-  { name: 'Ferritin', code: '82728' },
-  { name: 'HgbA1c', code: '83036' },
-  { name: 'HIV Screening', code: '86701' },
-  { name: 'Hepatitis Panel', code: '80074' },
-  { name: 'RPR (Syphilis)', code: '86592' },
-  { name: 'Fungal Culture', code: '87101' },
-  { name: 'Bacterial Culture', code: '87070' },
-  { name: 'HSV PCR', code: '87529' },
+  { name: 'HbA1c', code: '83036' },
+  { name: 'ANA Panel', code: '86038' },
+  { name: 'Anti-dsDNA', code: '86225' },
+  { name: 'Complement levels (C3, C4)', code: '86160' },
+  { name: 'TB QuantiFERON Gold', code: '86480' },
+  { name: 'Hepatitis B Panel', code: '80074' },
+  { name: 'Hepatitis C Antibody', code: '86803' },
+  { name: 'HIV screening', code: '86701' },
+  { name: 'RPR/VDRL (syphilis)', code: '86592' },
+  { name: 'Thyroid Panel (TSH, T3, T4)', code: '84443' },
+  { name: 'Vitamin D level', code: '82306' },
+  { name: 'Zinc level', code: '84630' },
+  { name: 'Ferritin/Iron studies', code: '82728' },
+  { name: 'Pregnancy test (hCG)', code: '84702' },
+  { name: 'Fungal culture', code: '87101' },
+  { name: 'Bacterial culture', code: '87070' },
 ];
 
 export function LabsPage() {
@@ -153,7 +155,7 @@ export function LabsPage() {
 
       setPathResults(paths);
       setLabResults(labs);
-      setPatients(patientsRes.patients || []);
+      setPatients(patientsRes.data || patientsRes.patients || []);
       setProviders(providersRes.providers || []);
     } catch (err: any) {
       showError(err.message || 'Failed to load data');

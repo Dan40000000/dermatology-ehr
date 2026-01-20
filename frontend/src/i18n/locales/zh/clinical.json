@@ -1,0 +1,115 @@
+{
+  "title": "Clinical",
+  "encounter": "Encounter",
+  "encounters": "Encounters",
+  "newEncounter": "New Encounter",
+  "chiefComplaint": "Chief Complaint",
+  "hpi": "History of Present Illness",
+  "ros": "Review of Systems",
+  "exam": "Physical Examination",
+  "assessment": "Assessment",
+  "plan": "Plan",
+  "assessmentPlan": "Assessment & Plan",
+  "vitals": {
+    "title": "Vitals",
+    "bloodPressure": "Blood Pressure",
+    "systolic": "Systolic",
+    "diastolic": "Diastolic",
+    "pulse": "Pulse",
+    "temperature": "Temperature",
+    "height": "Height",
+    "weight": "Weight",
+    "bmi": "BMI",
+    "oxygenSaturation": "Oxygen Saturation",
+    "respiratoryRate": "Respiratory Rate",
+    "painScale": "Pain Scale (0-10)"
+  },
+  "skinExam": {
+    "title": "Skin Examination",
+    "lesionType": "Lesion Type",
+    "location": "Location",
+    "size": "Size",
+    "color": "Color",
+    "shape": "Shape",
+    "texture": "Texture",
+    "distribution": "Distribution",
+    "description": "描述",
+    "bodyMap": "Body Map"
+  },
+  "diagnosis": {
+    "title": "Diagnosis",
+    "primary": "Primary Diagnosis",
+    "secondary": "Secondary Diagnosis",
+    "differential": "Differential Diagnosis",
+    "icdCode": "ICD Code",
+    "description": "描述"
+  },
+  "procedures": {
+    "title": "Procedures",
+    "biopsy": "Biopsy",
+    "excision": "Excision",
+    "cryotherapy": "Cryotherapy",
+    "electrodessication": "Electrodessication",
+    "phototherapy": "Phototherapy",
+    "laserTherapy": "Laser Therapy",
+    "injection": "Injection",
+    "mohs": "Mohs Surgery",
+    "procedureDate": "Procedure Date",
+    "procedureNotes": "Procedure Notes",
+    "anesthesia": "Anesthesia",
+    "complications": "Complications"
+  },
+  "orders": {
+    "title": "Orders",
+    "labOrder": "Lab Order",
+    "imagingOrder": "Imaging Order",
+    "pathology": "Pathology",
+    "referral": "Referral",
+    "orderType": "Order Type",
+    "orderDetails": "Order Details",
+    "orderDate": "Order Date",
+    "results": "Results",
+    "pending": "待处理",
+    "completed": "已完成"
+  },
+  "templates": {
+    "title": "Note Templates",
+    "selectTemplate": "Select Template",
+    "acne": "Acne Visit",
+    "eczema": "Eczema/Dermatitis",
+    "psoriasis": "Psoriasis",
+    "skinCancer": "Skin Cancer Screening",
+    "moleCheck": "Mole Check",
+    "rash": "Rash Evaluation",
+    "followUp": "Follow-up Visit",
+    "postOp": "Post-operative Check"
+  },
+  "photos": {
+    "title": "Clinical Photos",
+    "uploadPhoto": "Upload Photo",
+    "takePhoto": "Take Photo",
+    "bodyLocation": "Body Location",
+    "viewComparison": "View Comparison",
+    "beforeAfter": "Before/After",
+    "annotations": "Annotations"
+  },
+  "status": {
+    "draft": "草稿",
+    "signed": "Signed",
+    "locked": "Locked",
+    "amended": "Amended"
+  },
+  "actions": {
+    "saveNote": "Save Note",
+    "signNote": "Sign Note",
+    "amendNote": "Amend Note",
+    "printNote": "Print Note",
+    "exportPdf": "Export PDF"
+  },
+  "messages": {
+    "noteSaved": "Note saved successfully",
+    "noteSigned": "Note signed successfully",
+    "encounterLocked": "Encounter is locked; editing disabled",
+    "templateApplied": "Template applied successfully"
+  }
+}

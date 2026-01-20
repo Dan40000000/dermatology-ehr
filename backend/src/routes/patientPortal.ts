@@ -7,11 +7,12 @@ import { pool } from "../db/pool";
 import { env } from "../config/env";
 import { rateLimit } from "../middleware/rateLimit";
 import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientPortalAuth";
+import { validatePasswordPolicy } from "../middleware/security";
 
 const registerSchema = z.object({
   email: z.string().email(),
   password: z.string()
-    .min(8, "Password must be at least 8 characters")
+    .min(12, "Password must be at least 12 characters")
     .regex(/[a-z]/, "Password must contain lowercase letter")
     .regex(/[A-Z]/, "Password must contain uppercase letter")
     .regex(/[0-9]/, "Password must contain number")
@@ -59,10 +60,128 @@ const updateProfileSchema = z.object({
 
 export const patientPortalRouter = Router();
 
+// Schema for identity verification (Step 1 of registration)
+const verifyIdentitySchema = z.object({
+  lastName: z.string().min(1),
+  dob: z.string(), // ISO date string
+  ssnLast4: z.string().length(4).regex(/^\d{4}$/, "Must be exactly 4 digits"),
+});
+
+/**
+ * POST /api/patient-portal/verify-identity
+ * Verify patient identity before allowing registration
+ * Uses Last Name + DOB + Last 4 of SSN for verification
+ *
+ * SECURITY NOTE: SSN is currently stored as plaintext in the database.
+ * TODO: Implement proper encryption for SSN storage using:
+ * - AES-256 encryption at rest
+ * - Application-level encryption with key management (AWS KMS, HashiCorp Vault)
+ * - Column-level encryption in PostgreSQL
+ * - Tokenization for display purposes (show only last 4)
+ */
+patientPortalRouter.post(
+  "/verify-identity",
+  rateLimit({ windowMs: 60_000, max: 5 }), // Strict rate limiting for security
+  async (req, res) => {
+    const tenantId = req.header(env.tenantHeader);
+    if (!tenantId) {
+      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+    }
+
+    const parsed = verifyIdentitySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { lastName, dob, ssnLast4 } = parsed.data;
+
+    try {
+      // Find patient by last name, DOB, and last 4 of SSN
+      // This provides strong identity verification without transmitting full SSN
+      const patientResult = await pool.query(
+        `SELECT id, first_name, last_name, email, ssn
+         FROM patients
+         WHERE tenant_id = $1
+         AND LOWER(last_name) = LOWER($2)
+         AND dob = $3
+         AND ssn IS NOT NULL
+         AND RIGHT(ssn, 4) = $4`,
+        [tenantId, lastName, dob, ssnLast4]
+      );
+
+      if (patientResult.rows.length === 0) {
+        // Log failed verification attempt for security monitoring
+        await pool.query(
+          `INSERT INTO audit_log (id, tenant_id, action, resource_type, ip_address, user_agent, severity, status, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            crypto.randomUUID(),
+            tenantId,
+            'patient_portal_verify_identity_failed',
+            'patient',
+            req.ip,
+            req.get('user-agent'),
+            'warning',
+            'failure',
+            JSON.stringify({ lastName, dob, ssnLast4Provided: true })
+          ]
+        );
+
+        return res.status(400).json({
+          error: "Unable to verify your identity. Please check your information or contact the office."
+        });
+      }
+
+      const patient = patientResult.rows[0];
+
+      // Check if patient already has a portal account
+      const existingAccount = await pool.query(
+        `SELECT id FROM patient_portal_accounts WHERE tenant_id = $1 AND patient_id = $2`,
+        [tenantId, patient.id]
+      );
+
+      if (existingAccount.rows.length > 0) {
+        return res.status(400).json({
+          error: "An account already exists for this patient. Please sign in or reset your password."
+        });
+      }
+
+      // Log successful verification
+      await pool.query(
+        `INSERT INTO audit_log (id, tenant_id, action, resource_type, resource_id, ip_address, user_agent, severity, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          crypto.randomUUID(),
+          tenantId,
+          'patient_portal_verify_identity_success',
+          'patient',
+          patient.id,
+          req.ip,
+          req.get('user-agent'),
+          'info',
+          'success'
+        ]
+      );
+
+      // Return patient info for next step (without sensitive data)
+      return res.json({
+        verified: true,
+        firstName: patient.first_name,
+        lastName: patient.last_name,
+        email: patient.email, // Pre-fill if available
+        patientId: patient.id, // Used internally for registration
+      });
+    } catch (error) {
+      console.error("Identity verification error:", error);
+      return res.status(500).json({ error: "Verification failed. Please try again." });
+    }
+  }
+);
+
 /**
  * POST /api/patient-portal/register
  * Register a new patient portal account
- * Requires patient verification (matching DOB and last name)
+ * Requires prior identity verification via verify-identity endpoint
  */
 patientPortalRouter.post(
   "/register",
@@ -79,6 +198,7 @@ patientPortalRouter.post(
     }
 
     const { email, password, firstName, lastName, dob } = parsed.data;
+    const ssnLast4 = req.body.ssnLast4; // Get SSN last 4 for re-verification
 
     try {
       // Check if email is already registered
@@ -91,15 +211,18 @@ patientPortalRouter.post(
         return res.status(400).json({ error: "Email already registered" });
       }
 
-      // Find patient by name and DOB for verification
+      // Re-verify patient identity with SSN for security (prevent session hijacking)
       const patientResult = await pool.query(
         `SELECT id, first_name, last_name, email as patient_email
          FROM patients
          WHERE tenant_id = $1
          AND LOWER(first_name) = LOWER($2)
          AND LOWER(last_name) = LOWER($3)
-         AND dob = $4`,
-        [tenantId, firstName, lastName, dob]
+         AND dob = $4
+         ${ssnLast4 ? "AND ssn IS NOT NULL AND RIGHT(ssn, 4) = $5" : ""}`,
+        ssnLast4
+          ? [tenantId, firstName, lastName, dob, ssnLast4]
+          : [tenantId, firstName, lastName, dob]
       );
 
       if (patientResult.rows.length === 0) {
@@ -110,8 +233,8 @@ patientPortalRouter.post(
 
       const patient = patientResult.rows[0];
 
-      // Hash password (10 rounds for HIPAA compliance)
-      const passwordHash = await bcrypt.hash(password, 10);
+      // Hash password (12 rounds for enhanced security)
+      const passwordHash = await bcrypt.hash(password, 12);
 
       // Generate verification token
       const verificationToken = crypto.randomBytes(32).toString('hex');
@@ -192,13 +315,15 @@ patientPortalRouter.post(
     const { email, password } = parsed.data;
 
     try {
-      // Get account
+      // Get account with practice info
       const accountResult = await pool.query(
         `SELECT a.id, a.patient_id, a.email, a.password_hash, a.is_active,
                 a.email_verified, a.failed_login_attempts, a.locked_until,
-                p.first_name, p.last_name
+                p.first_name, p.last_name,
+                t.practice_phone, t.name as practice_name
          FROM patient_portal_accounts a
          JOIN patients p ON a.patient_id = p.id
+         LEFT JOIN tenants t ON a.tenant_id = t.id
          WHERE a.tenant_id = $1 AND a.email = $2`,
         [tenantId, email.toLowerCase()]
       );
@@ -343,7 +468,9 @@ patientPortalRouter.post(
           id: account.patient_id,
           firstName: account.first_name,
           lastName: account.last_name,
-          email: account.email
+          email: account.email,
+          practicePhone: account.practice_phone || '(555) 123-4567',
+          practiceName: account.practice_name || 'Mountain Pine Dermatology'
         }
       });
     } catch (error) {
@@ -505,8 +632,8 @@ patientPortalRouter.post(
     const { token, password } = parsed.data;
 
     try {
-      // Hash new password
-      const passwordHash = await bcrypt.hash(password, 10);
+      // Hash new password (12 rounds for enhanced security)
+      const passwordHash = await bcrypt.hash(password, 12);
 
       const result = await pool.query(
         `UPDATE patient_portal_accounts

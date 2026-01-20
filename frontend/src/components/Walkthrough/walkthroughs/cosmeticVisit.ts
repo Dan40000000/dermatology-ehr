@@ -1,0 +1,115 @@
+/**
+ * "Cosmetic Visit" Walkthrough
+ * Document cosmetic procedures with photos, consent, and treatment details
+ */
+
+import { Walkthrough } from '../types';
+
+export const cosmeticVisitWalkthrough: Walkthrough = {
+  id: 'cosmetic-visit',
+  title: 'Cosmetic Visit Documentation',
+  description: 'Learn the complete cosmetic visit workflow: taking before photos, obtaining consent, documenting treatment, and scheduling follow-up.',
+  estimatedMinutes: 7,
+  difficulty: 'intermediate',
+  category: 'clinical',
+  icon: '✨',
+  steps: [
+    {
+      id: 'intro',
+      title: 'Cosmetic Visit Overview',
+      description: 'Cosmetic procedures require special documentation: before/after photos, informed consent, detailed treatment notes, and careful billing. Let\'s walk through a complete cosmetic visit.',
+      targetSelector: 'body',
+      position: 'center',
+    },
+    {
+      id: 'select-patient',
+      title: 'Open Patient Chart',
+      description: 'Select the patient scheduled for the cosmetic procedure. Verify you have their consent form signed before starting.',
+      targetSelector: '.list-row:first-child',
+      position: 'right',
+      action: 'click',
+    },
+    {
+      id: 'take-before-photos',
+      title: 'Capture Before Photos',
+      description: 'Click on "Photos" to access the photo documentation system. Take standardized before photos from multiple angles. Good photos are essential for cosmetics.',
+      targetSelector: '.nav span:has-text("Document")',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'upload-photos',
+      title: 'Upload Before Photos',
+      description: 'Click "+ Photo" and upload before photos. Tag each photo with the treatment area (e.g., "Forehead - frontal view"). Ensure good lighting and consistent positioning.',
+      targetSelector: 'details:has(summary:contains("Photo"))',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'photo-location',
+      title: 'Specify Photo Location',
+      description: 'Enter the body location and angle for each photo. Examples: "Forehead - frontal", "Forehead - right oblique", "Forehead - left oblique". This helps with before/after comparison.',
+      targetSelector: 'input[placeholder*="location"]',
+      position: 'right',
+      action: 'type',
+      actionValue: 'Forehead - frontal view, Botox treatment area',
+    },
+    {
+      id: 'verify-consent',
+      title: 'Verify Consent Documentation',
+      description: 'Before treating, confirm the signed consent form is in the chart. Navigate to Documents and verify the cosmetic consent is uploaded and signed.',
+      targetSelector: '.panel:has(.panel-title:contains("Documents"))',
+      position: 'left',
+      action: 'wait',
+    },
+    {
+      id: 'start-encounter',
+      title: 'Create Treatment Encounter',
+      description: 'Click "+ Encounter" to document the cosmetic treatment. This is separate from medical encounters and will be billed differently.',
+      targetSelector: 'details:has(summary:contains("Encounter"))',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'document-treatment',
+      title: 'Document Treatment Details',
+      description: 'In the procedure note, document: product used, lot number, units/syringes, injection sites, technique, and patient tolerance. Be very specific for cosmetic procedures.',
+      targetSelector: 'textarea',
+      position: 'right',
+      action: 'type',
+      actionValue: 'Botox Cosmetic (Lot #ABC123) - Total 20 units injected into glabellar complex. 5 injection sites: 2 procerus, 3 corrugator. No complications.',
+    },
+    {
+      id: 'post-care-instructions',
+      title: 'Add Post-Care Instructions',
+      description: 'Include specific aftercare instructions: no lying down for 4 hours, no exercise for 24 hours, when to expect results, and when to follow up. Clear instructions prevent complications.',
+      targetSelector: 'label:has-text("Assessment") textarea',
+      position: 'right',
+      action: 'type',
+      actionValue: 'Post-care: Remain upright x4hrs, no exercise x24hrs, no manipulation of area. Results in 7-14 days. F/u 2 weeks for assessment.',
+    },
+    {
+      id: 'schedule-followup',
+      title: 'Schedule Follow-Up',
+      description: 'Schedule a 2-week follow-up appointment to assess results. Go to the Schedule tab and book the follow-up visit.',
+      targetSelector: '.nav span:has-text("Schedule")',
+      position: 'bottom',
+      action: 'click',
+    },
+    {
+      id: 'billing-cosmetic',
+      title: 'Billing for Cosmetic Services',
+      description: 'Cosmetic procedures are typically self-pay. Create a charge with the appropriate CPT code and cash price. Common codes: 64612 (Botox), J0585 (Botox product).',
+      targetSelector: 'details:has(summary:contains("Charge"))',
+      position: 'bottom',
+      action: 'wait',
+    },
+    {
+      id: 'completion',
+      title: 'Cosmetic Visit Complete!',
+      description: 'Excellent work! You now know how to properly document cosmetic visits with photos, detailed treatment notes, aftercare instructions, and appropriate billing. Always prioritize patient safety and informed consent.',
+      targetSelector: 'body',
+      position: 'center',
+    },
+  ],
+};

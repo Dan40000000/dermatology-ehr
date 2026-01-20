@@ -9,7 +9,7 @@ import { auditLog } from "../services/audit";
 const orderSchema = z.object({
   encounterId: z.string().optional(),
   patientId: z.string(),
-  providerId: z.string(),
+  providerId: z.string().optional(), // Optional - will default to first available provider
   type: z.string().min(1),
   status: z.string().optional(),
   priority: z.enum(['normal', 'high', 'stat', 'routine', 'urgent']).optional(),
@@ -111,12 +111,31 @@ ordersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]), a
   const id = crypto.randomUUID();
   const o = parsed.data;
 
-  // Get provider name for denormalization
-  const providerResult = await pool.query(
-    `select full_name from providers where id = $1 and tenant_id = $2`,
-    [o.providerId, tenantId]
-  );
-  const providerName = providerResult.rows[0]?.full_name || null;
+  // Get provider ID - use provided one or default to first available provider
+  let providerId = o.providerId;
+  let providerName: string | null = null;
+
+  if (providerId) {
+    // Get provider name for denormalization
+    const providerResult = await pool.query(
+      `select full_name from providers where id = $1 and tenant_id = $2`,
+      [providerId, tenantId]
+    );
+    providerName = providerResult.rows[0]?.full_name || null;
+  } else {
+    // Default to first available provider (prefer Dr. David Skin for derm orders)
+    const defaultProviderResult = await pool.query(
+      `select id, full_name from providers where tenant_id = $1 order by
+       case when id = 'prov-demo' then 0 else 1 end, created_at limit 1`,
+      [tenantId]
+    );
+    if (defaultProviderResult.rows[0]) {
+      providerId = defaultProviderResult.rows[0].id;
+      providerName = defaultProviderResult.rows[0].full_name;
+    } else {
+      return res.status(400).json({ error: "No providers available" });
+    }
+  }
 
   await pool.query(
     `insert into orders(id, tenant_id, encounter_id, patient_id, provider_id, provider_name, type, status, priority, details, notes)
@@ -126,7 +145,7 @@ ordersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]), a
       tenantId,
       o.encounterId || null,
       o.patientId,
-      o.providerId,
+      providerId,
       providerName,
       o.type,
       o.status || "draft",

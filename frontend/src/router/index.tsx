@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter, Navigate, Outlet } from 'react-router-dom';
 import { AppLayout } from '../components/layout';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 
@@ -18,6 +18,7 @@ import {
   PortalDocumentsPage,
   PortalHealthRecordPage,
   PortalProfilePage,
+  PortalBillingPage,
 } from '../pages/patient-portal';
 
 // Lazy load all other pages for better performance
@@ -30,6 +31,7 @@ const OrdersPage = lazy(() => import('../pages/OrdersPage').then(m => ({ default
 const DocumentsPage = lazy(() => import('../pages/DocumentsPage').then(m => ({ default: m.DocumentsPage })));
 const PhotosPage = lazy(() => import('../pages/PhotosPage').then(m => ({ default: m.PhotosPage })));
 const AnalyticsPage = lazy(() => import('../pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
+const AnalyticsDashboard = lazy(() => import('../pages/admin/AnalyticsDashboard').then(m => ({ default: m.AnalyticsDashboard })));
 const PrescriptionsPage = lazy(() => import('../pages/PrescriptionsPage').then(m => ({ default: m.PrescriptionsPage })));
 const LabsPage = lazy(() => import('../pages/LabsPage').then(m => ({ default: m.LabsPage })));
 const RadiologyPage = lazy(() => import('../pages/RadiologyPage').then(m => ({ default: m.RadiologyPage })));
@@ -52,6 +54,7 @@ const QuotesPage = lazy(() => import('../pages/QuotesPage').then(m => ({ default
 const OfficeFlowPage = lazy(() => import('../pages/OfficeFlowPage').then(m => ({ default: m.OfficeFlowPage })));
 const AppointmentFlowPage = lazy(() => import('../pages/AppointmentFlowPage').then(m => ({ default: m.AppointmentFlowPage })));
 const FeeSchedulePage = lazy(() => import('../pages/FeeSchedulePage').then(m => ({ default: m.FeeSchedulePage })));
+const CosmeticPricingPage = lazy(() => import('../pages/CosmeticPricingPage').then(m => ({ default: m.CosmeticPricingPage })));
 const ClaimsPage = lazy(() => import('../pages/ClaimsPage').then(m => ({ default: m.ClaimsPage })));
 const NoteTemplatesPage = lazy(() => import('../pages/NoteTemplatesPage').then(m => ({ default: m.NoteTemplatesPage })));
 const AuditLogPage = lazy(() => import('../pages/AuditLogPage').then(m => ({ default: m.AuditLogPage })));
@@ -75,6 +78,7 @@ const PreferencesPage = lazy(() => import('../pages/PreferencesPage').then(m => 
 const HelpPage = lazy(() => import('../pages/HelpPage').then(m => ({ default: m.HelpPage })));
 const RecallsPage = lazy(() => import('../pages/RecallsPage').then(m => ({ default: m.RecallsPage })));
 const FormsPage = lazy(() => import('../pages/FormsPage').then(m => ({ default: m.FormsPage })));
+const FrontDeskDashboard = lazy(() => import('../pages/FrontDeskDashboard').then(m => ({ default: m.default })));
 
 // Loading fallback component
 function PageLoader() {
@@ -105,7 +109,7 @@ export const router = createBrowserRouter([
     element: (
       <PatientPortalAuthProvider>
         <Suspense fallback={<PageLoader />}>
-          <div />
+          <Outlet />
         </Suspense>
       </PatientPortalAuthProvider>
     ),
@@ -117,6 +121,7 @@ export const router = createBrowserRouter([
       { path: 'visits', element: <PortalVisitSummariesPage /> },
       { path: 'documents', element: <PortalDocumentsPage /> },
       { path: 'health-record', element: <PortalHealthRecordPage /> },
+      { path: 'billing', element: <PortalBillingPage /> },
       { path: 'profile', element: <PortalProfilePage /> },
       { index: true, element: <Navigate to="/portal/login" replace /> },
     ],
@@ -131,8 +136,7 @@ export const router = createBrowserRouter([
       // Scheduling
       { path: 'schedule', element: lazyWithSuspense(SchedulePage) },
       { path: 'office-flow', element: lazyWithSuspense(OfficeFlowPage) },
-      { path: 'appt-flow', element: lazyWithSuspense(AppointmentFlowPage) },
-      { path: 'waitlist', element: lazyWithSuspense(WaitlistPage) },
+      { path: 'front-desk', element: lazyWithSuspense(FrontDeskDashboard) },
 
       // Patients
       { path: 'patients', element: lazyWithSuspense(PatientsPage) },
@@ -187,7 +191,9 @@ export const router = createBrowserRouter([
 
       // Admin
       { path: 'admin', element: lazyWithSuspense(AdminPage) },
+      { path: 'admin/analytics', element: lazyWithSuspense(AnalyticsDashboard) },
       { path: 'admin/fee-schedules', element: lazyWithSuspense(FeeSchedulePage) },
+      { path: 'admin/cosmetic-pricing', element: lazyWithSuspense(CosmeticPricingPage) },
       { path: 'admin/note-templates', element: lazyWithSuspense(NoteTemplatesPage) },
       { path: 'admin/audit-log', element: lazyWithSuspense(AuditLogPage) },
       { path: 'admin/ai-agents', element: lazyWithSuspense(AIAgentConfigsPage) },

@@ -1,0 +1,111 @@
+Category,CPT Code,Description,Typical Fee
+Evaluation & Management,99201,New patient office visit - Level 1 (10 min),$75.00
+Evaluation & Management,99202,New patient office visit - Level 2 (20 min),$110.00
+Evaluation & Management,99203,New patient office visit - Level 3 (30 min),$165.00
+Evaluation & Management,99204,New patient office visit - Level 4 (45 min),$240.00
+Evaluation & Management,99205,New patient office visit - Level 5 (60 min),$350.00
+Evaluation & Management,99211,Established patient office visit - Level 1 (5 min),$50.00
+Evaluation & Management,99212,Established patient office visit - Level 2 (10 min),$75.00
+Evaluation & Management,99213,Established patient office visit - Level 3 (15 min),$110.00
+Evaluation & Management,99214,Established patient office visit - Level 4 (25 min),$165.00
+Evaluation & Management,99215,Established patient office visit - Level 5 (40 min),$250.00
+Evaluation & Management,99241,Office consultation - Level 1 (15 min),$150.00
+Evaluation & Management,99242,Office consultation - Level 2 (30 min),$200.00
+Evaluation & Management,99243,Office consultation - Level 3 (40 min),$250.00
+Evaluation & Management,99244,Office consultation - Level 4 (60 min),$320.00
+Evaluation & Management,99245,Office consultation - Level 5 (80 min),$400.00
+Biopsies,11102,Tangential biopsy - single lesion,$150.00
+Biopsies,11103,Tangential biopsy - each additional,$75.00
+Biopsies,11104,Punch biopsy - single lesion,$175.00
+Biopsies,11105,Punch biopsy - each additional,$85.00
+Biopsies,11106,Incisional biopsy - single lesion,$250.00
+Biopsies,11107,Incisional biopsy - each additional,$125.00
+Excisions - Benign,11400,Excision benign (trunk/arms/legs) 0.5 cm or less,$200.00
+Excisions - Benign,11401,Excision benign (trunk/arms/legs) 0.6-1.0 cm,$280.00
+Excisions - Benign,11402,Excision benign (trunk/arms/legs) 1.1-2.0 cm,$360.00
+Excisions - Benign,11403,Excision benign (trunk/arms/legs) 2.1-3.0 cm,$440.00
+Excisions - Benign,11404,Excision benign (trunk/arms/legs) 3.1-4.0 cm,$520.00
+Excisions - Benign,11406,Excision benign (trunk/arms/legs) over 4.0 cm,$600.00
+Excisions - Benign,11420,Excision benign (scalp/neck/hands/feet) 0.5 cm or less,$225.00
+Excisions - Benign,11421,Excision benign (scalp/neck/hands/feet) 0.6-1.0 cm,$310.00
+Excisions - Benign,11422,Excision benign (scalp/neck/hands/feet) 1.1-2.0 cm,$390.00
+Excisions - Benign,11423,Excision benign (scalp/neck/hands/feet) 2.1-3.0 cm,$480.00
+Excisions - Benign,11424,Excision benign (scalp/neck/hands/feet) 3.1-4.0 cm,$560.00
+Excisions - Benign,11426,Excision benign (scalp/neck/hands/feet) over 4.0 cm,$650.00
+Excisions - Benign,11440,Excision benign (face/ears/eyelids) 0.5 cm or less,$275.00
+Excisions - Benign,11441,Excision benign (face/ears/eyelids) 0.6-1.0 cm,$360.00
+Excisions - Benign,11442,Excision benign (face/ears/eyelids) 1.1-2.0 cm,$460.00
+Excisions - Benign,11443,Excision benign (face/ears/eyelids) 2.1-3.0 cm,$560.00
+Excisions - Benign,11444,Excision benign (face/ears/eyelids) 3.1-4.0 cm,$660.00
+Excisions - Benign,11446,Excision benign (face/ears/eyelids) over 4.0 cm,$750.00
+Excisions - Malignant,11600,Excision malignant (trunk/arms/legs) 0.5 cm or less,$300.00
+Excisions - Malignant,11601,Excision malignant (trunk/arms/legs) 0.6-1.0 cm,$420.00
+Excisions - Malignant,11602,Excision malignant (trunk/arms/legs) 1.1-2.0 cm,$540.00
+Excisions - Malignant,11603,Excision malignant (trunk/arms/legs) 2.1-3.0 cm,$660.00
+Excisions - Malignant,11604,Excision malignant (trunk/arms/legs) 3.1-4.0 cm,$780.00
+Excisions - Malignant,11606,Excision malignant (trunk/arms/legs) over 4.0 cm,$900.00
+Excisions - Malignant,11620,Excision malignant (scalp/neck/hands/feet) 0.5 cm or less,$350.00
+Excisions - Malignant,11621,Excision malignant (scalp/neck/hands/feet) 0.6-1.0 cm,$470.00
+Excisions - Malignant,11622,Excision malignant (scalp/neck/hands/feet) 1.1-2.0 cm,$590.00
+Excisions - Malignant,11623,Excision malignant (scalp/neck/hands/feet) 2.1-3.0 cm,$710.00
+Excisions - Malignant,11624,Excision malignant (scalp/neck/hands/feet) 3.1-4.0 cm,$830.00
+Excisions - Malignant,11626,Excision malignant (scalp/neck/hands/feet) over 4.0 cm,$950.00
+Excisions - Malignant,11640,Excision malignant (face/ears/eyelids) 0.5 cm or less,$400.00
+Excisions - Malignant,11641,Excision malignant (face/ears/eyelids) 0.6-1.0 cm,$540.00
+Excisions - Malignant,11642,Excision malignant (face/ears/eyelids) 1.1-2.0 cm,$680.00
+Excisions - Malignant,11643,Excision malignant (face/ears/eyelids) 2.1-3.0 cm,$820.00
+Excisions - Malignant,11644,Excision malignant (face/ears/eyelids) 3.1-4.0 cm,$960.00
+Excisions - Malignant,11646,Excision malignant (face/ears/eyelids) over 4.0 cm,$1100.00
+Destruction,17000,Destruction premalignant lesion - first,$125.00
+Destruction,17003,Destruction premalignant lesion - 2-14 each,$35.00
+Destruction,17004,Destruction premalignant lesion - 15 or more,$400.00
+Destruction,17110,Destruction benign lesions - up to 14,$175.00
+Destruction,17111,Destruction benign lesions - 15 or more,$350.00
+Mohs Surgery,17311,Mohs surgery (head/neck/hands/feet/genitalia) 1st stage,$800.00
+Mohs Surgery,17312,Mohs surgery (head/neck/hands/feet/genitalia) additional stage,$500.00
+Mohs Surgery,17313,Mohs surgery (trunk/arms/legs) 1st stage,$700.00
+Mohs Surgery,17314,Mohs surgery (trunk/arms/legs) additional stage,$450.00
+Repairs - Simple,12001,Simple repair (scalp/neck/trunk/extremities) 2.5 cm or less,$150.00
+Repairs - Simple,12002,Simple repair (scalp/neck/trunk/extremities) 2.6-7.5 cm,$220.00
+Repairs - Simple,12004,Simple repair (scalp/neck/trunk/extremities) 7.6-12.5 cm,$290.00
+Repairs - Simple,12005,Simple repair (scalp/neck/trunk/extremities) 12.6-20.0 cm,$360.00
+Repairs - Simple,12007,Simple repair (scalp/neck/trunk/extremities) over 30.0 cm,$400.00
+Repairs - Intermediate,12031,Intermediate repair (scalp/trunk/extremities) 2.5 cm or less,$300.00
+Repairs - Intermediate,12032,Intermediate repair (scalp/trunk/extremities) 2.6-7.5 cm,$420.00
+Repairs - Intermediate,12034,Intermediate repair (scalp/trunk/extremities) 7.6-12.5 cm,$540.00
+Repairs - Intermediate,12035,Intermediate repair (scalp/trunk/extremities) 12.6-20.0 cm,$660.00
+Repairs - Intermediate,12037,Intermediate repair (scalp/trunk/extremities) over 30.0 cm,$800.00
+Repairs - Intermediate,12041,Intermediate repair (neck/hands/feet) 2.5 cm or less,$350.00
+Repairs - Intermediate,12042,Intermediate repair (neck/hands/feet) 2.6-7.5 cm,$480.00
+Repairs - Intermediate,12044,Intermediate repair (neck/hands/feet) 7.6-12.5 cm,$610.00
+Repairs - Intermediate,12045,Intermediate repair (neck/hands/feet) 12.6-20.0 cm,$740.00
+Repairs - Intermediate,12046,Intermediate repair (neck/hands/feet) 20.1-30.0 cm,$800.00
+Repairs - Intermediate,12051,Intermediate repair (face/ears/eyelids) 2.5 cm or less,$400.00
+Repairs - Intermediate,12052,Intermediate repair (face/ears/eyelids) 2.6-5.0 cm,$540.00
+Repairs - Intermediate,12053,Intermediate repair (face/ears/eyelids) 5.1-7.5 cm,$680.00
+Repairs - Intermediate,12054,Intermediate repair (face/ears/eyelids) 7.6-12.5 cm,$740.00
+Repairs - Intermediate,12055,Intermediate repair (face/ears/eyelids) 12.6-20.0 cm,$800.00
+Repairs - Intermediate,12056,Intermediate repair (face/ears/eyelids) 20.1-30.0 cm,$800.00
+Repairs - Intermediate,12057,Intermediate repair (face/ears/eyelids) over 30.0 cm,$800.00
+Repairs - Complex,13100,Complex repair (trunk) 1.1-2.5 cm,$500.00
+Repairs - Complex,13101,Complex repair (trunk) 2.6-7.5 cm,$700.00
+Repairs - Complex,13102,Complex repair (trunk) each additional 5 cm,$300.00
+Repairs - Complex,13120,Complex repair (scalp/arms/legs) 1.1-2.5 cm,$550.00
+Repairs - Complex,13121,Complex repair (scalp/arms/legs) 2.6-7.5 cm,$750.00
+Repairs - Complex,13122,Complex repair (scalp/arms/legs) each additional 5 cm,$350.00
+Repairs - Complex,13131,Complex repair (forehead/cheeks/chin/mouth/neck) 1.1-2.5 cm,$650.00
+Repairs - Complex,13132,Complex repair (forehead/cheeks/chin/mouth/neck) 2.6-7.5 cm,$900.00
+Repairs - Complex,13133,Complex repair (forehead/cheeks/chin/mouth/neck) each additional 5 cm,$400.00
+Repairs - Complex,13151,Complex repair (eyelids/nose/ears/lips) 1.1-2.5 cm,$800.00
+Repairs - Complex,13152,Complex repair (eyelids/nose/ears/lips) 2.6-7.5 cm,$1100.00
+Repairs - Complex,13153,Complex repair (eyelids/nose/ears/lips) each additional 5 cm,$500.00
+Repairs - Complex,13160,Complex repair - secondary repair,$1500.00
+Phototherapy,96910,Photochemotherapy with PUVA,$150.00
+Phototherapy,96912,Phototherapy with UVB,$100.00
+Phototherapy,96920,Laser treatment inflammatory skin disease <250 sq cm,$200.00
+Phototherapy,96921,Laser treatment inflammatory skin disease 250-500 sq cm,$300.00
+Phototherapy,96922,Laser treatment inflammatory skin disease >500 sq cm,$400.00
+Injections,11900,Intralesional injection - up to 7 lesions,$125.00
+Injections,11901,Intralesional injection - more than 7 lesions,$200.00
+Patch Testing,95044,Patch or application test - each test,$25.00
+Patch Testing,95052,Photo patch testing,$75.00

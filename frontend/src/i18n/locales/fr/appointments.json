@@ -1,0 +1,91 @@
+{
+  "title": "Rendez-vous",
+  "schedule": "Agenda",
+  "newAppointment": "New Appointment",
+  "reschedule": "Reschedule",
+  "cancelAppointment": "Cancel Appointment",
+  "fields": {
+    "patient": "Patient",
+    "provider": "Provider",
+    "location": "Location",
+    "appointmentType": "Appointment Type",
+    "date": "Date",
+    "startTime": "Start Time",
+    "endTime": "End Time",
+    "duration": "Duration",
+    "reason": "Reason for Visit",
+    "notes": "Notes",
+    "status": "Statut",
+    "recurringAppointment": "Recurring Appointment"
+  },
+  "types": {
+    "newPatient": "New Patient",
+    "followUp": "Follow-up",
+    "consultation": "Consultation",
+    "procedure": "Procedure",
+    "telehealth": "Telehealth",
+    "annual": "Annual Exam",
+    "emergency": "Emergency"
+  },
+  "status": {
+    "scheduled": "Planifié",
+    "confirmed": "Confirmed",
+    "checkedIn": "Checked In",
+    "inProgress": "En cours",
+    "completed": "Terminé",
+    "cancelled": "Annulé",
+    "noShow": "No Show",
+    "rescheduled": "Rescheduled"
+  },
+  "views": {
+    "day": "Day View",
+    "week": "Week View",
+    "month": "Month View",
+    "list": "List View"
+  },
+  "navigation": {
+    "today": "Aujourd'hui",
+    "prevDay": "Previous Day",
+    "nextDay": "Next Day",
+    "prevWeek": "Previous Week",
+    "nextWeek": "Next Week",
+    "prevMonth": "Previous Month",
+    "nextMonth": "Next Month"
+  },
+  "actions": {
+    "checkIn": "Check In",
+    "startVisit": "Start Visit",
+    "completeVisit": "Complete Visit",
+    "markNoShow": "Mark No Show",
+    "sendReminder": "Send Reminder",
+    "printSchedule": "Print Schedule"
+  },
+  "messages": {
+    "appointmentCreated": "Appointment scheduled successfully",
+    "appointmentUpdated": "Appointment updated successfully",
+    "appointmentCancelled": "Appointment cancelled successfully",
+    "appointmentRescheduled": "Appointment rescheduled successfully",
+    "noAppointments": "No appointments found",
+    "loadingAppointments": "Loading appointments...",
+    "conflictDetected": "Schedule conflict detected",
+    "confirmCancel": "Are you sure you want to cancel this appointment?",
+    "confirmNoShow": "Mark patient as no-show?"
+  },
+  "stats": {
+    "totalAppointments": "Total Appointments",
+    "scheduledAppointments": "Planifié",
+    "checkedInPatients": "Checked In",
+    "completedVisits": "Terminé"
+  },
+  "filters": {
+    "allProviders": "All Providers",
+    "allTypes": "All Types",
+    "allStatuses": "All Statuses",
+    "slotDuration": "Slot Duration (minutes)"
+  },
+  "conflicts": {
+    "title": "Schedule Conflicts",
+    "overlappingAppointments": "overlapping appointments",
+    "noConflicts": "No overlapping appointments detected"
+  }
+}

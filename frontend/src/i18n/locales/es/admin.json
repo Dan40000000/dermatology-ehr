@@ -1,0 +1,105 @@
+{
+  "title": "Administración",
+  "users": "Usuarios",
+  "providers": "Proveedores",
+  "locations": "Ubicaciones",
+  "settings": "Configuración",
+  "security": "Seguridad",
+  "audit": "Registro de Auditoría",
+  "users": {
+    "title": "Gestión de Usuarios",
+    "addUser": "Agregar Usuario",
+    "editUser": "Editar Usuario",
+    "deactivateUser": "Desactivar Usuario",
+    "fields": {
+      "username": "Nombre de Usuario",
+      "email": "Correo Electrónico",
+      "role": "Rol",
+      "status": "Estado",
+      "lastLogin": "Último Acceso",
+      "createdDate": "Fecha de Creación"
+    },
+    "roles": {
+      "admin": "Administrador",
+      "provider": "Proveedor",
+      "nurse": "Enfermera",
+      "frontDesk": "Recepción",
+      "billing": "Facturación",
+      "readonly": "Solo Lectura"
+    }
+  },
+  "providers": {
+    "title": "Gestión de Proveedores",
+    "addProvider": "Agregar Proveedor",
+    "fields": {
+      "npi": "Número NPI",
+      "dea": "Número DEA",
+      "licenseNumber": "Número de Licencia",
+      "specialty": "Especialidad",
+      "credentials": "Credenciales",
+      "taxId": "ID Fiscal"
+    }
+  },
+  "locations": {
+    "title": "Gestión de Ubicaciones",
+    "addLocation": "Agregar Ubicación",
+    "fields": {
+      "name": "Nombre de Ubicación",
+      "address": "Dirección",
+      "phone": "Teléfono",
+      "fax": "Fax",
+      "timezone": "Zona Horaria",
+      "hours": "Horario de Operación"
+    }
+  },
+  "settings": {
+    "general": "Configuración General",
+    "practice": "Configuración de Práctica",
+    "scheduling": "Configuración de Agenda",
+    "billing": "Configuración de Facturación",
+    "integrations": "Integraciones",
+    "notifications": "Notificaciones",
+    "preferences": "Preferencias",
+    "language": "Idioma",
+    "theme": "Tema",
+    "dateFormat": "Formato de Fecha",
+    "timeFormat": "Formato de Hora",
+    "timezone": "Zona Horaria",
+    "currency": "Moneda"
+  },
+  "audit": {
+    "title": "Registro de Auditoría",
+    "action": "Acción",
+    "user": "Usuario",
+    "entity": "Entidad",
+    "timestamp": "Marca de Tiempo",
+    "ipAddress": "Dirección IP",
+    "details": "Detalles",
+    "actions": {
+      "create": "Creado",
+      "update": "Actualizado",
+      "delete": "Eliminado",
+      "view": "Visto",
+      "export": "Exportado",
+      "print": "Impreso",
+      "login": "Inicio de Sesión",
+      "logout": "Cierre de Sesión"
+    }
+  },
+  "security": {
+    "title": "Configuración de Seguridad",
+    "twoFactor": "Autenticación de Dos Factores",
+    "passwordPolicy": "Política de Contraseñas",
+    "sessionTimeout": "Tiempo de Espera de Sesión",
+    "ipWhitelist": "Lista Blanca de IP",
+    "loginAttempts": "Intentos Máximos de Inicio de Sesión",
+    "passwordExpiry": "Caducidad de Contraseña (días)"
+  },
+  "messages": {
+    "settingsSaved": "Configuración guardada exitosamente",
+    "userCreated": "Usuario creado exitosamente",
+    "userUpdated": "Usuario actualizado exitosamente",
+    "providerAdded": "Proveedor agregado exitosamente",
+    "locationAdded": "Ubicación agregada exitosamente"
+  }
+}

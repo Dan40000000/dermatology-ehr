@@ -1,0 +1,361 @@
+/**
+ * Body Map Styles
+ * Professional styling for the lesion tracking body map
+ */
+
+/* Container styles */
+.body-map-container {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Main map area */
+.body-map-main {
+  position: relative;
+}
+
+/* Toolbar */
+.body-map-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+/* View selector buttons */
+.view-selector button {
+  transition: all 0.2s ease;
+}
+
+.view-selector button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.view-selector button:active {
+  transform: translateY(0);
+}
+
+/* Zoom controls */
+.zoom-controls button:hover {
+  background: #f3f4f6;
+}
+
+/* SVG container */
+.body-map-svg-container {
+  position: relative;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  touch-action: none;
+}
+
+/* Marker animations */
+.marker-pulse {
+  animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.marker-selection-ring {
+  animation: selection-pulse 2s ease-in-out infinite;
+}
+
+@keyframes selection-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.body-marking {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.body-marking:hover {
+  filter: brightness(1.1) drop-shadow(0 4px 6px rgba(0, 0, 0, 0.3));
+}
+
+/* Legend */
+.body-map-legend {
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+/* Sidebar */
+.body-map-sidebar {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+/* Modal overlay */
+.lesion-detail-modal-overlay {
+  backdrop-filter: blur(2px);
+  animation: fade-in 0.2s ease-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.lesion-detail-modal {
+  animation: slide-up 0.3s ease-out;
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Responsive styles */
+@media (max-width: 768px) {
+  .body-map-container {
+    flex-direction: column;
+  }
+
+  .body-map-sidebar {
+    width: 100%;
+    margin-top: 16px;
+  }
+
+  .body-map-toolbar {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .view-selector {
+    width: 100%;
+  }
+
+  .view-selector button {
+    flex: 1;
+  }
+
+  .lesion-detail-modal {
+    width: 95%;
+    max-height: 95vh;
+  }
+}
+
+/* Print styles */
+@media print {
+  .body-map-toolbar,
+  .body-map-sidebar,
+  .zoom-controls {
+    display: none;
+  }
+
+  .body-map-container {
+    box-shadow: none;
+  }
+
+  .marker-pulse,
+  .marker-selection-ring {
+    display: none;
+  }
+}
+
+/* Accessibility - High contrast mode */
+@media (prefers-contrast: high) {
+  .body-marking {
+    stroke-width: 3;
+  }
+
+  .marker-selection-ring {
+    stroke-width: 3;
+  }
+}
+
+/* Accessibility - Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .marker-pulse,
+  .marker-selection-ring {
+    animation: none;
+  }
+
+  .body-marking,
+  .view-selector button,
+  .lesion-detail-modal-overlay,
+  .lesion-detail-modal {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* Loading state */
+.body-map-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+  color: #6b7280;
+}
+
+.body-map-loading::after {
+  content: '';
+  width: 40px;
+  height: 40px;
+  border: 4px solid #e5e7eb;
+  border-top-color: #6b46c1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Error state */
+.body-map-error {
+  padding: 32px;
+  text-align: center;
+  color: #ef4444;
+  background: #fef2f2;
+  border-radius: 8px;
+  margin: 16px;
+}
+
+/* Empty state */
+.body-map-empty {
+  padding: 48px 32px;
+  text-align: center;
+  color: #6b7280;
+}
+
+.body-map-empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+/* Tooltips */
+.body-map-tooltip {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  pointer-events: none;
+  z-index: 1000;
+  max-width: 250px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+}
+
+.body-map-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: rgba(0, 0, 0, 0.8);
+}
+
+/* Focus styles for accessibility */
+.body-marking:focus,
+button:focus {
+  outline: 2px solid #6b46c1;
+  outline-offset: 2px;
+}
+
+/* Custom scrollbar for sidebar */
+.body-map-sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.body-map-sidebar::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.body-map-sidebar::-webkit-scrollbar-thumb {
+  background: #cbd5e0;
+  border-radius: 4px;
+}
+
+.body-map-sidebar::-webkit-scrollbar-thumb:hover {
+  background: #a0aec0;
+}
+
+/* Status badge colors */
+.status-monitoring {
+  background: #3b82f6;
+}
+
+.status-suspicious {
+  background: #eab308;
+}
+
+.status-benign {
+  background: #10b981;
+}
+
+.status-malignant {
+  background: #ef4444;
+}
+
+.status-treated {
+  background: #8b5cf6;
+}
+
+.status-resolved {
+  background: #6b7280;
+}
+
+/* Transitions for smooth interactions */
+.body-map-main,
+.body-map-sidebar,
+.body-map-toolbar {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* Loading skeleton */
+.body-map-skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: loading-skeleton 1.5s ease-in-out infinite;
+}
+
+@keyframes loading-skeleton {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

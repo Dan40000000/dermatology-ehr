@@ -963,10 +963,12 @@ async function processNoteGeneration(
            follow_up_tasks = $11,
            overall_confidence = $12,
            section_confidence = $13,
-           generation_status = $14,
+           differential_diagnoses = $14,
+           recommended_tests = $15,
+           generation_status = $16,
            completed_at = NOW(),
            updated_at = NOW()
-       WHERE id = $15 AND tenant_id = $16`,
+       WHERE id = $17 AND tenant_id = $18`,
       [
         result.chiefComplaint,
         result.hpi,
@@ -981,6 +983,8 @@ async function processNoteGeneration(
         JSON.stringify(result.followUpTasks),
         result.overallConfidence,
         JSON.stringify(result.sectionConfidence),
+        JSON.stringify(result.differentialDiagnoses || []),
+        JSON.stringify(result.recommendedTests || []),
         'completed',
         noteId,
         tenantId

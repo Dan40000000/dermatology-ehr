@@ -17,7 +17,10 @@
       "bundleIdentifier": "com.dermehr.mobile",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app needs access to your microphone to record clinical notes during patient encounters.",
-        "NSSpeechRecognitionUsageDescription": "This app needs speech recognition to transcribe your voice notes into text."
+        "NSSpeechRecognitionUsageDescription": "This app needs speech recognition to transcribe your voice notes into text.",
+        "NSCameraUsageDescription": "This app needs access to your camera to take clinical photos.",
+        "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to select clinical photos.",
+        "NSFaceIDUsageDescription": "This app uses Face ID for secure biometric authentication."
       }
     },
     "android": {
@@ -28,7 +31,12 @@
       "package": "com.dermehr.mobile",
       "permissions": [
         "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
       ],
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
@@ -42,7 +50,28 @@
         {
           "microphonePermission": "Allow Dermatology EHR to access your microphone for recording clinical notes."
         }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow Dermatology EHR to use Face ID for secure authentication."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Dermatology EHR to access your camera for clinical photos."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Dermatology EHR to access your photo library for clinical photos."
+        }
       ]
-    ]
+    ],
+    "extra": {
+      "releaseChannel": "development"
+    }
   }
 }

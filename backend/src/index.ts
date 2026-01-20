@@ -1,11 +1,15 @@
 import express from "express";
+import http from "http";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import swaggerUi from "swagger-ui-express";
 import { env } from "./config/env";
 import { logger } from "./lib/logger";
+import { swaggerSpec } from "./config/swagger";
 import { securityHeaders } from "./middleware/security";
 import { sanitizeInputs } from "./middleware/sanitization";
 import { apiLimiter, authLimiter, portalLimiter, uploadLimiter } from "./middleware/rateLimiter";
+import { initializeWebSocket } from "./websocket";
 import { healthRouter } from "./routes/health";
 import { authRouter } from "./routes/auth";
 import { patientsRouter } from "./routes/patients";
@@ -29,6 +33,7 @@ import { hl7Router } from "./routes/hl7";
 import { vitalsRouter } from "./routes/vitals";
 import { uploadRouter } from "./routes/upload";
 import { vitalsWriteRouter } from "./routes/vitalsWrite";
+import { chronicConditionsRouter } from "./routes/chronicConditions";
 import { templatesRouter } from "./routes/templates";
 import { ordersRouter } from "./routes/orders";
 import { interopRouter } from "./routes/interop";
@@ -60,13 +65,18 @@ import { patientPortalMessagesRouter } from "./routes/patientPortalMessages";
 import { cannedResponsesRouter } from "./routes/cannedResponses";
 import { patientSchedulingRouter, providerSchedulingRouter } from "./routes/patientScheduling";
 import { bodyDiagramRouter } from "./routes/bodyDiagram";
+import { bodyMapRouter } from "./routes/bodyMap";
+import { bodyMapMarkersRouter } from "./routes/bodyMapMarkers";
 import { smsRouter } from "./routes/sms";
-import priorAuthRouter from "./routes/priorAuth";
+import { smsConsentRouter } from "./routes/smsConsent";
+import { smsAuditRouter } from "./routes/smsAudit";
+import { priorAuthRouter } from "./routes/priorAuth";
 import timeBlocksRouter from "./routes/timeBlocks";
 import waitlistRouter from "./routes/waitlist";
 import handoutsRouter from "./routes/handouts";
 import aiAnalysisRouter from "./routes/aiAnalysis";
 import lesionsRouter from "./routes/lesions";
+import woundsRouter from "./routes/wounds";
 import aiNoteDraftingRouter from "./routes/aiNoteDrafting";
 import voiceTranscriptionRouter from "./routes/voiceTranscription";
 import cdsRouter from "./routes/cds";
@@ -77,6 +87,7 @@ import { clearinghouseRouter } from "./routes/clearinghouse";
 import { qualityMeasuresRouter } from "./routes/qualityMeasures";
 import { referralsRouter } from "./routes/referrals";
 import { registryRouter } from "./routes/registry";
+import { diseaseRegistryRouter } from "./routes/diseaseRegistry";
 import telehealthRouter from "./routes/telehealth";
 import { portalBillingRouter } from "./routes/portalBilling";
 import { portalIntakeRouter } from "./routes/portalIntake";
@@ -88,6 +99,7 @@ import { resultFlagsRouter } from "./routes/resultFlags";
 import ambientScribeRouter from "./routes/ambientScribe";
 import priorAuthRequestsRouter from "./routes/priorAuthRequests";
 import { erxRouter } from "./routes/erx";
+import { pdmpRouter } from "./routes/pdmp";
 import adminRouter from "./routes/admin";
 import { aiAgentConfigsRouter } from "./routes/aiAgentConfigs";
 import { inventoryRouter } from "./routes/inventory";
@@ -98,6 +110,13 @@ import { statementsRouter } from "./routes/statements";
 import { batchesRouter } from "./routes/batches";
 import { billsRouter } from "./routes/bills";
 import { financialMetricsRouter } from "./routes/financialMetrics";
+import { integrationsRouter } from "./routes/integrations";
+import { frontDeskRouter } from "./routes/frontDesk";
+import { eligibilityRouter } from "./routes/eligibility";
+import { checkInRouter } from "./routes/checkIn";
+import { billingRouter } from "./routes/billing";
+import { cosmeticTreatmentsRouter } from "./routes/cosmeticTreatments";
+import { protocolsRouter } from "./routes/protocols";
 import path from "path";
 import fs from "fs";
 import { waitlistAutoFillService } from "./services/waitlistAutoFillService";
@@ -112,9 +131,19 @@ app.use(securityHeaders);
 app.use(cookieParser());
 app.use(sanitizeInputs);
 
-// CORS configuration
+// CORS configuration - support multiple dev ports
+const allowedOrigins = process.env.FRONTEND_URL
+  ? [process.env.FRONTEND_URL]
+  : ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'];
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.some(allowed => origin.startsWith(allowed.replace(/:\d+$/, '')))) {
+      return callback(null, true);
+    }
+    return callback(null, false);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', env.tenantHeader],
@@ -142,6 +171,18 @@ app.use((req, _res, next) => {
   next();
 });
 
+// Swagger API Documentation
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customSiteTitle: "Dermatology EHR API Documentation",
+  customCss: '.swagger-ui .topbar { display: none }',
+}));
+
+// Serve OpenAPI JSON spec
+app.get("/api/openapi.json", (_req, res) => {
+  res.setHeader("Content-Type", "application/json");
+  res.send(swaggerSpec);
+});
+
 app.use("/health", healthRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/patients", patientsRouter);
@@ -164,6 +205,7 @@ app.use("/api/analytics", analyticsRouter);
 app.use("/api/hl7", hl7Router);
 app.use("/api/vitals", vitalsRouter);
 app.use("/api/vitals/write", vitalsWriteRouter);
+app.use("/api/chronic-conditions", chronicConditionsRouter);
 app.use("/api/upload", uploadLimiter, uploadRouter);
 app.use("/api/templates", templatesRouter);
 app.use("/api/orders", ordersRouter);
@@ -187,6 +229,7 @@ app.use("/api/medications", medicationsRouter);
 app.use("/api/pharmacies", pharmaciesRouter);
 app.use("/api/rx-history", rxHistoryRouter);
 app.use("/api/erx", erxRouter);
+app.use("/api/pdmp", pdmpRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/prior-auth", priorAuthRouter);
 app.use("/api/time-blocks", timeBlocksRouter);
@@ -205,9 +248,20 @@ app.use("/api/patient-portal/billing", portalLimiter, portalBillingRouter);
 app.use("/api/patient-portal/intake", portalLimiter, portalIntakeRouter);
 app.use("/api/scheduling", apiLimiter, providerSchedulingRouter);
 app.use("/api/body-diagram", bodyDiagramRouter);
+app.use("/api", bodyMapRouter);
+app.use("/api/body-map-markers", apiLimiter, bodyMapMarkersRouter);
+// Note: procedure-sites routes are prefixed /procedure-sites in bodyMapMarkersRouter, so mount at /api
+// But we need to make it more specific to avoid catching other routes
+// Moving all /api/procedure-sites/* routes to their own mount point would require refactoring
+// For now, the routes are available at /api/body-map-markers/procedure-sites
+app.use("/api/front-desk", frontDeskRouter);
 app.use("/api/sms", smsRouter);
+app.use("/api/sms-consent", smsConsentRouter);
+app.use("/api/sms-audit", smsAuditRouter);
 app.use("/api/ai-analysis", aiAnalysisRouter);
 app.use("/api/lesions", lesionsRouter);
+app.use("/api/wounds", woundsRouter);
+app.use("/api/protocols", protocolsRouter);
 app.use("/api/ai-notes", aiNoteDraftingRouter);
 app.use("/api/voice", voiceTranscriptionRouter);
 app.use("/api/cds", cdsRouter);
@@ -218,6 +272,7 @@ app.use("/api/clearinghouse", clearinghouseRouter);
 app.use("/api/quality", qualityMeasuresRouter);
 app.use("/api/referrals", referralsRouter);
 app.use("/api/registry", registryRouter);
+app.use("/api/disease-registry", diseaseRegistryRouter);
 app.use("/api/telehealth", telehealthRouter);
 app.use("/api/lab-orders", labOrdersRouter);
 app.use("/api/lab-results", labResultsRouter);
@@ -231,10 +286,15 @@ app.use("/api/inventory", inventoryRouter);
 app.use("/api/inventory-usage", inventoryUsageRouter);
 app.use("/api/payer-payments", payerPaymentsRouter);
 app.use("/api/patient-payments", patientPaymentsRouter);
+app.use("/api/integrations", integrationsRouter);
 app.use("/api/statements", statementsRouter);
 app.use("/api/batches", batchesRouter);
 app.use("/api/bills", billsRouter);
 app.use("/api/financial-metrics", financialMetricsRouter);
+app.use("/api/eligibility", eligibilityRouter);
+app.use("/api/check-in", checkInRouter);
+app.use("/api/billing", billingRouter);
+app.use("/api/cosmetic-treatments", cosmeticTreatmentsRouter);
 
 // Frontend is served by separate derm-frontend service on Railway
 // No need for backend to serve static files in production
@@ -256,7 +316,13 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
   res.status(err.status || 500).json({ error: message });
 });
 
-app.listen(env.port, () => {
+// Create HTTP server (required for Socket.IO)
+const httpServer = http.createServer(app);
+
+// Initialize WebSocket server
+initializeWebSocket(httpServer);
+
+httpServer.listen(env.port, () => {
   logger.info(`API server started on port ${env.port}`, {
     nodeEnv: process.env.NODE_ENV,
     port: env.port,

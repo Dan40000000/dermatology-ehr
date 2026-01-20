@@ -36,9 +36,11 @@ beforeEach(() => {
 
 describe("Vitals Write routes - Create", () => {
   it("POST /vitals creates vitals", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }], rowCount: 1 }); // Patient check
     queryMock.mockResolvedValueOnce({ rows: [{ status: "open" }], rowCount: 1 }); // Encounter check
 
     const res = await request(app).post("/vitals").send({
+      patientId: "patient-1",
       encounterId: "encounter-1",
       heightCm: 170,
       weightKg: 70,
@@ -54,9 +56,11 @@ describe("Vitals Write routes - Create", () => {
   });
 
   it("POST /vitals creates vitals with partial data", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }], rowCount: 1 }); // Patient check
     queryMock.mockResolvedValueOnce({ rows: [{ status: "open" }], rowCount: 1 });
 
     const res = await request(app).post("/vitals").send({
+      patientId: "patient-1",
       encounterId: "encounter-1",
       bpSystolic: 120,
       bpDiastolic: 80,
@@ -66,18 +70,18 @@ describe("Vitals Write routes - Create", () => {
     expect(res.body.id).toBeTruthy();
   });
 
-  it("POST /vitals creates vitals with all fields optional except encounterId", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ status: "open" }], rowCount: 1 });
+  it("POST /vitals creates vitals with all fields optional except patientId", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }], rowCount: 1 }); // Patient check
 
     const res = await request(app).post("/vitals").send({
-      encounterId: "encounter-1",
+      patientId: "patient-1",
     });
 
     expect(res.status).toBe(201);
     expect(res.body.id).toBeTruthy();
   });
 
-  it("POST /vitals rejects missing encounterId", async () => {
+  it("POST /vitals rejects missing patientId", async () => {
     const res = await request(app).post("/vitals").send({
       heightCm: 170,
       weightKg: 70,
@@ -89,6 +93,7 @@ describe("Vitals Write routes - Create", () => {
 
   it("POST /vitals rejects invalid data types", async () => {
     const res = await request(app).post("/vitals").send({
+      patientId: "patient-1",
       encounterId: "encounter-1",
       heightCm: "not-a-number",
     });
@@ -98,9 +103,11 @@ describe("Vitals Write routes - Create", () => {
   });
 
   it("POST /vitals returns 404 when encounter not found", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }], rowCount: 1 }); // Patient check
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // Encounter not found
 
     const res = await request(app).post("/vitals").send({
+      patientId: "patient-1",
       encounterId: "encounter-999",
       heightCm: 170,
     });
@@ -110,9 +117,11 @@ describe("Vitals Write routes - Create", () => {
   });
 
   it("POST /vitals returns 409 when encounter is locked", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }], rowCount: 1 }); // Patient check
     queryMock.mockResolvedValueOnce({ rows: [{ status: "locked" }], rowCount: 1 });
 
     const res = await request(app).post("/vitals").send({
+      patientId: "patient-1",
       encounterId: "encounter-1",
       heightCm: 170,
     });
@@ -122,9 +131,11 @@ describe("Vitals Write routes - Create", () => {
   });
 
   it("POST /vitals stores null for optional fields", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }], rowCount: 1 }); // Patient check
     queryMock.mockResolvedValueOnce({ rows: [{ status: "open" }], rowCount: 1 });
 
     const res = await request(app).post("/vitals").send({
+      patientId: "patient-1",
       encounterId: "encounter-1",
       bpSystolic: 120,
     });
@@ -132,29 +143,31 @@ describe("Vitals Write routes - Create", () => {
     expect(res.status).toBe(201);
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("insert into vitals"),
-      expect.arrayContaining([expect.any(String), "tenant-1", "encounter-1", null, null, 120, null, null, null])
+      expect.arrayContaining([expect.any(String), "tenant-1", "patient-1", "encounter-1", null, null, 120, null, null, null])
     );
   });
 
-  it("POST /vitals validates encounter belongs to tenant", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ status: "open" }], rowCount: 1 });
+  it("POST /vitals validates patient belongs to tenant", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }], rowCount: 1 }); // Patient check
 
     await request(app).post("/vitals").send({
-      encounterId: "encounter-1",
+      patientId: "patient-1",
       heightCm: 170,
     });
 
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining("tenant_id = $2"),
-      ["encounter-1", "tenant-1"]
+      ["patient-1", "tenant-1"]
     );
   });
 
   it("POST /vitals handles database errors during insert", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }], rowCount: 1 }); // Patient check
     queryMock.mockResolvedValueOnce({ rows: [{ status: "open" }], rowCount: 1 });
     queryMock.mockRejectedValueOnce(new Error("Insert failed"));
 
     const res = await request(app).post("/vitals").send({
+      patientId: "patient-1",
       encounterId: "encounter-1",
       heightCm: 170,
     });
@@ -162,10 +175,11 @@ describe("Vitals Write routes - Create", () => {
     expect(res.status).toBe(500);
   });
 
-  it("POST /vitals handles database errors during encounter check", async () => {
+  it("POST /vitals handles database errors during patient check", async () => {
     queryMock.mockRejectedValueOnce(new Error("Database error"));
 
     const res = await request(app).post("/vitals").send({
+      patientId: "patient-1",
       encounterId: "encounter-1",
       heightCm: 170,
     });
@@ -176,10 +190,10 @@ describe("Vitals Write routes - Create", () => {
   it("POST /vitals requires authentication", async () => {
     // This test verifies the auth middleware is applied
     // The mock auth middleware sets req.user, so this just confirms the route is protected
-    queryMock.mockResolvedValueOnce({ rows: [{ status: "open" }], rowCount: 1 });
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }], rowCount: 1 }); // Patient check
 
     const res = await request(app).post("/vitals").send({
-      encounterId: "encounter-1",
+      patientId: "patient-1",
       heightCm: 170,
     });
 
@@ -187,9 +201,11 @@ describe("Vitals Write routes - Create", () => {
   });
 
   it("POST /vitals accepts all valid vital measurements", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }], rowCount: 1 }); // Patient check
     queryMock.mockResolvedValueOnce({ rows: [{ status: "open" }], rowCount: 1 });
 
     const res = await request(app).post("/vitals").send({
+      patientId: "patient-1",
       encounterId: "encounter-1",
       heightCm: 175.5,
       weightKg: 72.3,
@@ -202,7 +218,19 @@ describe("Vitals Write routes - Create", () => {
     expect(res.status).toBe(201);
     expect(queryMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.arrayContaining([expect.any(String), "tenant-1", "encounter-1", 175.5, 72.3, 125, 85, 68, 37.2])
+      expect.arrayContaining([expect.any(String), "tenant-1", "patient-1", "encounter-1", 175.5, 72.3, 125, 85, 68, 37.2])
     );
+  });
+
+  it("POST /vitals returns 404 when patient not found", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // Patient not found
+
+    const res = await request(app).post("/vitals").send({
+      patientId: "patient-999",
+      heightCm: 170,
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain("Patient not found");
   });
 });

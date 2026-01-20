@@ -19,6 +19,8 @@ interface Encounter {
   id: string;
   patientId: string;
   providerId: string;
+  patientName?: string;
+  providerName?: string;
   appointmentId?: string;
   status: string;
   chiefComplaint?: string;
@@ -61,6 +63,10 @@ export function HomePage() {
     patientCount: 0,
     pendingTasks: 0,
     openEncounters: 0,
+    // Office Flow stats
+    waitingCount: 0,
+    inRoomsCount: 0,
+    checkoutCount: 0,
   });
 
   // Modal states
@@ -95,9 +101,19 @@ export function HomePage() {
     const loadStats = async () => {
       setLoading(true);
       try {
+        // Get today's date in YYYY-MM-DD format for filtering appointments
+        // Use the same approach as Schedule page to ensure consistency
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayStr = today.toISOString().split('T')[0];
+
         const [patientsRes, appointmentsRes, encountersRes, tasksRes, analyticsRes, providersRes] = await Promise.all([
           fetchPatients(session.tenantId, session.accessToken),
-          fetchAppointments(session.tenantId, session.accessToken),
+          // Use startDate and endDate to get today's appointments (same as Schedule page logic)
+          fetchAppointments(session.tenantId, session.accessToken, {
+            startDate: todayStr,
+            endDate: todayStr
+          }),
           fetchEncounters(session.tenantId, session.accessToken),
           fetchTasks(session.tenantId, session.accessToken),
           fetchAnalytics(session.tenantId, session.accessToken),
@@ -112,12 +128,25 @@ export function HomePage() {
         const appointments = appointmentsRes.appointments || [];
         const tasks = tasksRes.tasks || [];
         const encountersData = encountersRes.encounters || [];
-        const patientsData = patientsRes.patients || [];
+        // Backend returns paginated response with { data: [...], meta: {...} }
+        const patientsData = patientsRes.data || patientsRes.patients || [];
         const providersData = providersRes.providers || [];
 
         setEncounters(encountersData);
         setPatients(patientsData);
         setProviders(providersData);
+
+        // Calculate Office Flow stats from appointments
+        // These statuses mirror what OfficeFlowPage tracks
+        const waitingCount = appointments.filter((a: any) =>
+          a.status === 'checked_in' || a.status === 'waiting'
+        ).length;
+        const inRoomsCount = appointments.filter((a: any) =>
+          a.status === 'roomed' || a.status === 'in_progress' || a.status === 'with_provider'
+        ).length;
+        const checkoutCount = appointments.filter((a: any) =>
+          a.status === 'checkout' || a.status === 'ready_for_checkout'
+        ).length;
 
         setStats({
           scheduledCount: appointments.filter((a: any) => a.status === 'scheduled').length,
@@ -126,6 +155,10 @@ export function HomePage() {
           patientCount: analyticsRes.counts?.patients || 0,
           pendingTasks: tasks.filter((t: any) => t.status === 'open').length,
           openEncounters: encountersData.filter((e: Encounter) => e.status === 'draft').length,
+          // Office Flow stats
+          waitingCount,
+          inRoomsCount,
+          checkoutCount,
         });
       } catch (err: any) {
         showError(err.message || 'Failed to load dashboard');
@@ -138,13 +171,19 @@ export function HomePage() {
   }, [session, showError]);
 
   // Helper functions
-  const getPatientName = (patientId: string) => {
-    const patient = patients.find(p => p.id === patientId);
+  const getPatientName = (encounter: Encounter) => {
+    // Use patientName from API if available (backend returns it with JOIN)
+    if (encounter.patientName) return encounter.patientName;
+    // Fallback to lookup in patients array
+    const patient = patients.find(p => p.id === encounter.patientId);
     return patient ? `${patient.lastName}, ${patient.firstName}` : 'Unknown';
   };
 
-  const getProviderName = (providerId: string) => {
-    const provider = providers.find(p => p.id === providerId);
+  const getProviderName = (encounter: Encounter) => {
+    // Use providerName from API if available (backend returns it with JOIN)
+    if (encounter.providerName) return encounter.providerName;
+    // Fallback to lookup in providers array
+    const provider = providers.find(p => p.id === encounter.providerId);
     return provider ? provider.fullName : 'Unknown';
   };
 
@@ -213,7 +252,15 @@ export function HomePage() {
       key: 'patientId',
       label: 'Patient Name',
       sortable: true,
-      render: (row) => getPatientName(row.patientId),
+      render: (row) => (
+        <button
+          className="btn-link"
+          onClick={() => navigate(`/patients/${row.patientId}`)}
+          style={{ textAlign: 'left' }}
+        >
+          {getPatientName(row)}
+        </button>
+      ),
     },
     {
       key: 'createdAt',
@@ -237,7 +284,7 @@ export function HomePage() {
       key: 'providerId',
       label: 'Provider',
       sortable: true,
-      render: (row) => getProviderName(row.providerId),
+      render: (row) => getProviderName(row),
     },
     {
       key: 'actions',
@@ -246,7 +293,7 @@ export function HomePage() {
       render: (row) => (
         <button
           className="btn-link"
-          onClick={() => navigate(`/encounters/${row.id}`)}
+          onClick={() => navigate(`/patients/${row.patientId}/encounter/${row.id}`)}
         >
           View
         </button>
@@ -289,11 +336,11 @@ export function HomePage() {
 
   // Export configuration
   const exportColumns: ExportColumn[] = [
-    { key: 'patientId', label: 'Patient Name', format: (id) => getPatientName(id) },
+    { key: 'patientName', label: 'Patient Name', format: (val) => val || '-' },
     { key: 'createdAt', label: 'Date', format: (date) => formatExportDate(date, 'datetime') },
     { key: 'chiefComplaint', label: 'Chief Complaint', format: (val) => val || '-' },
     { key: 'status', label: 'Status' },
-    { key: 'providerId', label: 'Provider', format: (id) => getProviderName(id) },
+    { key: 'providerName', label: 'Provider', format: (val) => val || '-' },
     { key: 'hpi', label: 'HPI', format: (val) => val || '-' },
     { key: 'assessmentPlan', label: 'Assessment & Plan', format: (val) => val || '-' },
   ];
@@ -756,6 +803,36 @@ export function HomePage() {
             <div className="stat-card-teal">
               <div className="stat-number">{stats.patientCount}</div>
               <div className="stat-label">Total<br />Patients</div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Office Flow Summary */}
+      <div className="section-title-bar" style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', color: '#ffffff' }}>
+        Office Flow Summary
+      </div>
+
+      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+        {loading ? (
+          <>
+            <Skeleton variant="card" />
+            <Skeleton variant="card" />
+            <Skeleton variant="card" />
+          </>
+        ) : (
+          <>
+            <div className="stat-card" style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#ffffff', padding: '1.5rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
+              <div className="stat-number" style={{ fontSize: '2.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>{stats.waitingCount}</div>
+              <div className="stat-label" style={{ fontSize: '1rem', fontWeight: 500 }}>Waiting</div>
+            </div>
+            <div className="stat-card" style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)', color: '#ffffff', padding: '1.5rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
+              <div className="stat-number" style={{ fontSize: '2.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>{stats.inRoomsCount}</div>
+              <div className="stat-label" style={{ fontSize: '1rem', fontWeight: 500 }}>In Rooms</div>
+            </div>
+            <div className="stat-card" style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: '#ffffff', padding: '1.5rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
+              <div className="stat-number" style={{ fontSize: '2.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>{stats.checkoutCount}</div>
+              <div className="stat-label" style={{ fontSize: '1rem', fontWeight: 500 }}>Checkout</div>
             </div>
           </>
         )}

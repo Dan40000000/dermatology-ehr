@@ -1,8 +1,11 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
+import { LanguageSwitcher } from '../components/LanguageSwitcher';
 
 export function LoginPage() {
+  const { t } = useTranslation(['auth', 'common']);
   const { isAuthenticated, login, isLoading } = useAuth();
   const location = useLocation();
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/home';
@@ -22,7 +25,7 @@ export function LoginPage() {
     try {
       await login(tenantId, email, password);
     } catch (err: any) {
-      setError(err.message || 'Login failed');
+      setError(err.message || t('auth:errors.invalidCredentials'));
     }
   };
 
@@ -38,6 +41,10 @@ export function LoginPage() {
       position: 'relative',
       overflow: 'hidden'
     }}>
+      {/* Language Switcher */}
+      <div style={{ position: 'absolute', top: '1.5rem', right: '1.5rem', zIndex: 10 }}>
+        <LanguageSwitcher />
+      </div>
       {/* Animated background elements */}
       <div style={{
         position: 'absolute',
@@ -92,14 +99,14 @@ export function LoginPage() {
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
             marginBottom: '0.5rem'
-          }}>Mountain Pine Dermatology</h1>
-          <p style={{ color: '#6b7280', fontSize: '1rem' }}>Sign in to access your practice dashboard</p>
+          }}>{t('common:appName')}</h1>
+          <p style={{ color: '#6b7280', fontSize: '1rem' }}>{t('auth:login.subtitle')}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="login-form">
           <label className="form-field" style={{ display: 'block', marginBottom: '1.5rem' }}>
             <span style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', color: '#374151' }}>
-              Practice ID
+              {t('auth:login.practiceId')}
             </span>
             <input
               value={tenantId}
@@ -128,7 +135,7 @@ export function LoginPage() {
 
           <label className="form-field" style={{ display: 'block', marginBottom: '1.5rem' }}>
             <span style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', color: '#374151' }}>
-              Email Address
+              {t('auth:login.emailAddress')}
             </span>
             <input
               type="email"
@@ -159,7 +166,7 @@ export function LoginPage() {
 
           <label className="form-field" style={{ display: 'block', marginBottom: '2rem' }}>
             <span style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', color: '#374151' }}>
-              Password
+              {t('auth:login.password')}
             </span>
             <input
               type="password"
@@ -216,7 +223,7 @@ export function LoginPage() {
               e.currentTarget.style.boxShadow = '0 4px 12px rgba(139, 92, 246, 0.4)';
             }
           }}>
-            {isLoading ? 'Signing in...' : 'Sign In'}
+            {isLoading ? t('common:messages.loading') : t('auth:login.signInButton')}
           </button>
         </form>
 
@@ -235,7 +242,7 @@ export function LoginPage() {
             textTransform: 'uppercase',
             letterSpacing: '0.05em',
             marginBottom: '0.5rem'
-          }}>Demo Credentials</p>
+          }}>{t('auth:login.demoCredentials')}</p>
           <p className="demo-creds" style={{ color: '#374151', fontSize: '0.875rem' }}>
             <strong style={{ color: '#6b21a8' }}>admin@demo.practice</strong> / <strong style={{ color: '#6b21a8' }}>Password123!</strong>
           </p>

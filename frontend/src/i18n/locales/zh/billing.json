@@ -1,0 +1,88 @@
+{
+  "title": "Billing",
+  "charges": "Charges",
+  "payments": "Payments",
+  "claims": {
+    "claimNumber": "Claim Number",
+    "submissionDate": "Submission Date",
+    "claimStatus": "Claim Status",
+    "adjudicationDate": "Adjudication Date",
+    "paidAmount": "Paid Amount",
+    "denialReason": "Denial Reason",
+    "resubmit": "Resubmit",
+    "appeal": "Appeal"
+  },
+  "statements": "Statements",
+  "fields": {
+    "chargeDate": "Charge Date",
+    "serviceDate": "Service Date",
+    "cptCode": "CPT Code",
+    "icdCode": "ICD Code",
+    "description": "描述",
+    "amount": "Amount",
+    "units": "Units",
+    "modifier": "Modifier",
+    "placeOfService": "Place of Service",
+    "paymentMethod": "Payment Method",
+    "paymentAmount": "Payment Amount",
+    "paymentDate": "Payment Date",
+    "referenceNumber": "Reference Number",
+    "insurancePayer": "Insurance Payer",
+    "patientResponsibility": "Patient Responsibility",
+    "copay": "Copay",
+    "deductible": "Deductible",
+    "coinsurance": "Coinsurance",
+    "balance": "Balance",
+    "adjustments": "Adjustments",
+    "writeOffs": "Write-offs"
+  },
+  "status": {
+    "pending": "待处理",
+    "submitted": "Submitted",
+    "paid": "Paid",
+    "partiallyPaid": "Partially Paid",
+    "denied": "Denied",
+    "appealed": "Appealed",
+    "writeOff": "Write-off"
+  },
+  "paymentMethods": {
+    "cash": "Cash",
+    "check": "Check",
+    "creditCard": "Credit Card",
+    "debitCard": "Debit Card",
+    "insurance": "Insurance",
+    "other": "Other"
+  },
+  "actions": {
+    "addCharge": "Add Charge",
+    "recordPayment": "Record Payment",
+    "submitClaim": "Submit Claim",
+    "generateStatement": "Generate Statement",
+    "sendStatement": "Send Statement",
+    "viewStatement": "View Statement",
+    "printReceipt": "Print Receipt",
+    "refund": "Process Refund"
+  },
+  "reports": {
+    "title": "Financial Reports",
+    "dailyReceipts": "Daily Receipts",
+    "agingReport": "Aging Report",
+    "collectionsSummary": "Collections Summary",
+    "payerAnalysis": "Payer Analysis",
+    "revenueByProvider": "Revenue by Provider",
+    "revenueByService": "Revenue by Service"
+  },
+  "messages": {
+    "chargeCreated": "Charge added successfully",
+    "paymentRecorded": "Payment recorded successfully",
+    "claimSubmitted": "Claim submitted successfully",
+    "statementGenerated": "Statement generated successfully",
+    "refundProcessed": "Refund processed successfully"
+  },
+  "stats": {
+    "totalRevenue": "Total Revenue",
+    "outstandingBalance": "Outstanding Balance",
+    "collectionRate": "Collection Rate",
+    "avgPaymentTime": "Avg Payment Time"
+  }
+}

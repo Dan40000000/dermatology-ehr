@@ -1,0 +1,99 @@
+{
+  "title": "Administration",
+  "users": {
+    "title": "User Management",
+    "addUser": "Add User",
+    "editUser": "Edit User",
+    "deactivateUser": "Deactivate User",
+    "fields": {
+      "username": "Username",
+      "email": "电子邮件",
+      "role": "Role",
+      "status": "状态",
+      "lastLogin": "Last Login",
+      "createdDate": "Created Date"
+    },
+    "roles": {
+      "admin": "Administrator",
+      "provider": "Provider",
+      "nurse": "Nurse",
+      "frontDesk": "Front Desk",
+      "billing": "Billing",
+      "readonly": "Read Only"
+    }
+  },
+  "providers": {
+    "title": "Provider Management",
+    "addProvider": "Add Provider",
+    "fields": {
+      "npi": "NPI Number",
+      "dea": "DEA Number",
+      "licenseNumber": "License Number",
+      "specialty": "Specialty",
+      "credentials": "Credentials",
+      "taxId": "Tax ID"
+    }
+  },
+  "locations": {
+    "title": "Location Management",
+    "addLocation": "Add Location",
+    "fields": {
+      "name": "Location Name",
+      "address": "地址",
+      "phone": "电话",
+      "fax": "Fax",
+      "timezone": "Time Zone",
+      "hours": "Hours of Operation"
+    }
+  },
+  "settings": {
+    "general": "General Settings",
+    "practice": "Practice Settings",
+    "scheduling": "Scheduling Settings",
+    "billing": "Billing Settings",
+    "integrations": "Integrations",
+    "notifications": "Notifications",
+    "preferences": "Preferences",
+    "language": "Language",
+    "theme": "Theme",
+    "dateFormat": "Date Format",
+    "timeFormat": "Time Format",
+    "timezone": "Time Zone",
+    "currency": "Currency"
+  },
+  "security": {
+    "title": "Security Settings",
+    "twoFactor": "Two-Factor Authentication",
+    "passwordPolicy": "Password Policy",
+    "sessionTimeout": "Session Timeout",
+    "ipWhitelist": "IP Whitelist",
+    "loginAttempts": "Max Login Attempts",
+    "passwordExpiry": "Password Expiry (days)"
+  },
+  "audit": {
+    "title": "Audit Log",
+    "action": "Action",
+    "user": "User",
+    "entity": "Entity",
+    "timestamp": "Timestamp",
+    "ipAddress": "IP Address",
+    "details": "Details",
+    "actions": {
+      "create": "Created",
+      "update": "Updated",
+      "delete": "Deleted",
+      "view": "Viewed",
+      "export": "Exported",
+      "print": "Printed",
+      "login": "Login",
+      "logout": "退出登录"
+    }
+  },
+  "messages": {
+    "settingsSaved": "Settings saved successfully",
+    "userCreated": "User created successfully",
+    "userUpdated": "User updated successfully",
+    "providerAdded": "Provider added successfully",
+    "locationAdded": "Location added successfully"
+  }
+}

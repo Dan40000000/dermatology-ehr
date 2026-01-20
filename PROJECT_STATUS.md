@@ -257,3 +257,80 @@ After restarting your computer:
 5. Test the application at `http://localhost:5173`
 
 All TypeScript errors have been fixed. The codebase should compile cleanly on restart.
+
+---
+
+## Development Environment Notes
+
+### Browser Requirements
+**ALWAYS use Google Chrome for testing and development. NEVER use Safari.**
+
+Safari has compatibility issues with:
+- Playwright browser automation
+- Certain CSS features used in the premium glassmorphism design
+- Developer tools debugging
+
+When opening the app for testing, use Chrome:
+- Main EHR Frontend: `http://localhost:5173` (or 5174/5175 if port in use)
+- Patient Portal: `http://localhost:5173/portal`
+- Backend API: `http://localhost:4000`
+- API Docs: `http://localhost:4000/api/docs`
+
+---
+
+## Recent Updates (January 2026)
+
+### Patient Portal Enhancements
+- **Billing Page** (`PortalBillingPage.tsx`) - Shows patient balance, insurance payments, charges, and payment history
+- **Health Record Page** - Rebuilt with tabs for overview, allergies, medications, vitals, and lab results
+- **Documents Page** - Rebuilt with search, category filters, and download functionality
+- **Profile Page** - Rebuilt with personal info, contact, preferences, and security tabs
+- **Dynamic Support Phone** - Support call button now routes to the patient's specific practice phone number
+- **CORS Updated** - Backend now supports multiple frontend dev ports (5173, 5174, 5175)
+- **Registration Page** (`PortalRegisterPage.tsx`) - Multi-step registration with SSN identity verification
+  - Step 1: Verify identity using Last Name + DOB + Last 4 of SSN
+  - Step 2: Create account with email and strong password
+  - Step 3: Success confirmation with email verification
+
+---
+
+## Security Notes
+
+### SSN Handling - FUTURE ENCRYPTION REQUIRED
+
+**Current State:** SSN is stored as plaintext in the `patients.ssn` column.
+
+**TODO: Implement proper SSN encryption before production deployment:**
+
+1. **Encryption at Rest**
+   - Use AES-256 encryption for SSN storage
+   - Implement application-level encryption with key management
+   - Consider using AWS KMS, HashiCorp Vault, or similar for key management
+
+2. **Database-Level Options**
+   - PostgreSQL pgcrypto extension for column-level encryption
+   - Consider tokenization - store only encrypted tokens, keep keys separate
+
+3. **Access Controls**
+   - Limit SSN access to specific roles only
+   - Audit all SSN access attempts
+   - Never log full SSN values
+
+4. **Display Rules**
+   - Always mask SSN in UI (show only last 4: ***-**-1234)
+   - Never include full SSN in API responses
+   - Never log full SSN
+
+5. **Compliance**
+   - HIPAA requires encryption of PHI at rest and in transit
+   - PCI-like handling recommended for SSN data
+
+**Test Data (Development Only):**
+Patients with SSN set for registration testing:
+- Sarah Johnson (p-001): SSN 123-45-6789, Last 4: 6789, DOB: 1988-05-15
+- Michael Chen (p-002): SSN 987-65-4321, Last 4: 4321, DOB: 1975-11-22
+- Emily Rodriguez (p-003): SSN 555-12-3456, Last 4: 3456, DOB: 1992-03-08
+- Robert Williams (p-004): SSN 111-22-3333, Last 4: 3333, DOB: 1965-09-30
+
+Note: These patients already have portal accounts created. To test registration,
+you'll need to either delete their portal accounts or add SSN to another patient.

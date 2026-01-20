@@ -6,7 +6,14 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
 import { waitlistAutoFillService } from "../services/waitlistAutoFillService";
+import { notificationService } from "../services/integrations/notificationService";
 import { logger } from "../lib/logger";
+import {
+  emitAppointmentCreated,
+  emitAppointmentUpdated,
+  emitAppointmentCancelled,
+  emitAppointmentCheckedIn,
+} from "../websocket/emitter";
 
 const createAppointmentSchema = z.object({
   patientId: z.string().min(1),
@@ -43,6 +50,61 @@ const updateStatusSchema = z.object({
 
 export const appointmentsRouter = Router();
 
+/**
+ * @swagger
+ * /api/appointments:
+ *   get:
+ *     summary: List appointments
+ *     description: Retrieve appointments with optional filters for patient, date, or date range (limited to 200).
+ *     tags:
+ *       - Appointments
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: query
+ *         name: patientId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Filter by patient ID
+ *       - in: query
+ *         name: date
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter by specific date (YYYY-MM-DD)
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter by start date (YYYY-MM-DD)
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter by end date (YYYY-MM-DD)
+ *     responses:
+ *       200:
+ *         description: List of appointments
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 appointments:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Appointment'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 appointmentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const patientId = req.query.patientId as string | undefined;
@@ -105,6 +167,59 @@ appointmentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   return res.json({ appointments: result.rows });
 });
 
+/**
+ * @swagger
+ * /api/appointments:
+ *   post:
+ *     summary: Create an appointment
+ *     description: Create a new appointment. Checks for provider time conflicts. Requires admin, front_desk, ma, or provider role.
+ *     tags:
+ *       - Appointments
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CreateAppointmentRequest'
+ *     responses:
+ *       201:
+ *         description: Appointment created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: string
+ *                   format: uuid
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       409:
+ *         description: Time conflict for provider
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 appointmentsRouter.post("/", requireAuth, requireRoles(["admin", "front_desk", "ma", "provider"]), async (req: AuthedRequest, res) => {
   const parsed = createAppointmentSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -134,9 +249,125 @@ appointmentsRouter.post("/", requireAuth, requireRoles(["admin", "front_desk", "
   );
   await auditLog(tenantId, req.user ? req.user.id : "unknown", "appointment_create", "appointment", id);
 
+  // Send integration notification for new appointment
+  try {
+    const appointmentDetails = await pool.query(
+      `SELECT a.*,
+              p.first_name || ' ' || p.last_name as patient_name,
+              pr.full_name as provider_name,
+              l.name as location_name,
+              at.name as appointment_type
+       FROM appointments a
+       JOIN patients p ON p.id = a.patient_id
+       JOIN providers pr ON pr.id = a.provider_id
+       JOIN locations l ON l.id = a.location_id
+       JOIN appointment_types at ON at.id = a.appointment_type_id
+       WHERE a.id = $1`,
+      [id]
+    );
+
+    if (appointmentDetails.rows.length > 0) {
+      const appt = appointmentDetails.rows[0];
+      await notificationService.sendNotification({
+        tenantId,
+        notificationType: "appointment_booked",
+        data: {
+          patientName: appt.patient_name,
+          appointmentType: appt.appointment_type,
+          scheduledStart: appt.scheduled_start,
+          scheduledEnd: appt.scheduled_end,
+          providerName: appt.provider_name,
+          locationName: appt.location_name,
+        },
+      });
+
+      // Emit WebSocket event for real-time updates
+      emitAppointmentCreated(tenantId, {
+        id: appt.id,
+        patientId: appt.patient_id,
+        patientName: appt.patient_name,
+        providerId: appt.provider_id,
+        providerName: appt.provider_name,
+        locationId: appt.location_id,
+        locationName: appt.location_name,
+        scheduledStart: appt.scheduled_start,
+        scheduledEnd: appt.scheduled_end,
+        status: appt.status,
+        appointmentTypeId: appt.appointment_type_id,
+        appointmentTypeName: appt.appointment_type,
+      });
+    }
+  } catch (error: any) {
+    // Log error but don't fail the appointment creation
+    logger.error("Failed to send appointment booked notification", {
+      error: error.message,
+      appointmentId: id,
+    });
+  }
+
   return res.status(201).json({ id });
 });
 
+/**
+ * @swagger
+ * /api/appointments/{id}/reschedule:
+ *   post:
+ *     summary: Reschedule an appointment
+ *     description: Change the date/time and optionally the provider for an existing appointment. Checks for time conflicts. Requires admin, front_desk, or ma role.
+ *     tags:
+ *       - Appointments
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Appointment ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/RescheduleAppointmentRequest'
+ *     responses:
+ *       200:
+ *         description: Appointment rescheduled successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ok:
+ *                   type: boolean
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       404:
+ *         description: Appointment not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       409:
+ *         description: Time conflict for provider
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 appointmentsRouter.post("/:id/reschedule", requireAuth, requireRoles(["admin", "front_desk", "ma"]), async (req: AuthedRequest, res) => {
   const parsed = rescheduleSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -159,9 +390,99 @@ appointmentsRouter.post("/:id/reschedule", requireAuth, requireRoles(["admin", "
     [parsed.data.scheduledStart, parsed.data.scheduledEnd, newProviderId, apptId, tenantId],
   );
   await auditLog(tenantId, req.user!.id, "appointment_reschedule", "appointment", apptId);
+
+  // Emit WebSocket event for reschedule
+  try {
+    const updatedAppt = await pool.query(
+      `SELECT a.id, a.patient_id, a.provider_id, a.location_id, a.appointment_type_id,
+              a.scheduled_start, a.scheduled_end, a.status,
+              p.first_name || ' ' || p.last_name as patient_name,
+              pr.full_name as provider_name,
+              l.name as location_name,
+              at.name as appointment_type_name
+       FROM appointments a
+       JOIN patients p ON p.id = a.patient_id
+       JOIN providers pr ON pr.id = a.provider_id
+       JOIN locations l ON l.id = a.location_id
+       JOIN appointment_types at ON at.id = a.appointment_type_id
+       WHERE a.id = $1`,
+      [apptId]
+    );
+    if (updatedAppt.rows.length > 0) {
+      const appt = updatedAppt.rows[0];
+      emitAppointmentUpdated(tenantId, {
+        id: appt.id,
+        patientId: appt.patient_id,
+        patientName: appt.patient_name,
+        providerId: appt.provider_id,
+        providerName: appt.provider_name,
+        locationId: appt.location_id,
+        locationName: appt.location_name,
+        scheduledStart: appt.scheduled_start,
+        scheduledEnd: appt.scheduled_end,
+        status: appt.status,
+        appointmentTypeId: appt.appointment_type_id,
+        appointmentTypeName: appt.appointment_type_name,
+      });
+    }
+  } catch (error: any) {
+    logger.error("Failed to emit appointment rescheduled event", {
+      error: error.message,
+      appointmentId: apptId,
+    });
+  }
+
   res.json({ ok: true });
 });
 
+/**
+ * @swagger
+ * /api/appointments/{id}/status:
+ *   post:
+ *     summary: Update appointment status
+ *     description: Change an appointment's status. Triggers waitlist auto-fill when status is 'cancelled'. Requires admin, front_desk, ma, or provider role.
+ *     tags:
+ *       - Appointments
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Appointment ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/UpdateAppointmentStatusRequest'
+ *     responses:
+ *       200:
+ *         description: Status updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ok:
+ *                   type: boolean
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       403:
+ *         description: Forbidden - Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 appointmentsRouter.post("/:id/status", requireAuth, requireRoles(["admin", "front_desk", "ma", "provider"]), async (req: AuthedRequest, res) => {
   const parsed = updateStatusSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -197,6 +518,126 @@ appointmentsRouter.post("/:id/status", requireAuth, requireRoles(["admin", "fron
         appointmentId: apptId,
       });
     }
+
+    // Send integration notification for cancelled appointment
+    try {
+      const appointmentDetails = await pool.query(
+        `SELECT a.*,
+                p.first_name || ' ' || p.last_name as patient_name,
+                pr.full_name as provider_name,
+                at.name as appointment_type
+         FROM appointments a
+         JOIN patients p ON p.id = a.patient_id
+         JOIN providers pr ON pr.id = a.provider_id
+         JOIN appointment_types at ON at.id = a.appointment_type_id
+         WHERE a.id = $1`,
+        [apptId]
+      );
+
+      if (appointmentDetails.rows.length > 0) {
+        const appt = appointmentDetails.rows[0];
+        await notificationService.sendNotification({
+          tenantId,
+          notificationType: "appointment_cancelled",
+          data: {
+            patientName: appt.patient_name,
+            appointmentType: appt.appointment_type,
+            scheduledStart: appt.scheduled_start,
+            providerName: appt.provider_name,
+          },
+        });
+
+        // Emit WebSocket event for cancellation
+        emitAppointmentCancelled(tenantId, apptId);
+      }
+    } catch (error: any) {
+      logger.error("Failed to send appointment cancelled notification", {
+        error: error.message,
+        appointmentId: apptId,
+      });
+    }
+  }
+
+  // Send integration notification for patient check-in
+  if (parsed.data.status === 'checked_in') {
+    try {
+      const appointmentDetails = await pool.query(
+        `SELECT a.*,
+                p.first_name || ' ' || p.last_name as patient_name,
+                pr.full_name as provider_name,
+                at.name as appointment_type
+         FROM appointments a
+         JOIN patients p ON p.id = a.patient_id
+         JOIN providers pr ON pr.id = a.provider_id
+         JOIN appointment_types at ON at.id = a.appointment_type_id
+         WHERE a.id = $1`,
+        [apptId]
+      );
+
+      if (appointmentDetails.rows.length > 0) {
+        const appt = appointmentDetails.rows[0];
+        await notificationService.sendNotification({
+          tenantId,
+          notificationType: "patient_checked_in",
+          data: {
+            patientName: appt.patient_name,
+            appointmentType: appt.appointment_type,
+            scheduledStart: appt.scheduled_start,
+            providerName: appt.provider_name,
+            checkedInAt: new Date().toISOString(),
+          },
+        });
+
+        // Emit WebSocket event for check-in
+        emitAppointmentCheckedIn(tenantId, apptId, appt.patient_id, appt.patient_name);
+      }
+    } catch (error: any) {
+      logger.error("Failed to send patient checked in notification", {
+        error: error.message,
+        appointmentId: apptId,
+      });
+    }
+  }
+
+  // Emit general appointment updated event for all status changes
+  try {
+    const updatedAppt = await pool.query(
+      `SELECT a.id, a.patient_id, a.provider_id, a.location_id, a.appointment_type_id,
+              a.scheduled_start, a.scheduled_end, a.status,
+              p.first_name || ' ' || p.last_name as patient_name,
+              pr.full_name as provider_name,
+              l.name as location_name,
+              at.name as appointment_type_name
+       FROM appointments a
+       JOIN patients p ON p.id = a.patient_id
+       JOIN providers pr ON pr.id = a.provider_id
+       JOIN locations l ON l.id = a.location_id
+       JOIN appointment_types at ON at.id = a.appointment_type_id
+       WHERE a.id = $1`,
+      [apptId]
+    );
+    if (updatedAppt.rows.length > 0) {
+      const appt = updatedAppt.rows[0];
+      emitAppointmentUpdated(tenantId, {
+        id: appt.id,
+        patientId: appt.patient_id,
+        patientName: appt.patient_name,
+        providerId: appt.provider_id,
+        providerName: appt.provider_name,
+        locationId: appt.location_id,
+        locationName: appt.location_name,
+        scheduledStart: appt.scheduled_start,
+        scheduledEnd: appt.scheduled_end,
+        status: appt.status,
+        appointmentTypeId: appt.appointment_type_id,
+        appointmentTypeName: appt.appointment_type_name,
+      });
+    }
+  } catch (error: any) {
+    logger.error("Failed to emit appointment updated event", {
+      error: error.message,
+      appointmentId: apptId,
+    });
   }
 
   res.json({ ok: true });

@@ -1,7 +1,8 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import environment from '../config/environment';
 
-const API_BASE_URL = 'http://localhost:4000';
+const API_BASE_URL = environment.apiUrl;
 
 class ApiClient {
   private client: AxiosInstance;

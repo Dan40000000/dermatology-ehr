@@ -7,4 +7,5 @@ export { PortalDocumentsPage } from './PortalDocumentsPage';
 export { PortalHealthRecordPage } from './PortalHealthRecordPage';
 export { PortalProfilePage } from './PortalProfilePage';
 export { PortalRegisterPage } from './PortalRegisterPage';
+export { PortalBillingPage } from './PortalBillingPage';
 export { default as BookAppointmentPage } from './BookAppointmentPage';

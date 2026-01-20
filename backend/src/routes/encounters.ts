@@ -6,6 +6,15 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
 import { recordEncounterLearning } from "../services/learningService";
+import { encounterService } from "../services/encounterService";
+import { billingService } from "../services/billingService";
+import {
+  emitEncounterCreated,
+  emitEncounterUpdated,
+  emitEncounterCompleted,
+  emitEncounterSigned,
+} from "../websocket/emitter";
+import { logger } from "../lib/logger";
 
 const encounterSchema = z.object({
   patientId: z.string(),
@@ -28,18 +37,141 @@ const encounterUpdateSchema = z.object({
 
 export const encountersRouter = Router();
 
+/**
+ * @swagger
+ * /api/encounters:
+ *   get:
+ *     summary: List encounters
+ *     description: Retrieve encounters for the current tenant (limited to 50, ordered by creation date).
+ *     tags:
+ *       - Encounters
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     responses:
+ *       200:
+ *         description: List of encounters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 encounters:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                         format: uuid
+ *                       patientId:
+ *                         type: string
+ *                         format: uuid
+ *                       providerId:
+ *                         type: string
+ *                         format: uuid
+ *                       appointmentId:
+ *                         type: string
+ *                         format: uuid
+ *                       status:
+ *                         type: string
+ *                       chiefComplaint:
+ *                         type: string
+ *                       hpi:
+ *                         type: string
+ *                       ros:
+ *                         type: string
+ *                       exam:
+ *                         type: string
+ *                       assessmentPlan:
+ *                         type: string
+ *                       createdAt:
+ *                         type: string
+ *                         format: date-time
+ *                       updatedAt:
+ *                         type: string
+ *                         format: date-time
+ */
 encountersRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const result = await pool.query(
-    `select id, patient_id as "patientId", provider_id as "providerId", appointment_id as "appointmentId",
-            status, chief_complaint as "chiefComplaint", hpi, ros, exam, assessment_plan as "assessmentPlan",
-            created_at as "createdAt", updated_at as "updatedAt"
-     from encounters where tenant_id = $1 order by created_at desc limit 50`,
+    `SELECT e.id, e.patient_id as "patientId", e.provider_id as "providerId", e.appointment_id as "appointmentId",
+            e.status, e.chief_complaint as "chiefComplaint", e.hpi, e.ros, e.exam, e.assessment_plan as "assessmentPlan",
+            e.created_at as "createdAt", e.updated_at as "updatedAt",
+            p.first_name || ' ' || p.last_name as "patientName",
+            pr.full_name as "providerName"
+     FROM encounters e
+     LEFT JOIN patients p ON p.id = e.patient_id
+     LEFT JOIN providers pr ON pr.id = e.provider_id
+     WHERE e.tenant_id = $1
+     ORDER BY e.created_at DESC
+     LIMIT 50`,
     [tenantId],
   );
   res.json({ encounters: result.rows });
 });
 
+/**
+ * @swagger
+ * /api/encounters:
+ *   post:
+ *     summary: Create an encounter
+ *     description: Create a new encounter (clinical visit documentation). Requires provider, ma, or admin role.
+ *     tags:
+ *       - Encounters
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - patientId
+ *               - providerId
+ *             properties:
+ *               patientId:
+ *                 type: string
+ *               providerId:
+ *                 type: string
+ *               appointmentId:
+ *                 type: string
+ *               chiefComplaint:
+ *                 type: string
+ *               hpi:
+ *                 type: string
+ *               ros:
+ *                 type: string
+ *               exam:
+ *                 type: string
+ *               assessmentPlan:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Encounter created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: string
+ *                   format: uuid
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       403:
+ *         description: Forbidden - Insufficient permissions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 encountersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]), async (req: AuthedRequest, res) => {
   const parsed = encounterSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
@@ -64,6 +196,43 @@ encountersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]
     ],
   );
   await auditLog(tenantId, req.user!.id, "encounter_create", "encounter", id);
+
+  // Emit WebSocket event for encounter creation
+  try {
+    const encounterData = await pool.query(
+      `SELECT e.id, e.patient_id, e.provider_id, e.appointment_id, e.status,
+              e.chief_complaint, e.created_at, e.updated_at,
+              p.first_name || ' ' || p.last_name as patient_name,
+              pr.full_name as provider_name
+       FROM encounters e
+       JOIN patients p ON p.id = e.patient_id
+       JOIN providers pr ON pr.id = e.provider_id
+       WHERE e.id = $1`,
+      [id]
+    );
+
+    if (encounterData.rows.length > 0) {
+      const enc = encounterData.rows[0];
+      emitEncounterCreated(tenantId, {
+        id: enc.id,
+        patientId: enc.patient_id,
+        patientName: enc.patient_name,
+        providerId: enc.provider_id,
+        providerName: enc.provider_name,
+        appointmentId: enc.appointment_id,
+        status: enc.status,
+        chiefComplaint: enc.chief_complaint,
+        createdAt: enc.created_at,
+        updatedAt: enc.updated_at,
+      });
+    }
+  } catch (error: any) {
+    logger.error("Failed to emit encounter created event", {
+      error: error.message,
+      encounterId: id,
+    });
+  }
+
   res.status(201).json({ id });
 });
 
@@ -386,4 +555,236 @@ encountersRouter.get("/:id/superbill", requireAuth, async (req: AuthedRequest, r
   await auditLog(tenantId, req.user!.id, "superbill_generated", "encounter", encId);
   res.setHeader("Content-Type", "text/html");
   res.send(html);
+});
+
+encountersRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const encId = String(req.params.id);
+
+  try {
+    // Verify encounter exists
+    const encounterCheck = await pool.query(
+      `select id, patient_id from encounters where id = $1 and tenant_id = $2`,
+      [encId, tenantId]
+    );
+
+    if (!encounterCheck.rowCount) {
+      return res.status(404).json({ error: "Encounter not found" });
+    }
+
+    const encounter = encounterCheck.rows[0];
+
+    // Fetch prescriptions for this encounter
+    const result = await pool.query(
+      `select
+        p.id, p.patient_id as "patientId", p.provider_id as "providerId",
+        p.encounter_id as "encounterId",
+        p.medication_name as "medicationName", p.generic_name as "genericName",
+        p.strength, p.dosage_form as "dosageForm", p.sig, p.quantity, p.quantity_unit as "quantityUnit",
+        p.refills, p.refills_remaining as "refillsRemaining", p.days_supply as "daysSupply",
+        p.status, p.is_controlled as "isControlled", p.dea_schedule as "deaSchedule",
+        p.pharmacy_id as "pharmacyId", p.pharmacy_name as "pharmacyName",
+        p.indication, p.notes,
+        p.written_date as "writtenDate", p.sent_at as "sentAt",
+        p.created_at as "createdAt", p.updated_at as "updatedAt",
+        prov.full_name as "providerName",
+        ph.name as "pharmacyFullName", ph.phone as "pharmacyPhone"
+      from prescriptions p
+      left join providers prov on p.provider_id = prov.id
+      left join pharmacies ph on p.pharmacy_id = ph.id
+      where p.encounter_id = $1 and p.tenant_id = $2
+      order by p.created_at desc`,
+      [encId, tenantId]
+    );
+
+    await auditLog(tenantId, req.user!.id, "encounter_prescriptions_viewed", "encounter", encId);
+
+    return res.json({
+      encounterId: encId,
+      patientId: encounter.patient_id,
+      prescriptions: result.rows,
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error("Error fetching encounter prescriptions:", error);
+    return res.status(500).json({ error: "Failed to fetch encounter prescriptions" });
+  }
+});
+
+/**
+ * POST /api/encounters/:id/generate-charges
+ * Generate charges from encounter procedures
+ */
+encountersRouter.post("/:id/generate-charges", requireAuth, requireRoles(["provider", "admin", "billing"]), async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const encId = String(req.params.id);
+
+  try {
+    const charges = await encounterService.generateChargesFromEncounter(tenantId, encId);
+    await auditLog(tenantId, req.user!.id, "encounter_charges_generated", "encounter", encId);
+
+    return res.status(200).json({
+      encounterId: encId,
+      charges,
+      count: charges.length,
+      message: `Generated ${charges.length} charges from encounter`
+    });
+  } catch (error: any) {
+    console.error("Error generating charges:", error);
+    return res.status(500).json({ error: error.message || "Failed to generate charges" });
+  }
+});
+
+/**
+ * POST /api/encounters/:id/diagnoses
+ * Add a diagnosis to an encounter
+ */
+const diagnosisSchema = z.object({
+  icd10Code: z.string().min(1),
+  description: z.string().min(1),
+  isPrimary: z.boolean().optional(),
+});
+
+encountersRouter.post("/:id/diagnoses", requireAuth, requireRoles(["provider", "admin", "ma"]), async (req: AuthedRequest, res) => {
+  const parsed = diagnosisSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
+  const tenantId = req.user!.tenantId;
+  const encId = String(req.params.id);
+
+  try {
+    const diagnosisId = await encounterService.addDiagnosis(
+      tenantId,
+      encId,
+      parsed.data.icd10Code,
+      parsed.data.description,
+      parsed.data.isPrimary || false
+    );
+
+    await auditLog(tenantId, req.user!.id, "diagnosis_added", "encounter", encId);
+
+    return res.status(201).json({ id: diagnosisId, message: "Diagnosis added successfully" });
+  } catch (error: any) {
+    console.error("Error adding diagnosis:", error);
+    return res.status(500).json({ error: error.message || "Failed to add diagnosis" });
+  }
+});
+
+/**
+ * POST /api/encounters/:id/procedures
+ * Add a procedure/charge to an encounter
+ */
+const procedureSchema = z.object({
+  cptCode: z.string().min(1),
+  description: z.string().min(1),
+  quantity: z.number().optional(),
+  modifiers: z.array(z.string()).optional(),
+});
+
+encountersRouter.post("/:id/procedures", requireAuth, requireRoles(["provider", "admin", "ma"]), async (req: AuthedRequest, res) => {
+  const parsed = procedureSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
+  const tenantId = req.user!.tenantId;
+  const encId = String(req.params.id);
+
+  try {
+    const chargeId = await encounterService.addProcedure(
+      tenantId,
+      encId,
+      parsed.data.cptCode,
+      parsed.data.description,
+      parsed.data.quantity || 1,
+      parsed.data.modifiers
+    );
+
+    await auditLog(tenantId, req.user!.id, "procedure_added", "encounter", encId);
+
+    return res.status(201).json({ id: chargeId, message: "Procedure added successfully" });
+  } catch (error: any) {
+    console.error("Error adding procedure:", error);
+    return res.status(500).json({ error: error.message || "Failed to add procedure" });
+  }
+});
+
+/**
+ * POST /api/encounters/:id/complete
+ * Complete an encounter and generate charges
+ */
+encountersRouter.post("/:id/complete", requireAuth, requireRoles(["provider", "admin"]), async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const encId = String(req.params.id);
+
+  try {
+    await encounterService.completeEncounter(tenantId, encId);
+    await auditLog(tenantId, req.user!.id, "encounter_completed", "encounter", encId);
+
+    return res.status(200).json({
+      encounterId: encId,
+      message: "Encounter completed and charges generated"
+    });
+  } catch (error: any) {
+    console.error("Error completing encounter:", error);
+    return res.status(500).json({ error: error.message || "Failed to complete encounter" });
+  }
+});
+
+/**
+ * POST /api/encounters/:id/create-claim
+ * Create a claim from encounter charges
+ */
+encountersRouter.post("/:id/create-claim", requireAuth, requireRoles(["provider", "admin", "billing"]), async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const encId = String(req.params.id);
+  const userId = req.user!.id;
+
+  try {
+    const claim = await billingService.createClaimFromCharges(tenantId, encId, userId);
+
+    return res.status(201).json({
+      claimId: claim.id,
+      claimNumber: claim.claimNumber,
+      totalCents: claim.totalCents,
+      status: claim.status,
+      message: "Claim created successfully"
+    });
+  } catch (error: any) {
+    console.error("Error creating claim:", error);
+    return res.status(500).json({ error: error.message || "Failed to create claim" });
+  }
+});
+
+/**
+ * GET /api/encounters/:id/charges
+ * Get charges for an encounter
+ */
+encountersRouter.get("/:id/charges", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const encId = String(req.params.id);
+
+  try {
+    const result = await pool.query(
+      `SELECT id, cpt_code as "cptCode", description, quantity, fee_cents as "feeCents",
+              linked_diagnosis_ids as "linkedDiagnosisIds", icd_codes as "icdCodes",
+              status, created_at as "createdAt", updated_at as "updatedAt"
+       FROM charges
+       WHERE encounter_id = $1 AND tenant_id = $2
+       ORDER BY created_at`,
+      [encId, tenantId]
+    );
+
+    const totalCents = result.rows.reduce((sum, charge) => sum + (charge.feeCents || 0) * (charge.quantity || 1), 0);
+
+    await auditLog(tenantId, req.user!.id, "encounter_charges_viewed", "encounter", encId);
+
+    return res.json({
+      encounterId: encId,
+      charges: result.rows,
+      count: result.rows.length,
+      totalCents
+    });
+  } catch (error) {
+    console.error("Error fetching encounter charges:", error);
+    return res.status(500).json({ error: "Failed to fetch encounter charges" });
+  }
 });

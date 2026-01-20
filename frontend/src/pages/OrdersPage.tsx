@@ -7,15 +7,29 @@ import { fetchOrders, fetchPatients, updateOrderStatus, createOrder } from '../a
 import type { Order, Patient } from '../types';
 
 type OrderFilter = 'all' | 'pending' | 'in-progress' | 'completed' | 'cancelled';
-type OrderType = 'lab' | 'imaging' | 'biopsy' | 'procedure' | 'referral' | 'rx';
+type OrderType =
+  | 'biopsy'
+  | 'lab'
+  | 'pathology'
+  | 'dermpath'
+  | 'procedure'
+  | 'imaging'
+  | 'rx'
+  | 'cosmetic'
+  | 'referral'
+  | 'supply';
 
 const ORDER_TYPES: { value: OrderType; label: string; icon: string }[] = [
-  { value: 'lab', label: 'Lab', icon: '' },
   { value: 'biopsy', label: 'Biopsy', icon: '' },
-  { value: 'imaging', label: 'Imaging', icon: '' },
+  { value: 'pathology', label: 'Pathology', icon: '' },
+  { value: 'dermpath', label: 'DermPath', icon: '' },
+  { value: 'lab', label: 'Lab Work', icon: '' },
   { value: 'procedure', label: 'Procedure', icon: '' },
-  { value: 'referral', label: 'Referral', icon: '' },
+  { value: 'cosmetic', label: 'Cosmetic', icon: '' },
+  { value: 'imaging', label: 'Imaging', icon: '' },
   { value: 'rx', label: 'Prescription', icon: '' },
+  { value: 'referral', label: 'Referral', icon: '' },
+  { value: 'supply', label: 'Supply Order', icon: '' },
 ];
 
 export function OrdersPage() {
@@ -70,7 +84,8 @@ export function OrdersPage() {
       ]);
 
       setOrders(ordersRes.orders || []);
-      setPatients(patientsRes.patients || []);
+      // Patients API returns data in 'data' key, not 'patients'
+      setPatients(patientsRes.data || patientsRes.patients || []);
     } catch (err: any) {
       showError(err.message || 'Failed to load orders');
     } finally {

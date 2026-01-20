@@ -1,0 +1,77 @@
+{
+  "title": "Pacientes",
+  "newPatient": "Nuevo Paciente",
+  "patientList": "Lista de Pacientes",
+  "patientDetails": "Detalles del Paciente",
+  "patientSearch": "Buscar Paciente",
+  "searchPlaceholder": "Buscar por nombre, correo o teléfono...",
+  "fields": {
+    "firstName": "Nombre",
+    "lastName": "Apellido",
+    "middleName": "Segundo Nombre",
+    "dateOfBirth": "Fecha de Nacimiento",
+    "gender": "Género",
+    "email": "Correo Electrónico",
+    "phone": "Teléfono",
+    "mobilePhone": "Teléfono Móvil",
+    "homePhone": "Teléfono de Casa",
+    "workPhone": "Teléfono de Trabajo",
+    "address": "Dirección",
+    "addressLine1": "Dirección Línea 1",
+    "addressLine2": "Dirección Línea 2",
+    "city": "Ciudad",
+    "state": "Estado",
+    "zipCode": "Código Postal",
+    "country": "País",
+    "emergencyContact": "Contacto de Emergencia",
+    "emergencyPhone": "Teléfono de Emergencia",
+    "insuranceProvider": "Aseguradora",
+    "insuranceId": "ID de Seguro",
+    "policyNumber": "Número de Póliza",
+    "groupNumber": "Número de Grupo",
+    "medicalHistory": "Historia Clínica",
+    "allergies": "Alergias",
+    "medications": "Medicamentos Actuales",
+    "primaryCarePhysician": "Médico de Atención Primaria",
+    "referringPhysician": "Médico Referente"
+  },
+  "genders": {
+    "male": "Masculino",
+    "female": "Femenino",
+    "other": "Otro",
+    "preferNotToSay": "Prefiero no decir"
+  },
+  "tabs": {
+    "overview": "Resumen",
+    "demographics": "Demografía",
+    "insurance": "Seguro",
+    "medicalHistory": "Historia Médica",
+    "appointments": "Citas",
+    "encounters": "Encuentros",
+    "documents": "Documentos",
+    "photos": "Fotos",
+    "billing": "Facturación",
+    "messages": "Mensajes"
+  },
+  "actions": {
+    "addPatient": "Agregar Paciente",
+    "editPatient": "Editar Paciente",
+    "deletePatient": "Eliminar Paciente",
+    "viewChart": "Ver Expediente",
+    "scheduleAppointment": "Programar Cita",
+    "sendMessage": "Enviar Mensaje",
+    "uploadDocument": "Subir Documento"
+  },
+  "messages": {
+    "patientCreated": "Paciente creado exitosamente",
+    "patientUpdated": "Paciente actualizado exitosamente",
+    "patientDeleted": "Paciente eliminado exitosamente",
+    "noPatients": "No se encontraron pacientes",
+    "loadingPatients": "Cargando pacientes..."
+  },
+  "stats": {
+    "totalPatients": "Total de Pacientes",
+    "newThisMonth": "Nuevos Este Mes",
+    "activePatients": "Pacientes Activos"
+  }
+}

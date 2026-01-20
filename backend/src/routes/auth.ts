@@ -9,7 +9,7 @@ import { rateLimit } from "../middleware/rateLimit";
 
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(6),
+  password: z.string().min(1), // Don't validate length on login, only on creation
 });
 
 const refreshSchema = z.object({
@@ -18,7 +18,56 @@ const refreshSchema = z.object({
 
 export const authRouter = Router();
 
-authRouter.post("/login", async (req, res) => {
+/**
+ * @swagger
+ * /api/auth/login:
+ *   post:
+ *     summary: User login
+ *     description: Authenticate a user with email and password. Returns user info and JWT tokens.
+ *     tags:
+ *       - Authentication
+ *     security: []
+ *     parameters:
+ *       - in: header
+ *         name: X-Tenant-ID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Tenant ID for multi-tenancy
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/LoginRequest'
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/LoginResponse'
+ *       400:
+ *         description: Missing tenant header or validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Invalid credentials
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Login failed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+// Apply rate limiting to login endpoint to prevent brute force attacks
+authRouter.post("/login", rateLimit({ windowMs: 15 * 60 * 1000, max: 5 }), async (req, res) => {
   try {
     const tenantId = req.header(env.tenantHeader);
     if (!tenantId) {
@@ -49,7 +98,48 @@ authRouter.post("/login", async (req, res) => {
   }
 });
 
-authRouter.post("/refresh", async (req, res) => {
+/**
+ * @swagger
+ * /api/auth/refresh:
+ *   post:
+ *     summary: Refresh access token
+ *     description: Use a refresh token to obtain a new access token and refresh token.
+ *     tags:
+ *       - Authentication
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/RefreshTokenRequest'
+ *     responses:
+ *       200:
+ *         description: Token refresh successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *                 tokens:
+ *                   $ref: '#/components/schemas/Tokens'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationError'
+ *       401:
+ *         description: Invalid refresh token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+// Apply rate limiting to refresh endpoint
+authRouter.post("/refresh", rateLimit({ windowMs: 15 * 60 * 1000, max: 10 }), async (req, res) => {
   const parsed = refreshSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.format() });
@@ -61,10 +151,67 @@ authRouter.post("/refresh", async (req, res) => {
   return res.json(rotated);
 });
 
+/**
+ * @swagger
+ * /api/auth/me:
+ *   get:
+ *     summary: Get current user
+ *     description: Retrieve the currently authenticated user's information.
+ *     tags:
+ *       - Authentication
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Current user information
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Unauthorized - Invalid or missing token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 authRouter.get("/me", requireAuth, (req: AuthedRequest, res) => {
   return res.json({ user: req.user });
 });
 
+/**
+ * @swagger
+ * /api/auth/users:
+ *   get:
+ *     summary: List all users in tenant
+ *     description: Retrieve all users for the current tenant.
+ *     tags:
+ *       - Authentication
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     responses:
+ *       200:
+ *         description: List of users
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 users:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 authRouter.get("/users", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const users = await userStore.listByTenant(tenantId);

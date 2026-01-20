@@ -108,7 +108,7 @@ protocolsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
     const result = await pool.query(query, params);
 
     res.json(
-      paginatedResponse(result.rows, { page, limit, total })
+      paginatedResponse(result.rows, total, page, limit)
     );
   } catch (error) {
     logger.error("Error fetching protocols:", error);
@@ -210,7 +210,7 @@ protocolsRouter.post(
       res.status(201).json(result.rows[0]);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.errors });
+        return res.status(400).json({ error: error.issues });
       }
       logger.error("Error creating protocol:", error);
       res.status(500).json({ error: "Failed to create protocol" });
@@ -261,7 +261,7 @@ protocolsRouter.put(
       res.json(result.rows[0]);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.errors });
+        return res.status(400).json({ error: error.issues });
       }
       logger.error("Error updating protocol:", error);
       res.status(500).json({ error: "Failed to update protocol" });
@@ -349,7 +349,7 @@ protocolsRouter.post(
       res.status(201).json(result.rows[0]);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.errors });
+        return res.status(400).json({ error: error.issues });
       }
       logger.error("Error adding protocol step:", error);
       res.status(500).json({ error: "Failed to add protocol step" });
@@ -403,7 +403,7 @@ protocolsRouter.put(
       res.json(result.rows[0]);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.errors });
+        return res.status(400).json({ error: error.issues });
       }
       logger.error("Error updating protocol step:", error);
       res.status(500).json({ error: "Failed to update protocol step" });
@@ -492,7 +492,7 @@ protocolsRouter.post(
       res.status(201).json(result.rows[0]);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.errors });
+        return res.status(400).json({ error: error.issues });
       }
       logger.error("Error applying protocol:", error);
       res.status(500).json({ error: "Failed to apply protocol" });

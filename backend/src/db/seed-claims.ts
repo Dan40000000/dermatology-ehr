@@ -253,7 +253,7 @@ async function seedClaims() {
     console.log(`Creating ${claimScenarios.length} claims...`);
 
     for (let i = 0; i < claimScenarios.length; i++) {
-      const scenario = claimScenarios[i];
+      const scenario = claimScenarios[i]!;
       const claimId = randomUUID();
       const claimNumber = `CLM-${new Date(scenario.serviceDate).getTime()}-${claimId.substring(0, 8).toUpperCase()}`;
 
@@ -304,7 +304,7 @@ async function seedClaims() {
 
       // Create diagnoses
       for (let j = 0; j < scenario.diagnoses.length; j++) {
-        const dx = scenario.diagnoses[j];
+        const dx = scenario.diagnoses[j]!;
         await pool.query(
           `insert into claim_diagnoses (
             id, tenant_id, claim_id, icd10_code, description, is_primary, sequence_number
@@ -315,7 +315,7 @@ async function seedClaims() {
 
       // Create charges
       for (let j = 0; j < scenario.charges.length; j++) {
-        const charge = scenario.charges[j];
+        const charge = scenario.charges[j]!;
         await pool.query(
           `insert into claim_charges (
             id, tenant_id, claim_id, cpt_code, description, modifiers, quantity,

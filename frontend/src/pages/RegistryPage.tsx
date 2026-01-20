@@ -282,7 +282,7 @@ export function RegistryPage() {
                       Melanoma Staging Rate (MIPS 137)
                     </div>
                     <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#10b981' }}>
-                      {dashboard.qualityMetrics?.melanoma_staging_rate?.toFixed(1) || 0}%
+                      {parseFloat(dashboard.qualityMetrics?.melanoma_staging_rate || 0).toFixed(1)}%
                     </div>
                   </div>
                   <div style={{ padding: '1rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
@@ -290,7 +290,7 @@ export function RegistryPage() {
                       Psoriasis PASI Documentation (MIPS 485)
                     </div>
                     <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#10b981' }}>
-                      {dashboard.qualityMetrics?.psoriasis_pasi_rate?.toFixed(1) || 0}%
+                      {parseFloat(dashboard.qualityMetrics?.psoriasis_pasi_rate || 0).toFixed(1)}%
                     </div>
                   </div>
                   <div style={{ padding: '1rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
@@ -298,7 +298,7 @@ export function RegistryPage() {
                       Systemic Therapy Labs Compliance
                     </div>
                     <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#10b981' }}>
-                      {dashboard.qualityMetrics?.labs_compliance_rate?.toFixed(1) || 0}%
+                      {parseFloat(dashboard.qualityMetrics?.labs_compliance_rate || 0).toFixed(1)}%
                     </div>
                   </div>
                 </div>

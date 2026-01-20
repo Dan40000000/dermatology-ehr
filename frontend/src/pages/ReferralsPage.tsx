@@ -62,7 +62,7 @@ export function ReferralsPage() {
     if (!session) return;
     try {
       const res = await fetchPatients(session.tenantId, session.accessToken);
-      setPatients(res.patients || []);
+      setPatients(res.data || res.patients || []);
     } catch (err: any) {
       showError(err.message || 'Failed to load patients');
     }

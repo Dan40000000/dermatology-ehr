@@ -1,5 +1,5 @@
 # Derm-App Project Status Report
-**Last Updated:** January 12, 2026
+**Last Updated:** January 19, 2026
 
 ## Project Overview
 A comprehensive dermatology EHR (Electronic Health Records) application with:
@@ -9,9 +9,90 @@ A comprehensive dermatology EHR (Electronic Health Records) application with:
 
 ---
 
-## Current Status: Backend TypeScript - CLEAN (0 Errors)
+## Current Status: Referrals & Registry Pages Fixed
 
-### What Was Just Completed
+### What Was Just Completed (January 19, 2026)
+
+**Fixed Referrals Page Patient Dropdown:**
+- The patient dropdown in the "New Referral" modal was empty
+- **Root Cause:** API returns `{ data: [...] }` but frontend expected `{ patients: [...] }`
+- **Fix:** Updated `ReferralsPage.tsx`, `RemindersPage.tsx`, and `AppLayout.tsx` to use `res.data || res.patients || []`
+
+**Fixed Registry Page Crash:**
+- The Registry page was crashing with "toFixed is not a function" error
+- **Root Cause:** Backend returns quality metrics as strings (e.g., `"100.00000000000000000000"`) not numbers
+- **Fix:** Wrapped values in `parseFloat()` before calling `.toFixed()` in `RegistryPage.tsx`
+
+---
+
+## Development Port Configuration
+
+**IMPORTANT: Frontend MUST run on port 5173 only.**
+
+- **Frontend:** `http://localhost:5173` (primary) - Do NOT use 5174 or 5175
+- **Backend:** `http://localhost:4000`
+- **Patient Portal:** `http://localhost:5173/portal`
+- **API Docs:** `http://localhost:4000/api/docs`
+
+If you see the browser on port 5174 or 5175, kill extra processes:
+```bash
+# Find and kill duplicate frontend servers
+lsof -i :5174 | grep LISTEN
+lsof -i :5175 | grep LISTEN
+# Kill by PID if needed: kill <PID>
+```
+
+---
+
+## Previous Status: Patient Portal Registration Complete - Deployed to Railway
+
+### What Was Completed (Earlier January 19, 2026)
+
+Built and deployed the **Patient Portal Registration System** with SSN-based identity verification:
+
+#### Patient Portal Registration Page (`PortalRegisterPage.tsx`)
+A complete multi-step registration flow for existing patients:
+
+**Step 1: Identity Verification**
+- Patient enters: Last Name, Date of Birth, Last 4 digits of SSN
+- Backend validates against existing patient records
+- Rate-limited to prevent brute force attacks
+- Failed attempts logged to audit trail
+
+**Step 2: Account Creation**
+- Email address input (validated for format and uniqueness)
+- Password with strength indicator showing 5 requirements:
+  - Minimum 8 characters
+  - Uppercase letter
+  - Lowercase letter
+  - Number
+  - Special character
+- Terms of service checkbox
+- Real-time password strength feedback
+
+**Step 3: Success Confirmation**
+- Displays success message
+- Instructs patient to verify email
+- Link to login page
+
+#### Backend API Endpoints Added
+- `POST /api/patient-portal/verify-identity` - Validates patient by lastName + DOB + SSN last 4
+- `POST /api/patient-portal/register` - Creates portal account after re-verification
+- Both endpoints rate-limited and audit-logged
+
+#### Bug Fixes Applied
+- **API URL Fix**: Changed frontend fetch calls from relative URLs (`/api/...`) to use `${API_URL}/api/...` constant
+- This fixed 404 errors when frontend runs on different port than backend
+
+#### Deployment
+- All changes pushed to Railway (commit 4623315)
+- Working version copied to `derm-app-backup/`
+
+---
+
+## Previous Status: Backend TypeScript - CLEAN (0 Errors)
+
+### Previous Session Summary
 
 We deployed **7 agents in parallel** to systematically fix **241 TypeScript compilation errors** across the backend codebase. All errors have been resolved.
 
@@ -280,17 +361,22 @@ When opening the app for testing, use Chrome:
 
 ## Recent Updates (January 2026)
 
-### Patient Portal Enhancements
+### Patient Portal Enhancements (January 19, 2026)
+- **Registration Page** (`PortalRegisterPage.tsx`) - Complete multi-step registration with SSN-based identity verification
+  - Step 1: Verify identity using Last Name + DOB + Last 4 of SSN
+  - Step 2: Create account with email and strong password (with strength indicator)
+  - Step 3: Success confirmation with email verification prompt
+  - Premium glassmorphism UI matching the rest of the portal
+  - Rate limiting and audit logging for security
+- **API URL Fix** - Fixed frontend fetch calls to use full backend URL instead of relative paths
+
+### Patient Portal Enhancements (Earlier January 2026)
 - **Billing Page** (`PortalBillingPage.tsx`) - Shows patient balance, insurance payments, charges, and payment history
 - **Health Record Page** - Rebuilt with tabs for overview, allergies, medications, vitals, and lab results
 - **Documents Page** - Rebuilt with search, category filters, and download functionality
 - **Profile Page** - Rebuilt with personal info, contact, preferences, and security tabs
 - **Dynamic Support Phone** - Support call button now routes to the patient's specific practice phone number
 - **CORS Updated** - Backend now supports multiple frontend dev ports (5173, 5174, 5175)
-- **Registration Page** (`PortalRegisterPage.tsx`) - Multi-step registration with SSN identity verification
-  - Step 1: Verify identity using Last Name + DOB + Last 4 of SSN
-  - Step 2: Create account with email and strong password
-  - Step 3: Success confirmation with email verification
 
 ---
 

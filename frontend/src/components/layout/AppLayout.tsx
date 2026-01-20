@@ -17,7 +17,7 @@ export function AppLayout() {
     if (!session) return;
     try {
       const res = await fetchPatients(session.tenantId, session.accessToken);
-      setPatients(res.patients || []);
+      setPatients(res.data || res.patients || []);
     } catch {
       // Silently fail for patient search
     }

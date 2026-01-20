@@ -3457,6 +3457,32 @@ Consider age-appropriate treatments and include family counseling points.',
     create index if not exists idx_protocol_outcomes_type on protocol_outcomes(outcome_type);
     `,
   },
+  {
+    name: "070_patient_portal_accounts",
+    sql: `
+    -- Patient portal accounts for patient authentication
+    create table if not exists patient_portal_accounts (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      patient_id text not null references patients(id),
+      email text not null,
+      password_hash text not null,
+      is_active boolean default true,
+      email_verified boolean default false,
+      email_verification_token text,
+      email_verification_sent_at timestamptz,
+      password_reset_token text,
+      password_reset_expires_at timestamptz,
+      last_login_at timestamptz,
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    create unique index if not exists idx_portal_accounts_email on patient_portal_accounts(tenant_id, email);
+    create index if not exists idx_portal_accounts_patient on patient_portal_accounts(patient_id);
+    create index if not exists idx_portal_accounts_tenant on patient_portal_accounts(tenant_id);
+    `,
+  },
 ];
 
 async function ensureMigrationsTable() {

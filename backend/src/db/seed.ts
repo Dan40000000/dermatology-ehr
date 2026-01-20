@@ -2006,10 +2006,10 @@ async function seed() {
 
     for (const account of portalAccounts) {
       await pool.query(
-        `INSERT INTO patient_portal_accounts (tenant_id, patient_id, email, password_hash, is_active, email_verified)
-         VALUES ($1, $2, $3, $4, true, true)
+        `INSERT INTO patient_portal_accounts (id, tenant_id, patient_id, email, password_hash, is_active, email_verified)
+         VALUES ($1, $2, $3, $4, $5, true, true)
          ON CONFLICT (tenant_id, email) DO NOTHING`,
-        [tenantId, account.patientId, account.email, portalPasswordHash]
+        [randomUUID(), tenantId, account.patientId, account.email, portalPasswordHash]
       );
     }
     console.log("Seeded patient portal accounts");

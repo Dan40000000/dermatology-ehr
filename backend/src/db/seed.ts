@@ -551,6 +551,7 @@ async function seed() {
       { id: "prov-demo", name: "Dr. Skin", specialty: "Dermatology" },
       { id: "prov-demo-2", name: "PA Riley", specialty: "Dermatology" },
       { id: "prov-demo-3", name: "Dr. Martinez", specialty: "Dermatology" },
+      { id: "prov-cosmetic-pa", name: "Sarah Mitchell PA-C", specialty: "Cosmetic Dermatology" },
     ];
 
     for (const pr of providers) {

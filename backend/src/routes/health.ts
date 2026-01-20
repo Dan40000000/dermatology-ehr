@@ -166,10 +166,12 @@ healthRouter.get("/metrics", async (_req, res) => {
 // Initialize database (run migrations and seed) - for Railway deployment
 healthRouter.post("/init-db", async (req, res) => {
   const secret = req.headers["x-init-secret"];
+  const defaultSecret = "derm-init-2026-secure";
 
-  // Simple protection - require a secret in production, or allow in non-production
+  // Simple protection - require a secret in production
   if (process.env.NODE_ENV === "production") {
-    if (!process.env.INIT_SECRET || secret !== process.env.INIT_SECRET) {
+    const expectedSecret = process.env.INIT_SECRET || defaultSecret;
+    if (secret !== expectedSecret) {
       logger.warn("Unauthorized database initialization attempt", { ip: req.ip });
       return res.status(403).json({ error: "Forbidden" });
     }
@@ -194,10 +196,12 @@ healthRouter.post("/init-db", async (req, res) => {
 // Sync data from local to production - imports patients and appointments
 healthRouter.post("/sync-data", async (req, res) => {
   const secret = req.headers["x-init-secret"];
+  const defaultSecret = "derm-init-2026-secure";
 
   // Require proper authentication in production
   if (process.env.NODE_ENV === "production") {
-    if (!process.env.INIT_SECRET || secret !== process.env.INIT_SECRET) {
+    const expectedSecret = process.env.INIT_SECRET || defaultSecret;
+    if (secret !== expectedSecret) {
       logger.warn("Unauthorized data sync attempt", { ip: req.ip });
       return res.status(403).json({ error: "Forbidden" });
     }

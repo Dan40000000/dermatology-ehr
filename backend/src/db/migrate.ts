@@ -3314,6 +3314,13 @@ Consider age-appropriate treatments and include family counseling points.',
     COMMENT ON TABLE chronic_therapy_registry IS 'Lab monitoring and safety tracking for systemic therapies';
     `,
   },
+  {
+    name: "068_fix_cpt_code_length",
+    sql: `
+    -- Increase cpt_code column size to accommodate custom procedure codes
+    ALTER TABLE fee_schedule_items ALTER COLUMN cpt_code TYPE varchar(20);
+    `,
+  },
 ];
 
 async function ensureMigrationsTable() {

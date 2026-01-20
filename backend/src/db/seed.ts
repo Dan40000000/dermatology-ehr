@@ -2000,8 +2000,7 @@ async function seed() {
     const portalPasswordHash = bcrypt.hashSync("Portal123!", 10); // Dev/test only
     const portalAccounts = [
       { patientId: "p-demo", email: "jamie.patient@example.com" },
-      { patientId: "p-demo-2", email: "sarah.smith@example.com" },
-      { patientId: "p-perry", email: "dan.perry@example.com" },
+      { patientId: "p-demo-2", email: "alex.derm@example.com" },
     ];
 
     for (const account of portalAccounts) {

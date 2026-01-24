@@ -9,6 +9,8 @@ const apiMocks = vi.hoisted(() => ({
   uploadPortalInsuranceCard: vi.fn(),
   fetchPortalRequiredConsents: vi.fn(),
   signPortalConsent: vi.fn(),
+  fetchPortalProfile: vi.fn(),
+  updatePortalProfile: vi.fn(),
 }));
 
 vi.mock('../../portalApi', () => apiMocks);
@@ -26,6 +28,17 @@ describe('ECheckInPage', () => {
       copayCollected: false,
       staffNotified: false,
       startedAt: '2024-03-01T12:00:00',
+    });
+    apiMocks.fetchPortalProfile.mockResolvedValue({
+      patient: {
+        id: 'patient-1',
+        firstName: 'Test',
+        lastName: 'Patient',
+        address: '123 Main St',
+        phone: '(555) 123-4567',
+        emergencyContactName: 'Sam Contact',
+        emergencyContactPhone: '(555) 987-6543',
+      },
     });
     apiMocks.fetchPortalRequiredConsents.mockResolvedValue({
       requiredConsents: [
@@ -52,6 +65,7 @@ describe('ECheckInPage', () => {
       ],
     });
     apiMocks.updatePortalCheckinSession.mockResolvedValue({ id: 'session-1', status: 'updated' });
+    apiMocks.updatePortalProfile.mockResolvedValue({ id: 'patient-1' });
     apiMocks.signPortalConsent.mockResolvedValue({ id: 'sig-1', signedAt: '2024-03-01T12:00:00' });
   });
 
@@ -70,6 +84,7 @@ describe('ECheckInPage', () => {
       sessionType: 'mobile',
     });
     expect(apiMocks.fetchPortalCheckinSession).toHaveBeenCalledWith('tenant-1', 'token-1', 'session-1');
+    expect(apiMocks.fetchPortalProfile).toHaveBeenCalledWith('tenant-1', 'token-1');
     expect(apiMocks.fetchPortalRequiredConsents).toHaveBeenCalledWith('tenant-1', 'token-1');
 
     const nextButton = screen.getByRole('button', { name: 'Next' });
@@ -78,6 +93,18 @@ describe('ECheckInPage', () => {
     expect(nextButton).toBeEnabled();
 
     fireEvent.click(nextButton);
+    await waitFor(() =>
+      expect(apiMocks.updatePortalProfile).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        expect.objectContaining({
+          address: '123 Main St',
+          phone: '(555) 123-4567',
+          emergencyContactName: 'Sam Contact',
+          emergencyContactPhone: '(555) 987-6543',
+        })
+      )
+    );
     await waitFor(() =>
       expect(apiMocks.updatePortalCheckinSession).toHaveBeenNthCalledWith(
         1,

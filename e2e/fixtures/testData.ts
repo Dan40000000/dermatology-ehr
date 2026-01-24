@@ -4,24 +4,24 @@
 
 export const TEST_USERS = {
   admin: {
-    email: 'admin@demo.com',
-    password: 'demo123',
+    email: 'admin@demo.practice',
+    password: 'Password123!',
     role: 'admin',
   },
   doctor: {
-    email: 'doctor@demo.com',
-    password: 'demo123',
-    role: 'doctor',
+    email: 'provider@demo.practice',
+    password: 'Password123!',
+    role: 'provider',
   },
   nurse: {
-    email: 'nurse@demo.com',
-    password: 'demo123',
-    role: 'nurse',
+    email: 'ma@demo.practice',
+    password: 'Password123!',
+    role: 'ma',
   },
   receptionist: {
-    email: 'receptionist@demo.com',
-    password: 'demo123',
-    role: 'receptionist',
+    email: 'frontdesk@demo.practice',
+    password: 'Password123!',
+    role: 'front_desk',
   },
   invalid: {
     email: 'invalid@example.com',
@@ -37,7 +37,7 @@ export const TEST_PATIENT = {
   email: 'test.patient@example.com',
   address: '123 Test Street',
   city: 'Test City',
-  state: 'TS',
+  state: 'CA',
   zipCode: '12345',
 };
 

@@ -140,6 +140,15 @@ describe('api.ts', () => {
     await expect(fetchPatient(tenantId, token, 'patient-1')).rejects.toThrow('Patient not found');
   });
 
+  it('normalizes patient payloads to include patients array', async () => {
+    const payload = { data: [{ id: 'patient-1' }], meta: { total: 1 } };
+    fetchMock.mockResolvedValueOnce(okResponse(payload));
+
+    const res = await fetchPatients(tenantId, token);
+    expect(res.data).toEqual(payload.data);
+    expect(res.patients).toEqual(payload.data);
+  });
+
   it('builds task filters into query params', async () => {
     fetchMock.mockResolvedValueOnce(okResponse({}));
 

@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
+import { API_BASE_URL } from '../utils/apiBase';
 
 interface Patient {
   id: string;
@@ -31,8 +32,6 @@ interface RegisterData {
 
 const PatientPortalAuthContext = createContext<PatientPortalAuthContextType | null>(null);
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
-
 export function PatientPortalAuthProvider({ children }: { children: ReactNode }) {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
@@ -57,7 +56,7 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
   const login = async (tenantId: string, email: string, password: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_URL}/api/patient-portal/login`, {
+      const response = await fetch(`${API_BASE_URL}/api/patient-portal/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -91,7 +90,7 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
   const logout = async () => {
     if (sessionToken && tenantId) {
       try {
-        await fetch(`${API_URL}/api/patient-portal/logout`, {
+        await fetch(`${API_BASE_URL}/api/patient-portal/logout`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${sessionToken}`,
@@ -116,7 +115,7 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
   const register = async (data: RegisterData) => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_URL}/api/patient-portal/register`, {
+      const response = await fetch(`${API_BASE_URL}/api/patient-portal/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -173,7 +172,7 @@ export async function patientPortalFetch(endpoint: string, options: RequestInit 
     throw new Error('Not authenticated');
   }
 
-  const response = await fetch(`${API_URL}${endpoint}`, {
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',

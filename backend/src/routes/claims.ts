@@ -181,94 +181,6 @@ claimsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   res.json({ claims: result.rows });
 });
 
-// GET /api/claims/:id - Get single claim with detail
-claimsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
-  const tenantId = req.user!.tenantId;
-  const claimId = String(req.params.id);
-
-  // Fetch claim
-  const claimResult = await pool.query(
-    `select
-      c.id, c.claim_number as "claimNumber", c.encounter_id as "encounterId",
-      c.patient_id as "patientId", c.total_charges as "totalCharges", c.status,
-      c.payer, c.payer_id as "payerId", c.payer_name as "payerName",
-      c.submitted_at as "submittedAt", c.service_date as "serviceDate",
-      c.line_items as "lineItems", c.scrub_status as "scrubStatus",
-      c.scrub_errors as "scrubErrors", c.scrub_warnings as "scrubWarnings",
-      c.scrub_info as "scrubInfo", c.last_scrubbed_at as "lastScrubbedAt",
-      c.is_cosmetic as "isCosmetic", c.cosmetic_reason as "cosmeticReason",
-      c.denial_reason as "denialReason", c.denial_code as "denialCode",
-      c.denial_date as "denialDate", c.denial_category as "denialCategory",
-      c.appeal_status as "appealStatus", c.appeal_notes as "appealNotes",
-      c.appeal_submitted_at as "appealSubmittedAt",
-      c.created_at as "createdAt", c.updated_at as "updatedAt",
-      p.first_name as "patientFirstName", p.last_name as "patientLastName",
-      p.dob, p.insurance_plan_name as "insurancePlanName",
-      pr.full_name as "providerName"
-    from claims c
-    join patients p on p.id = c.patient_id
-    left join encounters e on e.id = c.encounter_id
-    left join providers pr on pr.id = e.provider_id
-    where c.id = $1 and c.tenant_id = $2`,
-    [claimId, tenantId],
-  );
-
-  if (!claimResult.rowCount) {
-    return res.status(404).json({ error: "Claim not found" });
-  }
-
-  const claim = claimResult.rows[0];
-
-  // Fetch payments
-  const paymentsResult = await pool.query(
-    `select id, amount_cents as "amountCents", payment_date as "paymentDate",
-            payment_method as "paymentMethod", payer, check_number as "checkNumber",
-            notes, created_at as "createdAt"
-     from claim_payments
-     where claim_id = $1 and tenant_id = $2
-     order by payment_date desc`,
-    [claimId, tenantId],
-  );
-
-  // Fetch status history
-  const historyResult = await pool.query(
-    `select id, status, notes, changed_by as "changedBy", changed_at as "changedAt"
-     from claim_status_history
-     where claim_id = $1 and tenant_id = $2
-     order by changed_at desc`,
-    [claimId, tenantId],
-  );
-
-  // Fetch diagnoses
-  const diagnosesResult = await pool.query(
-    `select id, icd10_code as "icd10Code", description, is_primary as "isPrimary",
-            sequence_number as "sequenceNumber"
-     from claim_diagnoses
-     where claim_id = $1 and tenant_id = $2
-     order by is_primary desc, sequence_number asc`,
-    [claimId, tenantId],
-  );
-
-  // Fetch charges
-  const chargesResult = await pool.query(
-    `select id, cpt_code as "cptCode", description, modifiers, quantity,
-            fee_cents as "feeCents", linked_diagnosis_ids as "linkedDiagnosisIds",
-            sequence_number as "sequenceNumber"
-     from claim_charges
-     where claim_id = $1 and tenant_id = $2
-     order by sequence_number asc`,
-    [claimId, tenantId],
-  );
-
-  res.json({
-    claim,
-    payments: paymentsResult.rows,
-    statusHistory: historyResult.rows,
-    diagnoses: diagnosesResult.rows,
-    charges: chargesResult.rows,
-  });
-});
-
 // POST /api/claims - Create new claim
 claimsRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = claimCreateSchema.safeParse(req.body);
@@ -976,4 +888,92 @@ claimsRouter.post("/:id/suggest-modifiers", requireAuth, async (req: AuthedReque
   const suggestions = await suggestModifiers(tenantId, lineItems);
 
   res.json({ suggestions });
+});
+
+// GET /api/claims/:id - Get single claim with detail
+claimsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const claimId = String(req.params.id);
+
+  // Fetch claim
+  const claimResult = await pool.query(
+    `select
+      c.id, c.claim_number as "claimNumber", c.encounter_id as "encounterId",
+      c.patient_id as "patientId", c.total_charges as "totalCharges", c.status,
+      c.payer, c.payer_id as "payerId", c.payer_name as "payerName",
+      c.submitted_at as "submittedAt", c.service_date as "serviceDate",
+      c.line_items as "lineItems", c.scrub_status as "scrubStatus",
+      c.scrub_errors as "scrubErrors", c.scrub_warnings as "scrubWarnings",
+      c.scrub_info as "scrubInfo", c.last_scrubbed_at as "lastScrubbedAt",
+      c.is_cosmetic as "isCosmetic", c.cosmetic_reason as "cosmeticReason",
+      c.denial_reason as "denialReason", c.denial_code as "denialCode",
+      c.denial_date as "denialDate", c.denial_category as "denialCategory",
+      c.appeal_status as "appealStatus", c.appeal_notes as "appealNotes",
+      c.appeal_submitted_at as "appealSubmittedAt",
+      c.created_at as "createdAt", c.updated_at as "updatedAt",
+      p.first_name as "patientFirstName", p.last_name as "patientLastName",
+      p.dob, p.insurance_plan_name as "insurancePlanName",
+      pr.full_name as "providerName"
+    from claims c
+    join patients p on p.id = c.patient_id
+    left join encounters e on e.id = c.encounter_id
+    left join providers pr on pr.id = e.provider_id
+    where c.id = $1 and c.tenant_id = $2`,
+    [claimId, tenantId],
+  );
+
+  if (!claimResult.rowCount) {
+    return res.status(404).json({ error: "Claim not found" });
+  }
+
+  const claim = claimResult.rows[0];
+
+  // Fetch payments
+  const paymentsResult = await pool.query(
+    `select id, amount_cents as "amountCents", payment_date as "paymentDate",
+            payment_method as "paymentMethod", payer, check_number as "checkNumber",
+            notes, created_at as "createdAt"
+     from claim_payments
+     where claim_id = $1 and tenant_id = $2
+     order by payment_date desc`,
+    [claimId, tenantId],
+  );
+
+  // Fetch status history
+  const historyResult = await pool.query(
+    `select id, status, notes, changed_by as "changedBy", changed_at as "changedAt"
+     from claim_status_history
+     where claim_id = $1 and tenant_id = $2
+     order by changed_at desc`,
+    [claimId, tenantId],
+  );
+
+  // Fetch diagnoses
+  const diagnosesResult = await pool.query(
+    `select id, icd10_code as "icd10Code", description, is_primary as "isPrimary",
+            sequence_number as "sequenceNumber"
+     from claim_diagnoses
+     where claim_id = $1 and tenant_id = $2
+     order by is_primary desc, sequence_number asc`,
+    [claimId, tenantId],
+  );
+
+  // Fetch charges
+  const chargesResult = await pool.query(
+    `select id, cpt_code as "cptCode", description, modifiers, quantity,
+            fee_cents as "feeCents", linked_diagnosis_ids as "linkedDiagnosisIds",
+            sequence_number as "sequenceNumber"
+     from claim_charges
+     where claim_id = $1 and tenant_id = $2
+     order by sequence_number asc`,
+    [claimId, tenantId],
+  );
+
+  res.json({
+    claim,
+    payments: paymentsResult.rows,
+    statusHistory: historyResult.rows,
+    diagnoses: diagnosesResult.rows,
+    charges: chargesResult.rows,
+  });
 });

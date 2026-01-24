@@ -20,8 +20,8 @@ export class SchedulePage extends BasePage {
   private readonly newAppointmentButton = () => this.page.getByRole('button', { name: /new appointment|schedule|add appointment/i });
 
   // Calendar elements
-  private readonly calendar = () => this.page.locator('[data-testid="calendar"], .calendar, .schedule-grid');
-  private readonly appointmentSlots = () => this.page.locator('[data-testid="appointment-slot"], .appointment, .slot');
+  private readonly calendar = () => this.page.locator('.calendar-container');
+  private readonly appointmentSlots = () => this.page.locator('.calendar-appointment');
 
   constructor(page: Page) {
     super(page);
@@ -121,7 +121,7 @@ export class SchedulePage extends BasePage {
    * Click on an appointment by patient name
    */
   async clickAppointment(patientName: string): Promise<void> {
-    const appointment = this.page.locator(`[data-testid="appointment"], .appointment`).filter({ hasText: patientName });
+    const appointment = this.page.locator('.calendar-appointment').filter({ hasText: patientName });
     await appointment.first().click();
   }
 }

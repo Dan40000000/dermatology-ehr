@@ -34,7 +34,7 @@ ordersRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
 
   // Extract query parameters for filtering
-  const { orderTypes, statuses, priorities, search, limit = '100' } = req.query;
+  const { orderTypes, statuses, priorities, search, patientId, limit = '100' } = req.query;
 
   let query = `
     select
@@ -94,6 +94,13 @@ ordersRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   if (search && typeof search === 'string' && search.trim()) {
     query += ` and (o.details ilike $${paramIndex} or o.notes ilike $${paramIndex})`;
     params.push(`%${search.trim()}%`);
+    paramIndex++;
+  }
+
+  // Filter by patient
+  if (patientId && typeof patientId === 'string') {
+    query += ` and o.patient_id = $${paramIndex}`;
+    params.push(patientId);
     paramIndex++;
   }
 

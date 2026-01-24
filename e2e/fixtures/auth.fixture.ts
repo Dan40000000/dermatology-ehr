@@ -13,6 +13,29 @@ type AuthFixtures = {
  */
 export const test = base.extend<AuthFixtures>({
   authenticatedPage: async ({ page }, use) => {
+    if (process.env.PLAYWRIGHT_MOCK_AUTH) {
+      await page.addInitScript(() => {
+        localStorage.setItem(
+          'derm_session',
+          JSON.stringify({
+            tenantId: 'tenant-demo',
+            accessToken: 'playwright-token',
+            refreshToken: 'playwright-refresh',
+            user: {
+              id: 'user-1',
+              email: 'admin@demo.practice',
+              fullName: 'Demo Admin',
+              role: 'admin',
+            },
+          })
+        );
+      });
+      await page.goto('/home');
+      await page.waitForURL(/\/home/i);
+      await use(page);
+      return;
+    }
+
     const loginPage = new LoginPage(page);
     await loginPage.goto();
     await loginPage.login(TEST_USERS.admin.email, TEST_USERS.admin.password);

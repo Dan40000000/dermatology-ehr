@@ -173,9 +173,8 @@ export async function batchVerifyEligibility(
     const patients = patientsResult.rows;
 
     // Build eligibility requests
-    const eligibilityRequests: EligibilityRequest[] = patients
-      .filter(p => p.insurance_member_id) // Only verify patients with insurance
-      .map(p => ({
+    const eligiblePatients = patients.filter(p => p.insurance_member_id); // Only verify patients with insurance
+    const eligibilityRequests: EligibilityRequest[] = eligiblePatients.map(p => ({
         payerId: p.insurance_payer_id || 'BCBS',
         memberId: p.insurance_member_id,
         patientFirstName: p.first_name,
@@ -196,7 +195,7 @@ export async function batchVerifyEligibility(
 
     for (let i = 0; i < responses.length; i++) {
       const response = responses[i]!;
-      const patient = patients[i]!;
+      const patient = eligiblePatients[i]!;
 
       try {
         const verification = await storeVerificationResult(
@@ -444,6 +443,52 @@ export async function getVerificationHistory(
   );
 
   return result.rows;
+}
+
+/**
+ * Get the latest verification record per patient in a single query
+ */
+export async function getLatestVerificationByPatients(
+  patientIds: string[],
+  tenantId: string
+): Promise<Record<string, any | null>> {
+  const uniquePatientIds = Array.from(new Set(patientIds.filter(Boolean)));
+  if (uniquePatientIds.length === 0) {
+    return {};
+  }
+
+  const result = await pool.query(
+    `SELECT DISTINCT ON (patient_id)
+      patient_id,
+      id,
+      payer_name,
+      member_id,
+      verification_status,
+      verified_at,
+      copay_specialist_cents,
+      deductible_total_cents,
+      deductible_remaining_cents,
+      oop_max_cents,
+      oop_remaining_cents,
+      has_issues,
+      issue_notes,
+      prior_auth_required
+     FROM insurance_verifications
+     WHERE tenant_id = $1
+       AND patient_id = ANY($2)
+     ORDER BY patient_id, verified_at DESC`,
+    [tenantId, uniquePatientIds]
+  );
+
+  const historyMap: Record<string, any | null> = {};
+  uniquePatientIds.forEach((patientId) => {
+    historyMap[patientId] = null;
+  });
+  result.rows.forEach((row) => {
+    historyMap[row.patient_id] = row;
+  });
+
+  return historyMap;
 }
 
 /**

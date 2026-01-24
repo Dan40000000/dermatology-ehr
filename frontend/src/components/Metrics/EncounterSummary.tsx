@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 // ================================================
 // TYPES
@@ -80,7 +81,7 @@ export function EncounterSummary({
 
       try {
         const response = await fetch(
-          `${import.meta.env.VITE_API_URL}/api/metrics/encounters/${encounterId}/summary`,
+          `${API_BASE_URL}/api/metrics/encounters/${encounterId}/summary`,
           {
             headers: {
               'Authorization': `Bearer ${session.accessToken}`,

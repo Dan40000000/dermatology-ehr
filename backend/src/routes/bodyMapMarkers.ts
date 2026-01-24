@@ -169,31 +169,6 @@ router.get('/', requireAuth, async (req: AuthedRequest, res) => {
 });
 
 /**
- * GET /api/body-map-markers/:id
- * Get a specific body map marker
- */
-router.get('/:id', requireAuth, async (req: AuthedRequest, res) => {
-  try {
-    const tenantId = req.user!.tenantId;
-    const { id } = req.params;
-
-    const result = await pool.query(
-      `select * from body_map_markers where id = $1 and tenant_id = $2`,
-      [id, tenantId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Body map marker not found' });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error: any) {
-    console.error('Error fetching body map marker:', error);
-    res.status(500).json({ error: 'Failed to fetch body map marker' });
-  }
-});
-
-/**
  * POST /api/body-map-markers
  * Create a new body map marker
  */
@@ -278,148 +253,6 @@ router.post(
  * PUT /api/body-map-markers/:id
  * Update a body map marker
  */
-router.put(
-  '/:id',
-  requireAuth,
-  requireRoles(['provider', 'ma', 'admin']),
-  async (req: AuthedRequest, res) => {
-    const parsed = updateBodyMapMarkerSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.format() });
-    }
-
-    const tenantId = req.user!.tenantId;
-    const userId = req.user!.id;
-    const { id } = req.params;
-    const data = parsed.data;
-
-    try {
-      // Verify marker exists and belongs to tenant
-      const markerCheck = await pool.query(
-        `select id from body_map_markers where id = $1 and tenant_id = $2`,
-        [id, tenantId]
-      );
-
-      if (markerCheck.rows.length === 0) {
-        return res.status(404).json({ error: 'Body map marker not found' });
-      }
-
-      // Build dynamic update query
-      const updates: string[] = [];
-      const values: any[] = [];
-      let paramCount = 1;
-
-      if (data.marker_type !== undefined) {
-        updates.push(`marker_type = $${paramCount++}`);
-        values.push(data.marker_type);
-      }
-      if (data.sub_type !== undefined) {
-        updates.push(`sub_type = $${paramCount++}`);
-        values.push(data.sub_type);
-      }
-      if (data.body_region !== undefined) {
-        updates.push(`body_region = $${paramCount++}`);
-        values.push(data.body_region);
-      }
-      if (data.x_position !== undefined) {
-        updates.push(`x_position = $${paramCount++}`);
-        values.push(data.x_position);
-      }
-      if (data.y_position !== undefined) {
-        updates.push(`y_position = $${paramCount++}`);
-        values.push(data.y_position);
-      }
-      if (data.description !== undefined) {
-        updates.push(`description = $${paramCount++}`);
-        values.push(data.description);
-      }
-      if (data.clinical_notes !== undefined) {
-        updates.push(`clinical_notes = $${paramCount++}`);
-        values.push(data.clinical_notes);
-      }
-      if (data.status !== undefined) {
-        updates.push(`status = $${paramCount++}`);
-        values.push(data.status);
-      }
-      if (data.severity !== undefined) {
-        updates.push(`severity = $${paramCount++}`);
-        values.push(data.severity);
-      }
-      if (data.size_mm !== undefined) {
-        updates.push(`size_mm = $${paramCount++}`);
-        values.push(data.size_mm);
-      }
-      if (data.date_identified !== undefined) {
-        updates.push(`date_identified = $${paramCount++}`);
-        values.push(data.date_identified);
-      }
-      if (data.date_resolved !== undefined) {
-        updates.push(`date_resolved = $${paramCount++}`);
-        values.push(data.date_resolved);
-      }
-
-      if (updates.length === 0) {
-        return res.status(400).json({ error: 'No fields to update' });
-      }
-
-      // Add updated_at
-      updates.push(`updated_at = NOW()`);
-
-      // Add WHERE clause parameters
-      values.push(id, tenantId);
-
-      await pool.query(
-        `update body_map_markers
-         set ${updates.join(', ')}
-         where id = $${paramCount++} and tenant_id = $${paramCount++}`,
-        values
-      );
-
-      await auditLog(tenantId, userId, 'body_map_marker_update', 'body_map_marker', id!);
-
-      res.json({ ok: true });
-    } catch (error: any) {
-      console.error('Error updating body map marker:', error);
-      res.status(500).json({ error: 'Failed to update body map marker' });
-    }
-  }
-);
-
-/**
- * DELETE /api/body-map-markers/:id
- * Delete a body map marker
- */
-router.delete(
-  '/:id',
-  requireAuth,
-  requireRoles(['provider', 'admin']),
-  async (req: AuthedRequest, res) => {
-    const tenantId = req.user!.tenantId;
-    const userId = req.user!.id;
-    const { id } = req.params;
-
-    try {
-      const result = await pool.query(
-        `delete from body_map_markers
-         where id = $1 and tenant_id = $2
-         returning id`,
-        [id, tenantId]
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ error: 'Body map marker not found' });
-      }
-
-      await auditLog(tenantId, userId, 'body_map_marker_delete', 'body_map_marker', id!);
-
-      res.json({ ok: true });
-    } catch (error: any) {
-      console.error('Error deleting body map marker:', error);
-      res.status(500).json({ error: 'Failed to delete body map marker' });
-    }
-  }
-);
-
 // ==================== Procedure Sites CRUD ====================
 
 /**
@@ -781,6 +614,177 @@ router.delete(
     } catch (error: any) {
       console.error('Error deleting procedure site:', error);
       res.status(500).json({ error: 'Failed to delete procedure site' });
+    }
+  }
+);
+
+/**
+ * GET /api/body-map-markers/:id
+ * Get a specific body map marker
+ */
+router.get('/:id', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { id } = req.params;
+
+    const result = await pool.query(
+      `select * from body_map_markers where id = $1 and tenant_id = $2`,
+      [id, tenantId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Body map marker not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error: any) {
+    console.error('Error fetching body map marker:', error);
+    res.status(500).json({ error: 'Failed to fetch body map marker' });
+  }
+});
+
+/**
+ * PUT /api/body-map-markers/:id
+ * Update a body map marker
+ */
+router.put(
+  '/:id',
+  requireAuth,
+  requireRoles(['provider', 'ma', 'admin']),
+  async (req: AuthedRequest, res) => {
+    const parsed = updateBodyMapMarkerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const { id } = req.params;
+    const data = parsed.data;
+
+    try {
+      // Verify marker exists and belongs to tenant
+      const markerCheck = await pool.query(
+        `select id from body_map_markers where id = $1 and tenant_id = $2`,
+        [id, tenantId]
+      );
+
+      if (markerCheck.rows.length === 0) {
+        return res.status(404).json({ error: 'Body map marker not found' });
+      }
+
+      // Build dynamic update query
+      const updates: string[] = [];
+      const values: any[] = [];
+      let paramCount = 1;
+
+      if (data.marker_type !== undefined) {
+        updates.push(`marker_type = $${paramCount++}`);
+        values.push(data.marker_type);
+      }
+      if (data.sub_type !== undefined) {
+        updates.push(`sub_type = $${paramCount++}`);
+        values.push(data.sub_type);
+      }
+      if (data.body_region !== undefined) {
+        updates.push(`body_region = $${paramCount++}`);
+        values.push(data.body_region);
+      }
+      if (data.x_position !== undefined) {
+        updates.push(`x_position = $${paramCount++}`);
+        values.push(data.x_position);
+      }
+      if (data.y_position !== undefined) {
+        updates.push(`y_position = $${paramCount++}`);
+        values.push(data.y_position);
+      }
+      if (data.description !== undefined) {
+        updates.push(`description = $${paramCount++}`);
+        values.push(data.description);
+      }
+      if (data.clinical_notes !== undefined) {
+        updates.push(`clinical_notes = $${paramCount++}`);
+        values.push(data.clinical_notes);
+      }
+      if (data.status !== undefined) {
+        updates.push(`status = $${paramCount++}`);
+        values.push(data.status);
+      }
+      if (data.severity !== undefined) {
+        updates.push(`severity = $${paramCount++}`);
+        values.push(data.severity);
+      }
+      if (data.size_mm !== undefined) {
+        updates.push(`size_mm = $${paramCount++}`);
+        values.push(data.size_mm);
+      }
+      if (data.date_identified !== undefined) {
+        updates.push(`date_identified = $${paramCount++}`);
+        values.push(data.date_identified);
+      }
+      if (data.date_resolved !== undefined) {
+        updates.push(`date_resolved = $${paramCount++}`);
+        values.push(data.date_resolved);
+      }
+
+      if (updates.length === 0) {
+        return res.status(400).json({ error: 'No fields to update' });
+      }
+
+      // Add updated_at
+      updates.push(`updated_at = NOW()`);
+
+      // Add WHERE clause parameters
+      values.push(id, tenantId);
+
+      await pool.query(
+        `update body_map_markers
+         set ${updates.join(', ')}
+         where id = $${paramCount++} and tenant_id = $${paramCount++}`,
+        values
+      );
+
+      await auditLog(tenantId, userId, 'body_map_marker_update', 'body_map_marker', id!);
+
+      res.json({ ok: true });
+    } catch (error: any) {
+      console.error('Error updating body map marker:', error);
+      res.status(500).json({ error: 'Failed to update body map marker' });
+    }
+  }
+);
+
+/**
+ * DELETE /api/body-map-markers/:id
+ * Delete a body map marker
+ */
+router.delete(
+  '/:id',
+  requireAuth,
+  requireRoles(['provider', 'admin']),
+  async (req: AuthedRequest, res) => {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const { id } = req.params;
+
+    try {
+      const result = await pool.query(
+        `delete from body_map_markers
+         where id = $1 and tenant_id = $2
+         returning id`,
+        [id, tenantId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Body map marker not found' });
+      }
+
+      await auditLog(tenantId, userId, 'body_map_marker_delete', 'body_map_marker', id!);
+
+      res.json({ ok: true });
+    } catch (error: any) {
+      console.error('Error deleting body map marker:', error);
+      res.status(500).json({ error: 'Failed to delete body map marker' });
     }
   }
 );

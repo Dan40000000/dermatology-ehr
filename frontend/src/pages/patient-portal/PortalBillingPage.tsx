@@ -1,55 +1,24 @@
 import { useState, useEffect } from 'react';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
-
-interface Balance {
-  totalCharges: number;
-  totalPayments: number;
-  totalAdjustments: number;
-  currentBalance: number;
-  lastPaymentDate: string | null;
-  lastPaymentAmount: number | null;
-}
-
-interface Charge {
-  id: string;
-  serviceDate: string;
-  description: string;
-  amount: number;
-  transactionType: string;
-  chiefComplaint: string;
-  providerName: string;
-  insurancePaid?: number;
-  patientResponsibility?: number;
-  status?: string;
-}
-
-interface PaymentMethod {
-  id: string;
-  paymentType: string;
-  lastFour: string;
-  cardBrand: string;
-  isDefault: boolean;
-  expiryMonth: number;
-  expiryYear: number;
-}
-
-interface Payment {
-  id: string;
-  amount: number;
-  status: string;
-  paymentMethodType: string;
-  description: string;
-  receiptNumber: string;
-  createdAt: string;
-}
+import {
+  fetchPortalBalance,
+  fetchPortalCharges,
+  fetchPortalPaymentHistory,
+  fetchPortalPaymentMethods,
+  makePortalPayment,
+  type PatientBalance,
+  type Charge as PortalCharge,
+  type PaymentMethod as PortalPaymentMethod,
+  type PaymentTransaction,
+} from '../../portalApi';
 
 export function PortalBillingPage() {
-  const { token } = usePatientPortalAuth();
-  const [balance, setBalance] = useState<Balance | null>(null);
-  const [charges, setCharges] = useState<Charge[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const { sessionToken, tenantId } = usePatientPortalAuth();
+  const [balance, setBalance] = useState<PatientBalance | null>(null);
+  const [charges, setCharges] = useState<PortalCharge[]>([]);
+  const [payments, setPayments] = useState<PaymentTransaction[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PortalPaymentMethod[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'statements' | 'payments' | 'methods'>('overview');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -59,43 +28,31 @@ export function PortalBillingPage() {
 
   useEffect(() => {
     fetchBillingData();
-  }, [token]);
+  }, [sessionToken, tenantId]);
 
   const fetchBillingData = async () => {
-    if (!token) return;
+    if (!sessionToken || !tenantId) {
+      setLoading(false);
+      return;
+    }
 
+    setLoading(true);
     try {
-      const headers = {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      };
-
-      const [balanceRes, chargesRes, paymentsRes, methodsRes] = await Promise.all([
-        fetch('/api/patient-portal/billing/balance', { headers }),
-        fetch('/api/patient-portal/billing/charges', { headers }),
-        fetch('/api/patient-portal/billing/payment-history', { headers }),
-        fetch('/api/patient-portal/billing/payment-methods', { headers }),
+      const [balanceData, chargesData, paymentsData, methodsData] = await Promise.all([
+        fetchPortalBalance(tenantId, sessionToken),
+        fetchPortalCharges(tenantId, sessionToken),
+        fetchPortalPaymentHistory(tenantId, sessionToken),
+        fetchPortalPaymentMethods(tenantId, sessionToken),
       ]);
 
-      if (balanceRes.ok) {
-        const data = await balanceRes.json();
-        setBalance(data);
-      }
-      if (chargesRes.ok) {
-        const data = await chargesRes.json();
-        setCharges(data.charges || []);
-      }
-      if (paymentsRes.ok) {
-        const data = await paymentsRes.json();
-        setPayments(data.payments || []);
-      }
-      if (methodsRes.ok) {
-        const data = await methodsRes.json();
-        setPaymentMethods(data.paymentMethods || []);
-        if (data.paymentMethods?.length > 0) {
-          const defaultMethod = data.paymentMethods.find((m: PaymentMethod) => m.isDefault);
-          setSelectedMethod(defaultMethod?.id || data.paymentMethods[0].id);
-        }
+      setBalance(balanceData);
+      setCharges(chargesData.charges || []);
+      setPayments(paymentsData.payments || []);
+      setPaymentMethods(methodsData.paymentMethods || []);
+
+      if (methodsData.paymentMethods?.length > 0) {
+        const defaultMethod = methodsData.paymentMethods.find((m) => m.isDefault);
+        setSelectedMethod(defaultMethod?.id || methodsData.paymentMethods[0].id);
       }
     } catch (error) {
       console.error('Failed to fetch billing data:', error);
@@ -105,27 +62,18 @@ export function PortalBillingPage() {
   };
 
   const handleMakePayment = async () => {
-    if (!paymentAmount || !selectedMethod || processing) return;
+    if (!paymentAmount || !selectedMethod || processing || !sessionToken || !tenantId) return;
 
     setProcessing(true);
     try {
-      const response = await fetch('/api/patient-portal/billing/payments', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          amount: parseFloat(paymentAmount),
-          paymentMethodId: selectedMethod,
-        }),
+      await makePortalPayment(tenantId, sessionToken, {
+        amount: parseFloat(paymentAmount),
+        paymentMethodId: selectedMethod,
       });
 
-      if (response.ok) {
-        setShowPaymentModal(false);
-        setPaymentAmount('');
-        fetchBillingData();
-      }
+      setShowPaymentModal(false);
+      setPaymentAmount('');
+      fetchBillingData();
     } catch (error) {
       console.error('Payment failed:', error);
     } finally {
@@ -148,12 +96,29 @@ export function PortalBillingPage() {
     });
   };
 
-  const getCardIcon = (brand: string) => {
+  const getCardIcon = (brand?: string) => {
     const brandLower = brand?.toLowerCase() || '';
     if (brandLower.includes('visa')) return '💳';
     if (brandLower.includes('master')) return '💳';
     if (brandLower.includes('amex')) return '💳';
     return '💳';
+  };
+
+  const formatPaymentMethodLabel = (method: PortalPaymentMethod) => {
+    const brand =
+      method.cardBrand ||
+      method.bankName ||
+      method.paymentType?.replace(/_/g, ' ') ||
+      'Card';
+    const lastFour = method.lastFour ? `ending in ${method.lastFour}` : '';
+    return `${brand} ${lastFour}`.trim();
+  };
+
+  const formatPaymentExpiry = (method: PortalPaymentMethod) => {
+    if (method.expiryMonth && method.expiryYear) {
+      return `Expires ${method.expiryMonth}/${method.expiryYear}`;
+    }
+    return 'Expiration unavailable';
   };
 
   return (
@@ -829,10 +794,10 @@ export function PortalBillingPage() {
                 paymentMethods.map(method => (
                   <div key={method.id} className="payment-method-card">
                     <div className="method-info">
-                      <div className="method-icon">{getCardIcon(method.cardBrand)}</div>
+                      <div className="method-icon">{getCardIcon(method.cardBrand || method.paymentType)}</div>
                       <div className="method-details">
-                        <h4>{method.cardBrand} ending in {method.lastFour}</h4>
-                        <p>Expires {method.expiryMonth}/{method.expiryYear}</p>
+                        <h4>{formatPaymentMethodLabel(method)}</h4>
+                        <p>{formatPaymentExpiry(method)}</p>
                       </div>
                     </div>
                     {method.isDefault && <span className="default-badge">Default</span>}
@@ -884,7 +849,7 @@ export function PortalBillingPage() {
                 >
                   {paymentMethods.map(method => (
                     <option key={method.id} value={method.id}>
-                      {method.cardBrand} ending in {method.lastFour}
+                      {formatPaymentMethodLabel(method)}
                     </option>
                   ))}
                 </select>

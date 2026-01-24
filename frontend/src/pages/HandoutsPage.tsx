@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Modal, Skeleton } from '../components/ui';
+import { API_BASE_URL } from '../utils/apiBase';
 
 interface Handout {
   id: string;
@@ -52,7 +53,7 @@ export function HandoutsPage() {
       if (searchTerm) params.append('search', searchTerm);
 
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/handouts?${params}`,
+        `${API_BASE_URL}/api/handouts?${params}`,
         {
           headers: {
             Authorization: `Bearer ${session.accessToken}`,
@@ -84,7 +85,7 @@ export function HandoutsPage() {
 
     setCreating(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/handouts`, {
+      const response = await fetch(`${API_BASE_URL}/api/handouts`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -118,7 +119,7 @@ export function HandoutsPage() {
     if (!window.confirm('Delete this handout? This cannot be undone.')) return;
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/handouts/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/handouts/${id}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${session.accessToken}`,

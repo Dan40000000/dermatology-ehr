@@ -15,7 +15,7 @@ describe('Select Component', () => {
 
   it('renders select with label', () => {
     render(<Select label="Country">{options}</Select>);
-    expect(screen.getByLabelText('Country')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /Country/ })).toBeInTheDocument();
   });
 
   it('renders select without label', () => {
@@ -30,7 +30,7 @@ describe('Select Component', () => {
       </Select>
     );
     expect(screen.getByText('Please select a country')).toBeInTheDocument();
-    expect(screen.getByLabelText('Country').closest('.form-field')).toHaveClass('has-error');
+    expect(screen.getByRole('combobox', { name: /Country/ }).closest('.form-field')).toHaveClass('has-error');
   });
 
   it('displays help text when no error', () => {
@@ -63,7 +63,7 @@ describe('Select Component', () => {
 
   it('generates id from label', () => {
     render(<Select label="Country Name">{options}</Select>);
-    const select = screen.getByLabelText('Country Name');
+    const select = screen.getByRole('combobox', { name: /Country Name/ });
     expect(select).toHaveAttribute('id', 'country-name');
   });
 
@@ -73,7 +73,7 @@ describe('Select Component', () => {
         {options}
       </Select>
     );
-    const select = screen.getByLabelText('Country');
+    const select = screen.getByRole('combobox', { name: /Country/ });
     expect(select).toHaveAttribute('id', 'custom-select');
   });
 
@@ -87,7 +87,7 @@ describe('Select Component', () => {
       </Select>
     );
 
-    const select = screen.getByLabelText('Country');
+    const select = screen.getByRole('combobox', { name: /Country/ });
     await user.selectOptions(select, 'option2');
 
     expect(handleChange).toHaveBeenCalledTimes(1);
@@ -100,7 +100,7 @@ describe('Select Component', () => {
         {options}
       </Select>
     );
-    expect(screen.getByLabelText('Country').closest('.form-field')).toHaveClass('custom-class');
+    expect(screen.getByRole('combobox', { name: /Country/ }).closest('.form-field')).toHaveClass('custom-class');
   });
 
   it('passes through standard select attributes', () => {
@@ -109,7 +109,7 @@ describe('Select Component', () => {
         {options}
       </Select>
     );
-    const select = screen.getByLabelText('Country');
+    const select = screen.getByRole('combobox', { name: /Country/ });
 
     expect(select).toBeDisabled();
     expect(select).toBeRequired();
@@ -133,7 +133,7 @@ describe('Select Component', () => {
       </Select>
     );
 
-    const select = screen.getByLabelText('Countries') as HTMLSelectElement;
+    const select = screen.getByRole('listbox', { name: /Countries/ }) as HTMLSelectElement;
     await user.selectOptions(select, ['option1', 'option2']);
 
     const selectedOptions = Array.from(select.selectedOptions).map(opt => opt.value);

@@ -4,6 +4,8 @@ import { InteractiveBodyMap } from '../components/body-diagram/InteractiveBodyMa
 import type { BodyMarking } from '../components/body-diagram/InteractiveBodyMap';
 import { BodyDiagram3D } from '../components/body-diagram/BodyDiagram3D';
 import type { BodyMarking3D } from '../components/body-diagram/BodyDiagram3D';
+import { PremiumBodyDiagram, MARKING_TYPES } from '../components/body-diagram/PremiumBodyDiagram';
+import type { BodyMarking as PremiumBodyMarking } from '../components/body-diagram/PremiumBodyDiagram';
 import { MarkingDetailModal } from '../components/body-diagram/MarkingDetailModal';
 import type { MarkingFormData } from '../components/body-diagram/MarkingDetailModal';
 import { api, fetchPatients } from '../api';
@@ -39,8 +41,11 @@ export function BodyDiagramPage() {
     viewType: 'front' | 'back' | 'left' | 'right';
   } | null>(null);
 
-  // View mode: 2D classic or 3D rotatable
-  const [viewMode, setViewMode] = useState<'2d' | '3d'>('3d');
+  // View mode: 2D classic, 3D rotatable, or Premium
+  const [viewMode, setViewMode] = useState<'2d' | '3d' | 'premium'>('premium');
+
+  // Skin tone for premium view
+  const [skinTone, setSkinTone] = useState<'light' | 'medium' | 'tan' | 'dark'>('light');
 
   // Filters
   const [filterMarkingType, setFilterMarkingType] = useState<string>('all');
@@ -376,7 +381,7 @@ export function BodyDiagramPage() {
           </div>
 
           {/* Main Content Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: viewMode === 'premium' ? '1fr' : '1fr 1fr', gap: '24px' }}>
             {/* Body Diagram */}
             <div
               style={{
@@ -387,45 +392,87 @@ export function BodyDiagramPage() {
               }}
             >
               {/* View Mode Toggle */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
                 <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '600', color: '#111827' }}>
-                  {viewMode === '3d' ? '3D Interactive Body' : 'Interactive Body Map'}
+                  {viewMode === 'premium' ? 'Premium Body Diagram' : viewMode === '3d' ? '3D Interactive Body' : 'Interactive Body Map'}
                 </h3>
-                <div style={{ display: 'flex', gap: '4px', background: '#F3F4F6', padding: '4px', borderRadius: '8px' }}>
-                  <button
-                    onClick={() => setViewMode('2d')}
-                    style={{
-                      padding: '8px 16px',
-                      border: 'none',
-                      borderRadius: '6px',
-                      background: viewMode === '2d' ? 'white' : 'transparent',
-                      color: viewMode === '2d' ? '#6B46C1' : '#6B7280',
-                      fontWeight: '500',
-                      fontSize: '13px',
-                      cursor: 'pointer',
-                      boxShadow: viewMode === '2d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                      transition: 'all 0.2s',
-                    }}
-                  >
-                    2D Classic
-                  </button>
-                  <button
-                    onClick={() => setViewMode('3d')}
-                    style={{
-                      padding: '8px 16px',
-                      border: 'none',
-                      borderRadius: '6px',
-                      background: viewMode === '3d' ? 'white' : 'transparent',
-                      color: viewMode === '3d' ? '#6B46C1' : '#6B7280',
-                      fontWeight: '500',
-                      fontSize: '13px',
-                      cursor: 'pointer',
-                      boxShadow: viewMode === '3d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                      transition: 'all 0.2s',
-                    }}
-                  >
-                    3D Rotatable
-                  </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  {/* Skin Tone Selector (only for premium view) */}
+                  {viewMode === 'premium' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '12px', color: '#6B7280' }}>Skin:</span>
+                      {(['light', 'medium', 'tan', 'dark'] as const).map((tone) => (
+                        <button
+                          key={tone}
+                          onClick={() => setSkinTone(tone)}
+                          title={tone.charAt(0).toUpperCase() + tone.slice(1)}
+                          style={{
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '50%',
+                            border: skinTone === tone ? '2px solid #6B46C1' : '2px solid transparent',
+                            background: tone === 'light' ? '#FFE4D6' : tone === 'medium' ? '#E8C4A8' : tone === 'tan' ? '#C8A07A' : '#8B6240',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                            boxShadow: skinTone === tone ? '0 0 0 2px rgba(107, 70, 193, 0.3)' : '0 1px 3px rgba(0,0,0,0.1)',
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: '4px', background: '#F3F4F6', padding: '4px', borderRadius: '8px' }}>
+                    <button
+                      onClick={() => setViewMode('premium')}
+                      style={{
+                        padding: '8px 16px',
+                        border: 'none',
+                        borderRadius: '6px',
+                        background: viewMode === 'premium' ? 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)' : 'transparent',
+                        color: viewMode === 'premium' ? 'white' : '#6B7280',
+                        fontWeight: '500',
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                        boxShadow: viewMode === 'premium' ? '0 2px 8px rgba(99, 102, 241, 0.4)' : 'none',
+                        transition: 'all 0.2s',
+                      }}
+                    >
+                      Premium
+                    </button>
+                    <button
+                      onClick={() => setViewMode('3d')}
+                      style={{
+                        padding: '8px 16px',
+                        border: 'none',
+                        borderRadius: '6px',
+                        background: viewMode === '3d' ? 'white' : 'transparent',
+                        color: viewMode === '3d' ? '#6B46C1' : '#6B7280',
+                        fontWeight: '500',
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                        boxShadow: viewMode === '3d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                        transition: 'all 0.2s',
+                      }}
+                    >
+                      3D
+                    </button>
+                    <button
+                      onClick={() => setViewMode('2d')}
+                      style={{
+                        padding: '8px 16px',
+                        border: 'none',
+                        borderRadius: '6px',
+                        background: viewMode === '2d' ? 'white' : 'transparent',
+                        color: viewMode === '2d' ? '#6B46C1' : '#6B7280',
+                        fontWeight: '500',
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                        boxShadow: viewMode === '2d' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                        transition: 'all 0.2s',
+                      }}
+                    >
+                      2D
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -433,6 +480,31 @@ export function BodyDiagramPage() {
                 <div style={{ padding: '40px', textAlign: 'center', color: '#6B7280' }}>Loading markings...</div>
               ) : error ? (
                 <div style={{ padding: '40px', textAlign: 'center', color: '#EF4444' }}>{error}</div>
+              ) : viewMode === 'premium' ? (
+                <PremiumBodyDiagram
+                  markings={filteredMarkings.map((m) => ({
+                    id: m.id,
+                    x: m.locationX,
+                    y: m.locationY,
+                    regionCode: m.locationCode,
+                    type: (m.markingType === 'lesion' ? 'lesion' : m.markingType === 'biopsy' ? 'biopsy' : m.markingType === 'excision' ? 'treatment' : 'other') as keyof typeof MARKING_TYPES,
+                    notes: m.description,
+                    severity: m.status === 'active' ? 'high' : m.status === 'monitored' ? 'medium' : 'low',
+                    size: m.lesionSizeMm,
+                    createdAt: m.createdAt || new Date().toISOString(),
+                    evolving: m.status === 'monitored',
+                  }))}
+                  skinTone={skinTone}
+                  mode="edit"
+                  onAddMarking={(x, y, regionCode) => handleAddMarking(regionCode, x, y, 'front')}
+                  onSelectMarking={(marking) => {
+                    const original = filteredMarkings.find((m) => m.id === marking.id);
+                    if (original) handleMarkingClick(original);
+                  }}
+                  selectedMarkingId={selectedMarking?.id}
+                  showLegend={true}
+                  showRegionInfo={true}
+                />
               ) : viewMode === '3d' ? (
                 <BodyDiagram3D
                   markings={filteredMarkings as BodyMarking3D[]}
@@ -453,7 +525,8 @@ export function BodyDiagramPage() {
               )}
             </div>
 
-            {/* Markings List */}
+            {/* Markings List - Only shown for 2D/3D views */}
+            {viewMode !== 'premium' && (
             <div
               style={{
                 background: 'white',
@@ -551,6 +624,7 @@ export function BodyDiagramPage() {
                 )}
               </div>
             </div>
+            )}
           </div>
         </>
       )}

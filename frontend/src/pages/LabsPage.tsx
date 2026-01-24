@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -7,6 +7,8 @@ import { fetchOrders, fetchPatients, fetchProviders, createOrder, updateOrderSta
 import { updateOrderResultFlag } from '../api/resultFlags';
 import type { Order, Patient, Provider, ResultFlagType } from '../types';
 import { ResultFlagBadge, ResultFlagSelect, ResultFlagFilter, QuickFilterButtons } from '../components/ResultFlagBadge';
+import { InsuranceStatusBadge } from '../components/Insurance';
+import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 
 // Main tab type
 type MainTab = 'path' | 'lab';
@@ -136,6 +138,12 @@ export function LabsPage() {
     notes: '',
   });
 
+  const eligibilityPatientIds = useMemo(
+    () => [...pathResults, ...labResults].map((item) => item.patientId),
+    [pathResults, labResults]
+  );
+  const { eligibilityByPatient, eligibilityLoading } = useEligibilityByPatient(session, eligibilityPatientIds);
+
   const loadData = useCallback(async () => {
     if (!session) return;
 
@@ -250,6 +258,14 @@ export function LabsPage() {
   const getPatientName = (patientId: string) => {
     const patient = patients.find((p) => p.id === patientId);
     return patient ? `${patient.lastName}, ${patient.firstName}` : 'Unknown';
+  };
+
+  const getPatientInsurance = (patientId: string) => {
+    const patient = patients.find((p) => p.id === patientId);
+    if (!patient?.insurance) return null;
+    if (typeof patient.insurance === 'string') return patient.insurance;
+    if (patient.insurance.planName) return patient.insurance.planName;
+    return 'On file';
   };
 
   const getProviderName = (providerId: string) => {
@@ -990,6 +1006,14 @@ export function LabsPage() {
                     <span className="sort-icon">{sortDirection === 'asc' ? '↑' : '↓'}</span>
                   )}
                 </th>
+                <th>
+                  Coverage
+                  {eligibilityLoading && (
+                    <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', color: '#9ca3af' }}>
+                      updating...
+                    </span>
+                  )}
+                </th>
                 <th>Facility</th>
                 <th>Ddx</th>
                 <th>Procedure</th>
@@ -1001,7 +1025,11 @@ export function LabsPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredData.map((item) => (
+              {filteredData.map((item) => {
+                const eligibility = eligibilityByPatient[item.patientId];
+                const insuranceLabel = getPatientInsurance(item.patientId);
+
+                return (
                 <tr key={item.id}>
                   <td>
                     <input
@@ -1017,6 +1045,21 @@ export function LabsPage() {
                     <a href="#" className="ema-patient-link">
                       {getPatientName(item.patientId)}
                     </a>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <InsuranceStatusBadge
+                        status={eligibility?.verification_status}
+                        verifiedAt={eligibility?.verified_at}
+                        hasIssues={eligibility?.has_issues}
+                        size="sm"
+                      />
+                      {insuranceLabel ? (
+                        <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>{insuranceLabel}</span>
+                      ) : (
+                        <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}>No insurance</span>
+                      )}
+                    </div>
                   </td>
                   <td style={{ fontSize: '0.875rem', color: '#6b7280' }}>
                     {item.facility || '--'}
@@ -1078,7 +1121,8 @@ export function LabsPage() {
                     )}
                   </td>
                 </tr>
-              ))}
+              );
+            })}
             </tbody>
           </table>
 

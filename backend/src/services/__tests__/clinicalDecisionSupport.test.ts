@@ -15,6 +15,63 @@ jest.mock('crypto', () => ({
 
 const queryMock = pool.query as jest.Mock;
 
+type CDSQueryOverrides = {
+  patient?: any;
+  lastEncounter?: any[];
+  skinExam?: any[];
+  highRiskLesions?: any[];
+  biopsyChecks?: any[];
+  aiRisk?: any[];
+  pendingLabs?: any[];
+  pendingBiopsies?: any[];
+  sunCounseling?: any[];
+};
+
+const setupQueryMock = (overrides: CDSQueryOverrides) => {
+  queryMock.mockImplementation((sql: string) => {
+    const normalized = sql.toLowerCase();
+
+    if (normalized.includes('from patients')) {
+      return Promise.resolve({ rows: overrides.patient ? [overrides.patient] : [] });
+    }
+    if (normalized.includes('from encounters') && normalized.includes('follow_up_recommended')) {
+      return Promise.resolve({ rows: overrides.lastEncounter ?? [] });
+    }
+    if (normalized.includes('chief_complaint ilike')) {
+      return Promise.resolve({ rows: overrides.skinExam ?? [] });
+    }
+    if (normalized.includes('from lesions') && normalized.includes('concern_level')) {
+      return Promise.resolve({ rows: overrides.highRiskLesions ?? [] });
+    }
+    if (normalized.includes('select biopsy_performed, biopsy_date')) {
+      return Promise.resolve({ rows: overrides.biopsyChecks ?? [] });
+    }
+    if (normalized.includes('join photo_ai_analysis')) {
+      return Promise.resolve({ rows: overrides.aiRisk ?? [] });
+    }
+    if (normalized.includes('from orders') && normalized.includes("order_type = 'lab'")) {
+      return Promise.resolve({ rows: overrides.pendingLabs ?? [] });
+    }
+    if (normalized.includes('biopsy_result is null')) {
+      return Promise.resolve({ rows: overrides.pendingBiopsies ?? [] });
+    }
+    if (normalized.includes('soap_note ilike') && normalized.includes('sun protection')) {
+      return Promise.resolve({ rows: overrides.sunCounseling ?? [] });
+    }
+    if (normalized.includes('insert into cds_alerts')) {
+      return Promise.resolve({ rows: [] });
+    }
+    if (normalized.includes('from cds_alerts')) {
+      return Promise.resolve({ rows: [] });
+    }
+    if (normalized.includes('update cds_alerts')) {
+      return Promise.resolve({ rows: [] });
+    }
+
+    return Promise.resolve({ rows: [] });
+  });
+};
+
 describe('ClinicalDecisionSupportService', () => {
   let service: ClinicalDecisionSupportService;
   const tenantId = 'tenant-123';
@@ -22,8 +79,9 @@ describe('ClinicalDecisionSupportService', () => {
   const encounterId = 'encounter-123';
 
   beforeEach(() => {
-    service = new ClinicalDecisionSupportService();
     jest.clearAllMocks();
+    queryMock.mockReset();
+    service = new ClinicalDecisionSupportService();
   });
 
   describe('runCDSChecks', () => {
@@ -38,8 +96,7 @@ describe('ClinicalDecisionSupportService', () => {
         medical_history: 'Hypertension',
       };
 
-      queryMock.mockResolvedValue({ rows: [] });
-      queryMock.mockResolvedValueOnce({ rows: [mockPatient] });
+      setupQueryMock({ patient: mockPatient });
 
       const result = await service.runCDSChecks({
         patientId,
@@ -52,7 +109,7 @@ describe('ClinicalDecisionSupportService', () => {
     });
 
     it('should throw error when patient not found', async () => {
-      queryMock.mockResolvedValueOnce({ rows: [] });
+      setupQueryMock({});
 
       await expect(
         service.runCDSChecks({ patientId: 'nonexistent', tenantId })
@@ -73,10 +130,7 @@ describe('ClinicalDecisionSupportService', () => {
         follow_up_date: new Date('2023-12-15'),
       };
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [mockEncounter] })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient, lastEncounter: [mockEncounter] });
 
       await service.runCDSChecks({ patientId, tenantId, encounterId });
 
@@ -104,7 +158,7 @@ describe('ClinicalDecisionSupportService', () => {
         follow_up_date: pastDate,
       };
 
-      queryMock.mockResolvedValueOnce({ rows: [mockEncounter] });
+      setupQueryMock({ patient: mockPatient, lastEncounter: [mockEncounter] });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -130,10 +184,7 @@ describe('ClinicalDecisionSupportService', () => {
         follow_up_date: futureDate,
       };
 
-      queryMock.mockResolvedValueOnce({ rows: [mockPatient] }).mockResolvedValueOnce({
-        rows: [mockEncounter],
-      });
-      queryMock.mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient, lastEncounter: [mockEncounter] });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -154,10 +205,7 @@ describe('ClinicalDecisionSupportService', () => {
         follow_up_recommended: false,
       };
 
-      queryMock.mockResolvedValueOnce({ rows: [mockPatient] }).mockResolvedValueOnce({
-        rows: [mockEncounter],
-      });
-      queryMock.mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient, lastEncounter: [mockEncounter] });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -181,11 +229,7 @@ describe('ClinicalDecisionSupportService', () => {
         encounter_date: oldExam,
       };
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [mockSkinExam] })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient, skinExam: [mockSkinExam] });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -205,11 +249,7 @@ describe('ClinicalDecisionSupportService', () => {
       const oldExam = new Date();
       oldExam.setMonth(oldExam.getMonth() - 7);
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ encounter_date: oldExam }] })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient, skinExam: [{ encounter_date: oldExam }] });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -242,13 +282,11 @@ describe('ClinicalDecisionSupportService', () => {
         biopsy_performed: false,
       };
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: mockLesions })
-        .mockResolvedValueOnce({ rows: [mockBiopsy] })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({
+        patient: mockPatient,
+        highRiskLesions: mockLesions,
+        biopsyChecks: [mockBiopsy],
+      });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -278,13 +316,11 @@ describe('ClinicalDecisionSupportService', () => {
         biopsy_performed: false,
       };
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: mockLesions })
-        .mockResolvedValueOnce({ rows: [mockBiopsy] })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({
+        patient: mockPatient,
+        highRiskLesions: mockLesions,
+        biopsyChecks: [mockBiopsy],
+      });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -314,15 +350,7 @@ describe('ClinicalDecisionSupportService', () => {
         },
       ];
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: mockAIRisk })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient, aiRisk: mockAIRisk });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -342,7 +370,7 @@ describe('ClinicalDecisionSupportService', () => {
         current_medications: 'Doxycycline 100mg BID, Lisinopril 10mg daily',
       };
 
-      queryMock.mockResolvedValueOnce({ rows: [mockPatient] }).mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -360,7 +388,7 @@ describe('ClinicalDecisionSupportService', () => {
         current_medications: 'Lisinopril 10mg daily, Metformin 500mg BID',
       };
 
-      queryMock.mockResolvedValueOnce({ rows: [mockPatient] }).mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -376,7 +404,7 @@ describe('ClinicalDecisionSupportService', () => {
         current_medications: null,
       };
 
-      queryMock.mockResolvedValueOnce({ rows: [mockPatient] }).mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -405,14 +433,7 @@ describe('ClinicalDecisionSupportService', () => {
         },
       ];
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: mockPendingLabs })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient, pendingLabs: mockPendingLabs });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -432,7 +453,7 @@ describe('ClinicalDecisionSupportService', () => {
       const recentDate = new Date();
       recentDate.setDate(recentDate.getDate() - 5);
 
-      queryMock.mockResolvedValueOnce({ rows: [mockPatient] }).mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -461,16 +482,7 @@ describe('ClinicalDecisionSupportService', () => {
         },
       ];
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: mockPendingBiopsies })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient, pendingBiopsies: mockPendingBiopsies });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -490,17 +502,7 @@ describe('ClinicalDecisionSupportService', () => {
         medical_history: 'Hypertension',
       };
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -517,17 +519,10 @@ describe('ClinicalDecisionSupportService', () => {
         medical_history: 'History of skin cancer',
       };
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ encounter_date: new Date('2022-01-01') }] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({
+        patient: mockPatient,
+        skinExam: [{ encounter_date: new Date('2022-01-01') }],
+      });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -546,17 +541,7 @@ describe('ClinicalDecisionSupportService', () => {
         id: 'encounter-1',
       };
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [recentEncounter] })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient, sunCounseling: [recentEncounter] });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 
@@ -570,13 +555,13 @@ describe('ClinicalDecisionSupportService', () => {
       const mockAlerts = [
         {
           id: 'alert-1',
-          alert_type: 'overdue_followup',
+          alertType: 'overdue_followup',
           severity: 'warning',
           title: 'Overdue Follow-up',
           description: 'Follow-up is overdue',
-          action_required: true,
+          actionRequired: true,
           dismissed: false,
-          created_at: new Date(),
+          createdAt: new Date(),
         },
       ];
 
@@ -659,10 +644,7 @@ describe('ClinicalDecisionSupportService', () => {
         follow_up_date: pastDate,
       };
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [mockEncounter] })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient, lastEncounter: [mockEncounter] });
 
       await service.runCDSChecks({ patientId, tenantId, encounterId });
 
@@ -684,7 +666,7 @@ describe('ClinicalDecisionSupportService', () => {
         age: 44,
       };
 
-      queryMock.mockResolvedValueOnce({ rows: [mockPatient] }).mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient });
 
       await service.runCDSChecks({ patientId, tenantId });
 
@@ -713,11 +695,7 @@ describe('ClinicalDecisionSupportService', () => {
         encounter_date: oldDate,
       };
 
-      queryMock
-        .mockResolvedValueOnce({ rows: [mockPatient] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [mockExam] })
-        .mockResolvedValue({ rows: [] });
+      setupQueryMock({ patient: mockPatient, skinExam: [mockExam] });
 
       const alerts = await service.runCDSChecks({ patientId, tenantId });
 

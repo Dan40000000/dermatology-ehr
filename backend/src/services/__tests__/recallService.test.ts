@@ -35,9 +35,8 @@ describe('RecallService', () => {
 
       const mockCampaign = {
         id: campaignId,
-        tenant_id: tenantId,
+        tenantId: tenantId,
         name: 'Annual Skin Check',
-        interval_months: 12,
         intervalMonths: 12,
       };
 
@@ -74,7 +73,7 @@ describe('RecallService', () => {
 
       const mockCampaign = {
         id: campaignId,
-        tenant_id: tenantId,
+        tenantId: tenantId,
         name: 'Campaign',
         intervalMonths: 12,
       };
@@ -122,7 +121,7 @@ describe('RecallService', () => {
 
       const mockCampaign = {
         id: campaignId,
-        tenant_id: tenantId,
+        tenantId: tenantId,
         intervalMonths: 12,
       };
 
@@ -175,7 +174,7 @@ describe('RecallService', () => {
 
       const mockCampaign = {
         id: campaignId,
-        tenant_id: tenantId,
+        tenantId: tenantId,
         intervalMonths: 12,
       };
 
@@ -428,14 +427,14 @@ describe('RecallService', () => {
     it('should get patient communication preferences', async () => {
       const mockPrefs = {
         id: 'pref-123',
-        tenant_id: tenantId,
-        patient_id: patientId,
-        allow_email: true,
-        allow_sms: true,
-        allow_phone: false,
-        allow_mail: true,
-        preferred_method: 'email',
-        opted_out: false,
+        tenantId: tenantId,
+        patientId: patientId,
+        allowEmail: true,
+        allowSms: true,
+        allowPhone: false,
+        allowMail: true,
+        preferredMethod: 'email',
+        optedOut: false,
       };
 
       queryMock.mockResolvedValueOnce({ rows: [mockPrefs] });
@@ -463,14 +462,14 @@ describe('RecallService', () => {
     it('should create new preferences', async () => {
       const newPrefs = {
         id: 'pref-123',
-        tenant_id: tenantId,
-        patient_id: patientId,
-        allow_email: true,
-        allow_sms: false,
-        allow_phone: true,
-        allow_mail: false,
-        preferred_method: 'email',
-        opted_out: false,
+        tenantId: tenantId,
+        patientId: patientId,
+        allowEmail: true,
+        allowSms: false,
+        allowPhone: true,
+        allowMail: false,
+        preferredMethod: 'email',
+        optedOut: false,
       };
 
       queryMock.mockResolvedValueOnce({ rows: [newPrefs] });
@@ -492,14 +491,14 @@ describe('RecallService', () => {
     it('should update existing preferences on conflict', async () => {
       const updatedPrefs = {
         id: 'pref-123',
-        tenant_id: tenantId,
-        patient_id: patientId,
-        allow_email: false,
-        allow_sms: true,
-        allow_phone: false,
-        allow_mail: false,
-        preferred_method: 'sms',
-        opted_out: false,
+        tenantId: tenantId,
+        patientId: patientId,
+        allowEmail: false,
+        allowSms: true,
+        allowPhone: false,
+        allowMail: false,
+        preferredMethod: 'sms',
+        optedOut: false,
       };
 
       queryMock.mockResolvedValueOnce({ rows: [updatedPrefs] });
@@ -520,14 +519,14 @@ describe('RecallService', () => {
     it('should handle partial updates', async () => {
       const mockPrefs = {
         id: 'pref-123',
-        tenant_id: tenantId,
-        patient_id: patientId,
-        allow_email: true,
-        allow_sms: true,
-        allow_phone: true,
-        allow_mail: true,
-        preferred_method: 'email',
-        opted_out: false,
+        tenantId: tenantId,
+        patientId: patientId,
+        allowEmail: true,
+        allowSms: true,
+        allowPhone: true,
+        allowMail: true,
+        preferredMethod: 'email',
+        optedOut: false,
       };
 
       queryMock.mockResolvedValueOnce({ rows: [mockPrefs] });
@@ -542,14 +541,14 @@ describe('RecallService', () => {
     it('should handle opt-out', async () => {
       const mockPrefs = {
         id: 'pref-123',
-        tenant_id: tenantId,
-        patient_id: patientId,
-        allow_email: true,
-        allow_sms: true,
-        allow_phone: true,
-        allow_mail: true,
-        preferred_method: 'email',
-        opted_out: true,
+        tenantId: tenantId,
+        patientId: patientId,
+        allowEmail: true,
+        allowSms: true,
+        allowPhone: true,
+        allowMail: true,
+        preferredMethod: 'email',
+        optedOut: true,
       };
 
       queryMock.mockResolvedValueOnce({ rows: [mockPrefs] });
@@ -574,11 +573,11 @@ describe('RecallService', () => {
 
     it('should allow contact when method is enabled', async () => {
       const mockPrefs = {
-        allow_email: true,
-        allow_sms: true,
-        allow_phone: false,
-        allow_mail: true,
-        opted_out: false,
+        allowEmail: true,
+        allowSms: true,
+        allowPhone: false,
+        allowMail: true,
+        optedOut: false,
       };
 
       queryMock.mockResolvedValueOnce({ rows: [mockPrefs] });
@@ -590,11 +589,11 @@ describe('RecallService', () => {
 
     it('should block contact when method is disabled', async () => {
       const mockPrefs = {
-        allow_email: true,
-        allow_sms: false,
-        allow_phone: false,
-        allow_mail: true,
-        opted_out: false,
+        allowEmail: true,
+        allowSms: false,
+        allowPhone: false,
+        allowMail: true,
+        optedOut: false,
       };
 
       queryMock.mockResolvedValueOnce({ rows: [mockPrefs] });
@@ -607,11 +606,11 @@ describe('RecallService', () => {
 
     it('should block all contact when patient opted out', async () => {
       const mockPrefs = {
-        allow_email: true,
-        allow_sms: true,
-        allow_phone: true,
-        allow_mail: true,
-        opted_out: true,
+        allowEmail: true,
+        allowSms: true,
+        allowPhone: true,
+        allowMail: true,
+        optedOut: true,
       };
 
       queryMock.mockResolvedValueOnce({ rows: [mockPrefs] });
@@ -624,11 +623,11 @@ describe('RecallService', () => {
 
     it('should check email method', async () => {
       const mockPrefs = {
-        allow_email: true,
-        allow_sms: false,
-        allow_phone: false,
-        allow_mail: false,
-        opted_out: false,
+        allowEmail: true,
+        allowSms: false,
+        allowPhone: false,
+        allowMail: false,
+        optedOut: false,
       };
 
       queryMock.mockResolvedValueOnce({ rows: [mockPrefs] });
@@ -640,11 +639,11 @@ describe('RecallService', () => {
 
     it('should check phone method', async () => {
       const mockPrefs = {
-        allow_email: false,
-        allow_sms: false,
-        allow_phone: true,
-        allow_mail: false,
-        opted_out: false,
+        allowEmail: false,
+        allowSms: false,
+        allowPhone: true,
+        allowMail: false,
+        optedOut: false,
       };
 
       queryMock.mockResolvedValueOnce({ rows: [mockPrefs] });
@@ -656,11 +655,11 @@ describe('RecallService', () => {
 
     it('should check mail method', async () => {
       const mockPrefs = {
-        allow_email: false,
-        allow_sms: false,
-        allow_phone: false,
-        allow_mail: true,
-        opted_out: false,
+        allowEmail: false,
+        allowSms: false,
+        allowPhone: false,
+        allowMail: true,
+        optedOut: false,
       };
 
       queryMock.mockResolvedValueOnce({ rows: [mockPrefs] });

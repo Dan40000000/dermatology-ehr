@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 const authMocks = vi.hoisted(() => ({
   session: null as null | {
@@ -19,11 +20,16 @@ const apiMocks = vi.hoisted(() => ({
   fetchPatients: vi.fn(),
   createOrder: vi.fn(),
   sendErx: vi.fn(),
+  getLastPDMPCheck: vi.fn(),
+  checkFormulary: vi.fn(),
+  checkPDMP: vi.fn(),
+  fetchPatientMedicationHistory: vi.fn(),
   fetchRefillRequests: vi.fn(),
   denyRefill: vi.fn(),
   requestMedicationChange: vi.fn(),
   confirmAudit: vi.fn(),
   fetchPARequests: vi.fn(),
+  fetchEligibilityHistoryBatch: vi.fn(),
   fetchRecallCampaigns: vi.fn(),
   createRecallCampaign: vi.fn(),
   updateRecallCampaign: vi.fn(),
@@ -123,7 +129,12 @@ describe('PrescriptionsPage', () => {
     apiMocks.fetchPatients.mockResolvedValue({
       patients: [{ id: 'patient-1', firstName: 'Ana', lastName: 'Derm' }],
     });
+    apiMocks.fetchEligibilityHistoryBatch.mockResolvedValue({ history: {} });
     apiMocks.fetchPARequests.mockResolvedValue([]);
+    apiMocks.getLastPDMPCheck.mockResolvedValue({ lastCheckAt: null });
+    apiMocks.checkFormulary.mockResolvedValue({ status: 'Preferred' });
+    apiMocks.checkPDMP.mockResolvedValue({ riskScore: 'Low', totalControlledRxLast6Months: 0, flags: [] });
+    apiMocks.fetchPatientMedicationHistory.mockResolvedValue([]);
     apiMocks.createOrder.mockResolvedValue({ id: 'rx-2' });
     apiMocks.sendErx.mockResolvedValue({ ok: true });
     apiMocks.fetchRefillRequests.mockResolvedValue({
@@ -151,7 +162,11 @@ describe('PrescriptionsPage', () => {
   });
 
   it('creates a prescription, sends eRx, and opens PA request', async () => {
-    render(<PrescriptionsPage />);
+    render(
+      <MemoryRouter>
+        <PrescriptionsPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('All Prescriptions');
     fireEvent.click(screen.getByRole('button', { name: /New Prescription/i }));
@@ -160,7 +175,11 @@ describe('PrescriptionsPage', () => {
     const selects = modalScope.getAllByRole('combobox');
 
     fireEvent.change(selects[0], { target: { value: 'patient-1' } });
-    fireEvent.change(selects[1], { target: { value: 'Tretinoin 0.025% cream' } });
+    fireEvent.change(modalScope.getByPlaceholderText('Search or type medication name...'), {
+      target: { value: 'Tretinoin 0.025% cream' },
+    });
+    fireEvent.click(modalScope.getByText('Tretinoin 0.025% cream'));
+    await screen.findByText('Selected: Tretinoin 0.025% cream');
     fireEvent.change(modalScope.getByPlaceholderText('Apply to affected area...'), {
       target: { value: 'Apply nightly' },
     });
@@ -191,7 +210,11 @@ describe('PrescriptionsPage', () => {
   });
 
   it('handles refill requests with deny, change, and audit confirmation', async () => {
-    render(<PrescriptionsPage />);
+    render(
+      <MemoryRouter>
+        <PrescriptionsPage />
+      </MemoryRouter>
+    );
     await screen.findByText('All Prescriptions');
 
     fireEvent.click(screen.getByRole('button', { name: /Refill Requests/i }));
@@ -325,7 +348,11 @@ describe('RemindersPage', () => {
   });
 
   it('manages campaigns with generate, edit, toggle, and delete actions', async () => {
-    render(<RemindersPage />);
+    render(
+      <MemoryRouter>
+        <RemindersPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Reminders & Recalls');
     fireEvent.click(screen.getByRole('button', { name: 'Generate All Recalls' }));
@@ -369,7 +396,11 @@ describe('RemindersPage', () => {
   });
 
   it('records contacts, updates status, exports, and loads history', async () => {
-    render(<RemindersPage />);
+    render(
+      <MemoryRouter>
+        <RemindersPage />
+      </MemoryRouter>
+    );
     await screen.findByText('Reminders & Recalls');
 
     fireEvent.click(screen.getByRole('button', { name: /Due for Recall/i }));

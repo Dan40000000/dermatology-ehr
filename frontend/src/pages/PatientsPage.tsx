@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -27,6 +27,7 @@ export function PatientsPage() {
   const [sortField, setSortField] = useState<SortField>('lastName');
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
   const [currentPage, setCurrentPage] = useState(1);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   // Debounce search input
   useEffect(() => {
@@ -46,7 +47,7 @@ export function PatientsPage() {
       try {
         const res = await fetchPatients(session.tenantId, session.accessToken);
         // API returns { data: Patient[], meta: { page, limit, total, totalPages, hasNext, hasPrev } }
-        setPatients(res.data || []);
+        setPatients(res.data || res.patients || []);
       } catch (err: any) {
         showError(err.message || 'Failed to load patients');
       } finally {
@@ -221,7 +222,14 @@ export function PatientsPage() {
           <span className="icon" style={{ fontSize: '1.1rem' }}>👤</span>
           Register New Patient
         </button>
-        <button type="button" className="ema-action-btn" style={{
+        <button
+          type="button"
+          className="ema-action-btn"
+          onClick={() => {
+            searchInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            searchInputRef.current?.focus();
+          }}
+          style={{
           background: 'rgba(255,255,255,0.95)',
           border: '2px solid rgba(255,255,255,0.4)',
           padding: '0.75rem 1.25rem',
@@ -244,7 +252,7 @@ export function PatientsPage() {
           <span className="icon" style={{ fontSize: '1.1rem' }}>🔍</span>
           Advanced Search
         </button>
-        <button type="button" className="ema-action-btn" style={{
+        <button type="button" className="ema-action-btn" onClick={() => navigate('/handouts')} style={{
           background: 'rgba(255,255,255,0.95)',
           border: '2px solid rgba(255,255,255,0.4)',
           padding: '0.75rem 1.25rem',
@@ -325,6 +333,7 @@ export function PatientsPage() {
                 className="ema-filter-select"
                 value={searchBy}
                 onChange={(e) => setSearchBy(e.target.value as any)}
+                aria-label="Search patients by"
                 style={{ minWidth: '120px' }}
               >
                 <option value="name">Name</option>
@@ -337,6 +346,8 @@ export function PatientsPage() {
                 placeholder="Enter search term..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                ref={searchInputRef}
+                aria-label="Search patients"
                 style={{ minWidth: '250px' }}
               />
             </div>

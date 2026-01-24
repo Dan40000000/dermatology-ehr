@@ -207,10 +207,11 @@ export function NewPatientPage() {
             <div className="ema-section-header" style={{ marginBottom: '1rem' }}>Patient Demographics</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="last-name" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Last Name *
                 </label>
                 <input
+                  id="last-name"
                   type="text"
                   value={formData.lastName}
                   onChange={(e) => updateField('lastName', e.target.value)}
@@ -226,10 +227,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="first-name" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   First Name *
                 </label>
                 <input
+                  id="first-name"
                   type="text"
                   value={formData.firstName}
                   onChange={(e) => updateField('firstName', e.target.value)}
@@ -245,10 +247,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="middle-name" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Middle Name
                 </label>
                 <input
+                  id="middle-name"
                   type="text"
                   value={formData.middleName}
                   onChange={(e) => updateField('middleName', e.target.value)}
@@ -263,10 +266,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="preferred-name" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Preferred Name
                 </label>
                 <input
+                  id="preferred-name"
                   type="text"
                   value={formData.preferredName}
                   onChange={(e) => updateField('preferredName', e.target.value)}
@@ -281,10 +285,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="date-of-birth" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Date of Birth *
                 </label>
                 <input
+                  id="date-of-birth"
                   type="date"
                   value={formData.dateOfBirth}
                   onChange={(e) => updateField('dateOfBirth', e.target.value)}
@@ -299,10 +304,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="sex" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Sex
                 </label>
                 <select
+                  id="sex"
                   value={formData.sex}
                   onChange={(e) => updateField('sex', e.target.value)}
                   style={{
@@ -321,10 +327,11 @@ export function NewPatientPage() {
                 </select>
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="ssn" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   SSN (Last 4)
                 </label>
                 <input
+                  id="ssn"
                   type="text"
                   value={formData.ssn}
                   onChange={(e) => updateField('ssn', e.target.value)}
@@ -366,10 +373,11 @@ export function NewPatientPage() {
             <div className="ema-section-header" style={{ marginBottom: '1rem' }}>Contact Information</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="email" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Email
                 </label>
                 <input
+                  id="email"
                   type="email"
                   value={formData.email}
                   onChange={(e) => updateField('email', e.target.value)}
@@ -384,10 +392,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="home-phone" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Home Phone
                 </label>
                 <input
+                  id="home-phone"
                   type="tel"
                   value={formData.phone}
                   onChange={(e) => updateField('phone', e.target.value)}
@@ -402,10 +411,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="cell-phone" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Cell Phone
                 </label>
                 <input
+                  id="cell-phone"
                   type="tel"
                   value={formData.cellPhone}
                   onChange={(e) => updateField('cellPhone', e.target.value)}
@@ -424,10 +434,11 @@ export function NewPatientPage() {
             <div className="ema-section-header" style={{ margin: '1.5rem 0 1rem' }}>Address</div>
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', gap: '1rem' }}>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="street-address" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Street Address
                 </label>
                 <input
+                  id="street-address"
                   type="text"
                   value={formData.address}
                   onChange={(e) => updateField('address', e.target.value)}
@@ -442,10 +453,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="city" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   City
                 </label>
                 <input
+                  id="city"
                   type="text"
                   value={formData.city}
                   onChange={(e) => updateField('city', e.target.value)}
@@ -460,10 +472,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="state" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   State
                 </label>
                 <select
+                  id="state"
                   value={formData.state}
                   onChange={(e) => updateField('state', e.target.value)}
                   style={{
@@ -482,10 +495,11 @@ export function NewPatientPage() {
                 </select>
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="zip-code" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   ZIP Code
                 </label>
                 <input
+                  id="zip-code"
                   type="text"
                   value={formData.zipCode}
                   onChange={(e) => updateField('zipCode', e.target.value)}
@@ -504,10 +518,11 @@ export function NewPatientPage() {
             <div className="ema-section-header" style={{ margin: '1.5rem 0 1rem' }}>Emergency Contact</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="emergency-contact-name" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Contact Name
                 </label>
                 <input
+                  id="emergency-contact-name"
                   type="text"
                   value={formData.emergencyContactName}
                   onChange={(e) => updateField('emergencyContactName', e.target.value)}
@@ -522,10 +537,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="emergency-contact-phone" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Contact Phone
                 </label>
                 <input
+                  id="emergency-contact-phone"
                   type="tel"
                   value={formData.emergencyContactPhone}
                   onChange={(e) => updateField('emergencyContactPhone', e.target.value)}
@@ -540,10 +556,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="emergency-contact-relationship" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Relationship
                 </label>
                 <input
+                  id="emergency-contact-relationship"
                   type="text"
                   value={formData.emergencyContactRelation}
                   onChange={(e) => updateField('emergencyContactRelation', e.target.value)}
@@ -599,10 +616,11 @@ export function NewPatientPage() {
             <div className="ema-section-header" style={{ marginBottom: '1rem' }}>Insurance Information</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="insurance-provider" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Insurance Provider
                 </label>
                 <input
+                  id="insurance-provider"
                   type="text"
                   value={formData.insuranceProvider}
                   onChange={(e) => updateField('insuranceProvider', e.target.value)}
@@ -617,10 +635,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="insurance-id" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Member ID
                 </label>
                 <input
+                  id="insurance-id"
                   type="text"
                   value={formData.insuranceId}
                   onChange={(e) => updateField('insuranceId', e.target.value)}
@@ -635,10 +654,11 @@ export function NewPatientPage() {
                 />
               </div>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="insurance-group-number" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Group Number
                 </label>
                 <input
+                  id="insurance-group-number"
                   type="text"
                   value={formData.insuranceGroupNumber}
                   onChange={(e) => updateField('insuranceGroupNumber', e.target.value)}
@@ -707,10 +727,11 @@ export function NewPatientPage() {
             <div className="ema-section-header" style={{ marginBottom: '1rem' }}>Medical Information</div>
             <div style={{ display: 'grid', gap: '1rem' }}>
               <div className="form-field">
-                <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                <label htmlFor="allergies" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                   Known Allergies
                 </label>
                 <textarea
+                  id="allergies"
                   value={formData.allergies}
                   onChange={(e) => updateField('allergies', e.target.value)}
                   placeholder="List any known allergies (medications, latex, etc.)"
@@ -727,10 +748,11 @@ export function NewPatientPage() {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
                 <div className="form-field">
-                  <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                  <label htmlFor="primary-care-physician" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                     Primary Care Physician
                   </label>
                   <input
+                    id="primary-care-physician"
                     type="text"
                     value={formData.primaryCarePhysician}
                     onChange={(e) => updateField('primaryCarePhysician', e.target.value)}
@@ -745,10 +767,11 @@ export function NewPatientPage() {
                   />
                 </div>
                 <div className="form-field">
-                  <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                  <label htmlFor="referral-source" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                     Referral Source
                   </label>
                   <select
+                    id="referral-source"
                     value={formData.referralSource}
                     onChange={(e) => updateField('referralSource', e.target.value)}
                     style={{
@@ -767,10 +790,11 @@ export function NewPatientPage() {
                   </select>
                 </div>
                 <div className="form-field">
-                  <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                  <label htmlFor="preferred-pharmacy" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                     Preferred Pharmacy
                   </label>
                   <input
+                    id="preferred-pharmacy"
                     type="text"
                     value={formData.preferredPharmacy}
                     onChange={(e) => updateField('preferredPharmacy', e.target.value)}

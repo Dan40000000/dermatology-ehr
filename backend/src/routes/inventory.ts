@@ -126,28 +126,6 @@ inventoryRouter.get("/usage", requireAuth, async (req: AuthedRequest, res) => {
   res.json({ usage: result.rows });
 });
 
-// Get single inventory item with usage stats
-inventoryRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
-  const tenantId = req.user!.tenantId;
-  const { id } = req.params;
-
-  const result = await pool.query(
-    `SELECT
-      id, name, category, sku, description, quantity, reorder_level as "reorderLevel",
-      unit_cost_cents as "unitCostCents", supplier, location, expiration_date as "expirationDate",
-      lot_number as "lotNumber", created_at as "createdAt", updated_at as "updatedAt"
-    FROM inventory_items
-    WHERE id = $1 AND tenant_id = $2`,
-    [id, tenantId]
-  );
-
-  if (!result.rowCount) {
-    return res.status(404).json({ error: "Item not found" });
-  }
-
-  res.json({ item: result.rows[0] });
-});
-
 // Create inventory item
 inventoryRouter.post("/", requireAuth, requireRoles(["admin", "provider"]), async (req: AuthedRequest, res) => {
   const parsed = inventoryItemSchema.safeParse(req.body);
@@ -462,6 +440,28 @@ inventoryRouter.get("/procedure-templates/:procedureName/items", requireAuth, as
   );
 
   res.json({ items: result.rows });
+});
+
+// Get single inventory item with usage stats
+inventoryRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const { id } = req.params;
+
+  const result = await pool.query(
+    `SELECT
+      id, name, category, sku, description, quantity, reorder_level as "reorderLevel",
+      unit_cost_cents as "unitCostCents", supplier, location, expiration_date as "expirationDate",
+      lot_number as "lotNumber", created_at as "createdAt", updated_at as "updatedAt"
+    FROM inventory_items
+    WHERE id = $1 AND tenant_id = $2`,
+    [id, tenantId]
+  );
+
+  if (!result.rowCount) {
+    return res.status(404).json({ error: "Item not found" });
+  }
+
+  res.json({ item: result.rows[0] });
 });
 
 // Record procedure-based inventory usage (batch)

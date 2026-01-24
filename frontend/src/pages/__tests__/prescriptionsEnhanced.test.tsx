@@ -65,6 +65,7 @@ describe('PrescriptionsPageEnhanced', () => {
     });
 
     vi.mocked(api.fetchPARequests).mockResolvedValue([]);
+    vi.mocked(api.fetchEligibilityHistoryBatch).mockResolvedValue({ history: {} });
 
     vi.mocked(api.fetchRefillRequestsNew).mockResolvedValue({
       refillRequests: [],
@@ -79,9 +80,10 @@ describe('PrescriptionsPageEnhanced', () => {
     render(<PrescriptionsPageEnhanced />);
 
     await waitFor(() => {
-      expect(screen.getByText('All Prescriptions')).toBeInTheDocument();
-      expect(screen.getByText(/Refill Requests/)).toBeInTheDocument();
-      expect(screen.getByText(/Rx Change Requests/)).toBeInTheDocument();
+      expect(screen.getByText('Prescriptions (eRx)')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Rx$/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Refill Req\.$/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Rx Change Requests/ })).toBeInTheDocument();
     });
   });
 
@@ -97,7 +99,7 @@ describe('PrescriptionsPageEnhanced', () => {
   it('switches to refill requests tab', async () => {
     render(<PrescriptionsPageEnhanced />);
 
-    const refillTab = await screen.findByText(/Refill Requests/);
+    const refillTab = await screen.findByRole('button', { name: /^Refill Req\.$/ });
     fireEvent.click(refillTab);
 
     await waitFor(() => {
@@ -164,7 +166,7 @@ describe('PrescriptionsPageEnhanced', () => {
     });
 
     // Apply eRx status filter
-    const erxStatusSelect = screen.getByLabelText('eRx Status') as HTMLSelectElement;
+    const erxStatusSelect = screen.getByLabelText('eRx') as HTMLSelectElement;
     fireEvent.change(erxStatusSelect, { target: { value: 'success' } });
 
     await waitFor(() => {
@@ -186,7 +188,7 @@ describe('PrescriptionsPageEnhanced', () => {
     });
 
     // Click controlled substances checkbox
-    const controlledCheckbox = screen.getByLabelText(/Controlled Substances Only/);
+    const controlledCheckbox = screen.getByLabelText('Controlled Substance');
     fireEvent.click(controlledCheckbox);
 
     await waitFor(() => {
@@ -208,7 +210,7 @@ describe('PrescriptionsPageEnhanced', () => {
     });
 
     // Apply some filters
-    const erxStatusSelect = screen.getByLabelText('eRx Status') as HTMLSelectElement;
+    const erxStatusSelect = screen.getByLabelText('eRx') as HTMLSelectElement;
     fireEvent.change(erxStatusSelect, { target: { value: 'success' } });
 
     // Clear filters
@@ -216,7 +218,7 @@ describe('PrescriptionsPageEnhanced', () => {
     fireEvent.click(clearButton);
 
     await waitFor(() => {
-      expect(erxStatusSelect.value).toBe('');
+      expect(erxStatusSelect.value).toBe('any');
     });
   });
 
@@ -244,7 +246,7 @@ describe('PrescriptionsPageEnhanced', () => {
     render(<PrescriptionsPageEnhanced />);
 
     // Switch to refills tab
-    const refillTab = await screen.findByText(/Refill Requests/);
+    const refillTab = await screen.findByRole('button', { name: /^Refill Req\.$/ });
     fireEvent.click(refillTab);
 
     await waitFor(() => {

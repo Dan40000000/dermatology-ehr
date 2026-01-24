@@ -96,6 +96,17 @@ export class AINoteDraftingService {
       }
     } catch (error) {
       console.error("Note draft generation error:", error);
+      if (error instanceof Error) {
+        const message = error.message;
+        if (
+          message.startsWith("OpenAI API error:") ||
+          message.startsWith("Invalid response from OpenAI API") ||
+          message.startsWith("Anthropic API error:") ||
+          message.startsWith("Invalid response from Anthropic API")
+        ) {
+          throw error;
+        }
+      }
       throw new Error("Failed to generate note draft");
     }
   }

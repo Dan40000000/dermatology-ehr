@@ -22,9 +22,9 @@ describe('TelehealthStatsCards', () => {
     expect(screen.getByText('3')).toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument();
 
-    expect(screen.getByText('My Cases In Progress')).toBeInTheDocument();
-    expect(screen.getByText('My Completed Cases')).toBeInTheDocument();
-    expect(screen.getByText('My Unread Messages')).toBeInTheDocument();
+    expect(screen.getByText('My cases in progress')).toBeInTheDocument();
+    expect(screen.getByText('My completed cases')).toBeInTheDocument();
+    expect(screen.getByText('My unread messages')).toBeInTheDocument();
     expect(screen.getByText('Unassigned Cases')).toBeInTheDocument();
   });
 
@@ -33,7 +33,7 @@ describe('TelehealthStatsCards', () => {
       <TelehealthStatsCards stats={mockStats} onCardClick={mockOnCardClick} activeFilter={null} />
     );
 
-    const inProgressCard = screen.getByText('My Cases In Progress').closest('button');
+    const inProgressCard = screen.getByText('My cases in progress').closest('button');
     fireEvent.click(inProgressCard!);
 
     expect(mockOnCardClick).toHaveBeenCalledWith('in_progress');
@@ -48,7 +48,7 @@ describe('TelehealthStatsCards', () => {
       />
     );
 
-    const completedCard = screen.getByText('My Completed Cases').closest('button');
+    const completedCard = screen.getByText('My completed cases').closest('button');
     expect(completedCard).toHaveClass('active');
   });
 

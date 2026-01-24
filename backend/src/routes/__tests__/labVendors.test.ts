@@ -1,8 +1,6 @@
 import request from "supertest";
 import express from "express";
-import { labVendorsRouter } from "../labVendors";
-import { pool } from "../../db/pool";
-import { logger } from "../../lib/logger";
+import type { Express } from "express";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -26,19 +24,41 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
-const app = express();
-app.use(express.json());
-app.use("/lab-vendors", labVendorsRouter);
-
-const queryMock = pool.query as jest.Mock;
-const connectMock = pool.connect as jest.Mock;
-
 const makeClient = () => ({
   query: jest.fn().mockResolvedValue({ rows: [] }),
   release: jest.fn(),
 });
 
+let app: Express;
+let queryMock: jest.Mock;
+let connectMock: jest.Mock;
+let logger: { error: jest.Mock; info: jest.Mock; warn: jest.Mock };
+
+const setupApp = () => {
+  jest.resetModules();
+
+  let labVendorsRouter: any;
+  let pool: any;
+
+  jest.isolateModules(() => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    labVendorsRouter = require("../labVendors").labVendorsRouter;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    pool = require("../../db/pool").pool;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    logger = require("../../lib/logger").logger;
+  });
+
+  app = express();
+  app.use(express.json());
+  app.use("/lab-vendors", labVendorsRouter);
+
+  queryMock = pool.query as jest.Mock;
+  connectMock = pool.connect as jest.Mock;
+};
+
 beforeEach(() => {
+  setupApp();
   queryMock.mockReset();
   connectMock.mockReset();
   (logger.error as jest.Mock).mockReset();

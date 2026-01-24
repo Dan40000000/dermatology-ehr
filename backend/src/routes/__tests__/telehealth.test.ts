@@ -61,6 +61,20 @@ describe("Telehealth routes", () => {
     expect(res.body.id).toBe("session-1");
   });
 
+  it("POST /telehealth/sessions returns 403 when provider not licensed", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/telehealth/sessions").send({
+      patientId: 1,
+      providerId: 2,
+      patientState: "CO",
+      recordingConsent: true,
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Provider not licensed in patient's state");
+  });
+
   it("GET /telehealth/sessions/:id returns 404 when missing", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -87,6 +101,25 @@ describe("Telehealth routes", () => {
     expect(res.body).toHaveLength(1);
   });
 
+  it("GET /telehealth/sessions supports status/provider/patient/date filters", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "session-1" }] });
+
+    const res = await request(app).get("/telehealth/sessions").query({
+      status: "scheduled",
+      providerId: "2",
+      patientId: "9",
+      startDate: "2024-01-01",
+      endDate: "2024-12-31",
+      myUnreadOnly: "true",
+    });
+
+    expect(res.status).toBe(200);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("ts.status ="),
+      expect.arrayContaining(["tenant-1", "scheduled", "2", "9", "2024-01-01", "2024-12-31"])
+    );
+  });
+
   it("PATCH /telehealth/sessions/:id/status updates status", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: "session-1", status: "completed" }] });
     queryMock.mockResolvedValueOnce({ rows: [] });
@@ -97,6 +130,18 @@ describe("Telehealth routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("completed");
+  });
+
+  it("PATCH /telehealth/sessions/:id/status sets startedAt when in_progress", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "session-1", status: "in_progress" }] });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .patch("/telehealth/sessions/session-1/status")
+      .send({ status: "in_progress" });
+
+    expect(res.status).toBe(200);
+    expect(queryMock.mock.calls[0][1][1]).toBeInstanceOf(Date);
   });
 
   it("GET /telehealth/stats returns statistics", async () => {

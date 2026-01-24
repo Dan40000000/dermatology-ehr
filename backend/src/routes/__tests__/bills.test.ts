@@ -156,6 +156,8 @@ describe("Bills Routes", () => {
     });
 
     it("should create a new bill with line items", async () => {
+      const currentYear = new Date().getFullYear();
+
       mockClient.query
         .mockResolvedValueOnce({ rows: [] }) // BEGIN
         .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // count query
@@ -192,7 +194,7 @@ describe("Bills Routes", () => {
 
       expect(res.status).toBe(201);
       expect(res.body.id).toBeTruthy();
-      expect(res.body.billNumber).toBe("BILL-2024-000001");
+      expect(res.body.billNumber).toBe(`BILL-${currentYear}-000001`);
       expect(auditLog).toHaveBeenCalled();
       expect(mockClient.release).toHaveBeenCalled();
     });
@@ -232,15 +234,15 @@ describe("Bills Routes", () => {
         .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // count query
         .mockRejectedValueOnce(new Error("DB error")); // insert bill fails
 
-      await expect(
-        request(app).post("/bills").send({
-          patientId: "patient-1",
-          billDate: "2024-01-15",
-          totalChargesCents: 100000,
-          patientResponsibilityCents: 20000,
-        })
-      ).rejects.toThrow();
+      const res = await request(app).post("/bills").send({
+        patientId: "patient-1",
+        billDate: "2024-01-15",
+        totalChargesCents: 100000,
+        patientResponsibilityCents: 20000,
+      });
 
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to create bill");
       expect(mockClient.query).toHaveBeenCalledWith("ROLLBACK");
       expect(mockClient.release).toHaveBeenCalled();
     });
@@ -350,12 +352,12 @@ describe("Bills Routes", () => {
         })
         .mockRejectedValueOnce(new Error("DB error")); // update fails
 
-      await expect(
-        request(app).put("/bills/bill-1").send({
-          status: "paid",
-        })
-      ).rejects.toThrow();
+      const res = await request(app).put("/bills/bill-1").send({
+        status: "paid",
+      });
 
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to update bill");
       expect(mockClient.query).toHaveBeenCalledWith("ROLLBACK");
       expect(mockClient.release).toHaveBeenCalled();
     });

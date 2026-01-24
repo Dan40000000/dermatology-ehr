@@ -87,24 +87,24 @@ describe("Vitals routes", () => {
     );
   });
 
-  it("GET /vitals orders by created_at desc", async () => {
+  it("GET /vitals orders by recorded_at desc, created_at desc", async () => {
     queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
     await request(app).get("/vitals");
 
     expect(queryMock).toHaveBeenCalledWith(
-      expect.stringContaining("order by created_at desc"),
+      expect.stringContaining("order by recorded_at desc, created_at desc"),
       expect.anything()
     );
   });
 
-  it("GET /vitals limits results to 50", async () => {
+  it("GET /vitals limits results to 200", async () => {
     queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
     await request(app).get("/vitals");
 
     expect(queryMock).toHaveBeenCalledWith(
-      expect.stringContaining("limit 50"),
+      expect.stringContaining("limit 200"),
       expect.anything()
     );
   });

@@ -75,9 +75,9 @@ test.describe('Appointments - Comprehensive Tests', () => {
       await schedulePage.clickNewAppointment();
       await authenticatedPage.waitForTimeout(1000);
 
-      // Should show appointment form or modal
-      const form = authenticatedPage.locator('form, [role="dialog"], [data-testid="appointment-form"]');
-      await expect(form.first()).toBeVisible();
+      const dialog = authenticatedPage.getByRole('dialog');
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole('heading', { name: /new appointment/i })).toBeVisible();
     });
 
     test('should require patient selection', async ({ authenticatedPage }) => {
@@ -87,12 +87,11 @@ test.describe('Appointments - Comprehensive Tests', () => {
       await schedulePage.clickNewAppointment();
       await authenticatedPage.waitForTimeout(1000);
 
-      const saveBtn = authenticatedPage.getByRole('button', { name: /save|create|schedule/i });
-      await saveBtn.first().click();
+      const dialog = authenticatedPage.getByRole('dialog');
+      await dialog.getByRole('button', { name: /save|create|schedule/i }).click();
 
       // Should show validation error
-      const error = authenticatedPage.getByText(/patient.*required|select.*patient/i);
-      await expect(error.first()).toBeVisible();
+      await expect(dialog.getByText(/patient is required/i)).toBeVisible();
     });
 
     test('should create appointment with required fields', async ({ authenticatedPage }) => {
@@ -102,57 +101,35 @@ test.describe('Appointments - Comprehensive Tests', () => {
       await schedulePage.clickNewAppointment();
       await authenticatedPage.waitForTimeout(1000);
 
-      // Fill appointment form
-      const patientSelect = authenticatedPage.getByLabel(/patient/i);
-      if (await patientSelect.isVisible()) {
-        // Select first patient
-        await patientSelect.click();
-        await authenticatedPage.waitForTimeout(500);
-        const firstOption = authenticatedPage.locator('option, [role="option"]').nth(1);
-        if (await firstOption.isVisible()) {
-          await firstOption.click();
-        }
+      const dialog = authenticatedPage.getByRole('dialog');
 
-        // Select provider
-        const providerSelect = authenticatedPage.getByLabel(/provider/i);
-        if (await providerSelect.isVisible()) {
-          await providerSelect.click();
-          await authenticatedPage.waitForTimeout(500);
-          const firstProviderOption = authenticatedPage.locator('option, [role="option"]').nth(1);
-          if (await firstProviderOption.isVisible()) {
-            await firstProviderOption.click();
-          }
-        }
-
-        // Select appointment type
-        const typeSelect = authenticatedPage.getByLabel(/type|appointment type/i);
-        if (await typeSelect.isVisible()) {
-          await typeSelect.click();
-          await authenticatedPage.waitForTimeout(500);
-          const firstTypeOption = authenticatedPage.locator('option, [role="option"]').nth(1);
-          if (await firstTypeOption.isVisible()) {
-            await firstTypeOption.click();
-          }
-        }
-
-        // Set date and time (today at 2 PM)
-        const today = new Date();
-        const dateStr = today.toISOString().split('T')[0];
-        const dateInput = authenticatedPage.getByLabel(/date/i);
-        if (await dateInput.isVisible()) {
-          await dateInput.fill(dateStr);
-        }
-
-        const timeInput = authenticatedPage.getByLabel(/time|start/i);
-        if (await timeInput.isVisible()) {
-          await timeInput.fill('14:00');
-        }
-
-        // Save appointment
-        const saveBtn = authenticatedPage.getByRole('button', { name: /save|create|schedule/i });
-        await saveBtn.first().click();
-        await authenticatedPage.waitForTimeout(2000);
+      const patientOptions = dialog.locator('#patient option');
+      if ((await patientOptions.count()) > 1) {
+        await dialog.getByLabel(/patient/i).selectOption({ index: 1 });
       }
+
+      const providerOptions = dialog.locator('#provider option');
+      if ((await providerOptions.count()) > 1) {
+        await dialog.getByLabel(/provider/i).selectOption({ index: 1 });
+      }
+
+      const typeOptions = dialog.locator('#appointmentType option');
+      if ((await typeOptions.count()) > 1) {
+        await dialog.getByLabel(/appointment type/i).selectOption({ index: 1 });
+      }
+
+      const locationOptions = dialog.locator('#location option');
+      if ((await locationOptions.count()) > 1) {
+        await dialog.getByLabel(/location/i).selectOption({ index: 1 });
+      }
+
+      const today = new Date();
+      const dateStr = today.toISOString().split('T')[0];
+      await dialog.getByLabel(/date/i).fill(dateStr);
+      await dialog.getByLabel(/time/i).selectOption('14:00');
+
+      await dialog.getByRole('button', { name: /save|create|schedule/i }).click();
+      await authenticatedPage.waitForTimeout(2000);
     });
   });
 
@@ -165,7 +142,7 @@ test.describe('Appointments - Comprehensive Tests', () => {
       const appointmentCount = await schedulePage.getAppointmentCount();
       if (appointmentCount > 0) {
         // Click on first appointment
-        const appointments = authenticatedPage.locator('[data-testid="appointment"], .appointment');
+        const appointments = authenticatedPage.locator('.calendar-appointment');
         const firstAppointment = appointments.first();
 
         if (await firstAppointment.isVisible()) {
@@ -179,8 +156,8 @@ test.describe('Appointments - Comprehensive Tests', () => {
             await authenticatedPage.waitForTimeout(1000);
 
             // Should show success or status change
-            const status = authenticatedPage.getByText(/checked.?in|arrived/i);
-            await expect(status.first()).toBeVisible({ timeout: 5000 });
+            const statusToast = authenticatedPage.locator('.toast-message', { hasText: /status updated/i });
+            await expect(statusToast).toBeVisible({ timeout: 5000 });
           }
         }
       }
@@ -193,7 +170,7 @@ test.describe('Appointments - Comprehensive Tests', () => {
 
       const appointmentCount = await schedulePage.getAppointmentCount();
       if (appointmentCount > 0) {
-        const appointments = authenticatedPage.locator('[data-testid="appointment"], .appointment');
+        const appointments = authenticatedPage.locator('.calendar-appointment');
         const firstAppointment = appointments.first();
 
         if (await firstAppointment.isVisible()) {
@@ -220,7 +197,7 @@ test.describe('Appointments - Comprehensive Tests', () => {
 
       const appointmentCount = await schedulePage.getAppointmentCount();
       if (appointmentCount > 0) {
-        const appointments = authenticatedPage.locator('[data-testid="appointment"], .appointment');
+        const appointments = authenticatedPage.locator('.calendar-appointment');
         const firstAppointment = appointments.first();
 
         if (await firstAppointment.isVisible()) {
@@ -231,20 +208,14 @@ test.describe('Appointments - Comprehensive Tests', () => {
             name: /cancel appointment/i,
           });
           if (await cancelBtn.isVisible()) {
+            authenticatedPage.once('dialog', (dialog) => dialog.accept());
             await cancelBtn.click();
-
-            // Confirm cancellation if modal appears
-            const confirmBtn = authenticatedPage.getByRole('button', { name: /confirm|yes|ok/i });
-            if (await confirmBtn.isVisible()) {
-              await confirmBtn.click();
-            }
 
             await authenticatedPage.waitForTimeout(1000);
 
             // Should show cancelled status or remove from list
-            const status = authenticatedPage.getByText(/cancelled/i);
-            const visible = await status.isVisible();
-            expect(visible || true).toBeTruthy(); // Either shows cancelled or removed
+            const statusToast = authenticatedPage.locator('.toast-message', { hasText: /status updated/i });
+            await expect(statusToast).toBeVisible({ timeout: 5000 });
           }
         }
       }

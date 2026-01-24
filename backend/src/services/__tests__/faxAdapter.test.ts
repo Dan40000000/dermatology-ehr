@@ -1,10 +1,37 @@
-import { MockFaxAdapter, FaxSendOptions } from '../faxAdapter';
+import { MockFaxAdapter, FaxSendOptions, MockFaxAdapterOptions } from '../faxAdapter';
+
+const createAdapter = (options: MockFaxAdapterOptions = {}) => {
+  let now = 1700000000000;
+
+  return new MockFaxAdapter({
+    delayMs: 0,
+    random: () => 0.5,
+    now: () => ++now,
+    ...options,
+  });
+};
+
+const createSuccessSequenceRandom = (successValues: number[]) => {
+  let callCount = 0;
+  let successIndex = 0;
+
+  return () => {
+    callCount += 1;
+    if (callCount % 2 === 1) {
+      return 0.5;
+    }
+
+    const value = successValues[successIndex % successValues.length];
+    successIndex += 1;
+    return value;
+  };
+};
 
 describe('FaxAdapter', () => {
   let adapter: MockFaxAdapter;
 
   beforeEach(() => {
-    adapter = new MockFaxAdapter();
+    adapter = createAdapter();
     jest.clearAllMocks();
   });
 
@@ -34,44 +61,24 @@ describe('FaxAdapter', () => {
         from: '+15555550000',
       };
 
-      let result;
-      let attempts = 0;
-      const maxAttempts = 20;
+      const result = await adapter.sendFax(options);
 
-      while (attempts < maxAttempts) {
-        result = await adapter.sendFax(options);
-        if (result.status === 'sent') {
-          break;
-        }
-        attempts++;
-      }
-
-      expect(result?.status).toBe('sent');
-      expect(result?.errorMessage).toBeUndefined();
+      expect(result.status).toBe('sent');
+      expect(result.errorMessage).toBeUndefined();
     });
 
     it('should handle failed transmission', async () => {
+      adapter = createAdapter({ random: () => 0.05 });
       const options: FaxSendOptions = {
         to: '+15555551234',
         from: '+15555550000',
       };
 
-      let result;
-      let attempts = 0;
-      const maxAttempts = 20;
+      const result = await adapter.sendFax(options);
 
-      while (attempts < maxAttempts) {
-        result = await adapter.sendFax(options);
-        if (result.status === 'failed') {
-          break;
-        }
-        attempts++;
-      }
-
-      if (result?.status === 'failed') {
-        expect(result.errorMessage).toBeDefined();
-        expect(result.errorMessage).toContain('Fax transmission failed');
-      }
+      expect(result.status).toBe('failed');
+      expect(result.errorMessage).toBeDefined();
+      expect(result.errorMessage).toContain('Fax transmission failed');
     });
 
     it('should use default page count of 1 when not provided', async () => {
@@ -137,6 +144,7 @@ describe('FaxAdapter', () => {
     });
 
     it('should simulate network delay', async () => {
+      adapter = createAdapter({ delayMs: 25 });
       const options: FaxSendOptions = {
         to: '+15555551234',
         from: '+15555550000',
@@ -147,7 +155,7 @@ describe('FaxAdapter', () => {
       const endTime = Date.now();
 
       const duration = endTime - startTime;
-      expect(duration).toBeGreaterThanOrEqual(2000);
+      expect(duration).toBeGreaterThanOrEqual(25);
     });
 
     it('should store sent fax for status lookup', async () => {
@@ -196,49 +204,29 @@ describe('FaxAdapter', () => {
     });
 
     it('should include sentAt for successful faxes', async () => {
+      adapter = createAdapter({ random: () => 0.5 });
       const options: FaxSendOptions = {
         to: '+15555551234',
         from: '+15555550000',
       };
 
-      let sendResult;
-      let attempts = 0;
+      const sendResult = await adapter.sendFax(options);
+      const status = await adapter.getStatus(sendResult.transmissionId);
 
-      while (attempts < 20) {
-        sendResult = await adapter.sendFax(options);
-        if (sendResult.status === 'sent') {
-          break;
-        }
-        attempts++;
-      }
-
-      if (sendResult && sendResult.status === 'sent') {
-        const status = await adapter.getStatus(sendResult.transmissionId);
-        expect(status.sentAt).toBeDefined();
-      }
+      expect(status.sentAt).toBeDefined();
     });
 
     it('should include errorMessage for failed faxes', async () => {
+      adapter = createAdapter({ random: () => 0.05 });
       const options: FaxSendOptions = {
         to: '+15555551234',
         from: '+15555550000',
       };
 
-      let sendResult;
-      let attempts = 0;
+      const sendResult = await adapter.sendFax(options);
+      const status = await adapter.getStatus(sendResult.transmissionId);
 
-      while (attempts < 20) {
-        sendResult = await adapter.sendFax(options);
-        if (sendResult.status === 'failed') {
-          break;
-        }
-        attempts++;
-      }
-
-      if (sendResult && sendResult.status === 'failed') {
-        const status = await adapter.getStatus(sendResult.transmissionId);
-        expect(status.errorMessage).toBeDefined();
-      }
+      expect(status.errorMessage).toBeDefined();
     });
 
     it('should throw error for nonexistent transmission ID', async () => {
@@ -353,7 +341,21 @@ describe('FaxAdapter', () => {
 
   describe('Success rate simulation', () => {
     it('should have approximately 90% success rate over many attempts', async () => {
-      const attempts = 100;
+      adapter = createAdapter({
+        random: createSuccessSequenceRandom([
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.05,
+        ]),
+      });
+      const attempts = 10;
       let successCount = 0;
 
       for (let i = 0; i < attempts; i++) {
@@ -369,6 +371,6 @@ describe('FaxAdapter', () => {
       const successRate = successCount / attempts;
       expect(successRate).toBeGreaterThan(0.75);
       expect(successRate).toBeLessThan(1.0);
-    }, 300000);
+    });
   });
 });

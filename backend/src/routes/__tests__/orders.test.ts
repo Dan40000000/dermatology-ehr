@@ -54,6 +54,19 @@ describe("Orders routes", () => {
     expect(res.body.orders).toHaveLength(1);
   });
 
+  it("GET /orders supports filters", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "order-1" }] });
+    const res = await request(app).get(
+      "/orders?orderTypes=lab,imaging&statuses=draft,completed&priorities=stat&search=cbc&patientId=patient-1"
+    );
+    expect(res.status).toBe(200);
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("o.type = ANY"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("o.status = ANY"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("o.priority = ANY"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("o.details ilike"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("o.patient_id"));
+  });
+
   it("POST /orders rejects invalid payload", async () => {
     const res = await request(app).post("/orders").send({});
     expect(res.status).toBe(400);
@@ -70,6 +83,32 @@ describe("Orders routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.id).toBe("order-1");
     expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /orders uses default provider when missing", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "prov-1", full_name: "Dr. Demo" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/orders").send({
+      patientId: "p1",
+      type: "lab",
+      details: "CBC",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe("order-1");
+  });
+
+  it("POST /orders returns 400 when no providers available", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/orders").send({
+      patientId: "p1",
+      type: "lab",
+    });
+
+    expect(res.status).toBe(400);
   });
 
   it("POST /orders/:id/status rejects invalid payload", async () => {

@@ -10,8 +10,8 @@ export class LoginPage extends BasePage {
   private readonly emailInput = () => this.page.getByLabel(/email/i);
   private readonly passwordInput = () => this.page.getByLabel(/password/i);
   private readonly signInButton = () => this.page.getByRole('button', { name: /sign in/i });
-  private readonly heading = () => this.page.getByRole('heading', { name: /sign in/i });
-  private readonly errorMessage = () => this.page.getByText(/invalid credentials|error/i);
+  private readonly heading = () => this.page.getByRole('heading', { name: /mountain pine dermatology/i });
+  private readonly errorMessage = () => this.page.getByText(/invalid credentials|error|unable/i);
 
   constructor(page: Page) {
     super(page);
@@ -39,7 +39,8 @@ export class LoginPage extends BasePage {
    */
   async assertLoginPageVisible(): Promise<void> {
     await expect(this.heading()).toBeVisible();
-    await expect(this.page).toHaveTitle(/Dermatology|EHR|DermApp/i);
+    await expect(this.page).toHaveTitle(/DermEHR|Dermatology/i);
+    await expect(this.page.getByText(/sign in to access your practice dashboard/i)).toBeVisible();
   }
 
   /**
@@ -53,8 +54,9 @@ export class LoginPage extends BasePage {
    * Assert validation error for email
    */
   async assertEmailValidationError(): Promise<void> {
-    const error = this.page.getByText(/email is required|invalid email/i);
-    await expect(error).toBeVisible();
+    const invalidInputs = this.page.locator('input:invalid');
+    const count = await invalidInputs.count();
+    expect(count).toBeGreaterThan(0);
   }
 
   /**

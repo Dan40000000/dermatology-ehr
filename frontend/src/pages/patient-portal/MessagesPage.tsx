@@ -2,6 +2,10 @@ import { useState, useEffect } from 'react';
 import type { FC } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import '../../styles/patient-portal.css';
+import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
+import { API_BASE_URL } from '../../utils/apiBase';
+
+const API_URL = API_BASE_URL;
 
 interface PatientThread {
   id: string;
@@ -18,6 +22,7 @@ interface PatientThread {
 }
 
 export function PatientPortalMessagesPage() {
+  const { sessionToken, tenantId } = usePatientPortalAuth();
   const [threads, setThreads] = useState<PatientThread[]>([]);
   const [selectedThread, setSelectedThread] = useState<PatientThread | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,20 +31,29 @@ export function PatientPortalMessagesPage() {
 
   useEffect(() => {
     fetchThreads();
-  }, [filter]);
+  }, [filter, sessionToken, tenantId]);
 
   const fetchThreads = async () => {
     setLoading(true);
     try {
+      if (!sessionToken || !tenantId) {
+        setThreads([]);
+        return;
+      }
+
       const response = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/patient-portal/messages/threads?${filter !== 'all' ? `category=${filter}` : ''}`,
+        `${API_URL}/api/patient-portal/messages/threads${filter !== 'all' ? `?category=${filter}` : ''}`,
         {
           headers: {
-            Authorization: `Bearer ${localStorage.getItem('patientToken')}`,
-            'X-Tenant-ID': localStorage.getItem('tenantId') || '',
+            Authorization: `Bearer ${sessionToken}`,
+            'X-Tenant-ID': tenantId,
           },
         }
       );
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || 'Failed to load messages');
+      }
       const data = await response.json();
       setThreads(Array.isArray(data.threads) ? data.threads : []);
     } catch (error) {

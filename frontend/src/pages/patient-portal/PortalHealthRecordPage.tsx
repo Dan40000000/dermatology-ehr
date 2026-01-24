@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
-import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
+import { usePatientPortalAuth, patientPortalFetch } from '../../contexts/PatientPortalAuthContext';
 
 interface Allergy {
   allergen: string;
@@ -41,7 +41,7 @@ interface LabResult {
 }
 
 export function PortalHealthRecordPage() {
-  const { token } = usePatientPortalAuth();
+  const { sessionToken, tenantId } = usePatientPortalAuth();
   const [allergies, setAllergies] = useState<Allergy[]>([]);
   const [medications, setMedications] = useState<Medication[]>([]);
   const [vitals, setVitals] = useState<VitalRecord[]>([]);
@@ -51,40 +51,27 @@ export function PortalHealthRecordPage() {
 
   useEffect(() => {
     fetchHealthData();
-  }, [token]);
+  }, [sessionToken, tenantId]);
 
   const fetchHealthData = async () => {
-    if (!token) return;
+    if (!sessionToken || !tenantId) {
+      setLoading(false);
+      return;
+    }
 
+    setLoading(true);
     try {
-      const headers = {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      };
-
-      const [allergiesRes, medicationsRes, vitalsRes, labsRes] = await Promise.all([
-        fetch('/api/patient-portal-data/allergies', { headers }),
-        fetch('/api/patient-portal-data/medications', { headers }),
-        fetch('/api/patient-portal-data/vitals', { headers }),
-        fetch('/api/patient-portal-data/lab-results', { headers }),
+      const [allergiesData, medicationsData, vitalsData, labsData] = await Promise.all([
+        patientPortalFetch('/api/patient-portal-data/allergies'),
+        patientPortalFetch('/api/patient-portal-data/medications'),
+        patientPortalFetch('/api/patient-portal-data/vitals'),
+        patientPortalFetch('/api/patient-portal-data/lab-results'),
       ]);
 
-      if (allergiesRes.ok) {
-        const data = await allergiesRes.json();
-        setAllergies(data.allergies || []);
-      }
-      if (medicationsRes.ok) {
-        const data = await medicationsRes.json();
-        setMedications(data.medications || []);
-      }
-      if (vitalsRes.ok) {
-        const data = await vitalsRes.json();
-        setVitals(data.vitals || []);
-      }
-      if (labsRes.ok) {
-        const data = await labsRes.json();
-        setLabResults(data.labResults || []);
-      }
+      setAllergies(allergiesData.allergies || []);
+      setMedications(medicationsData.medications || []);
+      setVitals(vitalsData.vitals || []);
+      setLabResults(labsData.labResults || []);
     } catch (error) {
       console.error('Failed to fetch health data:', error);
     } finally {

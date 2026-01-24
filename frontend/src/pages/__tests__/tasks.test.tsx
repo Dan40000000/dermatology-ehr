@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 const authMocks = vi.hoisted(() => ({
   session: null as null | { tenantId: string; accessToken: string; user: { id: string } },
@@ -174,7 +175,11 @@ describe('TasksPage', () => {
   });
 
   it('loads tasks and supports filters, list view, and modals', async () => {
-    render(<TasksPage />);
+    render(
+      <MemoryRouter>
+        <TasksPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Task Management');
 

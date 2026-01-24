@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -32,6 +32,12 @@ export function SchedulePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const patientIdParam = searchParams.get('patientId');
+  const appointmentIdParam = searchParams.get('appointmentId');
+  const handledQueryRef = useRef<{ patientId: string | null; appointmentId: string | null }>({
+    patientId: null,
+    appointmentId: null,
+  });
 
   const [loading, setLoading] = useState(true);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -123,6 +129,38 @@ export function SchedulePage() {
       setViewMode('day');
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!appointmentIdParam || handledQueryRef.current.appointmentId === appointmentIdParam) return;
+    if (appointments.length === 0) return;
+
+    handledQueryRef.current.appointmentId = appointmentIdParam;
+    const appointment = appointments.find((appt) => appt.id === appointmentIdParam);
+
+    if (appointment) {
+      setSelectedAppt(appointment);
+      setShowRescheduleModal(true);
+    } else {
+      showError('Appointment not found');
+    }
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('appointmentId');
+    setSearchParams(nextParams);
+  }, [appointmentIdParam, appointments, searchParams, setSearchParams, showError]);
+
+  useEffect(() => {
+    if (!patientIdParam || appointmentIdParam) return;
+    if (handledQueryRef.current.patientId === patientIdParam) return;
+
+    handledQueryRef.current.patientId = patientIdParam;
+    setNewAppt((prev) => ({ ...prev, patientId: patientIdParam }));
+    setShowNewApptModal(true);
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('patientId');
+    setSearchParams(nextParams);
+  }, [patientIdParam, appointmentIdParam, searchParams, setSearchParams]);
 
   // Auto-select first provider when switching to month view if "all" is selected
   useEffect(() => {
@@ -635,6 +673,7 @@ export function SchedulePage() {
               className="ema-filter-select"
               value={providerFilter}
               onChange={(e) => setProviderFilter(e.target.value)}
+              aria-label="Provider"
             >
               {viewMode !== 'month' && <option value="all">All Providers</option>}
               {providers.map((p) => (
@@ -649,6 +688,7 @@ export function SchedulePage() {
               className="ema-filter-select"
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
+              aria-label="Appointment Type"
             >
               <option value="all">All Types</option>
               {appointmentTypes.map((t) => (
@@ -663,6 +703,7 @@ export function SchedulePage() {
               className="ema-filter-select"
               value={locationFilter}
               onChange={(e) => setLocationFilter(e.target.value)}
+              aria-label="Location"
             >
               <option value="all">All Locations</option>
               {locations.map((l) => (
@@ -1134,6 +1175,7 @@ export function SchedulePage() {
                     name="selectedAppt"
                     checked={selectedAppt?.id === a.id}
                     onChange={() => setSelectedAppt(a)}
+                    aria-label={`Select appointment for ${a.patientName}`}
                   />
                 </td>
                 <td>
@@ -1175,6 +1217,7 @@ export function SchedulePage() {
                     }}
                     onChange={(e) => handleStatusChange(a.id, e.target.value)}
                     defaultValue=""
+                    aria-label={`Change status for ${a.patientName}`}
                   >
                     <option value="">Change Status</option>
                     <option value="scheduled">Scheduled</option>
@@ -1200,7 +1243,9 @@ export function SchedulePage() {
         locations={locations}
         appointmentTypes={appointmentTypes}
         initialData={{
+          patientId: newAppt.patientId,
           providerId: newAppt.providerId,
+          locationId: newAppt.locationId,
           date: newAppt.date,
           time: newAppt.time,
         }}

@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react';
 import { AppointmentCalendar } from '../../components/scheduling/AppointmentCalendar';
 import { TimeSlotSelector } from '../../components/scheduling/TimeSlotSelector';
 import { AppointmentConfirmation } from '../../components/scheduling/AppointmentConfirmation';
+import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
+import { API_BASE_URL } from '../../utils/apiBase';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const API_BASE = API_BASE_URL;
 
 interface Provider {
   id: string;
@@ -40,6 +42,7 @@ interface BookingSettings {
 type BookingStep = 'type' | 'provider' | 'date' | 'time' | 'confirm' | 'success';
 
 export default function BookAppointmentPage() {
+  const { sessionToken, tenantId } = usePatientPortalAuth();
   const [currentStep, setCurrentStep] = useState<BookingStep>('type');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,10 +64,15 @@ export default function BookAppointmentPage() {
 
   // Load initial data
   useEffect(() => {
+    if (!sessionToken || !tenantId) {
+      setError('Please sign in to book an appointment.');
+      return;
+    }
+
     loadSettings();
     loadProviders();
     loadAppointmentTypes();
-  }, []);
+  }, [sessionToken, tenantId]);
 
   // Load available dates when provider and type are selected
   useEffect(() => {
@@ -82,20 +90,17 @@ export default function BookAppointmentPage() {
     }
   }, [selectedDate, selectedProvider, selectedType]);
 
-  const getAuthToken = () => {
-    return localStorage.getItem('patientPortalToken');
-  };
-
   const getHeaders = () => {
     return {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${getAuthToken()}`,
-      'x-tenant-id': 'tenant-demo',
+      Authorization: `Bearer ${sessionToken || ''}`,
+      'X-Tenant-ID': tenantId || '',
     };
   };
 
   const loadSettings = async () => {
     try {
+      if (!sessionToken || !tenantId) return;
       const response = await fetch(`${API_BASE}/api/patient-portal/scheduling/settings`, {
         headers: getHeaders(),
       });
@@ -112,6 +117,7 @@ export default function BookAppointmentPage() {
 
   const loadProviders = async () => {
     try {
+      if (!sessionToken || !tenantId) return;
       const response = await fetch(`${API_BASE}/api/patient-portal/scheduling/providers`, {
         headers: getHeaders(),
       });
@@ -128,6 +134,7 @@ export default function BookAppointmentPage() {
 
   const loadAppointmentTypes = async () => {
     try {
+      if (!sessionToken || !tenantId) return;
       const response = await fetch(`${API_BASE}/api/patient-portal/scheduling/appointment-types`, {
         headers: getHeaders(),
       });
@@ -149,6 +156,7 @@ export default function BookAppointmentPage() {
     month: number
   ) => {
     try {
+      if (!sessionToken || !tenantId) return;
       const response = await fetch(
         `${API_BASE}/api/patient-portal/scheduling/available-dates?providerId=${providerId}&appointmentTypeId=${appointmentTypeId}&year=${year}&month=${month}`,
         {
@@ -167,6 +175,11 @@ export default function BookAppointmentPage() {
   };
 
   const loadTimeSlots = async (date: Date, providerId: string, appointmentTypeId: string) => {
+    if (!sessionToken || !tenantId) {
+      setError('Please sign in to book an appointment.');
+      return;
+    }
+
     setLoading(true);
     try {
       const dateStr = date.toISOString().split('T')[0];
@@ -193,6 +206,11 @@ export default function BookAppointmentPage() {
   const handleBookAppointment = async () => {
     if (!selectedProvider || !selectedType || !selectedSlot) {
       setError('Please complete all required fields');
+      return;
+    }
+
+    if (!sessionToken || !tenantId) {
+      setError('Please sign in to book an appointment.');
       return;
     }
 

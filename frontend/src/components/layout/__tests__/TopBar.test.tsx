@@ -138,7 +138,7 @@ describe('TopBar Component', () => {
     renderWithContext();
 
     await user.click(screen.getByRole('button', { name: /Open my account menu/i }));
-    expect(screen.getByText('My Account')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'My Account' })).toBeInTheDocument();
   });
 
   it('renders Logout button', () => {
@@ -169,10 +169,12 @@ describe('TopBar Component', () => {
     const submitButton = screen.getByRole('button', { name: /Submit Feedback/i });
     await user.click(submitButton);
 
-    // Wait for submission
-    await vi.waitFor(() => {
-      expect(window.alert).toHaveBeenCalledWith('Thank you for your feedback!');
-    });
+    await vi.waitFor(
+      () => {
+        expect(window.alert).toHaveBeenCalledWith('Thank you for your feedback!');
+      },
+      { timeout: 2000 },
+    );
   });
 
   it('disables submit when feedback is empty', async () => {

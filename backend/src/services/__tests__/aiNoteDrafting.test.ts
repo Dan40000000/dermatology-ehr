@@ -19,10 +19,10 @@ describe('AINoteDraftingService', () => {
   const providerId = 'provider-123';
 
   beforeEach(() => {
-    service = new AINoteDraftingService();
     jest.clearAllMocks();
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    service = new AINoteDraftingService();
   });
 
   describe('generateNoteDraft', () => {

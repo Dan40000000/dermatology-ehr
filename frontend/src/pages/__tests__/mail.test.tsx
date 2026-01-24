@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 const authMocks = vi.hoisted(() => ({
   session: null as null | {
@@ -138,7 +139,11 @@ describe('MailPage', () => {
   });
 
   it('opens a thread, replies, and archives', async () => {
-    render(<MailPage />);
+    render(
+      <MemoryRouter>
+        <MailPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Inbox');
     fireEvent.click(screen.getByText('Lab results'));
@@ -164,7 +169,11 @@ describe('MailPage', () => {
   });
 
   it('composes a new message', async () => {
-    render(<MailPage />);
+    render(
+      <MemoryRouter>
+        <MailPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Inbox');
     fireEvent.click(screen.getByRole('button', { name: '+ New Message' }));

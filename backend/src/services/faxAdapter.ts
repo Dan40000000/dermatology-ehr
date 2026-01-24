@@ -47,6 +47,12 @@ export interface FaxAdapter {
   receiveWebhook(webhookData: unknown): Promise<InboundFaxData>;
 }
 
+export interface MockFaxAdapterOptions {
+  delayMs?: number;
+  random?: () => number;
+  now?: () => number;
+}
+
 /**
  * MockFaxAdapter
  * Mock implementation for testing and development.
@@ -54,15 +60,26 @@ export interface FaxAdapter {
  */
 export class MockFaxAdapter implements FaxAdapter {
   private sentFaxes: Map<string, FaxStatusResult> = new Map();
+  private delayMs: number;
+  private random: () => number;
+  private now: () => number;
+
+  constructor(options: MockFaxAdapterOptions = {}) {
+    this.delayMs = options.delayMs ?? 2000;
+    this.random = options.random ?? Math.random;
+    this.now = options.now ?? Date.now;
+  }
 
   async sendFax(options: FaxSendOptions): Promise<FaxSendResult> {
     // Simulate network delay
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    if (this.delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    }
 
-    const transmissionId = `TX-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    const transmissionId = `TX-${this.now()}-${this.random().toString(36).substring(7)}`;
 
     // Simulate 90% success rate
-    const success = Math.random() > 0.1;
+    const success = this.random() > 0.1;
 
     if (!success) {
       const errorMessage = "Fax transmission failed: No answer";
@@ -77,7 +94,7 @@ export class MockFaxAdapter implements FaxAdapter {
         transmissionId,
         status: "failed",
         pages: options.pages || 1,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date(this.now()).toISOString(),
         errorMessage,
       };
     }
@@ -93,7 +110,7 @@ export class MockFaxAdapter implements FaxAdapter {
       transmissionId,
       status: "sent",
       pages: options.pages || 1,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date(this.now()).toISOString(),
     };
   }
 
@@ -112,12 +129,12 @@ export class MockFaxAdapter implements FaxAdapter {
 
     return {
       transmissionId:
-        (data.transmissionId as string) || `RX-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+        (data.transmissionId as string) || `RX-${this.now()}-${this.random().toString(36).substring(7)}`,
       from: (data.from as string) || "+15555551234",
       to: (data.to as string) || "+15555550000",
       subject: (data.subject as string) || "Incoming Fax",
       pages: (data.pages as number) || 1,
-      receivedAt: (data.receivedAt as string) || new Date().toISOString(),
+      receivedAt: (data.receivedAt as string) || new Date(this.now()).toISOString(),
       documentUrl: (data.documentUrl as string) || undefined,
       metadata: (data.metadata as Record<string, unknown>) || {},
     };
@@ -130,16 +147,16 @@ export class MockFaxAdapter implements FaxAdapter {
       { from: "+15555559999", subject: "Insurance Authorization", pages: 1 },
     ];
 
-    const randomIndex = Math.floor(Math.random() * samples.length);
+    const randomIndex = Math.floor(this.random() * samples.length);
     const sample = samples[randomIndex]!;
 
     return {
-      transmissionId: `RX-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      transmissionId: `RX-${this.now()}-${this.random().toString(36).substring(7)}`,
       from: sample.from,
       to: "+15555550000",
       subject: sample.subject,
       pages: sample.pages,
-      receivedAt: new Date().toISOString(),
+      receivedAt: new Date(this.now()).toISOString(),
       documentUrl: `/sample-fax-${sample.pages}p.pdf`,
       metadata: { tenantId },
     };

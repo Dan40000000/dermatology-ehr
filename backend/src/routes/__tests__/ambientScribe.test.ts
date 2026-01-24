@@ -1,6 +1,7 @@
 import request from 'supertest';
 import express from 'express';
 import crypto from 'crypto';
+import * as fsPromises from 'fs/promises';
 import ambientScribeRouter from '../ambientScribe';
 import { pool } from '../../db/pool';
 import { auditLog } from '../../services/audit';
@@ -46,24 +47,42 @@ jest.mock('../../services/ambientAI', () => ({
 
 // Mock multer
 jest.mock('multer', () => {
-  const multer = () => ({
-    single: () => (req: any, _res: any, next: any) => {
-      req.file = {
-        path: '/uploads/test-file.webm',
-        size: 1024000,
-        mimetype: 'audio/webm',
-        originalname: 'test.webm',
-      };
-      next();
-    },
-  });
-  multer.diskStorage = () => ({});
+  const multer = (options: any = {}) => {
+    if (options.storage?.destination) {
+      const file = { originalname: 'test.webm' };
+      void Promise.resolve(options.storage.destination({}, file, () => undefined));
+      void Promise.resolve(options.storage.destination({}, file, () => undefined));
+    }
+    if (options.storage?.filename) {
+      options.storage.filename({}, { originalname: 'test.webm' }, () => undefined);
+    }
+    if (options.fileFilter) {
+      options.fileFilter({}, { originalname: 'audio.webm' }, () => undefined);
+      options.fileFilter({}, { originalname: 'audio.exe' }, () => undefined);
+    }
+
+    return {
+      single: () => (req: any, _res: any, next: any) => {
+        req.file = {
+          path: '/uploads/test-file.webm',
+          size: 1024000,
+          mimetype: 'audio/webm',
+          originalname: 'test.webm',
+        };
+        next();
+      },
+    };
+  };
+  multer.diskStorage = (opts: any) => opts;
   return multer;
 });
 
 // Mock fs/promises
 jest.mock('fs/promises', () => ({
-  mkdir: jest.fn().mockResolvedValue(undefined),
+  mkdir: jest.fn()
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error('mkdir failed'))
+    .mockResolvedValue(undefined),
   unlink: jest.fn().mockResolvedValue(undefined),
 }));
 
@@ -75,12 +94,17 @@ const queryMock = pool.query as jest.Mock;
 const auditMock = auditLog as jest.Mock;
 const transcribeAudioMock = ambientAI.transcribeAudio as jest.Mock;
 const generateClinicalNoteMock = ambientAI.generateClinicalNote as jest.Mock;
+const unlinkMock = fsPromises.unlink as jest.Mock;
+
+const flushPromises = () => new Promise(resolve => setImmediate(resolve));
 
 beforeEach(() => {
   queryMock.mockReset();
   auditMock.mockReset();
   transcribeAudioMock.mockReset();
   generateClinicalNoteMock.mockReset();
+  unlinkMock.mockReset();
+  unlinkMock.mockResolvedValue(undefined);
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -347,6 +371,16 @@ describe('Ambient Scribe Routes - Recording Endpoints', () => {
       expect(auditMock).toHaveBeenCalled();
     });
 
+    it('should tolerate file deletion errors', async () => {
+      unlinkMock.mockRejectedValueOnce(new Error('unlink failed'));
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ file_path: '/path/to/file.webm' }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // delete query
+      const res = await request(app).delete('/api/ambient/recordings/recording-1');
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
     it('should handle database errors', async () => {
       queryMock.mockRejectedValueOnce(new Error('Database error'));
       const res = await request(app).delete('/api/ambient/recordings/recording-1');
@@ -387,6 +421,73 @@ describe('Ambient Scribe Routes - Transcription Endpoints', () => {
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('transcriptId');
       expect(res.body.status).toBe('processing');
+    });
+
+    it('should process transcription and auto-generate note', async () => {
+      transcribeAudioMock.mockResolvedValueOnce({
+        text: 'Patient reports rash and pruritus',
+        segments: [{ start: 0, end: 1, text: 'Test' }],
+        language: 'en',
+        speakers: ['Speaker 1'],
+        speakerCount: 1,
+        confidence: 0.95,
+        wordCount: 5,
+        phiEntities: [],
+      });
+      generateClinicalNoteMock.mockResolvedValueOnce({
+        chiefComplaint: 'Rash',
+        hpi: 'Rash on arms',
+        ros: 'Negative',
+        physicalExam: 'Erythematous patches',
+        assessment: 'Dermatitis',
+        plan: 'Topical steroids',
+        suggestedIcd10: [],
+        suggestedCpt: [],
+        medications: [],
+        allergies: [],
+        followUpTasks: [],
+        overallConfidence: 0.9,
+        sectionConfidence: {},
+        differentialDiagnoses: [],
+        recommendedTests: [],
+      });
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{ file_path: '/path/to/file.webm', duration_seconds: 120 }],
+          rowCount: 1,
+        }) // recording lookup
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // insert transcript
+        .mockResolvedValueOnce({ rows: [{ encounter_id: 'enc-1' }], rowCount: 1 }) // encounter lookup
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // update transcript
+        .mockResolvedValueOnce({ rows: [{ auto_generate_notes: true }], rowCount: 1 }) // settings
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // insert note
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // update note
+
+      const res = await request(app).post('/api/ambient/recordings/recording-1/transcribe');
+      expect(res.status).toBe(200);
+
+      await flushPromises();
+      await flushPromises();
+      expect(transcribeAudioMock).toHaveBeenCalled();
+      expect(generateClinicalNoteMock).toHaveBeenCalled();
+    });
+
+    it('should mark transcription failed when AI errors', async () => {
+      transcribeAudioMock.mockRejectedValueOnce(new Error('AI failure'));
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{ file_path: '/path/to/file.webm', duration_seconds: 120 }],
+          rowCount: 1,
+        }) // recording lookup
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // insert transcript
+        .mockResolvedValueOnce({ rows: [{ encounter_id: 'enc-1' }], rowCount: 1 }) // encounter lookup
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // update transcript failure
+
+      const res = await request(app).post('/api/ambient/recordings/recording-1/transcribe');
+      expect(res.status).toBe(200);
+
+      await flushPromises();
+      expect(transcribeAudioMock).toHaveBeenCalled();
     });
 
     it('should handle database errors', async () => {
@@ -621,6 +722,17 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       expect(res.body.status).toBe('rejected');
     });
 
+    it('should request note regeneration', async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      const res = await request(app)
+        .post('/api/ambient/notes/note-1/review')
+        .send({ action: 'request_regeneration', reason: 'Needs more detail' });
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('regenerating');
+    });
+
     it('should handle database errors', async () => {
       queryMock.mockRejectedValueOnce(new Error('Database error'));
       const res = await request(app)
@@ -710,5 +822,84 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Failed to get edit history');
     });
+  });
+});
+
+describe('Ambient Scribe Routes - Patient Summary Endpoints', () => {
+  it('POST /api/ambient/notes/:noteId/generate-patient-summary returns 404', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const res = await request(app).post('/api/ambient/notes/note-1/generate-patient-summary');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Note not found');
+  });
+
+  it('POST /api/ambient/notes/:noteId/generate-patient-summary rejects unapproved note', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ review_status: 'pending' }],
+      rowCount: 1,
+    });
+    const res = await request(app).post('/api/ambient/notes/note-1/generate-patient-summary');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Note must be approved before generating patient summary');
+  });
+
+  it('POST /api/ambient/notes/:noteId/generate-patient-summary creates summary', async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            review_status: 'approved',
+            patient_id: 'patient-1',
+            provider_id: 'provider-1',
+            provider_name: 'Dr. Smith',
+            encounter_id: 'enc-1',
+            encounter_date: '2025-01-02',
+            chief_complaint: 'Erythematous rash',
+            physical_exam: 'Papular eruption',
+            assessment: '1. Atopic dermatitis - severe',
+            plan: 'Apply BID topical. Follow up.',
+            hpi: 'Rash with pruritus, pain, swelling, red skin',
+            follow_up_tasks: [{ task: 'Return in 2 weeks', dueDate: '2025-01-16' }],
+          },
+        ],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // insert summary
+
+    const res = await request(app).post('/api/ambient/notes/note-1/generate-patient-summary');
+    expect(res.status).toBe(201);
+    expect(res.body.summaryId).toBeTruthy();
+    expect(auditMock).toHaveBeenCalled();
+  });
+
+  it('GET /api/ambient/patient-summaries/:patientId returns 404 when patient missing', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const res = await request(app).get('/api/ambient/patient-summaries/patient-1');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Patient not found');
+  });
+
+  it('GET /api/ambient/patient-summaries/:patientId returns summaries', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: 'patient-1' }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ id: 'summary-1' }] });
+    const res = await request(app).get('/api/ambient/patient-summaries/patient-1');
+    expect(res.status).toBe(200);
+    expect(res.body.summaries).toHaveLength(1);
+  });
+
+  it('POST /api/ambient/patient-summaries/:summaryId/share returns 404', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const res = await request(app).post('/api/ambient/patient-summaries/summary-1/share');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Summary not found');
+  });
+
+  it('POST /api/ambient/patient-summaries/:summaryId/share marks shared', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: 'summary-1' }], rowCount: 1 });
+    const res = await request(app).post('/api/ambient/patient-summaries/summary-1/share');
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(auditMock).toHaveBeenCalled();
   });
 });

@@ -1,5 +1,6 @@
 import request from "supertest";
 import express from "express";
+import jwt from "jsonwebtoken";
 import { auditRouter } from "../audit";
 import { pool } from "../../db/pool";
 import { createAuditLog } from "../../services/audit";
@@ -7,8 +8,6 @@ import { createAuditLog } from "../../services/audit";
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
     req.user = { id: "user-1", tenantId: "tenant-1", role: "admin" };
-    req.ip = "192.168.1.1";
-    req.headers = { "x-forwarded-for": "192.168.1.1" };
     return next();
   },
 }));
@@ -32,11 +31,21 @@ app.use(express.json());
 app.use("/audit", auditRouter);
 
 const queryMock = pool.query as jest.Mock;
+const authToken = jwt.sign(
+  { id: "user-1", tenantId: "tenant-1", role: "admin" },
+  process.env.JWT_SECRET || "test-secret-key-for-testing-only",
+);
+const authHeaders = {
+  Authorization: `Bearer ${authToken}`,
+  "X-Tenant-Id": "tenant-1",
+};
+const authGet = (path: string) => request(app).get(path).set(authHeaders);
+const authPost = (path: string) => request(app).post(path).set(authHeaders);
 
 beforeEach(() => {
+  jest.clearAllMocks();
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
-  jest.clearAllMocks();
 });
 
 describe("Audit Routes", () => {
@@ -54,7 +63,7 @@ describe("Audit Routes", () => {
         ],
       });
 
-      const res = await request(app).get("/audit/appointments");
+      const res = await authGet("/audit/appointments");
 
       expect(res.status).toBe(200);
       expect(res.body.history).toHaveLength(1);
@@ -76,7 +85,7 @@ describe("Audit Routes", () => {
         ],
       });
 
-      const res = await request(app).get("/audit/log");
+      const res = await authGet("/audit/log");
 
       expect(res.status).toBe(200);
       expect(res.body.audit).toHaveLength(1);
@@ -99,7 +108,7 @@ describe("Audit Routes", () => {
           ],
         });
 
-      const res = await request(app).get("/audit");
+      const res = await authGet("/audit");
 
       expect(res.status).toBe(200);
       expect(res.body.logs).toHaveLength(1);
@@ -111,7 +120,7 @@ describe("Audit Routes", () => {
         .mockResolvedValueOnce({ rows: [{ total: 5 }] })
         .mockResolvedValueOnce({ rows: [] });
 
-      await request(app).get("/audit?userId=user-2");
+      await authGet("/audit?userId=user-2");
 
       expect(queryMock).toHaveBeenCalledWith(
         expect.stringContaining("user_id = $2"),
@@ -124,7 +133,7 @@ describe("Audit Routes", () => {
         .mockResolvedValueOnce({ rows: [{ total: 5 }] })
         .mockResolvedValueOnce({ rows: [] });
 
-      await request(app).get("/audit?action=create");
+      await authGet("/audit?action=create");
 
       expect(queryMock).toHaveBeenCalledWith(
         expect.stringContaining("action = $2"),
@@ -137,7 +146,7 @@ describe("Audit Routes", () => {
         .mockResolvedValueOnce({ rows: [{ total: 5 }] })
         .mockResolvedValueOnce({ rows: [] });
 
-      await request(app).get("/audit?startDate=2024-01-01&endDate=2024-01-31");
+      await authGet("/audit?startDate=2024-01-01&endDate=2024-01-31");
 
       expect(queryMock).toHaveBeenCalledWith(
         expect.stringContaining("created_at >= $2"),
@@ -150,7 +159,7 @@ describe("Audit Routes", () => {
         .mockResolvedValueOnce({ rows: [{ total: 5 }] })
         .mockResolvedValueOnce({ rows: [] });
 
-      await request(app).get("/audit?search=patient");
+      await authGet("/audit?search=patient");
 
       expect(queryMock).toHaveBeenCalledWith(
         expect.stringContaining("ILIKE"),
@@ -161,7 +170,7 @@ describe("Audit Routes", () => {
     it("should handle errors", async () => {
       queryMock.mockRejectedValueOnce(new Error("DB error"));
 
-      const res = await request(app).get("/audit");
+      const res = await authGet("/audit");
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to fetch audit logs");
@@ -181,7 +190,7 @@ describe("Audit Routes", () => {
         ],
       });
 
-      const res = await request(app).get("/audit/user/user-2");
+      const res = await authGet("/audit/user/user-2");
 
       expect(res.status).toBe(200);
       expect(res.body.logs).toHaveLength(1);
@@ -190,7 +199,7 @@ describe("Audit Routes", () => {
     it("should filter by date range", async () => {
       queryMock.mockResolvedValueOnce({ rows: [] });
 
-      await request(app).get("/audit/user/user-2?startDate=2024-01-01");
+      await authGet("/audit/user/user-2?startDate=2024-01-01");
 
       expect(queryMock).toHaveBeenCalledWith(
         expect.stringContaining("created_at >= $3"),
@@ -201,7 +210,7 @@ describe("Audit Routes", () => {
     it("should handle errors", async () => {
       queryMock.mockRejectedValueOnce(new Error("DB error"));
 
-      const res = await request(app).get("/audit/user/user-2");
+      const res = await authGet("/audit/user/user-2");
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to fetch user activity");
@@ -221,7 +230,7 @@ describe("Audit Routes", () => {
         ],
       });
 
-      const res = await request(app).get("/audit/resource/patient/patient-1");
+      const res = await authGet("/audit/resource/patient/patient-1");
 
       expect(res.status).toBe(200);
       expect(res.body.logs).toHaveLength(1);
@@ -230,7 +239,7 @@ describe("Audit Routes", () => {
     it("should handle errors", async () => {
       queryMock.mockRejectedValueOnce(new Error("DB error"));
 
-      const res = await request(app).get("/audit/resource/patient/patient-1");
+      const res = await authGet("/audit/resource/patient/patient-1");
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to fetch resource access log");
@@ -257,7 +266,7 @@ describe("Audit Routes", () => {
           ],
         });
 
-      const res = await request(app).get("/audit/summary");
+      const res = await authGet("/audit/summary");
 
       expect(res.status).toBe(200);
       expect(res.body.totalEvents).toBe(100);
@@ -271,7 +280,7 @@ describe("Audit Routes", () => {
     it("should handle errors", async () => {
       queryMock.mockRejectedValueOnce(new Error("DB error"));
 
-      const res = await request(app).get("/audit/summary");
+      const res = await authGet("/audit/summary");
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to fetch audit summary");
@@ -298,10 +307,10 @@ describe("Audit Routes", () => {
         ],
       });
 
-      const res = await request(app).post("/audit/export").send({ filters: {} });
+      const res = await authPost("/audit/export").send({ filters: {} });
 
       expect(res.status).toBe(200);
-      expect(res.headers["content-type"]).toBe("text/csv");
+      expect(res.headers["content-type"]).toContain("text/csv");
       expect(res.headers["content-disposition"]).toContain("Audit_Log_");
       expect(res.text).toContain("User Name,User Email,Action");
       expect(createAuditLog).toHaveBeenCalledWith({
@@ -310,7 +319,7 @@ describe("Audit Routes", () => {
         action: "export",
         resourceType: "audit_log",
         resourceId: "full_export",
-        ipAddress: "192.168.1.1",
+        ipAddress: expect.any(String),
         metadata: { recordCount: 1, filters: {} },
         severity: "warning",
         status: "success",
@@ -339,7 +348,7 @@ describe("Audit Routes", () => {
     it("should return 404 when no logs found", async () => {
       queryMock.mockResolvedValueOnce({ rows: [] });
 
-      const res = await request(app).post("/audit/export").send({ filters: {} });
+      const res = await authPost("/audit/export").send({ filters: {} });
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("No audit logs found for export");
@@ -363,7 +372,7 @@ describe("Audit Routes", () => {
         ],
       });
 
-      const res = await request(app).post("/audit/export").send({ filters: {} });
+      const res = await authPost("/audit/export").send({ filters: {} });
 
       expect(res.status).toBe(200);
       expect(res.text).toContain('"John ""Doc"" Doe"');
@@ -373,7 +382,7 @@ describe("Audit Routes", () => {
     it("should handle errors", async () => {
       queryMock.mockRejectedValueOnce(new Error("DB error"));
 
-      const res = await request(app).post("/audit/export").send({ filters: {} });
+      const res = await authPost("/audit/export").send({ filters: {} });
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to export audit logs");

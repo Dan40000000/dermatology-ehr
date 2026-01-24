@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchProtocol } from '../../api';
-import { ProtocolWithDetails } from '../../types/protocol';
+import type { ProtocolWithDetails } from '../../types/protocol';
 
 interface ProtocolDetailsModalProps {
   protocolId: string;

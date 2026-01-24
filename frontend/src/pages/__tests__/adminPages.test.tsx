@@ -165,7 +165,7 @@ describe('Admin pages', () => {
     expect(await screen.findByText('Admin Settings')).toBeInTheDocument();
     expect(await screen.findByText('Main Clinic')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '+ Add facilitie' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Add Facility' }));
     fireEvent.change(screen.getByPlaceholderText('Main Clinic'), { target: { value: 'New Facility' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(fetchSpy).toHaveBeenCalled());

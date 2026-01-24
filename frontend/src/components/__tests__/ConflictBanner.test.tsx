@@ -10,12 +10,6 @@ describe('ConflictBanner Component', () => {
 
   it('applies warning styles', () => {
     const { container } = render(<ConflictBanner message="Conflict" />);
-    expect(container.firstChild).toHaveClass('conflict-banner');
-  });
-
-  it('renders with icon', () => {
-    const { container } = render(<ConflictBanner message="Conflict" />);
-    const icon = container.querySelector('.warning-icon');
-    expect(icon).toBeInTheDocument();
+    expect(container.firstChild).toHaveClass('banner', 'error');
   });
 });

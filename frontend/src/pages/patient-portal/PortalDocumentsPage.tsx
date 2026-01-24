@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
-import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
+import { usePatientPortalAuth, patientPortalFetch } from '../../contexts/PatientPortalAuthContext';
+import { API_BASE_URL } from '../../utils/apiBase';
+
+const API_URL = API_BASE_URL;
 
 interface Document {
   id: string;
@@ -17,7 +20,7 @@ interface Document {
 }
 
 export function PortalDocumentsPage() {
-  const { token } = usePatientPortalAuth();
+  const { sessionToken, tenantId } = usePatientPortalAuth();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -26,23 +29,18 @@ export function PortalDocumentsPage() {
 
   useEffect(() => {
     fetchDocuments();
-  }, [token]);
+  }, [sessionToken, tenantId]);
 
   const fetchDocuments = async () => {
-    if (!token) return;
+    if (!sessionToken || !tenantId) {
+      setLoading(false);
+      return;
+    }
 
+    setLoading(true);
     try {
-      const response = await fetch('/api/patient-portal-data/documents', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setDocuments(data.documents || []);
-      }
+      const data = await patientPortalFetch('/api/patient-portal-data/documents');
+      setDocuments(data.documents || []);
     } catch (error) {
       console.error('Failed to fetch documents:', error);
     } finally {
@@ -51,10 +49,13 @@ export function PortalDocumentsPage() {
   };
 
   const handleDownload = async (doc: Document) => {
+    if (!sessionToken || !tenantId) return;
+
     try {
-      const response = await fetch(`/api/patient-portal-data/documents/${doc.id}/download`, {
+      const response = await fetch(`${API_URL}/api/patient-portal-data/documents/${doc.id}/download`, {
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Bearer ${sessionToken}`,
+          'X-Tenant-ID': tenantId,
         },
       });
 

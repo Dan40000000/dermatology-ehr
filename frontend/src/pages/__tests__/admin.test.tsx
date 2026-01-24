@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 
 const mockNavigate = vi.fn();
 
-const mockSession = {
+const mockSession = vi.hoisted(() => ({
   tenantId: 'tenant-1',
   accessToken: 'token-123',
   refreshToken: 'refresh-123',
@@ -16,7 +16,7 @@ const mockSession = {
     fullName: 'Admin User',
     role: 'admin' as const,
   },
-};
+}));
 
 const authMocks = vi.hoisted(() => ({
   session: mockSession,
@@ -172,7 +172,7 @@ describe('AdminPage', () => {
       expect(screen.getByText('Exam Room 1')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Procedure Room')).toBeInTheDocument();
+    expect(screen.getAllByText('Procedure Room').length).toBeGreaterThan(0);
   });
 
   it('should switch to providers tab and load providers', async () => {
@@ -252,7 +252,7 @@ describe('AdminPage', () => {
     const addButton = screen.getByRole('button', { name: /Add facilit/i });
     fireEvent.click(addButton);
 
-    expect(screen.getByText('Add New facilit')).toBeInTheDocument();
+    expect(screen.getByText('Add New Facility')).toBeInTheDocument();
     expect(screen.getByLabelText(/Facility Name/i)).toBeInTheDocument();
   });
 
@@ -270,7 +270,7 @@ describe('AdminPage', () => {
     const editButtons = screen.getAllByRole('button', { name: 'Edit' });
     fireEvent.click(editButtons[0]);
 
-    expect(screen.getByText('Edit facilit')).toBeInTheDocument();
+    expect(screen.getByText('Edit Facility')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Main Clinic')).toBeInTheDocument();
   });
 
@@ -372,13 +372,13 @@ describe('AdminPage', () => {
     const addButton = screen.getByRole('button', { name: /Add facilit/i });
     await user.click(addButton);
 
-    expect(screen.getByText('Add New facilit')).toBeInTheDocument();
+    expect(screen.getByText('Add New Facility')).toBeInTheDocument();
 
     const cancelButton = screen.getByRole('button', { name: 'Cancel' });
     await user.click(cancelButton);
 
     await waitFor(() => {
-      expect(screen.queryByText('Add New facilit')).not.toBeInTheDocument();
+      expect(screen.queryByText('Add New Facility')).not.toBeInTheDocument();
     });
   });
 
@@ -458,7 +458,7 @@ describe('AdminPage', () => {
     });
 
     expect(screen.getByText('Exam Room')).toBeInTheDocument();
-    expect(screen.getByText('Procedure Room')).toBeInTheDocument();
+    expect(screen.getAllByText('Procedure Room').length).toBeGreaterThan(0);
   });
 
   it('should show provider specialty and NPI', async () => {

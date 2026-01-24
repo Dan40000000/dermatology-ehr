@@ -41,8 +41,16 @@ const saveInsuranceCardPhotoMock = signatureService.saveInsuranceCardPhoto as je
 const validateSignatureDataMock = signatureService.validateSignatureData as jest.Mock;
 const auditLogMock = audit.auditLog as jest.Mock;
 
+const patientId = "11111111-1111-4111-8111-111111111111";
+const appointmentId = "22222222-2222-4222-8222-222222222222";
+const sessionId = "33333333-3333-4333-8333-333333333333";
+const missingPatientId = "99999999-9999-4999-8999-999999999999";
+const missingAppointmentId = "88888888-8888-4888-8888-888888888888";
+const missingSessionId = "77777777-7777-4777-8777-777777777777";
+
 beforeEach(() => {
   jest.clearAllMocks();
+  queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
   auditLogMock.mockResolvedValue(undefined);
 });
@@ -78,7 +86,7 @@ describe("Kiosk Routes", () => {
       queryMock.mockResolvedValueOnce({
         rows: [
           {
-            id: "patient-1",
+            id: patientId,
             firstName: "John",
             lastName: "Doe",
             dob: "1990-01-01",
@@ -101,7 +109,7 @@ describe("Kiosk Routes", () => {
       queryMock.mockResolvedValueOnce({
         rows: [
           {
-            id: "patient-1",
+            id: patientId,
             firstName: "John",
             lastName: "Doe",
             phone: "555-1234",
@@ -123,7 +131,7 @@ describe("Kiosk Routes", () => {
       queryMock.mockResolvedValueOnce({
         rows: [
           {
-            id: "patient-1",
+            id: patientId,
             firstName: "John",
             lastName: "Doe",
             mrn: "MRN123",
@@ -193,7 +201,7 @@ describe("Kiosk Routes", () => {
       queryMock.mockResolvedValueOnce({
         rows: [
           {
-            id: "appt-1",
+            id: appointmentId,
             scheduledStart: "2024-01-01T10:00:00Z",
             patientFirstName: "John",
             patientLastName: "Doe",
@@ -224,30 +232,30 @@ describe("Kiosk Routes", () => {
   describe("POST /api/kiosk/checkin/start", () => {
     it("should start checkin session", async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: "patient-1" }] })
-        .mockResolvedValueOnce({ rows: [{ id: "appt-1" }] })
+        .mockResolvedValueOnce({ rows: [{ id: patientId }] })
+        .mockResolvedValueOnce({ rows: [{ id: appointmentId }] })
         .mockResolvedValueOnce({ rows: [] });
 
       const res = await request(app).post("/api/kiosk/checkin/start").send({
-        patientId: "patient-1",
-        appointmentId: "appt-1",
+        patientId,
+        appointmentId,
         verificationMethod: "dob",
         verificationValue: "1990-01-01",
       });
 
       expect(res.status).toBe(201);
       expect(res.body.sessionId).toBe("uuid-test-123");
-      expect(res.body.patientId).toBe("patient-1");
+      expect(res.body.patientId).toBe(patientId);
       expect(auditLogMock).toHaveBeenCalled();
     });
 
     it("should start checkin without appointment", async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: "patient-1" }] })
+        .mockResolvedValueOnce({ rows: [{ id: patientId }] })
         .mockResolvedValueOnce({ rows: [] });
 
       const res = await request(app).post("/api/kiosk/checkin/start").send({
-        patientId: "patient-1",
+        patientId,
         verificationMethod: "dob",
         verificationValue: "1990-01-01",
       });
@@ -268,7 +276,7 @@ describe("Kiosk Routes", () => {
       queryMock.mockResolvedValueOnce({ rows: [] });
 
       const res = await request(app).post("/api/kiosk/checkin/start").send({
-        patientId: "patient-999",
+        patientId: missingPatientId,
         verificationMethod: "dob",
         verificationValue: "1990-01-01",
       });
@@ -279,12 +287,12 @@ describe("Kiosk Routes", () => {
 
     it("should return 404 when appointment not found", async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ id: "patient-1" }] })
+        .mockResolvedValueOnce({ rows: [{ id: patientId }] })
         .mockResolvedValueOnce({ rows: [] });
 
       const res = await request(app).post("/api/kiosk/checkin/start").send({
-        patientId: "patient-1",
-        appointmentId: "appt-999",
+        patientId,
+        appointmentId: missingAppointmentId,
         verificationMethod: "dob",
         verificationValue: "1990-01-01",
       });
@@ -297,7 +305,7 @@ describe("Kiosk Routes", () => {
       queryMock.mockRejectedValueOnce(new Error("DB error"));
 
       const res = await request(app).post("/api/kiosk/checkin/start").send({
-        patientId: "patient-1",
+        patientId,
         verificationMethod: "dob",
         verificationValue: "1990-01-01",
       });
@@ -312,24 +320,24 @@ describe("Kiosk Routes", () => {
       queryMock.mockResolvedValueOnce({
         rows: [
           {
-            id: "session-1",
-            patient_id: "patient-1",
+            id: sessionId,
+            patient_id: patientId,
             patientFirstName: "John",
             patientLastName: "Doe",
           },
         ],
       });
 
-      const res = await request(app).get("/api/kiosk/checkin/session-1");
+      const res = await request(app).get(`/api/kiosk/checkin/${sessionId}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.session.id).toBe("session-1");
+      expect(res.body.session.id).toBe(sessionId);
     });
 
     it("should return 404 when session not found", async () => {
       queryMock.mockResolvedValueOnce({ rows: [] });
 
-      const res = await request(app).get("/api/kiosk/checkin/session-999");
+      const res = await request(app).get(`/api/kiosk/checkin/${missingSessionId}`);
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("Session not found");
@@ -338,7 +346,7 @@ describe("Kiosk Routes", () => {
     it("should return 500 on database error", async () => {
       queryMock.mockRejectedValueOnce(new Error("DB error"));
 
-      const res = await request(app).get("/api/kiosk/checkin/session-1");
+      const res = await request(app).get(`/api/kiosk/checkin/${sessionId}`);
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to fetch session");
@@ -348,7 +356,7 @@ describe("Kiosk Routes", () => {
   describe("PUT /api/kiosk/checkin/:sessionId/demographics", () => {
     it("should update demographics", async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ patientId: "patient-1" }] })
+        .mockResolvedValueOnce({ rows: [{ patientId }] })
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -404,7 +412,7 @@ describe("Kiosk Routes", () => {
   describe("PUT /api/kiosk/checkin/:sessionId/insurance", () => {
     it("should update insurance", async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ patientId: "patient-1" }] })
+        .mockResolvedValueOnce({ rows: [{ patientId }] })
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -424,7 +432,7 @@ describe("Kiosk Routes", () => {
       const res = await request(app)
         .put("/api/kiosk/checkin/session-1/insurance")
         .send({
-          invalidField: "value",
+          insuranceMemberId: 123,
         });
 
       expect(res.status).toBe(400);
@@ -460,7 +468,7 @@ describe("Kiosk Routes", () => {
   describe("POST /api/kiosk/checkin/:sessionId/insurance-photo", () => {
     it("should upload insurance card photo", async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ patientId: "patient-1" }] })
+        .mockResolvedValueOnce({ rows: [{ patientId }] })
         .mockResolvedValueOnce({ rows: [] });
 
       saveInsuranceCardPhotoMock.mockResolvedValue({
@@ -506,7 +514,7 @@ describe("Kiosk Routes", () => {
     });
 
     it("should return 500 on save error", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [{ patientId: "patient-1" }] });
+      queryMock.mockResolvedValueOnce({ rows: [{ patientId }] });
       saveInsuranceCardPhotoMock.mockRejectedValue(new Error("Save failed"));
 
       const res = await request(app)
@@ -522,7 +530,7 @@ describe("Kiosk Routes", () => {
   });
 
   describe("POST /api/kiosk/checkin/:sessionId/signature", () => {
-    const validFormId = "00000000-0000-0000-0000-000000000001";
+    const validFormId = "44444444-4444-4444-8444-444444444444";
 
     beforeEach(() => {
       queryMock.mockReset();
@@ -535,7 +543,7 @@ describe("Kiosk Routes", () => {
 
     it("should save signature", async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ patientId: "patient-1" }] })
+        .mockResolvedValueOnce({ rows: [{ patientId }] })
         .mockResolvedValueOnce({
           rows: [
             {
@@ -579,7 +587,7 @@ describe("Kiosk Routes", () => {
     });
 
     it("should return 400 for invalid signature data", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [{ patientId: "patient-1" }] });
+      queryMock.mockResolvedValueOnce({ rows: [{ patientId }] });
       validateSignatureDataMock.mockReturnValue(false);
 
       const res = await request(app)
@@ -601,7 +609,7 @@ describe("Kiosk Routes", () => {
         .post("/api/kiosk/checkin/session-999/signature")
         .send({
           signatureData: "data:image/png;base64,abc",
-          consentFormId: "00000000-0000-0000-0000-000000000001",
+          consentFormId: validFormId,
         });
 
       expect(res.status).toBe(404);
@@ -610,7 +618,7 @@ describe("Kiosk Routes", () => {
 
     it("should return 404 when consent form not found", async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ patientId: "patient-1" }] })
+        .mockResolvedValueOnce({ rows: [{ patientId }] })
         .mockResolvedValueOnce({ rows: [] });
       validateSignatureDataMock.mockReturnValue(true);
 
@@ -618,7 +626,7 @@ describe("Kiosk Routes", () => {
         .post("/api/kiosk/checkin/session-1/signature")
         .send({
           signatureData: "data:image/png;base64,abc",
-          consentFormId: "00000000-0000-0000-0000-000000000999",
+          consentFormId: "55555555-5555-4555-8555-555555555555",
         });
 
       expect(res.status).toBe(404);
@@ -627,8 +635,8 @@ describe("Kiosk Routes", () => {
 
     it("should return 500 on save error", async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [{ patientId: "patient-1" }] })
-        .mockResolvedValueOnce({ rows: [{ id: "00000000-0000-0000-0000-000000000001", formContent: "Terms", version: "1.0" }] });
+        .mockResolvedValueOnce({ rows: [{ patientId }] })
+        .mockResolvedValueOnce({ rows: [{ id: validFormId, formContent: "Terms", version: "1.0" }] });
       validateSignatureDataMock.mockReturnValue(true);
       saveSignatureMock.mockRejectedValue(new Error("Save failed"));
 
@@ -636,7 +644,7 @@ describe("Kiosk Routes", () => {
         .post("/api/kiosk/checkin/session-1/signature")
         .send({
           signatureData: "data:image/png;base64,abc",
-          consentFormId: "00000000-0000-0000-0000-000000000001",
+          consentFormId: validFormId,
         });
 
       expect(res.status).toBe(500);
@@ -653,7 +661,7 @@ describe("Kiosk Routes", () => {
     it("should complete checkin", async () => {
       queryMock
         .mockResolvedValueOnce({
-          rows: [{ patientId: "patient-1", appointmentId: "appt-1" }],
+          rows: [{ patientId, appointmentId }],
         })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -661,14 +669,14 @@ describe("Kiosk Routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.patientId).toBe("patient-1");
-      expect(res.body.appointmentId).toBe("appt-1");
+      expect(res.body.patientId).toBe(patientId);
+      expect(res.body.appointmentId).toBe(appointmentId);
       expect(auditLogMock).toHaveBeenCalled();
     });
 
     it("should complete checkin without appointment", async () => {
       queryMock.mockResolvedValueOnce({
-        rows: [{ patientId: "patient-1", appointmentId: null }],
+        rows: [{ patientId, appointmentId: null }],
       });
 
       const res = await request(app).post("/api/kiosk/checkin/session-1/complete");
@@ -704,7 +712,7 @@ describe("Kiosk Routes", () => {
     });
 
     it("should cancel checkin", async () => {
-      queryMock.mockResolvedValueOnce({ rows: [{ id: "session-1" }] });
+      queryMock.mockResolvedValueOnce({ rows: [{ id: sessionId }] });
 
       const res = await request(app).post("/api/kiosk/checkin/session-1/cancel");
 

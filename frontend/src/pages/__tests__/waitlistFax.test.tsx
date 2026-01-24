@@ -82,6 +82,7 @@ vi.mock('../../components/ui', () => ({
 
 import { WaitlistPage } from '../WaitlistPage';
 import { FaxPage } from '../FaxPage';
+import { MemoryRouter } from 'react-router-dom';
 
 const adminSession = {
   tenantId: 'tenant-1',
@@ -329,7 +330,11 @@ describe('FaxPage', () => {
   });
 
   it('sends, previews, marks read, assigns, and downloads faxes', async () => {
-    render(<FaxPage />);
+    render(
+      <MemoryRouter>
+        <FaxPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Referral');
     fireEvent.click(screen.getByRole('button', { name: 'Send Fax' }));

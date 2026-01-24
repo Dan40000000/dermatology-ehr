@@ -10,7 +10,7 @@ import {
 } from '../useAppointments';
 import type { ReactNode } from 'react';
 
-const mockSession = {
+const mockSession = vi.hoisted(() => ({
   tenantId: 'tenant-1',
   accessToken: 'token-123',
   refreshToken: 'refresh-123',
@@ -20,7 +20,7 @@ const mockSession = {
     fullName: 'Test User',
     role: 'provider' as const,
   },
-};
+}));
 
 const mockAppointments = [
   {

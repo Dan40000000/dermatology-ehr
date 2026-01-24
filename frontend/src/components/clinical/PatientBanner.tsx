@@ -62,7 +62,7 @@ export function PatientBanner({
 
   if (compact) {
     return (
-      <div className={`patient-banner compact ${className}`}>
+      <div className={`patient-banner compact ${className}`} data-testid="patient-banner">
         <div className="patient-avatar">{initials}</div>
         <div className="patient-info-compact">
           <span className="patient-name">{fullName}</span>
@@ -80,7 +80,7 @@ export function PatientBanner({
   }
 
   return (
-    <div className={`patient-banner ${className}`}>
+    <div className={`patient-banner ${className}`} data-testid="patient-banner">
       <div className="patient-banner-main">
         <div className="patient-avatar large">{initials}</div>
 

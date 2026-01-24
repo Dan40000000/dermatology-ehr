@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchProtocols, applyProtocol } from '../../api';
-import { Protocol } from '../../types/protocol';
+import type { Protocol } from '../../types/protocol';
 
 interface ApplyProtocolModalProps {
   patientId: string;

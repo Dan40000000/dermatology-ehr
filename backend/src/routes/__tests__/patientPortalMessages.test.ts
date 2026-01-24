@@ -425,7 +425,7 @@ describe("Patient Portal Messages routes", () => {
       expect(res.status).toBe(201);
       expect(mockClient.query).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO patient_message_threads"),
-        expect.arrayContaining(["high"])
+        expect.arrayContaining(["urgent"])
       );
     });
 

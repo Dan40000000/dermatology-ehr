@@ -1,9 +1,17 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const authMocks = vi.hoisted(() => ({
+  session: null as null | { tenantId: string; accessToken: string },
+}));
+
 const exportMocks = vi.hoisted(() => ({
   exportToCSV: vi.fn(),
   exportToPDF: vi.fn(),
+}));
+
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => authMocks,
 }));
 
 vi.mock('../../utils/exportUtils', () => ({
@@ -22,6 +30,7 @@ const baseFiltersResponses = [
 ];
 
 beforeEach(() => {
+  authMocks.session = { tenantId: 'tenant-1', accessToken: 'token-1' };
   localStorage.setItem('accessToken', 'token-1');
   vi.spyOn(window, 'alert').mockImplementation(() => {});
 });
@@ -84,7 +93,7 @@ describe('ReportsPage', () => {
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/reports/appointments',
+        expect.stringContaining('/api/reports/appointments'),
         expect.objectContaining({ method: 'POST' })
       )
     );

@@ -111,7 +111,7 @@ describe('PatientsPage', () => {
 
   it('renders patients, supports sorting, paging, searching, and navigation', async () => {
     const patients = buildPatients();
-    apiMocks.fetchPatients.mockResolvedValue({ patients });
+    apiMocks.fetchPatients.mockResolvedValue({ data: patients });
 
     render(<PatientsPage />);
 
@@ -251,7 +251,7 @@ describe('PatientsPage', () => {
         lastVisit: '',
       },
     ];
-    apiMocks.fetchPatients.mockResolvedValueOnce({ patients });
+    apiMocks.fetchPatients.mockResolvedValueOnce({ data: patients });
 
     render(<PatientsPage />);
 
@@ -321,7 +321,7 @@ describe('PatientsPage', () => {
 
   it('renders pagination ellipses and resets the page on search', async () => {
     const patients = buildPatients(120);
-    apiMocks.fetchPatients.mockResolvedValueOnce({ patients });
+    apiMocks.fetchPatients.mockResolvedValueOnce({ data: patients });
 
     render(<PatientsPage />);
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
+import { fetchPortalProfile, updatePortalProfile } from '../../portalApi';
 
 interface PatientProfile {
   id: string;
@@ -23,7 +24,7 @@ interface PatientProfile {
 }
 
 export function PortalProfilePage() {
-  const { patient, token } = usePatientPortalAuth();
+  const { patient, sessionToken, tenantId } = usePatientPortalAuth();
   const [profile, setProfile] = useState<PatientProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -33,35 +34,37 @@ export function PortalProfilePage() {
 
   useEffect(() => {
     fetchProfile();
-  }, [token]);
+  }, [sessionToken, tenantId]);
 
   const fetchProfile = async () => {
-    if (!token) return;
+    if (!sessionToken || !tenantId) {
+      setLoading(false);
+      return;
+    }
 
     try {
-      // For now, use the patient data from auth context
-      // In production, you'd fetch full profile from /api/patient-portal-data/profile
-      if (patient) {
-        setProfile({
-          id: patient.patientId,
-          fullName: patient.fullName,
-          firstName: patient.fullName.split(' ')[0] || '',
-          lastName: patient.fullName.split(' ').slice(1).join(' ') || '',
-          dateOfBirth: '',
-          gender: '',
-          email: patient.email,
-          phone: '',
-          address: '',
-          city: '',
-          state: '',
-          zip: '',
-          emergencyContactName: '',
-          emergencyContactRelationship: '',
-          emergencyContactPhone: '',
-          preferredLanguage: 'English',
-          preferredPharmacy: '',
-        });
-      }
+      const data = await fetchPortalProfile(tenantId, sessionToken);
+      const portalPatient = data.patient;
+      const fullName = [portalPatient.firstName, portalPatient.lastName].filter(Boolean).join(' ') || patient?.fullName || '';
+      setProfile({
+        id: portalPatient.id,
+        fullName,
+        firstName: portalPatient.firstName || '',
+        lastName: portalPatient.lastName || '',
+        dateOfBirth: (portalPatient as any).dob || '',
+        gender: '',
+        email: portalPatient.email || '',
+        phone: portalPatient.phone || '',
+        address: portalPatient.address || '',
+        city: portalPatient.city || '',
+        state: portalPatient.state || '',
+        zip: portalPatient.zip || '',
+        emergencyContactName: portalPatient.emergencyContactName || '',
+        emergencyContactRelationship: portalPatient.emergencyContactRelationship || '',
+        emergencyContactPhone: portalPatient.emergencyContactPhone || '',
+        preferredLanguage: 'English',
+        preferredPharmacy: '',
+      });
     } catch (error) {
       console.error('Failed to fetch profile:', error);
     } finally {
@@ -82,9 +85,34 @@ export function PortalProfilePage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      // In production, save to API
+      if (sessionToken && tenantId) {
+        const updates: Record<string, any> = {};
+        const allowedFields = [
+          'phone',
+          'email',
+          'address',
+          'city',
+          'state',
+          'zip',
+          'emergencyContactName',
+          'emergencyContactRelationship',
+          'emergencyContactPhone',
+        ] as const;
+
+        allowedFields.forEach((field) => {
+          if (editForm[field] !== undefined) {
+            updates[field] = editForm[field];
+          }
+        });
+
+        if (Object.keys(updates).length > 0) {
+          await updatePortalProfile(tenantId, sessionToken, updates);
+        }
+      }
+
       setProfile(prev => prev ? { ...prev, ...editForm } : null);
       setEditing(false);
+      setEditForm({});
     } catch (error) {
       console.error('Failed to save profile:', error);
     } finally {

@@ -16,9 +16,8 @@ import { logger } from '../lib/logger';
 import { AgentConfiguration } from './agentConfigService';
 
 // Environment configuration
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const USE_REAL_AI = Boolean(OPENAI_API_KEY || ANTHROPIC_API_KEY);
+const getOpenAIKey = () => process.env.OPENAI_API_KEY;
+const getAnthropicKey = () => process.env.ANTHROPIC_API_KEY;
 
 // API endpoints
 const OPENAI_TRANSCRIPTION_URL = 'https://api.openai.com/v1/audio/transcriptions';
@@ -62,6 +61,18 @@ const COMMON_DERM_CPT = [
   { code: '96900', description: 'Actinotherapy (UV light)', confidence: 0.85 },
   { code: '11042', description: 'Debridement, skin, subcutaneous tissue', confidence: 0.87 }
 ];
+
+function resolveMockDelayMs(defaultDelayMs: number): number {
+  const override = process.env.AMBIENT_AI_MOCK_DELAY_MS;
+  if (override !== undefined) {
+    const parsed = Number(override);
+    if (!Number.isNaN(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+
+  return defaultDelayMs;
+}
 
 export interface TranscriptionSegment {
   speaker: string;
@@ -157,9 +168,10 @@ export async function transcribeAudio(
   durationSeconds: number
 ): Promise<TranscriptionResult> {
   // Use real OpenAI Whisper if API key available
-  if (USE_REAL_AI && OPENAI_API_KEY) {
+  const openAIKey = getOpenAIKey();
+  if (openAIKey) {
     try {
-      return await transcribeWithWhisper(audioFilePath, durationSeconds);
+      return await transcribeWithWhisper(audioFilePath, durationSeconds, openAIKey);
     } catch (error) {
       logger.warn('OpenAI Whisper transcription failed, falling back to mock', {
         error: (error as Error).message,
@@ -177,7 +189,8 @@ export async function transcribeAudio(
  */
 async function transcribeWithWhisper(
   audioFilePath: string,
-  durationSeconds: number
+  durationSeconds: number,
+  openAIKey: string
 ): Promise<TranscriptionResult> {
   logger.info('Transcribing audio with OpenAI Whisper', { durationSeconds });
 
@@ -199,7 +212,7 @@ async function transcribeWithWhisper(
   const response = await fetch(OPENAI_TRANSCRIPTION_URL, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      'Authorization': `Bearer ${openAIKey}`,
       ...formData.getHeaders()
     },
     body: formData
@@ -293,7 +306,10 @@ async function mockTranscribeAudio(
   logger.info('Using mock transcription (no API key configured)');
 
   // Simulate processing delay
-  await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 1000));
+  const delayMs = resolveMockDelayMs(2000 + Math.random() * 1000);
+  if (delayMs > 0) {
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
 
   // Generate realistic dermatology conversation
   const segments: TranscriptionSegment[] = generateMockConversation(durationSeconds);
@@ -485,15 +501,29 @@ export async function generateClinicalNote(
   patientContext?: PatientContext
 ): Promise<ClinicalNote & ExtractedData> {
   // Use real AI if available
-  if (USE_REAL_AI) {
+  const anthropicKey = getAnthropicKey();
+  const openAIKey = getOpenAIKey();
+  if (anthropicKey || openAIKey) {
     try {
       // Prefer Claude for medical documentation (Anthropic API)
-      if (ANTHROPIC_API_KEY) {
-        return await generateNoteWithClaude(transcriptText, segments, agentConfig, patientContext);
+      if (anthropicKey) {
+        return await generateNoteWithClaude(
+          transcriptText,
+          segments,
+          agentConfig,
+          patientContext,
+          anthropicKey
+        );
       }
       // Fall back to GPT-4 if OpenAI key available
-      if (OPENAI_API_KEY) {
-        return await generateNoteWithGPT4(transcriptText, segments, agentConfig, patientContext);
+      if (openAIKey) {
+        return await generateNoteWithGPT4(
+          transcriptText,
+          segments,
+          agentConfig,
+          patientContext,
+          openAIKey
+        );
       }
     } catch (error) {
       console.error('AI note generation failed, falling back to mock:', error);
@@ -513,7 +543,8 @@ async function generateNoteWithClaude(
   transcriptText: string,
   segments: TranscriptionSegment[],
   agentConfig?: AgentConfiguration | null,
-  patientContext?: PatientContext
+  patientContext?: PatientContext,
+  anthropicKey: string
 ): Promise<ClinicalNote & ExtractedData> {
   logger.info('Generating clinical note with Claude', {
     agentConfigId: agentConfig?.id,
@@ -534,7 +565,7 @@ async function generateNoteWithClaude(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY!,
+      'x-api-key': anthropicKey!,
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
@@ -570,7 +601,8 @@ async function generateNoteWithGPT4(
   transcriptText: string,
   segments: TranscriptionSegment[],
   agentConfig?: AgentConfiguration | null,
-  patientContext?: PatientContext
+  patientContext?: PatientContext,
+  openAIKey: string
 ): Promise<ClinicalNote & ExtractedData> {
   logger.info('Generating clinical note with GPT-4', {
     agentConfigId: agentConfig?.id,
@@ -592,7 +624,7 @@ async function generateNoteWithGPT4(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENAI_API_KEY}`
+      'Authorization': `Bearer ${openAIKey}`
     },
     body: JSON.stringify({
       model: 'gpt-4-turbo-preview',
@@ -978,7 +1010,10 @@ async function mockGenerateClinicalNote(
   logger.info('Using mock note generation (no API key configured)');
 
   // Simulate AI processing delay
-  await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+  const delayMs = resolveMockDelayMs(3000 + Math.random() * 2000);
+  if (delayMs > 0) {
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
 
   return mockGenerateClinicalNoteSync(segments);
 }

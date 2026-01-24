@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useMetricsContext } from './MetricsProvider';
 import { useAuth } from '../../contexts/AuthContext';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 // ================================================
 // TYPES
@@ -67,7 +68,7 @@ export function EfficiencyBadge({
     const fetchAverages = async () => {
       try {
         const response = await fetch(
-          `${import.meta.env.VITE_API_URL}/api/metrics/summary?period=30d`,
+          `${API_BASE_URL}/api/metrics/summary?period=30d`,
           {
             headers: {
               'Authorization': `Bearer ${session.accessToken}`,

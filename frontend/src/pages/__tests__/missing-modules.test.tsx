@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import { RegistryPage } from '../RegistryPage';
 import { ReferralsPage } from '../ReferralsPage';
 import { ProtocolsPage } from '../ProtocolsPage';
@@ -22,6 +23,8 @@ const mockSession = vi.hoisted(() => ({
 
 const authMocks = vi.hoisted(() => ({
   session: mockSession,
+  tenantId: mockSession.tenantId,
+  accessToken: mockSession.accessToken,
   user: mockSession.user,
   isAuthenticated: true,
   isLoading: false,
@@ -50,11 +53,21 @@ vi.mock('../../contexts/ToastContext', () => ({
 }));
 
 vi.mock('../../api', () => ({
-  fetchRegistryCohorts: vi.fn().mockResolvedValue({ cohorts: [] }),
-  fetchRegistryMembers: vi.fn().mockResolvedValue({ members: [] }),
-  createRegistryCohort: vi.fn(),
-  addRegistryMember: vi.fn(),
-  removeRegistryMember: vi.fn(),
+  fetchRegistryDashboard: vi.fn().mockResolvedValue(null),
+  fetchMelanomaRegistry: vi.fn().mockResolvedValue({ data: [] }),
+  fetchPsoriasisRegistry: vi.fn().mockResolvedValue({ data: [] }),
+  fetchAcneRegistry: vi.fn().mockResolvedValue({ data: [] }),
+  fetchChronicTherapyRegistry: vi.fn().mockResolvedValue({ data: [] }),
+  fetchRegistryAlerts: vi.fn().mockResolvedValue({ alerts: [] }),
+  fetchPasiHistory: vi.fn().mockResolvedValue({ data: [] }),
+  fetchProtocols: vi.fn().mockResolvedValue({ data: [] }),
+  fetchProtocolStats: vi.fn().mockResolvedValue({
+    active_protocols: 0,
+    total_applications: 0,
+    active_applications: 0,
+    completed_applications: 0,
+  }),
+  deleteProtocol: vi.fn(),
   fetchPatients: vi.fn().mockResolvedValue({ patients: [] }),
   fetchReferrals: vi.fn().mockResolvedValue({ referrals: [] }),
   createReferral: vi.fn(),
@@ -63,18 +76,22 @@ vi.mock('../../api', () => ({
 
 describe('Missing module placeholder pages', () => {
   const cases = [
-    { Component: RegistryPage, heading: 'Registry', emptyTitle: 'No registries yet' },
+    { Component: RegistryPage, heading: 'Patient Registries', emptyTitle: 'No data available' },
     { Component: ReferralsPage, heading: 'Referrals', emptyTitle: 'No referrals yet' },
     { Component: FormsPage, heading: 'Forms', emptyTitle: 'No forms configured' },
-    { Component: ProtocolsPage, heading: 'Protocols', emptyTitle: 'No protocols yet' },
-    { Component: PreferencesPage, heading: 'Preferences', emptyTitle: 'No preferences configured' },
+    { Component: ProtocolsPage, heading: 'Treatment Protocols', emptyTitle: 'No protocols found' },
+    { Component: PreferencesPage, heading: 'admin:settings.preferences', emptyTitle: 'No preferences configured' },
     { Component: HelpPage, heading: 'Help', emptyTitle: 'Help resources coming soon' },
     { Component: RecallsPage, heading: 'Recalls', emptyTitle: 'No recall campaigns' },
   ];
 
   cases.forEach(({ Component, heading, emptyTitle }) => {
     it(`renders ${heading} placeholder`, async () => {
-      render(<Component />);
+      render(
+        <MemoryRouter>
+          <Component />
+        </MemoryRouter>
+      );
       expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument();
       expect(await screen.findByText(emptyTitle)).toBeInTheDocument();
     });

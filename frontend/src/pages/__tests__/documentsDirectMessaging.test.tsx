@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 const authMocks = vi.hoisted(() => ({
   session: null as null | {
@@ -147,7 +148,11 @@ describe('DocumentsPage', () => {
   });
 
   it('filters documents and uploads a new document', async () => {
-    render(<DocumentsPage />);
+    render(
+      <MemoryRouter>
+        <DocumentsPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Document Management');
     fireEvent.change(screen.getByPlaceholderText('Search documents...'), { target: { value: 'Lab' } });
@@ -231,7 +236,11 @@ describe('DirectMessagingPage', () => {
   });
 
   it('composes and sends a direct message', async () => {
-    render(<DirectMessagingPage />);
+    render(
+      <MemoryRouter>
+        <DirectMessagingPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Direct Secure Messaging');
     fireEvent.click(screen.getByRole('button', { name: '+ Compose Message' }));
@@ -258,7 +267,11 @@ describe('DirectMessagingPage', () => {
   });
 
   it('marks messages read and adds contacts', async () => {
-    render(<DirectMessagingPage />);
+    render(
+      <MemoryRouter>
+        <DirectMessagingPage />
+      </MemoryRouter>
+    );
     await screen.findByText('Direct Secure Messaging');
 
     fireEvent.click(screen.getByText('Lab Results'));

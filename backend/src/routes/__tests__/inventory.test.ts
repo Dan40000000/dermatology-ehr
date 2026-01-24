@@ -184,6 +184,76 @@ describe("Inventory routes", () => {
     expect(res.body.lowStockCount).toBe(2);
   });
 
+  it("GET /inventory/procedure-templates returns templates", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "template-1" }] });
+
+    const res = await request(app).get("/inventory/procedure-templates?category=biopsy");
+
+    expect(res.status).toBe(200);
+    expect(res.body.templates).toHaveLength(1);
+  });
+
+  it("GET /inventory/procedure-templates/:procedureName/items returns items", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ item_id: "item-1" }] });
+
+    const res = await request(app).get("/inventory/procedure-templates/biopsy/items");
+
+    expect(res.status).toBe(200);
+    expect(res.body.items).toHaveLength(1);
+  });
+
+  it("POST /inventory/procedure-usage rejects invalid payload", async () => {
+    const res = await request(app).post("/inventory/procedure-usage").send({});
+
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /inventory/procedure-usage records usage from template", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ item_id: "item-1", default_quantity: 2 }] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "item-1", name: "Item", quantity: 10, unit_cost_cents: 100 }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "usage-1", used_at: "2025-01-01" }] })
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/inventory/procedure-usage").send({
+      procedureName: "biopsy",
+      patientId: "patient-1",
+      providerId: "provider-1",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.usageIds).toEqual(["usage-1"]);
+    expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /inventory/procedure-usage returns 400 on insufficient inventory", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ item_id: "item-1", default_quantity: 5 }] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "item-1", name: "Item", quantity: 1, unit_cost_cents: 100 }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/inventory/procedure-usage").send({
+      procedureName: "biopsy",
+      patientId: "patient-1",
+      providerId: "provider-1",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Insufficient inventory");
+  });
+
   it("POST /inventory/usage rejects invalid payload", async () => {
     const res = await request(app).post("/inventory/usage").send({});
     expect(res.status).toBe(400);

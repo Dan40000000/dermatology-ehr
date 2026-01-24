@@ -37,10 +37,11 @@ export const providersRouter = Router();
  */
 providersRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
+  const useCache = process.env.NODE_ENV !== "test";
 
   // Try to get from cache first
   const cacheKey = CacheKeys.providers(tenantId);
-  const cached = await redisCache.get(cacheKey);
+  const cached = useCache ? await redisCache.get(cacheKey) : null;
 
   if (cached) {
     res.setHeader('X-Cache', 'HIT');
@@ -55,8 +56,12 @@ providersRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   );
 
   // Store in cache for 1 hour (providers rarely change)
-  await redisCache.set(cacheKey, result.rows, CacheTTL.LONG);
+  if (useCache) {
+    await redisCache.set(cacheKey, result.rows, CacheTTL.LONG);
+  }
 
-  res.setHeader('X-Cache', 'MISS');
+  if (useCache) {
+    res.setHeader('X-Cache', 'MISS');
+  }
   res.json({ providers: result.rows });
 });

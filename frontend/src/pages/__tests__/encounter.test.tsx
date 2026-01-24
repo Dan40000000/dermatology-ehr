@@ -50,6 +50,7 @@ const apiMocks = vi.hoisted(() => ({
   getSuperbillUrl: vi.fn(),
   generateAiNoteDraft: vi.fn(),
   fetchNoteTemplates: vi.fn(),
+  fetchProviders: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -307,6 +308,7 @@ describe('EncounterPage', () => {
     apiMocks.fetchPatients.mockResolvedValue({ patients: [fixtures.patient] });
     apiMocks.fetchEncounters.mockResolvedValue({ encounters: [fixtures.encounter] });
     apiMocks.fetchVitals.mockResolvedValue({ vitals: [fixtures.vitals] });
+    apiMocks.fetchProviders.mockResolvedValue({ providers: [{ id: 'user-1', fullName: 'Dr Demo' }] });
     apiMocks.fetchOrders.mockResolvedValue({ orders: fixtures.orders });
     apiMocks.fetchDiagnosesByEncounter.mockResolvedValue({ diagnoses: fixtures.diagnoses });
     apiMocks.fetchChargesByEncounter.mockResolvedValue({ charges: fixtures.charges });

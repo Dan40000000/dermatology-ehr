@@ -1,4 +1,4 @@
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useAutosave } from '../useAutosave';
 
@@ -66,24 +66,18 @@ describe('useAutosave', () => {
     // Wait for debounce delay
     await act(async () => {
       vi.advanceTimersByTime(1000);
+      await Promise.resolve();
     });
 
-    await waitFor(() => {
-      expect(onSave).toHaveBeenCalledWith({ test: 'updated' });
-    });
-
-    await waitFor(() => {
-      expect(result.current.status).toBe('saved');
-    });
+    expect(onSave).toHaveBeenCalledWith({ test: 'updated' });
+    expect(result.current.status).toBe('saved');
 
     // Status should reset to idle after 2 seconds
     await act(async () => {
       vi.advanceTimersByTime(2000);
     });
 
-    await waitFor(() => {
-      expect(result.current.status).toBe('idle');
-    });
+    expect(result.current.status).toBe('idle');
   });
 
   it('should debounce multiple rapid changes', async () => {
@@ -114,12 +108,11 @@ describe('useAutosave', () => {
     // Wait for final debounce
     await act(async () => {
       vi.advanceTimersByTime(1000);
+      await Promise.resolve();
     });
 
-    await waitFor(() => {
-      expect(onSave).toHaveBeenCalledTimes(1);
-      expect(onSave).toHaveBeenCalledWith({ test: 'change3' });
-    });
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith({ test: 'change3' });
   });
 
   it('should handle manual save with saveNow', async () => {
@@ -269,8 +262,6 @@ describe('useAutosave', () => {
       vi.advanceTimersByTime(2000);
     });
 
-    await waitFor(() => {
-      expect(onSave).toHaveBeenCalled();
-    });
+    expect(onSave).toHaveBeenCalled();
   });
 });

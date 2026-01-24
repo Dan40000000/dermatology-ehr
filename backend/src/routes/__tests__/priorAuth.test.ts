@@ -2,6 +2,8 @@ import request from "supertest";
 import express from "express";
 import priorAuthRouter from "../priorAuth";
 import { pool } from "../../db/pool";
+import { notificationService } from "../../services/integrations/notificationService";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -13,6 +15,21 @@ jest.mock("../../middleware/auth", () => ({
 jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),
+  },
+}));
+
+jest.mock("../../services/integrations/notificationService", () => ({
+  notificationService: {
+    sendNotification: jest.fn(),
+  },
+}));
+
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
   },
 }));
 
@@ -32,10 +49,21 @@ app.use((err: any, req: any, res: any, next: any) => {
 });
 
 const queryMock = pool.query as jest.Mock;
+const notificationServiceMock = notificationService as jest.Mocked<typeof notificationService>;
+const loggerMock = logger as jest.Mocked<typeof logger>;
+const flushPromises = () => Promise.resolve();
+const originalNodeEnv = process.env.NODE_ENV;
 
 beforeEach(() => {
   jest.clearAllMocks();
   queryMock.mockResolvedValue({ rows: [] });
+  notificationServiceMock.sendNotification.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+  jest.useRealTimers();
+  process.env.NODE_ENV = originalNodeEnv;
 });
 
 describe("Prior Auth Routes", () => {
@@ -123,6 +151,28 @@ describe("Prior Auth Routes", () => {
       const res = await request(app).get("/api/prior-auth");
 
       expect(res.status).toBe(500);
+    });
+
+    it("should apply search filtering", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).get("/api/prior-auth").query({ search: "Dupixent" });
+
+      expect(res.status).toBe(200);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("pa.auth_number ILIKE"),
+        expect.arrayContaining(["%Dupixent%"])
+      );
+    });
+
+    it("should apply pagination when page or limit provided", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).get("/api/prior-auth").query({ page: "2", limit: "10" });
+
+      expect(res.status).toBe(200);
+      expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("LIMIT"));
+      expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("OFFSET"));
     });
   });
 
@@ -249,6 +299,17 @@ describe("Prior Auth Routes", () => {
       });
 
       expect(res.status).toBe(500);
+    });
+
+    it("should validate modern payload requirements", async () => {
+      const res = await request(app).post("/api/prior-auth").send({
+        patientId: "a1111111-1111-4111-8111-111111111111",
+        authType: "service",
+        // missing serviceDescription
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Validation error");
     });
   });
 
@@ -483,6 +544,197 @@ describe("Prior Auth Routes", () => {
 
       expect(res.status).toBe(500);
     });
+
+    it("should simulate approved payer response and notify", async () => {
+      const originalEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = "production";
+
+      const randomMock = jest.spyOn(Math, "random").mockReturnValue(0.5);
+      jest.useFakeTimers();
+
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: "b1111111-1111-4111-8111-111111111111",
+              status: "pending",
+              patient_id: "a1111111-1111-4111-8111-111111111111",
+              medication_name: "Dupixent",
+              insurance_name: "Blue Cross",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              patient_name: "John Doe",
+              medication_name: "Dupixent",
+              insurance_name: "Blue Cross",
+            },
+          ],
+        });
+
+      const res = await request(app).post("/api/prior-auth/b1111111-1111-4111-8111-111111111111/submit");
+
+      await jest.runAllTimersAsync();
+      await flushPromises();
+
+      expect(res.status).toBe(200);
+      expect(notificationServiceMock.sendNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: "99999999-9999-4999-8999-999999999999",
+          notificationType: "prior_auth_approved",
+          data: expect.objectContaining({
+            patientName: "John Doe",
+            medication: "Dupixent",
+            insurancePlan: "Blue Cross",
+          }),
+        })
+      );
+
+      randomMock.mockRestore();
+      jest.useRealTimers();
+      process.env.NODE_ENV = originalEnv;
+    });
+
+    it("should log notification errors for denied response", async () => {
+      const originalEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = "production";
+
+      const randomMock = jest.spyOn(Math, "random").mockReturnValue(0.7);
+      jest.useFakeTimers();
+      notificationServiceMock.sendNotification.mockRejectedValueOnce(new Error("notify fail"));
+
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: "b1111111-1111-4111-8111-111111111111",
+              status: "pending",
+              patient_id: "a1111111-1111-4111-8111-111111111111",
+              medication_name: "Dupixent",
+              insurance_name: "Blue Cross",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              patient_name: "John Doe",
+              medication_name: "Dupixent",
+              insurance_name: "Blue Cross",
+            },
+          ],
+        });
+
+      const res = await request(app).post("/api/prior-auth/b1111111-1111-4111-8111-111111111111/submit");
+
+      await jest.runAllTimersAsync();
+      await flushPromises();
+
+      expect(res.status).toBe(200);
+      expect(loggerMock.error).toHaveBeenCalledWith(
+        "Failed to send prior auth notification",
+        expect.objectContaining({
+          error: "notify fail",
+          priorAuthId: "b1111111-1111-4111-8111-111111111111",
+        })
+      );
+
+      randomMock.mockRestore();
+      jest.useRealTimers();
+      process.env.NODE_ENV = originalEnv;
+    });
+
+    it("should handle more info needed response without notifications", async () => {
+      const originalEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = "production";
+
+      const randomMock = jest.spyOn(Math, "random").mockReturnValue(0.95);
+      jest.useFakeTimers();
+
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: "b1111111-1111-4111-8111-111111111111",
+              status: "pending",
+              patient_id: "a1111111-1111-4111-8111-111111111111",
+              medication_name: "Dupixent",
+              insurance_name: "Blue Cross",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              patient_name: "John Doe",
+              medication_name: "Dupixent",
+              insurance_name: "Blue Cross",
+            },
+          ],
+        });
+
+      const res = await request(app).post("/api/prior-auth/b1111111-1111-4111-8111-111111111111/submit");
+
+      await jest.runAllTimersAsync();
+      await flushPromises();
+
+      const notesUpdate = queryMock.mock.calls.find((call) => {
+        return typeof call[0] === "string" && call[0].includes("notes = COALESCE");
+      });
+
+      expect(res.status).toBe(200);
+      expect(notesUpdate).toBeDefined();
+      expect(notificationServiceMock.sendNotification).not.toHaveBeenCalled();
+
+      randomMock.mockRestore();
+      jest.useRealTimers();
+      process.env.NODE_ENV = originalEnv;
+    });
+
+    it("should log errors when mock payer response fails", async () => {
+      const originalEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = "production";
+
+      const randomMock = jest.spyOn(Math, "random").mockReturnValue(0.5);
+      jest.useFakeTimers();
+
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: "b1111111-1111-4111-8111-111111111111",
+              status: "pending",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockRejectedValueOnce(new Error("update failed"));
+
+      const res = await request(app).post("/api/prior-auth/b1111111-1111-4111-8111-111111111111/submit");
+
+      await jest.runAllTimersAsync();
+      await flushPromises();
+
+      expect(res.status).toBe(200);
+      expect(loggerMock.error).toHaveBeenCalledWith(
+        "Error processing mock payer response",
+        expect.objectContaining({
+          error: expect.anything(),
+        })
+      );
+
+      randomMock.mockRestore();
+      jest.useRealTimers();
+      process.env.NODE_ENV = originalEnv;
+    });
   });
 
   describe("POST /api/prior-auth/:id/documents", () => {
@@ -657,6 +909,147 @@ describe("Prior Auth Routes", () => {
         });
 
       expect(res.status).toBe(500);
+    });
+  });
+
+  describe("GET /api/prior-auth/dashboard", () => {
+    it("should return dashboard stats", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          {
+            total: "5",
+            pending: "2",
+            approved: "1",
+            denied: "1",
+            expiring_soon: "1",
+            expiring_urgent: "0",
+            avg_days_pending: "3.5",
+            success_rate: "50",
+          },
+        ],
+      });
+
+      const res = await request(app).get("/api/prior-auth/dashboard");
+
+      expect(res.status).toBe(200);
+      expect(res.body.total).toBe(5);
+      expect(res.body.pending).toBe(2);
+      expect(res.body.success_rate).toBe(50);
+    });
+
+    it("should return zeros when no data", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).get("/api/prior-auth/dashboard");
+
+      expect(res.status).toBe(200);
+      expect(res.body.total).toBe(0);
+      expect(res.body.pending).toBe(0);
+    });
+  });
+
+  describe("GET /api/prior-auth/expiring", () => {
+    it("should return expiring prior auths", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "pa-1" }] });
+
+      const res = await request(app).get("/api/prior-auth/expiring?days=15");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(1);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("INTERVAL '15 days'"),
+        ["99999999-9999-4999-8999-999999999999"]
+      );
+    });
+  });
+
+  describe("POST /api/prior-auth/:id/status", () => {
+    it("should add status update", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: "b1111111-1111-4111-8111-111111111111" }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).post("/api/prior-auth/b1111111-1111-4111-8111-111111111111/status").send({
+        status: "submitted",
+        notes: "Called payer",
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.message).toBe("Status updated successfully");
+    });
+
+    it("should return 404 when not found", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).post("/api/prior-auth/b9999999-9999-4999-8999-999999999999/status").send({
+        status: "approved",
+      });
+
+      expect(res.status).toBe(404);
+    });
+
+    it("should return 400 for validation errors", async () => {
+      const res = await request(app).post("/api/prior-auth/b1111111-1111-4111-8111-111111111111/status").send({
+        status: "bad",
+      });
+
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("POST /api/prior-auth/:id/generate-letter", () => {
+    it("should return letter text", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          {
+            auth_number: "PA-123",
+            first_name: "John",
+            last_name: "Doe",
+            dob: "1990-01-01",
+            insurance: "Blue Cross",
+            medication_name: "Dupixent",
+            diagnosis_code: "L20.9",
+            clinical_justification: "Severe dermatitis",
+            provider_name: "Dr. Smith",
+          },
+        ],
+      });
+
+      const res = await request(app).post("/api/prior-auth/b1111111-1111-4111-8111-111111111111/generate-letter");
+
+      expect(res.status).toBe(200);
+      expect(res.body.letterText).toContain("Prior Authorization Request");
+    });
+
+    it("should return 404 when not found", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).post("/api/prior-auth/b9999999-9999-4999-8999-999999999999/generate-letter");
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("POST /api/prior-auth (modern payload)", () => {
+    it("should create prior auth from modern payload", async () => {
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{ id: "00000000-0000-4000-8000-000000000000" }],
+        })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).post("/api/prior-auth").send({
+        patientId: "a1111111-1111-4111-8111-111111111111",
+        authType: "procedure",
+        procedureCode: "11111",
+        diagnosisCodes: ["L20.9"],
+        payerName: "Blue Cross",
+        previousTreatments: "Topicals",
+        urgency: "urgent",
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.id).toBe("00000000-0000-4000-8000-000000000000");
     });
   });
 });

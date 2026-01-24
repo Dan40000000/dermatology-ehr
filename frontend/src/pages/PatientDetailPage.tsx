@@ -10,21 +10,25 @@ import type { Lesion } from '../components/clinical';
 import { TasksTab } from '../components/patient';
 import { RxHistoryTab } from '../components/RxHistoryTab';
 import { ActiveMedicationsCard } from '../components/prescriptions';
+import { CoverageSummaryCard } from '../components/Insurance/CoverageSummaryCard';
 import {
   fetchPatient,
   fetchEncounters,
   fetchAppointments,
   fetchDocuments,
   fetchPhotos,
+  fetchOrders,
   fetchPrescriptionsEnhanced,
   fetchTasks,
+  fetchEligibilityHistory,
+  verifyPatientEligibility,
   deletePatient,
   API_BASE_URL,
   TENANT_HEADER_NAME,
 } from '../api';
-import type { Patient, Encounter, Appointment, Document, Photo, Prescription, Task } from '../types';
+import type { Patient, Encounter, Appointment, Document, Photo, Prescription, Task, Order } from '../types';
 
-type TabId = 'overview' | 'demographics' | 'insurance' | 'medical-history' | 'clinical-trends' | 'encounters' | 'appointments' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks';
+type TabId = 'overview' | 'demographics' | 'insurance' | 'medical-history' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks';
 
 export function PatientDetailPage() {
   const { patientId } = useParams<{ patientId: string }>();
@@ -36,6 +40,7 @@ export function PatientDetailPage() {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [encounters, setEncounters] = useState<Encounter[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
@@ -140,6 +145,14 @@ export function PatientDetailPage() {
         console.warn('Failed to load prescriptions:', rxErr);
         setPrescriptions([]);
       }
+
+      try {
+        const ordersRes = await fetchOrders(session.tenantId, session.accessToken, { patientId });
+        setOrders(ordersRes.orders || []);
+      } catch (ordersErr) {
+        console.warn('Failed to load orders:', ordersErr);
+        setOrders([]);
+      }
     } catch (err: any) {
       if (err.message === 'Patient not found') {
         showError('Patient not found');
@@ -228,6 +241,7 @@ export function PatientDetailPage() {
     { id: 'clinical-trends', label: 'Clinical Trends', icon: '📊' },
     { id: 'encounters', label: 'Encounters', icon: '', count: encounters.length },
     { id: 'appointments', label: 'Appointments', icon: '', count: appointments.length },
+    { id: 'orders', label: 'Orders', icon: '', count: orders.length },
     { id: 'rx-history', label: 'Rx History', icon: '', count: prescriptions.length },
     { id: 'documents', label: 'Documents', icon: '', count: documents.length },
     { id: 'photos', label: 'Photos', icon: '', count: photos.length },
@@ -608,12 +622,13 @@ export function PatientDetailPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
                   {[
                     { label: 'New Encounter', icon: '', onClick: handleStartEncounter },
-                    { label: 'Schedule', icon: '', onClick: () => navigate('/schedule') },
-                    { label: 'Message', icon: '', onClick: () => navigate('/mail') },
-                    { label: 'Documents', icon: '', onClick: () => setActiveTab('documents') },
-                    { label: 'Photos', icon: '', onClick: () => setActiveTab('photos') },
-                    { label: 'Insurance', icon: '', onClick: () => setActiveTab('insurance') },
-                  ].map((action) => (
+                  { label: 'Schedule', icon: '', onClick: () => navigate('/schedule') },
+                  { label: 'Message', icon: '', onClick: () => navigate('/mail') },
+                  { label: 'Documents', icon: '', onClick: () => setActiveTab('documents') },
+                  { label: 'Photos', icon: '', onClick: () => setActiveTab('photos') },
+                  { label: 'Orders', icon: '', onClick: () => setActiveTab('orders') },
+                  { label: 'Insurance', icon: '', onClick: () => setActiveTab('insurance') },
+                ].map((action) => (
                     <button
                       key={action.label}
                       type="button"
@@ -786,6 +801,10 @@ export function PatientDetailPage() {
               </div>
             )}
           </div>
+        )}
+
+        {activeTab === 'orders' && (
+          <OrdersTab orders={orders} onOpenOrders={() => navigate('/orders')} />
         )}
 
         {activeTab === 'demographics' && (
@@ -1066,14 +1085,105 @@ function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => 
   );
 }
 
+function PatientEligibilitySummary({
+  patientId,
+  carrier,
+  memberId,
+  groupNumber,
+}: {
+  patientId: string;
+  carrier?: string;
+  memberId?: string;
+  groupNumber?: string;
+}) {
+  const { session } = useAuth();
+  const [latest, setLatest] = useState<any | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadLatest = useCallback(async () => {
+    if (!session) return;
+    try {
+      const res = await fetchEligibilityHistory(session.tenantId, session.accessToken, patientId);
+      const history = res?.history || [];
+      setLatest(history[0] || null);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load eligibility history');
+    }
+  }, [session, patientId]);
+
+  useEffect(() => {
+    setError(null);
+    loadLatest();
+  }, [loadLatest]);
+
+  const handleVerify = async () => {
+    if (!session) return;
+    setIsRefreshing(true);
+    setError(null);
+    try {
+      await verifyPatientEligibility(session.tenantId, session.accessToken, patientId);
+      await loadLatest();
+    } catch (err: any) {
+      setError(err.message || 'Failed to verify eligibility');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const deductibleTotal = latest?.deductible_total_cents;
+  const deductibleRemaining = latest?.deductible_remaining_cents;
+  const oopMax = latest?.oop_max_cents;
+  const oopRemaining = latest?.oop_remaining_cents;
+
+  const eligibility = {
+    status: latest?.verification_status,
+    verifiedAt: latest?.verified_at,
+    payerName: latest?.payer_name || carrier,
+    memberId: latest?.member_id || memberId,
+    groupNumber,
+    copayAmount: latest?.copay_specialist_cents,
+    deductibleTotal,
+    deductibleRemaining,
+    deductibleMet: deductibleTotal != null && deductibleRemaining != null
+      ? deductibleTotal - deductibleRemaining
+      : undefined,
+    oopMax,
+    oopRemaining,
+    oopMet: oopMax != null && oopRemaining != null
+      ? oopMax - oopRemaining
+      : undefined,
+    priorAuthRequired: latest?.prior_auth_required,
+    hasIssues: latest?.has_issues,
+    issueNotes: latest?.issue_notes,
+  };
+
+  return (
+    <div>
+      <CoverageSummaryCard
+        eligibility={eligibility}
+        onRefresh={handleVerify}
+        isRefreshing={isRefreshing}
+      />
+      {error && (
+        <div style={{ marginTop: '0.75rem', color: '#b91c1c', fontSize: '0.875rem' }}>
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Insurance Tab Component
 function InsuranceTab({ patient, onEdit }: { patient: Patient; onEdit: () => void }) {
   // Use patient's direct insurance fields, falling back to insuranceDetails for legacy data
   const insuranceDetails = (patient as any).insuranceDetails || {};
+  const rawInsurance = (patient as any).insurance;
+  const insuranceObject = typeof rawInsurance === 'object' && rawInsurance !== null ? rawInsurance : null;
   const insuranceData = {
-    primaryCarrier: (patient as any).insurance || insuranceDetails.primaryCarrier,
-    primaryPolicyNumber: (patient as any).insuranceId || insuranceDetails.primaryPolicyNumber,
-    primaryGroupNumber: (patient as any).insuranceGroupNumber || insuranceDetails.primaryGroupNumber,
+    primaryCarrier: insuranceObject?.planName || rawInsurance || insuranceDetails.primaryCarrier,
+    primaryPolicyNumber: (patient as any).insuranceId || insuranceObject?.memberId || insuranceDetails.primaryPolicyNumber,
+    primaryGroupNumber: (patient as any).insuranceGroupNumber || insuranceObject?.groupNumber || insuranceDetails.primaryGroupNumber,
     primarySubscriberName: insuranceDetails.primarySubscriberName,
     primaryRelationship: insuranceDetails.primaryRelationship,
     primaryEffectiveDate: insuranceDetails.primaryEffectiveDate,
@@ -1159,18 +1269,89 @@ function InsuranceTab({ patient, onEdit }: { patient: Patient; onEdit: () => voi
           </div>
         </div>
 
-        {/* Eligibility Check */}
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button type="button" className="ema-action-btn" onClick={() => alert('Eligibility check feature coming soon')}>
-            <span className="icon"></span>
-            Check Eligibility
-          </button>
-          <button type="button" className="ema-action-btn" onClick={() => alert('Benefits verification feature coming soon')}>
-            <span className="icon"></span>
-            Verify Benefits
-          </button>
+        {/* Eligibility & Coverage */}
+        <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1.5rem' }}>
+          <h3 style={{ margin: '0 0 1rem', fontSize: '1rem', fontWeight: 600, color: '#374151' }}>
+            Eligibility & Coverage
+          </h3>
+          <PatientEligibilitySummary
+            patientId={patient.id}
+            carrier={insuranceData.primaryCarrier || undefined}
+            memberId={insuranceData.primaryPolicyNumber || undefined}
+            groupNumber={insuranceData.primaryGroupNumber || undefined}
+          />
         </div>
       </div>
+    </div>
+  );
+}
+
+// Orders Tab Component
+function OrdersTab({ orders, onOpenOrders }: { orders: Order[]; onOpenOrders: () => void }) {
+  const getStatusClass = (status?: string) => {
+    if (!status) return 'pending';
+    if (['completed', 'closed'].includes(status)) return 'established';
+    if (['pending', 'draft', 'open', 'sent', 'in-progress', 'ordered'].includes(status)) return 'pending';
+    return 'inactive';
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div className="ema-section-header">Orders</div>
+        <button type="button" className="ema-action-btn" onClick={onOpenOrders}>
+          <span className="icon"></span>
+          Open Orders
+        </button>
+      </div>
+
+      {orders.length === 0 ? (
+        <div style={{
+          background: '#f9fafb',
+          border: '1px dashed #d1d5db',
+          borderRadius: '8px',
+          padding: '3rem',
+          textAlign: 'center'
+        }}>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
+          <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No orders yet</h3>
+          <p style={{ color: '#6b7280', margin: '0 0 1rem' }}>Create an order to link it to this patient</p>
+          <button type="button" className="ema-action-btn" onClick={onOpenOrders}>
+            Create Order
+          </button>
+        </div>
+      ) : (
+        <table className="ema-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Priority</th>
+              <th>Details</th>
+              <th>Provider</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((order) => (
+              <tr key={order.id}>
+                <td>{order.createdAt ? new Date(order.createdAt).toLocaleDateString() : '—'}</td>
+                <td>{order.type ? order.type.toUpperCase() : '—'}</td>
+                <td>
+                  <span className={`ema-status ${getStatusClass(order.status)}`}>
+                    {order.status || 'pending'}
+                  </span>
+                </td>
+                <td>{order.priority || 'normal'}</td>
+                <td style={{ maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {order.details || '—'}
+                </td>
+                <td>{order.providerName || 'Unknown'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

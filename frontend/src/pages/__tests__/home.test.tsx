@@ -146,7 +146,14 @@ describe('HomePage', () => {
     await screen.findByText('Derm, Amy');
 
     expect(apiMocks.fetchPatients).toHaveBeenCalledWith('tenant-1', 'token-1');
-    expect(apiMocks.fetchAppointments).toHaveBeenCalledWith('tenant-1', 'token-1');
+    expect(apiMocks.fetchAppointments).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      expect.objectContaining({
+        startDate: expect.any(String),
+        endDate: expect.any(String),
+      }),
+    );
     expect(apiMocks.fetchEncounters).toHaveBeenCalledWith('tenant-1', 'token-1');
     expect(apiMocks.fetchTasks).toHaveBeenCalledWith('tenant-1', 'token-1');
     expect(apiMocks.fetchAnalytics).toHaveBeenCalledWith('tenant-1', 'token-1');
@@ -195,7 +202,7 @@ describe('HomePage', () => {
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('Download feature coming soon');
 
     fireEvent.click(within(amyRow).getByRole('button', { name: 'View' }));
-    expect(navigateMock).toHaveBeenCalledWith('/encounters/enc-1');
+    expect(navigateMock).toHaveBeenCalledWith('/patients/patient-1/encounter/enc-1');
 
     fireEvent.click(screen.getByRole('button', { name: /Export/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Export as CSV' }));

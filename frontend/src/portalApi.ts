@@ -100,6 +100,69 @@ export interface AutoPayEnrollment {
   cardBrand?: string;
 }
 
+// ============================================================================
+// PORTAL PROFILE
+// ============================================================================
+
+export interface PortalPatientProfile {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  emergencyContactName?: string;
+  emergencyContactRelationship?: string;
+  emergencyContactPhone?: string;
+}
+
+export async function fetchPortalProfile(
+  tenantId: string,
+  portalToken: string
+): Promise<{ patient: PortalPatientProfile }> {
+  const res = await fetch(`${API_BASE}/api/patient-portal/me`, {
+    headers: {
+      Authorization: `Bearer ${portalToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch patient profile');
+  return res.json();
+}
+
+export async function updatePortalProfile(
+  tenantId: string,
+  portalToken: string,
+  data: {
+    phone?: string;
+    email?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    emergencyContactName?: string;
+    emergencyContactRelationship?: string;
+    emergencyContactPhone?: string;
+  }
+): Promise<{ id: string }> {
+  const res = await fetch(`${API_BASE}/api/patient-portal/me`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${portalToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to update patient profile');
+  return res.json();
+}
+
 // Get patient balance
 export async function fetchPortalBalance(
   tenantId: string,

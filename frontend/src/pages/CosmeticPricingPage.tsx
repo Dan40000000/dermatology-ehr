@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton } from '../components/ui';
+import { API_BASE_URL } from '../utils/apiBase';
 
 interface CosmeticProcedure {
   id: string;
@@ -53,10 +54,11 @@ export function CosmeticPricingPage() {
 
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/fee-schedules/cosmetic/categories`,
+        `${API_BASE_URL}/api/fee-schedules/cosmetic/categories`,
         {
           headers: {
             Authorization: `Bearer ${session.accessToken}`,
+            'x-tenant-id': session.tenantId,
           },
         }
       );
@@ -83,10 +85,11 @@ export function CosmeticPricingPage() {
       }
 
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/fee-schedules/cosmetic/pricing?${params}`,
+        `${API_BASE_URL}/api/fee-schedules/cosmetic/pricing?${params}`,
         {
           headers: {
             Authorization: `Bearer ${session.accessToken}`,
+            'x-tenant-id': session.tenantId,
           },
         }
       );

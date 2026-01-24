@@ -259,10 +259,10 @@ describe('TelehealthPage', () => {
 
     await screen.findByText('Telehealth Video Consultations');
 
-    expect(screen.getByText('My Cases In Progress')).toBeInTheDocument();
-    expect(screen.getByText('My Completed Cases')).toBeInTheDocument();
-    expect(screen.getByText('My Unread Messages')).toBeInTheDocument();
-    expect(screen.getByText('Unassigned Cases')).toBeInTheDocument();
+    expect(screen.getByText(/My cases in progress/i)).toBeInTheDocument();
+    expect(screen.getByText(/My completed cases/i)).toBeInTheDocument();
+    expect(screen.getByText(/My unread messages/i)).toBeInTheDocument();
+    expect(screen.getByText(/Unassigned Cases/i)).toBeInTheDocument();
 
     expect(apiMocks.fetchTelehealthStats).toHaveBeenCalledWith(
       'tenant-1',
@@ -276,11 +276,12 @@ describe('TelehealthPage', () => {
 
     await screen.findByText('Telehealth Video Consultations');
 
-    expect(screen.getByLabelText('Date Range')).toBeInTheDocument();
+    expect(screen.getByLabelText('Dates')).toBeInTheDocument();
     expect(screen.getByLabelText('Status')).toBeInTheDocument();
-    expect(screen.getByLabelText('Reason for Visit')).toBeInTheDocument();
+    expect(screen.getByLabelText('Reason')).toBeInTheDocument();
     expect(screen.getByLabelText('Assigned To')).toBeInTheDocument();
     expect(screen.getByLabelText('Physician')).toBeInTheDocument();
+    expect(screen.getByLabelText('Patient')).toBeInTheDocument();
   });
 
   it('includes reason field in new session modal', async () => {

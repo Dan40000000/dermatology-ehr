@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 const authMocks = vi.hoisted(() => ({
   session: null as null | {
@@ -336,7 +337,11 @@ describe('PriorAuthPage', () => {
   });
 
   it('renders attention banner, submits quick actions, and updates detail status', async () => {
-    render(<PriorAuthPage />);
+    render(
+      <MemoryRouter>
+        <PriorAuthPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Electronic Prior Authorization');
     expect(screen.getByText(/need attention/i)).toBeInTheDocument();
@@ -370,7 +375,11 @@ describe('PriorAuthPage', () => {
   });
 
   it('creates a new prior authorization request', async () => {
-    render(<PriorAuthPage />);
+    render(
+      <MemoryRouter>
+        <PriorAuthPage />
+      </MemoryRouter>
+    );
     await screen.findByText('Electronic Prior Authorization');
 
     fireEvent.click(screen.getByRole('button', { name: 'New PA Request' }));

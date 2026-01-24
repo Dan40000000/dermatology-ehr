@@ -196,7 +196,11 @@ describe('queryOptimizer utilities', () => {
   });
 
   it('runs vacuum analyze and handles errors', async () => {
-    queryMock.mockResolvedValue({});
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ tablename: 'patients' }, { tablename: 'appointments' }],
+      })
+      .mockResolvedValue({});
     await vacuumAnalyze(['patients', 'appointments']);
     expect(queryMock).toHaveBeenCalledWith('VACUUM ANALYZE patients');
     expect(queryMock).toHaveBeenCalledWith('VACUUM ANALYZE appointments');

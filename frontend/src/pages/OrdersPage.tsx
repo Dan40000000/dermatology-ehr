@@ -1,9 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
+import { InsuranceStatusBadge } from '../components/Insurance';
 import { fetchOrders, fetchPatients, updateOrderStatus, createOrder } from '../api';
+import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 import type { Order, Patient } from '../types';
 
 type OrderFilter = 'all' | 'pending' | 'in-progress' | 'completed' | 'cancelled';
@@ -96,6 +98,8 @@ export function OrdersPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+  const patientIds = useMemo(() => orders.map((order) => order.patientId), [orders]);
+  const { eligibilityByPatient, eligibilityLoading } = useEligibilityByPatient(session, patientIds);
 
   const handleStatusChange = async (orderId: string, newStatus: string) => {
     if (!session) return;
@@ -145,6 +149,14 @@ export function OrdersPage() {
   const getPatientName = (patientId: string) => {
     const patient = patients.find((p) => p.id === patientId);
     return patient ? `${patient.lastName}, ${patient.firstName}` : 'Unknown';
+  };
+
+  const getPatientInsurance = (patientId: string) => {
+    const patient = patients.find((p) => p.id === patientId);
+    if (!patient?.insurance) return null;
+    if (typeof patient.insurance === 'string') return patient.insurance;
+    if (patient.insurance.planName) return patient.insurance.planName;
+    return 'On file';
   };
 
   const filteredOrders = orders.filter((order) => {
@@ -491,6 +503,14 @@ export function OrdersPage() {
               <th>Details</th>
               <th>Priority</th>
               <th>Status</th>
+              <th>
+                Coverage
+                {eligibilityLoading && (
+                  <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', color: '#6b7280' }}>
+                    updating...
+                  </span>
+                )}
+              </th>
               <th>Created</th>
               <th>Actions</th>
             </tr>
@@ -498,6 +518,8 @@ export function OrdersPage() {
           <tbody>
             {filteredOrders.map((order) => {
               const typeInfo = ORDER_TYPES.find((t) => t.value === order.type);
+              const eligibility = eligibilityByPatient[order.patientId];
+              const insuranceLabel = getPatientInsurance(order.patientId);
               return (
                 <tr
                   key={order.id}
@@ -581,6 +603,21 @@ export function OrdersPage() {
                     >
                       {order.status}
                     </span>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <InsuranceStatusBadge
+                        status={eligibility?.verification_status}
+                        verifiedAt={eligibility?.verified_at}
+                        hasIssues={eligibility?.has_issues}
+                        size="sm"
+                      />
+                      {insuranceLabel ? (
+                        <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>{insuranceLabel}</span>
+                      ) : (
+                        <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}>No insurance</span>
+                      )}
+                    </div>
                   </td>
                   <td style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                     {new Date(order.createdAt).toLocaleDateString()}

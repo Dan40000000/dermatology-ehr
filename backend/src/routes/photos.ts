@@ -45,6 +45,9 @@ const PHOTO_TYPES = [
   'other',
 ] as const;
 
+const LEGACY_PHOTO_TYPES = ['clinical', 'before', 'after', 'dermoscopy', 'baseline'] as const;
+const LEGACY_STORAGE_TYPES = ['local', 's3'] as const;
+
 // Validation schemas
 const uploadPhotoSchema = z.object({
   patientId: z.string().uuid(),
@@ -106,6 +109,81 @@ const linkPhotoToBodyMapSchema = z.object({
   bodyView: z.enum(['front', 'back', 'head-front', 'head-back', 'left-side', 'right-side']),
 });
 
+const isLegacyPhotoUrl = (url: string) =>
+  url.startsWith('/') || url.startsWith('http://') || url.startsWith('https://');
+
+const legacyPhotoSchema = z.object({
+  patientId: z.string().min(1),
+  url: z.string().refine(isLegacyPhotoUrl, { message: 'Invalid URL' }),
+  photoType: z.enum(LEGACY_PHOTO_TYPES).default('clinical'),
+  bodyLocation: z.string().optional(),
+  description: z.string().optional(),
+  encounterId: z.string().optional(),
+  lesionId: z.string().optional(),
+  comparisonGroupId: z.string().optional(),
+  sequenceNumber: z.coerce.number().int().optional(),
+  storage: z.enum(LEGACY_STORAGE_TYPES).default('local'),
+  objectKey: z.string().optional(),
+  category: z.string().optional(),
+  bodyRegion: z.string().optional(),
+  filename: z.string().optional(),
+  mimeType: z.string().optional(),
+  fileSize: z.coerce.number().int().optional(),
+});
+
+const legacyComparisonGroupSchema = z.object({
+  patientId: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().optional(),
+});
+
+const isNumberField = (value: unknown): boolean =>
+  typeof value === 'number' && !Number.isNaN(value);
+
+const isNonEmptyString = (value: unknown): boolean =>
+  typeof value === 'string' && value.trim().length > 0;
+
+const isValidLegacyAnnotationPayload = (payload: any): boolean => {
+  if (!payload || !Array.isArray(payload.shapes)) {
+    return false;
+  }
+
+  return payload.shapes.every((shape: any) => {
+    if (!shape || typeof shape !== 'object' || typeof shape.type !== 'string') {
+      return false;
+    }
+
+    switch (shape.type) {
+      case 'arrow':
+        return isNumberField(shape.x) && isNumberField(shape.y) && isNonEmptyString(shape.color);
+      case 'circle':
+        return (
+          isNumberField(shape.x) &&
+          isNumberField(shape.y) &&
+          isNumberField(shape.radius) &&
+          isNonEmptyString(shape.color)
+        );
+      case 'rectangle':
+        return (
+          isNumberField(shape.x) &&
+          isNumberField(shape.y) &&
+          isNumberField(shape.width) &&
+          isNumberField(shape.height) &&
+          isNonEmptyString(shape.color)
+        );
+      case 'text':
+        return (
+          isNumberField(shape.x) &&
+          isNumberField(shape.y) &&
+          isNonEmptyString(shape.text) &&
+          isNonEmptyString(shape.color)
+        );
+      default:
+        return false;
+    }
+  });
+};
+
 // Configure multer for file uploads
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -160,30 +238,220 @@ photosRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
     let paramIndex = 2;
 
     if (patientId) {
-      query += ` AND p.patient_id = $${paramIndex}`;
+      query += ` and patient_id = $${paramIndex}`;
       params.push(patientId);
       paramIndex++;
     }
 
     if (photoType) {
-      query += ` AND p.photo_type = $${paramIndex}`;
+      query += ` and photo_type = $${paramIndex}`;
       params.push(photoType);
       paramIndex++;
     }
 
     if (bodyLocation) {
-      query += ` AND (p.body_location = $${paramIndex} OR p.body_region = $${paramIndex})`;
+      query += ` and (body_location = $${paramIndex} OR body_region = $${paramIndex})`;
       params.push(bodyLocation);
       paramIndex++;
     }
 
-    query += ` ORDER BY p.created_at DESC LIMIT 100`;
+    query += ` order by created_at desc limit 100`;
 
     const result = await pool.query(query, params);
     res.json({ photos: result.rows });
   } catch (error: any) {
     console.error('Error fetching photos:', error);
     res.status(500).json({ error: 'Failed to fetch photos' });
+  }
+});
+
+/**
+ * Legacy: POST /api/photos
+ * Create a photo record (used by existing frontend integrations).
+ */
+photosRouter.post('/', requireAuth, async (req: AuthedRequest, res) => {
+  const parsed = legacyPhotoSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid payload' });
+  }
+
+  try {
+    const tenantId = req.user!.tenantId;
+    const photoId = crypto.randomUUID();
+    const data = parsed.data;
+
+    await pool.query(
+      `insert into photos (
+        id, tenant_id, patient_id, encounter_id, body_location, lesion_id,
+        photo_type, comparison_group_id, sequence_number, url, storage, object_key,
+        category, body_region, description, filename, mime_type, file_size
+      ) values (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+      )`,
+      [
+        photoId,
+        tenantId,
+        data.patientId,
+        data.encounterId || null,
+        data.bodyLocation || null,
+        data.lesionId || null,
+        data.photoType,
+        data.comparisonGroupId || null,
+        data.sequenceNumber ?? null,
+        data.url,
+        data.storage,
+        data.objectKey || null,
+        data.category || null,
+        data.bodyRegion || null,
+        data.description || null,
+        data.filename || null,
+        data.mimeType || null,
+        data.fileSize ?? null,
+      ],
+    );
+
+    res.status(201).json({ id: photoId });
+  } catch (error: any) {
+    console.error('Error creating photo:', error);
+    res.status(500).json({ error: 'Failed to create photo' });
+  }
+});
+
+/**
+ * Legacy: PUT /api/photos/:id/annotate
+ * Update photo annotations.
+ */
+photosRouter.put('/:photoId/annotate', requireAuth, async (req: AuthedRequest, res) => {
+  const { photoId } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  if (!isValidLegacyAnnotationPayload(req.body)) {
+    return res.status(400).json({ error: 'Invalid annotations' });
+  }
+
+  try {
+    await pool.query('update photos set annotations = $1 where id = $2 and tenant_id = $3', [
+      JSON.stringify(req.body),
+      photoId,
+      tenantId,
+    ]);
+
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('Error updating annotations:', error);
+    res.status(500).json({ error: 'Failed to update annotations' });
+  }
+});
+
+/**
+ * Legacy: PUT /api/photos/:id/body-location
+ * Update photo body location.
+ */
+photosRouter.put('/:photoId/body-location', requireAuth, async (req: AuthedRequest, res) => {
+  const { photoId } = req.params;
+  const tenantId = req.user!.tenantId;
+  const { bodyLocation } = req.body;
+
+  if (typeof bodyLocation !== 'string' || bodyLocation.trim().length === 0) {
+    return res.status(400).json({ error: 'bodyLocation is required' });
+  }
+
+  try {
+    await pool.query('update photos set body_location = $1 where id = $2 and tenant_id = $3', [
+      bodyLocation,
+      photoId,
+      tenantId,
+    ]);
+
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('Error updating body location:', error);
+    res.status(500).json({ error: 'Failed to update body location' });
+  }
+});
+
+/**
+ * Legacy: POST /api/photos/comparison-group
+ * Create a comparison group for timeline views.
+ */
+photosRouter.post('/comparison-group', requireAuth, async (req: AuthedRequest, res) => {
+  const parsed = legacyComparisonGroupSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid payload' });
+  }
+
+  try {
+    const tenantId = req.user!.tenantId;
+    const groupId = crypto.randomUUID();
+    const { patientId, name, description } = parsed.data;
+
+    await pool.query(
+      `insert into photo_comparison_groups (id, tenant_id, patient_id, name, description)
+       values ($1, $2, $3, $4, $5)`,
+      [groupId, tenantId, patientId, name, description || null],
+    );
+
+    res.status(201).json({ id: groupId });
+  } catch (error: any) {
+    console.error('Error creating comparison group:', error);
+    res.status(500).json({ error: 'Failed to create comparison group' });
+  }
+});
+
+/**
+ * Legacy: GET /api/photos/comparison-group/:id
+ * Fetch a comparison group with its photos.
+ */
+photosRouter.get('/comparison-group/:id', requireAuth, async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    const groupResult = await pool.query(
+      `SELECT id, tenant_id as "tenantId", patient_id as "patientId", name, description,
+              created_at as "createdAt", updated_at as "updatedAt"
+       FROM photo_comparison_groups
+       WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId],
+    );
+
+    if (groupResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Comparison group not found' });
+    }
+
+    const photosResult = await pool.query(
+      `SELECT id, comparison_group_id as "comparisonGroupId", sequence_number as "sequenceNumber", url
+       FROM photos
+       WHERE comparison_group_id = $1 AND tenant_id = $2
+       ORDER BY sequence_number ASC, created_at ASC`,
+      [id, tenantId],
+    );
+
+    res.json({ ...groupResult.rows[0], photos: photosResult.rows });
+  } catch (error: any) {
+    console.error('Error fetching comparison group:', error);
+    res.status(500).json({ error: 'Failed to fetch comparison group' });
+  }
+});
+
+/**
+ * Legacy: GET /api/photos/patient/:patientId/timeline
+ * Fetch a patient photo timeline (most recent first).
+ */
+photosRouter.get('/patient/:patientId/timeline', requireAuth, async (req: AuthedRequest, res) => {
+  const { patientId } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    const result = await pool.query(
+      'select * from photos where patient_id = $1 and tenant_id = $2 order by created_at desc',
+      [patientId, tenantId],
+    );
+
+    res.json({ photos: result.rows });
+  } catch (error: any) {
+    console.error('Error fetching photo timeline:', error);
+    res.status(500).json({ error: 'Failed to fetch photo timeline' });
   }
 });
 
@@ -421,149 +689,6 @@ photosRouter.get(
 );
 
 /**
- * GET /api/patients/:patientId/photos/:photoId
- * Get a single photo
- */
-photosRouter.get(
-  '/patients/:patientId/photos/:photoId',
-  requireAuth,
-  async (req: AuthedRequest, res) => {
-    try {
-      const { patientId, photoId } = req.params;
-      const tenantId = req.user!.tenantId;
-      const userId = req.user!.id;
-
-      const result = await pool.query(
-        `SELECT p.*, u.name as taken_by_name
-         FROM patient_photos p
-         LEFT JOIN users u ON p.taken_by = u.id
-         WHERE p.id = $1 AND p.patient_id = $2 AND p.tenant_id = $3 AND p.is_deleted = FALSE`,
-        [photoId, patientId, tenantId],
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ error: 'Photo not found' });
-      }
-
-      // Log access
-      await logPhotoAccess(photoId!, tenantId!, userId!, 'viewed', req);
-
-      res.json(result.rows[0]);
-    } catch (err) {
-      console.error('Error fetching photo:', err);
-      res.status(500).json({ error: 'Failed to fetch photo' });
-    }
-  },
-);
-
-/**
- * PUT /api/patients/:patientId/photos/:photoId
- * Update photo metadata
- */
-photosRouter.put(
-  '/patients/:patientId/photos/:photoId',
-  requireAuth,
-  requireRoles(['provider', 'admin', 'nurse']),
-  async (req: AuthedRequest, res) => {
-    try {
-      const { patientId, photoId } = req.params;
-      const tenantId = req.user!.tenantId;
-      const userId = req.user!.id;
-
-      const updates = updatePhotoSchema.parse(req.body);
-
-      // Build dynamic update query
-      const updateFields = [];
-      const values = [];
-      let paramCount = 0;
-
-      for (const [key, value] of Object.entries(updates)) {
-        if (value !== undefined) {
-          paramCount++;
-          // Convert camelCase to snake_case
-          const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
-          updateFields.push(`${dbKey} = $${paramCount}`);
-          values.push(value);
-        }
-      }
-
-      if (updateFields.length === 0) {
-        return res.status(400).json({ error: 'No fields to update' });
-      }
-
-      paramCount++;
-      values.push(photoId);
-      paramCount++;
-      values.push(patientId);
-      paramCount++;
-      values.push(tenantId);
-
-      const query = `
-        UPDATE patient_photos
-        SET ${updateFields.join(', ')}, updated_at = NOW()
-        WHERE id = $${paramCount - 2} AND patient_id = $${paramCount - 1}
-          AND tenant_id = $${paramCount} AND is_deleted = FALSE
-        RETURNING *
-      `;
-
-      const result = await pool.query(query, values);
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ error: 'Photo not found' });
-      }
-
-      // Log access
-      await logPhotoAccess(photoId!, tenantId!, userId!, 'modified', req);
-
-      res.json(result.rows[0]);
-    } catch (err) {
-      console.error('Error updating photo:', err);
-      if (err instanceof z.ZodError) {
-        return res.status(400).json({ error: 'Invalid data', details: err.issues });
-      }
-      res.status(500).json({ error: 'Failed to update photo' });
-    }
-  },
-);
-
-/**
- * DELETE /api/patients/:patientId/photos/:photoId
- * Soft delete a photo
- */
-photosRouter.delete(
-  '/patients/:patientId/photos/:photoId',
-  requireAuth,
-  requireRoles(['provider', 'admin']),
-  async (req: AuthedRequest, res) => {
-    try {
-      const { patientId, photoId } = req.params;
-      const tenantId = req.user!.tenantId;
-      const userId = req.user!.id;
-
-      const result = await pool.query(
-        `UPDATE patient_photos
-         SET is_deleted = TRUE, deleted_at = NOW(), deleted_by = $1
-         WHERE id = $2 AND patient_id = $3 AND tenant_id = $4
-         RETURNING *`,
-        [userId, photoId, patientId, tenantId],
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ error: 'Photo not found' });
-      }
-
-      // Log access
-      await logPhotoAccess(photoId!, tenantId!, userId!, 'deleted', req);
-
-      res.json({ success: true, message: 'Photo deleted' });
-    } catch (err) {
-      console.error('Error deleting photo:', err);
-      res.status(500).json({ error: 'Failed to delete photo' });
-    }
-  },
-);
-
-/**
  * GET /api/patients/:patientId/photos/timeline/:bodyRegion
  * Get timeline of photos for a specific body region
  */
@@ -748,6 +873,149 @@ photosRouter.get(
     } catch (err) {
       console.error('Error fetching stats:', err);
       res.status(500).json({ error: 'Failed to fetch statistics' });
+    }
+  },
+);
+
+/**
+ * GET /api/patients/:patientId/photos/:photoId
+ * Get a single photo
+ */
+photosRouter.get(
+  '/patients/:patientId/photos/:photoId',
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    try {
+      const { patientId, photoId } = req.params;
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+
+      const result = await pool.query(
+        `SELECT p.*, u.name as taken_by_name
+         FROM patient_photos p
+         LEFT JOIN users u ON p.taken_by = u.id
+         WHERE p.id = $1 AND p.patient_id = $2 AND p.tenant_id = $3 AND p.is_deleted = FALSE`,
+        [photoId, patientId, tenantId],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Photo not found' });
+      }
+
+      // Log access
+      await logPhotoAccess(photoId!, tenantId!, userId!, 'viewed', req);
+
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error('Error fetching photo:', err);
+      res.status(500).json({ error: 'Failed to fetch photo' });
+    }
+  },
+);
+
+/**
+ * PUT /api/patients/:patientId/photos/:photoId
+ * Update photo metadata
+ */
+photosRouter.put(
+  '/patients/:patientId/photos/:photoId',
+  requireAuth,
+  requireRoles(['provider', 'admin', 'nurse']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const { patientId, photoId } = req.params;
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+
+      const updates = updatePhotoSchema.parse(req.body);
+
+      // Build dynamic update query
+      const updateFields = [];
+      const values = [];
+      let paramCount = 0;
+
+      for (const [key, value] of Object.entries(updates)) {
+        if (value !== undefined) {
+          paramCount++;
+          // Convert camelCase to snake_case
+          const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+          updateFields.push(`${dbKey} = $${paramCount}`);
+          values.push(value);
+        }
+      }
+
+      if (updateFields.length === 0) {
+        return res.status(400).json({ error: 'No fields to update' });
+      }
+
+      paramCount++;
+      values.push(photoId);
+      paramCount++;
+      values.push(patientId);
+      paramCount++;
+      values.push(tenantId);
+
+      const query = `
+        UPDATE patient_photos
+        SET ${updateFields.join(', ')}, updated_at = NOW()
+        WHERE id = $${paramCount - 2} AND patient_id = $${paramCount - 1}
+          AND tenant_id = $${paramCount} AND is_deleted = FALSE
+        RETURNING *
+      `;
+
+      const result = await pool.query(query, values);
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Photo not found' });
+      }
+
+      // Log access
+      await logPhotoAccess(photoId!, tenantId!, userId!, 'modified', req);
+
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error('Error updating photo:', err);
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid data', details: err.issues });
+      }
+      res.status(500).json({ error: 'Failed to update photo' });
+    }
+  },
+);
+
+/**
+ * DELETE /api/patients/:patientId/photos/:photoId
+ * Soft delete a photo
+ */
+photosRouter.delete(
+  '/patients/:patientId/photos/:photoId',
+  requireAuth,
+  requireRoles(['provider', 'admin']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const { patientId, photoId } = req.params;
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+
+      const result = await pool.query(
+        `UPDATE patient_photos
+         SET is_deleted = TRUE, deleted_at = NOW(), deleted_by = $1
+         WHERE id = $2 AND patient_id = $3 AND tenant_id = $4
+         RETURNING *`,
+        [userId, photoId, patientId, tenantId],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Photo not found' });
+      }
+
+      // Log access
+      await logPhotoAccess(photoId!, tenantId!, userId!, 'deleted', req);
+
+      res.json({ success: true, message: 'Photo deleted' });
+    } catch (err) {
+      console.error('Error deleting photo:', err);
+      res.status(500).json({ error: 'Failed to delete photo' });
     }
   },
 );

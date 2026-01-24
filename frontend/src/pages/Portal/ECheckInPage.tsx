@@ -36,6 +36,8 @@ import {
   uploadPortalInsuranceCard,
   fetchPortalRequiredConsents,
   signPortalConsent,
+  fetchPortalProfile,
+  updatePortalProfile,
   type CheckinSession,
   type ConsentForm,
 } from '../../portalApi';
@@ -62,7 +64,8 @@ export default function ECheckInPage({ tenantId, portalToken, appointmentId }: E
   const [demographicsConfirmed, setDemographicsConfirmed] = useState(false);
   const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
-  const [emergencyContact, setEmergencyContact] = useState('');
+  const [emergencyContactName, setEmergencyContactName] = useState('');
+  const [emergencyContactPhone, setEmergencyContactPhone] = useState('');
 
   // Step 2: Insurance
   const [insuranceFrontImage, setInsuranceFrontImage] = useState<string | null>(null);
@@ -70,6 +73,7 @@ export default function ECheckInPage({ tenantId, portalToken, appointmentId }: E
 
   // Step 3: Consents
   const [signedConsents, setSignedConsents] = useState<Set<string>>(new Set());
+  const [signerName, setSignerName] = useState('');
 
   // Step 4: Payment
   const [copayAmount, setCopayAmount] = useState<number>(0);
@@ -95,6 +99,23 @@ export default function ECheckInPage({ tenantId, portalToken, appointmentId }: E
       const sessionData = await fetchPortalCheckinSession(tenantId, portalToken, newSessionId);
       setSession(sessionData);
 
+      try {
+        const profileData = await fetchPortalProfile(tenantId, portalToken);
+        const patient = profileData.patient;
+        if (patient) {
+          setAddress(patient.address || '');
+          setPhone(patient.phone || '');
+          setEmergencyContactName(patient.emergencyContactName || '');
+          setEmergencyContactPhone(patient.emergencyContactPhone || '');
+          if (!signerName) {
+            const fullName = [patient.firstName, patient.lastName].filter(Boolean).join(' ');
+            if (fullName) setSignerName(fullName);
+          }
+        }
+      } catch (profileError) {
+        console.error('Failed to load patient profile', profileError);
+      }
+
       // Load required consents
       const consentsData = await fetchPortalRequiredConsents(tenantId, portalToken);
       setRequiredConsents(consentsData.requiredConsents);
@@ -118,6 +139,12 @@ export default function ECheckInPage({ tenantId, portalToken, appointmentId }: E
 
       // Update session based on current step
       if (activeStep === 0) {
+        await updatePortalProfile(tenantId, portalToken, {
+          address: address || undefined,
+          phone: phone || undefined,
+          emergencyContactName: emergencyContactName || undefined,
+          emergencyContactPhone: emergencyContactPhone || undefined,
+        });
         await updatePortalCheckinSession(tenantId, portalToken, sessionId, {
           demographicsConfirmed: true,
         });
@@ -161,24 +188,35 @@ export default function ECheckInPage({ tenantId, portalToken, appointmentId }: E
     }
   };
 
-  const handleInsuranceUpload = async (front: File, back: File) => {
-    if (!sessionId) return;
+  const readFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+    });
+
+  const handleInsuranceFileChange = async (side: 'front' | 'back', file?: File) => {
+    if (!sessionId || !file) return;
 
     try {
       setLoading(true);
+      const dataUrl = await readFileAsDataUrl(file);
+      const nextFront = side === 'front' ? dataUrl : insuranceFrontImage;
+      const nextBack = side === 'back' ? dataUrl : insuranceBackImage;
 
-      // Convert files to base64 or upload to server
-      // This is simplified - in real implementation, use proper file upload
-      const frontUrl = URL.createObjectURL(front);
-      const backUrl = URL.createObjectURL(back);
+      if (side === 'front') {
+        setInsuranceFrontImage(dataUrl);
+      } else {
+        setInsuranceBackImage(dataUrl);
+      }
 
-      setInsuranceFrontImage(frontUrl);
-      setInsuranceBackImage(backUrl);
-
-      await uploadPortalInsuranceCard(tenantId, portalToken, sessionId, {
-        frontImageUrl: frontUrl,
-        backImageUrl: backUrl,
-      });
+      if (nextFront && nextBack) {
+        await uploadPortalInsuranceCard(tenantId, portalToken, sessionId, {
+          frontImageUrl: nextFront,
+          backImageUrl: nextBack,
+        });
+      }
     } catch (err) {
       setError('Failed to upload insurance card');
       console.error(err);
@@ -188,14 +226,17 @@ export default function ECheckInPage({ tenantId, portalToken, appointmentId }: E
   };
 
   const handleSignConsent = async (consentId: string) => {
+    if (!signerName.trim()) {
+      setError('Please enter your full name to sign.');
+      return;
+    }
+
     try {
       setLoading(true);
 
-      // In real implementation, capture actual signature
-      // For now, we'll use mock signature data for testing
       await signPortalConsent(tenantId, portalToken, consentId, {
-        signatureData: 'mock-signature-data',
-        signerName: 'Patient Name',
+        signatureData: `typed:${signerName.trim()}`,
+        signerName: signerName.trim(),
         signerRelationship: 'self',
       });
       setSignedConsents((prev) => new Set([...prev, consentId]));
@@ -283,10 +324,19 @@ export default function ECheckInPage({ tenantId, portalToken, appointmentId }: E
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
-                  label="Emergency Contact"
-                  value={emergencyContact}
-                  onChange={(e) => setEmergencyContact(e.target.value)}
-                  placeholder="Name and phone"
+                  label="Emergency Contact Name"
+                  value={emergencyContactName}
+                  onChange={(e) => setEmergencyContactName(e.target.value)}
+                  placeholder="Full name"
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Emergency Contact Phone"
+                  value={emergencyContactPhone}
+                  onChange={(e) => setEmergencyContactPhone(e.target.value)}
+                  placeholder="(555) 987-6543"
                 />
               </Grid>
             </Grid>
@@ -333,9 +383,7 @@ export default function ECheckInPage({ tenantId, portalToken, appointmentId }: E
                       accept="image/*"
                       onChange={(e) => {
                         const file = e.target.files?.[0];
-                        if (file && insuranceBackImage) {
-                          // Mock - would upload both
-                        }
+                        handleInsuranceFileChange('front', file);
                       }}
                     />
                   </Button>
@@ -361,9 +409,7 @@ export default function ECheckInPage({ tenantId, portalToken, appointmentId }: E
                       accept="image/*"
                       onChange={(e) => {
                         const file = e.target.files?.[0];
-                        if (file && insuranceFrontImage) {
-                          // Mock - would upload both
-                        }
+                        handleInsuranceFileChange('back', file);
                       }}
                     />
                   </Button>
@@ -389,6 +435,13 @@ export default function ECheckInPage({ tenantId, portalToken, appointmentId }: E
             <Typography variant="body2" color="text.secondary" paragraph>
               Please review and sign the following consent forms.
             </Typography>
+            <TextField
+              fullWidth
+              label="Signer Name"
+              value={signerName}
+              onChange={(e) => setSignerName(e.target.value)}
+              sx={{ mb: 2 }}
+            />
             <List>
               {requiredConsents.map((consent) => (
                 <ListItem key={consent.id}>

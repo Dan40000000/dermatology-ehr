@@ -338,4 +338,449 @@ describe('FHIR routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.resourceType).toBe('Bundle');
   });
+
+  it('GET /fhir/Patient supports identifier/birthdate/gender filters', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'p1' }] });
+
+    const res = await request(app).get(
+      '/fhir/Patient?name=pat&identifier=p1&birthdate=1990-01-01&gender=male&_count=10&_offset=5'
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('Bundle');
+  });
+
+  it('GET /fhir/Practitioner supports filters', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'pr1' }] });
+
+    const res = await request(app).get('/fhir/Practitioner?name=doc&identifier=pr1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('Bundle');
+  });
+
+  it('GET /fhir/Encounter supports patient/date/status filters', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'e1' }] });
+
+    const res = await request(app).get('/fhir/Encounter?patient=p1&date=2024-01-01&status=finished');
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('Bundle');
+  });
+
+  it('GET /fhir/Observation supports patient/date/encounter filters', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'v1' }] });
+
+    const res = await request(app).get('/fhir/Observation?patient=p1&date=2024-01-01&encounter=e1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('Bundle');
+  });
+
+  it('GET /fhir/Observation/:id returns 404 when no observation match', async () => {
+    fetchVitalMock.mockResolvedValueOnce({ id: 'v1' });
+
+    const res = await request(app).get('/fhir/Observation/v1-temp');
+
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /fhir/Condition/:id returns 404 when missing', async () => {
+    fetchDiagnosisMock.mockResolvedValueOnce(null);
+
+    const res = await request(app).get('/fhir/Condition/c1');
+
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /fhir/Condition supports patient/code/encounter filters', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'c1' }] });
+
+    const res = await request(app).get('/fhir/Condition?patient=p1&code=L30.9&encounter=e1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('Bundle');
+  });
+
+  it('GET /fhir/Practitioner/:id returns 404 when missing', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get('/fhir/Practitioner/pr-missing');
+
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /fhir/AllergyIntolerance/:id returns 404 when missing', async () => {
+    fetchAllergyMock.mockResolvedValueOnce(null);
+
+    const res = await request(app).get('/fhir/AllergyIntolerance/a-missing');
+
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /fhir/AllergyIntolerance supports filters', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'a1' }] });
+
+    const res = await request(app).get(
+      '/fhir/AllergyIntolerance?patient=Patient/p1&_id=a1,a2&clinical-status=active&verification-status=confirmed&category=food&code=pea&_count=10&_offset=5'
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('Bundle');
+  });
+
+  it('GET /fhir/AllergyIntolerance supports unconfirmed filter', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get('/fhir/AllergyIntolerance?verification-status=unconfirmed');
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('Bundle');
+  });
+
+  it('POST /fhir/AllergyIntolerance rejects missing patient reference', async () => {
+    const res = await request(app).post('/fhir/AllergyIntolerance').send({
+      resourceType: 'AllergyIntolerance',
+      code: { text: 'Peanuts' },
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /fhir/AllergyIntolerance rejects missing allergen', async () => {
+    const res = await request(app).post('/fhir/AllergyIntolerance').send({
+      resourceType: 'AllergyIntolerance',
+      patient: { reference: 'Patient/p1' },
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('PUT /fhir/AllergyIntolerance updates verification status', async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'a1' }] });
+
+    const res = await request(app).put('/fhir/AllergyIntolerance/a1').send({
+      resourceType: 'AllergyIntolerance',
+      verificationStatus: { coding: [{ code: 'unconfirmed' }] },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('AllergyIntolerance');
+  });
+
+  it('GET /fhir/Patient/:id returns 500 on error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Patient/p1');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Patient returns 500 on search error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Patient');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Practitioner/:id returns 500 on error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Practitioner/pr1');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Practitioner returns 500 on search error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Practitioner');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Encounter/:id returns 404 when missing', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get('/fhir/Encounter/e-missing');
+
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /fhir/Encounter/:id returns 500 on error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Encounter/e1');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Encounter returns 500 on search error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Encounter');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Observation/:id returns 500 on error', async () => {
+    fetchVitalMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Observation/v1-bp');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Observation returns 500 on search error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Observation');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Condition/:id returns 500 on error', async () => {
+    fetchDiagnosisMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Condition/c1');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Condition returns 500 on search error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Condition');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/AllergyIntolerance/:id returns 500 on error', async () => {
+    fetchAllergyMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/AllergyIntolerance/a1');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/AllergyIntolerance supports single _id filter', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'a1' }] });
+
+    const res = await request(app).get('/fhir/AllergyIntolerance?_id=a1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('Bundle');
+  });
+
+  it('GET /fhir/AllergyIntolerance returns 500 on search error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/AllergyIntolerance');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('POST /fhir/AllergyIntolerance returns 500 on error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).post('/fhir/AllergyIntolerance').send({
+      resourceType: 'AllergyIntolerance',
+      patient: { reference: 'Patient/p1' },
+      code: { text: 'Peanuts' },
+    });
+
+    expect(res.status).toBe(500);
+  });
+
+  it('PUT /fhir/AllergyIntolerance rejects invalid payload', async () => {
+    const res = await request(app).put('/fhir/AllergyIntolerance/a1').send({
+      resourceType: 'Patient',
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('PUT /fhir/AllergyIntolerance updates verified severity', async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'a1' }] });
+
+    const res = await request(app).put('/fhir/AllergyIntolerance/a1').send({
+      resourceType: 'AllergyIntolerance',
+      code: { text: 'Peanuts' },
+      verificationStatus: { coding: [{ code: 'confirmed' }] },
+      criticality: 'high',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('AllergyIntolerance');
+  });
+
+  it('PUT /fhir/AllergyIntolerance returns 404 when missing', async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const res = await request(app).put('/fhir/AllergyIntolerance/a-missing').send({
+      resourceType: 'AllergyIntolerance',
+      code: { text: 'Peanuts' },
+    });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('PUT /fhir/AllergyIntolerance returns 500 on error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).put('/fhir/AllergyIntolerance/a1').send({
+      resourceType: 'AllergyIntolerance',
+      code: { text: 'Peanuts' },
+    });
+
+    expect(res.status).toBe(500);
+  });
+
+  it('DELETE /fhir/AllergyIntolerance/:id returns 404 when missing', async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const res = await request(app).delete('/fhir/AllergyIntolerance/a-missing');
+
+    expect(res.status).toBe(404);
+  });
+
+  it('DELETE /fhir/AllergyIntolerance/:id returns 500 on error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).delete('/fhir/AllergyIntolerance/a1');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Procedure/:id returns 404 when missing', async () => {
+    fetchChargeMock.mockResolvedValueOnce(null);
+
+    const res = await request(app).get('/fhir/Procedure/proc-missing');
+
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /fhir/Procedure/:id returns 500 on error', async () => {
+    fetchChargeMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Procedure/proc1');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Procedure supports filters', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'proc1' }] });
+
+    const res = await request(app).get('/fhir/Procedure?patient=p1&date=2024-01-01&code=11100&encounter=e1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('Bundle');
+  });
+
+  it('GET /fhir/Procedure returns 500 on search error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Procedure');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Appointment/:id returns 404 when missing', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get('/fhir/Appointment/appt-missing');
+
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /fhir/Appointment/:id returns 500 on error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Appointment/appt1');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Appointment supports filters', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'appt1' }] });
+
+    const res = await request(app).get(
+      '/fhir/Appointment?patient=p1&date=2024-01-01&status=booked&practitioner=pr1'
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('Bundle');
+  });
+
+  it('GET /fhir/Appointment returns 500 on search error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Appointment');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Organization/:id returns 404 when missing', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get('/fhir/Organization/org-missing');
+
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /fhir/Organization/:id returns 500 on error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Organization/org1');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Organization supports name filter', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'org1' }] });
+
+    const res = await request(app).get('/fhir/Organization?name=Main');
+
+    expect(res.status).toBe(200);
+    expect(res.body.resourceType).toBe('Bundle');
+  });
+
+  it('GET /fhir/Organization returns 500 on search error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Organization');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /fhir/Bundle/summary returns 500 on error', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await request(app).get('/fhir/Bundle/summary');
+
+    expect(res.status).toBe(500);
+  });
 });

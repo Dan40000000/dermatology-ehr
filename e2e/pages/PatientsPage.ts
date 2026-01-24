@@ -7,11 +7,14 @@ import { BasePage } from './BasePage';
  */
 export class PatientsPage extends BasePage {
   // Locators
-  private readonly pageHeading = () => this.page.getByRole('heading', { name: /patients/i });
+  private readonly pageHeading = () =>
+    this.page.locator('.ema-section-header', { hasText: /patient search\s*$/i });
   private readonly newPatientButton = () => this.page.getByRole('button', { name: /new patient|add patient|register patient/i });
-  private readonly searchInput = () => this.page.getByPlaceholder(/search|filter/i);
+  private readonly advancedSearchButton = () => this.page.getByRole('button', { name: /advanced search/i });
+  private readonly handoutLibraryButton = () => this.page.getByRole('button', { name: /handout library/i });
+  private readonly searchInput = () => this.page.getByPlaceholder(/enter search term|search term/i);
   private readonly patientTable = () => this.page.getByRole('table');
-  private readonly patientRows = () => this.page.getByRole('row');
+  private readonly patientRows = () => this.page.locator('tbody tr');
   private readonly loadingSpinner = () => this.page.locator('[data-testid="loading-spinner"], .loading, .spinner');
 
   constructor(page: Page) {
@@ -42,6 +45,27 @@ export class PatientsPage extends BasePage {
   }
 
   /**
+   * Click advanced search button
+   */
+  async clickAdvancedSearch(): Promise<void> {
+    await this.advancedSearchButton().click();
+  }
+
+  /**
+   * Click handout library button
+   */
+  async clickHandoutLibrary(): Promise<void> {
+    await this.handoutLibraryButton().click();
+  }
+
+  /**
+   * Assert search input is focused
+   */
+  async assertSearchFocused(): Promise<void> {
+    await expect(this.searchInput()).toBeFocused();
+  }
+
+  /**
    * Search for a patient
    */
   async searchPatient(searchTerm: string): Promise<void> {
@@ -61,25 +85,32 @@ export class PatientsPage extends BasePage {
    * Get number of patient rows
    */
   async getPatientCount(): Promise<number> {
-    const rows = await this.patientRows().count();
-    // Subtract 1 for header row
-    return Math.max(0, rows - 1);
+    const rows = this.patientRows();
+    const emptyState = rows.filter({ hasText: /no patients found|loading patients/i });
+    if (await emptyState.count()) {
+      return 0;
+    }
+    return await rows.count();
   }
 
   /**
    * Click on a patient by name
    */
   async clickPatientByName(firstName: string, lastName: string): Promise<void> {
-    const patientRow = this.page.getByRole('row', { name: new RegExp(`${firstName}.*${lastName}|${lastName}.*${firstName}`, 'i') });
-    await patientRow.click();
+    const patientRow = this.patientRows()
+      .filter({ hasText: new RegExp(firstName, 'i') })
+      .filter({ hasText: new RegExp(lastName, 'i') });
+    await patientRow.locator('a.ema-patient-link').first().click();
   }
 
   /**
    * Assert patient appears in list
    */
   async assertPatientInList(firstName: string, lastName: string): Promise<void> {
-    const patientRow = this.page.getByRole('row', { name: new RegExp(`${firstName}.*${lastName}|${lastName}.*${firstName}`, 'i') });
-    await expect(patientRow).toBeVisible();
+    const patientRow = this.patientRows()
+      .filter({ hasText: new RegExp(firstName, 'i') })
+      .filter({ hasText: new RegExp(lastName, 'i') });
+    await expect(patientRow.first()).toBeVisible();
   }
 
   /**
@@ -98,15 +129,15 @@ export class PatientsPage extends BasePage {
    * Click on first patient in list
    */
   async clickFirstPatient(): Promise<void> {
-    const firstRow = this.patientRows().nth(1); // Skip header
-    await firstRow.click();
+    const firstRow = this.patientRows().first();
+    await firstRow.locator('a.ema-patient-link').first().click();
   }
 
   /**
    * Assert search results contain term
    */
   async assertSearchResults(searchTerm: string): Promise<void> {
-    const resultsText = await this.page.locator('tbody, .patient-list').textContent();
-    expect(resultsText).toContain(searchTerm);
+    const resultsText = await this.page.locator('tbody').textContent();
+    expect(resultsText?.toLowerCase() ?? '').toContain(searchTerm.toLowerCase());
   }
 }

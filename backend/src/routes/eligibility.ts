@@ -5,6 +5,7 @@
  * POST /api/eligibility/verify/:patientId - Verify single patient
  * POST /api/eligibility/batch - Batch verify multiple patients
  * GET /api/eligibility/history/:patientId - Verification history
+ * POST /api/eligibility/history/batch - Latest verification history for multiple patients
  * GET /api/eligibility/issues - Patients with insurance issues
  * GET /api/eligibility/pending - Patients needing verification
  */
@@ -19,6 +20,7 @@ import {
   verifyPatientEligibility,
   batchVerifyEligibility,
   getVerificationHistory,
+  getLatestVerificationByPatients,
   getPatientsWithIssues,
   getPatientsNeedingVerification,
   getTomorrowsPatients,
@@ -28,6 +30,9 @@ import { pool } from '../db/pool';
 const batchVerifySchema = z.object({
   patientIds: z.array(z.string()).min(1),
   batchName: z.string().optional(),
+});
+const batchHistorySchema = z.object({
+  patientIds: z.array(z.string()).min(1),
 });
 
 export const eligibilityRouter = Router();
@@ -367,6 +372,79 @@ eligibilityRouter.get(
       res.status(500).json({
         success: false,
         error: 'Failed to fetch verification history',
+        message: (error as Error).message,
+      });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/eligibility/history/batch:
+ *   post:
+ *     summary: Get latest verification history for multiple patients
+ *     description: Returns the most recent eligibility verification record per patient
+ *     tags:
+ *       - Insurance Eligibility
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - patientIds
+ *             properties:
+ *               patientIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: uuid
+ *                 description: Array of patient IDs
+ *     responses:
+ *       200:
+ *         description: Latest verification history by patient
+ *       401:
+ *         description: Unauthorized
+ *       400:
+ *         description: Invalid request
+ *       500:
+ *         description: Server error
+ */
+eligibilityRouter.post(
+  '/history/batch',
+  requireAuth,
+  requireRoles(['admin', 'provider', 'front_desk', 'billing']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const validatedData = batchHistorySchema.parse(req.body);
+      const tenantId = req.headers['x-tenant-id'] as string;
+
+      const history = await getLatestVerificationByPatients(validatedData.patientIds, tenantId);
+
+      res.json({
+        success: true,
+        history,
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid request data',
+          details: error.issues,
+        });
+      }
+
+      logger.error('Error fetching batch verification history', {
+        error: (error as Error).message,
+      });
+
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch batch verification history',
         message: (error as Error).message,
       });
     }

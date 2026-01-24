@@ -45,9 +45,10 @@ const navItems: NavItem[] = [
     module: 'office_flow',
     dropdown: [
       { label: 'All Patients', path: '/office-flow' },
-      { label: 'Waiting Room', path: '/office-flow?status=waiting' },
-      { label: 'In Exam', path: '/office-flow?status=in-exam' },
-      { label: 'Checkout', path: '/office-flow?status=checkout' },
+      { label: 'Waiting Room', path: '/office-flow?status=checked_in' },
+      { label: 'In Room', path: '/office-flow?status=in_room' },
+      { label: 'With Provider', path: '/office-flow?status=with_provider' },
+      { label: 'Completed', path: '/office-flow?status=completed' },
     ]
   },
   {

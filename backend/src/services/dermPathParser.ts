@@ -54,13 +54,16 @@ export class DermPathParser {
 
     // Common section headers in dermatopathology reports
     const sectionPatterns = [
-      { key: 'specimenInfo', pattern: /(?:SPECIMEN|SITE):\s*(.+?)(?:\n\n|(?=\n[A-Z]+:))/is },
+      { key: 'specimenInfo', pattern: /(?:SPECIMEN|SITE):\s*(.+?)(?:\n\n|(?=\n[A-Z]+:)|$)/is },
       { key: 'specimenSite', pattern: /(?:SITE|SPECIMEN SITE):\s*(.+?)(?:\n|$)/i },
-      { key: 'clinicalHistory', pattern: /CLINICAL (?:HISTORY|INFORMATION):\s*(.+?)(?:\n\n|(?=\n[A-Z]+:))/is },
-      { key: 'clinicalDiagnosis', pattern: /CLINICAL DIAGNOSIS:\s*(.+?)(?:\n\n|(?=\n[A-Z]+:))/is },
-      { key: 'grossDescription', pattern: /GROSS (?:DESCRIPTION|EXAMINATION):\s*(.+?)(?:\n\n|(?=\n[A-Z]+:))/is },
-      { key: 'microscopicDescription', pattern: /MICROSCOPIC (?:DESCRIPTION|EXAMINATION):\s*(.+?)(?:\n\n|(?=\n[A-Z]+:))/is },
-      { key: 'diagnosis', pattern: /(?:DIAGNOSIS|PATHOLOGIC DIAGNOSIS):\s*(.+?)(?:\n\n|(?=\n(?:COMMENT|NOTE|SPECIAL STAINS):))/is },
+      { key: 'clinicalHistory', pattern: /CLINICAL (?:HISTORY|INFORMATION):\s*(.+?)(?:\n\n|(?=\n[A-Z]+:)|$)/is },
+      { key: 'clinicalDiagnosis', pattern: /CLINICAL DIAGNOSIS:\s*(.+?)(?:\n\n|(?=\n[A-Z]+:)|$)/is },
+      { key: 'grossDescription', pattern: /GROSS (?:DESCRIPTION|EXAMINATION):\s*(.+?)(?:\n\n|(?=\n[A-Z]+:)|$)/is },
+      { key: 'microscopicDescription', pattern: /MICROSCOPIC (?:DESCRIPTION|EXAMINATION):\s*(.+?)(?:\n\n|(?=\n[A-Z]+:)|$)/is },
+      {
+        key: 'diagnosis',
+        pattern: /(?:^|\n)(?:DIAGNOSIS|PATHOLOGIC DIAGNOSIS):\s*(.+?)(?:\n\n|(?=\n(?:COMMENT|NOTE|SPECIAL STAINS):)|$)/is
+      },
       { key: 'comment', pattern: /(?:COMMENT|NOTE):\s*(.+?)$/is }
     ];
 

@@ -544,6 +544,97 @@ describe('Recalls Routes', () => {
     });
   });
 
+  describe('POST /api/recalls/bulk-notify', () => {
+    it('should validate recallIds and notificationType', async () => {
+      const missingIds = await request(app).post('/api/recalls/bulk-notify').send({
+        notificationType: 'email',
+      });
+
+      expect(missingIds.status).toBe(400);
+      expect(missingIds.body.error).toBe('Recall IDs are required');
+
+      const missingType = await request(app).post('/api/recalls/bulk-notify').send({
+        recallIds: ['recall-1'],
+      });
+
+      expect(missingType.status).toBe(400);
+      expect(missingType.body.error).toBe('Notification type is required');
+    });
+
+    it('should process recalls with mixed outcomes', async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 'recall-2',
+              patient_id: 'patient-2',
+              patientId: 'patient-2',
+              email: 'patient2@example.com',
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 'recall-3',
+              patient_id: 'patient-3',
+              patientId: 'patient-3',
+              email: 'patient3@example.com',
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      canContactPatientMock
+        .mockResolvedValueOnce({ canContact: false, reason: 'Opted out' })
+        .mockResolvedValueOnce({ canContact: true });
+      logReminderMock.mockResolvedValueOnce({ id: 'reminder-1' });
+
+      const response = await request(app).post('/api/recalls/bulk-notify').send({
+        recallIds: ['recall-1', 'recall-2', 'recall-3'],
+        notificationType: 'email',
+        messageTemplate: 'Reminder message',
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body.total).toBe(3);
+      expect(response.body.successful).toBe(1);
+      expect(response.body.failed).toBe(2);
+      expect(response.body.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ recallId: 'recall-1', error: 'Recall not found' }),
+          expect.objectContaining({ recallId: 'recall-2', error: 'Opted out' }),
+        ])
+      );
+    });
+
+    it('should capture errors during bulk notify processing', async () => {
+      queryMock.mockRejectedValueOnce(new Error('Notify failed'));
+
+      const response = await request(app).post('/api/recalls/bulk-notify').send({
+        recallIds: ['recall-1'],
+        notificationType: 'sms',
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body.failed).toBe(1);
+      expect(response.body.errors[0].error).toBe('Notify failed');
+    });
+  });
+
+  describe('GET /api/recalls/:id/notification-history', () => {
+    it('should return notification history', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: 'history-1' }] });
+
+      const response = await request(app).get('/api/recalls/recall-123/notification-history');
+
+      expect(response.status).toBe(200);
+      expect(response.body.history).toHaveLength(1);
+    });
+  });
+
   describe('GET /api/recalls/export', () => {
     it('should export recalls to CSV', async () => {
       const mockRecalls = [

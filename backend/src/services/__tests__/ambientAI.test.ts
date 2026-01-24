@@ -1,7 +1,6 @@
 import { logger } from '../../lib/logger';
 import * as ambientAI from '../ambientAI';
 import fs from 'fs/promises';
-import FormData from 'form-data';
 
 jest.mock('../../lib/logger', () => ({
   logger: {
@@ -12,7 +11,12 @@ jest.mock('../../lib/logger', () => ({
 }));
 
 jest.mock('fs/promises');
-jest.mock('form-data');
+jest.mock('form-data', () => {
+  return jest.fn().mockImplementation(() => ({
+    append: jest.fn(),
+    getHeaders: jest.fn(() => ({})),
+  }));
+});
 
 // Mock global fetch
 global.fetch = jest.fn();
@@ -22,6 +26,11 @@ describe('AmbientAI Service', () => {
     jest.clearAllMocks();
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    process.env.AMBIENT_AI_MOCK_DELAY_MS = '0';
+  });
+
+  afterAll(() => {
+    delete process.env.AMBIENT_AI_MOCK_DELAY_MS;
   });
 
   describe('transcribeAudio', () => {

@@ -1,8 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
 import { fetchOrders, fetchPatients, updateOrderStatus, createOrder } from '../api';
+import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 import { QuickFilters } from '../components/orders/QuickFilters';
 import { GroupedOrdersTable } from '../components/orders/GroupedOrdersTable';
 import type {
@@ -108,6 +109,8 @@ export function OrdersPageEnhanced() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+  const patientIds = useMemo(() => orders.map((order) => order.patientId), [orders]);
+  const { eligibilityByPatient, eligibilityLoading } = useEligibilityByPatient(session, patientIds);
 
   const handleStatusChange = async (orderId: string, newStatus: string) => {
     if (!session) return;
@@ -158,6 +161,14 @@ export function OrdersPageEnhanced() {
   const getPatientName = (patientId: string) => {
     const patient = patients.find((p) => p.id === patientId);
     return patient ? `${patient.lastName}, ${patient.firstName}` : 'Unknown';
+  };
+
+  const getPatientInsurance = (patientId: string) => {
+    const patient = patients.find((p) => p.id === patientId);
+    if (!patient?.insurance) return null;
+    if (typeof patient.insurance === 'string') return patient.insurance;
+    if (patient.insurance.planName) return patient.insurance.planName;
+    return 'On file';
   };
 
   const filteredOrders = orders.filter((order) => {
@@ -865,27 +876,42 @@ export function OrdersPageEnhanced() {
           boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '1rem' }}>
           <h3 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#6b7280' }}>
             Total Results: <span style={{ color: '#4f46e5', fontWeight: 700 }}>{filteredOrders.length}</span>
           </h3>
-          <button
-            type="button"
-            onClick={() => setShowNewOrderModal(true)}
-            style={{
-              padding: '0.625rem 1.25rem',
-              background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: '0.875rem',
-              fontWeight: 700,
-              cursor: 'pointer',
-              boxShadow: '0 4px 12px rgba(79, 70, 229, 0.4)',
-            }}
-          >
-            + New Order
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <input
+              type="text"
+              placeholder="Search orders..."
+              value={filters.searchTerm}
+              onChange={(e) => setFilters((prev) => ({ ...prev, searchTerm: e.target.value }))}
+              style={{
+                padding: '0.5rem 0.75rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '8px',
+                fontSize: '0.875rem',
+                minWidth: '220px',
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowNewOrderModal(true)}
+              style={{
+                padding: '0.625rem 1.25rem',
+                background: 'linear-gradient(135deg, #4f46e5 0%, #3730a3 100%)',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '0.875rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                boxShadow: '0 4px 12px rgba(79, 70, 229, 0.4)',
+              }}
+            >
+              + New Order
+            </button>
+          </div>
         </div>
 
         {/* Orders Table */}
@@ -923,6 +949,9 @@ export function OrdersPageEnhanced() {
             onToggleSelectAll={toggleSelectAll}
             onStatusChange={handleStatusChange}
             getPatientName={getPatientName}
+            eligibilityByPatient={eligibilityByPatient}
+            getPatientInsurance={getPatientInsurance}
+            eligibilityLoading={eligibilityLoading}
           />
         )}
       </div>

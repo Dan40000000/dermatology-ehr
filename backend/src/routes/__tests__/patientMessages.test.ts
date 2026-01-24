@@ -92,6 +92,39 @@ describe("Patient message routes", () => {
     expect(res.body.pagination.total).toBe(1);
   });
 
+  it("GET /patient-messages/threads applies filters", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "thread-1" }] })
+      .mockResolvedValueOnce({ rows: [{ total: "1" }] });
+
+    const res = await request(app).get("/patient-messages/threads").query({
+      category: "billing",
+      status: "open",
+      assignedTo: "provider-1",
+      priority: "urgent",
+      unreadOnly: "true",
+      search: "Doe",
+      limit: "10",
+      offset: "20",
+    });
+
+    expect(res.status).toBe(200);
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("t.category"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("t.status"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("t.assigned_to"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("t.priority"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("t.is_read_by_staff = false"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("t.subject ILIKE"));
+  });
+
+  it("GET /patient-messages/threads returns 500 on database error", async () => {
+    queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+    const res = await request(app).get("/patient-messages/threads");
+
+    expect(res.status).toBe(500);
+  });
+
   it("GET /patient-messages/threads/:id returns 404 when missing", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -329,6 +362,18 @@ describe("Patient message routes", () => {
     expect(newFiles).toHaveLength(1);
 
     cleanupUploads(newFiles);
+  });
+
+  it("POST /patient-messages/attachments rejects invalid file type", async () => {
+    const res = await request(app)
+      .post("/patient-messages/attachments")
+      .field("messageId", uuid)
+      .attach("file", Buffer.from("test"), {
+        filename: "note.txt",
+        contentType: "text/plain",
+      });
+
+    expect(res.status).toBe(500);
   });
 
   it("GET /patient-messages/attachments/:id downloads attachment", async () => {

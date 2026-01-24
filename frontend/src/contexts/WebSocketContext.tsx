@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from './AuthContext';
+import { API_BASE_URL } from '../utils/apiBase';
 import toast from 'react-hot-toast';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -18,7 +19,7 @@ interface WebSocketContextValue {
 
 const WebSocketContext = createContext<WebSocketContextValue | null>(null);
 
-const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const SOCKET_URL = API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 const RECONNECTION_DELAY = 5000;
 const MAX_RECONNECTION_ATTEMPTS = 10;
 

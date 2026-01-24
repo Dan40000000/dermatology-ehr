@@ -1,6 +1,27 @@
 import '@testing-library/jest-dom';
 import { expect, afterEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
+import type { ReactNode } from 'react';
+
+vi.mock('react-i18next', () => {
+  const i18n = {
+    language: 'en',
+    changeLanguage: vi.fn().mockResolvedValue(undefined),
+  };
+
+  return {
+    useTranslation: () => ({
+      t: (key: string, defaultValue?: string) => defaultValue ?? key,
+      i18n,
+    }),
+    Trans: ({ children }: { children: ReactNode }) => children,
+    I18nextProvider: ({ children }: { children: ReactNode }) => children,
+    initReactI18next: {
+      type: '3rdParty',
+      init: () => undefined,
+    },
+  };
+});
 
 // Cleanup after each test
 afterEach(() => {

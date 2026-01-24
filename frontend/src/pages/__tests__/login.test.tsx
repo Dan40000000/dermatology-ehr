@@ -4,7 +4,8 @@ import { LoginPage } from '../LoginPage';
 import { BrowserRouter } from 'react-router-dom';
 
 const mockNavigate = vi.fn();
-const mockLogin = vi.fn();
+const mockLogin = vi.hoisted(() => vi.fn());
+const locationMock = vi.hoisted(() => vi.fn(() => ({ state: {} })));
 
 const authMocks = vi.hoisted(() => ({
   isAuthenticated: false,
@@ -18,7 +19,7 @@ vi.mock('react-router-dom', async () => {
     ...actual,
     Navigate: ({ to }: { to: string }) => <div data-testid="navigate">{to}</div>,
     useNavigate: () => mockNavigate,
-    useLocation: () => ({ state: {} }),
+    useLocation: locationMock,
   };
 });
 
@@ -32,6 +33,7 @@ describe('LoginPage', () => {
     authMocks.isAuthenticated = false;
     authMocks.isLoading = false;
     mockLogin.mockResolvedValue(undefined);
+    locationMock.mockReturnValue({ state: {} });
   });
 
   it('should render login form', () => {
@@ -41,10 +43,10 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText(/Mountain Pine Dermatology/i)).toBeInTheDocument();
+    expect(screen.getByText('common:appName')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('tenant-demo')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('admin@demo.practice')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Sign In/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /auth:login.signInButton/i })).toBeInTheDocument();
   });
 
   it('should display demo credentials', () => {
@@ -54,7 +56,7 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText(/Demo Credentials/i)).toBeInTheDocument();
+    expect(screen.getByText('auth:login.demoCredentials')).toBeInTheDocument();
     expect(screen.getByText(/admin@demo.practice/)).toBeInTheDocument();
     expect(screen.getByText(/Password123!/)).toBeInTheDocument();
   });
@@ -102,7 +104,7 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    const submitButton = screen.getByRole('button', { name: /Sign In/i });
+    const submitButton = screen.getByRole('button', { name: /auth:login.signInButton/i });
     fireEvent.click(submitButton);
 
     await waitFor(() => {
@@ -119,7 +121,7 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    const submitButton = screen.getByRole('button', { name: /Sign In/i });
+    const submitButton = screen.getByRole('button', { name: /auth:login.signInButton/i });
     fireEvent.click(submitButton);
 
     await waitFor(() => {
@@ -136,11 +138,11 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    const submitButton = screen.getByRole('button', { name: /Sign In/i });
+    const submitButton = screen.getByRole('button', { name: /auth:login.signInButton/i });
     fireEvent.click(submitButton);
 
     await waitFor(() => {
-      expect(screen.getByText('Login failed')).toBeInTheDocument();
+      expect(screen.getByText('auth:errors.invalidCredentials')).toBeInTheDocument();
     });
   });
 
@@ -153,7 +155,7 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    const submitButton = screen.getByRole('button', { name: /Sign In/i });
+    const submitButton = screen.getByRole('button', { name: /auth:login.signInButton/i });
 
     fireEvent.click(submitButton);
 
@@ -179,7 +181,7 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    const submitButton = screen.getByRole('button', { name: /Signing in/i });
+    const submitButton = screen.getByRole('button', { name: /common:messages.loading/i });
     expect(submitButton).toBeDisabled();
   });
 
@@ -198,9 +200,7 @@ describe('LoginPage', () => {
   it('should redirect to previous location when specified', () => {
     authMocks.isAuthenticated = true;
 
-    vi.mocked(require('react-router-dom').useLocation).mockReturnValue({
-      state: { from: { pathname: '/patients' } },
-    });
+    locationMock.mockReturnValue({ state: { from: { pathname: '/patients' } } });
 
     render(
       <BrowserRouter>
@@ -272,9 +272,9 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText('Practice ID')).toBeInTheDocument();
-    expect(screen.getByText('Email Address')).toBeInTheDocument();
-    expect(screen.getByText('Password')).toBeInTheDocument();
+    expect(screen.getByText('auth:login.practiceId')).toBeInTheDocument();
+    expect(screen.getByText('auth:login.emailAddress')).toBeInTheDocument();
+    expect(screen.getByText('auth:login.password')).toBeInTheDocument();
   });
 
   it('should handle form submission with Enter key', async () => {
@@ -284,7 +284,7 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    const form = screen.getByRole('button', { name: /Sign In/i }).closest('form');
+    const form = screen.getByRole('button', { name: /auth:login.signInButton/i }).closest('form');
 
     fireEvent.submit(form!);
 
@@ -306,7 +306,7 @@ describe('LoginPage', () => {
 
     fireEvent.change(emailInput, { target: { value: 'custom@example.com' } });
 
-    const submitButton = screen.getByRole('button', { name: /Sign In/i });
+    const submitButton = screen.getByRole('button', { name: /auth:login.signInButton/i });
     fireEvent.click(submitButton);
 
     await waitFor(() => {

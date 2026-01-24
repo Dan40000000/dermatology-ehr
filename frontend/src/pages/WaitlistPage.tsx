@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Modal, Skeleton } from '../components/ui';
 import { fetchPatients, fetchProviders, notifyWaitlistPatient, getWaitlistNotifications, fillWaitlistEntry } from '../api';
+import { API_BASE_URL } from '../utils/apiBase';
 import type { Patient, Provider } from '../types';
 
 interface WaitlistEntry {
@@ -120,7 +121,7 @@ export function WaitlistPage() {
     setLoading(true);
     try {
       const [waitlistRes, patientsRes, providersRes] = await Promise.all([
-        fetch(`${import.meta.env.VITE_API_URL}/api/waitlist${statusFilter !== 'all' ? `?status=${statusFilter}` : ''}`, {
+        fetch(`${API_BASE_URL}/api/waitlist${statusFilter !== 'all' ? `?status=${statusFilter}` : ''}`, {
           headers: {
             'Authorization': `Bearer ${session.accessToken}`,
             'x-tenant-id': session.tenantId,
@@ -153,7 +154,7 @@ export function WaitlistPage() {
 
     setCreating(true);
     try {
-      await fetch(`${import.meta.env.VITE_API_URL}/api/waitlist`, {
+      await fetch(`${API_BASE_URL}/api/waitlist`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -199,7 +200,7 @@ export function WaitlistPage() {
 
     setCreating(true);
     try {
-      await fetch(`${import.meta.env.VITE_API_URL}/api/waitlist/${selectedEntry.id}`, {
+      await fetch(`${API_BASE_URL}/api/waitlist/${selectedEntry.id}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -230,7 +231,7 @@ export function WaitlistPage() {
     if (!window.confirm('Remove this patient from the waitlist?')) return;
 
     try {
-      await fetch(`${import.meta.env.VITE_API_URL}/api/waitlist/${id}`, {
+      await fetch(`${API_BASE_URL}/api/waitlist/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${session.accessToken}`,

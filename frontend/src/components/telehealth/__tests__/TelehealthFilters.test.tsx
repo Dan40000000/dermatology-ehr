@@ -10,6 +10,7 @@ describe('TelehealthFilters', () => {
     status: '',
     assignedTo: '',
     physician: '',
+    patientSearch: '',
     reason: '',
     myUnreadOnly: false,
   };
@@ -27,15 +28,21 @@ describe('TelehealthFilters', () => {
 
   it('renders all filter fields', () => {
     render(
-      <TelehealthFilters filters={mockFilters} onChange={mockOnChange} providers={mockProviders} />
+      <TelehealthFilters
+        filters={mockFilters}
+        onChange={mockOnChange}
+        onClear={vi.fn()}
+        providers={mockProviders}
+        patients={[]}
+      />
     );
 
-    expect(screen.getByLabelText('Date Range')).toBeInTheDocument();
+    expect(screen.getByLabelText('Dates')).toBeInTheDocument();
     expect(screen.getByLabelText('Status')).toBeInTheDocument();
-    expect(screen.getByLabelText('Reason for Visit')).toBeInTheDocument();
+    expect(screen.getByLabelText('Reason')).toBeInTheDocument();
     expect(screen.getByLabelText('Assigned To')).toBeInTheDocument();
     expect(screen.getByLabelText('Physician')).toBeInTheDocument();
-    expect(screen.getByText('My Unread Only')).toBeInTheDocument();
+    expect(screen.getByLabelText('My Unread Only')).toBeInTheDocument();
   });
 
   it('shows custom date fields when custom preset is selected', () => {
@@ -45,20 +52,28 @@ describe('TelehealthFilters', () => {
       <TelehealthFilters
         filters={customFilters}
         onChange={mockOnChange}
+        onClear={vi.fn()}
         providers={mockProviders}
+        patients={[]}
       />
     );
 
-    expect(screen.getByLabelText('Start Date')).toBeInTheDocument();
-    expect(screen.getByLabelText('End Date')).toBeInTheDocument();
+    expect(screen.getByLabelText('Date Created (From)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Date Created (To)')).toBeInTheDocument();
   });
 
   it('calls onChange when date preset changes', () => {
     render(
-      <TelehealthFilters filters={mockFilters} onChange={mockOnChange} providers={mockProviders} />
+      <TelehealthFilters
+        filters={mockFilters}
+        onChange={mockOnChange}
+        onClear={vi.fn()}
+        providers={mockProviders}
+        patients={[]}
+      />
     );
 
-    const dateSelect = screen.getByLabelText('Date Range');
+    const dateSelect = screen.getByLabelText('Dates');
     fireEvent.change(dateSelect, { target: { value: 'today' } });
 
     expect(mockOnChange).toHaveBeenCalled();
@@ -69,7 +84,13 @@ describe('TelehealthFilters', () => {
 
   it('calls onChange when status filter changes', () => {
     render(
-      <TelehealthFilters filters={mockFilters} onChange={mockOnChange} providers={mockProviders} />
+      <TelehealthFilters
+        filters={mockFilters}
+        onChange={mockOnChange}
+        onClear={vi.fn()}
+        providers={mockProviders}
+        patients={[]}
+      />
     );
 
     const statusSelect = screen.getByLabelText('Status');
@@ -82,19 +103,31 @@ describe('TelehealthFilters', () => {
 
   it('renders all dermatology reasons in dropdown', () => {
     render(
-      <TelehealthFilters filters={mockFilters} onChange={mockOnChange} providers={mockProviders} />
+      <TelehealthFilters
+        filters={mockFilters}
+        onChange={mockOnChange}
+        onClear={vi.fn()}
+        providers={mockProviders}
+        patients={[]}
+      />
     );
 
-    const reasonSelect = screen.getByLabelText('Reason for Visit');
+    const reasonSelect = screen.getByLabelText('Reason');
     const options = reasonSelect.querySelectorAll('option');
 
-    // +1 for "All Reasons" option
+    // +1 for "Any" option
     expect(options).toHaveLength(DERMATOLOGY_REASONS.length + 1);
   });
 
   it('renders provider options in Assigned To dropdown', () => {
     render(
-      <TelehealthFilters filters={mockFilters} onChange={mockOnChange} providers={mockProviders} />
+      <TelehealthFilters
+        filters={mockFilters}
+        onChange={mockOnChange}
+        onClear={vi.fn()}
+        providers={mockProviders}
+        patients={[]}
+      />
     );
 
     const assignedToSelect = screen.getByLabelText('Assigned To');
@@ -109,13 +142,19 @@ describe('TelehealthFilters', () => {
     expect(optionTexts).toContain('Dr. Jane Doe');
   });
 
-  it('calls onChange when checkbox is toggled', () => {
+  it('calls onChange when unread filter changes', () => {
     render(
-      <TelehealthFilters filters={mockFilters} onChange={mockOnChange} providers={mockProviders} />
+      <TelehealthFilters
+        filters={mockFilters}
+        onChange={mockOnChange}
+        onClear={vi.fn()}
+        providers={mockProviders}
+        patients={[]}
+      />
     );
 
-    const checkbox = screen.getByRole('checkbox');
-    fireEvent.click(checkbox);
+    const unreadSelect = screen.getByLabelText('My Unread Only');
+    fireEvent.change(unreadSelect, { target: { value: 'yes' } });
 
     expect(mockOnChange).toHaveBeenCalledWith(
       expect.objectContaining({ myUnreadOnly: true })
@@ -124,10 +163,16 @@ describe('TelehealthFilters', () => {
 
   it('sets correct date range for "Last 7 Days" preset', () => {
     render(
-      <TelehealthFilters filters={mockFilters} onChange={mockOnChange} providers={mockProviders} />
+      <TelehealthFilters
+        filters={mockFilters}
+        onChange={mockOnChange}
+        onClear={vi.fn()}
+        providers={mockProviders}
+        patients={[]}
+      />
     );
 
-    const dateSelect = screen.getByLabelText('Date Range');
+    const dateSelect = screen.getByLabelText('Dates');
     fireEvent.change(dateSelect, { target: { value: 'last7days' } });
 
     const callArgs = mockOnChange.mock.calls[0][0];
@@ -147,11 +192,13 @@ describe('TelehealthFilters', () => {
       <TelehealthFilters
         filters={filtersWithDates}
         onChange={mockOnChange}
+        onClear={vi.fn()}
         providers={mockProviders}
+        patients={[]}
       />
     );
 
-    const dateSelect = screen.getByLabelText('Date Range');
+    const dateSelect = screen.getByLabelText('Dates');
     fireEvent.change(dateSelect, { target: { value: 'alltime' } });
 
     const callArgs = mockOnChange.mock.calls[0][0];

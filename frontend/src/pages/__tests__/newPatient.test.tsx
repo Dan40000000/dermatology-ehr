@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 
 const mockNavigate = vi.fn();
 
-const mockSession = {
+const mockSession = vi.hoisted(() => ({
   tenantId: 'tenant-1',
   accessToken: 'token-123',
   refreshToken: 'refresh-123',
@@ -16,7 +16,7 @@ const mockSession = {
     fullName: 'Test User',
     role: 'provider' as const,
   },
-};
+}));
 
 const authMocks = vi.hoisted(() => ({
   session: mockSession,
@@ -65,7 +65,7 @@ describe('NewPatientPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     authMocks.session = mockSession;
-    apiMocks.createPatient.mockResolvedValue({ patient: { id: 'new-patient-1' } });
+    apiMocks.createPatient.mockResolvedValue({ id: 'new-patient-1' });
   });
 
   it('should render new patient form', () => {
@@ -90,8 +90,11 @@ describe('NewPatientPage', () => {
     expect(screen.getByLabelText(/First Name/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Last Name/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Date of Birth/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Next: Contact Info/i }));
+
     expect(screen.getByLabelText(/Email/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Phone/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Home Phone/i)).toBeInTheDocument();
   });
 
   it('should submit form with valid data', async () => {
@@ -106,10 +109,12 @@ describe('NewPatientPage', () => {
     await user.type(screen.getByLabelText(/First Name/i), 'John');
     await user.type(screen.getByLabelText(/Last Name/i), 'Doe');
     await user.type(screen.getByLabelText(/Date of Birth/i), '1990-01-01');
-    await user.type(screen.getByLabelText(/Email/i), 'john@example.com');
-    await user.type(screen.getByLabelText(/Phone/i), '555-0100');
 
-    const submitButton = screen.getByRole('button', { name: /Create Patient/i });
+    await user.click(screen.getByRole('button', { name: /Next: Contact Info/i }));
+    await user.type(screen.getByLabelText(/Email/i), 'john@example.com');
+    await user.type(screen.getByLabelText(/Home Phone/i), '555-0100');
+
+    const submitButton = screen.getByRole('button', { name: /Save Patient/i });
     await user.click(submitButton);
 
     await waitFor(() => {
@@ -133,8 +138,9 @@ describe('NewPatientPage', () => {
 
     await user.type(screen.getByLabelText(/First Name/i), 'John');
     await user.type(screen.getByLabelText(/Last Name/i), 'Doe');
+    await user.type(screen.getByLabelText(/Date of Birth/i), '1990-01-01');
 
-    const submitButton = screen.getByRole('button', { name: /Create Patient/i });
+    const submitButton = screen.getByRole('button', { name: /Save Patient/i });
     await user.click(submitButton);
 
     await waitFor(() => {
@@ -156,7 +162,7 @@ describe('NewPatientPage', () => {
     const cancelButton = screen.getByRole('button', { name: /Cancel/i });
     await user.click(cancelButton);
 
-    expect(mockNavigate).toHaveBeenCalledWith(-1);
+    expect(mockNavigate).toHaveBeenCalledWith('/patients');
   });
 
   it('should validate required fields', async () => {

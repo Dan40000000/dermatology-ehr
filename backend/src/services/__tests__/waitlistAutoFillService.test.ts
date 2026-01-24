@@ -28,18 +28,23 @@ describe('WaitlistAutoFillService', () => {
   const providerId = 'provider-123';
   const locationId = 'location-123';
   const appointmentTypeId = 'type-123';
+  // Use local times so getHours() logic stays stable across time zones.
+  const makeLocalIso = (year: number, monthIndex: number, day: number, hour: number, minute = 0) =>
+    new Date(year, monthIndex, day, hour, minute, 0, 0).toISOString();
 
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
   describe('findMatchingWaitlistEntries', () => {
+    const slotStart = makeLocalIso(2024, 0, 15, 9);
+    const slotEnd = makeLocalIso(2024, 0, 15, 9, 30);
     const slot = {
       provider_id: providerId,
       location_id: locationId,
       appointment_type_id: appointmentTypeId,
-      scheduled_start: '2024-01-15T09:00:00Z', // Monday morning
-      scheduled_end: '2024-01-15T09:30:00Z',
+      scheduled_start: slotStart, // Monday morning
+      scheduled_end: slotEnd,
     };
 
     it('should find matching waitlist entries with high scores', async () => {
@@ -162,17 +167,17 @@ describe('WaitlistAutoFillService', () => {
     it('should handle time of day matching', async () => {
       const morningSlot = {
         ...slot,
-        scheduled_start: '2024-01-15T09:00:00Z', // 9 AM
+        scheduled_start: makeLocalIso(2024, 0, 15, 9), // 9 AM
       };
 
       const afternoonSlot = {
         ...slot,
-        scheduled_start: '2024-01-15T14:00:00Z', // 2 PM
+        scheduled_start: makeLocalIso(2024, 0, 15, 14), // 2 PM
       };
 
       const eveningSlot = {
         ...slot,
-        scheduled_start: '2024-01-15T18:00:00Z', // 6 PM
+        scheduled_start: makeLocalIso(2024, 0, 15, 18), // 6 PM
       };
 
       const mockWaitlist = {
@@ -204,10 +209,11 @@ describe('WaitlistAutoFillService', () => {
       (pool.query as jest.Mock).mockResolvedValue({ rows: [] }); // Query already filters these out
 
       await waitlistAutoFillService.findMatchingWaitlistEntries(tenantId, slot);
+      const expectedSlotDate = new Date(slot.scheduled_start).toISOString().split('T')[0];
 
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('NOT EXISTS'),
-        expect.arrayContaining([tenantId, '2024-01-15'])
+        expect.arrayContaining([tenantId, expectedSlotDate])
       );
     });
 
@@ -225,12 +231,14 @@ describe('WaitlistAutoFillService', () => {
 
   describe('createWaitlistHold', () => {
     const waitlistId = 'waitlist-123';
+    const slotStart = makeLocalIso(2024, 0, 15, 9);
+    const slotEnd = makeLocalIso(2024, 0, 15, 9, 30);
     const slot = {
       provider_id: providerId,
       location_id: locationId,
       appointment_type_id: appointmentTypeId,
-      scheduled_start: '2024-01-15T09:00:00Z',
-      scheduled_end: '2024-01-15T09:30:00Z',
+      scheduled_start: slotStart,
+      scheduled_end: slotEnd,
     };
 
     let mockClient: any;
@@ -319,8 +327,8 @@ describe('WaitlistAutoFillService', () => {
         provider_id: providerId,
         location_id: locationId,
         appointment_type_id: appointmentTypeId,
-        scheduled_start: '2024-01-15T09:00:00Z',
-        scheduled_end: '2024-01-15T09:30:00Z',
+        scheduled_start: makeLocalIso(2024, 0, 15, 9),
+        scheduled_end: makeLocalIso(2024, 0, 15, 9, 30),
         provider_name: 'Dr. Smith',
         location_name: 'Main Clinic',
       };
@@ -374,8 +382,8 @@ describe('WaitlistAutoFillService', () => {
         provider_id: providerId,
         location_id: locationId,
         appointment_type_id: appointmentTypeId,
-        scheduled_start: '2024-01-15T09:00:00Z',
-        scheduled_end: '2024-01-15T09:30:00Z',
+        scheduled_start: makeLocalIso(2024, 0, 15, 9),
+        scheduled_end: makeLocalIso(2024, 0, 15, 9, 30),
       };
 
       (pool.query as jest.Mock)
@@ -401,8 +409,8 @@ describe('WaitlistAutoFillService', () => {
         provider_id: providerId,
         location_id: locationId,
         appointment_type_id: appointmentTypeId,
-        scheduled_start: '2024-01-15T09:00:00Z',
-        scheduled_end: '2024-01-15T09:30:00Z',
+        scheduled_start: makeLocalIso(2024, 0, 15, 9),
+        scheduled_end: makeLocalIso(2024, 0, 15, 9, 30),
       };
 
       // Create 10 mock waitlist entries
@@ -424,7 +432,8 @@ describe('WaitlistAutoFillService', () => {
 
       (pool.query as jest.Mock)
         .mockResolvedValueOnce({ rows: [mockAppointment] })
-        .mockResolvedValueOnce({ rows: mockWaitlistEntries });
+        .mockResolvedValueOnce({ rows: mockWaitlistEntries })
+        .mockResolvedValue({ rows: [{ patient_id: patientId }] });
 
       // Mock createWaitlistHold to always fail so we don't create actual holds
       const mockClient = {

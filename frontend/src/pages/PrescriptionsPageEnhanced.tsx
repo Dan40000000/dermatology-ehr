@@ -1,7 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
+import { InsuranceStatusBadge } from '../components/Insurance';
+import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 import {
   fetchOrders,
   fetchPatients,
@@ -118,6 +120,12 @@ export function PrescriptionsPageEnhanced() {
   const [selectedRxForPA, setSelectedRxForPA] = useState<Order | undefined>(undefined);
   const [paRequests, setPaRequests] = useState<any[]>([]);
   const [selectedPARequestId, setSelectedPARequestId] = useState<string | null>(null);
+
+  const eligibilityPatientIds = useMemo(
+    () => prescriptions.map((rx) => rx.patientId),
+    [prescriptions]
+  );
+  const { eligibilityByPatient, eligibilityLoading } = useEligibilityByPatient(session, eligibilityPatientIds);
 
   const [newRx, setNewRx] = useState({
     patientId: '',
@@ -404,6 +412,14 @@ export function PrescriptionsPageEnhanced() {
   const getPatientName = (patientId: string) => {
     const patient = patients.find((p) => p.id === patientId);
     return patient ? `${patient.lastName}, ${patient.firstName}` : 'Unknown';
+  };
+
+  const getPatientInsurance = (patientId: string) => {
+    const patient = patients.find((p) => p.id === patientId);
+    if (!patient?.insurance) return null;
+    if (typeof patient.insurance === 'string') return patient.insurance;
+    if (patient.insurance.planName) return patient.insurance.planName;
+    return 'On file';
   };
 
   const getPAStatusForRx = (rxId: string) => {
@@ -1164,6 +1180,14 @@ export function PrescriptionsPageEnhanced() {
                       />
                     </th>
                     <th>Patient</th>
+                    <th>
+                      Coverage
+                      {eligibilityLoading && (
+                        <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', color: '#9ca3af' }}>
+                          updating...
+                        </span>
+                      )}
+                    </th>
                     <th>Drug</th>
                     <th>Written On</th>
                     <th>Last Update</th>
@@ -1182,6 +1206,8 @@ export function PrescriptionsPageEnhanced() {
                     const sig = lines.find((l) => l.startsWith('Sig:'))?.replace('Sig: ', '') || '';
                     const refills = lines.find((l) => l.startsWith('Refills:'))?.replace('Refills: ', '') || '0';
                     const paRequest = getPAStatusForRx(rx.id);
+                    const eligibility = eligibilityByPatient[rx.patientId];
+                    const insuranceLabel = getPatientInsurance(rx.patientId);
 
                     return (
                       <tr
@@ -1205,6 +1231,23 @@ export function PrescriptionsPageEnhanced() {
                           }}>
                             {getPatientName(rx.patientId)}
                           </a>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                            <InsuranceStatusBadge
+                              status={eligibility?.verification_status}
+                              verifiedAt={eligibility?.verified_at}
+                              hasIssues={eligibility?.has_issues}
+                              size="sm"
+                            />
+                            {insuranceLabel ? (
+                              <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>
+                                {insuranceLabel}
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}>No insurance</span>
+                            )}
+                          </div>
                         </td>
                         <td>
                           <div style={{ fontWeight: 600, color: '#111827' }}>{medication}</div>

@@ -42,6 +42,11 @@ const toastMocks = vi.hoisted(() => ({
   dismissAll: vi.fn(),
 }));
 
+const portalApiMocks = vi.hoisted(() => ({
+  fetchPortalProfile: vi.fn(),
+  updatePortalProfile: vi.fn(),
+}));
+
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
   return {
@@ -58,6 +63,8 @@ vi.mock('../../contexts/PatientPortalAuthContext', () => ({
 vi.mock('../../contexts/ToastContext', () => ({
   useToast: () => toastMocks,
 }));
+
+vi.mock('../../portalApi', () => portalApiMocks);
 
 const renderWithRouter = (ui: ReactElement) => render(<MemoryRouter>{ui}</MemoryRouter>);
 
@@ -77,6 +84,8 @@ beforeEach(() => {
   portalAuthMocks.login.mockReset().mockResolvedValue(undefined);
   portalAuthMocks.logout.mockReset().mockResolvedValue(undefined);
   portalAuthMocks.register.mockReset().mockResolvedValue(undefined);
+  portalApiMocks.fetchPortalProfile.mockReset();
+  portalApiMocks.updatePortalProfile.mockReset();
   toastMocks.showSuccess.mockReset();
   toastMocks.showError.mockReset();
 });
@@ -85,9 +94,6 @@ describe('Patient portal pages', () => {
   it('submits login and navigates to dashboard', async () => {
     renderWithRouter(<PortalLoginPage />);
 
-    fireEvent.change(screen.getByLabelText(/Practice ID/i), {
-      target: { value: 'tenant-123' },
-    });
     fireEvent.change(screen.getByLabelText(/Email Address/i), {
       target: { value: 'patient@example.com' },
     });
@@ -97,7 +103,7 @@ describe('Patient portal pages', () => {
     fireEvent.click(screen.getByRole('button', { name: /Sign In/i }));
 
     await waitFor(() =>
-      expect(portalAuthMocks.login).toHaveBeenCalledWith('tenant-123', 'patient@example.com', 'secret')
+      expect(portalAuthMocks.login).toHaveBeenCalledWith('tenant-demo', 'patient@example.com', 'secret')
     );
     expect(navigateMock).toHaveBeenCalledWith('/portal/dashboard');
   }, 15000);
@@ -117,31 +123,36 @@ describe('Patient portal pages', () => {
     expect(await screen.findByText('Bad credentials')).toBeInTheDocument();
   });
 
-  it('renders the registration placeholder', () => {
-    render(<PortalRegisterPage />);
-    expect(screen.getByText('Create Account')).toBeInTheDocument();
-    expect(screen.getByText('Registration form will be displayed here.')).toBeInTheDocument();
+  it('renders the registration page', () => {
+    renderWithRouter(<PortalRegisterPage />);
+    expect(screen.getByRole('heading', { name: /verify your identity/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Last Name/i)).toBeInTheDocument();
   });
 
   it('loads and renders the portal dashboard', async () => {
-    patientPortalFetchMock.mockResolvedValueOnce({
-      dashboard: {
-        upcomingAppointments: 2,
-        newDocuments: 1,
-        newVisits: 3,
-        activePrescriptions: 4,
-        nextAppointment: {
-          appointmentDate: '2025-02-01',
-          appointmentTime: '14:30',
-          providerName: 'Dr. Rivera',
-        },
-      },
+    patientPortalFetchMock.mockImplementation((endpoint: string) => {
+      if (endpoint === '/api/patient-portal-data/dashboard') {
+        return Promise.resolve({
+          dashboard: {
+            upcomingAppointments: 2,
+            newDocuments: 1,
+            newVisits: 3,
+            activePrescriptions: 4,
+            nextAppointment: {
+              appointmentDate: '2025-02-01',
+              appointmentTime: '14:30',
+              providerName: 'Dr. Rivera',
+            },
+          },
+        });
+      }
+      return Promise.resolve({});
     });
 
     renderWithRouter(<PortalDashboardPage />);
 
     expect(await screen.findByText('Upcoming Appointments')).toBeInTheDocument();
-    expect(screen.getByText('Your Next Appointment')).toBeInTheDocument();
+    expect(screen.getByText('Next Appointment')).toBeInTheDocument();
     expect(screen.getByText('Dr. Rivera')).toBeInTheDocument();
     expect(patientPortalFetchMock).toHaveBeenCalledWith('/api/patient-portal-data/dashboard');
   });
@@ -224,9 +235,6 @@ describe('Patient portal pages', () => {
       json: () => Promise.resolve({ threads }),
     } as Response);
 
-    localStorage.setItem('patientToken', 'token');
-    localStorage.setItem('tenantId', 'tenant-demo');
-
     render(<PatientPortalMessagesPage />);
 
     expect(await screen.findByText('Prescription Question')).toBeInTheDocument();
@@ -243,18 +251,60 @@ describe('Patient portal pages', () => {
     fetchSpy.mockRestore();
   });
 
-  it('renders patient portal static pages', () => {
-    const cases = [
-      { Component: PortalDocumentsPage, heading: 'Documents', text: 'Documents will be displayed here.' },
-      { Component: PortalHealthRecordPage, heading: 'Health Record', text: 'Health record information will be displayed here.' },
-      { Component: PortalProfilePage, heading: 'My Profile', text: 'Profile settings will be displayed here.' },
-      { Component: PortalVisitSummariesPage, heading: 'Visit Summaries', text: 'Visit summaries will be displayed here.' },
-    ];
-
-    cases.forEach(({ Component, heading, text }) => {
-      render(<Component />);
-      expect(screen.getByText(heading)).toBeInTheDocument();
-      expect(screen.getByText(text)).toBeInTheDocument();
+  it('loads portal documents', async () => {
+    patientPortalFetchMock.mockImplementation((endpoint: string) => {
+      if (endpoint === '/api/patient-portal-data/documents') {
+        return Promise.resolve({ documents: [] });
+      }
+      return Promise.resolve({});
     });
+    renderWithRouter(<PortalDocumentsPage />);
+    expect(await screen.findByRole('heading', { name: 'Documents' })).toBeInTheDocument();
+  });
+
+  it('loads portal health record', async () => {
+    patientPortalFetchMock.mockImplementation((endpoint: string) => {
+      if (endpoint === '/api/patient-portal-data/allergies') {
+        return Promise.resolve({ allergies: [] });
+      }
+      if (endpoint === '/api/patient-portal-data/medications') {
+        return Promise.resolve({ medications: [] });
+      }
+      if (endpoint === '/api/patient-portal-data/vitals') {
+        return Promise.resolve({ vitals: [] });
+      }
+      if (endpoint === '/api/patient-portal-data/lab-results') {
+        return Promise.resolve({ labResults: [] });
+      }
+      return Promise.resolve({});
+    });
+
+    renderWithRouter(<PortalHealthRecordPage />);
+    expect(await screen.findByRole('heading', { name: 'Health Record' })).toBeInTheDocument();
+  });
+
+  it('loads portal profile', async () => {
+    portalApiMocks.fetchPortalProfile.mockResolvedValueOnce({
+      patient: {
+        id: 'patient-1',
+        firstName: 'Jamie',
+        lastName: 'Lee',
+        email: 'jamie@example.com',
+      },
+    });
+
+    renderWithRouter(<PortalProfilePage />);
+    expect(await screen.findByText('Jamie Lee')).toBeInTheDocument();
+  });
+
+  it('loads visit summaries', async () => {
+    patientPortalFetchMock.mockImplementation((endpoint: string) => {
+      if (endpoint === '/api/patient-portal-data/visit-summaries') {
+        return Promise.resolve({ summaries: [] });
+      }
+      return Promise.resolve({});
+    });
+    renderWithRouter(<PortalVisitSummariesPage />);
+    expect(await screen.findByText('Your Visit Summaries')).toBeInTheDocument();
   });
 });

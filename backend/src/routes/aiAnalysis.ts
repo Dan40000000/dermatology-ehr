@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { z } from "zod";
 import { aiImageAnalysisService } from "../services/aiImageAnalysis";
 import { pool } from "../db/pool";
+import { requireAuth } from "../middleware/auth";
 
 const router = express.Router();
 
@@ -11,6 +12,7 @@ const router = express.Router();
  *
  * Endpoints for AI-powered image analysis and clinical decision support
  */
+router.use(requireAuth);
 
 /**
  * @swagger

@@ -161,16 +161,7 @@ export function AnalyticsDashboard() {
     try {
       const filter = getDateFilter();
 
-      const [
-        overviewRes,
-        appointmentsRes,
-        revenueRes,
-        patientsRes,
-        providersRes,
-        qualityRes,
-        revenueTrendRes,
-        topDiagnosesRes,
-      ] = await Promise.all([
+      const results = await Promise.allSettled([
         fetchAnalyticsOverview(session.tenantId, session.accessToken, filter),
         fetchAppointmentAnalytics(session.tenantId, session.accessToken, filter),
         fetchRevenueAnalytics(session.tenantId, session.accessToken, filter),
@@ -181,16 +172,70 @@ export function AnalyticsDashboard() {
         fetchTopDiagnoses(session.tenantId, session.accessToken, filter),
       ]);
 
-      setOverview(overviewRes);
-      setAppointments(appointmentsRes);
-      setRevenue(revenueRes);
-      setPatients(patientsRes);
-      setProviders(providersRes);
-      setQuality(qualityRes);
-      setRevenueTrend(Array.isArray(revenueTrendRes.data) ? revenueTrendRes.data : []);
-      setTopDiagnoses(Array.isArray(topDiagnosesRes.data) ? topDiagnosesRes.data : []);
+      const [
+        overviewRes,
+        appointmentsRes,
+        revenueRes,
+        patientsRes,
+        providersRes,
+        qualityRes,
+        revenueTrendRes,
+        topDiagnosesRes,
+      ] = results;
 
-      if (isRefresh) {
+      const failures: string[] = [];
+
+      if (overviewRes.status === 'fulfilled') {
+        setOverview(overviewRes.value);
+      } else {
+        failures.push('overview');
+      }
+
+      if (appointmentsRes.status === 'fulfilled') {
+        setAppointments(appointmentsRes.value);
+      } else {
+        failures.push('appointments');
+      }
+
+      if (revenueRes.status === 'fulfilled') {
+        setRevenue(revenueRes.value);
+      } else {
+        failures.push('revenue');
+      }
+
+      if (patientsRes.status === 'fulfilled') {
+        setPatients(patientsRes.value);
+      } else {
+        failures.push('patients');
+      }
+
+      if (providersRes.status === 'fulfilled') {
+        setProviders(providersRes.value);
+      } else {
+        failures.push('providers');
+      }
+
+      if (qualityRes.status === 'fulfilled') {
+        setQuality(qualityRes.value);
+      } else {
+        failures.push('quality');
+      }
+
+      if (revenueTrendRes.status === 'fulfilled') {
+        setRevenueTrend(Array.isArray(revenueTrendRes.value.data) ? revenueTrendRes.value.data : []);
+      } else {
+        failures.push('revenue trend');
+      }
+
+      if (topDiagnosesRes.status === 'fulfilled') {
+        setTopDiagnoses(Array.isArray(topDiagnosesRes.value.data) ? topDiagnosesRes.value.data : []);
+      } else {
+        failures.push('top diagnoses');
+      }
+
+      if (failures.length > 0) {
+        showError(`Failed to load ${failures.join(', ')}`);
+      } else if (isRefresh) {
         showSuccess('Dashboard refreshed successfully');
       }
     } catch (err: any) {

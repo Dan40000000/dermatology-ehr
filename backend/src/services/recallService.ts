@@ -72,7 +72,17 @@ export async function generateRecalls(
 
     // Get campaign details
     const campaignResult = await client.query<RecallCampaign>(
-      `SELECT * FROM recall_campaigns WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+      `SELECT id,
+              tenant_id as "tenantId",
+              name,
+              description,
+              recall_type as "recallType",
+              interval_months as "intervalMonths",
+              is_active as "isActive",
+              created_at as "createdAt",
+              updated_at as "updatedAt"
+       FROM recall_campaigns
+       WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
       [campaignId, tenantId]
     );
 
@@ -217,7 +227,17 @@ export async function getPatientPreferences(
   patientId: string
 ): Promise<CommunicationPreferences | null> {
   const result = await pool.query<CommunicationPreferences>(
-    `SELECT * FROM patient_communication_preferences
+    `SELECT id,
+            tenant_id as "tenantId",
+            patient_id as "patientId",
+            allow_email as "allowEmail",
+            allow_sms as "allowSms",
+            allow_phone as "allowPhone",
+            allow_mail as "allowMail",
+            preferred_method as "preferredMethod",
+            opted_out as "optedOut",
+            opted_out_at as "optedOutAt"
+     FROM patient_communication_preferences
      WHERE tenant_id = $1 AND patient_id = $2`,
     [tenantId, patientId]
   );
@@ -249,7 +269,16 @@ export async function updatePatientPreferences(
       preferred_method = COALESCE($8, patient_communication_preferences.preferred_method),
       opted_out = COALESCE($9, patient_communication_preferences.opted_out),
       updated_at = NOW()
-    RETURNING *`,
+    RETURNING id,
+              tenant_id as "tenantId",
+              patient_id as "patientId",
+              allow_email as "allowEmail",
+              allow_sms as "allowSms",
+              allow_phone as "allowPhone",
+              allow_mail as "allowMail",
+              preferred_method as "preferredMethod",
+              opted_out as "optedOut",
+              opted_out_at as "optedOutAt"`,
     [
       id,
       tenantId,

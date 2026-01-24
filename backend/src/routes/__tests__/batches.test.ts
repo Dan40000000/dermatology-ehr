@@ -30,6 +30,7 @@ app.use(express.json());
 app.use("/batches", batchesRouter);
 
 const queryMock = pool.query as jest.Mock;
+const currentYear = new Date().getFullYear();
 
 beforeEach(() => {
   queryMock.mockReset();
@@ -44,7 +45,7 @@ describe("Batches Routes", () => {
         rows: [
           {
             id: "batch-1",
-            batchNumber: "BATCH-2024-000001",
+            batchNumber: `BATCH-${currentYear}-000001`,
             batchType: "payer",
             totalAmountCents: 50000,
             status: "open",
@@ -99,7 +100,7 @@ describe("Batches Routes", () => {
           rows: [
             {
               id: "batch-1",
-              batchNumber: "BATCH-2024-000001",
+              batchNumber: `BATCH-${currentYear}-000001`,
               totalAmountCents: 50000,
             },
           ],
@@ -156,7 +157,7 @@ describe("Batches Routes", () => {
 
       expect(res.status).toBe(201);
       expect(res.body.id).toBeTruthy();
-      expect(res.body.batchNumber).toBe("BATCH-2024-000001");
+      expect(res.body.batchNumber).toBe(`BATCH-${currentYear}-000001`);
       expect(auditLog).toHaveBeenCalledWith(
         "tenant-1",
         "user-1",

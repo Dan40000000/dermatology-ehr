@@ -2,13 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ErrorState, FieldError, ErrorBanner } from '../ErrorState';
-
-// Mock the error handling utils
-vi.mock('../../utils/errorHandling', () => ({
-  isNetworkError: (error: any) => error?.message?.includes('network'),
-  isAuthError: (error: any) => error?.message?.includes('auth'),
-  isPermissionError: (error: any) => error?.message?.includes('permission'),
-}));
+import { ApiException } from '../../../utils/errorHandling';
 
 describe('ErrorState Component', () => {
   it('renders error message', () => {
@@ -33,7 +27,7 @@ describe('ErrorState Component', () => {
   });
 
   it('renders network error state', () => {
-    const error = new Error('network connection failed');
+    const error = new TypeError('network connection failed');
     render(<ErrorState error={error} />);
     expect(screen.getByText('Connection Error')).toBeInTheDocument();
     expect(
@@ -42,14 +36,14 @@ describe('ErrorState Component', () => {
   });
 
   it('renders auth error state', () => {
-    const error = new Error('auth failed');
+    const error = new ApiException({ message: 'auth failed', status: 401 });
     render(<ErrorState error={error} />);
     expect(screen.getByText('Authentication Required')).toBeInTheDocument();
     expect(screen.getByText('Your session has expired. Please log in again.')).toBeInTheDocument();
   });
 
   it('renders permission error state', () => {
-    const error = new Error('permission denied');
+    const error = new ApiException({ message: 'permission denied', status: 403 });
     render(<ErrorState error={error} />);
     expect(screen.getByText('Access Denied')).toBeInTheDocument();
     expect(
@@ -78,13 +72,13 @@ describe('ErrorState Component', () => {
   });
 
   it('does not show retry for auth errors', () => {
-    const error = new Error('auth failed');
+    const error = new ApiException({ message: 'auth failed', status: 401 });
     render(<ErrorState error={error} onRetry={vi.fn()} />);
     expect(screen.queryByRole('button', { name: /try again/i })).not.toBeInTheDocument();
   });
 
   it('does not show retry for permission errors', () => {
-    const error = new Error('permission denied');
+    const error = new ApiException({ message: 'permission denied', status: 403 });
     render(<ErrorState error={error} onRetry={vi.fn()} />);
     expect(screen.queryByRole('button', { name: /try again/i })).not.toBeInTheDocument();
   });

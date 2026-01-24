@@ -11,6 +11,8 @@ vi.mock('../../api', () => ({
   fetchPatients: vi.fn(),
   updateOrderStatus: vi.fn(),
   createOrder: vi.fn(),
+  fetchEligibilityHistory: vi.fn(),
+  fetchEligibilityHistoryBatch: vi.fn(),
 }));
 
 const mockSession = {
@@ -109,6 +111,8 @@ describe('OrdersPageEnhanced', () => {
     localStorage.clear();
     (api.fetchOrders as any).mockResolvedValue({ orders: mockOrders });
     (api.fetchPatients as any).mockResolvedValue({ patients: mockPatients });
+    (api.fetchEligibilityHistory as any).mockResolvedValue({ history: [] });
+    (api.fetchEligibilityHistoryBatch as any).mockResolvedValue({ history: {} });
   });
 
   it('renders the page with orders', async () => {
@@ -128,10 +132,8 @@ describe('OrdersPageEnhanced', () => {
     renderWithProviders(<OrdersPageEnhanced />);
 
     await waitFor(() => {
-      expect(screen.getAllByText('Pending').length).toBeGreaterThan(0);
-      expect(screen.getAllByText('In Progress').length).toBeGreaterThan(0);
-      expect(screen.getAllByText('Completed').length).toBeGreaterThan(0);
-      expect(screen.getByText('STAT Orders')).toBeInTheDocument();
+      expect(screen.getByText(/Total Results/i)).toBeInTheDocument();
+      expect(screen.getByText(String(mockOrders.length))).toBeInTheDocument();
     });
   });
 
@@ -141,6 +143,8 @@ describe('OrdersPageEnhanced', () => {
     await waitFor(() => {
       expect(screen.getByText('CBC with differential')).toBeInTheDocument();
     });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show Filters' }));
 
     // Select only Lab orders
     const labCheckbox = screen.getByLabelText('Labs');
@@ -159,6 +163,8 @@ describe('OrdersPageEnhanced', () => {
       expect(screen.getByText('CBC with differential')).toBeInTheDocument();
     });
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show Filters' }));
+
     // Select only In Progress orders
     const inProgressCheckbox = screen.getByLabelText('In Progress');
     fireEvent.click(inProgressCheckbox);
@@ -175,6 +181,8 @@ describe('OrdersPageEnhanced', () => {
     await waitFor(() => {
       expect(screen.getByText('Skin biopsy')).toBeInTheDocument();
     });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show Filters' }));
 
     // Select only STAT orders
     const statCheckbox = screen.getByLabelText('STAT');
@@ -209,6 +217,8 @@ describe('OrdersPageEnhanced', () => {
       expect(screen.getByText('CBC with differential')).toBeInTheDocument();
     });
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show Filters' }));
+
     // Select Patient grouping
     const patientRadio = screen.getByLabelText('Patient');
     fireEvent.click(patientRadio);
@@ -226,12 +236,14 @@ describe('OrdersPageEnhanced', () => {
       expect(screen.getByText('CBC with differential')).toBeInTheDocument();
     });
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show Filters' }));
+
     // Apply some filters
     const labCheckbox = screen.getByLabelText('Labs');
     fireEvent.click(labCheckbox);
 
     // Clear filters
-    const clearButton = screen.getByText('Clear All Filters');
+    const clearButton = screen.getByText('Clear Filter');
     fireEvent.click(clearButton);
 
     await waitFor(() => {
@@ -247,12 +259,14 @@ describe('OrdersPageEnhanced', () => {
       expect(screen.getByText('Orders Log')).toBeInTheDocument();
     });
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show Filters' }));
+
     // Apply filters
     const labCheckbox = screen.getByLabelText('Labs');
     fireEvent.click(labCheckbox);
 
     // Open save dialog
-    const saveButton = screen.getByText('+ Save Current Filter');
+    const saveButton = screen.getByText('New Filter');
     fireEvent.click(saveButton);
 
     // Enter filter name
@@ -268,7 +282,7 @@ describe('OrdersPageEnhanced', () => {
     });
 
     // Clear current filters
-    const clearButton = screen.getByText('Clear All Filters');
+    const clearButton = screen.getByText('Clear Filter');
     fireEvent.click(clearButton);
 
     // Load saved filter
@@ -303,7 +317,7 @@ describe('OrdersPageEnhanced', () => {
       expect(screen.getByText('Orders Log')).toBeInTheDocument();
     });
 
-    const newOrderButton = screen.getByText('New Order');
+    const newOrderButton = screen.getByText('+ New Order');
     fireEvent.click(newOrderButton);
 
     await waitFor(() => {
@@ -321,7 +335,7 @@ describe('OrdersPageEnhanced', () => {
     });
 
     // Open modal
-    const newOrderButton = screen.getByText('New Order');
+    const newOrderButton = screen.getByText('+ New Order');
     fireEvent.click(newOrderButton);
 
     // Fill form

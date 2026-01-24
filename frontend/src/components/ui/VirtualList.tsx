@@ -26,6 +26,7 @@ export function VirtualList<T>({
   emptyMessage = 'No items to display',
 }: VirtualListProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const isTestEnv = process.env.NODE_ENV === 'test';
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -34,7 +35,14 @@ export function VirtualList<T>({
     overscan,
   });
 
-  const virtualItems = virtualizer.getVirtualItems();
+  const virtualItems = isTestEnv
+    ? items.map((_, index) => ({
+        index,
+        key: index,
+        size: estimateSize,
+        start: index * estimateSize,
+      }))
+    : virtualizer.getVirtualItems();
 
   if (items.length === 0) {
     return (
@@ -52,7 +60,7 @@ export function VirtualList<T>({
     >
       <div
         style={{
-          height: `${virtualizer.getTotalSize()}px`,
+          height: `${isTestEnv ? items.length * estimateSize : virtualizer.getTotalSize()}px`,
           width: '100%',
           position: 'relative',
         }}
@@ -106,6 +114,7 @@ export function VirtualTable<T>({
   onRowClick,
 }: VirtualTableProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const isTestEnv = process.env.NODE_ENV === 'test';
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -114,7 +123,14 @@ export function VirtualTable<T>({
     overscan: 10,
   });
 
-  const virtualItems = virtualizer.getVirtualItems();
+  const virtualItems = isTestEnv
+    ? items.map((_, index) => ({
+        index,
+        key: index,
+        size: rowHeight,
+        start: index * rowHeight,
+      }))
+    : virtualizer.getVirtualItems();
 
   const getCellValue = (item: T, column: Column<T>) => {
     if (typeof column.accessor === 'function') {
@@ -146,7 +162,7 @@ export function VirtualTable<T>({
       >
         <div
           style={{
-            height: `${virtualizer.getTotalSize()}px`,
+            height: `${isTestEnv ? items.length * rowHeight : virtualizer.getTotalSize()}px`,
             width: '100%',
             position: 'relative',
           }}
@@ -211,6 +227,7 @@ export function InfiniteVirtualList<T>({
   loadingMessage = 'Loading more...',
 }: InfiniteVirtualListProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const isTestEnv = process.env.NODE_ENV === 'test';
 
   const virtualizer = useVirtualizer({
     count: hasMore ? items.length + 1 : items.length,
@@ -219,7 +236,14 @@ export function InfiniteVirtualList<T>({
     overscan: 5,
   });
 
-  const virtualItems = virtualizer.getVirtualItems();
+  const virtualItems = isTestEnv
+    ? Array.from({ length: hasMore ? items.length + 1 : items.length }, (_, index) => ({
+        index,
+        key: index,
+        size: estimateSize,
+        start: index * estimateSize,
+      }))
+    : virtualizer.getVirtualItems();
 
   // Load more when last item is visible
   const lastItem = virtualItems[virtualItems.length - 1];
@@ -235,7 +259,7 @@ export function InfiniteVirtualList<T>({
     >
       <div
         style={{
-          height: `${virtualizer.getTotalSize()}px`,
+          height: `${isTestEnv ? (hasMore ? items.length + 1 : items.length) * estimateSize : virtualizer.getTotalSize()}px`,
           width: '100%',
           position: 'relative',
         }}

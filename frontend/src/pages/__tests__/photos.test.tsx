@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 const authMocks = vi.hoisted(() => ({
   session: null as null | {
@@ -171,7 +172,11 @@ describe('PhotosPage', () => {
   });
 
   it('uploads a photo and saves annotations', async () => {
-    render(<PhotosPage />);
+    render(
+      <MemoryRouter>
+        <PhotosPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Clinical Photos');
 
@@ -230,7 +235,11 @@ describe('PhotosPage', () => {
   });
 
   it('selects photos for comparison', async () => {
-    render(<PhotosPage />);
+    render(
+      <MemoryRouter>
+        <PhotosPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Clinical Photos');
     const checkboxes = screen.getAllByRole('checkbox');

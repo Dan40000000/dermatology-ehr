@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { fetchProtocols, fetchProtocolStats, deleteProtocol } from '../api';
-import { Protocol, ProtocolStats, ProtocolCategory } from '../types/protocol';
+import type { Protocol, ProtocolStats, ProtocolCategory } from '../types/protocol';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ProtocolDetailsModal } from '../components/protocols/ProtocolDetailsModal';
 import { CreateProtocolModal } from '../components/protocols/CreateProtocolModal';

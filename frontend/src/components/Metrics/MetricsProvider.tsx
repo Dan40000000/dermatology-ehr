@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 // ================================================
 // TYPES
@@ -152,7 +153,7 @@ export function MetricsProvider({ children }: { children: ReactNode }) {
     if (!session || !user || events.length === 0) return;
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/metrics/events`, {
+      const response = await fetch(`${API_BASE_URL}/api/metrics/events`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -449,7 +450,7 @@ export function MetricsProvider({ children }: { children: ReactNode }) {
     return () => {
       if (pendingEvents.length > 0 && isOnline) {
         // Use sendBeacon for reliable event sending on page unload
-        const apiUrl = `${import.meta.env.VITE_API_URL}/api/metrics/events`;
+        const apiUrl = `${API_BASE_URL}/api/metrics/events`;
         const data = JSON.stringify({
           sessionId,
           events: pendingEvents.map(event => ({

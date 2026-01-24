@@ -155,6 +155,26 @@ const btnDangerStyle: React.CSSProperties = {
   color: '#dc2626',
 };
 
+const singularLabels: Record<string, string> = {
+  facilities: 'facility',
+  rooms: 'room',
+  providers: 'provider',
+  users: 'user',
+};
+
+const roomTypeLabels: Record<string, string> = {
+  exam: 'Exam Room',
+  procedure: 'Procedure Room',
+  consult: 'Consultation Room',
+  photo: 'Photo Room',
+  lab: 'Lab Room',
+};
+
+const formatRoomType = (roomType?: string) => {
+  if (!roomType) return 'Exam Room';
+  return roomTypeLabels[roomType] || roomType;
+};
+
 const formGroupStyle: React.CSSProperties = {
   marginBottom: '1.5rem',
 };
@@ -578,7 +598,7 @@ function RoomsTable({ rooms, onEdit, onDelete }: { rooms: Room[]; onEdit: (r: Ro
           <tr key={r.id}>
             <td style={tdStyle}><strong>{r.name}</strong></td>
             <td style={tdStyle}>{r.facilityName || '—'}</td>
-            <td style={tdStyle}>{r.roomType || 'Exam Room'}</td>
+            <td style={tdStyle}>{formatRoomType(r.roomType)}</td>
             <td style={tdStyle}>
               <span style={r.isActive !== false ? badgeActiveStyle : badgeInactiveStyle}>
                 {r.isActive !== false ? 'Active' : 'Inactive'}
@@ -725,7 +745,9 @@ function Modal({
     setFormData({ ...formData, [field]: value });
   };
 
-  const title = item?.id ? `Edit ${type.slice(0, -1)}` : `Add New ${type.slice(0, -1)}`;
+  const typeLabel = singularLabels[type] || type.slice(0, -1);
+  const titleLabel = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
+  const title = item?.id ? `Edit ${titleLabel}` : `Add New ${titleLabel}`;
 
   return (
     <div style={modalOverlayStyle} onClick={onClose}>
@@ -736,9 +758,10 @@ function Modal({
           {type === 'facilities' && (
             <>
               <div style={formGroupStyle}>
-                <label style={labelStyle}>Facility Name *</label>
+                <label htmlFor="facility-name" style={labelStyle}>Facility Name *</label>
                 <input
                   type="text"
+                  id="facility-name"
                   value={formData.name || ''}
                   onChange={(e) => handleChange('name', e.target.value)}
                   required
@@ -747,9 +770,10 @@ function Modal({
                 />
               </div>
               <div style={formGroupStyle}>
-                <label style={labelStyle}>Address</label>
+                <label htmlFor="facility-address" style={labelStyle}>Address</label>
                 <input
                   type="text"
+                  id="facility-address"
                   value={formData.address || ''}
                   onChange={(e) => handleChange('address', e.target.value)}
                   style={inputStyle}
@@ -757,9 +781,10 @@ function Modal({
                 />
               </div>
               <div style={formGroupStyle}>
-                <label style={labelStyle}>Phone</label>
+                <label htmlFor="facility-phone" style={labelStyle}>Phone</label>
                 <input
                   type="tel"
+                  id="facility-phone"
                   value={formData.phone || ''}
                   onChange={(e) => handleChange('phone', e.target.value)}
                   style={inputStyle}
@@ -772,9 +797,10 @@ function Modal({
           {type === 'rooms' && (
             <>
               <div style={formGroupStyle}>
-                <label style={labelStyle}>Room Name *</label>
+                <label htmlFor="room-name" style={labelStyle}>Room Name *</label>
                 <input
                   type="text"
+                  id="room-name"
                   value={formData.name || ''}
                   onChange={(e) => handleChange('name', e.target.value)}
                   required
@@ -783,8 +809,9 @@ function Modal({
                 />
               </div>
               <div style={formGroupStyle}>
-                <label style={labelStyle}>Facility *</label>
+                <label htmlFor="room-facility" style={labelStyle}>Facility *</label>
                 <select
+                  id="room-facility"
                   value={formData.facilityId || ''}
                   onChange={(e) => handleChange('facilityId', e.target.value)}
                   required
@@ -797,8 +824,9 @@ function Modal({
                 </select>
               </div>
               <div style={formGroupStyle}>
-                <label style={labelStyle}>Room Type</label>
+                <label htmlFor="room-type" style={labelStyle}>Room Type</label>
                 <select
+                  id="room-type"
                   value={formData.roomType || 'exam'}
                   onChange={(e) => handleChange('roomType', e.target.value)}
                   style={selectStyle}
@@ -816,9 +844,10 @@ function Modal({
           {type === 'providers' && (
             <>
               <div style={formGroupStyle}>
-                <label style={labelStyle}>Full Name *</label>
+                <label htmlFor="provider-full-name" style={labelStyle}>Full Name *</label>
                 <input
                   type="text"
+                  id="provider-full-name"
                   value={formData.fullName || ''}
                   onChange={(e) => handleChange('fullName', e.target.value)}
                   required
@@ -827,9 +856,10 @@ function Modal({
                 />
               </div>
               <div style={formGroupStyle}>
-                <label style={labelStyle}>Specialty</label>
+                <label htmlFor="provider-specialty" style={labelStyle}>Specialty</label>
                 <input
                   type="text"
+                  id="provider-specialty"
                   value={formData.specialty || ''}
                   onChange={(e) => handleChange('specialty', e.target.value)}
                   style={inputStyle}
@@ -837,9 +867,10 @@ function Modal({
                 />
               </div>
               <div style={formGroupStyle}>
-                <label style={labelStyle}>NPI</label>
+                <label htmlFor="provider-npi" style={labelStyle}>NPI</label>
                 <input
                   type="text"
+                  id="provider-npi"
                   value={formData.npi || ''}
                   onChange={(e) => handleChange('npi', e.target.value)}
                   style={inputStyle}
@@ -852,9 +883,10 @@ function Modal({
           {type === 'users' && (
             <>
               <div style={formGroupStyle}>
-                <label style={labelStyle}>Full Name *</label>
+                <label htmlFor="user-full-name" style={labelStyle}>Full Name *</label>
                 <input
                   type="text"
+                  id="user-full-name"
                   value={formData.fullName || ''}
                   onChange={(e) => handleChange('fullName', e.target.value)}
                   required
@@ -863,9 +895,10 @@ function Modal({
                 />
               </div>
               <div style={formGroupStyle}>
-                <label style={labelStyle}>Email *</label>
+                <label htmlFor="user-email" style={labelStyle}>Email *</label>
                 <input
                   type="email"
+                  id="user-email"
                   value={formData.email || ''}
                   onChange={(e) => handleChange('email', e.target.value)}
                   required
@@ -874,8 +907,9 @@ function Modal({
                 />
               </div>
               <div style={formGroupStyle}>
-                <label style={labelStyle}>Role *</label>
+                <label htmlFor="user-role" style={labelStyle}>Role *</label>
                 <select
+                  id="user-role"
                   value={formData.role || 'front_desk'}
                   onChange={(e) => handleChange('role', e.target.value)}
                   required
@@ -889,9 +923,10 @@ function Modal({
               </div>
               {!item?.id && (
                 <div style={formGroupStyle}>
-                  <label style={labelStyle}>Password *</label>
+                  <label htmlFor="user-password" style={labelStyle}>Password *</label>
                   <input
                     type="password"
+                    id="user-password"
                     value={formData.password || ''}
                     onChange={(e) => handleChange('password', e.target.value)}
                     required

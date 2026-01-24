@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { createProtocol } from '../../api';
-import { ProtocolCategory } from '../../types/protocol';
+import type { ProtocolCategory } from '../../types/protocol';
 
 interface CreateProtocolModalProps {
   onClose: () => void;

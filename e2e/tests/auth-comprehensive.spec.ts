@@ -14,38 +14,44 @@ test.describe('Authentication - Comprehensive Tests', () => {
   test.describe('Login Page Display', () => {
     test('should display login page with all elements', async ({ page }) => {
       await loginPage.assertLoginPageVisible();
+      await expect(page.getByLabel(/practice id/i)).toBeVisible();
       await expect(page.getByLabel(/email/i)).toBeVisible();
       await expect(page.getByLabel(/password/i)).toBeVisible();
       await expect(page.getByRole('button', { name: /sign in/i })).toBeVisible();
     });
 
     test('should have proper page title', async ({ page }) => {
-      await expect(page).toHaveTitle(/Dermatology|EHR|DermApp/i);
+      await expect(page).toHaveTitle(/DermEHR|Dermatology|Mountain Pine/i);
     });
   });
 
   test.describe('Login Validation', () => {
     test('should show validation errors for empty credentials', async () => {
+      await loginPage.page.getByLabel(/practice id/i).fill('');
+      await loginPage.page.getByLabel(/email/i).fill('');
+      await loginPage.page.getByLabel(/password/i).fill('');
       await loginPage.submitEmptyForm();
-      await loginPage.assertEmailValidationError();
+      const invalidInputs = loginPage.page.locator('input:invalid');
+      const count = await invalidInputs.count();
+      expect(count).toBeGreaterThan(0);
     });
 
     test('should show error for invalid email format', async ({ page }) => {
+      await page.getByLabel(/practice id/i).fill('tenant-demo');
       await page.getByLabel(/email/i).fill('invalid-email');
-      await page.getByLabel(/password/i).fill('password123');
+      await page.getByLabel(/password/i).fill('Password123!');
       await page.getByRole('button', { name: /sign in/i }).click();
 
-      // Should show validation or error message
-      const errorMessage = page.getByText(/invalid|error/i);
-      await expect(errorMessage.first()).toBeVisible();
+      await expect(page.locator('input:invalid')).toHaveCount(1);
     });
 
     test('should show error for missing password', async ({ page }) => {
+      await page.getByLabel(/practice id/i).fill('tenant-demo');
       await page.getByLabel(/email/i).fill('test@example.com');
+      await page.getByLabel(/password/i).fill('');
       await page.getByRole('button', { name: /sign in/i }).click();
 
-      const errorMessage = page.getByText(/password.*required|required.*password/i);
-      await expect(errorMessage.first()).toBeVisible();
+      await expect(page.locator('input:invalid')).toHaveCount(1);
     });
   });
 
@@ -92,7 +98,7 @@ test.describe('Authentication - Comprehensive Tests', () => {
       await page.waitForURL(/\/(home|dashboard)/i);
 
       // Check for user name or role display
-      const userInfo = page.locator('text=/admin|user|doctor/i').first();
+      const userInfo = page.getByText(/admin user/i);
       await expect(userInfo).toBeVisible();
     });
   });
@@ -195,15 +201,18 @@ test.describe('Authentication - Comprehensive Tests', () => {
       await expect(page).toHaveURL(/\/login/);
     });
 
-    test('should handle concurrent login attempts gracefully', async ({ page }) => {
-      // Start multiple login attempts
-      const login1 = loginPage.login(TEST_USERS.admin.email, TEST_USERS.admin.password);
-      const login2 = loginPage.login(TEST_USERS.admin.email, TEST_USERS.admin.password);
+    test('should handle concurrent login attempts gracefully', async ({ page, context }) => {
+      const secondPage = await context.newPage();
+      const secondLogin = new LoginPage(secondPage);
 
-      await Promise.all([login1, login2]);
+      await Promise.all([
+        loginPage.login(TEST_USERS.admin.email, TEST_USERS.admin.password),
+        secondLogin.goto().then(() => secondLogin.login(TEST_USERS.admin.email, TEST_USERS.admin.password)),
+      ]);
 
-      // Should still end up authenticated
       await page.waitForURL(/\/(home|dashboard)/i, { timeout: 10000 });
+      await secondPage.waitForURL(/\/(home|dashboard)/i, { timeout: 10000 });
+      await secondPage.close();
     });
   });
 });

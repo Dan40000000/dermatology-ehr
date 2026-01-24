@@ -216,10 +216,20 @@ export const performanceMonitor = new PerformanceMonitor();
 export function performanceMonitoring(req: Request, res: Response, next: NextFunction): void {
   const startTime = Date.now();
   const authedReq = req as AuthedRequest;
+  let durationMs = 0;
+
+  const originalEnd = res.end.bind(res);
+  res.end = ((...args: any[]) => {
+    durationMs = Date.now() - startTime;
+    if (!res.headersSent) {
+      res.setHeader('X-Response-Time', `${durationMs}ms`);
+    }
+    return originalEnd(...args);
+  }) as any;
 
   // Capture response finish
   res.on('finish', () => {
-    const duration = Date.now() - startTime;
+    const duration = durationMs || Date.now() - startTime;
 
     const metric: PerformanceMetric = {
       endpoint: req.route?.path || req.path,
@@ -234,9 +244,6 @@ export function performanceMonitoring(req: Request, res: Response, next: NextFun
     };
 
     performanceMonitor.recordMetric(metric);
-
-    // Add performance header
-    res.setHeader('X-Response-Time', `${duration}ms`);
   });
 
   next();

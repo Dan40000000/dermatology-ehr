@@ -230,7 +230,8 @@ billsRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_des
     res.status(201).json({ id: billId, billNumber });
   } catch (error) {
     await client.query('ROLLBACK');
-    throw error;
+    console.error("Create bill error:", error);
+    return res.status(500).json({ error: "Failed to create bill" });
   } finally {
     client.release();
   }
@@ -317,7 +318,8 @@ billsRouter.put("/:id", requireAuth, requireRoles(["provider", "admin", "front_d
     res.json({ success: true });
   } catch (error) {
     await client.query('ROLLBACK');
-    throw error;
+    console.error("Update bill error:", error);
+    return res.status(500).json({ error: "Failed to update bill" });
   } finally {
     client.release();
   }

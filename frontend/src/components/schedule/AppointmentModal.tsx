@@ -12,7 +12,9 @@ interface AppointmentModalProps {
   locations: Location[];
   appointmentTypes: AppointmentType[];
   initialData?: {
+    patientId?: string;
     providerId?: string;
+    locationId?: string;
     date?: string;
     time?: string;
   };
@@ -80,10 +82,11 @@ export function AppointmentModal({
         // Create mode with initial data
         setFormData((prev) => ({
           ...prev,
+          patientId: initialData.patientId || prev.patientId,
           providerId: initialData.providerId || prev.providerId,
           date: initialData.date || prev.date,
           time: initialData.time || prev.time,
-          locationId: locations[0]?.id || '',
+          locationId: initialData.locationId || locations[0]?.id || prev.locationId,
         }));
       } else {
         // Create mode from scratch

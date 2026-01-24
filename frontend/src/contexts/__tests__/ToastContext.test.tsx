@@ -1,14 +1,10 @@
-import { render, screen, renderHook, act, waitFor } from '@testing-library/react';
+import { render, screen, renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ToastProvider, useToast } from '../ToastContext';
 import type { ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
 
 describe('ToastContext', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -128,7 +124,8 @@ describe('ToastContext', () => {
     });
   });
 
-  it('should auto-dismiss toast after duration', async () => {
+  it('should auto-dismiss toast after duration', () => {
+    vi.useFakeTimers();
     const { result } = renderHook(() => useToast(), {
       wrapper: ({ children }: { children: ReactNode }) => (
         <ToastProvider>{children}</ToastProvider>
@@ -145,12 +142,11 @@ describe('ToastContext', () => {
       vi.advanceTimersByTime(2000);
     });
 
-    await waitFor(() => {
-      expect(result.current.toasts).toHaveLength(0);
-    });
+    expect(result.current.toasts).toHaveLength(0);
   });
 
   it('should not auto-dismiss persistent toast', async () => {
+    vi.useFakeTimers();
     const { result } = renderHook(() => useToast(), {
       wrapper: ({ children }: { children: ReactNode }) => (
         <ToastProvider>{children}</ToastProvider>
@@ -260,10 +256,9 @@ describe('ToastContext', () => {
 
   it('should render toast container with toasts', () => {
     const { result } = renderHook(() => useToast(), {
-      wrapper: ({ children }: { children: ReactNode }) => {
-        render(<ToastProvider>{children}</ToastProvider>);
-        return <div />;
-      },
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <ToastProvider>{children}</ToastProvider>
+      ),
     });
 
     act(() => {
@@ -274,11 +269,10 @@ describe('ToastContext', () => {
   });
 
   it('should apply correct CSS class based on toast type', () => {
-    const { result, rerender } = renderHook(() => useToast(), {
-      wrapper: ({ children }: { children: ReactNode }) => {
-        render(<ToastProvider>{children}</ToastProvider>);
-        return <div />;
-      },
+    const { result } = renderHook(() => useToast(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <ToastProvider>{children}</ToastProvider>
+      ),
     });
 
     act(() => {
@@ -316,10 +310,7 @@ describe('ToastContext', () => {
     expect(toast).toBeInTheDocument();
 
     await user.click(toast);
-
-    await waitFor(() => {
-      expect(screen.queryByText('Clickable toast')).not.toBeInTheDocument();
-    });
+    expect(screen.queryByText('Clickable toast')).not.toBeInTheDocument();
   });
 
   it('should not dismiss persistent toast on click', async () => {
@@ -360,9 +351,7 @@ describe('ToastContext', () => {
 
     expect(actionFn).toHaveBeenCalled();
 
-    await waitFor(() => {
-      expect(screen.queryByText('Toast with action')).not.toBeInTheDocument();
-    });
+    expect(screen.queryByText('Toast with action')).not.toBeInTheDocument();
   });
 
   it('should render close button for persistent toast', async () => {
@@ -380,9 +369,7 @@ describe('ToastContext', () => {
     const closeButton = screen.getByLabelText('Dismiss');
     await user.click(closeButton);
 
-    await waitFor(() => {
-      expect(screen.queryByText('Persistent toast')).not.toBeInTheDocument();
-    });
+    expect(screen.queryByText('Persistent toast')).not.toBeInTheDocument();
   });
 
   it('should provide all context methods', () => {

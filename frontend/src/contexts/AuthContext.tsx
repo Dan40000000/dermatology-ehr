@@ -82,6 +82,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           role: data.user.role as User['role'],
         });
       }
+    } catch (error) {
+      console.error('Failed to refresh user', error);
     } finally {
       setIsLoading(false);
     }

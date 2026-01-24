@@ -13,3 +13,5 @@ export { SchedulePage } from './SchedulePage';
 export { AppointmentPage } from './AppointmentPage';
 export { EncounterPage } from './EncounterPage';
 export { AdminPage } from './AdminPage';
+export { AnalyticsPage } from './AnalyticsPage';
+export { AdminAnalyticsDashboardPage } from './AdminAnalyticsDashboardPage';

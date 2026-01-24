@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useProviders } from '../useProviders';
 import type { ReactNode } from 'react';
 
-const mockSession = {
+const mockSession = vi.hoisted(() => ({
   tenantId: 'tenant-1',
   accessToken: 'token-123',
   refreshToken: 'refresh-123',
@@ -14,7 +14,7 @@ const mockSession = {
     fullName: 'Test User',
     role: 'provider' as const,
   },
-};
+}));
 
 const mockProviders = [
   {
@@ -148,9 +148,18 @@ describe('useProviders', () => {
   });
 
   it('should cache providers with staleTime', async () => {
-    const { result } = renderHook(() => useProviders(), {
-      wrapper: createWrapper(),
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
     });
+
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useProviders(), { wrapper });
 
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true);
@@ -159,9 +168,7 @@ describe('useProviders', () => {
     expect(apiMocks.fetchProviders).toHaveBeenCalledTimes(1);
 
     // Re-render should use cached data within staleTime
-    const { result: result2 } = renderHook(() => useProviders(), {
-      wrapper: createWrapper(),
-    });
+    const { result: result2 } = renderHook(() => useProviders(), { wrapper });
 
     await waitFor(() => {
       expect(result2.current.isSuccess).toBe(true);

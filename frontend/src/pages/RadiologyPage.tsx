@@ -1,10 +1,12 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
 import { fetchOrders, fetchPatients, createOrder, updateOrderStatus } from '../api';
 import type { Order, Patient, ResultFlagType } from '../types';
 import { ResultFlagBadge, ResultFlagSelect } from '../components/ResultFlagBadge';
+import { InsuranceStatusBadge } from '../components/Insurance';
+import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 
 type ImagingFilter = 'all' | 'pending' | 'scheduled' | 'completed';
 type WorkflowStatus = 'pending_review' | 'reviewed' | 'filed' | 'needs_followup';
@@ -55,6 +57,7 @@ export function RadiologyPage() {
     visitDate: true,
     performedDate: true,
     patientName: true,
+    coverage: true,
     resultType: true,
     resultName: true,
     flag: true,
@@ -75,6 +78,12 @@ export function RadiologyPage() {
     contrast: false,
     notes: '',
   });
+
+  const eligibilityPatientIds = useMemo(
+    () => imagingOrders.map((order) => order.patientId),
+    [imagingOrders]
+  );
+  const { eligibilityByPatient, eligibilityLoading } = useEligibilityByPatient(session, eligibilityPatientIds);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -224,6 +233,14 @@ export function RadiologyPage() {
   const getPatientName = (patientId: string) => {
     const patient = patients.find((p) => p.id === patientId);
     return patient ? `${patient.lastName}, ${patient.firstName}` : 'Unknown';
+  };
+
+  const getPatientInsurance = (patientId: string) => {
+    const patient = patients.find((p) => p.id === patientId);
+    if (!patient?.insurance) return null;
+    if (typeof patient.insurance === 'string') return patient.insurance;
+    if (patient.insurance.planName) return patient.insurance.planName;
+    return 'On file';
   };
 
   const filteredImaging = imagingOrders.filter((img) => {
@@ -605,6 +622,16 @@ export function RadiologyPage() {
                   {visibleColumns.patientName && (
                     <th style={{ padding: '1rem', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Patient Name</th>
                   )}
+                  {visibleColumns.coverage && (
+                    <th style={{ padding: '1rem', textAlign: 'left', fontWeight: 600, color: '#374151' }}>
+                      Coverage
+                      {eligibilityLoading && (
+                        <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', color: '#9ca3af' }}>
+                          updating...
+                        </span>
+                      )}
+                    </th>
+                  )}
                   {visibleColumns.resultType && (
                     <th style={{ padding: '1rem', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Result Type</th>
                   )}
@@ -631,6 +658,8 @@ export function RadiologyPage() {
                   const portalStatus = getPortalStatus(img);
                   const workflowColors = getWorkflowBadgeColor(workflowStatus);
                   const portalColors = getPortalBadgeColor(portalStatus);
+                  const eligibility = eligibilityByPatient[img.patientId];
+                  const insuranceLabel = getPatientInsurance(img.patientId);
 
                   return (
                     <tr
@@ -676,6 +705,25 @@ export function RadiologyPage() {
                       {visibleColumns.patientName && (
                         <td style={{ padding: '1rem', fontWeight: 600, color: '#0891b2' }}>
                           {getPatientName(img.patientId)}
+                        </td>
+                      )}
+                      {visibleColumns.coverage && (
+                        <td style={{ padding: '1rem' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                            <InsuranceStatusBadge
+                              status={eligibility?.verification_status}
+                              verifiedAt={eligibility?.verified_at}
+                              hasIssues={eligibility?.has_issues}
+                              size="sm"
+                            />
+                            {insuranceLabel ? (
+                              <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>
+                                {insuranceLabel}
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}>No insurance</span>
+                            )}
+                          </div>
                         </td>
                       )}
                       {visibleColumns.resultType && (
@@ -806,6 +854,7 @@ export function RadiologyPage() {
                    key === 'visitDate' ? 'Visit Date' :
                    key === 'performedDate' ? 'Performed Date' :
                    key === 'patientName' ? 'Patient Name' :
+                   key === 'coverage' ? 'Coverage' :
                    key === 'resultType' ? 'Result Type' :
                    key === 'resultName' ? 'Result Name' :
                    key === 'flag' ? 'Flag' :

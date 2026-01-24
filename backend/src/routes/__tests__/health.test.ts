@@ -4,6 +4,8 @@ import os from 'os';
 import { healthRouter } from '../health';
 import { pool } from '../../db/pool';
 import { register } from '../../lib/metrics';
+import { runSeed } from '../../db/seed';
+import { runMigrations } from '../../db/migrate';
 
 // Mock logger
 jest.mock('../../lib/logger', () => ({
@@ -29,15 +31,28 @@ jest.mock('../../lib/metrics', () => ({
   },
 }), { virtual: true });
 
+jest.mock('../../db/seed', () => ({
+  runSeed: jest.fn(),
+}));
+
+jest.mock('../../db/migrate', () => ({
+  runMigrations: jest.fn(),
+}));
+
 const app = express();
+app.use(express.json());
 app.use('/health', healthRouter);
 
 const queryMock = pool.query as jest.Mock;
 const metricsMock = register.metrics as jest.Mock;
+const seedMock = runSeed as jest.Mock;
+const migrationsMock = runMigrations as jest.Mock;
 
 beforeEach(() => {
   queryMock.mockReset();
   metricsMock.mockReset();
+  seedMock.mockReset();
+  migrationsMock.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
   metricsMock.mockResolvedValue('# Metrics');
 });
@@ -137,6 +152,103 @@ describe('Health Routes', () => {
     it('should handle metrics errors', async () => {
       metricsMock.mockRejectedValueOnce(new Error('metrics failed'));
       const res = await request(app).get('/health/metrics');
+      expect(res.status).toBe(500);
+    });
+  });
+
+  describe('POST /health/init-db', () => {
+    const originalEnv = process.env;
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('returns 403 in production with invalid secret', async () => {
+      process.env = { ...originalEnv, NODE_ENV: 'production', INIT_SECRET: 'secret' };
+
+      const res = await request(app).post('/health/init-db').set('x-init-secret', 'bad');
+
+      expect(res.status).toBe(403);
+    });
+
+    it('runs migrations and seed', async () => {
+      migrationsMock.mockResolvedValueOnce(undefined);
+      seedMock.mockResolvedValueOnce(undefined);
+
+      const res = await request(app).post('/health/init-db');
+
+      expect(res.status).toBe(200);
+      expect(migrationsMock).toHaveBeenCalled();
+      expect(seedMock).toHaveBeenCalled();
+    });
+
+    it('returns 500 on failure', async () => {
+      migrationsMock.mockRejectedValueOnce(new Error('boom'));
+
+      const res = await request(app).post('/health/init-db');
+
+      expect(res.status).toBe(500);
+    });
+  });
+
+  describe('POST /health/sync-data', () => {
+    const originalEnv = process.env;
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('returns 403 in production with invalid secret', async () => {
+      process.env = { ...originalEnv, NODE_ENV: 'production', INIT_SECRET: 'secret' };
+
+      const res = await request(app).post('/health/sync-data').set('x-init-secret', 'bad');
+
+      expect(res.status).toBe(403);
+    });
+
+    it('rejects missing payloads', async () => {
+      const res = await request(app).post('/health/sync-data').send({ patients: [] });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('syncs patients and appointments', async () => {
+      queryMock.mockResolvedValue({ rows: [] });
+
+      const res = await request(app).post('/health/sync-data').send({
+        patients: [
+          {
+            id: 'patient-1',
+            first_name: 'Pat',
+            last_name: 'Ent',
+          },
+        ],
+        appointments: [
+          {
+            id: 'apt-1',
+            patient_id: 'patient-1',
+            provider_id: 'prov-1',
+            location_id: 'loc-1',
+            appointment_type_id: 'type-1',
+            scheduled_start: '2025-01-01T10:00:00Z',
+            scheduled_end: '2025-01-01T10:15:00Z',
+            status: 'scheduled',
+          },
+        ],
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('ok');
+    });
+
+    it('returns 500 on failure', async () => {
+      queryMock.mockRejectedValueOnce(new Error('boom'));
+
+      const res = await request(app).post('/health/sync-data').send({
+        patients: [{ id: 'patient-1', first_name: 'Pat', last_name: 'Ent' }],
+        appointments: [],
+      });
+
       expect(res.status).toBe(500);
     });
   });

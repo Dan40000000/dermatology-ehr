@@ -90,7 +90,7 @@ describe("Patient portal routes", () => {
       .set(tenantHeader, "tenant-1")
       .send({
         email: "patient@example.com",
-        password: "Password1!",
+        password: "C0mpl3x!Health",
         firstName: "Pat",
         lastName: "Ent",
         dob: "1990-01-01",
@@ -107,7 +107,7 @@ describe("Patient portal routes", () => {
       .set(tenantHeader, "tenant-1")
       .send({
         email: "patient@example.com",
-        password: "Password1!",
+        password: "C0mpl3x!Health",
         firstName: "Pat",
         lastName: "Ent",
         dob: "1990-01-01",
@@ -128,7 +128,7 @@ describe("Patient portal routes", () => {
       .set(tenantHeader, "tenant-1")
       .send({
         email: "patient@example.com",
-        password: "Password1!",
+        password: "C0mpl3x!Health",
         firstName: "Pat",
         lastName: "Ent",
         dob: "1990-01-01",
@@ -160,7 +160,7 @@ describe("Patient portal routes", () => {
     const res = await request(app)
       .post("/patient-portal/login")
       .set(tenantHeader, "tenant-1")
-      .send({ email: "patient@example.com", password: "Password1!" });
+      .send({ email: "patient@example.com", password: "C0mpl3x!Health" });
 
     expect(res.status).toBe(401);
   });
@@ -186,7 +186,7 @@ describe("Patient portal routes", () => {
     const res = await request(app)
       .post("/patient-portal/login")
       .set(tenantHeader, "tenant-1")
-      .send({ email: "patient@example.com", password: "Password1!" });
+      .send({ email: "patient@example.com", password: "C0mpl3x!Health" });
 
     expect(res.status).toBe(403);
   });
@@ -212,7 +212,7 @@ describe("Patient portal routes", () => {
     const res = await request(app)
       .post("/patient-portal/login")
       .set(tenantHeader, "tenant-1")
-      .send({ email: "patient@example.com", password: "Password1!" });
+      .send({ email: "patient@example.com", password: "C0mpl3x!Health" });
 
     expect(res.status).toBe(403);
   });
@@ -239,7 +239,7 @@ describe("Patient portal routes", () => {
     const res = await request(app)
       .post("/patient-portal/login")
       .set(tenantHeader, "tenant-1")
-      .send({ email: "patient@example.com", password: "Password1!" });
+      .send({ email: "patient@example.com", password: "C0mpl3x!Health" });
 
     expect(res.status).toBe(401);
     expect(res.body.attemptsRemaining).toBe(3);
@@ -266,7 +266,7 @@ describe("Patient portal routes", () => {
     const res = await request(app)
       .post("/patient-portal/login")
       .set(tenantHeader, "tenant-1")
-      .send({ email: "patient@example.com", password: "Password1!" });
+      .send({ email: "patient@example.com", password: "C0mpl3x!Health" });
 
     expect(res.status).toBe(403);
     expect(res.body.requiresVerification).toBe(true);
@@ -297,7 +297,7 @@ describe("Patient portal routes", () => {
     const res = await request(app)
       .post("/patient-portal/login")
       .set(tenantHeader, "tenant-1")
-      .send({ email: "patient@example.com", password: "Password1!" });
+      .send({ email: "patient@example.com", password: "C0mpl3x!Health" });
 
     expect(res.status).toBe(200);
     expect(res.body.sessionToken).toBe("jwt-token");
@@ -351,7 +351,7 @@ describe("Patient portal routes", () => {
     const res = await request(app)
       .post("/patient-portal/reset-password")
       .set(tenantHeader, "tenant-1")
-      .send({ token: "token-1234567890", password: "Password1!" });
+      .send({ token: "token-1234567890", password: "C0mpl3x!Health" });
 
     expect(res.status).toBe(400);
   });
@@ -362,7 +362,7 @@ describe("Patient portal routes", () => {
     const res = await request(app)
       .post("/patient-portal/reset-password")
       .set(tenantHeader, "tenant-1")
-      .send({ token: "token-1234567890", password: "Password1!" });
+      .send({ token: "token-1234567890", password: "C0mpl3x!Health" });
 
     expect(res.status).toBe(200);
   });

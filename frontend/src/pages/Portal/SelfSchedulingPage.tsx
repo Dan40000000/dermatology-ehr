@@ -27,6 +27,9 @@ import {
   AccessTime as TimeIcon,
   Check as CheckIcon,
 } from '@mui/icons-material';
+import { API_BASE_URL } from '../../utils/apiBase';
+
+const API_BASE = API_BASE_URL;
 
 // This would come from your existing patient portal routing/auth
 interface SelfSchedulingPageProps {
@@ -51,9 +54,10 @@ interface AppointmentType {
 }
 
 interface TimeSlot {
-  start: string;
-  end: string;
+  startTime: string;
+  endTime: string;
   providerId: string;
+  providerName?: string;
 }
 
 const steps = ['Select Provider', 'Choose Type', 'Pick Date & Time', 'Confirm'];
@@ -89,43 +93,53 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
     loadBookingSettings();
     loadProviders();
     loadAppointmentTypes();
-  }, []);
+  }, [tenantId, portalToken]);
+
+  useEffect(() => {
+    setSelectedDate('');
+    setAvailableSlots([]);
+    setSelectedSlot(null);
+  }, [selectedProvider, selectedType]);
+
+  useEffect(() => {
+    setSelectedSlot(null);
+  }, [selectedDate]);
+
+  const getHeaders = () => ({
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${portalToken}`,
+    'x-tenant-id': tenantId,
+  });
 
   const loadBookingSettings = async () => {
     try {
-      // Mock settings - replace with actual API call
-      setBookingSettings({
-        isEnabled: true,
-        minAdvanceHours: 24,
-        maxAdvanceDays: 60,
-        customMessage: 'Welcome to our online booking system!',
-        requireReason: false,
+      const response = await fetch(`${API_BASE}/api/patient-portal/scheduling/settings`, {
+        headers: getHeaders(),
       });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to load booking settings');
+      }
+      const data = await response.json();
+      setBookingSettings(data);
     } catch (err) {
       console.error('Failed to load booking settings:', err);
+      setError('Failed to load booking settings');
     }
   };
 
   const loadProviders = async () => {
     try {
       setLoading(true);
-      // Mock providers - replace with actual API call
-      setProviders([
-        {
-          id: '1',
-          fullName: 'Dr. Sarah Johnson',
-          specialty: 'Medical Dermatology',
-          bio: 'Board-certified dermatologist specializing in skin cancer screening and treatment.',
-          profileImageUrl: undefined,
-        },
-        {
-          id: '2',
-          fullName: 'Dr. Michael Chen',
-          specialty: 'Cosmetic Dermatology',
-          bio: 'Expert in cosmetic procedures including Botox, fillers, and laser treatments.',
-          profileImageUrl: undefined,
-        },
-      ]);
+      const response = await fetch(`${API_BASE}/api/patient-portal/scheduling/providers`, {
+        headers: getHeaders(),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to load providers');
+      }
+      const data = await response.json();
+      setProviders(Array.isArray(data.providers) ? data.providers : []);
     } catch (err) {
       setError('Failed to load providers');
     } finally {
@@ -135,13 +149,15 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
 
   const loadAppointmentTypes = async () => {
     try {
-      // Mock appointment types - replace with actual API call
-      setAppointmentTypes([
-        { id: '1', name: 'New Patient Visit', durationMinutes: 60, description: 'Comprehensive initial consultation', color: '#4CAF50' },
-        { id: '2', name: 'Follow-up Visit', durationMinutes: 30, description: 'Follow-up appointment for existing patients', color: '#2196F3' },
-        { id: '3', name: 'Skin Check', durationMinutes: 30, description: 'Full body skin cancer screening', color: '#FF9800' },
-        { id: '4', name: 'Cosmetic Consultation', durationMinutes: 45, description: 'Consultation for cosmetic procedures', color: '#9C27B0' },
-      ]);
+      const response = await fetch(`${API_BASE}/api/patient-portal/scheduling/appointment-types`, {
+        headers: getHeaders(),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to load appointment types');
+      }
+      const data = await response.json();
+      setAppointmentTypes(Array.isArray(data.appointmentTypes) ? data.appointmentTypes : []);
     } catch (err) {
       setError('Failed to load appointment types');
     }
@@ -152,27 +168,25 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
 
     try {
       setLoading(true);
-      // Mock available slots - replace with actual API call
-      const mockSlots: TimeSlot[] = [
-        { start: `${date}T09:00:00`, end: `${date}T10:00:00`, providerId: selectedProvider.id },
-        { start: `${date}T10:00:00`, end: `${date}T11:00:00`, providerId: selectedProvider.id },
-        { start: `${date}T11:00:00`, end: `${date}T12:00:00`, providerId: selectedProvider.id },
-        { start: `${date}T14:00:00`, end: `${date}T15:00:00`, providerId: selectedProvider.id },
-        { start: `${date}T15:00:00`, end: `${date}T16:00:00`, providerId: selectedProvider.id },
-        { start: `${date}T16:00:00`, end: `${date}T17:00:00`, providerId: selectedProvider.id },
-      ];
-      setAvailableSlots(mockSlots);
+      const response = await fetch(
+        `${API_BASE}/api/patient-portal/scheduling/availability?date=${date}&providerId=${selectedProvider.id}&appointmentTypeId=${selectedType.id}`,
+        { headers: getHeaders() }
+      );
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to load availability');
+      }
+      const data = await response.json();
+      setAvailableSlots(Array.isArray(data.slots) ? data.slots : []);
     } catch (err) {
       setError('Failed to load available times');
+      setAvailableSlots([]);
     } finally {
       setLoading(false);
     }
   };
 
   const handleNext = () => {
-    if (activeStep === 2 && selectedDate) {
-      loadAvailableSlots(selectedDate);
-    }
     setActiveStep((prev) => prev + 1);
   };
 
@@ -185,12 +199,37 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
       setLoading(true);
       setError(null);
 
-      // Mock booking - replace with actual API call
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      if (!selectedProvider || !selectedType || !selectedSlot) {
+        setError('Please select a provider, appointment type, and time slot.');
+        return;
+      }
+
+      if (bookingSettings?.requireReason && !reason.trim()) {
+        setError('Please provide a reason for your visit.');
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}/api/patient-portal/scheduling/book`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          providerId: selectedProvider.id,
+          appointmentTypeId: selectedType.id,
+          scheduledStart: selectedSlot.startTime,
+          scheduledEnd: selectedSlot.endTime,
+          reason: reason || undefined,
+          notes: notes || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to book appointment');
+      }
 
       setSuccess(true);
-    } catch (err) {
-      setError('Failed to book appointment. Please try again.');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to book appointment. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -205,6 +244,15 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
     const date = new Date(isoString);
     return date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   };
+
+  const formatDateInput = (date: Date) => date.toISOString().split('T')[0];
+  const minDate = bookingSettings
+    ? formatDateInput(new Date(Date.now() + bookingSettings.minAdvanceHours * 60 * 60 * 1000))
+    : formatDateInput(new Date());
+  const maxDate = bookingSettings
+    ? formatDateInput(new Date(Date.now() + bookingSettings.maxAdvanceDays * 24 * 60 * 60 * 1000))
+    : undefined;
+  const bookingDisabled = bookingSettings ? !bookingSettings.isEnabled : false;
 
   if (success) {
     return (
@@ -225,8 +273,8 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
             <Typography>Type: {selectedType?.name}</Typography>
             {selectedSlot && (
               <>
-                <Typography>Date: {formatDate(selectedSlot.start)}</Typography>
-                <Typography>Time: {formatTime(selectedSlot.start)}</Typography>
+                <Typography>Date: {formatDate(selectedSlot.startTime)}</Typography>
+                <Typography>Time: {formatTime(selectedSlot.startTime)}</Typography>
               </>
             )}
           </Box>
@@ -247,6 +295,12 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
       {bookingSettings?.customMessage && (
         <Alert severity="info" sx={{ mb: 3 }}>
           {bookingSettings.customMessage}
+        </Alert>
+      )}
+
+      {bookingDisabled && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          Online booking is currently unavailable. Please call the office to schedule.
         </Alert>
       )}
 
@@ -364,8 +418,10 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
                 }}
                 InputLabelProps={{ shrink: true }}
                 inputProps={{
-                  min: new Date().toISOString().split('T')[0],
+                  min: minDate,
+                  ...(maxDate ? { max: maxDate } : {}),
                 }}
+                disabled={bookingDisabled}
               />
             </Grid>
           </Grid>
@@ -390,7 +446,7 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
                         variant={selectedSlot === slot ? 'contained' : 'outlined'}
                         onClick={() => setSelectedSlot(slot)}
                       >
-                        {formatTime(slot.start)}
+                        {formatTime(slot.startTime)}
                       </Button>
                     </Grid>
                   ))}
@@ -428,13 +484,13 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
                       <Typography variant="subtitle2" color="text.secondary">
                         Date
                       </Typography>
-                      <Typography variant="body1">{formatDate(selectedSlot.start)}</Typography>
+                      <Typography variant="body1">{formatDate(selectedSlot.startTime)}</Typography>
                     </Grid>
                     <Grid item xs={12} sm={6}>
                       <Typography variant="subtitle2" color="text.secondary">
                         Time
                       </Typography>
-                      <Typography variant="body1">{formatTime(selectedSlot.start)}</Typography>
+                      <Typography variant="body1">{formatTime(selectedSlot.startTime)}</Typography>
                     </Grid>
                   </>
                 )}
@@ -446,7 +502,7 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
             fullWidth
             multiline
             rows={3}
-            label="Reason for Visit (Optional)"
+            label={bookingSettings?.requireReason ? 'Reason for Visit *' : 'Reason for Visit (Optional)'}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             sx={{ mb: 2 }}
@@ -473,7 +529,7 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
             <Button
               variant="contained"
               onClick={handleBookAppointment}
-              disabled={loading || !selectedSlot}
+              disabled={loading || !selectedSlot || bookingDisabled}
             >
               {loading ? <CircularProgress size={24} /> : 'Book Appointment'}
             </Button>
@@ -482,6 +538,7 @@ export default function SelfSchedulingPage({ tenantId, portalToken }: SelfSchedu
               variant="contained"
               onClick={handleNext}
               disabled={
+                bookingDisabled ||
                 (activeStep === 0 && !selectedProvider) ||
                 (activeStep === 1 && !selectedType) ||
                 (activeStep === 2 && !selectedSlot)

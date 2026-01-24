@@ -30,7 +30,7 @@ describe('QuickFilters', () => {
 
   it('opens save dialog when clicking Save Current Filter button', () => {
     render(<QuickFilters onLoadFilter={mockOnLoadFilter} currentFilters={mockCurrentFilters} />);
-    const saveButton = screen.getByText('+ Save Current Filter');
+    const saveButton = screen.getByText('New Filter');
     fireEvent.click(saveButton);
     expect(screen.getByText('Save Quick Filter')).toBeInTheDocument();
   });
@@ -39,7 +39,7 @@ describe('QuickFilters', () => {
     render(<QuickFilters onLoadFilter={mockOnLoadFilter} currentFilters={mockCurrentFilters} />);
 
     // Open save dialog
-    const saveButton = screen.getByText('+ Save Current Filter');
+    const saveButton = screen.getByText('New Filter');
     fireEvent.click(saveButton);
 
     // Enter filter name
@@ -107,7 +107,7 @@ describe('QuickFilters', () => {
     render(<QuickFilters onLoadFilter={mockOnLoadFilter} currentFilters={mockCurrentFilters} />);
 
     // Click edit button
-    const editButton = screen.getByText('Edit');
+    const editButton = screen.getByTitle('Edit filter');
     fireEvent.click(editButton);
 
     // Change name
@@ -215,7 +215,7 @@ describe('QuickFilters', () => {
     render(<QuickFilters onLoadFilter={mockOnLoadFilter} currentFilters={mockCurrentFilters} />);
 
     // Open save dialog
-    const saveButton = screen.getByText('+ Save Current Filter');
+    const saveButton = screen.getByText('New Filter');
     fireEvent.click(saveButton);
 
     // Click save without entering name

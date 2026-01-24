@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { usePatients, useCreatePatient, useSearchPatients } from '../usePatients';
 import type { ReactNode } from 'react';
 
-const mockSession = {
+const mockSession = vi.hoisted(() => ({
   tenantId: 'tenant-1',
   accessToken: 'token-123',
   refreshToken: 'refresh-123',
@@ -14,7 +14,7 @@ const mockSession = {
     fullName: 'Test User',
     role: 'provider' as const,
   },
-};
+}));
 
 const mockPatients = [
   {
@@ -294,16 +294,14 @@ describe('useSearchPatients', () => {
     expect(result.current.data![0].phone).toBe('555-0100');
   });
 
-  it('should return all patients when search term is empty', async () => {
+  it('should not search when search term is empty', () => {
     const { result } = renderHook(() => useSearchPatients(''), {
       wrapper: createWrapper(),
     });
 
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true);
-    });
-
-    expect(result.current.data).toEqual(mockPatients);
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.data).toBeUndefined();
+    expect(apiMocks.fetchPatients).not.toHaveBeenCalled();
   });
 
   it('should not search when term is less than 2 characters', () => {

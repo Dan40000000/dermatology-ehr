@@ -1,8 +1,10 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
+import { InsuranceStatusBadge } from '../components/Insurance';
+import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 import {
   fetchOrders,
   fetchPatients,
@@ -269,6 +271,12 @@ export function PrescriptionsPage() {
   const [medicationSearch, setMedicationSearch] = useState('');
   const [showMedicationDropdown, setShowMedicationDropdown] = useState(false);
   const medicationDropdownRef = useRef<HTMLDivElement>(null);
+
+  const eligibilityPatientIds = useMemo(
+    () => prescriptions.map((rx) => rx.patientId),
+    [prescriptions]
+  );
+  const { eligibilityByPatient, eligibilityLoading } = useEligibilityByPatient(session, eligibilityPatientIds);
 
   const [denyForm, setDenyForm] = useState({
     reason: '',
@@ -558,6 +566,14 @@ export function PrescriptionsPage() {
   const getPatientName = (patientId: string) => {
     const patient = patients.find((p) => p.id === patientId);
     return patient ? `${patient.lastName}, ${patient.firstName}` : 'Unknown';
+  };
+
+  const getPatientInsurance = (patientId: string) => {
+    const patient = patients.find((p) => p.id === patientId);
+    if (!patient?.insurance) return null;
+    if (typeof patient.insurance === 'string') return patient.insurance;
+    if (patient.insurance.planName) return patient.insurance.planName;
+    return 'On file';
   };
 
   const getPAStatusForRx = (rxId: string) => {
@@ -1024,6 +1040,14 @@ export function PrescriptionsPage() {
                   />
                 </th>
                 <th>Patient</th>
+                <th>
+                  Coverage
+                  {eligibilityLoading && (
+                    <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', color: '#9ca3af' }}>
+                      updating...
+                    </span>
+                  )}
+                </th>
                 <th>Medication</th>
                 <th>Sig</th>
                 <th>Qty / Refills</th>
@@ -1042,6 +1066,8 @@ export function PrescriptionsPage() {
                 const sig = lines.find((l) => l.startsWith('Sig:'))?.replace('Sig: ', '') || '';
                 const refills = lines.find((l) => l.startsWith('Refills:'))?.replace('Refills: ', '') || '0';
                 const paRequest = getPAStatusForRx(rx.id);
+                const eligibility = eligibilityByPatient[rx.patientId];
+                const insuranceLabel = getPatientInsurance(rx.patientId);
 
                 return (
                   <tr
@@ -1061,6 +1087,23 @@ export function PrescriptionsPage() {
                       <a href="#" className="ema-patient-link">
                         {getPatientName(rx.patientId)}
                       </a>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        <InsuranceStatusBadge
+                          status={eligibility?.verification_status}
+                          verifiedAt={eligibility?.verified_at}
+                          hasIssues={eligibility?.has_issues}
+                          size="sm"
+                        />
+                        {insuranceLabel ? (
+                          <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>
+                            {insuranceLabel}
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}>No insurance</span>
+                        )}
+                      </div>
                     </td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

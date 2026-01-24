@@ -8,7 +8,7 @@ import { BasePage } from './BasePage';
 export class HomePage extends BasePage {
   // Navigation links
   private readonly scheduleLink = () => this.page.getByRole('link', { name: /schedule/i });
-  private readonly patientsLink = () => this.page.getByRole('link', { name: /^patients$/i });
+  private readonly patientsLink = () => this.page.getByRole('link', { name: /patients/i });
   private readonly appointmentsLink = () => this.page.getByRole('link', { name: /appointment/i });
   private readonly tasksLink = () => this.page.getByRole('link', { name: /tasks/i });
   private readonly ordersLink = () => this.page.getByRole('link', { name: /orders/i });
@@ -20,7 +20,7 @@ export class HomePage extends BasePage {
   private readonly logoutButton = () => this.page.getByRole('button', { name: /logout|sign out/i });
 
   // Page elements
-  private readonly welcomeText = () => this.page.getByText(/welcome|dashboard|home/i);
+  private readonly welcomeText = () => this.page.getByText(/today's overview|office flow summary|pending tasks/i);
   private readonly searchInput = () => this.page.getByPlaceholder(/search|patient/i);
 
   constructor(page: Page) {

@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { AuthTokens, AuthenticatedRequestUser, TenantUser } from "../types";
@@ -33,6 +34,7 @@ async function signRefreshToken(user: TenantUser): Promise<string> {
     {
       issuer: env.jwtIssuer,
       expiresIn: env.refreshTokenTtlSec,
+      jwtid: randomUUID(),
     },
   );
 

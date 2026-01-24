@@ -14,8 +14,12 @@ const toastMocks = vi.hoisted(() => ({
   showError: vi.fn(),
 }));
 
+const navigateMock = vi.hoisted(() => vi.fn());
+
 const apiMocks = vi.hoisted(() => ({
-  fetchAppointments: vi.fn(),
+  fetchFrontDeskSchedule: vi.fn(),
+  updateFrontDeskStatus: vi.fn(),
+  checkOutFrontDeskAppointment: vi.fn(),
   fetchPatients: vi.fn(),
   fetchProviders: vi.fn(),
 }));
@@ -26,6 +30,11 @@ vi.mock('../../contexts/AuthContext', () => ({
 
 vi.mock('../../contexts/ToastContext', () => ({
   useToast: () => toastMocks,
+}));
+
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => navigateMock,
+  useSearchParams: () => [new URLSearchParams(), vi.fn()],
 }));
 
 vi.mock('../../api', () => apiMocks);
@@ -55,14 +64,18 @@ const makeAppointment = (index: number, start: Date) => {
     id: `appt-${index + 1}`,
     tenantId: 'tenant-1',
     patientId: `pat-${index + 1}`,
-    patientName: `Patient ${index + 1}`,
+    patientFirstName: 'Patient',
+    patientLastName: `${index + 1}`,
     providerId: 'prov-1',
+    providerName: 'Dr. House',
     locationId: 'loc-1',
+    locationName: 'Mountain Pine Dermatology PLLC',
     appointmentTypeId: 'type-1',
     appointmentTypeName: 'Visit',
     scheduledStart: startTime.toISOString(),
     scheduledEnd: endTime.toISOString(),
-    status: 'scheduled' as const,
+    status: 'checked_in' as const,
+    arrivedAt: startTime.toISOString(),
     createdAt: new Date().toISOString(),
   };
 };
@@ -76,13 +89,15 @@ beforeEach(() => {
   baseTime.setHours(9, 0, 0, 0);
   const appointments = Array.from({ length: 6 }, (_, i) => makeAppointment(i, baseTime));
 
-  apiMocks.fetchAppointments.mockResolvedValue({ appointments });
+  apiMocks.fetchFrontDeskSchedule.mockResolvedValue({ appointments });
+  apiMocks.updateFrontDeskStatus.mockResolvedValue({ ok: true });
+  apiMocks.checkOutFrontDeskAppointment.mockResolvedValue({ ok: true });
   apiMocks.fetchPatients.mockResolvedValue({
     patients: appointments.map((appt) => ({
       id: appt.patientId,
       tenantId: 'tenant-1',
-      firstName: appt.patientName.split(' ')[0],
-      lastName: appt.patientName.split(' ')[1] || 'Patient',
+      firstName: appt.patientFirstName,
+      lastName: appt.patientLastName,
       createdAt: new Date().toISOString(),
     })),
   });
@@ -98,7 +113,7 @@ afterEach(() => {
 });
 
 describe('OfficeFlowPage', () => {
-  it('rooms patients and updates statuses through checkout', async () => {
+  it('rooms patients and updates statuses through completion', async () => {
     render(<OfficeFlowPage />);
 
     await screen.findByText('Office Flow');
@@ -114,16 +129,16 @@ describe('OfficeFlowPage', () => {
       expect(toastMocks.showSuccess).toHaveBeenCalledWith(expect.stringMatching(/roomed in/i))
     );
 
-    const startButtons = screen.getAllByRole('button', { name: 'Start Visit' });
+    const startButtons = await screen.findAllByRole('button', { name: 'Start Visit' });
     fireEvent.click(startButtons[0]);
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Status updated to with-provider');
+    await waitFor(() =>
+      expect(toastMocks.showSuccess).toHaveBeenCalledWith('Status updated to with provider')
+    );
 
-    const checkoutButtons = screen.getAllByRole('button', { name: 'Ready for Checkout' });
+    const checkoutButtons = await screen.findAllByRole('button', { name: 'Check Out' });
     fireEvent.click(checkoutButtons[0]);
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Status updated to checkout');
-
-    const completeButtons = screen.getAllByRole('button', { name: 'Complete' });
-    fireEvent.click(completeButtons[0]);
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Status updated to completed');
+    await waitFor(() =>
+      expect(toastMocks.showSuccess).toHaveBeenCalledWith('Status updated to completed')
+    );
   });
 });

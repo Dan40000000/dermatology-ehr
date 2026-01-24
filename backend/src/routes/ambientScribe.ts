@@ -77,7 +77,7 @@ const updateNoteSchema = z.object({
   assessment: z.string().optional(),
   plan: z.string().optional(),
   editReason: z.string().optional()
-});
+}).strict();
 
 const reviewActionSchema = z.object({
   action: z.enum(['approve', 'reject', 'request_regeneration']),

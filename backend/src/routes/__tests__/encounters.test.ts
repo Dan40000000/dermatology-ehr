@@ -4,6 +4,8 @@ import { encountersRouter } from "../encounters";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
 import { recordEncounterLearning } from "../../services/learningService";
+import { encounterService } from "../../services/encounterService";
+import { billingService } from "../../services/billingService";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -24,6 +26,28 @@ jest.mock("../../services/learningService", () => ({
   recordEncounterLearning: jest.fn(),
 }));
 
+jest.mock("../../services/encounterService", () => ({
+  encounterService: {
+    generateChargesFromEncounter: jest.fn(),
+    addDiagnosis: jest.fn(),
+    addProcedure: jest.fn(),
+    completeEncounter: jest.fn(),
+  },
+}));
+
+jest.mock("../../services/billingService", () => ({
+  billingService: {
+    createClaimFromCharges: jest.fn(),
+  },
+}));
+
+jest.mock("../../websocket/emitter", () => ({
+  emitEncounterCreated: jest.fn(),
+  emitEncounterUpdated: jest.fn(),
+  emitEncounterCompleted: jest.fn(),
+  emitEncounterSigned: jest.fn(),
+}));
+
 jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),
@@ -37,11 +61,15 @@ app.use("/encounters", encountersRouter);
 const queryMock = pool.query as jest.Mock;
 const auditMock = auditLog as jest.Mock;
 const learningMock = recordEncounterLearning as jest.Mock;
+const encounterServiceMock = encounterService as jest.Mocked<typeof encounterService>;
+const billingServiceMock = billingService as jest.Mocked<typeof billingService>;
 
 beforeEach(() => {
   queryMock.mockReset();
   auditMock.mockReset();
   learningMock.mockReset();
+  Object.values(encounterServiceMock).forEach((fn) => fn.mockReset());
+  Object.values(billingServiceMock).forEach((fn) => fn.mockReset());
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -152,6 +180,123 @@ describe("Encounters routes", () => {
     const res = await request(app).get("/encounters/enc-1/superbill");
     expect(res.status).toBe(200);
     expect(res.text).toContain("Superbill - Jones, Ava");
+    expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("GET /encounters/:id/prescriptions returns 404 when missing", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const res = await request(app).get("/encounters/enc-1/prescriptions");
+
+    expect(res.status).toBe(404);
+  });
+
+  it("GET /encounters/:id/prescriptions returns list", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ patient_id: "pat-1" }] })
+      .mockResolvedValueOnce({ rows: [{ id: "rx-1" }] });
+
+    const res = await request(app).get("/encounters/enc-1/prescriptions");
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /encounters/:id/generate-charges returns charges", async () => {
+    encounterServiceMock.generateChargesFromEncounter.mockResolvedValueOnce([{ id: "chg-1" }] as any);
+
+    const res = await request(app).post("/encounters/enc-1/generate-charges");
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /encounters/:id/generate-charges handles errors", async () => {
+    encounterServiceMock.generateChargesFromEncounter.mockRejectedValueOnce(new Error("boom"));
+
+    const res = await request(app).post("/encounters/enc-1/generate-charges");
+
+    expect(res.status).toBe(500);
+  });
+
+  it("POST /encounters/:id/diagnoses rejects invalid payload", async () => {
+    const res = await request(app).post("/encounters/enc-1/diagnoses").send({ icd10Code: "L30.9" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /encounters/:id/diagnoses adds diagnosis", async () => {
+    encounterServiceMock.addDiagnosis.mockResolvedValueOnce("diag-1");
+
+    const res = await request(app).post("/encounters/enc-1/diagnoses").send({
+      icd10Code: "L30.9",
+      description: "Dermatitis",
+      isPrimary: true,
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe("diag-1");
+    expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /encounters/:id/procedures rejects invalid payload", async () => {
+    const res = await request(app).post("/encounters/enc-1/procedures").send({ cptCode: "11100" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /encounters/:id/procedures adds procedure", async () => {
+    encounterServiceMock.addProcedure.mockResolvedValueOnce("chg-1");
+
+    const res = await request(app).post("/encounters/enc-1/procedures").send({
+      cptCode: "11100",
+      description: "Biopsy",
+      quantity: 1,
+      modifiers: ["25"],
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe("chg-1");
+    expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /encounters/:id/complete completes encounter", async () => {
+    encounterServiceMock.completeEncounter.mockResolvedValueOnce(undefined as any);
+
+    const res = await request(app).post("/encounters/enc-1/complete");
+
+    expect(res.status).toBe(200);
+    expect(res.body.encounterId).toBe("enc-1");
+    expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /encounters/:id/create-claim returns claim", async () => {
+    billingServiceMock.createClaimFromCharges.mockResolvedValueOnce({
+      id: "claim-1",
+      claimNumber: "CLM-1",
+      totalCents: 1000,
+      status: "draft",
+    } as any);
+
+    const res = await request(app).post("/encounters/enc-1/create-claim");
+
+    expect(res.status).toBe(201);
+    expect(res.body.claimId).toBe("claim-1");
+  });
+
+  it("GET /encounters/:id/charges returns charges", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        { id: "chg-1", cptCode: "11100", description: "Biopsy", quantity: 2, feeCents: 1000 },
+      ],
+    });
+
+    const res = await request(app).get("/encounters/enc-1/charges");
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalCents).toBe(2000);
     expect(auditMock).toHaveBeenCalled();
   });
 });

@@ -254,7 +254,7 @@ describe("Admin routes - Users", () => {
     const res = await request(app).post("/admin/users").send({
       email: "newuser@example.com",
       fullName: "New User",
-      password: "Password123!",
+      password: "C0mpl3x!Health",
       role: "provider",
     });
 
@@ -279,7 +279,7 @@ describe("Admin routes - Users", () => {
     const res = await request(app).post("/admin/users").send({
       email: "existing@example.com",
       fullName: "Existing User",
-      password: "Password123!",
+      password: "C0mpl3x!Health",
     });
 
     expect(res.status).toBe(400);
@@ -292,7 +292,7 @@ describe("Admin routes - Users", () => {
     const res = await request(app).post("/admin/users").send({
       email: "newuser@example.com",
       fullName: "New User",
-      password: "Password123!",
+      password: "C0mpl3x!Health",
     });
 
     expect(res.status).toBe(201);
@@ -305,7 +305,7 @@ describe("Admin routes - Users", () => {
     const res = await request(app).post("/admin/users").send({
       email: "NewUser@Example.COM",
       fullName: "New User",
-      password: "Password123!",
+      password: "C0mpl3x!Health",
     });
 
     expect(res.status).toBe(201);

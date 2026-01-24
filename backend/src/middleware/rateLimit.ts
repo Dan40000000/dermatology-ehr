@@ -3,6 +3,9 @@ import { Request, Response, NextFunction } from "express";
 type RateBucket = { count: number; resetAt: number };
 
 export function rateLimit({ windowMs, max }: { windowMs: number; max: number }) {
+  if (process.env.DISABLE_RATE_LIMIT === "true") {
+    return (_req: Request, _res: Response, next: NextFunction) => next();
+  }
   const buckets = new Map<string, RateBucket>();
   return (req: Request, res: Response, next: NextFunction) => {
     const key = `${req.ip || "unknown"}:${req.path}`;

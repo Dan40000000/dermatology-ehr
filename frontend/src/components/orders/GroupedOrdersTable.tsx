@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { InsuranceStatusBadge } from '../Insurance';
 import type { Order, Patient, OrderGroupBy } from '../../types';
 
 interface GroupedOrdersTableProps {
@@ -10,6 +11,9 @@ interface GroupedOrdersTableProps {
   onToggleSelectAll: () => void;
   onStatusChange: (orderId: string, status: string) => void;
   getPatientName: (patientId: string) => string;
+  eligibilityByPatient?: Record<string, EligibilityHistoryItem | null>;
+  getPatientInsurance?: (patientId: string) => string | null;
+  eligibilityLoading?: boolean;
 }
 
 interface OrderGroup {
@@ -17,6 +21,13 @@ interface OrderGroup {
   label: string;
   orders: Order[];
 }
+
+type EligibilityHistoryItem = {
+  verification_status?: string;
+  verified_at?: string;
+  has_issues?: boolean;
+  issue_notes?: string | null;
+};
 
 export function GroupedOrdersTable({
   orders,
@@ -27,6 +38,9 @@ export function GroupedOrdersTable({
   onToggleSelectAll,
   onStatusChange,
   getPatientName,
+  eligibilityByPatient,
+  getPatientInsurance,
+  eligibilityLoading = false,
 }: GroupedOrdersTableProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
@@ -127,6 +141,9 @@ export function GroupedOrdersTable({
               </th>
               <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Date</th>
               <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Patient Name</th>
+              <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                Coverage{eligibilityLoading ? <span style={{ marginLeft: '0.5rem', color: '#9ca3af' }}>updating...</span> : null}
+              </th>
               <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Number</th>
               <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Name</th>
               <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Provider</th>
@@ -147,6 +164,8 @@ export function GroupedOrdersTable({
                 onToggle={onToggleOrder}
                 onStatusChange={onStatusChange}
                 getPatientName={getPatientName}
+                eligibility={eligibilityByPatient?.[order.patientId]}
+                insuranceLabel={getPatientInsurance?.(order.patientId) ?? null}
                 getPriorityStyle={getPriorityStyle}
                 getOrderTypeLabel={getOrderTypeLabel}
               />
@@ -214,6 +233,9 @@ export function GroupedOrdersTable({
                       </th>
                       <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Date</th>
                       <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Patient Name</th>
+                      <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                        Coverage{eligibilityLoading ? <span style={{ marginLeft: '0.5rem', color: '#9ca3af' }}>updating...</span> : null}
+                      </th>
                       <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Number</th>
                       <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Order Name</th>
                       <th style={{ textAlign: 'left', padding: '0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Provider</th>
@@ -234,6 +256,8 @@ export function GroupedOrdersTable({
                         onToggle={onToggleOrder}
                         onStatusChange={onStatusChange}
                         getPatientName={getPatientName}
+                        eligibility={eligibilityByPatient?.[order.patientId]}
+                        insuranceLabel={getPatientInsurance?.(order.patientId) ?? null}
                         getPriorityStyle={getPriorityStyle}
                         getOrderTypeLabel={getOrderTypeLabel}
                       />
@@ -255,6 +279,8 @@ interface OrderRowProps {
   onToggle: (orderId: string) => void;
   onStatusChange: (orderId: string, status: string) => void;
   getPatientName: (patientId: string) => string;
+  eligibility?: EligibilityHistoryItem | null;
+  insuranceLabel?: string | null;
   getPriorityStyle: (priority?: string) => { background: string; color: string };
   getOrderTypeLabel: (type: string) => string;
 }
@@ -265,6 +291,8 @@ function OrderRow({
   onToggle,
   onStatusChange,
   getPatientName,
+  eligibility,
+  insuranceLabel,
   getPriorityStyle,
   getOrderTypeLabel,
 }: OrderRowProps) {
@@ -294,6 +322,21 @@ function OrderRow({
         <a href="#" className="ema-patient-link" style={{ color: '#4f46e5', textDecoration: 'none', fontWeight: 600, fontSize: '0.813rem' }}>
           {getPatientName(order.patientId)}
         </a>
+      </td>
+      <td style={{ padding: '0.75rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+          <InsuranceStatusBadge
+            status={eligibility?.verification_status}
+            verifiedAt={eligibility?.verified_at}
+            hasIssues={eligibility?.has_issues}
+            size="sm"
+          />
+          {insuranceLabel ? (
+            <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>{insuranceLabel}</span>
+          ) : (
+            <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}>No insurance</span>
+          )}
+        </div>
       </td>
       <td style={{ padding: '0.75rem', fontSize: '0.813rem', color: '#6b7280', fontFamily: 'monospace' }}>
         {orderNumber}

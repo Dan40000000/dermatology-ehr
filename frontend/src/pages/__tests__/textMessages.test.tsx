@@ -24,6 +24,12 @@ const apiMocks = vi.hoisted(() => ({
   fetchSMSConversation: vi.fn(),
   sendSMSConversationMessage: vi.fn(),
   markSMSConversationRead: vi.fn(),
+  getSMSConsent: vi.fn(),
+  recordSMSConsent: vi.fn(),
+  revokeSMSConsent: vi.fn(),
+  fetchSMSAuditLog: vi.fn(),
+  exportSMSAuditLog: vi.fn(),
+  fetchSMSAuditSummary: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -89,7 +95,7 @@ const buildFixtures = () => ({
       id: 'tpl-1',
       name: 'Appointment Reminder',
       body: 'Hi {patientName}, your appointment is on {date} at {time}.',
-      category: 'appointment',
+      category: 'appointment_reminders',
       isActive: true,
       createdAt: '2024-04-01',
     },
@@ -97,7 +103,7 @@ const buildFixtures = () => ({
       id: 'tpl-2',
       name: 'Lab Results',
       body: 'Hi {patientName}, your lab results are ready.',
-      category: 'results',
+      category: 'follow_up_care',
       isActive: true,
       createdAt: '2024-04-02',
     },
@@ -146,6 +152,9 @@ describe('TextMessagesPage', () => {
     apiMocks.sendBulkSMS.mockResolvedValue({ ok: true });
     apiMocks.fetchScheduledMessages.mockResolvedValue({ scheduled: fixtures.scheduled });
     apiMocks.cancelScheduledMessage.mockResolvedValue({ ok: true });
+    apiMocks.getSMSConsent.mockResolvedValue({ hasConsent: true, daysUntilExpiration: 30 });
+    apiMocks.recordSMSConsent.mockResolvedValue({ ok: true });
+    apiMocks.revokeSMSConsent.mockResolvedValue({ ok: true });
     toastMocks.showSuccess.mockClear();
     toastMocks.showError.mockClear();
     Element.prototype.scrollIntoView = vi.fn();
@@ -154,7 +163,7 @@ describe('TextMessagesPage', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it('loads conversations, inserts templates, sends messages, and schedules', async () => {
@@ -228,7 +237,7 @@ describe('TextMessagesPage', () => {
     const templateModal = await screen.findByTestId('modal-new-template');
     const templateScope = within(templateModal);
     fireEvent.change(templateScope.getByPlaceholderText('e.g., Appointment Reminder'), { target: { value: 'New Template' } });
-    fireEvent.change(templateScope.getByRole('combobox'), { target: { value: 'general' } });
+    fireEvent.change(templateScope.getByRole('combobox'), { target: { value: 'general_communication' } });
     fireEvent.change(templateScope.getByPlaceholderText('Enter your template message...'), { target: { value: 'Hello there' } });
     fireEvent.click(templateScope.getByRole('button', { name: 'Create Template' }));
 
@@ -236,7 +245,7 @@ describe('TextMessagesPage', () => {
       expect(apiMocks.createSMSTemplate).toHaveBeenCalledWith('tenant-1', 'token-1', {
         name: 'New Template',
         body: 'Hello there',
-        category: 'general',
+        category: 'general_communication',
       }),
     );
 
@@ -417,6 +426,7 @@ describe('TextMessagesPage', () => {
 
     const templateScope = within(templateModal);
     fireEvent.change(templateScope.getByPlaceholderText('e.g., Appointment Reminder'), { target: { value: 'Recovery' } });
+    fireEvent.change(templateScope.getByRole('combobox'), { target: { value: 'general_communication' } });
     fireEvent.change(templateScope.getByPlaceholderText('Enter your template message...'), { target: { value: 'Recover soon' } });
     fireEvent.click(templateScope.getByRole('button', { name: 'Create Template' }));
 
@@ -626,7 +636,7 @@ describe('TextMessagesPage', () => {
         id: 'tpl-x',
         name: 'General',
         body: 'Hello {patientName}',
-        category: 'general',
+        category: 'general_communication',
         isActive: true,
         createdAt: now,
       },

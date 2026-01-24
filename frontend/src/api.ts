@@ -61,7 +61,11 @@ export async function fetchPatients(tenantId: string, accessToken: string) {
   if (!res.ok) {
     throw new Error("Failed to load patients");
   }
-  return res.json();
+  const payload = await res.json();
+  if (payload && Array.isArray(payload.data) && !Array.isArray(payload.patients)) {
+    return { ...payload, patients: payload.data };
+  }
+  return payload;
 }
 
 export async function fetchPatient(tenantId: string, accessToken: string, patientId: string) {
@@ -117,6 +121,71 @@ export async function fetchAppointments(
   });
   if (!res.ok) {
     throw new Error("Failed to load appointments");
+  }
+  return res.json();
+}
+
+export async function fetchFrontDeskSchedule(
+  tenantId: string,
+  accessToken: string,
+  filters?: { providerId?: string; status?: string }
+) {
+  const params = new URLSearchParams();
+  if (filters?.providerId) params.append('providerId', filters.providerId);
+  if (filters?.status) params.append('status', filters.status);
+
+  const queryString = params.toString();
+  const url = queryString ? `${API_BASE}/api/front-desk/today?${queryString}` : `${API_BASE}/api/front-desk/today`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    throw new Error("Failed to load front desk schedule");
+  }
+  return res.json();
+}
+
+export async function updateFrontDeskStatus(
+  tenantId: string,
+  accessToken: string,
+  appointmentId: string,
+  status: string
+) {
+  const res = await fetch(`${API_BASE}/api/front-desk/status/${appointmentId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to update front desk status' }));
+    throw new Error(error.error || 'Failed to update front desk status');
+  }
+  return res.json();
+}
+
+export async function checkOutFrontDeskAppointment(
+  tenantId: string,
+  accessToken: string,
+  appointmentId: string
+) {
+  const res = await fetch(`${API_BASE}/api/front-desk/check-out/${appointmentId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to check out patient' }));
+    throw new Error(error.error || 'Failed to check out patient');
   }
   return res.json();
 }
@@ -476,8 +545,30 @@ export const updateVitals = (tenantId: string, accessToken: string, data: any) =
 export const updateEncounterFields = (tenantId: string, accessToken: string, id: string, data: any) =>
   authedPost(tenantId, accessToken, `/api/encounters/${id}`, data);
 
-export async function fetchOrders(tenantId: string, accessToken: string) {
-  const res = await fetch(`${API_BASE}/api/orders`, {
+export async function fetchOrders(
+  tenantId: string,
+  accessToken: string,
+  options?: {
+    patientId?: string;
+    orderTypes?: string[];
+    statuses?: string[];
+    priorities?: string[];
+    search?: string;
+    limit?: number;
+  }
+) {
+  const params = new URLSearchParams();
+  if (options?.patientId) params.append('patientId', options.patientId);
+  if (options?.orderTypes?.length) params.append('orderTypes', options.orderTypes.join(','));
+  if (options?.statuses?.length) params.append('statuses', options.statuses.join(','));
+  if (options?.priorities?.length) params.append('priorities', options.priorities.join(','));
+  if (options?.search) params.append('search', options.search);
+  if (options?.limit) params.append('limit', String(options.limit));
+
+  const query = params.toString();
+  const url = query ? `${API_BASE}/api/orders?${query}` : `${API_BASE}/api/orders`;
+
+  const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
   });
   if (!res.ok) throw new Error("Failed to load orders");
@@ -6494,6 +6585,32 @@ export async function fetchPatientInsurance(
   return res.json();
 }
 
+export async function fetchEligibilityHistory(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+) {
+  return authedGet(tenantId, accessToken, `/api/eligibility/history/${patientId}`);
+}
+
+export async function fetchEligibilityHistoryBatch(
+  tenantId: string,
+  accessToken: string,
+  patientIds: string[]
+) {
+  return authedPost(tenantId, accessToken, '/api/eligibility/history/batch', { patientIds });
+}
+
+export async function verifyPatientEligibility(
+  tenantId: string,
+  accessToken: string,
+  patientId: string,
+  appointmentId?: string
+) {
+  const params = appointmentId ? `?appointmentId=${encodeURIComponent(appointmentId)}` : '';
+  return authedPost(tenantId, accessToken, `/api/eligibility/verify/${patientId}${params}`, {});
+}
+
 // ============================================================================
 // PDMP (Prescription Drug Monitoring Program) API
 // ============================================================================
@@ -6585,21 +6702,34 @@ function buildUrl(endpoint: string, params?: Record<string, any>): string {
   return queryString ? `${url}?${queryString}` : url;
 }
 
-function getAuthHeaders(): Record<string, string> {
-  // Get auth from localStorage if available
-  const stored = localStorage.getItem('auth');
-  if (stored) {
+const SESSION_STORAGE_KEYS = ['derm_session', 'auth'];
+
+function getStoredSession(): { tenantId: string; accessToken: string } | null {
+  for (const key of SESSION_STORAGE_KEYS) {
+    const stored = localStorage.getItem(key);
+    if (!stored) continue;
     try {
-      const auth = JSON.parse(stored);
-      return {
-        'Authorization': `Bearer ${auth.accessToken}`,
-        [TENANT_HEADER]: auth.tenantId,
-      };
-    } catch (e) {
+      const parsed = JSON.parse(stored);
+      if (parsed?.tenantId && parsed?.accessToken) {
+        return { tenantId: parsed.tenantId, accessToken: parsed.accessToken };
+      }
+      if (parsed?.tenantId && parsed?.tokens?.accessToken) {
+        return { tenantId: parsed.tenantId, accessToken: parsed.tokens.accessToken };
+      }
+    } catch {
       // ignore parse errors
     }
   }
-  return {};
+  return null;
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const session = getStoredSession();
+  if (!session) return {};
+  return {
+    'Authorization': `Bearer ${session.accessToken}`,
+    [TENANT_HEADER]: session.tenantId,
+  };
 }
 
 const apiClient = {

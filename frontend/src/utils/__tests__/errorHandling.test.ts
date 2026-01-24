@@ -392,9 +392,10 @@ describe('withRetry', () => {
       backoff: false,
       shouldRetry: () => true,
     });
+    const assertion = expect(promise).rejects.toThrow('persistent failure');
     await vi.runAllTimersAsync();
 
-    await expect(promise).rejects.toThrow('persistent failure');
+    await assertion;
     expect(fn).toHaveBeenCalledTimes(3);
   });
 
@@ -406,9 +407,10 @@ describe('withRetry', () => {
       delayMs: 10,
       shouldRetry: (error, attempt) => attempt < 2, // Only retry once
     });
+    const assertion = expect(promise).rejects.toThrow('fail');
     await vi.runAllTimersAsync();
 
-    await expect(promise).rejects.toThrow('fail');
+    await assertion;
     expect(fn).toHaveBeenCalledTimes(2); // Initial + 1 retry
   });
 
@@ -419,9 +421,10 @@ describe('withRetry', () => {
       maxAttempts: 5,
       shouldRetry: defaultShouldRetry, // Won't retry 400 errors
     });
+    const assertion = expect(promise).rejects.toThrow('Client error');
     await vi.runAllTimersAsync();
 
-    await expect(promise).rejects.toThrow('Client error');
+    await assertion;
     expect(fn).toHaveBeenCalledTimes(1); // No retries for 400
   });
 

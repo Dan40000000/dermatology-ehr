@@ -39,9 +39,14 @@ vi.mock('../../contexts/ToastContext', () => ({
   useToast: () => toastMocks,
 }));
 
-vi.mock('react-router-dom', () => ({
-  useNavigate: () => navigateMock,
-}));
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+    useSearchParams: () => [new URLSearchParams(), vi.fn()],
+  };
+});
 
 vi.mock('../../api', () => apiMocks);
 
@@ -325,7 +330,14 @@ describe('SchedulePage', () => {
 
     await screen.findByTestId('calendar');
 
-    expect(apiMocks.fetchAppointments).toHaveBeenCalledWith('tenant-1', 'token-1');
+    expect(apiMocks.fetchAppointments).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      expect.objectContaining({
+        startDate: expect.any(String),
+        endDate: expect.any(String),
+      })
+    );
     await screen.findByText('Scheduling Conflicts:');
     expect(screen.getByTestId('calendar-appointments')).toHaveTextContent('3');
     expect(screen.getByTestId('calendar-providers')).toHaveTextContent('2');
@@ -339,6 +351,9 @@ describe('SchedulePage', () => {
     fireEvent.change(providerSelect, { target: { value: 'provider-1' } });
     await waitFor(() => expect(screen.getByTestId('calendar-providers')).toHaveTextContent('1'));
     expect(screen.getByTestId('calendar-timeblocks')).toHaveTextContent('1');
+
+    fireEvent.change(providerSelect, { target: { value: 'all' } });
+    await waitFor(() => expect(screen.getByTestId('calendar-providers')).toHaveTextContent('2'));
 
     fireEvent.change(locationSelect, { target: { value: 'loc-2' } });
     await waitFor(() => expect(screen.getByTestId('calendar-appointments')).toHaveTextContent('1'));

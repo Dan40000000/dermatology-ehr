@@ -10,22 +10,29 @@ export class NewPatientPage extends BasePage {
   private readonly firstNameInput = () => this.page.getByLabel(/first name/i);
   private readonly lastNameInput = () => this.page.getByLabel(/last name/i);
   private readonly dateOfBirthInput = () => this.page.getByLabel(/date of birth|dob/i);
-  private readonly phoneInput = () => this.page.getByLabel(/phone/i);
+  private readonly phoneInput = () => this.page.getByLabel(/home phone/i);
   private readonly emailInput = () => this.page.getByLabel(/email/i);
-  private readonly addressInput = () => this.page.getByLabel(/^address$|street address/i);
+  private readonly addressInput = () => this.page.getByLabel(/street address/i);
   private readonly cityInput = () => this.page.getByLabel(/city/i);
   private readonly stateInput = () => this.page.getByLabel(/state/i);
   private readonly zipCodeInput = () => this.page.getByLabel(/zip|postal code/i);
 
   // Gender/Sex field
-  private readonly genderSelect = () => this.page.getByLabel(/gender|sex/i);
+  private readonly genderSelect = () => this.page.getByLabel(/sex/i);
+
+  // Section tabs
+  private readonly demographicsTab = () => this.page.getByRole('button', { name: /^demographics$/i });
+  private readonly contactTab = () => this.page.getByRole('button', { name: /^contact info$/i });
+  private readonly insuranceTab = () => this.page.getByRole('button', { name: /^insurance$/i });
+  private readonly medicalTab = () => this.page.getByRole('button', { name: /^medical info$/i });
 
   // Buttons
-  private readonly saveButton = () => this.page.getByRole('button', { name: /save|create|submit|register/i });
-  private readonly cancelButton = () => this.page.getByRole('button', { name: /cancel/i });
+  private readonly saveButton = () => this.page.getByRole('button', { name: /^save patient$/i });
+  private readonly cancelButton = () =>
+    this.page.locator('.ema-action-bar').getByRole('button', { name: /cancel/i });
 
   // Validation
-  private readonly validationError = () => this.page.getByText(/required|invalid/i);
+  private readonly validationError = () => this.page.getByText(/please fill in required fields|required|invalid/i);
   private readonly successMessage = () => this.page.getByText(/patient created|success|saved/i);
 
   constructor(page: Page) {
@@ -38,6 +45,16 @@ export class NewPatientPage extends BasePage {
   async goto(): Promise<void> {
     await this.page.goto('/patients/new');
     await this.waitForPageLoad();
+  }
+
+  async showSection(section: 'demographics' | 'contact' | 'insurance' | 'medical'): Promise<void> {
+    const sectionMap = {
+      demographics: this.demographicsTab,
+      contact: this.contactTab,
+      insurance: this.insuranceTab,
+      medical: this.medicalTab,
+    };
+    await sectionMap[section]().click();
   }
 
   /**
@@ -55,11 +72,27 @@ export class NewPatientPage extends BasePage {
     zipCode?: string;
     gender?: string;
   }): Promise<void> {
+    await this.showSection('demographics');
     await this.firstNameInput().fill(patient.firstName);
     await this.lastNameInput().fill(patient.lastName);
 
     if (patient.dateOfBirth) {
       await this.dateOfBirthInput().fill(patient.dateOfBirth);
+    }
+
+    if (patient.gender) {
+      await this.genderSelect().selectOption(patient.gender);
+    }
+
+    if (
+      patient.phone ||
+      patient.email ||
+      patient.address ||
+      patient.city ||
+      patient.state ||
+      patient.zipCode
+    ) {
+      await this.showSection('contact');
     }
 
     if (patient.phone) {
@@ -79,15 +112,11 @@ export class NewPatientPage extends BasePage {
     }
 
     if (patient.state) {
-      await this.stateInput().fill(patient.state);
+      await this.stateInput().selectOption(patient.state);
     }
 
     if (patient.zipCode) {
       await this.zipCodeInput().fill(patient.zipCode);
-    }
-
-    if (patient.gender) {
-      await this.genderSelect().selectOption(patient.gender);
     }
   }
 
@@ -155,7 +184,9 @@ export class NewPatientPage extends BasePage {
    * Fill only required fields
    */
   async fillRequiredFields(firstName: string, lastName: string): Promise<void> {
+    await this.showSection('demographics');
     await this.firstNameInput().fill(firstName);
     await this.lastNameInput().fill(lastName);
+    await this.dateOfBirthInput().fill('1990-01-01');
   }
 }

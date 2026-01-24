@@ -21,6 +21,15 @@ const apiMocks = vi.hoisted(() => ({
   fetchAppointments: vi.fn(),
   fetchDocuments: vi.fn(),
   fetchPhotos: vi.fn(),
+  fetchProviders: vi.fn(),
+  fetchTasks: vi.fn(),
+  fetchOrders: vi.fn(),
+  fetchPrescriptionsEnhanced: vi.fn(),
+  fetchEligibilityHistory: vi.fn(),
+  verifyPatientEligibility: vi.fn(),
+  default: {
+    get: vi.fn(),
+  },
   API_BASE_URL: 'http://api.test',
   TENANT_HEADER_NAME: 'x-tenant-id',
 }));
@@ -175,6 +184,13 @@ describe('PatientDetailPage', () => {
     apiMocks.fetchAppointments.mockResolvedValue({ appointments: fixtures.appointments });
     apiMocks.fetchDocuments.mockResolvedValue({ documents: fixtures.documents });
     apiMocks.fetchPhotos.mockResolvedValue({ photos: fixtures.photos });
+    apiMocks.fetchProviders.mockResolvedValue({ providers: [{ id: 'provider-1', name: 'Dr Demo' }] });
+    apiMocks.fetchTasks.mockResolvedValue({ tasks: [] });
+    apiMocks.fetchOrders.mockResolvedValue({ orders: [] });
+    apiMocks.fetchPrescriptionsEnhanced.mockResolvedValue({ prescriptions: [] });
+    apiMocks.fetchEligibilityHistory.mockResolvedValue({ history: [] });
+    apiMocks.verifyPatientEligibility.mockResolvedValue({ success: true });
+    apiMocks.default.get.mockResolvedValue({ data: { prescriptions: [] } });
 
     vi.spyOn(window, 'open').mockImplementation(() => null);
     vi.spyOn(window, 'print').mockImplementation(() => undefined);
@@ -253,9 +269,7 @@ describe('PatientDetailPage', () => {
     const insuranceButtons = screen.getAllByRole('button', { name: 'Insurance' });
     fireEvent.click(insuranceButtons[insuranceButtons.length - 1]);
     expect(screen.getByText('Insurance Information')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Check Eligibility/i }));
-    fireEvent.click(screen.getByRole('button', { name: /Verify Benefits/i }));
-    expect(window.alert).toHaveBeenCalled();
+    expect(screen.getByText('Eligibility & Coverage')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Demographics' }));
     fireEvent.click(screen.getByRole('button', { name: /Edit Demographics/i }));

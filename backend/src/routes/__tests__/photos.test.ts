@@ -2,6 +2,7 @@ import request from "supertest";
 import express from "express";
 import { photosRouter } from "../photos";
 import { pool } from "../../db/pool";
+import { PhotoService } from "../../services/photoService";
 
 // Mock crypto with requireActual to preserve createHash
 jest.mock("crypto", () => ({
@@ -26,15 +27,40 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../services/photoService", () => ({
+  PhotoService: {
+    validateImageFile: jest.fn(),
+    processPhoto: jest.fn(),
+    generateComparison: jest.fn(),
+    getPhotoStats: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/photos", photosRouter);
 
 const queryMock = pool.query as jest.Mock;
+const photoServiceMock = PhotoService as jest.Mocked<typeof PhotoService>;
+
+const patientId = "11111111-1111-4111-8111-111111111111";
+const photoId = "22222222-2222-4222-8222-222222222222";
+const beforePhotoId = "33333333-3333-4333-8333-333333333333";
+const afterPhotoId = "44444444-4444-4444-8444-444444444444";
 
 beforeEach(() => {
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+  photoServiceMock.validateImageFile.mockReturnValue({ valid: true });
+  photoServiceMock.processPhoto.mockResolvedValue({
+    filePath: "/tmp/photo.jpg",
+    thumbnailPath: "/tmp/photo_thumb.jpg",
+    metadata: { width: 800, height: 600, format: "jpeg", size: 1234, hasAlpha: false },
+    originalSize: 1000,
+    compressedSize: 900,
+  });
+  photoServiceMock.generateComparison.mockResolvedValue("/tmp/comparison.jpg");
+  photoServiceMock.getPhotoStats.mockResolvedValue({ totalCount: 1, totalSizeMB: 1, byRegion: { face: 1 } });
 });
 
 describe("Photos routes", () => {
@@ -101,7 +127,7 @@ describe("Photos routes", () => {
 
       expect(res.status).toBe(200);
       expect(queryMock).toHaveBeenCalledWith(
-        expect.stringContaining("and body_location = $2"),
+        expect.stringContaining("body_location = $2"),
         ["tenant-1", "arm"]
       );
     });
@@ -131,6 +157,14 @@ describe("Photos routes", () => {
         expect.stringContaining("limit 100"),
         ["tenant-1"]
       );
+    });
+
+    it("handles database errors", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).get("/photos");
+
+      expect(res.status).toBe(500);
     });
   });
 
@@ -340,6 +374,14 @@ describe("Photos routes", () => {
         ]
       );
     });
+
+    it("handles database errors", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).post("/photos").send(validPayload);
+
+      expect(res.status).toBe(500);
+    });
   });
 
   describe("PUT /photos/:id/annotate", () => {
@@ -404,6 +446,14 @@ describe("Photos routes", () => {
       expect(res.status).toBe(400);
     });
 
+    it("returns 400 for missing shape type", async () => {
+      const res = await request(app)
+        .put("/photos/photo-1/annotate")
+        .send({ shapes: [{}] });
+
+      expect(res.status).toBe(400);
+    });
+
     it("returns 400 for missing required shape fields", async () => {
       const res = await request(app)
         .put("/photos/photo-1/annotate")
@@ -420,6 +470,16 @@ describe("Photos routes", () => {
         .send({ invalid: "structure" });
 
       expect(res.status).toBe(400);
+    });
+
+    it("returns 500 when annotation update fails", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app)
+        .put("/photos/photo-1/annotate")
+        .send(validAnnotations);
+
+      expect(res.status).toBe(500);
     });
   });
 
@@ -453,6 +513,16 @@ describe("Photos routes", () => {
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("bodyLocation is required");
+    });
+
+    it("returns 500 when body location update fails", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app)
+        .put("/photos/photo-1/body-location")
+        .send({ bodyLocation: "left-arm" });
+
+      expect(res.status).toBe(500);
     });
   });
 
@@ -519,6 +589,16 @@ describe("Photos routes", () => {
       });
 
       expect(res.status).toBe(400);
+    });
+
+    it("handles database errors", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app)
+        .post("/photos/comparison-group")
+        .send(validGroupPayload);
+
+      expect(res.status).toBe(500);
     });
   });
 
@@ -590,6 +670,14 @@ describe("Photos routes", () => {
       expect(res.status).toBe(200);
       expect(res.body.photos).toHaveLength(0);
     });
+
+    it("handles database errors", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).get("/photos/comparison-group/group-1");
+
+      expect(res.status).toBe(500);
+    });
   });
 
   describe("GET /photos/patient/:patientId/timeline", () => {
@@ -634,6 +722,595 @@ describe("Photos routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.photos).toHaveLength(0);
+    });
+
+    it("handles database errors", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).get("/photos/patient/patient-1/timeline");
+
+      expect(res.status).toBe(500);
+    });
+  });
+
+  describe("Patient photo endpoints", () => {
+    it("returns 400 when no files uploaded", async () => {
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos`)
+        .field("metadata", JSON.stringify({ bodyRegion: "face" }));
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("No files uploaded");
+    });
+
+    it("returns 404 when patient not found", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos`)
+        .field("metadata", JSON.stringify({ bodyRegion: "face" }))
+        .attach("photos", Buffer.from("test"), "photo.jpg");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Patient not found");
+    });
+
+    it("returns 400 for invalid metadata", async () => {
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos`)
+        .field("metadata", JSON.stringify({}))
+        .attach("photos", Buffer.from("test"), "photo.jpg");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid metadata");
+    });
+
+    it("returns 400 when validation fails", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: patientId }] });
+      photoServiceMock.validateImageFile.mockReturnValueOnce({
+        valid: false,
+        error: "Invalid file type",
+      });
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos`)
+        .field("metadata", JSON.stringify({ bodyRegion: "face" }))
+        .attach("photos", Buffer.from("test"), "photo.jpg");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid file type");
+    });
+
+    it("uploads photo and logs access", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: patientId }] })
+        .mockResolvedValueOnce({ rows: [{ id: photoId }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos`)
+        .field("metadata", JSON.stringify({ bodyRegion: "face" }))
+        .attach("photos", Buffer.from("test"), "photo.jpg");
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.photos).toHaveLength(1);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO patient_photos"),
+        expect.any(Array)
+      );
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO photo_access_log"),
+        expect.any(Array)
+      );
+    });
+
+    it("lists patient photos with filters", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: photoId }] })
+        .mockResolvedValueOnce({ rows: [{ count: "1" }] });
+
+      const res = await request(app)
+        .get(`/photos/patients/${patientId}/photos`)
+        .query({
+          bodyRegion: "face",
+          photoType: "clinical",
+          comparisonGroup: "group-1",
+          isBaseline: "true",
+          startDate: "2024-01-01",
+          endDate: "2024-02-01",
+          limit: "10",
+          offset: "5",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.total).toBe(1);
+      expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("body_region"));
+      expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("photo_type"));
+      expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("comparison_group"));
+      expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("taken_at"));
+    });
+
+    it("returns 404 when patient photo missing", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).get(`/photos/patients/${patientId}/photos/${photoId}`);
+
+      expect(res.status).toBe(404);
+    });
+
+    it("returns patient photo and logs access", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: photoId, patient_id: patientId }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).get(`/photos/patients/${patientId}/photos/${photoId}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe(photoId);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO photo_access_log"),
+        expect.any(Array)
+      );
+    });
+
+    it("rejects update with no fields", async () => {
+      const res = await request(app)
+        .put(`/photos/patients/${patientId}/photos/${photoId}`)
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("No fields to update");
+    });
+
+    it("rejects invalid update payload", async () => {
+      const res = await request(app)
+        .put(`/photos/patients/${patientId}/photos/${photoId}`)
+        .send({ bodyRegion: "invalid" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid data");
+    });
+
+    it("updates photo metadata and logs access", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: photoId }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .put(`/photos/patients/${patientId}/photos/${photoId}`)
+        .send({ notes: "Updated" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe(photoId);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO photo_access_log"),
+        expect.any(Array)
+      );
+    });
+
+    it("returns 404 when deleting missing photo", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).delete(`/photos/patients/${patientId}/photos/${photoId}`);
+
+      expect(res.status).toBe(404);
+    });
+
+    it("soft deletes photo and logs access", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: photoId }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).delete(`/photos/patients/${patientId}/photos/${photoId}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO photo_access_log"),
+        expect.any(Array)
+      );
+    });
+
+    it("returns timeline by body region", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: photoId }] });
+
+      const res = await request(app).get(
+        `/photos/patients/${patientId}/photos/timeline/face`
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.count).toBe(1);
+      expect(res.body.bodyRegion).toBe("face");
+    });
+
+    it("returns 404 when comparison photos missing", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: beforePhotoId }] });
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/compare`)
+        .send({
+          patientId,
+          beforePhotoId,
+          afterPhotoId,
+          comparisonType: "side_by_side",
+        });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("One or both photos not found");
+    });
+
+    it("creates a comparison", async () => {
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [
+            { id: beforePhotoId, file_path: "/before.jpg", body_region: "face" },
+            { id: afterPhotoId, file_path: "/after.jpg", body_region: "face" },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [{ id: "comparison-1" }] });
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/compare`)
+        .send({
+          patientId,
+          beforePhotoId,
+          afterPhotoId,
+          comparisonType: "overlay",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe("comparison-1");
+      expect(photoServiceMock.generateComparison).toHaveBeenCalled();
+    });
+
+    it("lists photo comparisons", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "comparison-1" }] });
+
+      const res = await request(app).get(`/photos/patients/${patientId}/photos/comparisons`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.comparisons).toHaveLength(1);
+    });
+
+    it("returns photo stats", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ file_size_bytes: 10, body_region: "face" }] });
+
+      const res = await request(app).get(`/photos/patients/${patientId}/photos/stats`);
+
+      expect(res.status).toBe(200);
+      expect(photoServiceMock.getPhotoStats).toHaveBeenCalled();
+      expect(res.body.totalCount).toBe(1);
+    });
+
+    it("returns 404 when linking missing photo", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/${photoId}/link-to-body-map`)
+        .send({
+          bodyMapMarkerId: "marker-1",
+          xPosition: 10,
+          yPosition: 20,
+          bodyView: "front",
+        });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Photo not found");
+    });
+
+    it("returns 404 when lesion not found", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: photoId }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/${photoId}/link-to-body-map`)
+        .send({
+          bodyMapMarkerId: "marker-1",
+          lesionId: "lesion-1",
+          xPosition: 10,
+          yPosition: 20,
+          bodyView: "front",
+        });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Lesion not found");
+    });
+
+    it("links photo to body map", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: photoId }] })
+        .mockResolvedValueOnce({ rows: [{ id: "lesion-1" }] })
+        .mockResolvedValueOnce({ rows: [{ id: photoId }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/${photoId}/link-to-body-map`)
+        .send({
+          bodyMapMarkerId: "marker-1",
+          lesionId: "lesion-1",
+          xPosition: 10,
+          yPosition: 20,
+          bodyView: "front",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe(photoId);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO photo_access_log"),
+        expect.any(Array)
+      );
+    });
+
+    it("returns photos by body region", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: photoId }] })
+        .mockResolvedValueOnce({ rows: [{ count: "1" }] });
+
+      const res = await request(app)
+        .get(`/photos/patients/${patientId}/photos/by-body-region/face`)
+        .query({ bodyView: "front", limit: "2", offset: "0" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.total).toBe(1);
+    });
+
+    it("returns marker timeline with metrics", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          { id: photoId, taken_at: "2024-01-01T00:00:00Z" },
+          { id: "photo-2", taken_at: "2024-01-03T00:00:00Z" },
+        ],
+      });
+
+      const res = await request(app).get(
+        `/photos/patients/${patientId}/photos/by-marker/marker-1/timeline`
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.count).toBe(2);
+      expect(res.body.timeline[1].progression_metrics.days_since_baseline).toBe(2);
+    });
+
+    it("creates comparison via new endpoint", async () => {
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [
+            { id: beforePhotoId, file_path: "/before.jpg", body_region: "face" },
+            { id: afterPhotoId, file_path: "/after.jpg", body_region: "face" },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [{ id: "comparison-2" }] });
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/comparisons/create`)
+        .send({
+          patientId,
+          beforePhotoId,
+          afterPhotoId,
+          comparisonType: "side_by_side",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe("comparison-2");
+    });
+
+    it("returns 500 for invalid file type uploads", async () => {
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos`)
+        .field("metadata", JSON.stringify({ bodyRegion: "face" }))
+        .attach("photos", Buffer.from("bad"), {
+          filename: "photo.txt",
+          contentType: "text/plain",
+        });
+
+      expect(res.status).toBe(500);
+    });
+
+    it("returns 500 when upload processing fails", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: patientId }] });
+      photoServiceMock.processPhoto.mockRejectedValueOnce(new Error("process failed"));
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos`)
+        .field("metadata", JSON.stringify({ bodyRegion: "face" }))
+        .attach("photos", Buffer.from("test"), "photo.jpg");
+
+      expect(res.status).toBe(500);
+    });
+
+    it("handles database errors when listing patient photos", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).get(`/photos/patients/${patientId}/photos`);
+
+      expect(res.status).toBe(500);
+    });
+
+    it("handles database errors for body region timeline", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).get(
+        `/photos/patients/${patientId}/photos/timeline/face`
+      );
+
+      expect(res.status).toBe(500);
+    });
+
+    it("returns 400 for invalid comparison payload", async () => {
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/compare`)
+        .send({ patientId });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 500 when comparison creation fails", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/compare`)
+        .send({
+          patientId,
+          beforePhotoId,
+          afterPhotoId,
+          comparisonType: "overlay",
+        });
+
+      expect(res.status).toBe(500);
+    });
+
+    it("handles database errors when listing comparisons", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).get(`/photos/patients/${patientId}/photos/comparisons`);
+
+      expect(res.status).toBe(500);
+    });
+
+    it("handles database errors when fetching stats", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).get(`/photos/patients/${patientId}/photos/stats`);
+
+      expect(res.status).toBe(500);
+    });
+
+    it("handles database errors when fetching photo", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).get(`/photos/patients/${patientId}/photos/${photoId}`);
+
+      expect(res.status).toBe(500);
+    });
+
+    it("returns 404 when updating missing photo", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .put(`/photos/patients/${patientId}/photos/${photoId}`)
+        .send({ notes: "Updated" });
+
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 500 when updating photo fails", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app)
+        .put(`/photos/patients/${patientId}/photos/${photoId}`)
+        .send({ notes: "Updated" });
+
+      expect(res.status).toBe(500);
+    });
+
+    it("returns 500 when deleting photo fails", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).delete(`/photos/patients/${patientId}/photos/${photoId}`);
+
+      expect(res.status).toBe(500);
+    });
+
+    it("returns 400 for invalid body map link payload", async () => {
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/${photoId}/link-to-body-map`)
+        .send({ bodyMapMarkerId: "marker-1" });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 500 when linking photo fails", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/${photoId}/link-to-body-map`)
+        .send({
+          bodyMapMarkerId: "marker-1",
+          xPosition: 10,
+          yPosition: 20,
+          bodyView: "front",
+        });
+
+      expect(res.status).toBe(500);
+    });
+
+    it("returns photos by body region with marker filters", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: photoId }] })
+        .mockResolvedValueOnce({ rows: [{ count: "1" }] });
+
+      const res = await request(app)
+        .get(`/photos/patients/${patientId}/photos/by-body-region/face`)
+        .query({
+          bodyMapMarkerId: "marker-1",
+          lesionId: "lesion-1",
+          bodyView: "front",
+          limit: "2",
+          offset: "0",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.total).toBe(1);
+    });
+
+    it("handles database errors when fetching photos by body region", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).get(
+        `/photos/patients/${patientId}/photos/by-body-region/face`
+      );
+
+      expect(res.status).toBe(500);
+    });
+
+    it("handles database errors for marker timeline", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).get(
+        `/photos/patients/${patientId}/photos/by-marker/marker-1/timeline`
+      );
+
+      expect(res.status).toBe(500);
+    });
+
+    it("returns 404 when comparison create photos missing", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: beforePhotoId }] });
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/comparisons/create`)
+        .send({
+          patientId,
+          beforePhotoId,
+          afterPhotoId,
+          comparisonType: "side_by_side",
+        });
+
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 400 for invalid comparison create payload", async () => {
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/comparisons/create`)
+        .send({ patientId });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 500 when comparison create fails", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app)
+        .post(`/photos/patients/${patientId}/photos/comparisons/create`)
+        .send({
+          patientId,
+          beforePhotoId,
+          afterPhotoId,
+          comparisonType: "side_by_side",
+        });
+
+      expect(res.status).toBe(500);
     });
   });
 });

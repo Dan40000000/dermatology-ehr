@@ -103,7 +103,9 @@ describe("Prescription routes", () => {
   });
 
   it("GET /prescriptions/patient/:patientId returns list", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "rx-1" }] });
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: uuid }] })
+      .mockResolvedValueOnce({ rows: [{ id: "rx-1" }] });
 
     const res = await request(app).get(`/prescriptions/patient/${uuid}`);
 
@@ -525,5 +527,192 @@ describe("Prescription routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+  });
+
+  it("GET /prescriptions supports filters", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "rx-1" }] });
+
+    const res = await request(app).get("/prescriptions").query({
+      patientId: uuid,
+      status: "pending",
+      providerId: uuid2,
+      erxStatus: "success",
+      isControlled: "true",
+      writtenDateFrom: "2024-01-01",
+      writtenDateTo: "2024-02-01",
+      startDate: "2024-01-01",
+      endDate: "2024-02-01",
+      search: "test",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.prescriptions).toHaveLength(1);
+  });
+
+  it("GET /prescriptions/refill-requests supports filters", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "rx-1" }] });
+
+    const res = await request(app)
+      .get("/prescriptions/refill-requests")
+      .query({ status: "pending", patientId: uuid });
+
+    expect(res.status).toBe(200);
+    expect(res.body.refillRequests).toHaveLength(1);
+  });
+
+  it("GET /prescriptions/encounter/:encounterId returns 404 when missing", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get(`/prescriptions/encounter/${uuid}`);
+
+    expect(res.status).toBe(404);
+  });
+
+  it("GET /prescriptions/encounter/:encounterId returns list", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: uuid }] })
+      .mockResolvedValueOnce({ rows: [{ id: "rx-1" }] });
+
+    const res = await request(app).get(`/prescriptions/encounter/${uuid}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.prescriptions).toHaveLength(1);
+  });
+
+  it("GET /prescriptions/:id/refill-history returns 404 when missing", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get(`/prescriptions/${uuid}/refill-history`);
+
+    expect(res.status).toBe(404);
+  });
+
+  it("GET /prescriptions/:id/refill-history returns history", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: uuid,
+            patient_id: uuid2,
+            medication_name: "Test Med",
+            refills: 2,
+            refills_remaining: 1,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [{ filled_date: "2024-01-01" }] });
+
+    const res = await request(app).get(`/prescriptions/${uuid}/refill-history`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.refills).toHaveLength(1);
+    expect(res.body.summary.refillsUsed).toBe(1);
+  });
+
+  it("POST /prescriptions/:id/send returns redirect details", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ id: uuid, ncpdp_id: "NCPDP1", pharmacy_ncpdp: null }],
+    });
+
+    const res = await request(app).post(`/prescriptions/${uuid}/send`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.redirectTo).toBe("/api/prescriptions/send-erx");
+    expect(res.body.body.prescriptionId).toBe(uuid);
+  });
+
+  it("POST /prescriptions/bulk/send-erx validates payload", async () => {
+    const res = await request(app).post("/prescriptions/bulk/send-erx").send({});
+
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /prescriptions/bulk/send-erx rejects too many", async () => {
+    const res = await request(app)
+      .post("/prescriptions/bulk/send-erx")
+      .send({ prescriptionIds: Array.from({ length: 51 }, (_, i) => `rx-${i}`) });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /prescriptions/bulk/send-erx returns mixed results", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] }) // insert batch
+      .mockResolvedValueOnce({ rows: [] }) // missing
+      .mockResolvedValueOnce({ rows: [{ ncpdp_id: null, pharmacy_ncpdp: null, status: "pending" }] })
+      .mockResolvedValueOnce({ rows: [{ ncpdp_id: "N1", pharmacy_ncpdp: null, status: "cancelled" }] })
+      .mockResolvedValueOnce({ rows: [{ ncpdp_id: "N1", pharmacy_ncpdp: null, status: "sent" }] })
+      .mockResolvedValueOnce({ rows: [{ ncpdp_id: "N1", pharmacy_ncpdp: null, status: "pending" }] })
+      .mockResolvedValueOnce({ rows: [] }) // update success
+      .mockResolvedValueOnce({ rows: [] }) // audit
+      .mockResolvedValueOnce({ rows: [] }); // update batch
+
+    const res = await request(app).post("/prescriptions/bulk/send-erx").send({
+      prescriptionIds: ["missing", "no-ncpdp", "cancelled", "sent", "ok"],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.successCount).toBe(1);
+    expect(res.body.failureCount).toBe(4);
+  });
+
+  it("POST /prescriptions/bulk/print validates payload", async () => {
+    const res = await request(app).post("/prescriptions/bulk/print").send({});
+
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /prescriptions/bulk/print rejects too many", async () => {
+    const res = await request(app)
+      .post("/prescriptions/bulk/print")
+      .send({ prescriptionIds: Array.from({ length: 101 }, (_, i) => `rx-${i}`) });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /prescriptions/bulk/print returns success", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/prescriptions/bulk/print").send({
+      prescriptionIds: ["rx-1", "rx-2"],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalCount).toBe(2);
+  });
+
+  it("POST /prescriptions/bulk/refill validates payload", async () => {
+    const res = await request(app).post("/prescriptions/bulk/refill").send({});
+
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /prescriptions/bulk/refill rejects too many", async () => {
+    const res = await request(app)
+      .post("/prescriptions/bulk/refill")
+      .send({ prescriptionIds: Array.from({ length: 51 }, (_, i) => `rx-${i}`) });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /prescriptions/bulk/refill returns mixed results", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] }) // insert batch
+      .mockResolvedValueOnce({ rows: [] }) // missing
+      .mockResolvedValueOnce({ rows: [{ refills: 0 }] }) // no refills
+      .mockResolvedValueOnce({ rows: [{ refills: 2 }] }) // ok
+      .mockResolvedValueOnce({ rows: [] }) // insert new
+      .mockResolvedValueOnce({ rows: [] }); // update batch
+
+    const res = await request(app).post("/prescriptions/bulk/refill").send({
+      prescriptionIds: ["missing", "no-refills", "ok"],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.successCount).toBe(1);
+    expect(res.body.failureCount).toBe(2);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { PageHeader } from '../PageHeader';
 
 describe('PageHeader Component', () => {
@@ -65,12 +65,11 @@ describe('PageHeader Component', () => {
 
     render(<PageHeader title="Patients" breadcrumbs={breadcrumbs} />);
 
-    const homeLink = screen.getByText('Home');
-    expect(homeLink.tagName).toBe('A');
+    const nav = screen.getByRole('navigation', { name: /breadcrumb/i });
+    const homeLink = within(nav).getByRole('link', { name: 'Home' });
     expect(homeLink).toHaveAttribute('href', '/');
 
-    const patientsLink = screen.getByText('Patients');
-    expect(patientsLink.tagName).toBe('A');
+    const patientsLink = within(nav).getByRole('link', { name: 'Patients' });
     expect(patientsLink).toHaveAttribute('href', '/patients');
   });
 
@@ -82,7 +81,8 @@ describe('PageHeader Component', () => {
 
     render(<PageHeader title="Current Page" breadcrumbs={breadcrumbs} />);
 
-    const currentCrumb = screen.getByText('Current Page');
+    const nav = screen.getByRole('navigation', { name: /breadcrumb/i });
+    const currentCrumb = within(nav).getByText('Current Page');
     expect(currentCrumb.tagName).toBe('SPAN');
     expect(currentCrumb).toHaveAttribute('aria-current', 'page');
   });
@@ -126,8 +126,9 @@ describe('PageHeader Component', () => {
       />
     );
 
-    expect(screen.getByText('Home')).toBeInTheDocument();
-    expect(screen.getByText('Patients')).toBeInTheDocument();
+    const nav = screen.getByRole('navigation', { name: /breadcrumb/i });
+    expect(within(nav).getByText('Home')).toBeInTheDocument();
+    expect(within(nav).getByText('Patients')).toBeInTheDocument();
     expect(screen.getByText('Manage your patients')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /add patient/i })).toBeInTheDocument();
   });

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 // ================================================
 // TYPES
@@ -73,25 +74,25 @@ export default function MetricsDashboard() {
 
       try {
         const [summaryRes, providersRes, trendsRes, featuresRes] = await Promise.all([
-          fetch(`${import.meta.env.VITE_API_URL}/api/metrics/summary?period=${period}`, {
+          fetch(`${API_BASE_URL}/api/metrics/summary?period=${period}`, {
             headers: {
               'Authorization': `Bearer ${session.accessToken}`,
               'X-Tenant-ID': session.tenantId,
             },
           }),
-          fetch(`${import.meta.env.VITE_API_URL}/api/metrics/providers?period=${period}`, {
+          fetch(`${API_BASE_URL}/api/metrics/providers?period=${period}`, {
             headers: {
               'Authorization': `Bearer ${session.accessToken}`,
               'X-Tenant-ID': session.tenantId,
             },
           }),
-          fetch(`${import.meta.env.VITE_API_URL}/api/metrics/trends?period=${period}`, {
+          fetch(`${API_BASE_URL}/api/metrics/trends?period=${period}`, {
             headers: {
               'Authorization': `Bearer ${session.accessToken}`,
               'X-Tenant-ID': session.tenantId,
             },
           }),
-          fetch(`${import.meta.env.VITE_API_URL}/api/metrics/features?period=${period}`, {
+          fetch(`${API_BASE_URL}/api/metrics/features?period=${period}`, {
             headers: {
               'Authorization': `Bearer ${session.accessToken}`,
               'X-Tenant-ID': session.tenantId,

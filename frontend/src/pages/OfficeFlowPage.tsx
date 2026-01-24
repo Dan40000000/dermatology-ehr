@@ -1,12 +1,19 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton } from '../components/ui';
-import { fetchAppointments, fetchPatients, fetchProviders } from '../api';
+import {
+  fetchFrontDeskSchedule,
+  updateFrontDeskStatus,
+  checkOutFrontDeskAppointment,
+  fetchPatients,
+  fetchProviders,
+} from '../api';
 import type { Appointment, Patient, Provider } from '../types';
 
 type RoomStatus = 'available' | 'occupied' | 'cleaning' | 'blocked';
-type PatientFlowStatus = 'checked-in' | 'in-waiting' | 'roomed' | 'with-provider' | 'checkout' | 'completed';
+type PatientFlowStatus = Appointment['status'];
 
 interface Room {
   id: string;
@@ -33,9 +40,10 @@ interface PatientFlow {
   providerStartTime?: string;
   checkoutTime?: string;
   status: PatientFlowStatus;
-  roomId?: string;
   providerId: string;
   providerName: string;
+  locationId?: string;
+  locationName?: string;
   waitTime?: number;
 }
 
@@ -52,18 +60,21 @@ const INITIAL_ROOMS: Room[] = [
 export function OfficeFlowPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const statusParam = searchParams.get('status');
 
   const [loading, setLoading] = useState(true);
-  const [, setAppointments] = useState<Appointment[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [rooms, setRooms] = useState<Room[]>(INITIAL_ROOMS);
   const [patientFlows, setPatientFlows] = useState<PatientFlow[]>([]);
+  const [roomAssignments, setRoomAssignments] = useState<Record<string, string>>({});
   const [, setSelectedRoom] = useState<Room | null>(null);
 
   // Filter states
   const [showFiltersPanel, setShowFiltersPanel] = useState(false);
-  const [filterFacility, setFilterFacility] = useState('Mountain Pine Dermatology PLLC');
+  const [filterFacility, setFilterFacility] = useState('');
   const [filterProvider, setFilterProvider] = useState('');
   const [filterPatient, setFilterPatient] = useState('');
   const [filterCallButton, setFilterCallButton] = useState('');
@@ -74,66 +85,49 @@ export function OfficeFlowPage() {
 
     setLoading(true);
     try {
-      const [appointmentsRes, patientsRes, providersRes] = await Promise.all([
-        fetchAppointments(session.tenantId, session.accessToken),
+      const [scheduleRes, patientsRes, providersRes] = await Promise.all([
+        fetchFrontDeskSchedule(session.tenantId, session.accessToken),
         fetchPatients(session.tenantId, session.accessToken),
         fetchProviders(session.tenantId, session.accessToken),
       ]);
 
-      setAppointments(appointmentsRes.appointments || []);
-      setPatients(patientsRes.patients || []);
+      const patientsList = patientsRes.patients || patientsRes.data || [];
+      setPatients(patientsList);
       setProviders(providersRes.providers || []);
 
-      // Create mock patient flows from today's appointments
-      const today = new Date().toDateString();
-      const todayAppts = (appointmentsRes.appointments || []).filter(
-        (a: Appointment) => new Date(a.scheduledStart).toDateString() === today
-      );
+      const activeStatuses: PatientFlowStatus[] = ['checked_in', 'in_room', 'with_provider', 'completed'];
+      const flows: PatientFlow[] = (scheduleRes.appointments || [])
+        .filter((appt: any) => activeStatuses.includes(appt.status))
+        .map((appt: any) => {
+          const patientName = appt.patientLastName && appt.patientFirstName
+            ? `${appt.patientLastName}, ${appt.patientFirstName}`
+            : (appt.patientName || 'Patient');
+          const waitTime = appt.waitTimeMinutes ??
+            (appt.arrivedAt
+              ? Math.floor((Date.now() - new Date(appt.arrivedAt).getTime()) / (1000 * 60))
+              : undefined);
 
-      const mockFlows: PatientFlow[] = todayAppts.slice(0, 8).map((appt: Appointment, i: number) => {
-        const statuses: PatientFlowStatus[] = ['checked-in', 'in-waiting', 'roomed', 'with-provider', 'checkout', 'completed'];
-        const status = statuses[Math.min(i, statuses.length - 1)];
-        const provider = (providersRes.providers || []).find((p: Provider) => p.id === appt.providerId);
-
-        return {
-          id: `flow-${i}`,
-          appointmentId: appt.id,
-          patientId: appt.patientId,
-          patientName: appt.patientName || 'Patient',
-          appointmentType: appt.appointmentTypeName || 'Visit',
-          scheduledTime: appt.scheduledStart,
-          arrivalTime: i < 6 ? new Date(new Date(appt.scheduledStart).getTime() - 10 * 60000).toISOString() : undefined,
-          roomedTime: i >= 2 && i < 6 ? new Date(new Date(appt.scheduledStart).getTime() + 5 * 60000).toISOString() : undefined,
-          providerStartTime: i >= 3 && i < 6 ? new Date(new Date(appt.scheduledStart).getTime() + 10 * 60000).toISOString() : undefined,
-          status,
-          roomId: i >= 2 && i < 5 ? `room-${(i % 4) + 1}` : undefined,
-          providerId: appt.providerId,
-          providerName: provider?.fullName || provider?.name || 'Provider',
-          waitTime: i < 5 ? Math.floor(Math.random() * 20) + 5 : undefined,
-        };
-      });
-
-      setPatientFlows(mockFlows);
-
-      // Update rooms based on patient flows
-      const updatedRooms = INITIAL_ROOMS.map((room) => {
-        const occupant = mockFlows.find((f) => f.roomId === room.id && f.status !== 'completed' && f.status !== 'checkout');
-        if (occupant) {
           return {
-            ...room,
-            status: 'occupied' as const,
-            currentPatient: {
-              patientId: occupant.patientId,
-              appointmentId: occupant.appointmentId,
-              arrivalTime: occupant.arrivalTime || '',
-              status: occupant.status,
-            },
+            id: appt.id,
+            appointmentId: appt.id,
+            patientId: appt.patientId,
+            patientName,
+            appointmentType: appt.appointmentTypeName || 'Visit',
+            scheduledTime: appt.scheduledStart,
+            arrivalTime: appt.arrivedAt,
+            roomedTime: appt.roomedAt,
+            providerStartTime: appt.roomedAt,
+            checkoutTime: appt.completedAt,
+            status: appt.status,
+            providerId: appt.providerId,
+            providerName: appt.providerName || 'Provider',
+            locationId: appt.locationId,
+            locationName: appt.locationName,
+            waitTime,
           };
-        }
-        return room;
-      });
+        });
 
-      setRooms(updatedRooms);
+      setPatientFlows(flows);
     } catch (err: any) {
       showError(err.message || 'Failed to load data');
     } finally {
@@ -145,82 +139,144 @@ export function OfficeFlowPage() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    if (!statusParam) return;
+    const normalized = statusParam.toLowerCase();
+    const statusMap: Record<string, PatientFlowStatus> = {
+      checked_in: 'checked_in',
+      in_room: 'in_room',
+      with_provider: 'with_provider',
+      completed: 'completed',
+      waiting: 'checked_in',
+      'in-exam': 'in_room',
+      checkout: 'completed',
+    };
+    const mappedStatus = statusMap[normalized];
+    if (mappedStatus) {
+      setFilterStatus(mappedStatus);
+    }
+  }, [statusParam]);
+
+  useEffect(() => {
+    const updatedRooms = INITIAL_ROOMS.map((room) => {
+      const occupant = patientFlows.find((flow) => {
+        const assignedRoomId = roomAssignments[flow.appointmentId];
+        return assignedRoomId === room.id && (flow.status === 'in_room' || flow.status === 'with_provider');
+      });
+
+      if (occupant) {
+        return {
+          ...room,
+          status: 'occupied' as const,
+          currentPatient: {
+            patientId: occupant.patientId,
+            appointmentId: occupant.appointmentId,
+            arrivalTime: occupant.arrivalTime || '',
+            status: occupant.status,
+          },
+        };
+      }
+
+      return {
+        ...room,
+        status: 'available' as const,
+        currentPatient: undefined,
+      };
+    });
+
+    setRooms(updatedRooms);
+  }, [patientFlows, roomAssignments]);
+
   const getPatientName = (patientId: string) => {
+    const flow = patientFlows.find((p) => p.patientId === patientId);
+    if (flow) return flow.patientName;
     const patient = patients.find((p) => p.id === patientId);
     return patient ? `${patient.lastName}, ${patient.firstName}` : 'Unknown';
   };
 
-  const handleRoomPatient = (flow: PatientFlow, roomId: string) => {
-    setPatientFlows((prev) =>
-      prev.map((f) =>
-        f.id === flow.id
-          ? {
-            ...f,
-            status: 'roomed' as const,
-            roomId,
-            roomedTime: new Date().toISOString(),
-          }
-          : f
-      )
-    );
-
-    setRooms((prev) =>
-      prev.map((room) =>
-        room.id === roomId
-          ? {
-            ...room,
-            status: 'occupied' as const,
-            currentPatient: {
-              patientId: flow.patientId,
-              appointmentId: flow.appointmentId,
-              arrivalTime: flow.arrivalTime || new Date().toISOString(),
-              status: 'roomed',
-            },
-          }
-          : room
-      )
-    );
-
-    showSuccess(`${flow.patientName} roomed in ${rooms.find((r) => r.id === roomId)?.name}`);
+  const statusLabels: Record<PatientFlowStatus, string> = {
+    scheduled: 'scheduled',
+    checked_in: 'checked in',
+    in_room: 'in room',
+    with_provider: 'with provider',
+    completed: 'completed',
+    cancelled: 'cancelled',
+    no_show: 'no show',
   };
 
-  const handleStatusChange = (flow: PatientFlow, newStatus: PatientFlowStatus) => {
-    setPatientFlows((prev) =>
-      prev.map((f) => {
-        if (f.id === flow.id) {
-          const updates: Partial<PatientFlow> = { status: newStatus };
-          if (newStatus === 'with-provider') {
-            updates.providerStartTime = new Date().toISOString();
-          } else if (newStatus === 'checkout' || newStatus === 'completed') {
-            updates.checkoutTime = new Date().toISOString();
-            // Free up the room
-            if (f.roomId) {
-              setRooms((prevRooms) =>
-                prevRooms.map((room) =>
-                  room.id === f.roomId
-                    ? { ...room, status: 'cleaning' as const, currentPatient: undefined }
-                    : room
-                )
-              );
-            }
-          }
-          return { ...f, ...updates };
-        }
-        return f;
-      })
-    );
+  const getStatusLabel = (status: PatientFlowStatus) => statusLabels[status] || status;
 
-    showSuccess(`Status updated to ${newStatus}`);
+  const handleRoomPatient = async (flow: PatientFlow, roomId: string) => {
+    if (!session) return;
+
+    try {
+      await updateFrontDeskStatus(session.tenantId, session.accessToken, flow.appointmentId, 'in_room');
+      setRoomAssignments((prev) => ({ ...prev, [flow.appointmentId]: roomId }));
+      setPatientFlows((prev) =>
+        prev.map((f) =>
+          f.id === flow.id
+            ? {
+              ...f,
+              status: 'in_room',
+              roomedTime: new Date().toISOString(),
+            }
+            : f
+        )
+      );
+
+      const roomName = INITIAL_ROOMS.find((room) => room.id === roomId)?.name || 'room';
+      showSuccess(`${flow.patientName} roomed in ${roomName}`);
+    } catch (err: any) {
+      showError(err.message || 'Failed to room patient');
+    }
+  };
+
+  const handleStatusChange = async (flow: PatientFlow, newStatus: PatientFlowStatus) => {
+    if (!session) return;
+
+    try {
+      if (newStatus === 'completed') {
+        await checkOutFrontDeskAppointment(session.tenantId, session.accessToken, flow.appointmentId);
+        setRoomAssignments((prev) => {
+          if (!prev[flow.appointmentId]) return prev;
+          const next = { ...prev };
+          delete next[flow.appointmentId];
+          return next;
+        });
+      } else {
+        await updateFrontDeskStatus(session.tenantId, session.accessToken, flow.appointmentId, newStatus);
+      }
+
+      setPatientFlows((prev) =>
+        prev.map((f) => {
+          if (f.id === flow.id) {
+            const updates: Partial<PatientFlow> = { status: newStatus };
+            if (newStatus === 'with_provider') {
+              updates.providerStartTime = new Date().toISOString();
+            } else if (newStatus === 'completed') {
+              updates.checkoutTime = new Date().toISOString();
+            }
+            return { ...f, ...updates };
+          }
+          return f;
+        })
+      );
+
+      showSuccess(`Status updated to ${getStatusLabel(newStatus)}`);
+    } catch (err: any) {
+      showError(err.message || 'Failed to update status');
+    }
   };
 
   const getStatusIcon = (status: PatientFlowStatus) => {
     switch (status) {
-      case 'checked-in': return '';
-      case 'in-waiting': return '';
-      case 'roomed': return '';
-      case 'with-provider': return '';
-      case 'checkout': return '';
+      case 'scheduled': return '';
+      case 'checked_in': return '';
+      case 'in_room': return '';
+      case 'with_provider': return '';
       case 'completed': return '';
+      case 'cancelled': return '';
+      case 'no_show': return '';
     }
   };
 
@@ -233,10 +289,21 @@ export function OfficeFlowPage() {
     }
   };
 
-  const waitingPatients = patientFlows.filter((f) => f.status === 'checked-in' || f.status === 'in-waiting');
-  const roomedPatients = patientFlows.filter((f) => f.status === 'roomed' || f.status === 'with-provider');
-  const checkoutPatients = patientFlows.filter((f) => f.status === 'checkout');
+  const filteredFlows = patientFlows.filter((flow) => {
+    if (filterFacility && flow.locationName !== filterFacility) return false;
+    if (filterProvider && flow.providerId !== filterProvider) return false;
+    if (filterPatient && flow.patientId !== filterPatient) return false;
+    if (filterStatus && flow.status !== filterStatus) return false;
+    return true;
+  });
+
+  const waitingPatients = filteredFlows.filter((f) => f.status === 'checked_in');
+  const roomedPatients = filteredFlows.filter((f) => f.status === 'in_room' || f.status === 'with_provider');
+  const completedPatients = filteredFlows.filter((f) => f.status === 'completed');
   const availableRooms = rooms.filter((r) => r.status === 'available');
+  const facilityOptions = Array.from(
+    new Set(patientFlows.map((flow) => flow.locationName).filter((name): name is string => Boolean(name)))
+  ).sort();
 
   const avgWaitTime = waitingPatients.length > 0
     ? Math.round(waitingPatients.reduce((sum, p) => sum + (p.waitTime || 0), 0) / waitingPatients.length)
@@ -262,7 +329,7 @@ export function OfficeFlowPage() {
   return (
     <div className="office-flow-page">
       <div className="page-header" style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', color: '#ffffff', padding: '1rem 1.5rem', borderRadius: '8px 8px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
-        <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700 }}>OfficeFlow</h1>
+        <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700 }}>Office Flow</h1>
         <div className="flow-time" style={{ background: 'rgba(255,255,255,0.2)', padding: '0.5rem 1rem', borderRadius: '6px', fontWeight: 600, fontSize: '1rem' }}>
           {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </div>
@@ -377,8 +444,12 @@ export function OfficeFlowPage() {
                   fontSize: '0.875rem',
                 }}
               >
-                <option value="Mountain Pine Dermatology PLLC">Mountain Pine Dermatology PLLC</option>
                 <option value="">All Facilities</option>
+                {facilityOptions.map((facility) => (
+                  <option key={facility} value={facility}>
+                    {facility}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -460,11 +531,11 @@ export function OfficeFlowPage() {
                   fontSize: '0.875rem',
                 }}
               >
-                <option value="">Custom Status Search...</option>
-                <option value="waiting">Waiting</option>
-                <option value="roomed">In Room</option>
-                <option value="with-provider">With Provider</option>
-                <option value="checkout">Checkout</option>
+                <option value="">All Statuses</option>
+                <option value="checked_in">Checked In</option>
+                <option value="in_room">In Room</option>
+                <option value="with_provider">With Provider</option>
+                <option value="completed">Completed</option>
               </select>
             </div>
           </div>
@@ -526,8 +597,8 @@ export function OfficeFlowPage() {
           <span className="stat-label" style={{ fontSize: '0.875rem', fontWeight: 500 }}>In Rooms</span>
         </div>
         <div className="flow-stat" style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: '#ffffff', padding: '1.25rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
-          <span className="stat-value" style={{ display: 'block', fontSize: '2rem', fontWeight: 700, marginBottom: '0.25rem' }}>{checkoutPatients.length}</span>
-          <span className="stat-label" style={{ fontSize: '0.875rem', fontWeight: 500 }}>Checkout</span>
+          <span className="stat-value" style={{ display: 'block', fontSize: '2rem', fontWeight: 700, marginBottom: '0.25rem' }}>{completedPatients.length}</span>
+          <span className="stat-label" style={{ fontSize: '0.875rem', fontWeight: 500 }}>Completed</span>
         </div>
         <div className="flow-stat" style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)', color: '#ffffff', padding: '1.25rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
           <span className="stat-value" style={{ display: 'block', fontSize: '2rem', fontWeight: 700, marginBottom: '0.25rem' }}>{availableRooms.length}</span>
@@ -561,7 +632,7 @@ export function OfficeFlowPage() {
                         {getPatientName(room.currentPatient.patientId)}
                       </div>
                       <div className="occupant-status">
-                        {getStatusIcon(room.currentPatient.status)} {room.currentPatient.status}
+                        {getStatusIcon(room.currentPatient.status)} {getStatusLabel(room.currentPatient.status)}
                       </div>
                     </div>
                   )}
@@ -637,7 +708,8 @@ export function OfficeFlowPage() {
             </div>
             <div className="column-content">
               {roomedPatients.map((flow) => {
-                const room = rooms.find((r) => r.id === flow.roomId);
+                const assignedRoomId = roomAssignments[flow.appointmentId];
+                const room = rooms.find((r) => r.id === assignedRoomId);
                 return (
                   <div key={flow.id} className="flow-card">
                     <div className="flow-card-header">
@@ -646,29 +718,29 @@ export function OfficeFlowPage() {
                     </div>
                     <div className="flow-card-info">
                       <div className="info-row">
-                        <span className="status-badge">{getStatusIcon(flow.status)} {flow.status}</span>
+                        <span className="status-badge">{getStatusIcon(flow.status)} {getStatusLabel(flow.status)}</span>
                       </div>
                       <div className="info-row muted tiny">
                         {flow.providerName}
                       </div>
                     </div>
                     <div className="flow-card-actions">
-                      {flow.status === 'roomed' && (
+                      {flow.status === 'in_room' && (
                         <button
                           type="button"
                           className="btn-sm btn-primary"
-                          onClick={() => handleStatusChange(flow, 'with-provider')}
+                          onClick={() => handleStatusChange(flow, 'with_provider')}
                         >
                           Start Visit
                         </button>
                       )}
-                      {flow.status === 'with-provider' && (
+                      {flow.status === 'with_provider' && (
                         <button
                           type="button"
                           className="btn-sm btn-primary"
-                          onClick={() => handleStatusChange(flow, 'checkout')}
+                          onClick={() => handleStatusChange(flow, 'completed')}
                         >
-                          Ready for Checkout
+                          Check Out
                         </button>
                       )}
                     </div>
@@ -684,14 +756,14 @@ export function OfficeFlowPage() {
             </div>
           </div>
 
-          {/* Checkout */}
+          {/* Completed */}
           <div className="flow-column">
             <div className="column-header checkout">
-              <span className="column-title">Checkout</span>
-              <span className="column-count">{checkoutPatients.length}</span>
+              <span className="column-title">Completed</span>
+              <span className="column-count">{completedPatients.length}</span>
             </div>
             <div className="column-content">
-              {checkoutPatients.map((flow) => (
+              {completedPatients.map((flow) => (
                 <div key={flow.id} className="flow-card">
                   <div className="flow-card-header">
                     <span className="patient-name">{flow.patientName}</span>
@@ -702,23 +774,27 @@ export function OfficeFlowPage() {
                     </div>
                   </div>
                   <div className="flow-card-actions">
-                    <button type="button" className="btn-sm btn-secondary">
+                    <button
+                      type="button"
+                      className="btn-sm btn-secondary"
+                      onClick={() => navigate(`/schedule?patientId=${flow.patientId}`)}
+                    >
                       Schedule F/U
                     </button>
                     <button
                       type="button"
                       className="btn-sm btn-primary"
-                      onClick={() => handleStatusChange(flow, 'completed')}
+                      onClick={() => navigate(`/patients/${flow.patientId}`)}
                     >
-                      Complete
+                      View Chart
                     </button>
                   </div>
                 </div>
               ))}
-              {checkoutPatients.length === 0 && (
+              {completedPatients.length === 0 && (
                 <div className="empty-column" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '3rem 1rem', color: '#9ca3af' }}>
                   <div style={{ fontSize: '4rem', marginBottom: '1rem', opacity: 0.3 }}>💳</div>
-                  <span className="empty-text" style={{ fontSize: '0.875rem', fontWeight: 500 }}>No patients at checkout</span>
+                  <span className="empty-text" style={{ fontSize: '0.875rem', fontWeight: 500 }}>No completed visits</span>
                 </div>
               )}
             </div>

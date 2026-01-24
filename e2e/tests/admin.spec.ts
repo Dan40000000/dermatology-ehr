@@ -90,7 +90,7 @@ test.describe('Admin Functions - Comprehensive Tests', () => {
         await authenticatedPage.waitForTimeout(1000);
 
         // Check if admin user is listed
-        const adminUser = authenticatedPage.getByText(/admin@demo.com/i);
+        const adminUser = authenticatedPage.getByText(/admin@demo.practice/i);
         if (await adminUser.isVisible()) {
           await expect(adminUser).toBeVisible();
         }

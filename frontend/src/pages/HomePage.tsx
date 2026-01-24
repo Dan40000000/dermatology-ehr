@@ -138,15 +138,11 @@ export function HomePage() {
 
         // Calculate Office Flow stats from appointments
         // These statuses mirror what OfficeFlowPage tracks
-        const waitingCount = appointments.filter((a: any) =>
-          a.status === 'checked_in' || a.status === 'waiting'
-        ).length;
+        const waitingCount = appointments.filter((a: any) => a.status === 'checked_in').length;
         const inRoomsCount = appointments.filter((a: any) =>
-          a.status === 'roomed' || a.status === 'in_progress' || a.status === 'with_provider'
+          a.status === 'in_room' || a.status === 'with_provider'
         ).length;
-        const checkoutCount = appointments.filter((a: any) =>
-          a.status === 'checkout' || a.status === 'ready_for_checkout'
-        ).length;
+        const checkoutCount = appointments.filter((a: any) => a.status === 'completed').length;
 
         setStats({
           scheduledCount: appointments.filter((a: any) => a.status === 'scheduled').length,
@@ -832,7 +828,7 @@ export function HomePage() {
             </div>
             <div className="stat-card" style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: '#ffffff', padding: '1.5rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
               <div className="stat-number" style={{ fontSize: '2.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>{stats.checkoutCount}</div>
-              <div className="stat-label" style={{ fontSize: '1rem', fontWeight: 500 }}>Checkout</div>
+              <div className="stat-label" style={{ fontSize: '1rem', fontWeight: 500 }}>Completed</div>
             </div>
           </>
         )}

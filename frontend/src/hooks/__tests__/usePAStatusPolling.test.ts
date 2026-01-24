@@ -1,8 +1,8 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { usePAStatusPolling } from '../usePAStatusPolling';
 
-const mockSession = {
+const mockSession = vi.hoisted(() => ({
   tenantId: 'tenant-1',
   accessToken: 'token-123',
   refreshToken: 'refresh-123',
@@ -12,7 +12,7 @@ const mockSession = {
     fullName: 'Test User',
     role: 'provider' as const,
   },
-};
+}));
 
 const authMock = vi.hoisted(() => ({
   session: mockSession,
@@ -33,6 +33,19 @@ vi.mock('../../contexts/AuthContext', () => ({
 }));
 
 vi.mock('../../api', () => apiMocks);
+
+const flushPromises = async () => {
+  await act(async () => {
+    await Promise.resolve();
+  });
+};
+
+const advanceTime = async (ms: number) => {
+  await act(async () => {
+    vi.advanceTimersByTime(ms);
+    await Promise.resolve();
+  });
+};
 
 describe('usePAStatusPolling', () => {
   beforeEach(() => {
@@ -58,22 +71,16 @@ describe('usePAStatusPolling', () => {
       })
     );
 
-    // Initial check
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
-    });
+    await flushPromises();
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
 
     // First interval
-    vi.advanceTimersByTime(5000);
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(2);
-    });
+    await advanceTime(5000);
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(2);
 
     // Second interval
-    vi.advanceTimersByTime(5000);
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(3);
-    });
+    await advanceTime(5000);
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(3);
 
     expect(apiMocks.checkPARequestStatus).toHaveBeenCalledWith('tenant-1', 'token-123', 'pa-request-1');
   });
@@ -87,7 +94,7 @@ describe('usePAStatusPolling', () => {
       })
     );
 
-    vi.advanceTimersByTime(10000);
+    await advanceTime(10000);
 
     expect(apiMocks.checkPARequestStatus).not.toHaveBeenCalled();
   });
@@ -101,7 +108,7 @@ describe('usePAStatusPolling', () => {
       })
     );
 
-    vi.advanceTimersByTime(10000);
+    await advanceTime(10000);
 
     expect(apiMocks.checkPARequestStatus).not.toHaveBeenCalled();
   });
@@ -117,7 +124,7 @@ describe('usePAStatusPolling', () => {
       })
     );
 
-    vi.advanceTimersByTime(10000);
+    await advanceTime(10000);
 
     expect(apiMocks.checkPARequestStatus).not.toHaveBeenCalled();
   });
@@ -138,18 +145,14 @@ describe('usePAStatusPolling', () => {
       })
     );
 
-    // Initial check
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
-    });
+    await flushPromises();
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
 
     expect(onStatusChange).toHaveBeenCalledWith({ status: 'pending' });
 
     // Status changes on next poll
-    vi.advanceTimersByTime(5000);
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(2);
-    });
+    await advanceTime(5000);
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(2);
 
     expect(onStatusChange).toHaveBeenCalledWith({ status: 'approved' });
     expect(onStatusChange).toHaveBeenCalledTimes(2);
@@ -169,18 +172,14 @@ describe('usePAStatusPolling', () => {
       })
     );
 
-    // Initial check
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
-    });
+    await flushPromises();
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
 
     expect(onStatusChange).toHaveBeenCalledTimes(1);
 
     // Status unchanged on next poll
-    vi.advanceTimersByTime(5000);
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(2);
-    });
+    await advanceTime(5000);
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(2);
 
     // Should not call onStatusChange again
     expect(onStatusChange).toHaveBeenCalledTimes(1);
@@ -199,17 +198,14 @@ describe('usePAStatusPolling', () => {
       })
     );
 
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalled();
-    });
+    await flushPromises();
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalled();
 
     expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to poll PA status:', expect.any(Error));
 
     // Should continue polling even after error
-    vi.advanceTimersByTime(5000);
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(2);
-    });
+    await advanceTime(5000);
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(2);
 
     consoleErrorSpy.mockRestore();
   });
@@ -222,21 +218,16 @@ describe('usePAStatusPolling', () => {
       })
     );
 
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
-    });
+    await flushPromises();
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
 
     // Should not poll before 30 seconds
-    vi.advanceTimersByTime(20000);
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
-    });
+    await advanceTime(20000);
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
 
     // Should poll after 30 seconds
-    vi.advanceTimersByTime(10000);
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(2);
-    });
+    await advanceTime(10000);
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(2);
   });
 
   it('should clear interval on unmount', async () => {
@@ -248,14 +239,13 @@ describe('usePAStatusPolling', () => {
       })
     );
 
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
-    });
+    await flushPromises();
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
 
     unmount();
 
     // Should not poll after unmount
-    vi.advanceTimersByTime(10000);
+    await advanceTime(10000);
     expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
   });
 
@@ -272,16 +262,14 @@ describe('usePAStatusPolling', () => {
       }
     );
 
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledWith('tenant-1', 'token-123', 'pa-request-1');
-    });
+    await flushPromises();
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledWith('tenant-1', 'token-123', 'pa-request-1');
 
     // Change paRequestId
     rerender({ paRequestId: 'pa-request-2' });
 
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledWith('tenant-1', 'token-123', 'pa-request-2');
-    });
+    await flushPromises();
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledWith('tenant-1', 'token-123', 'pa-request-2');
   });
 
   it('should return checkStatus function', () => {
@@ -306,13 +294,13 @@ describe('usePAStatusPolling', () => {
       })
     );
 
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
-    });
+    await flushPromises();
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
 
     // Manual check
     await result.current.checkStatus();
 
+    await flushPromises();
     expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(2);
   });
 
@@ -329,15 +317,14 @@ describe('usePAStatusPolling', () => {
       }
     );
 
-    await waitFor(() => {
-      expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
-    });
+    await flushPromises();
+    expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
 
     // Disable polling
     rerender({ enabled: false });
 
     // Should not poll after disabling
-    vi.advanceTimersByTime(10000);
+    await advanceTime(10000);
     expect(apiMocks.checkPARequestStatus).toHaveBeenCalledTimes(1);
   });
 });

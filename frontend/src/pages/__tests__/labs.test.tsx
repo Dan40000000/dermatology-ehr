@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 const authMocks = vi.hoisted(() => ({
   session: null as null | {
@@ -19,6 +20,8 @@ const apiMocks = vi.hoisted(() => ({
   fetchPatients: vi.fn(),
   createOrder: vi.fn(),
   updateOrderStatus: vi.fn(),
+  fetchEligibilityHistory: vi.fn(),
+  fetchEligibilityHistoryBatch: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -125,6 +128,8 @@ beforeEach(() => {
       { id: 'pat-2', tenantId: 'tenant-1', firstName: 'John', lastName: 'Smith', createdAt: now },
     ],
   });
+  apiMocks.fetchEligibilityHistory.mockResolvedValue({ history: [] });
+  apiMocks.fetchEligibilityHistoryBatch.mockResolvedValue({ history: {} });
 
   apiMocks.createOrder.mockResolvedValue({ id: 'order-new' });
   apiMocks.updateOrderStatus.mockResolvedValue({ ok: true });
@@ -136,7 +141,11 @@ afterEach(() => {
 
 describe('LabsPage', () => {
   it('loads lab orders, supports selection, and updates status', async () => {
-    render(<LabsPage />);
+    render(
+      <MemoryRouter>
+        <LabsPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Pathology & Lab Orders');
 
@@ -151,7 +160,11 @@ describe('LabsPage', () => {
   });
 
   it('creates lab orders and completes results', async () => {
-    render(<LabsPage />);
+    render(
+      <MemoryRouter>
+        <LabsPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText(/Add Manual Entry/i);
 

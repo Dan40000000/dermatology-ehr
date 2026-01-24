@@ -17,6 +17,8 @@ export interface S3StorageConfig {
   region: string;
   accessKeyId?: string;
   secretAccessKey?: string;
+  endpoint?: string;
+  forcePathStyle?: boolean;
 }
 
 export class S3StorageAdapter implements IStorageService {
@@ -26,6 +28,8 @@ export class S3StorageAdapter implements IStorageService {
   constructor(config?: Partial<S3StorageConfig>) {
     const bucket = config?.bucket || env.s3Bucket;
     const region = config?.region || env.s3Region || "us-east-1";
+    const endpoint = config?.endpoint ?? env.s3Endpoint;
+    const forcePathStyle = config?.forcePathStyle ?? env.s3ForcePathStyle;
 
     if (!bucket) {
       throw new Error("S3 bucket is required. Set AWS_S3_BUCKET environment variable.");
@@ -36,6 +40,8 @@ export class S3StorageAdapter implements IStorageService {
     const clientConfig: {
       region: string;
       credentials?: { accessKeyId: string; secretAccessKey: string };
+      endpoint?: string;
+      forcePathStyle?: boolean;
     } = { region };
 
     const accessKeyId = config?.accessKeyId || env.s3AccessKeyId;
@@ -43,6 +49,12 @@ export class S3StorageAdapter implements IStorageService {
 
     if (accessKeyId && secretAccessKey) {
       clientConfig.credentials = { accessKeyId, secretAccessKey };
+    }
+    if (endpoint) {
+      clientConfig.endpoint = endpoint;
+    }
+    if (forcePathStyle !== undefined) {
+      clientConfig.forcePathStyle = forcePathStyle;
     }
 
     this.client = new S3Client(clientConfig);

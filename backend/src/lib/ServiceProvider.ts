@@ -15,6 +15,9 @@
  * - USE_MOCK_NOTIFICATIONS: 'true' to mock Slack/Teams
  * - USE_MOCK_VIRUS_SCAN: 'true' to mock ClamAV
  * - USE_MOCK_EMAIL: 'true' to mock email
+ *
+ * Legacy aliases (still supported):
+ * - USE_MOCK_TWILIO, USE_MOCK_SLACK, USE_MOCK_TEAMS, USE_MOCK_CLAMAV
  */
 
 import { ServiceContainer } from "./ServiceContainer";
@@ -60,15 +63,18 @@ function shouldUseMocks(): boolean {
 /**
  * Check if a specific service should use mock implementation
  */
-function shouldMockService(serviceEnvVar: string): boolean {
+function shouldMockService(serviceEnvVar: string | string[]): boolean {
   const globalMock = shouldUseMocks();
 
-  // Check for service-specific override
-  const serviceOverride = process.env[serviceEnvVar];
-  if (serviceOverride === "true") {
+  const envVars = Array.isArray(serviceEnvVar) ? serviceEnvVar : [serviceEnvVar];
+  const overrides = envVars
+    .map((name) => process.env[name])
+    .filter((value): value is string => value !== undefined);
+
+  if (overrides.some((value) => value === "true")) {
     return true;
   }
-  if (serviceOverride === "false") {
+  if (overrides.some((value) => value === "false")) {
     return false;
   }
 
@@ -129,7 +135,7 @@ function registerStorageService(container: ServiceContainer): void {
  * Register SMS service (Twilio or mock)
  */
 function registerSmsService(container: ServiceContainer): void {
-  const useMock = shouldMockService("USE_MOCK_SMS");
+  const useMock = shouldMockService(["USE_MOCK_SMS", "USE_MOCK_TWILIO"]);
   const hasTwilioConfig = hasCredentials(["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"]);
 
   if (useMock || !hasTwilioConfig) {
@@ -154,7 +160,7 @@ function registerSmsService(container: ServiceContainer): void {
  * Register notification services (Slack/Teams or mocks)
  */
 function registerNotificationServices(container: ServiceContainer): void {
-  const useMock = shouldMockService("USE_MOCK_NOTIFICATIONS");
+  const useMock = shouldMockService(["USE_MOCK_NOTIFICATIONS", "USE_MOCK_SLACK", "USE_MOCK_TEAMS"]);
 
   // Slack notification service
   if (useMock) {
@@ -191,7 +197,7 @@ function registerNotificationServices(container: ServiceContainer): void {
  * Register virus scan service (ClamAV or mock)
  */
 function registerVirusScanService(container: ServiceContainer): void {
-  const useMock = shouldMockService("USE_MOCK_VIRUS_SCAN");
+  const useMock = shouldMockService(["USE_MOCK_VIRUS_SCAN", "USE_MOCK_CLAMAV"]);
   const hasClamAVConfig = env.clamavHost !== undefined && env.clamavHost !== "";
 
   if (useMock || !hasClamAVConfig) {

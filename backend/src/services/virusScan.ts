@@ -1,5 +1,6 @@
 import net from "net";
 import { env } from "../config/env";
+import { config } from "../config";
 
 async function scanWithClamav(buf: Buffer): Promise<boolean | null> {
   if (!env.clamavHost) return null;
@@ -36,6 +37,8 @@ async function scanWithClamav(buf: Buffer): Promise<boolean | null> {
 }
 
 export async function scanBuffer(buf: Buffer): Promise<boolean> {
+  const allowBypass = !config.hipaa.virusScanEnabled || config.isDevelopment || config.isTest;
+
   if (!buf || buf.length === 0) return true;
 
   // Catch obvious test signature early.
@@ -46,6 +49,12 @@ export async function scanBuffer(buf: Buffer): Promise<boolean> {
   const clamResult = await scanWithClamav(buf);
   if (clamResult !== null) {
     return clamResult;
+  }
+
+  if (!allowBypass) {
+    // eslint-disable-next-line no-console
+    console.warn("⚠️  Virus scan failed (ClamAV unreachable).");
+    return false;
   }
 
   // Fallback: allow file but log that ClamAV was unavailable.

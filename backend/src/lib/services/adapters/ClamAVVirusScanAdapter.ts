@@ -8,6 +8,7 @@ import net from "net";
 import { IVirusScanService, VirusScanResult } from "../../types/services";
 import { logger } from "../../logger";
 import { env } from "../../../config/env";
+import { config } from "../../../config";
 
 export interface ClamAVConfig {
   host: string;
@@ -34,6 +35,7 @@ export class ClamAVVirusScanAdapter implements IVirusScanService {
 
   async scanBuffer(buffer: Buffer): Promise<VirusScanResult> {
     const startTime = Date.now();
+    const allowBypass = !config.hipaa.virusScanEnabled || config.isDevelopment || config.isTest;
 
     // Handle empty buffers
     if (!buffer || buffer.length === 0) {
@@ -58,13 +60,11 @@ export class ClamAVVirusScanAdapter implements IVirusScanService {
       const scanTime = Date.now() - startTime;
 
       if (result === null) {
-        // ClamAV unavailable - log warning and allow file
+        // ClamAV unavailable - allow bypass only in non-production contexts
         logger.warn("Virus scan skipped (ClamAV unreachable)");
-        return {
-          clean: true,
-          scanTime,
-          error: "Virus scanner unavailable",
-        };
+        return allowBypass
+          ? { clean: true, scanTime, error: "Virus scanner unavailable" }
+          : { clean: false, scanTime, error: "Virus scanner unavailable" };
       }
 
       if (result.infected) {
@@ -83,11 +83,10 @@ export class ClamAVVirusScanAdapter implements IVirusScanService {
     } catch (error: unknown) {
       const err = error as { message?: string };
       logger.error("Virus scan error", { error: err.message });
-      return {
-        clean: true,
-        scanTime: Date.now() - startTime,
-        error: err.message,
-      };
+      const scanTime = Date.now() - startTime;
+      return allowBypass
+        ? { clean: true, scanTime, error: err.message }
+        : { clean: false, scanTime, error: err.message };
     }
   }
 

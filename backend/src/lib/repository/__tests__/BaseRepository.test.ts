@@ -416,6 +416,35 @@ describe("BaseRepository", () => {
       expect(result).toEqual(mockEntity);
     });
 
+    it("should ignore reserved columns on create", async () => {
+      mockPool.query = jest
+        .fn()
+        .mockResolvedValue(createMockQueryResult([mockEntity]));
+
+      const hijackDate = new Date("1999-01-01T00:00:00Z");
+
+      await repository.create(
+        {
+          name: "Test",
+          email: "test@example.com",
+          tenant_id: "tenant-hijack",
+          id: "id-hijack",
+          created_at: hijackDate,
+          updated_at: hijackDate,
+          deleted_at: hijackDate,
+        } as unknown as CreateTestDTO,
+        "tenant-1"
+      );
+
+      const values = (mockPool.query as jest.Mock).mock.calls[0][1] as unknown[];
+
+      expect(values).toContain("tenant-1");
+      expect(values).toContain("test-uuid-123");
+      expect(values).not.toContain("tenant-hijack");
+      expect(values).not.toContain("id-hijack");
+      expect(values.some((value) => value === hijackDate)).toBe(false);
+    });
+
     it("should throw error if create fails", async () => {
       mockPool.query = jest.fn().mockResolvedValue(createMockQueryResult([]));
 
@@ -486,6 +515,25 @@ describe("BaseRepository", () => {
         expect.arrayContaining(["Updated Name", "entity-1", "tenant-1"])
       );
       expect(result).toEqual(mockEntity);
+    });
+
+    it("should ignore reserved columns on update", async () => {
+      mockPool.query = jest
+        .fn()
+        .mockResolvedValue(createMockQueryResult([mockEntity]));
+
+      await repository.update(
+        "entity-1",
+        { name: "Updated", tenant_id: "tenant-hijack", id: "id-hijack" } as unknown as UpdateTestDTO,
+        "tenant-1"
+      );
+
+      const values = (mockPool.query as jest.Mock).mock.calls[0][1] as unknown[];
+
+      expect(values).toContain("tenant-1");
+      expect(values).toContain("entity-1");
+      expect(values).not.toContain("tenant-hijack");
+      expect(values).not.toContain("id-hijack");
     });
 
     it("should return null if entity not found", async () => {
@@ -634,6 +682,45 @@ describe("BaseRepository", () => {
         expect.any(Array)
       );
       expect(result).toEqual(mockEntity);
+    });
+
+    it("should not generate empty update clause", async () => {
+      mockPool.query = jest
+        .fn()
+        .mockResolvedValue(createMockQueryResult([mockEntity]));
+
+      await repository.upsert(
+        { name: "Test", email: "test@example.com" },
+        "tenant-1",
+        ["name", "email"]
+      );
+
+      const query = (mockPool.query as jest.Mock).mock.calls[0][0] as string;
+      expect(query).toContain("DO UPDATE SET updated_at = NOW()");
+      expect(query).not.toMatch(/DO UPDATE SET\s*,/);
+    });
+
+    it("should ignore reserved columns on upsert", async () => {
+      mockPool.query = jest
+        .fn()
+        .mockResolvedValue(createMockQueryResult([mockEntity]));
+
+      await repository.upsert(
+        {
+          name: "Test",
+          email: "test@example.com",
+          tenant_id: "tenant-hijack",
+          id: "id-hijack",
+        } as unknown as CreateTestDTO,
+        "tenant-1",
+        ["email"]
+      );
+
+      const values = (mockPool.query as jest.Mock).mock.calls[0][1] as unknown[];
+      expect(values).toContain("tenant-1");
+      expect(values).toContain("test-uuid-123");
+      expect(values).not.toContain("tenant-hijack");
+      expect(values).not.toContain("id-hijack");
     });
 
     it("should throw error if upsert fails", async () => {

@@ -98,6 +98,36 @@ export abstract class BaseRepository<
   }
 
   /**
+   * Columns that should never be set by caller-provided data
+   */
+  private getReservedColumns(): Set<string> {
+    const reserved = new Set<string>([
+      this.primaryKey,
+      this.tenantColumn,
+      "created_at",
+      "updated_at",
+    ]);
+    if (this.supportsSoftDelete) {
+      reserved.add(this.softDeleteColumn);
+    }
+    return reserved;
+  }
+
+  /**
+   * Remove reserved columns from caller-provided data
+   */
+  private stripReservedFields(data: Record<string, unknown>): Record<string, unknown> {
+    const reserved = this.getReservedColumns();
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (!reserved.has(key)) {
+        sanitized[key] = value;
+      }
+    }
+    return sanitized;
+  }
+
+  /**
    * Get the column selection string for queries
    */
   protected getSelectColumns(): string {
@@ -375,12 +405,13 @@ export abstract class BaseRepository<
     const now = new Date();
 
     // Build column and value lists
+    const safeData = this.stripReservedFields(data as Record<string, unknown>);
     const insertData: Record<string, unknown> = {
+      ...safeData,
       [this.primaryKey]: id,
       [this.tenantColumn]: tenantId,
       created_at: now,
       updated_at: now,
-      ...data,
     };
 
     const insertColumns = Object.keys(insertData);
@@ -447,8 +478,9 @@ export abstract class BaseRepository<
     tenantId: string,
     executor: QueryExecutor = this.pool
   ): Promise<T | null> {
+    const safeData = this.stripReservedFields(data as Record<string, unknown>);
     const updateData: Record<string, unknown> = {
-      ...data,
+      ...safeData,
       updated_at: new Date(),
     };
 
@@ -582,12 +614,13 @@ export abstract class BaseRepository<
     const id = randomUUID();
     const now = new Date();
 
+    const safeData = this.stripReservedFields(data as Record<string, unknown>);
     const insertData: Record<string, unknown> = {
+      ...safeData,
       [this.primaryKey]: id,
       [this.tenantColumn]: tenantId,
       created_at: now,
       updated_at: now,
-      ...data,
     };
 
     const insertColumns = Object.keys(insertData);
@@ -600,17 +633,20 @@ export abstract class BaseRepository<
         col !== this.primaryKey &&
         col !== this.tenantColumn &&
         col !== "created_at" &&
+        col !== "updated_at" &&
         !conflictColumns.includes(col)
     );
-    const updateClause = updateColumns
-      .map((col) => `${col} = EXCLUDED.${col}`)
-      .join(", ");
+    const updateClause = updateColumns.map((col) => `${col} = EXCLUDED.${col}`);
+    const updateSet =
+      updateClause.length > 0
+        ? `${updateClause.join(", ")}, updated_at = NOW()`
+        : "updated_at = NOW()";
 
     const text = `
       INSERT INTO ${this.tableName} (${insertColumns.join(", ")})
       VALUES (${placeholders.join(", ")})
       ON CONFLICT (${conflictColumns.join(", ")})
-      DO UPDATE SET ${updateClause}, updated_at = NOW()
+      DO UPDATE SET ${updateSet}
       RETURNING ${this.getSelectColumns()}
     `;
 

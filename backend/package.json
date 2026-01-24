@@ -31,6 +31,7 @@
     "@types/express-validator": "^2.20.33",
     "@types/socket.io": "^3.0.1",
     "@types/twilio": "^3.19.2",
+    "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",

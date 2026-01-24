@@ -12,6 +12,8 @@ function getClient() {
   const config: {
     region: string;
     credentials?: { accessKeyId: string; secretAccessKey: string };
+    endpoint?: string;
+    forcePathStyle?: boolean;
   } = {
     region: env.s3Region || "us-east-1",
   };
@@ -21,6 +23,12 @@ function getClient() {
       accessKeyId: env.s3AccessKeyId,
       secretAccessKey: env.s3SecretAccessKey,
     };
+  }
+  if (env.s3Endpoint) {
+    config.endpoint = env.s3Endpoint;
+  }
+  if (env.s3ForcePathStyle) {
+    config.forcePathStyle = true;
   }
 
   client = new S3Client(config);

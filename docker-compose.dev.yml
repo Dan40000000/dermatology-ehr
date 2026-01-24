@@ -1,0 +1,215 @@
+# =============================================================================
+# DERMATOLOGY EHR - LOCAL DEVELOPMENT ENVIRONMENT
+# =============================================================================
+#
+# Usage:
+#   1. Copy .env.dev.example to .env.dev and adjust values if needed
+#   2. Start all services:     docker compose -f docker-compose.dev.yml up -d
+#   3. Stop all services:      docker compose -f docker-compose.dev.yml down
+#   4. View logs:              docker compose -f docker-compose.dev.yml logs -f [service]
+#   5. Reset everything:       docker compose -f docker-compose.dev.yml down -v
+#
+# Service URLs:
+#   - PostgreSQL:    localhost:5432
+#   - Redis:         localhost:6379
+#   - Mailhog UI:    http://localhost:8025
+#   - Mailhog SMTP:  localhost:1025
+#   - LocalStack S3: http://localhost:4566
+#   - Adminer:       http://localhost:8080
+#   - ClamAV:        localhost:3310 (if enabled)
+#
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 - Main Database
+  # ---------------------------------------------------------------------------
+  # The primary database for all application data.
+  # Data persists in the derm-dev-pg-data volume between restarts.
+  postgres:
+    image: postgres:16-alpine
+    container_name: derm-dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-derm_dev}
+      POSTGRES_USER: ${DB_USER:-derm_dev}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-derm_dev}
+      # Enable UTF-8 encoding for proper character support
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      # Persist database data
+      - derm-dev-pg-data:/var/lib/postgresql/data
+      # Optional: Mount init scripts (runs on first startup only)
+      # - ./backend/migrations:/docker-entrypoint-initdb.d:ro
+    networks:
+      - derm-dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-derm_dev} -d ${DB_NAME:-derm_dev}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Redis - Caching & Session Store
+  # ---------------------------------------------------------------------------
+  # Used for caching, session storage, and rate limiting.
+  # In development, runs without authentication for simplicity.
+  redis:
+    image: redis:7-alpine
+    container_name: derm-dev-redis
+    restart: unless-stopped
+    # Development: no password required (add --requirepass for security)
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - derm-dev-redis-data:/data
+    networks:
+      - derm-dev-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # Mailhog - Local Email Testing
+  # ---------------------------------------------------------------------------
+  # Captures all outgoing emails for inspection.
+  # Web UI: http://localhost:8025
+  # SMTP: localhost:1025
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: derm-dev-mailhog
+    restart: unless-stopped
+    ports:
+      # SMTP server - configure your app to send mail here
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"
+      # Web UI - view captured emails
+      - "${MAILHOG_UI_PORT:-8025}:8025"
+    networks:
+      - derm-dev-network
+    # Mailhog is lightweight and doesn't need a healthcheck
+
+  # ---------------------------------------------------------------------------
+  # LocalStack - AWS S3 Mock
+  # ---------------------------------------------------------------------------
+  # Provides a local S3-compatible storage service.
+  # Endpoint: http://localhost:4566
+  # Use AWS CLI: aws --endpoint-url=http://localhost:4566 s3 ls
+  localstack:
+    image: localstack/localstack:latest
+    container_name: derm-dev-localstack
+    restart: unless-stopped
+    environment:
+      # Only enable S3 service
+      SERVICES: s3
+      # Default region
+      DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      # Persistence across restarts
+      PERSISTENCE: 1
+      # Debug mode (set to 0 for less verbose output)
+      DEBUG: ${LOCALSTACK_DEBUG:-0}
+    ports:
+      - "${LOCALSTACK_PORT:-4566}:4566"
+    volumes:
+      # Persist LocalStack data
+      - derm-dev-localstack-data:/var/lib/localstack
+      # Docker socket for Lambda support (not needed for S3 only)
+      # - /var/run/docker.sock:/var/run/docker.sock
+      # Init script to create default bucket on startup
+      - ./docker/localstack-init:/etc/localstack/init/ready.d:ro
+    networks:
+      - derm-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Adminer - Database Management UI
+  # ---------------------------------------------------------------------------
+  # Web-based database administration tool.
+  # Access: http://localhost:8080
+  # Login with: Server=postgres, User=derm_dev, Pass=derm_dev, DB=derm_dev
+  adminer:
+    image: adminer:latest
+    container_name: derm-dev-adminer
+    restart: unless-stopped
+    environment:
+      # Set default server to our postgres container
+      ADMINER_DEFAULT_SERVER: postgres
+      # Use a nicer theme
+      ADMINER_DESIGN: ${ADMINER_DESIGN:-nette}
+    ports:
+      - "${ADMINER_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - derm-dev-network
+
+  # ---------------------------------------------------------------------------
+  # ClamAV - Virus Scanning (OPTIONAL - Heavy Resource Usage)
+  # ---------------------------------------------------------------------------
+  # Antivirus scanner for uploaded files (HIPAA compliance).
+  # WARNING: Uses significant RAM (~1-2GB) and takes 2-3 minutes to start.
+  # Uncomment this service if you need to test virus scanning locally.
+  #
+  # clamav:
+  #   image: clamav/clamav:stable
+  #   container_name: derm-dev-clamav
+  #   restart: unless-stopped
+  #   ports:
+  #     - "${CLAMAV_PORT:-3310}:3310"
+  #   volumes:
+  #     # Persist virus definitions to avoid re-downloading
+  #     - derm-dev-clamav-data:/var/lib/clamav
+  #   networks:
+  #     - derm-dev-network
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "nc -z localhost 3310"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 10
+  #     # ClamAV takes a long time to download virus definitions
+  #     start_period: 180s
+  #   # Limit resources in development
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 2G
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  derm-dev-network:
+    driver: bridge
+    name: derm-dev-network
+
+# =============================================================================
+# Volumes
+# =============================================================================
+# Named volumes persist data between container restarts.
+# To completely reset, run: docker compose -f docker-compose.dev.yml down -v
+volumes:
+  derm-dev-pg-data:
+    driver: local
+    name: derm-dev-pg-data
+  derm-dev-redis-data:
+    driver: local
+    name: derm-dev-redis-data
+  derm-dev-localstack-data:
+    driver: local
+    name: derm-dev-localstack-data
+  # Uncomment if using ClamAV
+  # derm-dev-clamav-data:
+  #   driver: local
+  #   name: derm-dev-clamav-data

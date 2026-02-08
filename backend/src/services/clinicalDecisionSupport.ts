@@ -81,7 +81,7 @@ export class ClinicalDecisionSupportService {
     const result = await pool.query(
       `select
         p.*,
-        extract(year from age(p.date_of_birth)) as age
+        extract(year from age(p.dob)) as age
        from patients p
        where p.id = $1 and p.tenant_id = $2`,
       [patientId, tenantId]

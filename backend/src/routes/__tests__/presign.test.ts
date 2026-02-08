@@ -6,7 +6,10 @@ import { fetchObjectBuffer, getSignedObjectUrl } from "../../services/s3";
 import { scanBuffer } from "../../services/virusScan";
 
 jest.mock("../../middleware/auth", () => ({
-  requireAuth: (_req: any, _res: any, next: any) => next(),
+  requireAuth: (req: any, _res: any, next: any) => {
+    req.user = { tenantId: "tenant-123", id: "user-1" };
+    next();
+  },
 }));
 
 jest.mock("../../services/presign", () => ({
@@ -78,7 +81,10 @@ describe("Presign routes", () => {
     process.env.AWS_S3_BUCKET = "bucket";
     fetchMock.mockResolvedValueOnce(Buffer.from("data"));
     scanMock.mockResolvedValueOnce(false);
-    const res = await request(app).post("/presign/s3/complete").send({ key: "obj", contentType: "image/png" });
+    const res = await request(app).post("/presign/s3/complete").send({
+      key: "tenants/tenant-123/obj",
+      contentType: "image/png",
+    });
     expect(res.status).toBe(400);
   });
 
@@ -87,7 +93,10 @@ describe("Presign routes", () => {
     fetchMock.mockResolvedValueOnce(Buffer.from("data"));
     scanMock.mockResolvedValueOnce(true);
     getUrlMock.mockResolvedValueOnce("signed-url");
-    const res = await request(app).post("/presign/s3/complete").send({ key: "obj", contentType: "image/png" });
+    const res = await request(app).post("/presign/s3/complete").send({
+      key: "tenants/tenant-123/obj",
+      contentType: "image/png",
+    });
     expect(res.status).toBe(200);
     expect(res.body.url).toBe("signed-url");
   });
@@ -95,7 +104,10 @@ describe("Presign routes", () => {
   it("POST /presign/s3/complete returns 500 on error", async () => {
     process.env.AWS_S3_BUCKET = "bucket";
     fetchMock.mockRejectedValueOnce(new Error("boom"));
-    const res = await request(app).post("/presign/s3/complete").send({ key: "obj", contentType: "image/png" });
+    const res = await request(app).post("/presign/s3/complete").send({
+      key: "tenants/tenant-123/obj",
+      contentType: "image/png",
+    });
     expect(res.status).toBe(500);
   });
 
@@ -107,7 +119,8 @@ describe("Presign routes", () => {
   it("GET /presign/s3/access/:key returns signed url", async () => {
     process.env.AWS_S3_BUCKET = "bucket";
     getUrlMock.mockResolvedValueOnce("signed-access");
-    const res = await request(app).get("/presign/s3/access/file%20name.pdf");
+    const encodedKey = encodeURIComponent("tenants/tenant-123/file name.pdf");
+    const res = await request(app).get(`/presign/s3/access/${encodedKey}`);
     expect(res.status).toBe(200);
     expect(res.body.url).toBe("signed-access");
   });

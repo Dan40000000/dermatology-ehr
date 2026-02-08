@@ -281,7 +281,7 @@ SELECT
   ct.*,
   p.first_name || ' ' || p.last_name as patient_name,
   p.mrn,
-  p.date_of_birth,
+  p.dob as date_of_birth,
   pr.first_name || ' ' || pr.last_name as provider_name,
   pr.npi as provider_npi,
   -- Count of injection sites

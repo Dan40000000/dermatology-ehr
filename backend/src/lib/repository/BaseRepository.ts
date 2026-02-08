@@ -43,7 +43,7 @@
  * }
  */
 
-import type { Pool, PoolClient, QueryResult } from "pg";
+import type { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
 import { randomUUID } from "crypto";
 import { logger } from "../logger.js";
 import { QueryBuilder, createQueryBuilder } from "./QueryBuilder.js";
@@ -120,11 +120,35 @@ export abstract class BaseRepository<
     const reserved = this.getReservedColumns();
     const sanitized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(data)) {
+      if (value === undefined) {
+        continue;
+      }
       if (!reserved.has(key)) {
         sanitized[key] = value;
       }
     }
     return sanitized;
+  }
+
+  /**
+   * Validate and normalize ORDER BY column names
+   */
+  private resolveOrderBy(column: string): string {
+    const trimmed = column.trim();
+    if (!trimmed) {
+      throw new Error("BaseRepository: orderBy column is empty");
+    }
+
+    const allowed = new Set<string>([
+      ...this.columns,
+      ...this.columns.map((col) => `${this.tableName}.${col}`),
+    ]);
+
+    if (!allowed.has(trimmed)) {
+      throw new Error(`BaseRepository: invalid orderBy column '${trimmed}'`);
+    }
+
+    return trimmed.includes(".") ? trimmed : `${this.tableName}.${trimmed}`;
   }
 
   /**
@@ -137,7 +161,7 @@ export abstract class BaseRepository<
   /**
    * Execute a query using the provided executor (pool or client)
    */
-  protected async query<R = T>(
+  protected async query<R extends QueryResultRow = T & QueryResultRow>(
     executor: QueryExecutor,
     text: string,
     values?: unknown[]
@@ -221,7 +245,8 @@ export abstract class BaseRepository<
     }
 
     if (options?.orderBy) {
-      builder.orderBy(options.orderBy, options.direction ?? "ASC");
+      const orderBy = this.resolveOrderBy(options.orderBy);
+      builder.orderBy(orderBy, options.direction ?? "ASC");
     }
 
     if (options?.limit !== undefined) {
@@ -262,7 +287,8 @@ export abstract class BaseRepository<
     }
 
     if (options?.orderBy) {
-      builder.orderBy(options.orderBy, options.direction ?? "ASC");
+      const orderBy = this.resolveOrderBy(options.orderBy);
+      builder.orderBy(orderBy, options.direction ?? "ASC");
     }
 
     if (options?.limit !== undefined) {
@@ -479,6 +505,10 @@ export abstract class BaseRepository<
     executor: QueryExecutor = this.pool
   ): Promise<T | null> {
     const safeData = this.stripReservedFields(data as Record<string, unknown>);
+    if (Object.keys(safeData).length === 0) {
+      return this.findById(id, tenantId, executor);
+    }
+
     const updateData: Record<string, unknown> = {
       ...safeData,
       updated_at: new Date(),
@@ -669,7 +699,7 @@ export abstract class BaseRepository<
    * @param executor - Optional query executor (for transactions)
    * @returns Query result
    */
-  async rawQuery<R = T>(
+  async rawQuery<R extends QueryResultRow = T & QueryResultRow>(
     text: string,
     values?: unknown[],
     executor: QueryExecutor = this.pool

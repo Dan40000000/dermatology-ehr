@@ -58,6 +58,7 @@ const NoteTemplatesPage = lazy(() => import('../pages/NoteTemplatesPage').then(m
 const AuditLogPage = lazy(() => import('../pages/AuditLogPage').then(m => ({ default: m.AuditLogPage })));
 const ReportsPage = lazy(() => import('../pages/ReportsPage'));
 const BodyDiagramPage = lazy(() => import('../pages/BodyDiagramPage').then(m => ({ default: m.BodyDiagramPage })));
+const AmbientScribePage = lazy(() => import('../pages/AmbientScribePage'));
 const FaceSheetPage = lazy(() => import('../pages/FaceSheetPage').then(m => ({ default: m.FaceSheetPage })));
 const PriorAuthPage = lazy(() => import('../pages/PriorAuthPage').then(m => ({ default: m.PriorAuthPage })));
 const WaitlistPage = lazy(() => import('../pages/WaitlistPage').then(m => ({ default: m.WaitlistPage })));
@@ -149,6 +150,7 @@ export const routes: RouteObject[] = [
 
       // Clinical
       { path: 'notes', element: lazyWithSuspense(NotesPage) },
+      { path: 'ambient-scribe', element: lazyWithSuspense(AmbientScribePage) },
       { path: 'orders', element: lazyWithSuspense(OrdersPage) },
       { path: 'rx', element: lazyWithSuspense(PrescriptionsPage) },
       { path: 'prior-auth', element: lazyWithSuspense(PriorAuthPage) },

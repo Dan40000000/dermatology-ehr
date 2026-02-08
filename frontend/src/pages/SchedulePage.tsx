@@ -18,6 +18,8 @@ import {
   fetchPatients,
   updateAppointmentStatus,
   createAppointment,
+  createEncounter,
+  fetchPatientEncounters,
   rescheduleAppointment,
   fetchTimeBlocks,
   createTimeBlock,
@@ -79,6 +81,7 @@ export function SchedulePage() {
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [selectedTimeBlock, setSelectedTimeBlock] = useState<TimeBlock | null>(null);
   const [creating, setCreating] = useState(false);
+  const [rowAction, setRowAction] = useState<{ id: string; action: 'encounter' | 'scribe' } | null>(null);
 
   // New appointment form
   const [newAppt, setNewAppt] = useState({
@@ -324,6 +327,51 @@ export function SchedulePage() {
     }
   };
 
+  const ensureEncounterForAppointment = useCallback(async (appt: Appointment) => {
+    if (!session) {
+      throw new Error('Session missing');
+    }
+    const encountersRes = await fetchPatientEncounters(
+      session.tenantId,
+      session.accessToken,
+      appt.patientId
+    );
+    const existing = (encountersRes.encounters || []).find((e: any) => e.appointmentId === appt.id);
+    if (existing?.id) {
+      return existing.id as string;
+    }
+    const created = await createEncounter(session.tenantId, session.accessToken, {
+      patientId: appt.patientId,
+      providerId: appt.providerId,
+      appointmentId: appt.id,
+    });
+    return created.id as string;
+  }, [session]);
+
+  const handleStartEncounterFromSchedule = async (appt: Appointment, mode: 'encounter' | 'scribe') => {
+    if (!session) return;
+    try {
+      setRowAction({ id: appt.id, action: mode });
+      const encounterId = await ensureEncounterForAppointment(appt);
+      if (appt.status !== 'completed' && appt.status !== 'cancelled' && appt.status !== 'in_progress') {
+        try {
+          await updateAppointmentStatus(session.tenantId, session.accessToken, appt.id, 'in_progress');
+        } catch {
+          // Don't block the workflow if status update fails
+        }
+      }
+      if (mode === 'scribe') {
+        navigate(`/patients/${appt.patientId}?scribe=1&auto=1&encounterId=${encounterId}&providerId=${appt.providerId}`);
+      } else {
+        navigate(`/patients/${appt.patientId}/encounter/${encounterId}`);
+      }
+    } catch (err: any) {
+      showError(err.message || 'Failed to start encounter');
+    } finally {
+      setRowAction(null);
+    }
+  };
+
   const handleCreateAppointment = async (formData: AppointmentFormData) => {
     if (!session) return;
 
@@ -563,6 +611,46 @@ export function SchedulePage() {
         >
           <span style={{ marginRight: '0.5rem' }}>✓</span>
           Check In
+        </button>
+        <button
+          type="button"
+          className="ema-action-btn"
+          disabled={!selectedAppt || rowAction?.id === selectedAppt?.id}
+          onClick={() => selectedAppt && handleStartEncounterFromSchedule(selectedAppt, 'encounter')}
+          style={{
+            background: selectedAppt ? 'linear-gradient(to bottom, #10b981 0%, #059669 100%)' : '#e5e7eb',
+            color: selectedAppt ? '#ffffff' : '#9ca3af',
+            border: 'none',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            cursor: selectedAppt ? 'pointer' : 'not-allowed',
+            fontWeight: 500,
+            boxShadow: selectedAppt ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+            opacity: rowAction?.id === selectedAppt?.id ? 0.7 : 1
+          }}
+        >
+          <span style={{ marginRight: '0.5rem' }}>🩺</span>
+          {rowAction?.id === selectedAppt?.id && rowAction?.action === 'encounter' ? 'Starting…' : 'Start Encounter'}
+        </button>
+        <button
+          type="button"
+          className="ema-action-btn"
+          disabled={!selectedAppt || rowAction?.id === selectedAppt?.id}
+          onClick={() => selectedAppt && handleStartEncounterFromSchedule(selectedAppt, 'scribe')}
+          style={{
+            background: selectedAppt ? 'linear-gradient(to bottom, #f59e0b 0%, #d97706 100%)' : '#e5e7eb',
+            color: selectedAppt ? '#ffffff' : '#9ca3af',
+            border: 'none',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            cursor: selectedAppt ? 'pointer' : 'not-allowed',
+            fontWeight: 500,
+            boxShadow: selectedAppt ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+            opacity: rowAction?.id === selectedAppt?.id ? 0.7 : 1
+          }}
+        >
+          <span style={{ marginRight: '0.5rem' }}>🎙️</span>
+          {rowAction?.id === selectedAppt?.id && rowAction?.action === 'scribe' ? 'Starting…' : 'Start Scribe'}
         </button>
         <button
           type="button"
@@ -1208,24 +1296,83 @@ export function SchedulePage() {
                   </span>
                 </td>
                 <td onClick={(e) => e.stopPropagation()}>
-                  <select
-                    style={{
-                      padding: '0.25rem 0.5rem',
-                      fontSize: '0.75rem',
-                      borderRadius: '4px',
-                      border: '1px solid #d1d5db'
-                    }}
-                    onChange={(e) => handleStatusChange(a.id, e.target.value)}
-                    defaultValue=""
-                    aria-label={`Change status for ${a.patientName}`}
-                  >
-                    <option value="">Change Status</option>
-                    <option value="scheduled">Scheduled</option>
-                    <option value="checked_in">Checked In</option>
-                    <option value="in_progress">In Progress</option>
-                    <option value="completed">Completed</option>
-                    <option value="cancelled">Cancelled</option>
-                  </select>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/patients/${a.patientId}`)}
+                        title="Open patient chart"
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          border: '1px solid #cbd5f5',
+                          background: '#eef2ff',
+                          color: '#1e3a8a',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Chart
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleStartEncounterFromSchedule(a, 'encounter')}
+                        disabled={rowAction?.id === a.id}
+                        title="Start or resume encounter"
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          border: '1px solid #d1fae5',
+                          background: '#ecfdf5',
+                          color: '#065f46',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          cursor: rowAction?.id === a.id ? 'not-allowed' : 'pointer',
+                          opacity: rowAction?.id === a.id ? 0.6 : 1
+                        }}
+                      >
+                        {rowAction?.id === a.id && rowAction?.action === 'encounter' ? 'Starting…' : 'Encounter'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleStartEncounterFromSchedule(a, 'scribe')}
+                        disabled={rowAction?.id === a.id}
+                        title="Start AI scribe"
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          border: '1px solid #fde68a',
+                          background: '#fffbeb',
+                          color: '#92400e',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          cursor: rowAction?.id === a.id ? 'not-allowed' : 'pointer',
+                          opacity: rowAction?.id === a.id ? 0.6 : 1
+                        }}
+                      >
+                        {rowAction?.id === a.id && rowAction?.action === 'scribe' ? 'Starting…' : 'Scribe'}
+                      </button>
+                    </div>
+                    <select
+                      style={{
+                        padding: '0.25rem 0.5rem',
+                        fontSize: '0.75rem',
+                        borderRadius: '4px',
+                        border: '1px solid #d1d5db'
+                      }}
+                      onChange={(e) => handleStatusChange(a.id, e.target.value)}
+                      defaultValue=""
+                      aria-label={`Change status for ${a.patientName}`}
+                    >
+                      <option value="">Change Status</option>
+                      <option value="scheduled">Scheduled</option>
+                      <option value="checked_in">Checked In</option>
+                      <option value="in_progress">In Progress</option>
+                      <option value="completed">Completed</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+                  </div>
                 </td>
               </tr>
             ))

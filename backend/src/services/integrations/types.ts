@@ -6,10 +6,17 @@ export type NotificationType =
   | "patient_checked_in"
   | "prior_auth_approved"
   | "prior_auth_denied"
+  | "prior_auth_needed"
   | "lab_results_ready"
+  | "critical_lab_result"
   | "urgent_message"
   | "daily_schedule_summary"
-  | "end_of_day_report";
+  | "end_of_day_report"
+  | "claim_created"
+  | "claim_scrub_error"
+  | "claim_denied"
+  | "claim_paid"
+  | "payment_received";
 
 export interface Integration {
   id: string;

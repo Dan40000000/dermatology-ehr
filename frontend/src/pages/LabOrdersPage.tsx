@@ -34,6 +34,7 @@ import {
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import LabOrderForm from '../components/LabOrderForm';
+import { API_BASE_URL } from '../utils/apiBase';
 
 interface LabOrder {
   id: string;
@@ -76,7 +77,7 @@ const LabOrdersPage: React.FC = () => {
       if (statusFilter) params.append('status', statusFilter);
       if (vendorFilter) params.append('vendor_id', vendorFilter);
 
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-orders?${params}`, {
+      const response = await fetch(`${API_BASE_URL}/api/lab-orders?${params}`, {
         credentials: 'include'
       });
 
@@ -117,7 +118,7 @@ const LabOrdersPage: React.FC = () => {
 
   const handleSubmitOrder = async (orderId: string) => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-orders/${orderId}/submit`, {
+      const response = await fetch(`${API_BASE_URL}/api/lab-orders/${orderId}/submit`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' }

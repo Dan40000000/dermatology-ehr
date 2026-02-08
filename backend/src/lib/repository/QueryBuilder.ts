@@ -29,6 +29,101 @@ export class QueryBuilder {
   private havingConditions: WhereCondition[] = [];
   private isCountQuery: boolean = false;
 
+  private assertNoUnsafeTokens(value: string, context: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      throw new Error(`QueryBuilder: ${context} cannot be empty`);
+    }
+    if (/;|--|\/\*|\*\//.test(trimmed)) {
+      throw new Error(`QueryBuilder: ${context} contains unsafe tokens`);
+    }
+    return trimmed;
+  }
+
+  private assertSafeIdentifier(value: string, context: string): string {
+    const trimmed = this.assertNoUnsafeTokens(value, context);
+    const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+    const numericPattern = /^\d+$/;
+    if (!identifierPattern.test(trimmed) && !numericPattern.test(trimmed)) {
+      throw new Error(`QueryBuilder: ${context} must be a simple identifier`);
+    }
+    return trimmed;
+  }
+
+  private assertSafeSelectColumn(value: string): string {
+    const trimmed = this.assertNoUnsafeTokens(value, "select column");
+    const safePattern = /^[A-Za-z0-9_.*(),\s]+$/;
+    if (!safePattern.test(trimmed)) {
+      throw new Error("QueryBuilder: select column contains unsafe characters");
+    }
+    return trimmed;
+  }
+
+  private assertSafeCountColumn(value: string): string {
+    const trimmed = this.assertNoUnsafeTokens(value, "count column");
+    if (trimmed === "*") {
+      return trimmed;
+    }
+    const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+    const distinctPattern =
+      /^distinct\s+[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/i;
+    if (!identifierPattern.test(trimmed) && !distinctPattern.test(trimmed)) {
+      throw new Error(
+        "QueryBuilder: count column must be '*' or a simple identifier"
+      );
+    }
+    return trimmed;
+  }
+
+  private assertSafeTable(value: string): string {
+    const trimmed = this.assertNoUnsafeTokens(value, "table");
+    const parts = trimmed.split(/\s+/);
+    const basePattern = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
+    const aliasPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+    if (parts.length === 1) {
+      const tableName = parts[0] ?? '';
+      if (!basePattern.test(tableName)) {
+        throw new Error("QueryBuilder: table must be a simple identifier");
+      }
+      return trimmed;
+    }
+
+    if (parts.length === 2) {
+      const tableName = parts[0] ?? '';
+      const alias = parts[1] ?? '';
+      if (!basePattern.test(tableName) || !aliasPattern.test(alias)) {
+        throw new Error("QueryBuilder: table alias is invalid");
+      }
+      return `${tableName} ${alias}`;
+    }
+
+    if (parts.length === 3) {
+      const tableName = parts[0] ?? '';
+      const asKeyword = parts[1] ?? '';
+      const alias = parts[2] ?? '';
+      if (
+        asKeyword.toLowerCase() !== "as" ||
+        !basePattern.test(tableName) ||
+        !aliasPattern.test(alias)
+      ) {
+        throw new Error("QueryBuilder: table alias is invalid");
+      }
+      return `${tableName} ${asKeyword} ${alias}`;
+    }
+
+    throw new Error("QueryBuilder: table format is invalid");
+  }
+
+  private assertSafeJoinCondition(value: string): string {
+    const trimmed = this.assertNoUnsafeTokens(value, "join condition");
+    const safePattern = /^[A-Za-z0-9_\s.=<>]+$/;
+    if (!safePattern.test(trimmed)) {
+      throw new Error("QueryBuilder: join condition contains unsafe characters");
+    }
+    return trimmed;
+  }
+
   /**
    * Set columns to select
    * @param columns - Array of column names (use explicit columns, not '*')
@@ -37,7 +132,9 @@ export class QueryBuilder {
     if (columns.length === 0) {
       throw new Error("QueryBuilder: select() requires at least one column");
     }
-    this.selectColumns = columns;
+    this.selectColumns = columns.map((column) =>
+      this.assertSafeSelectColumn(column)
+    );
     this.isCountQuery = false;
     return this;
   }
@@ -47,7 +144,8 @@ export class QueryBuilder {
    * @param column - Column to count (default: '*')
    */
   selectCount(column: string = "*"): this {
-    this.selectColumns = [`COUNT(${column}) as count`];
+    const safeColumn = this.assertSafeCountColumn(column);
+    this.selectColumns = [`COUNT(${safeColumn}) as count`];
     this.isCountQuery = true;
     return this;
   }
@@ -60,7 +158,7 @@ export class QueryBuilder {
     if (!table || table.trim() === "") {
       throw new Error("QueryBuilder: from() requires a table name");
     }
-    this.fromTable = table;
+    this.fromTable = this.assertSafeTable(table);
     return this;
   }
 
@@ -75,7 +173,9 @@ export class QueryBuilder {
     table: string,
     condition: string
   ): this {
-    this.joinClauses.push(`${type} JOIN ${table} ON ${condition}`);
+    const safeTable = this.assertSafeTable(table);
+    const safeCondition = this.assertSafeJoinCondition(condition);
+    this.joinClauses.push(`${type} JOIN ${safeTable} ON ${safeCondition}`);
     return this;
   }
 
@@ -85,21 +185,25 @@ export class QueryBuilder {
    */
   where(conditions: Record<string, unknown>): this {
     for (const [column, value] of Object.entries(conditions)) {
-      if (value === null || value === undefined) {
+      if (value === undefined) {
+        continue;
+      }
+      const safeColumn = this.assertSafeIdentifier(column, "where column");
+      if (value === null) {
         this.whereConditions.push({
-          column,
+          column: safeColumn,
           operator: "IS NULL",
           value: null,
         });
       } else if (Array.isArray(value)) {
         this.whereConditions.push({
-          column,
+          column: safeColumn,
           operator: "IN",
           value,
         });
       } else {
         this.whereConditions.push({
-          column,
+          column: safeColumn,
           operator: "=",
           value,
         });
@@ -115,7 +219,8 @@ export class QueryBuilder {
    * @param value - Value to compare against
    */
   whereOp(column: string, operator: ComparisonOperator, value: unknown): this {
-    this.whereConditions.push({ column, operator, value });
+    const safeColumn = this.assertSafeIdentifier(column, "where column");
+    this.whereConditions.push({ column: safeColumn, operator, value });
     return this;
   }
 
@@ -124,8 +229,9 @@ export class QueryBuilder {
    * @param column - Column name
    */
   whereNotNull(column: string): this {
+    const safeColumn = this.assertSafeIdentifier(column, "where column");
     this.whereConditions.push({
-      column,
+      column: safeColumn,
       operator: "IS NOT NULL",
       value: null,
     });
@@ -137,8 +243,9 @@ export class QueryBuilder {
    * @param column - Column name
    */
   whereNull(column: string): this {
+    const safeColumn = this.assertSafeIdentifier(column, "where column");
     this.whereConditions.push({
-      column,
+      column: safeColumn,
       operator: "IS NULL",
       value: null,
     });
@@ -159,8 +266,9 @@ export class QueryBuilder {
         value: 0,
       });
     } else {
+      const safeColumn = this.assertSafeIdentifier(column, "where column");
       this.whereConditions.push({
-        column,
+        column: safeColumn,
         operator: "IN",
         value: values,
       });
@@ -174,7 +282,8 @@ export class QueryBuilder {
    * @param direction - Sort direction (ASC or DESC)
    */
   orderBy(column: string, direction: "ASC" | "DESC" = "ASC"): this {
-    this.orderByClause = { column, direction };
+    const safeColumn = this.assertSafeIdentifier(column, "orderBy column");
+    this.orderByClause = { column: safeColumn, direction };
     return this;
   }
 
@@ -207,7 +316,9 @@ export class QueryBuilder {
    * @param columns - Columns to group by
    */
   groupBy(columns: string[]): this {
-    this.groupByColumns = columns;
+    this.groupByColumns = columns.map((column) =>
+      this.assertSafeIdentifier(column, "groupBy column")
+    );
     return this;
   }
 
@@ -217,8 +328,9 @@ export class QueryBuilder {
    */
   having(conditions: Record<string, unknown>): this {
     for (const [column, value] of Object.entries(conditions)) {
+      const safeColumn = this.assertSafeIdentifier(column, "having column");
       this.havingConditions.push({
-        column,
+        column: safeColumn,
         operator: "=",
         value,
       });

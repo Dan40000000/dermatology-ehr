@@ -1,31 +1,31 @@
-import dotenv from "dotenv";
+import { loadEnv } from "./validate";
 
-dotenv.config();
+const envVars = loadEnv();
 
 export const env = {
-  nodeEnv: process.env.NODE_ENV || "development",
-  port: parseInt(process.env.PORT || "4000", 10),
-  databaseUrl: process.env.DATABASE_URL || "postgres://derm_user:derm_pass@localhost:5432/derm_db",
-  jwtSecret: process.env.JWT_SECRET || "dev-secret-change-me",
-  jwtIssuer: process.env.JWT_ISSUER || "derm-app",
-  accessTokenTtlSec: parseInt(process.env.ACCESS_TOKEN_TTL_SEC || "900", 10), // 15m
-  refreshTokenTtlSec: parseInt(process.env.REFRESH_TOKEN_TTL_SEC || "1209600", 10), // 14d
-  tenantHeader: process.env.TENANT_HEADER || "x-tenant-id",
-  storageProvider: process.env.STORAGE_PROVIDER || "s3", // s3 by default; falls back to local when bucket missing
-  s3Bucket: process.env.AWS_S3_BUCKET || "",
-  s3Region: process.env.AWS_REGION || "",
-  s3AccessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
-  s3SecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
-  s3Endpoint: process.env.AWS_S3_ENDPOINT || process.env.S3_ENDPOINT || "",
-  s3ForcePathStyle:
-    process.env.AWS_S3_FORCE_PATH_STYLE === "true" ||
-    process.env.S3_FORCE_PATH_STYLE === "true",
-  clamavHost: process.env.CLAMAV_HOST,
-  clamavPort: parseInt(process.env.CLAMAV_PORT || "3310", 10),
-  clamavTimeoutMs: parseInt(process.env.CLAMAV_TIMEOUT_MS || "4000", 10),
+  nodeEnv: envVars.NODE_ENV,
+  port: envVars.PORT,
+  databaseUrl: envVars.DATABASE_URL,
+  jwtSecret:
+    envVars.JWT_SECRET ||
+    (envVars.NODE_ENV === "production" ? "" : "dev-secret-change-me"),
+  jwtIssuer: envVars.JWT_ISSUER,
+  accessTokenTtlSec: envVars.ACCESS_TOKEN_TTL_SEC, // 15m
+  refreshTokenTtlSec: envVars.REFRESH_TOKEN_TTL_SEC, // 14d
+  tenantHeader: envVars.TENANT_HEADER,
+  storageProvider: envVars.STORAGE_PROVIDER,
+  s3Bucket: envVars.AWS_S3_BUCKET || "",
+  s3Region: envVars.AWS_REGION,
+  s3AccessKeyId: envVars.AWS_ACCESS_KEY_ID || "",
+  s3SecretAccessKey: envVars.AWS_SECRET_ACCESS_KEY || "",
+  s3Endpoint: envVars.AWS_S3_ENDPOINT || envVars.S3_ENDPOINT || "",
+  s3ForcePathStyle: envVars.AWS_S3_FORCE_PATH_STYLE || envVars.S3_FORCE_PATH_STYLE,
+  clamavHost: envVars.CLAMAV_HOST,
+  clamavPort: envVars.CLAMAV_PORT,
+  clamavTimeoutMs: envVars.CLAMAV_TIMEOUT_MS,
 };
 
-if (!process.env.JWT_SECRET) {
+if (!process.env.JWT_SECRET && envVars.NODE_ENV !== "production") {
   // eslint-disable-next-line no-console
   console.warn("⚠️  Using default JWT secret. Set JWT_SECRET in env for non-dev use.");
 }

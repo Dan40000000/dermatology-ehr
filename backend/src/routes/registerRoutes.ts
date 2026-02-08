@@ -107,6 +107,16 @@ import { checkInRouter } from "./checkIn";
 import { billingRouter } from "./billing";
 import { cosmeticTreatmentsRouter } from "./cosmeticTreatments";
 import { protocolsRouter } from "./protocols";
+import { intakeRouter } from "./intake";
+import { staffSchedulingRouter } from "./staffScheduling";
+import { revenueCycleRouter } from "./revenueCycle";
+import { patientEngagementRouter } from "./patientEngagement";
+import { externalIntegrationsRouter } from "./externalIntegrations";
+import { communicationsRouter } from "./communications";
+import { notificationsRouter } from "./notifications";
+import { jobsRouter } from "./jobs";
+import { eventsRouter } from "./events";
+import { waitlistRecallRouter } from "./waitlistRecall";
 
 export function registerRoutes(app: Express) {
   app.use("/health", healthRouter);
@@ -221,4 +231,14 @@ export function registerRoutes(app: Express) {
   app.use("/api/check-in", checkInRouter);
   app.use("/api/billing", billingRouter);
   app.use("/api/cosmetic-treatments", cosmeticTreatmentsRouter);
+  app.use("/api/intake", intakeRouter);
+  app.use("/api/staff-scheduling", apiLimiter, staffSchedulingRouter);
+  app.use("/api/rcm", revenueCycleRouter);
+  app.use("/api/engagement", patientEngagementRouter);
+  app.use("/api/communications", communicationsRouter);
+  app.use("/api/notifications", notificationsRouter);
+  app.use("/api/jobs", jobsRouter);
+  app.use("/api/events", eventsRouter);
+  app.use("/api/waitlist-recall", waitlistRecallRouter);
+  app.use("/api/external-integrations", externalIntegrationsRouter);
 }

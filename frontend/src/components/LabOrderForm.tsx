@@ -25,6 +25,7 @@ import {
   IconButton
 } from '@mui/material';
 import { Delete as DeleteIcon } from '@mui/icons-material';
+import { API_BASE_URL } from '../utils/apiBase';
 
 interface LabOrderFormProps {
   patientId: string | null;
@@ -127,7 +128,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
 
   const fetchPatients = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/patients?limit=100`, {
+      const response = await fetch(`${API_BASE_URL}/api/patients?limit=100`, {
         credentials: 'include'
       });
       if (response.ok) {
@@ -142,7 +143,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
 
   const fetchProviders = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/providers`, {
+      const response = await fetch(`${API_BASE_URL}/api/providers`, {
         credentials: 'include'
       });
       if (response.ok) {
@@ -156,7 +157,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
 
   const fetchVendors = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-vendors`, {
+      const response = await fetch(`${API_BASE_URL}/api/lab-vendors`, {
         credentials: 'include'
       });
       if (response.ok) {
@@ -170,7 +171,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
 
   const fetchOrderSets = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-vendors/order-sets`, {
+      const response = await fetch(`${API_BASE_URL}/api/lab-vendors/order-sets`, {
         credentials: 'include'
       });
       if (response.ok) {
@@ -185,7 +186,7 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
   const fetchTestCatalog = async (vendorId: string) => {
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-vendors/catalog?vendor_id=${vendorId}`,
+        `${API_BASE_URL}/api/lab-vendors/catalog?vendor_id=${vendorId}`,
         { credentials: 'include' }
       );
       if (response.ok) {
@@ -234,8 +235,8 @@ const LabOrderForm: React.FC<LabOrderFormProps> = ({
     setError(null);
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-orders`, {
-        method: 'POST',
+    const response = await fetch(`${API_BASE_URL}/api/lab-orders`, {
+      method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json'

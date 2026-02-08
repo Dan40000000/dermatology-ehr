@@ -81,7 +81,7 @@ router.get('/reports/:id', async (req: AuthedRequest, res: Response) => {
         dr.*,
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
-        p.date_of_birth,
+        p.dob as date_of_birth,
         lo.ordering_provider_id,
         pr.first_name || ' ' || pr.last_name as ordering_provider_name,
         (

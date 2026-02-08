@@ -17,7 +17,9 @@
     "seed:demo": "ts-node-dev --transpile-only src/db/demo-seed.ts",
     "migrate": "node dist/db/migrate.js",
     "seed": "node dist/db/seed.js",
-    "generate:openapi": "ts-node-dev --transpile-only src/scripts/generateOpenAPI.ts"
+    "generate:openapi": "ts-node-dev --transpile-only src/scripts/generateOpenAPI.ts",
+    "encrypt:ssn": "ts-node-dev --transpile-only src/scripts/encryptSsn.ts",
+    "ai:scribe:smoke": "ts-node-dev --transpile-only src/scripts/ambientScribeSmoke.ts"
   },
   "keywords": [],
   "author": "",

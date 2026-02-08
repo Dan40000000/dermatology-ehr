@@ -1,8 +1,7 @@
-import dotenv from 'dotenv';
 import path from 'path';
+import { loadEnv } from './validate';
 
-// Load environment variables
-dotenv.config();
+const envVars = loadEnv();
 
 /**
  * Application Configuration
@@ -11,151 +10,165 @@ dotenv.config();
 
 export const config = {
   // Environment
-  env: process.env.NODE_ENV || 'development',
-  isDevelopment: process.env.NODE_ENV === 'development',
-  isProduction: process.env.NODE_ENV === 'production',
-  isTest: process.env.NODE_ENV === 'test',
+  env: envVars.NODE_ENV,
+  isDevelopment: envVars.NODE_ENV === 'development',
+  isProduction: envVars.NODE_ENV === 'production',
+  isTest: envVars.NODE_ENV === 'test',
 
   // Server
-  port: parseInt(process.env.PORT || '4000', 10),
-  apiUrl: process.env.API_URL || 'http://localhost:4000',
-  frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+  port: envVars.PORT,
+  apiUrl: envVars.API_URL,
+  frontendUrl: envVars.FRONTEND_URL,
 
   // Database
   database: {
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432', 10),
-    name: process.env.DB_NAME || 'derm_db',
-    user: process.env.DB_USER || 'derm_user',
-    password: process.env.DB_PASSWORD || '',
-    maxConnections: parseInt(process.env.DB_MAX_CONNECTIONS || '20', 10),
-    idleTimeout: parseInt(process.env.DB_IDLE_TIMEOUT || '30000', 10),
+    host: envVars.DB_HOST,
+    port: envVars.DB_PORT,
+    name: envVars.DB_NAME,
+    user: envVars.DB_USER,
+    password: envVars.DB_PASSWORD || '',
+    maxConnections: envVars.DB_MAX_CONNECTIONS,
+    idleTimeout: envVars.DB_IDLE_TIMEOUT,
   },
 
   // Authentication
   jwt: {
-    secret: process.env.JWT_SECRET || '',
-    expiry: process.env.JWT_EXPIRY || '15m',
-    refreshExpiry: process.env.REFRESH_TOKEN_EXPIRY || '7d',
+    secret: envVars.JWT_SECRET || '',
+    expiry: envVars.JWT_EXPIRY,
+    refreshExpiry: envVars.REFRESH_TOKEN_EXPIRY,
   },
 
   session: {
-    secret: process.env.SESSION_SECRET || '',
-    maxAge: parseInt(process.env.SESSION_MAX_AGE || '86400000', 10),
+    secret: envVars.SESSION_SECRET || '',
+    maxAge: envVars.SESSION_MAX_AGE,
   },
 
   // Security
   security: {
-    csrfSecret: process.env.CSRF_SECRET || '',
-    encryptionKey: process.env.ENCRYPTION_KEY || '',
-    phiEncryptionEnabled: process.env.PHI_ENCRYPTION_ENABLED === 'true',
+    csrfSecret: envVars.CSRF_SECRET || '',
+    encryptionKey: envVars.ENCRYPTION_KEY || '',
+    phiEncryptionEnabled: envVars.PHI_ENCRYPTION_ENABLED || envVars.ENABLE_PHI_ENCRYPTION,
   },
 
   // Rate Limiting
   rateLimit: {
-    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW || '15', 10) * 60 * 1000,
-    maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
+    windowMs: envVars.RATE_LIMIT_WINDOW * 60 * 1000,
+    maxRequests: envVars.RATE_LIMIT_MAX_REQUESTS,
   },
 
   // Redis
   redis: {
-    url: process.env.REDIS_URL || 'redis://localhost:6379',
-    password: process.env.REDIS_PASSWORD,
+    url: envVars.REDIS_URL,
+    password: envVars.REDIS_PASSWORD,
   },
 
   // Storage
   storage: {
-    provider: process.env.STORAGE_PROVIDER || 'local',
-    uploadDir: process.env.UPLOAD_DIR || path.join(__dirname, '../../uploads'),
-    maxFileSize: parseInt(process.env.MAX_FILE_SIZE || '52428800', 10), // 50MB
+    provider: envVars.STORAGE_PROVIDER,
+    uploadDir: envVars.UPLOAD_DIR || path.join(__dirname, '../../uploads'),
+    maxFileSize: envVars.MAX_FILE_SIZE, // 50MB
     aws: {
-      region: process.env.AWS_REGION || 'us-east-1',
-      bucket: process.env.AWS_S3_BUCKET || '',
-      accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+      region: envVars.AWS_REGION,
+      bucket: envVars.AWS_S3_BUCKET || '',
+      accessKeyId: envVars.AWS_ACCESS_KEY_ID || '',
+      secretAccessKey: envVars.AWS_SECRET_ACCESS_KEY || '',
+      endpoint: envVars.AWS_S3_ENDPOINT || envVars.S3_ENDPOINT || '',
+      forcePathStyle: envVars.AWS_S3_FORCE_PATH_STYLE || envVars.S3_FORCE_PATH_STYLE,
     },
   },
 
   // Email
   email: {
     smtp: {
-      host: process.env.SMTP_HOST || 'smtp.sendgrid.net',
-      port: parseInt(process.env.SMTP_PORT || '587', 10),
-      secure: process.env.SMTP_SECURE === 'true',
-      user: process.env.SMTP_USER || '',
-      password: process.env.SMTP_PASSWORD || '',
+      host: envVars.SMTP_HOST,
+      port: envVars.SMTP_PORT,
+      secure: envVars.SMTP_SECURE,
+      user: envVars.SMTP_USER || '',
+      password: envVars.SMTP_PASSWORD || '',
     },
     from: {
-      email: process.env.FROM_EMAIL || 'noreply@example.com',
-      name: process.env.FROM_NAME || 'Dermatology EHR',
+      email: envVars.FROM_EMAIL || envVars.EMAIL_FROM || 'noreply@example.com',
+      name: envVars.FROM_NAME,
     },
   },
 
   // Monitoring
   monitoring: {
-    sentryDsn: process.env.SENTRY_DSN || '',
-    sentryEnvironment: process.env.SENTRY_ENVIRONMENT || 'production',
-    sentryTracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || '1.0'),
-    logLevel: process.env.LOG_LEVEL || 'info',
+    sentryDsn: envVars.SENTRY_DSN || '',
+    sentryEnvironment: envVars.SENTRY_ENVIRONMENT,
+    sentryTracesSampleRate: envVars.SENTRY_TRACES_SAMPLE_RATE,
+    logLevel: envVars.LOG_LEVEL,
   },
 
   // HIPAA Compliance
   hipaa: {
-    auditLogRetentionDays: parseInt(process.env.AUDIT_LOG_RETENTION_DAYS || '2555', 10), // 7 years
-    virusScanEnabled: process.env.VIRUS_SCAN_ENABLED === 'true',
+    auditLogRetentionDays: envVars.AUDIT_LOG_RETENTION_DAYS, // 7 years
+    virusScanEnabled: envVars.VIRUS_SCAN_ENABLED,
     clamav: {
-      host: process.env.CLAMAV_HOST || 'localhost',
-      port: parseInt(process.env.CLAMAV_PORT || '3310', 10),
+      host: envVars.CLAMAV_HOST || 'localhost',
+      port: envVars.CLAMAV_PORT,
     },
   },
 
   // Backup
   backup: {
-    enabled: process.env.BACKUP_ENABLED === 'true',
-    schedule: process.env.BACKUP_SCHEDULE || '0 2 * * *',
-    retentionDays: parseInt(process.env.BACKUP_RETENTION_DAYS || '90', 10),
-    bucket: process.env.BACKUP_BUCKET || '',
+    enabled: envVars.BACKUP_ENABLED,
+    schedule: envVars.BACKUP_SCHEDULE,
+    retentionDays: envVars.BACKUP_RETENTION_DAYS,
+    bucket: envVars.BACKUP_BUCKET || '',
   },
 
   // Feature Flags
   features: {
-    patientPortal: process.env.ENABLE_PATIENT_PORTAL === 'true',
-    telehealth: process.env.ENABLE_TELEHEALTH === 'true',
-    messaging: process.env.ENABLE_MESSAGING === 'true',
-    documentExport: process.env.ENABLE_DOCUMENT_EXPORT === 'true',
+    patientPortal: envVars.ENABLE_PATIENT_PORTAL,
+    telehealth: envVars.ENABLE_TELEHEALTH,
+    messaging: envVars.ENABLE_MESSAGING,
+    documentExport: envVars.ENABLE_DOCUMENT_EXPORT,
   },
 
   // CORS
   cors: {
-    origin: process.env.CORS_ORIGIN?.split(',') || ['http://localhost:5173'],
-    credentials: process.env.CORS_CREDENTIALS === 'true',
+    origin: (() => {
+      if (envVars.CORS_ORIGIN) {
+        return envVars.CORS_ORIGIN.split(',');
+      }
+      const origins: string[] = [];
+      if (envVars.FRONTEND_URL) {
+        origins.push(envVars.FRONTEND_URL);
+      }
+      if (envVars.NODE_ENV !== 'production') {
+        origins.push('http://localhost:5174', 'http://localhost:5175');
+      }
+      return origins;
+    })(),
+    credentials: envVars.CORS_CREDENTIALS,
   },
 
   // SSL/TLS
   ssl: {
-    enabled: process.env.SSL_ENABLED === 'true',
-    certPath: process.env.SSL_CERT_PATH || '',
-    keyPath: process.env.SSL_KEY_PATH || '',
+    enabled: envVars.SSL_ENABLED,
+    certPath: envVars.SSL_CERT_PATH || '',
+    keyPath: envVars.SSL_KEY_PATH || '',
   },
 
   // External Services
   external: {
     twilio: {
-      accountSid: process.env.TWILIO_ACCOUNT_SID || '',
-      authToken: process.env.TWILIO_AUTH_TOKEN || '',
-      phoneNumber: process.env.TWILIO_PHONE_NUMBER || '',
+      accountSid: envVars.TWILIO_ACCOUNT_SID || '',
+      authToken: envVars.TWILIO_AUTH_TOKEN || '',
+      phoneNumber: envVars.TWILIO_PHONE_NUMBER || '',
     },
     stripe: {
-      secretKey: process.env.STRIPE_SECRET_KEY || '',
-      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+      secretKey: envVars.STRIPE_SECRET_KEY || '',
+      publishableKey: envVars.STRIPE_PUBLISHABLE_KEY || '',
     },
   },
 
   // Debug
   debug: {
-    enabled: process.env.DEBUG === 'true',
-    apiDocs: process.env.ENABLE_API_DOCS === 'true',
-    playground: process.env.ENABLE_PLAYGROUND === 'true',
+    enabled: envVars.DEBUG,
+    apiDocs: envVars.ENABLE_API_DOCS,
+    playground: envVars.ENABLE_PLAYGROUND,
   },
 };
 
@@ -165,20 +178,22 @@ export const config = {
 function validateConfig(): void {
   const errors: string[] = [];
 
-  // Required in all environments
-  const required = [
-    'DB_PASSWORD',
-    'JWT_SECRET',
-  ];
+  const requireEnv = (key: string, condition = true) => {
+    if (condition && !process.env[key]) {
+      errors.push(`Missing required environment variable: ${key}`);
+    }
+  };
 
   // Required in production
   if (config.isProduction) {
-    required.push(
-      'CSRF_SECRET',
-      'SESSION_SECRET',
-      'ENCRYPTION_KEY',
-      'SENTRY_DSN',
-    );
+    requireEnv('JWT_SECRET');
+    requireEnv('CSRF_SECRET');
+    requireEnv('SESSION_SECRET');
+    requireEnv('SENTRY_DSN');
+
+    if (!process.env.DATABASE_URL && !process.env.DB_PASSWORD) {
+      errors.push('Missing required environment variable: DB_PASSWORD (or DATABASE_URL)');
+    }
 
     // Warn about secure configuration
     if (config.jwt.secret.length < 32) {
@@ -187,6 +202,14 @@ function validateConfig(): void {
 
     if (config.security.csrfSecret.length < 32) {
       errors.push('CSRF_SECRET should be at least 32 characters in production');
+    }
+
+    if (config.security.encryptionKey.length > 0 && config.security.encryptionKey.length < 32) {
+      errors.push('ENCRYPTION_KEY should be at least 32 characters in production');
+    }
+
+    if (!config.security.phiEncryptionEnabled) {
+      errors.push('PHI_ENCRYPTION_ENABLED must be true in production');
     }
 
     if (!config.ssl.enabled && config.apiUrl.startsWith('https')) {
@@ -198,10 +221,20 @@ function validateConfig(): void {
     }
   }
 
-  // Check for required variables
-  for (const key of required) {
-    if (!process.env[key]) {
-      errors.push(`Missing required environment variable: ${key}`);
+  if (config.security.phiEncryptionEnabled) {
+    if (!config.security.encryptionKey) {
+      errors.push('ENCRYPTION_KEY is required when PHI_ENCRYPTION_ENABLED is true');
+    } else if (config.security.encryptionKey.length < 32) {
+      errors.push('ENCRYPTION_KEY should be at least 32 characters when PHI encryption is enabled');
+    }
+  }
+
+  if (!config.isProduction) {
+    if (!process.env.JWT_SECRET) {
+      console.warn('WARNING: JWT_SECRET is not set; using defaults is unsafe outside development.');
+    }
+    if (!process.env.DATABASE_URL && !process.env.DB_PASSWORD) {
+      console.warn('WARNING: DB_PASSWORD or DATABASE_URL is not set; defaults may not work.');
     }
   }
 

@@ -94,6 +94,7 @@ describe("Patient portal routes", () => {
         firstName: "Pat",
         lastName: "Ent",
         dob: "1990-01-01",
+        verificationCode: "1234",
       });
 
     expect(res.status).toBe(400);
@@ -111,6 +112,7 @@ describe("Patient portal routes", () => {
         firstName: "Pat",
         lastName: "Ent",
         dob: "1990-01-01",
+        verificationCode: "1234",
       });
 
     expect(res.status).toBe(400);
@@ -132,6 +134,7 @@ describe("Patient portal routes", () => {
         firstName: "Pat",
         lastName: "Ent",
         dob: "1990-01-01",
+        verificationCode: "1234",
       });
 
     expect(res.status).toBe(201);

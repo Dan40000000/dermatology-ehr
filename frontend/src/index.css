@@ -7,6 +7,10 @@
 /* Import Responsive Styles */
 @import './styles/responsive.css';
 
+/* Import ScribePanel Styles */
+@import './styles/scribePanel.css';
+@import './styles/scribeSummary.css';
+
 * {
   box-sizing: border-box;
 }

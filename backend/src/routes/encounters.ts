@@ -8,6 +8,7 @@ import { auditLog } from "../services/audit";
 import { recordEncounterLearning } from "../services/learningService";
 import { encounterService } from "../services/encounterService";
 import { billingService } from "../services/billingService";
+import { workflowOrchestrator } from "../services/workflowOrchestrator";
 import {
   emitEncounterCreated,
   emitEncounterUpdated,
@@ -105,7 +106,7 @@ encountersRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
      LEFT JOIN providers pr ON pr.id = e.provider_id
      WHERE e.tenant_id = $1
      ORDER BY e.created_at DESC
-     LIMIT 50`,
+     LIMIT 500`,
     [tenantId],
   );
   res.json({ encounters: result.rows });
@@ -266,25 +267,47 @@ encountersRouter.post("/:id/status", requireAuth, requireRoles(["provider", "adm
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
   const tenantId = req.user!.tenantId;
   const encId = String(req.params.id);
+  const newStatus = parsed.data.status;
+
   await pool.query(`update encounters set status = $1, updated_at = now() where id = $2 and tenant_id = $3`, [
-    parsed.data.status,
+    newStatus,
     encId,
     tenantId,
   ]);
   await pool.query(
     `insert into audit_log(id, tenant_id, actor_id, action, entity, entity_id)
      values ($1,$2,$3,$4,$5,$6)`,
-    [crypto.randomUUID(), tenantId, req.user!.id, `encounter_status_${parsed.data.status}`, "encounter", encId],
+    [crypto.randomUUID(), tenantId, req.user!.id, `encounter_status_${newStatus}`, "encounter", encId],
   );
-  await auditLog(tenantId, req.user!.id, `encounter_status_${parsed.data.status}`, "encounter", encId);
+  await auditLog(tenantId, req.user!.id, `encounter_status_${newStatus}`, "encounter", encId);
 
   // Trigger adaptive learning when encounter is finalized/locked
-  if (parsed.data.status === "locked" || parsed.data.status === "finalized") {
+  if (newStatus === "locked" || newStatus === "finalized") {
     try {
       await recordEncounterLearning(encId);
     } catch (error) {
       // Log error but don't fail the request
       console.error("Error recording encounter learning:", error);
+    }
+  }
+
+  // CRITICAL: Trigger workflow orchestrator for signed/locked encounters
+  // This auto-creates claims and runs the billing workflow
+  if (newStatus === "signed" || newStatus === "locked" || newStatus === "finalized") {
+    try {
+      await workflowOrchestrator.processEvent({
+        type: newStatus === "signed" ? "encounter_signed" : "encounter_locked",
+        tenantId,
+        userId: req.user!.id,
+        entityType: "encounter",
+        entityId: encId,
+        data: {},
+        timestamp: new Date(),
+      });
+      logger.info("Workflow orchestrator triggered for encounter sign", { encounterId: encId, status: newStatus });
+    } catch (error: any) {
+      // Log error but don't fail the request - workflow should be resilient
+      logger.error("Error triggering workflow for encounter sign", { encounterId: encId, error: error.message });
     }
   }
 

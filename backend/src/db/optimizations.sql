@@ -13,13 +13,13 @@
 CREATE INDEX IF NOT EXISTS idx_patients_name ON patients(tenant_id, last_name, first_name);
 
 -- Index for patient search by date of birth (common in verification)
-CREATE INDEX IF NOT EXISTS idx_patients_dob ON patients(tenant_id, date_of_birth);
+CREATE INDEX IF NOT EXISTS idx_patients_dob ON patients(tenant_id, dob);
 
 -- Index for patient search by email (common for login and communication)
 CREATE INDEX IF NOT EXISTS idx_patients_email ON patients(tenant_id, email);
 
 -- Composite index for patient list queries with sorting
-CREATE INDEX IF NOT EXISTS idx_patients_list ON patients(tenant_id, last_name, first_name, date_of_birth)
+CREATE INDEX IF NOT EXISTS idx_patients_list ON patients(tenant_id, last_name, first_name, dob)
 WHERE deleted_at IS NULL;
 
 -- ================================================

@@ -113,7 +113,7 @@ export class BiopsyService {
         b.*,
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
-        p.date_of_birth,
+        p.dob as date_of_birth,
         pr.first_name || ' ' || pr.last_name as ordering_provider_name,
         EXTRACT(DAY FROM (NOW() - b.resulted_at))::INTEGER as days_since_result
       FROM biopsies b
@@ -469,7 +469,7 @@ export class BiopsyService {
         b.status,
         p.mrn,
         p.first_name || ' ' || p.last_name as patient_name,
-        p.date_of_birth,
+        p.dob as date_of_birth,
         b.body_location,
         b.specimen_type,
         b.clinical_description,

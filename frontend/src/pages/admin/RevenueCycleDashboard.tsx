@@ -10,6 +10,7 @@ import { PayerMix } from '../../components/RCM/PayerMix';
 import { ProviderProductivity } from '../../components/RCM/ProviderProductivity';
 import { ActionItems } from '../../components/RCM/ActionItems';
 import { FinancialCalendar } from '../../components/RCM/FinancialCalendar';
+import { API_BASE_URL } from '../../utils/apiBase';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -54,7 +55,7 @@ export function RevenueCycleDashboard() {
       }
 
       try {
-        const baseUrl = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
+        const baseUrl = API_BASE_URL;
         const headers = {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.accessToken}`,
@@ -297,8 +298,7 @@ export function RevenueCycleDashboard() {
 
   const handleResolveAction = async (actionId: string) => {
     try {
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
-      const response = await fetch(`${baseUrl}/api/rcm/action-items/${actionId}/resolve`, {
+      const response = await fetch(`${API_BASE_URL}/api/rcm/action-items/${actionId}/resolve`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

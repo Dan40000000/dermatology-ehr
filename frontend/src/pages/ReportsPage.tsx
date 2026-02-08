@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { exportToCSV, exportToPDF, formatCurrency, formatDate } from '../utils/exportUtils';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
+import { API_BASE_URL } from '../utils/apiBase';
 
 type ReportType = 'appointments' | 'financial' | 'clinical' | 'patients' | 'productivity' | 'no-shows';
 
@@ -61,19 +60,19 @@ export default function ReportsPage() {
     };
 
     // Fetch providers
-    fetch(`${API_BASE}/api/reports/filters/providers`, { headers })
+    fetch(`${API_BASE_URL}/api/reports/filters/providers`, { headers })
       .then((res) => res.json())
       .then((data) => setProviders(data.providers || []))
       .catch(console.error);
 
     // Fetch locations
-    fetch(`${API_BASE}/api/reports/filters/locations`, { headers })
+    fetch(`${API_BASE_URL}/api/reports/filters/locations`, { headers })
       .then((res) => res.json())
       .then((data) => setLocations(data.locations || []))
       .catch(console.error);
 
     // Fetch appointment types
-    fetch(`${API_BASE}/api/reports/filters/appointment-types`, { headers })
+    fetch(`${API_BASE_URL}/api/reports/filters/appointment-types`, { headers })
       .then((res) => res.json())
       .then((data) => setAppointmentTypes(data.appointmentTypes || []))
       .catch(console.error);
@@ -84,7 +83,7 @@ export default function ReportsPage() {
     setLoading(true);
 
     try {
-      const endpoint = `${API_BASE}/api/reports/${selectedReport}`;
+      const endpoint = `${API_BASE_URL}/api/reports/${selectedReport}`;
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -115,7 +114,7 @@ export default function ReportsPage() {
 
   const handleExportCSV = async () => {
     if (!session) return;
-    const endpoint = `${API_BASE}/api/reports/${selectedReport}`;
+    const endpoint = `${API_BASE_URL}/api/reports/${selectedReport}`;
 
     try {
       const response = await fetch(endpoint, {

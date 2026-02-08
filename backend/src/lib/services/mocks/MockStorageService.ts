@@ -8,12 +8,13 @@
 import crypto from "crypto";
 import { IStorageService, StorageUploadResult } from "../../types/services";
 import { logger } from "../../logger";
+import { config } from "../../../config";
 
 export class MockStorageService implements IStorageService {
   private storage: Map<string, { buffer: Buffer; contentType: string }> = new Map();
   private baseUrl: string;
 
-  constructor(baseUrl = "http://localhost:4000/mock-storage") {
+  constructor(baseUrl = `${config.apiUrl}/mock-storage`) {
     this.baseUrl = baseUrl;
     logger.info("MockStorageService initialized");
   }

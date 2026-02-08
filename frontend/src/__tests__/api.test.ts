@@ -69,8 +69,8 @@ import {
   exportFeeSchedule,
   fetchAppointmentsByDay,
 } from '../api';
+import { API_BASE_URL } from '../utils/apiBase';
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 const tenantId = 'tenant-1';
 const token = 'token-1';
 
@@ -96,7 +96,7 @@ describe('api.ts', () => {
     await login(tenantId, 'user@example.com', 'secret');
 
     const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/auth/login`);
+    expect(url).toBe(`${API_BASE_URL}/api/auth/login`);
     expect(options?.method).toBe('POST');
     expect(options?.headers).toMatchObject({
       'Content-Type': 'application/json',
@@ -119,7 +119,7 @@ describe('api.ts', () => {
     await fetchMe(tenantId, token);
 
     const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/auth/me`);
+    expect(url).toBe(`${API_BASE_URL}/api/auth/me`);
     expect(options?.headers).toMatchObject({
       Authorization: `Bearer ${token}`,
       'x-tenant-id': tenantId,
@@ -159,7 +159,7 @@ describe('api.ts', () => {
     });
 
     const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/tasks?status=open&priority=high&search=rash`);
+    expect(url).toBe(`${API_BASE_URL}/api/tasks?status=open&priority=high&search=rash`);
   });
 
   it.each([
@@ -283,7 +283,7 @@ describe('api.ts', () => {
     await call();
 
     const [url, options] = fetchMock.mock.calls[fetchMock.mock.calls.length - 1];
-    expect(url).toBe(`${baseUrl}${path}`);
+    expect(url).toBe(`${API_BASE_URL}${path}`);
     expect(options?.headers).toMatchObject({
       Authorization: `Bearer ${token}`,
       'x-tenant-id': tenantId,
@@ -295,7 +295,7 @@ describe('api.ts', () => {
     await fetchMessageThreads(tenantId, token, 'unread');
 
     const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/messaging/threads?filter=unread`);
+    expect(url).toBe(`${API_BASE_URL}/api/messaging/threads?filter=unread`);
   });
 
   it('marks thread as read via PUT', async () => {
@@ -303,7 +303,7 @@ describe('api.ts', () => {
     await markThreadAsRead(tenantId, token, 'thread-1');
 
     const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/messaging/threads/thread-1/read`);
+    expect(url).toBe(`${API_BASE_URL}/api/messaging/threads/thread-1/read`);
     expect(options?.method).toBe('PUT');
   });
 
@@ -327,7 +327,7 @@ describe('api.ts', () => {
     await sendThreadMessage(tenantId, token, 'thread-1', 'hello');
 
     const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/messaging/threads/thread-1/messages`);
+    expect(url).toBe(`${API_BASE_URL}/api/messaging/threads/thread-1/messages`);
     expect(options?.method).toBe('POST');
 
     fetchMock.mockResolvedValueOnce({
@@ -347,7 +347,7 @@ describe('api.ts', () => {
 
     const [url] = fetchMock.mock.calls[0];
     expect(url).toBe(
-      `${baseUrl}/api/photos?patientId=patient-1&photoType=clinical&bodyLocation=arm`
+      `${API_BASE_URL}/api/photos?patientId=patient-1&photoType=clinical&bodyLocation=arm`
     );
   });
 
@@ -359,7 +359,7 @@ describe('api.ts', () => {
     });
 
     let [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/photos/comparison-group`);
+    expect(url).toBe(`${API_BASE_URL}/api/photos/comparison-group`);
     expect(options?.method).toBe('POST');
     expect(options?.body).toBe(JSON.stringify({ patientId: 'patient-1', name: 'progress' }));
 
@@ -367,7 +367,7 @@ describe('api.ts', () => {
     await fetchComparisonGroup(tenantId, token, 'group-1');
 
     [url] = fetchMock.mock.calls[1];
-    expect(url).toBe(`${baseUrl}/api/photos/comparison-group/group-1`);
+    expect(url).toBe(`${API_BASE_URL}/api/photos/comparison-group/group-1`);
   });
 
   it('archives threads with payload', async () => {
@@ -375,7 +375,7 @@ describe('api.ts', () => {
     await archiveThread(tenantId, token, 'thread-1', true);
 
     const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/messaging/threads/thread-1/archive`);
+    expect(url).toBe(`${API_BASE_URL}/api/messaging/threads/thread-1/archive`);
     expect(options?.method).toBe('PUT');
     expect(options?.body).toBe(JSON.stringify({ archive: true }));
   });
@@ -385,7 +385,7 @@ describe('api.ts', () => {
     await createPatient(tenantId, token, { name: 'Jane' });
 
     let [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/patients`);
+    expect(url).toBe(`${API_BASE_URL}/api/patients`);
     expect(options?.method).toBe('POST');
     expect(options?.body).toBe(JSON.stringify({ name: 'Jane' }));
 
@@ -393,7 +393,7 @@ describe('api.ts', () => {
     await updatePatient(tenantId, token, 'patient-1', { name: 'Jane Doe' });
 
     [url, options] = fetchMock.mock.calls[1];
-    expect(url).toBe(`${baseUrl}/api/patients/patient-1`);
+    expect(url).toBe(`${API_BASE_URL}/api/patients/patient-1`);
     expect(options?.method).toBe('PUT');
     expect(options?.body).toBe(JSON.stringify({ name: 'Jane Doe' }));
 
@@ -401,35 +401,35 @@ describe('api.ts', () => {
     await createAppointment(tenantId, token, { patientId: 'patient-1' });
 
     [url, options] = fetchMock.mock.calls[2];
-    expect(url).toBe(`${baseUrl}/api/appointments`);
+    expect(url).toBe(`${API_BASE_URL}/api/appointments`);
     expect(options?.method).toBe('POST');
 
     fetchMock.mockResolvedValueOnce(okResponse({}));
     await updateAppointmentStatus(tenantId, token, 'appt-1', 'checked-in');
 
     [url, options] = fetchMock.mock.calls[3];
-    expect(url).toBe(`${baseUrl}/api/appointments/appt-1/status`);
+    expect(url).toBe(`${API_BASE_URL}/api/appointments/appt-1/status`);
     expect(options?.body).toBe(JSON.stringify({ status: 'checked-in' }));
 
     fetchMock.mockResolvedValueOnce(okResponse({}));
     await createEncounter(tenantId, token, { patientId: 'patient-1' });
 
     [url, options] = fetchMock.mock.calls[4];
-    expect(url).toBe(`${baseUrl}/api/encounters`);
+    expect(url).toBe(`${API_BASE_URL}/api/encounters`);
     expect(options?.method).toBe('POST');
 
     fetchMock.mockResolvedValueOnce(okResponse({}));
     await updateEncounterStatus(tenantId, token, 'enc-1', 'closed');
 
     [url, options] = fetchMock.mock.calls[5];
-    expect(url).toBe(`${baseUrl}/api/encounters/enc-1/status`);
+    expect(url).toBe(`${API_BASE_URL}/api/encounters/enc-1/status`);
     expect(options?.body).toBe(JSON.stringify({ status: 'closed' }));
 
     fetchMock.mockResolvedValueOnce(okResponse({ draft: {} }));
     await generateAiNoteDraft(tenantId, token, { patientId: 'patient-1', briefNotes: 'AI note' });
 
     [url, options] = fetchMock.mock.calls[6];
-    expect(url).toBe(`${baseUrl}/api/ai-notes/draft`);
+    expect(url).toBe(`${API_BASE_URL}/api/ai-notes/draft`);
     expect(options?.method).toBe('POST');
   });
 
@@ -453,7 +453,7 @@ describe('api.ts', () => {
     await updateTask(tenantId, token, 'task-1', { status: 'done' });
 
     let [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/tasks/task-1`);
+    expect(url).toBe(`${API_BASE_URL}/api/tasks/task-1`);
     expect(options?.method).toBe('PUT');
     expect(options?.body).toBe(JSON.stringify({ status: 'done' }));
 
@@ -461,14 +461,14 @@ describe('api.ts', () => {
     await updateTaskStatus(tenantId, token, 'task-1', 'done');
 
     [url, options] = fetchMock.mock.calls[1];
-    expect(url).toBe(`${baseUrl}/api/tasks/task-1/status`);
+    expect(url).toBe(`${API_BASE_URL}/api/tasks/task-1/status`);
     expect(options?.body).toBe(JSON.stringify({ status: 'done' }));
 
     fetchMock.mockResolvedValueOnce(okResponse({}));
     await deleteTask(tenantId, token, 'task-1');
 
     [url, options] = fetchMock.mock.calls[2];
-    expect(url).toBe(`${baseUrl}/api/tasks/task-1`);
+    expect(url).toBe(`${API_BASE_URL}/api/tasks/task-1`);
     expect(options?.method).toBe('DELETE');
   });
 
@@ -477,7 +477,7 @@ describe('api.ts', () => {
     await createFeeSchedule(tenantId, token, { name: 'Standard' });
 
     let [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/fee-schedules`);
+    expect(url).toBe(`${API_BASE_URL}/api/fee-schedules`);
     expect(options?.method).toBe('POST');
     expect(options?.body).toBe(JSON.stringify({ name: 'Standard' }));
 
@@ -485,7 +485,7 @@ describe('api.ts', () => {
     await updateFeeSchedule(tenantId, token, 'schedule-1', { name: 'Updated' });
 
     [url, options] = fetchMock.mock.calls[1];
-    expect(url).toBe(`${baseUrl}/api/fee-schedules/schedule-1`);
+    expect(url).toBe(`${API_BASE_URL}/api/fee-schedules/schedule-1`);
     expect(options?.method).toBe('PUT');
     expect(options?.body).toBe(JSON.stringify({ name: 'Updated' }));
 
@@ -493,7 +493,7 @@ describe('api.ts', () => {
     await updateFeeScheduleItem(tenantId, token, 'schedule-1', '99213', { price: 120 });
 
     [url, options] = fetchMock.mock.calls[2];
-    expect(url).toBe(`${baseUrl}/api/fee-schedules/schedule-1/items/99213`);
+    expect(url).toBe(`${API_BASE_URL}/api/fee-schedules/schedule-1/items/99213`);
     expect(options?.method).toBe('PUT');
     expect(options?.body).toBe(JSON.stringify({ price: 120 }));
 
@@ -501,7 +501,7 @@ describe('api.ts', () => {
     await importFeeScheduleItems(tenantId, token, 'schedule-1', [{ code: '99213' }]);
 
     [url, options] = fetchMock.mock.calls[3];
-    expect(url).toBe(`${baseUrl}/api/fee-schedules/schedule-1/items/import`);
+    expect(url).toBe(`${API_BASE_URL}/api/fee-schedules/schedule-1/items/import`);
     expect(options?.method).toBe('POST');
     expect(options?.body).toBe(JSON.stringify({ items: [{ code: '99213' }] }));
 
@@ -518,7 +518,7 @@ describe('api.ts', () => {
     await createOrder(tenantId, token, { type: 'lab' });
 
     let [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/orders`);
+    expect(url).toBe(`${API_BASE_URL}/api/orders`);
     expect(options?.method).toBe('POST');
     expect(options?.body).toBe(JSON.stringify({ type: 'lab' }));
 
@@ -526,14 +526,14 @@ describe('api.ts', () => {
     await updateOrderStatus(tenantId, token, 'order-1', 'sent');
 
     [url, options] = fetchMock.mock.calls[1];
-    expect(url).toBe(`${baseUrl}/api/orders/order-1/status`);
+    expect(url).toBe(`${API_BASE_URL}/api/orders/order-1/status`);
     expect(options?.body).toBe(JSON.stringify({ status: 'sent' }));
 
     fetchMock.mockResolvedValueOnce(okResponse({}));
     await sendErx(tenantId, token, { orderId: 'order-1' });
 
     [url, options] = fetchMock.mock.calls[2];
-    expect(url).toBe(`${baseUrl}/api/orders/erx/send`);
+    expect(url).toBe(`${API_BASE_URL}/api/orders/erx/send`);
     expect(options?.body).toBe(JSON.stringify({ orderId: 'order-1' }));
 
     fetchMock.mockResolvedValueOnce({ ok: true, text: vi.fn().mockResolvedValue('csv-data') } as Response);
@@ -548,7 +548,7 @@ describe('api.ts', () => {
     await presignS3(tenantId, token, 'file.txt', 'text/plain');
 
     let [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/presign/s3`);
+    expect(url).toBe(`${API_BASE_URL}/api/presign/s3`);
     expect(options?.method).toBe('POST');
     expect(options?.body).toBe(JSON.stringify({ filename: 'file.txt', contentType: 'text/plain' }));
 
@@ -556,14 +556,14 @@ describe('api.ts', () => {
     await completePresign(tenantId, token, 'key-1');
 
     [url, options] = fetchMock.mock.calls[1];
-    expect(url).toBe(`${baseUrl}/api/presign/s3/complete`);
+    expect(url).toBe(`${API_BASE_URL}/api/presign/s3/complete`);
     expect(options?.body).toBe(JSON.stringify({ key: 'key-1' }));
 
     fetchMock.mockResolvedValueOnce(okResponse({ url: 'https://download' }));
     await getPresignedAccess(tenantId, token, 'folder/file 1.png');
 
     [url] = fetchMock.mock.calls[2];
-    expect(url).toBe(`${baseUrl}/api/presign/s3/access/folder%2Ffile%201.png`);
+    expect(url).toBe(`${API_BASE_URL}/api/presign/s3/access/folder%2Ffile%201.png`);
 
     fetchMock.mockResolvedValueOnce({
       ok: false,
@@ -611,7 +611,7 @@ describe('api.ts', () => {
     await fetchAppointmentsByDay(tenantId, token, { startDate: '2024-01-01', providerId: 'all' });
 
     const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${baseUrl}/api/analytics/appointments-by-day?startDate=2024-01-01`);
+    expect(url).toBe(`${API_BASE_URL}/api/analytics/appointments-by-day?startDate=2024-01-01`);
   });
 
   it('builds analytics queries with filters', async () => {
@@ -624,26 +624,26 @@ describe('api.ts', () => {
 
     let [url] = fetchMock.mock.calls[0];
     expect(url).toBe(
-      `${baseUrl}/api/analytics/appointments-by-provider?startDate=2024-01-01&endDate=2024-01-02&providerId=provider-1`
+      `${API_BASE_URL}/api/analytics/appointments-by-provider?startDate=2024-01-01&endDate=2024-01-02&providerId=provider-1`
     );
 
     fetchMock.mockResolvedValueOnce(okResponse({}));
     await fetchRevenueByDay(tenantId, token, { endDate: '2024-01-02' });
 
     [url] = fetchMock.mock.calls[1];
-    expect(url).toBe(`${baseUrl}/api/analytics/revenue-by-day?endDate=2024-01-02`);
+    expect(url).toBe(`${API_BASE_URL}/api/analytics/revenue-by-day?endDate=2024-01-02`);
 
     fetchMock.mockResolvedValueOnce(okResponse({}));
     await fetchStatusCounts(tenantId, token, { providerId: 'provider-1' });
 
     [url] = fetchMock.mock.calls[2];
-    expect(url).toBe(`${baseUrl}/api/analytics/status-counts?providerId=provider-1`);
+    expect(url).toBe(`${API_BASE_URL}/api/analytics/status-counts?providerId=provider-1`);
 
     fetchMock.mockResolvedValueOnce(okResponse({}));
     await fetchDashboardKPIs(tenantId, token, { startDate: '2024-01-01' });
 
     [url] = fetchMock.mock.calls[3];
-    expect(url).toBe(`${baseUrl}/api/analytics/dashboard?startDate=2024-01-01`);
+    expect(url).toBe(`${API_BASE_URL}/api/analytics/dashboard?startDate=2024-01-01`);
   });
 
   it('surfaces auth helper errors', async () => {

@@ -31,6 +31,7 @@ export function PhotoAnnotator({
   const [textInput, setTextInput] = useState('');
   const [showTextDialog, setShowTextDialog] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
+  const activePointerId = useRef<number | null>(null);
 
   useEffect(() => {
     if (annotations?.shapes) {
@@ -123,24 +124,39 @@ export function PhotoAnnotator({
     ctx.stroke();
   };
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const getCanvasPoint = (e: { clientX: number; clientY: number }) => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return { x: 0, y: 0 };
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (readOnly || selectedTool === 'select') return;
+    if (activePointerId.current !== null) return;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const { x, y } = getCanvasPoint(e);
+
+    if (selectedTool === 'text') {
+      setStartPos({ x, y });
+      setShowTextDialog(true);
+      return;
+    }
+
+    canvas.setPointerCapture(e.pointerId);
+    activePointerId.current = e.pointerId;
 
     setIsDrawing(true);
     setStartPos({ x, y });
-
-    if (selectedTool === 'text') {
-      setShowTextDialog(true);
-      setStartPos({ x, y });
-      return;
-    }
 
     const newShape: PhotoAnnotationShape = {
       type: selectedTool as any,
@@ -156,15 +172,11 @@ export function PhotoAnnotator({
     setCurrentShape(newShape);
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointerId.current !== e.pointerId) return;
     if (!isDrawing || !startPos || selectedTool === 'text') return;
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const { x, y } = getCanvasPoint(e);
 
     if (selectedTool === 'arrow' || selectedTool === 'rectangle') {
       setCurrentShape({
@@ -183,7 +195,15 @@ export function PhotoAnnotator({
     }
   };
 
-  const handleMouseUp = () => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointerId.current !== e.pointerId) return;
+
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.releasePointerCapture(e.pointerId);
+    }
+    activePointerId.current = null;
+
     if (!isDrawing || selectedTool === 'text') return;
 
     if (currentShape) {
@@ -366,10 +386,12 @@ export function PhotoAnnotator({
         <canvas
           ref={canvasRef}
           className="annotator-canvas"
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          style={{ cursor: readOnly ? 'default' : 'crosshair' }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          style={{ cursor: readOnly ? 'default' : 'crosshair', touchAction: 'none' }}
         />
       </div>
 

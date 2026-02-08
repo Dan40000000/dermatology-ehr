@@ -1,9 +1,11 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:4000");
+import { API_BASE_URL } from "./utils/apiBase";
+
+const API_BASE = API_BASE_URL;
 const TENANT_HEADER = "x-tenant-id";
 
 export type StoredFileResponse = { url: string; storage: "local" | "s3"; objectKey?: string };
-export const API_BASE_URL = API_BASE;
 export const TENANT_HEADER_NAME = TENANT_HEADER;
+export { API_BASE_URL };
 
 export interface LoginResponse {
   user: {
@@ -51,8 +53,18 @@ export async function fetchMe(tenantId: string, accessToken: string) {
   return res.json();
 }
 
-export async function fetchPatients(tenantId: string, accessToken: string) {
-  const res = await fetch(`${API_BASE}/api/patients`, {
+export async function fetchPatients(
+  tenantId: string,
+  accessToken: string,
+  options?: { page?: number; limit?: number; fields?: string }
+) {
+  const params = new URLSearchParams();
+  const limit = options?.limit ?? 100;
+  if (limit) params.set("limit", String(limit));
+  if (options?.page) params.set("page", String(options.page));
+  if (options?.fields) params.set("fields", options.fields);
+  const url = params.toString() ? `${API_BASE}/api/patients?${params.toString()}` : `${API_BASE}/api/patients`;
+  const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       [TENANT_HEADER]: tenantId,
@@ -5060,6 +5072,8 @@ export interface AmbientGeneratedNote {
   id: string;
   transcriptId: string;
   encounterId?: string;
+  patientId?: string;
+  providerId?: string;
   chiefComplaint: string;
   hpi: string;
   ros: string;
@@ -5091,6 +5105,7 @@ export interface AmbientGeneratedNote {
   reviewedAt?: string;
   createdAt: string;
   completedAt?: string;
+  transcriptText?: string;
 }
 
 export interface AmbientNoteEdit {
@@ -5105,6 +5120,23 @@ export interface AmbientNoteEdit {
   editReason?: string;
   isSignificant: boolean;
   createdAt: string;
+}
+
+export interface PatientSummary {
+  id: string;
+  encounterId?: string | null;
+  ambientNoteId?: string | null;
+  visitDate: string;
+  providerName: string;
+  summaryText: string;
+  symptomsDiscussed?: string[] | null;
+  diagnosisShared?: string | null;
+  treatmentPlan?: string | null;
+  nextSteps?: string | null;
+  followUpDate?: string | null;
+  sharedAt?: string | null;
+  createdAt: string;
+  generatedByName?: string | null;
 }
 
 /**
@@ -5420,6 +5452,51 @@ export async function applyAmbientNoteToEncounter(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to apply note to encounter');
+  }
+  return res.json();
+}
+
+/**
+ * Generate and store a patient-friendly summary for a note
+ */
+export async function generatePatientSummary(
+  tenantId: string,
+  accessToken: string,
+  noteId: string
+): Promise<{ summaryId: string; message: string; existing?: boolean }> {
+  const res = await fetch(`${API_BASE}/api/ambient/notes/${noteId}/generate-patient-summary`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to generate patient summary');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch patient-friendly summaries for a patient
+ */
+export async function fetchPatientSummaries(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+): Promise<{ summaries: PatientSummary[] }> {
+  const res = await fetch(`${API_BASE}/api/ambient/patient-summaries/${patientId}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch patient summaries');
   }
   return res.json();
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { FC } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 interface CannedResponse {
   id: string;
@@ -35,7 +36,7 @@ export const CannedResponseSelector: FC<CannedResponseSelectorProps> = ({
 
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/canned-responses?activeOnly=true`,
+        `${API_BASE_URL}/api/canned-responses?activeOnly=true`,
         {
           headers: {
             Authorization: `Bearer ${session.accessToken}`,

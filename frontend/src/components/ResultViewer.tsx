@@ -25,6 +25,7 @@ import {
   TrendingDown as TrendDownIcon,
   TrendingFlat as TrendFlatIcon
 } from '@mui/icons-material';
+import { API_BASE_URL } from '../utils/apiBase';
 
 interface ResultViewerProps {
   result: {
@@ -87,7 +88,7 @@ const ResultViewer: React.FC<ResultViewerProps> = ({ result }) => {
     try {
       setLoadingTrends(true);
       const response = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/lab-results/trends/${result.patient_id}/${result.test_code}`,
+        `${API_BASE_URL}/api/lab-results/trends/${result.patient_id}/${result.test_code}`,
         { credentials: 'include' }
       );
 

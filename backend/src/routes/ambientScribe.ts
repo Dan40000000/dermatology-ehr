@@ -66,7 +66,7 @@ const startRecordingSchema = z.object({
 });
 
 const completeRecordingSchema = z.object({
-  durationSeconds: z.number().min(1)
+  durationSeconds: z.coerce.number().min(1)
 });
 
 const updateNoteSchema = z.object({
@@ -139,9 +139,20 @@ router.post('/recordings/start', requireAuth, requireRoles(['provider', 'ma', 'a
     await pool.query(
       `INSERT INTO ambient_recordings (
         id, tenant_id, encounter_id, patient_id, provider_id,
-        status, started_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-      [recordingId, tenantId, encounterId || null, patientId, providerId, 'recording']
+        status, recording_status, consent_obtained, consent_method, consent_timestamp,
+        started_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW(), NOW())`,
+      [
+        recordingId,
+        tenantId,
+        encounterId || null,
+        patientId,
+        providerId,
+        'recording',
+        'recording',
+        consentObtained,
+        consentMethod || null,
+      ]
     );
 
     await auditLog(tenantId, req.user?.id || null, 'ambient_recording_start', 'ambient_recording', recordingId);
@@ -195,6 +206,7 @@ router.post('/recordings/:id/upload', requireAuth, upload.single('audio'), async
            mime_type = $3,
            duration_seconds = $4,
            recording_status = 'completed',
+           status = 'completed',
            completed_at = NOW(),
            updated_at = NOW()
        WHERE id = $5 AND tenant_id = $6`,
@@ -294,7 +306,17 @@ router.get('/recordings/:id', requireAuth, async (req: AuthedRequest, res) => {
 
     const result = await pool.query(
       `SELECT
-        r.*,
+        r.id,
+        r.encounter_id as "encounterId",
+        r.patient_id as "patientId",
+        r.provider_id as "providerId",
+        r.recording_status as "status",
+        r.duration_seconds as "durationSeconds",
+        r.consent_obtained as "consentObtained",
+        r.consent_method as "consentMethod",
+        r.started_at as "startedAt",
+        r.completed_at as "completedAt",
+        r.created_at as "createdAt",
         p.first_name || ' ' || p.last_name as "patientName",
         pr.full_name as "providerName"
       FROM ambient_recordings r
@@ -366,7 +388,23 @@ router.get('/transcripts/:id', requireAuth, async (req: AuthedRequest, res) => {
     const tenantId = req.user!.tenantId;
 
     const result = await pool.query(
-      `SELECT * FROM ambient_transcripts WHERE id = $1 AND tenant_id = $2`,
+      `SELECT
+        id,
+        recording_id as "recordingId",
+        encounter_id as "encounterId",
+        transcript_text as "transcriptText",
+        transcript_segments as "transcriptSegments",
+        language,
+        speakers,
+        speaker_count as "speakerCount",
+        confidence_score as "confidenceScore",
+        word_count as "wordCount",
+        phi_masked as "phiMasked",
+        transcription_status as "transcriptionStatus",
+        created_at as "createdAt",
+        completed_at as "completedAt"
+      FROM ambient_transcripts
+      WHERE id = $1 AND tenant_id = $2`,
       [transcriptId, tenantId]
     );
 
@@ -391,7 +429,23 @@ router.get('/recordings/:id/transcript', requireAuth, async (req: AuthedRequest,
     const tenantId = req.user!.tenantId;
 
     const result = await pool.query(
-      `SELECT * FROM ambient_transcripts WHERE recording_id = $1 AND tenant_id = $2`,
+      `SELECT
+        id,
+        recording_id as "recordingId",
+        encounter_id as "encounterId",
+        transcript_text as "transcriptText",
+        transcript_segments as "transcriptSegments",
+        language,
+        speakers,
+        speaker_count as "speakerCount",
+        confidence_score as "confidenceScore",
+        word_count as "wordCount",
+        phi_masked as "phiMasked",
+        transcription_status as "transcriptionStatus",
+        created_at as "createdAt",
+        completed_at as "completedAt"
+      FROM ambient_transcripts
+      WHERE recording_id = $1 AND tenant_id = $2`,
       [recordingId, tenantId]
     );
 
@@ -459,8 +513,31 @@ router.get('/notes/:id', requireAuth, async (req: AuthedRequest, res) => {
 
     const result = await pool.query(
       `SELECT
-        n.*,
-        t.transcript_text,
+        n.id,
+        n.transcript_id as "transcriptId",
+        n.encounter_id as "encounterId",
+        n.chief_complaint as "chiefComplaint",
+        n.hpi,
+        n.ros,
+        n.physical_exam as "physicalExam",
+        n.assessment,
+        n.plan,
+        n.suggested_icd10_codes as "suggestedIcd10Codes",
+        n.suggested_cpt_codes as "suggestedCptCodes",
+        n.mentioned_medications as "mentionedMedications",
+        n.mentioned_allergies as "mentionedAllergies",
+        n.follow_up_tasks as "followUpTasks",
+        n.differential_diagnoses as "differentialDiagnoses",
+        n.recommended_tests as "recommendedTests",
+        n.overall_confidence as "overallConfidence",
+        n.section_confidence as "sectionConfidence",
+        n.review_status as "reviewStatus",
+        n.generation_status as "generationStatus",
+        n.reviewed_by as "reviewedBy",
+        n.reviewed_at as "reviewedAt",
+        n.created_at as "createdAt",
+        n.completed_at as "completedAt",
+        t.transcript_text as "transcriptText",
         r.patient_id as "patientId",
         r.provider_id as "providerId"
       FROM ambient_generated_notes n
@@ -492,7 +569,30 @@ router.get('/encounters/:encounterId/notes', requireAuth, async (req: AuthedRequ
 
     const result = await pool.query(
       `SELECT
-        n.*,
+        n.id,
+        n.transcript_id as "transcriptId",
+        n.encounter_id as "encounterId",
+        n.chief_complaint as "chiefComplaint",
+        n.hpi,
+        n.ros,
+        n.physical_exam as "physicalExam",
+        n.assessment,
+        n.plan,
+        n.suggested_icd10_codes as "suggestedIcd10Codes",
+        n.suggested_cpt_codes as "suggestedCptCodes",
+        n.mentioned_medications as "mentionedMedications",
+        n.mentioned_allergies as "mentionedAllergies",
+        n.follow_up_tasks as "followUpTasks",
+        n.differential_diagnoses as "differentialDiagnoses",
+        n.recommended_tests as "recommendedTests",
+        n.overall_confidence as "overallConfidence",
+        n.section_confidence as "sectionConfidence",
+        n.review_status as "reviewStatus",
+        n.generation_status as "generationStatus",
+        n.reviewed_by as "reviewedBy",
+        n.reviewed_at as "reviewedAt",
+        n.created_at as "createdAt",
+        n.completed_at as "completedAt",
         t.created_at as "transcriptCreatedAt"
       FROM ambient_generated_notes n
       JOIN ambient_transcripts t ON t.id = n.transcript_id
@@ -736,8 +836,17 @@ router.get('/notes/:id/edits', requireAuth, async (req: AuthedRequest, res) => {
 
     const result = await pool.query(
       `SELECT
-        e.*,
-        u.name as "editorName"
+        e.id,
+        e.generated_note_id as "generatedNoteId",
+        e.edited_by as "editedBy",
+        u.full_name as "editorName",
+        e.section,
+        e.previous_value as "previousValue",
+        e.new_value as "newValue",
+        e.change_type as "changeType",
+        e.edit_reason as "editReason",
+        e.is_significant as "isSignificant",
+        e.created_at as "createdAt"
       FROM ambient_note_edits e
       JOIN users u ON u.id = e.edited_by
       WHERE e.generated_note_id = $1 AND e.tenant_id = $2
@@ -917,13 +1026,19 @@ async function generateNote(
   segments: any
 ): Promise<string> {
   const noteId = crypto.randomUUID();
+  const transcriptMeta = await pool.query(
+    'SELECT recording_id, encounter_id FROM ambient_transcripts WHERE id = $1 AND tenant_id = $2',
+    [transcriptId, tenantId]
+  );
+  const recordingId = transcriptMeta.rows[0]?.recording_id || null;
+  const effectiveEncounterId = encounterId || transcriptMeta.rows[0]?.encounter_id || null;
 
   // Create note record
   await pool.query(
     `INSERT INTO ambient_generated_notes (
-      id, tenant_id, transcript_id, encounter_id, generation_status, started_at
-    ) VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [noteId, tenantId, transcriptId, encounterId, 'processing']
+      id, tenant_id, transcript_id, recording_id, encounter_id, generation_status, started_at, note_content
+    ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)`,
+    [noteId, tenantId, transcriptId, recordingId, effectiveEncounterId, 'processing', JSON.stringify({})]
   );
 
   // Process note generation asynchronously
@@ -1045,6 +1160,20 @@ router.post('/notes/:noteId/generate-patient-summary', requireAuth, requireRoles
       return res.status(400).json({ error: 'Note must be approved before generating patient summary' });
     }
 
+    // Avoid duplicate summaries for the same ambient note
+    const existingSummary = await pool.query(
+      `SELECT id FROM visit_summaries WHERE ambient_note_id = $1 AND tenant_id = $2`,
+      [noteId, tenantId]
+    );
+
+    if (existingSummary.rowCount && existingSummary.rowCount > 0) {
+      return res.json({
+        summaryId: existingSummary.rows[0].id,
+        message: 'Patient summary already exists',
+        existing: true
+      });
+    }
+
     // Generate patient-friendly summary
     const visitDate = note.encounter_date || new Date();
 
@@ -1152,6 +1281,8 @@ router.get('/patient-summaries/:patientId', requireAuth, async (req: AuthedReque
     const result = await pool.query(
       `SELECT
         vs.id,
+        vs.encounter_id as "encounterId",
+        vs.ambient_note_id as "ambientNoteId",
         vs.visit_date as "visitDate",
         vs.provider_name as "providerName",
         vs.summary_text as "summaryText",

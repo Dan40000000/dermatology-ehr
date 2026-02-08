@@ -4,11 +4,15 @@ import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
 import {
   fetchPortalBalance,
   fetchPortalCharges,
+  fetchPortalStatements,
+  fetchPortalStatementDetails,
   fetchPortalPaymentHistory,
   fetchPortalPaymentMethods,
   makePortalPayment,
   type PatientBalance,
   type Charge as PortalCharge,
+  type PortalStatement,
+  type PortalStatementLineItem,
   type PaymentMethod as PortalPaymentMethod,
   type PaymentTransaction,
 } from '../../portalApi';
@@ -17,14 +21,18 @@ export function PortalBillingPage() {
   const { sessionToken, tenantId } = usePatientPortalAuth();
   const [balance, setBalance] = useState<PatientBalance | null>(null);
   const [charges, setCharges] = useState<PortalCharge[]>([]);
+  const [statements, setStatements] = useState<PortalStatement[]>([]);
   const [payments, setPayments] = useState<PaymentTransaction[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PortalPaymentMethod[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'statements' | 'payments' | 'methods'>('overview');
+  const [activeTab, setActiveTab] = useState<'statements' | 'charges' | 'payments' | 'methods'>('statements');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [selectedMethod, setSelectedMethod] = useState<string>('');
   const [processing, setProcessing] = useState(false);
+  const [selectedStatement, setSelectedStatement] = useState<PortalStatement | null>(null);
+  const [statementLineItems, setStatementLineItems] = useState<PortalStatementLineItem[]>([]);
+  const [statementLoading, setStatementLoading] = useState(false);
 
   useEffect(() => {
     fetchBillingData();
@@ -38,15 +46,17 @@ export function PortalBillingPage() {
 
     setLoading(true);
     try {
-      const [balanceData, chargesData, paymentsData, methodsData] = await Promise.all([
+      const [balanceData, chargesData, statementsData, paymentsData, methodsData] = await Promise.all([
         fetchPortalBalance(tenantId, sessionToken),
         fetchPortalCharges(tenantId, sessionToken),
+        fetchPortalStatements(tenantId, sessionToken),
         fetchPortalPaymentHistory(tenantId, sessionToken),
         fetchPortalPaymentMethods(tenantId, sessionToken),
       ]);
 
       setBalance(balanceData);
       setCharges(chargesData.charges || []);
+      setStatements(statementsData.statements || []);
       setPayments(paymentsData.payments || []);
       setPaymentMethods(methodsData.paymentMethods || []);
 
@@ -119,6 +129,22 @@ export function PortalBillingPage() {
       return `Expires ${method.expiryMonth}/${method.expiryYear}`;
     }
     return 'Expiration unavailable';
+  };
+
+  const handleViewStatement = async (statementId: string) => {
+    if (!sessionToken || !tenantId) return;
+    setStatementLoading(true);
+    try {
+      const result = await fetchPortalStatementDetails(tenantId, sessionToken, statementId);
+      setSelectedStatement(result.statement);
+      setStatementLineItems(result.lineItems || []);
+    } catch (error) {
+      console.error('Failed to load statement:', error);
+      setSelectedStatement(null);
+      setStatementLineItems([]);
+    } finally {
+      setStatementLoading(false);
+    }
   };
 
   return (
@@ -245,6 +271,103 @@ export function PortalBillingPage() {
           border-bottom: 2px solid #6366f1;
           margin-bottom: -0.5rem;
           padding-bottom: calc(0.75rem + 0.5rem);
+        }
+
+        .statement-list {
+          display: grid;
+          gap: 1rem;
+          padding: 1.5rem;
+        }
+
+        .statement-card {
+          background: #ffffff;
+          border-radius: 14px;
+          padding: 1.25rem;
+          border: 1px solid #e5e7eb;
+          display: grid;
+          gap: 0.75rem;
+        }
+
+        .statement-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 1rem;
+        }
+
+        .statement-number {
+          font-weight: 700;
+          color: #111827;
+        }
+
+        .statement-meta {
+          display: flex;
+          gap: 1rem;
+          flex-wrap: wrap;
+          color: #6b7280;
+          font-size: 0.875rem;
+        }
+
+        .statement-balance {
+          font-size: 1.25rem;
+          font-weight: 700;
+          color: #111827;
+        }
+
+        .statement-actions {
+          display: flex;
+          gap: 0.5rem;
+        }
+
+        .statement-view-btn {
+          padding: 0.5rem 1rem;
+          border-radius: 8px;
+          border: none;
+          background: #6366f1;
+          color: white;
+          font-weight: 600;
+          cursor: pointer;
+        }
+
+        .statement-modal-backdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(15, 23, 42, 0.6);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+          padding: 1.5rem;
+        }
+
+        .statement-modal {
+          background: white;
+          border-radius: 16px;
+          max-width: 720px;
+          width: 100%;
+          max-height: 85vh;
+          overflow: auto;
+          padding: 1.5rem;
+          box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+        }
+
+        .statement-modal-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 1rem;
+        }
+
+        .statement-line-item {
+          display: flex;
+          justify-content: space-between;
+          padding: 0.75rem 0;
+          border-bottom: 1px solid #e5e7eb;
+          gap: 1rem;
+        }
+
+        .statement-line-item:last-child {
+          border-bottom: none;
         }
 
         .content-section {
@@ -646,10 +769,16 @@ export function PortalBillingPage() {
         {/* Tabs */}
         <div className="tabs">
           <button
-            className={`tab ${activeTab === 'overview' ? 'active' : ''}`}
-            onClick={() => setActiveTab('overview')}
+            className={`tab ${activeTab === 'statements' ? 'active' : ''}`}
+            onClick={() => setActiveTab('statements')}
           >
             Statements
+          </button>
+          <button
+            className={`tab ${activeTab === 'charges' ? 'active' : ''}`}
+            onClick={() => setActiveTab('charges')}
+          >
+            Charges
           </button>
           <button
             className={`tab ${activeTab === 'payments' ? 'active' : ''}`}
@@ -667,7 +796,65 @@ export function PortalBillingPage() {
 
         {/* Content */}
         <div className="content-section">
-          {activeTab === 'overview' && (
+          {activeTab === 'statements' && (
+            <>
+              <div className="section-header">
+                <h3 className="section-title">Statements</h3>
+              </div>
+              {loading ? (
+                <div style={{ padding: '1.5rem' }}>
+                  {[1, 2, 3].map(i => (
+                    <div key={i} className="loading-skeleton" style={{ height: '4rem', marginBottom: '1rem' }} />
+                  ))}
+                </div>
+              ) : statements.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M9 14l6-6M4 4v5h.01M4 4l5 5M20 20v-5h-.01M20 20l-5-5" />
+                    </svg>
+                  </div>
+                  <p>No statements available</p>
+                </div>
+              ) : (
+                <div className="statement-list">
+                  {statements.map(statement => (
+                    <div key={statement.id} className="statement-card">
+                      <div className="statement-header">
+                        <div>
+                          <div className="statement-number">{statement.statementNumber}</div>
+                          <div className="statement-meta">
+                            <span>Date: {formatDate(statement.statementDate)}</span>
+                            {statement.dueDate && <span>Due: {formatDate(statement.dueDate)}</span>}
+                            {statement.sentVia && <span>Sent via: {statement.sentVia}</span>}
+                          </div>
+                        </div>
+                        <div className="statement-balance">
+                          {formatCurrency(statement.balanceCents / 100)}
+                        </div>
+                      </div>
+                      <div className="statement-meta">
+                        <span>Status: {statement.status}</span>
+                        {statement.lineItemCount !== undefined && (
+                          <span>{statement.lineItemCount} line item(s)</span>
+                        )}
+                      </div>
+                      <div className="statement-actions">
+                        <button
+                          className="statement-view-btn"
+                          onClick={() => handleViewStatement(statement.id)}
+                        >
+                          View Statement
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {activeTab === 'charges' && (
             <>
               <div className="section-header">
                 <h3 className="section-title">Recent Charges</h3>
@@ -808,6 +995,73 @@ export function PortalBillingPage() {
           )}
         </div>
       </div>
+
+      {selectedStatement && (
+        <div
+          className="statement-modal-backdrop"
+          onClick={() => {
+            setSelectedStatement(null);
+            setStatementLineItems([]);
+          }}
+        >
+          <div className="statement-modal" onClick={e => e.stopPropagation()}>
+            <div className="statement-modal-header">
+              <h3>Statement {selectedStatement.statementNumber}</h3>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => {
+                  setSelectedStatement(null);
+                  setStatementLineItems([]);
+                }}
+              >
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            {statementLoading ? (
+              <div style={{ padding: '1rem' }}>
+                <div className="loading-skeleton" style={{ height: '6rem' }} />
+              </div>
+            ) : (
+              <>
+                <div className="statement-meta" style={{ marginBottom: '1rem' }}>
+                  <span>Date: {formatDate(selectedStatement.statementDate)}</span>
+                  {selectedStatement.dueDate && <span>Due: {formatDate(selectedStatement.dueDate)}</span>}
+                  <span>Status: {selectedStatement.status}</span>
+                  <span>Balance: {formatCurrency(selectedStatement.balanceCents / 100)}</span>
+                </div>
+
+                {statementLineItems.length === 0 ? (
+                  <p style={{ color: '#6b7280' }}>No line items available.</p>
+                ) : (
+                  statementLineItems.map(item => (
+                    <div key={item.id} className="statement-line-item">
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{item.description}</div>
+                        <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>
+                          {formatDate(item.serviceDate)}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 600 }}>{formatCurrency(item.amountCents / 100)}</div>
+                        {item.patientResponsibilityCents !== undefined && (
+                          <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>
+                            Patient: {formatCurrency(item.patientResponsibilityCents / 100)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Payment Modal */}
       {showPaymentModal && (

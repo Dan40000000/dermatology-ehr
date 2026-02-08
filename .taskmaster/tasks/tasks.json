@@ -502,11 +502,369 @@
             "testStrategy": "Validate JSON parses correctly; run dependency cycle detection algorithm asserts no cycles; git diff confirms commit with correct tag; manual review of generated tasks structure."
           }
         ]
+      },
+      {
+        "id": 13,
+        "title": "Centralized Config Layer (UNIVERSAL-002)",
+        "description": "Create shared config schema and validation to replace scattered env usage.",
+        "details": "Inventory all env vars, define Zod schema in shared/config, add startup validation, document .env.schema, and update backend/frontend to consume config instead of hardcoded URLs or credentials.",
+        "testStrategy": "Unit tests for schema parsing; integration test fails fast on missing required vars; smoke test validates config values in runtime.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "completed",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Inventory env vars and define schema",
+            "description": "Audit backend, frontend, and scripts for env usage and codify the full config schema.",
+            "dependencies": [],
+            "details": "Create shared/config/schema.ts and .env.schema after cataloging all required and optional variables; mark defaults and sensitive entries.",
+            "status": "completed",
+            "testStrategy": "Schema unit tests cover required, optional, and default values."
+          },
+          {
+            "id": 2,
+            "title": "Implement config loader and validation",
+            "description": "Build config loading with startup validation and clear error reporting.",
+            "dependencies": [
+              1
+            ],
+            "details": "Create shared/config/validate.ts plus services and features config files, load config at startup, and surface actionable errors on missing values.",
+            "status": "completed",
+            "testStrategy": "Startup fails with clear errors when required vars are missing or invalid."
+          },
+          {
+            "id": 3,
+            "title": "Replace hardcoded config and update env examples",
+            "description": "Remove hardcoded URLs and credentials and update env templates.",
+            "dependencies": [
+              2
+            ],
+            "details": "Swap hardcoded endpoints to config lookups, update .env.local.example and .env.dev.example, and document feature flags if needed.",
+            "status": "completed",
+            "testStrategy": "Repo scan confirms no hardcoded endpoints remain; app boots with updated env templates."
+          }
+        ]
+      },
+      {
+        "id": 14,
+        "title": "Security Middleware Stack (UNIVERSAL-006)",
+        "description": "Implement baseline security controls for PII, tenant isolation, privileged endpoints, and input sanitization.",
+        "details": "Add backend security modules for encryption, tenant enforcement, secret management, admin auth for health endpoints, and input sanitization; update frontend token handling to HttpOnly cookies.",
+        "testStrategy": "Unit tests for encryption and sanitization; integration tests enforce tenant isolation and admin auth; security regression checks for critical routes.",
+        "priority": "high",
+        "dependencies": [
+          13
+        ],
+        "status": "in_progress",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "PII encryption for SSN and sensitive fields",
+            "description": "Encrypt SSNs and other PII at rest with controlled accessors.",
+            "dependencies": [],
+            "details": "Implement AES-256 encryption helpers, migrate SSN storage to encrypted columns or accessors, and backfill existing data.",
+            "status": "completed",
+            "testStrategy": "Round-trip tests for encryption and decryption; migration test covers backfill."
+          },
+          {
+            "id": 2,
+            "title": "Tenant isolation and privileged endpoint auth",
+            "description": "Enforce tenant filtering and require admin auth on sensitive endpoints.",
+            "dependencies": [
+              1
+            ],
+            "details": "Apply tenant_id enforcement in services and repositories, protect /health/init-db and /health/sync-data, and add middleware coverage.",
+            "status": "pending",
+            "testStrategy": "Integration tests block cross-tenant access and require admin tokens on privileged endpoints."
+          },
+          {
+            "id": 3,
+            "title": "Input sanitization, secret management, and frontend token storage",
+            "description": "Reduce injection risk, centralize secrets, and move tokens to HttpOnly cookies.",
+            "dependencies": [
+              2
+            ],
+            "details": "Add request sanitizers for SQL and XSS, move secrets to config or secret manager, and shift frontend auth tokens to HttpOnly cookie flow.",
+            "status": "pending",
+            "testStrategy": "Fuzz tests for sanitizers, config tests for secrets, and auth regression tests for cookie sessions."
+          }
+        ]
+      },
+      {
+        "id": 15,
+        "title": "Service Layer + Response Envelope (UNIVERSAL-001)",
+        "description": "Standardize backend service layer with BaseService, ResponseEnvelope, and async route handling.",
+        "details": "Add BaseService for transactions and error mapping, create ResponseEnvelope helpers, implement asyncHandler wrapper, and wire ServiceContainer usage across routes.",
+        "testStrategy": "Unit tests for BaseService and ResponseEnvelope; route tests validate consistent error format.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Add BaseService, ResponseEnvelope, and asyncHandler utilities",
+            "description": "Create core service utilities and document usage patterns.",
+            "dependencies": [],
+            "details": "Add BaseService, ResponseEnvelope, and asyncHandler utilities in backend/src/lib (or backend/src/core) to standardize transactions and error responses.",
+            "status": "pending",
+            "testStrategy": "Unit tests cover success and error envelopes plus transaction wrapper behavior."
+          },
+          {
+            "id": 2,
+            "title": "Wire ServiceContainer into routes and services",
+            "description": "Use DI for service instantiation across routes.",
+            "dependencies": [
+              1
+            ],
+            "details": "Register services in ServiceProvider, inject into route handlers, and remove ad hoc instantiation to ensure consistent lifecycles.",
+            "status": "pending",
+            "testStrategy": "Route tests confirm container wiring and service lifetimes."
+          },
+          {
+            "id": 3,
+            "title": "Migrate high-traffic routes to the service layer",
+            "description": "Refactor core routes to use BaseService and ResponseEnvelope.",
+            "dependencies": [
+              2
+            ],
+            "details": "Refactor patients, appointments, billing, and prescriptions routes to use the service layer with consistent error handling.",
+            "status": "pending",
+            "testStrategy": "Integration tests verify response shapes and preserve existing behaviors."
+          }
+        ]
+      },
+      {
+        "id": 16,
+        "title": "Repository Adoption + Migration Consolidation (UNIVERSAL-004)",
+        "description": "Adopt BaseRepository for data access and consolidate migrations and seeds into a single runner.",
+        "details": "Create migrator and seeder to run all SQL migrations, add repositories for core entities, replace inline SQL with repository calls, and add missing indexes or soft delete support.",
+        "testStrategy": "Migration integration tests cover full migration set; repository tests cover CRUD and pagination; performance checks for key queries.",
+        "priority": "high",
+        "dependencies": [
+          15
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Build migrator and seeder to run all migrations",
+            "description": "Create a single migrator and seeder to execute all SQL files reliably.",
+            "dependencies": [],
+            "details": "Implement backend/src/db/migrator.ts and backend/src/db/seeder.ts to load all migration and seed files in order with consistent logging.",
+            "status": "pending",
+            "testStrategy": "Run migrator on a clean database and verify expected tables and seed data."
+          },
+          {
+            "id": 2,
+            "title": "Implement repositories for core entities",
+            "description": "Add repositories for key domains using BaseRepository.",
+            "dependencies": [
+              1
+            ],
+            "details": "Create PatientRepository, AppointmentRepository, EncounterRepository, and BillingRepository with tenant scoping and soft delete support.",
+            "status": "pending",
+            "testStrategy": "Repository integration tests verify CRUD, pagination, and soft delete behaviors."
+          },
+          {
+            "id": 3,
+            "title": "Replace inline SQL in core routes",
+            "description": "Refactor data access to repositories and remove SELECT * usage.",
+            "dependencies": [
+              2
+            ],
+            "details": "Update top routes and services to use repositories, remove inline SQL, and add missing indexes for critical queries.",
+            "status": "pending",
+            "testStrategy": "Route tests verify behavior parity and query plan checks confirm index usage."
+          }
+        ]
+      },
+      {
+        "id": 17,
+        "title": "Contract-First Development (UNIVERSAL-003)",
+        "description": "Introduce shared API contracts using Zod schemas, response types, and request validation.",
+        "details": "Create shared/contracts schemas and errors, add validateRequest middleware, and generate OpenAPI from schemas.",
+        "testStrategy": "Schema unit tests and route validation tests; OpenAPI generation CI check.",
+        "priority": "high",
+        "dependencies": [
+          13
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define shared Zod schemas for core domains",
+            "description": "Create contract schemas for key entities and responses.",
+            "dependencies": [],
+            "details": "Add shared/contracts/schemas for patients, appointments, encounters, billing, and auth plus shared response types.",
+            "status": "pending",
+            "testStrategy": "Schema tests validate examples and required fields."
+          },
+          {
+            "id": 2,
+            "title": "Add request and response validation middleware",
+            "description": "Validate requests and responses against shared contracts.",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement validateRequest middleware, standardize error mapping, and enforce response envelopes for core routes.",
+            "status": "pending",
+            "testStrategy": "Route tests assert invalid input is rejected and responses match schema."
+          },
+          {
+            "id": 3,
+            "title": "Generate OpenAPI and add CI enforcement",
+            "description": "Generate API docs from schemas and keep them in sync.",
+            "dependencies": [
+              2
+            ],
+            "details": "Add script to generate OpenAPI from Zod schemas and wire a CI check to ensure specs are updated.",
+            "status": "pending",
+            "testStrategy": "CI fails when schema changes do not update OpenAPI output."
+          }
+        ]
+      },
+      {
+        "id": 18,
+        "title": "Frontend Data Architecture (UNIVERSAL-005)",
+        "description": "Standardize frontend data fetching with React Query, typed hooks, and UI state stores.",
+        "details": "Set up queryClient, consolidate queries and mutations, integrate contract types, and migrate pages to hooks with cache invalidation.",
+        "testStrategy": "Hook unit tests, React Query cache behavior tests, and key E2E flows for data freshness.",
+        "priority": "high",
+        "dependencies": [
+          17
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create query client and API wrapper",
+            "description": "Centralize React Query configuration and typed API calls.",
+            "dependencies": [],
+            "details": "Add frontend/src/data/queryClient.ts, a typed API wrapper, and shared defaults for retries, caching, and error handling.",
+            "status": "pending",
+            "testStrategy": "Unit tests verify query client defaults and API wrapper behavior."
+          },
+          {
+            "id": 2,
+            "title": "Implement core query and mutation hooks",
+            "description": "Create hooks for core workflows using shared contracts.",
+            "dependencies": [
+              1
+            ],
+            "details": "Add usePatients, useAppointments, useEncounters, and useBilling hooks with cache invalidation and optimistic updates.",
+            "status": "pending",
+            "testStrategy": "Hook tests verify caching, invalidation, and error handling."
+          },
+          {
+            "id": 3,
+            "title": "Migrate pages to hooks and UI store",
+            "description": "Replace duplicate fetches and move UI state to stores.",
+            "dependencies": [
+              2
+            ],
+            "details": "Refactor core pages to use query hooks, remove redundant useState fetches, and move UI-only state to a store.",
+            "status": "pending",
+            "testStrategy": "E2E flows confirm data freshness and reduced duplicate requests."
+          }
+        ]
+      },
+      {
+        "id": 19,
+        "title": "Test Infrastructure (UNIVERSAL-007)",
+        "description": "Build fixtures, factories, and CI pipeline for unit, integration, and E2E tests with coverage gates.",
+        "details": "Add shared fixtures and factories, update GitHub Actions to run the full test pyramid, and provide scripts/test-all.sh.",
+        "testStrategy": "CI run proves unit, integration, and E2E suites pass and coverage thresholds are enforced.",
+        "priority": "high",
+        "dependencies": [
+          15,
+          17
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create fixtures, factories, and mocks",
+            "description": "Establish shared test data for backend and frontend suites.",
+            "dependencies": [],
+            "details": "Add testing/fixtures, testing/factories, and testing/mocks with reusable data builders for core entities.",
+            "status": "pending",
+            "testStrategy": "Unit tests verify factory output and fixture consistency."
+          },
+          {
+            "id": 2,
+            "title": "Update CI workflows for full test pyramid",
+            "description": "Run unit, integration, and E2E tests in CI with coverage gates.",
+            "dependencies": [
+              1
+            ],
+            "details": "Update .github/workflows to run backend, frontend, and e2e suites with coverage thresholds and required services.",
+            "status": "pending",
+            "testStrategy": "CI reports coverage and fails when thresholds are not met."
+          },
+          {
+            "id": 3,
+            "title": "Add local test-all script and docs",
+            "description": "Provide a single script to run the full test pyramid locally.",
+            "dependencies": [
+              2
+            ],
+            "details": "Add scripts/test-all.sh with environment setup and update TESTING.md to document the workflow.",
+            "status": "pending",
+            "testStrategy": "Local run passes on a clean environment with documented prerequisites."
+          }
+        ]
+      },
+      {
+        "id": 20,
+        "title": "External Adapters for Integrations (UNIVERSAL-008)",
+        "description": "Replace mocked integrations with adapter interfaces and real implementations behind feature flags.",
+        "details": "Define adapter interfaces and factory, implement real adapters for email, SMS, storage, and payments, and migrate services to adapter usage with high-fidelity mocks.",
+        "testStrategy": "Adapter contract tests; integration tests using sandbox or mock implementations; failover tests for disabled integrations.",
+        "priority": "high",
+        "dependencies": [
+          13,
+          15
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define adapter interfaces and factory",
+            "description": "Establish adapter contracts and selection logic.",
+            "dependencies": [],
+            "details": "Create adapter interfaces and an AdapterFactory that selects real or mock implementations based on config and feature flags.",
+            "status": "pending",
+            "testStrategy": "Unit tests verify adapter selection and interface compliance."
+          },
+          {
+            "id": 2,
+            "title": "Implement real adapters for priority services",
+            "description": "Add real adapters for the most critical integrations.",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement adapters for SendGrid, Twilio, S3, and Stripe (or prioritized list) with proper error handling and retries.",
+            "status": "pending",
+            "testStrategy": "Integration tests validate adapter behavior against sandbox or mocked endpoints."
+          },
+          {
+            "id": 3,
+            "title": "Migrate service usage and tighten mocks",
+            "description": "Switch existing services to adapter usage and align mocks to real contracts.",
+            "dependencies": [
+              2
+            ],
+            "details": "Refactor call sites to use adapter interfaces, update mock adapters to match real payloads, and add parity tests.",
+            "status": "pending",
+            "testStrategy": "Contract tests ensure mocks match real adapter interfaces and payload shapes."
+          }
+        ]
       }
     ],
     "metadata": {
       "created": "2025-12-30T19:36:14.078Z",
-      "updated": "2025-12-30T19:36:14.078Z",
+      "updated": "2026-01-24T21:38:58Z",
       "description": "Tasks for master context"
     }
   },

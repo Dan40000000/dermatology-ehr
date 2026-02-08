@@ -43,6 +43,7 @@ const PHI_FIELD_NAMES = [
   'streetAddress',
   'street_address',
   'city',
+  'zip',
   'zipCode',
   'zip_code',
   'postal_code',

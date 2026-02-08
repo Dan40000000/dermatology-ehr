@@ -9,12 +9,15 @@ interface Allergy {
 }
 
 interface Medication {
+  id: string;
   medicationName: string;
   sig: string;
-  quantity: string;
-  refills: number;
+  quantity?: string;
+  refills?: number;
   prescribedDate: string;
-  providerName: string;
+  providerName?: string;
+  strength?: string;
+  pharmacyName?: string;
 }
 
 interface VitalRecord {
@@ -48,6 +51,8 @@ export function PortalHealthRecordPage() {
   const [labResults, setLabResults] = useState<LabResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'allergies' | 'medications' | 'vitals' | 'labs'>('overview');
+  const [refillNotice, setRefillNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [refillInFlight, setRefillInFlight] = useState<string | null>(null);
 
   useEffect(() => {
     fetchHealthData();
@@ -99,6 +104,25 @@ export function PortalHealthRecordPage() {
     if (f === 'h' || f === 'high' || f === 'hh') return '#dc2626';
     if (f === 'l' || f === 'low' || f === 'll') return '#2563eb';
     return '#10b981';
+  };
+
+  const requestRefill = async (prescriptionId: string) => {
+    if (!prescriptionId) return;
+    setRefillNotice(null);
+    setRefillInFlight(prescriptionId);
+
+    try {
+      await patientPortalFetch('/api/patient-portal-data/refill-requests', {
+        method: 'POST',
+        body: JSON.stringify({ prescriptionId }),
+      });
+      setRefillNotice({ type: 'success', message: 'Refill request submitted.' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to submit refill request.';
+      setRefillNotice({ type: 'error', message });
+    } finally {
+      setRefillInFlight(null);
+    }
   };
 
   return (
@@ -329,6 +353,42 @@ export function PortalHealthRecordPage() {
           justify-content: space-between;
           align-items: flex-start;
           margin-bottom: 0.5rem;
+        }
+
+        .refill-button {
+          background: #2563eb;
+          color: white;
+          border: none;
+          padding: 0.4rem 0.75rem;
+          border-radius: 8px;
+          font-size: 0.75rem;
+          font-weight: 600;
+          cursor: pointer;
+        }
+
+        .refill-button:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .refill-notice {
+          margin: 0 1.5rem 1rem;
+          padding: 0.75rem 1rem;
+          border-radius: 10px;
+          font-size: 0.875rem;
+          font-weight: 500;
+        }
+
+        .refill-notice.success {
+          background: #ecfdf3;
+          color: #047857;
+          border: 1px solid #a7f3d0;
+        }
+
+        .refill-notice.error {
+          background: #fef2f2;
+          color: #b91c1c;
+          border: 1px solid #fecaca;
         }
 
         .medication-name {
@@ -813,6 +873,11 @@ export function PortalHealthRecordPage() {
                   Current Medications
                 </h3>
               </div>
+              {refillNotice && (
+                <div className={`refill-notice ${refillNotice.type}`}>
+                  {refillNotice.message}
+                </div>
+              )}
               {loading ? (
                 <div style={{ padding: '1.5rem' }}>
                   {[1, 2, 3].map(i => (
@@ -833,16 +898,32 @@ export function PortalHealthRecordPage() {
                 medications.map((med, idx) => (
                   <div key={idx} className="medication-item">
                     <div className="medication-header">
-                      <h4 className="medication-name">{med.medicationName}</h4>
-                      <span className="medication-date">
-                        Prescribed: {formatDate(med.prescribedDate)}
-                      </span>
+                      <div>
+                        <h4 className="medication-name">
+                          {med.medicationName}
+                          {med.strength ? ` ${med.strength}` : ''}
+                        </h4>
+                        <span className="medication-date">
+                          Prescribed: {formatDate(med.prescribedDate)}
+                        </span>
+                      </div>
+                      {med.id && (
+                        <button
+                          type="button"
+                          className="refill-button"
+                          onClick={() => requestRefill(med.id)}
+                          disabled={refillInFlight === med.id}
+                        >
+                          {refillInFlight === med.id ? 'Submitting...' : 'Request Refill'}
+                        </button>
+                      )}
                     </div>
                     <p className="medication-sig">{med.sig}</p>
                     <div className="medication-meta">
                       {med.quantity && <span>Qty: {med.quantity}</span>}
                       {med.refills !== undefined && <span>Refills: {med.refills}</span>}
                       {med.providerName && <span>By: {med.providerName}</span>}
+                      {med.pharmacyName && <span>Pharmacy: {med.pharmacyName}</span>}
                     </div>
                   </div>
                 ))

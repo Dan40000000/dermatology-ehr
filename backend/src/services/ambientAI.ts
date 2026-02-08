@@ -2,8 +2,8 @@
  * Ambient AI Service
  *
  * AI service integrating:
- * - OpenAI Whisper API for speech-to-text transcription
- * - Anthropic Claude / OpenAI GPT-4 for clinical note generation
+ * - OpenAI transcription models (gpt-4o-transcribe[-diarize]/whisper-1)
+ * - Anthropic Claude / OpenAI for clinical note generation
  * - Medical NLP for code suggestions and entity extraction
  *
  * Falls back to mock implementations if API keys not configured
@@ -18,6 +18,11 @@ import { AgentConfiguration } from './agentConfigService';
 // Environment configuration
 const getOpenAIKey = () => process.env.OPENAI_API_KEY;
 const getAnthropicKey = () => process.env.ANTHROPIC_API_KEY;
+const getOpenAITranscribeModel = () =>
+  process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
+const getOpenAINoteModel = () => process.env.OPENAI_NOTE_MODEL || 'gpt-4o';
+const getAnthropicNoteModel = () =>
+  process.env.ANTHROPIC_NOTE_MODEL || 'claude-3-5-sonnet-20241022';
 
 // API endpoints
 const OPENAI_TRANSCRIPTION_URL = 'https://api.openai.com/v1/audio/transcriptions';
@@ -109,6 +114,12 @@ export interface TranscriptionResult {
   duration: number;
 }
 
+export interface LiveTranscriptionResult {
+  text: string;
+  confidence: number;
+  source: 'live' | 'mock';
+}
+
 export interface DifferentialDiagnosis {
   condition: string;
   confidence: number;
@@ -161,20 +172,22 @@ export interface ExtractedData {
 }
 
 /**
- * Transcribe audio using OpenAI Whisper API (or mock if not configured)
+ * Transcribe audio using OpenAI transcription API (or mock if not configured)
  */
 export async function transcribeAudio(
   audioFilePath: string,
   durationSeconds: number
 ): Promise<TranscriptionResult> {
-  // Use real OpenAI Whisper if API key available
+  // Use real OpenAI transcription if API key available
   const openAIKey = getOpenAIKey();
   if (openAIKey) {
     try {
-      return await transcribeWithWhisper(audioFilePath, durationSeconds, openAIKey);
+      const model = getOpenAITranscribeModel();
+      return await transcribeWithOpenAI(audioFilePath, durationSeconds, openAIKey, model);
     } catch (error) {
-      logger.warn('OpenAI Whisper transcription failed, falling back to mock', {
+      logger.warn('OpenAI transcription failed, falling back to mock', {
         error: (error as Error).message,
+        model: getOpenAITranscribeModel(),
       });
       // Fall through to mock implementation
     }
@@ -185,70 +198,235 @@ export async function transcribeAudio(
 }
 
 /**
- * Real OpenAI Whisper transcription
+ * OpenAI transcription (Whisper or gpt-4o-transcribe variants)
  */
-async function transcribeWithWhisper(
+async function transcribeWithOpenAI(
   audioFilePath: string,
   durationSeconds: number,
-  openAIKey: string
+  openAIKey: string,
+  model: string
 ): Promise<TranscriptionResult> {
-  logger.info('Transcribing audio with OpenAI Whisper', { durationSeconds });
+  const resolvedModel = model || 'gpt-4o-transcribe-diarize';
+  logger.info('Transcribing audio with OpenAI', { durationSeconds, model: resolvedModel });
 
   // Read audio file
   const audioBuffer = await fs.readFile(audioFilePath);
 
-  // Create form data for Whisper API
+  // Detect content type from file extension
+  const ext = audioFilePath.split('.').pop()?.toLowerCase() || 'webm';
+  const contentTypeMap: Record<string, string> = {
+    wav: 'audio/wav',
+    mp3: 'audio/mpeg',
+    m4a: 'audio/mp4',
+    webm: 'audio/webm',
+    ogg: 'audio/ogg',
+    flac: 'audio/flac'
+  };
+  const contentType = contentTypeMap[ext] || 'audio/webm';
+  const filename = `audio.${ext}`;
+
+  // Create form data for transcription API
   const formData = new FormData();
   formData.append('file', audioBuffer, {
-    filename: 'audio.webm',
-    contentType: 'audio/webm'
+    filename,
+    contentType
   });
-  formData.append('model', 'whisper-1');
+  formData.append('model', resolvedModel);
   formData.append('language', 'en');
-  formData.append('response_format', 'verbose_json'); // Get timestamps and word-level details
-  formData.append('timestamp_granularities', JSON.stringify(['segment']));
 
-  // Call OpenAI Whisper API
+  const isWhisper = resolvedModel === 'whisper-1';
+  const isDiarized = resolvedModel === 'gpt-4o-transcribe-diarize';
+
+  if (isWhisper) {
+    formData.append('response_format', 'verbose_json'); // Timestamps and segments
+    formData.append('timestamp_granularities', JSON.stringify(['segment']));
+  } else if (isDiarized) {
+    formData.append('response_format', 'diarized_json');
+  } else {
+    formData.append('response_format', 'json');
+  }
+
+  // Convert form-data to buffer for native fetch compatibility
+  const formBuffer = formData.getBuffer();
+  const formHeaders = formData.getHeaders();
+
   const response = await fetch(OPENAI_TRANSCRIPTION_URL, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${openAIKey}`,
-      ...formData.getHeaders()
+      ...formHeaders
     },
-    body: formData
+    body: formBuffer
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Whisper API error: ${response.status} - ${errorText}`);
+    throw new Error(`OpenAI transcription error: ${response.status} - ${errorText}`);
   }
 
-  const whisperResult = await response.json() as any;
-  logger.info('Whisper transcription completed');
+  const transcription = await response.json() as any;
 
-  // Process Whisper output into our format
-  // Note: Whisper doesn't do speaker diarization natively, so we'll use heuristics
-  // For production, consider using additional services like Pyannote or AssemblyAI
-  const segments = processWhisperSegments(whisperResult.segments || [], durationSeconds);
-  const fullText = whisperResult.text || '';
+  if (isWhisper) {
+    const segments = processWhisperSegments(transcription.segments || [], durationSeconds);
+    const fullText = transcription.text || '';
+    const phiEntities = detectPHI(fullText);
 
-  // Detect PHI in the transcribed text
+    return {
+      text: fullText,
+      segments,
+      speakers: {
+        'speaker_0': { label: 'doctor', name: 'Provider' },
+        'speaker_1': { label: 'patient' }
+      },
+      speakerCount: 2,
+      confidence: 0.85,
+      wordCount: fullText.split(/\s+/).length,
+      phiEntities,
+      language: transcription.language || 'en',
+      duration: durationSeconds
+    };
+  }
+
+  if (isDiarized) {
+    const fullText = transcription.text || '';
+    const diarized = processDiarizedSegments(transcription.segments || []);
+    const segments = diarized.segments.length > 0
+      ? diarized.segments
+      : buildSingleSpeakerSegments(fullText, durationSeconds);
+    const speakers = diarized.speakers || {
+      'speaker_0': { label: 'doctor', name: 'Provider' }
+    };
+    const phiEntities = detectPHI(fullText);
+
+    return {
+      text: fullText,
+      segments,
+      speakers,
+      speakerCount: Object.keys(speakers).length,
+      confidence: 0.85,
+      wordCount: fullText.split(/\s+/).length,
+      phiEntities,
+      language: transcription.language || 'en',
+      duration: durationSeconds
+    };
+  }
+
+  // Non-diarized JSON output (text only)
+  const fullText = transcription.text || '';
+  const segments = buildSingleSpeakerSegments(fullText, durationSeconds);
   const phiEntities = detectPHI(fullText);
 
   return {
     text: fullText,
     segments,
     speakers: {
-      'speaker_0': { label: 'doctor', name: 'Provider' },
-      'speaker_1': { label: 'patient' }
+      'speaker_0': { label: 'doctor', name: 'Provider' }
     },
-    speakerCount: 2,
-    confidence: 0.85, // Whisper doesn't provide overall confidence
+    speakerCount: 1,
+    confidence: 0.85,
     wordCount: fullText.split(/\s+/).length,
     phiEntities,
-    language: whisperResult.language || 'en',
+    language: transcription.language || 'en',
     duration: durationSeconds
   };
+}
+
+function resolveLiveTranscribeModel(): string {
+  return (
+    process.env.AMBIENT_LIVE_TRANSCRIBE_MODEL ||
+    process.env.OPENAI_TRANSCRIBE_MODEL ||
+    'gpt-4o-transcribe'
+  );
+}
+
+function extractLiveConfidence(transcription: any): number {
+  if (typeof transcription?.confidence === 'number') {
+    return transcription.confidence;
+  }
+
+  const segments = Array.isArray(transcription?.segments) ? transcription.segments : [];
+  const confidences = segments
+    .map((seg: any) => (typeof seg?.confidence === 'number' ? seg.confidence : null))
+    .filter((value: number | null) => value !== null) as number[];
+
+  if (confidences.length === 0) {
+    return 0.85;
+  }
+
+  const avg = confidences.reduce((sum, value) => sum + value, 0) / confidences.length;
+  return Math.max(0.5, Math.min(0.99, avg));
+}
+
+function mockLiveTranscription(chunkIndex: number): LiveTranscriptionResult {
+  const samples = [
+    'Patient reports itching on the scalp for two weeks.',
+    'No prior history of psoriasis or seborrheic dermatitis.',
+    'Exam shows erythematous, scaly plaques along the hairline.',
+    'Recommend ketoconazole shampoo twice weekly.',
+    'Discussed avoiding harsh hair products.',
+    'Follow-up in four weeks if symptoms persist.'
+  ];
+  const text = samples[chunkIndex % samples.length] || '';
+  return { text, confidence: 0.75, source: 'mock' };
+}
+
+/**
+ * Transcribe a short live audio chunk for streaming UI updates.
+ */
+export async function transcribeLiveAudioChunk(
+  audioBuffer: Buffer,
+  mimeType: string,
+  chunkIndex: number
+): Promise<LiveTranscriptionResult> {
+  const openAIKey = getOpenAIKey();
+  if (!openAIKey) {
+    return mockLiveTranscription(chunkIndex);
+  }
+
+  const model = resolveLiveTranscribeModel();
+  try {
+    const formData = new FormData();
+    formData.append('file', audioBuffer, {
+      filename: `live-chunk-${chunkIndex}.webm`,
+      contentType: mimeType || 'audio/webm'
+    });
+    formData.append('model', model);
+    formData.append('language', 'en');
+
+    if (model === 'whisper-1') {
+      formData.append('response_format', 'json');
+    } else {
+      formData.append('response_format', 'json');
+    }
+
+    const response = await fetch(OPENAI_TRANSCRIPTION_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${openAIKey}`,
+        ...formData.getHeaders()
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI live transcription error: ${response.status} - ${errorText}`);
+    }
+
+    const transcription = await response.json() as any;
+    const text = transcription.text || '';
+    return {
+      text,
+      confidence: extractLiveConfidence(transcription),
+      source: 'live'
+    };
+  } catch (error: any) {
+    logger.warn('OpenAI live transcription failed, falling back to mock', {
+      error: error?.message,
+      model
+    });
+    return mockLiveTranscription(chunkIndex);
+  }
 }
 
 /**
@@ -294,6 +472,52 @@ function processWhisperSegments(whisperSegments: any[], duration: number): Trans
   }
 
   return segments;
+}
+
+function buildSingleSpeakerSegments(fullText: string, duration: number): TranscriptionSegment[] {
+  if (!fullText) return [];
+  return [
+    {
+      speaker: 'speaker_0',
+      text: fullText,
+      start: 0,
+      end: duration,
+      confidence: 0.85
+    }
+  ];
+}
+
+function processDiarizedSegments(
+  diarizedSegments: any[]
+): { segments: TranscriptionSegment[]; speakers: SpeakerInfo } {
+  const speakerMap = new Map<string, string>();
+  const speakers: SpeakerInfo = {};
+  let speakerIndex = 0;
+
+  const segments: TranscriptionSegment[] = diarizedSegments
+    .filter((segment) => segment && typeof segment.text === 'string')
+    .map((segment) => {
+      const rawSpeaker = typeof segment.speaker === 'string' ? segment.speaker : 'A';
+      let speakerId = speakerMap.get(rawSpeaker);
+      if (!speakerId) {
+        speakerId = `speaker_${speakerIndex}`;
+        speakerMap.set(rawSpeaker, speakerId);
+        speakers[speakerId] = {
+          label: speakerIndex === 0 ? 'doctor' : 'patient'
+        };
+        speakerIndex += 1;
+      }
+
+      return {
+        speaker: speakerId,
+        text: segment.text,
+        start: typeof segment.start === 'number' ? segment.start : 0,
+        end: typeof segment.end === 'number' ? segment.end : 0,
+        confidence: typeof segment.confidence === 'number' ? segment.confidence : 0.85
+      };
+    });
+
+  return { segments, speakers };
 }
 
 /**
@@ -490,8 +714,22 @@ export interface PatientContext {
   relevantHistory?: string;
 }
 
+function resolveOpenAINoteModel(agentConfig?: AgentConfiguration | null): string {
+  if (agentConfig?.aiModel && !agentConfig.aiModel.toLowerCase().includes('claude')) {
+    return agentConfig.aiModel;
+  }
+  return getOpenAINoteModel();
+}
+
+function resolveAnthropicModel(agentConfig?: AgentConfiguration | null): string {
+  if (agentConfig?.aiModel && agentConfig.aiModel.toLowerCase().includes('claude')) {
+    return agentConfig.aiModel;
+  }
+  return getAnthropicNoteModel();
+}
+
 /**
- * Generate clinical note using Claude or GPT-4 (or mock if not configured)
+ * Generate clinical note using Claude or OpenAI (or mock if not configured)
  * Now supports custom agent configurations for different visit types
  */
 export async function generateClinicalNote(
@@ -515,7 +753,7 @@ export async function generateClinicalNote(
           anthropicKey
         );
       }
-      // Fall back to GPT-4 if OpenAI key available
+      // Fall back to OpenAI if key available
       if (openAIKey) {
         return await generateNoteWithGPT4(
           transcriptText,
@@ -542,13 +780,15 @@ export async function generateClinicalNote(
 async function generateNoteWithClaude(
   transcriptText: string,
   segments: TranscriptionSegment[],
-  agentConfig?: AgentConfiguration | null,
-  patientContext?: PatientContext,
+  agentConfig: AgentConfiguration | null | undefined,
+  patientContext: PatientContext | undefined,
   anthropicKey: string
 ): Promise<ClinicalNote & ExtractedData> {
+  const model = resolveAnthropicModel(agentConfig);
   logger.info('Generating clinical note with Claude', {
     agentConfigId: agentConfig?.id,
-    agentConfigName: agentConfig?.name
+    agentConfigName: agentConfig?.name,
+    model
   });
 
   // Build prompt using agent config if available, otherwise use default
@@ -557,7 +797,6 @@ async function generateNoteWithClaude(
     : buildClinicalNotePrompt(transcriptText, segments);
 
   // Use model and settings from config if available
-  const model = agentConfig?.aiModel || 'claude-3-5-sonnet-20241022';
   const temperature = agentConfig?.temperature || 0.3;
   const maxTokens = agentConfig?.maxTokens || 4000;
 
@@ -594,19 +833,21 @@ async function generateNoteWithClaude(
 }
 
 /**
- * Generate clinical note using OpenAI GPT-4
+ * Generate clinical note using OpenAI
  * Uses agent configuration if provided for customized prompts and settings
  */
 async function generateNoteWithGPT4(
   transcriptText: string,
   segments: TranscriptionSegment[],
-  agentConfig?: AgentConfiguration | null,
-  patientContext?: PatientContext,
+  agentConfig: AgentConfiguration | null | undefined,
+  patientContext: PatientContext | undefined,
   openAIKey: string
 ): Promise<ClinicalNote & ExtractedData> {
-  logger.info('Generating clinical note with GPT-4', {
+  const model = resolveOpenAINoteModel(agentConfig);
+  logger.info('Generating clinical note with OpenAI', {
     agentConfigId: agentConfig?.id,
-    agentConfigName: agentConfig?.name
+    agentConfigName: agentConfig?.name,
+    model
   });
 
   // Build prompt using agent config if available, otherwise use default
@@ -627,7 +868,7 @@ async function generateNoteWithGPT4(
       'Authorization': `Bearer ${openAIKey}`
     },
     body: JSON.stringify({
-      model: 'gpt-4-turbo-preview',
+      model: model,
       messages: [
         {
           role: 'system',
@@ -639,13 +880,14 @@ async function generateNoteWithGPT4(
         }
       ],
       temperature: temperature,
-      max_tokens: maxTokens
+      max_tokens: maxTokens,
+      response_format: { type: 'json_object' }
     })
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`GPT-4 API error: ${response.status} - ${errorText}`);
+    throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
   }
 
   const result = await response.json() as any;

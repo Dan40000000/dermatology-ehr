@@ -6,6 +6,7 @@
 |----------|---------|----------|
 | [GASTOWN_BRIEFING.md](./GASTOWN_BRIEFING.md) | Complete system overview and gap analysis | New team members, stakeholders |
 | [CONVO_ARCHITECTURE.md](./CONVO_ARCHITECTURE.md) | How we got here, decision rationale | Developers, architects |
+| [BEADS_IMPLEMENTATION_ROADMAP.md](./BEADS_IMPLEMENTATION_ROADMAP.md) | Execution roadmap mapped to TaskMaster | Developers, PMs |
 | [../BEADS.md](../BEADS.md) | Full task backlog with universal solutions | Development team |
 | [../BEADS_DIAGRAM.md](../BEADS_DIAGRAM.md) | Visual architecture diagrams | Everyone |
 
@@ -91,6 +92,7 @@ npm run dev
 ### Architecture & Planning
 - **[GASTOWN_BRIEFING.md](./GASTOWN_BRIEFING.md)** - Executive summary, architecture, roadmap
 - **[CONVO_ARCHITECTURE.md](./CONVO_ARCHITECTURE.md)** - Decision records, conversation flow
+- **[BEADS_IMPLEMENTATION_ROADMAP.md](./BEADS_IMPLEMENTATION_ROADMAP.md)** - Execution roadmap mapped to TaskMaster
 - **[../ARCHITECTURE.md](../ARCHITECTURE.md)** - Technical architecture details
 
 ### Gap Analysis

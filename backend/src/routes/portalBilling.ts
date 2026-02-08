@@ -167,6 +167,106 @@ portalBillingRouter.get(
   }
 );
 
+/**
+ * GET /api/patient-portal/billing/statements
+ * Get patient's statements (e-statement history)
+ */
+portalBillingRouter.get(
+  "/statements",
+  requirePatientAuth,
+  async (req: PatientPortalRequest, res) => {
+    try {
+      const { patientId, tenantId } = req.patient!;
+
+      const result = await pool.query(
+        `SELECT
+          s.id,
+          s.statement_number as "statementNumber",
+          s.statement_date as "statementDate",
+          s.balance_cents as "balanceCents",
+          s.status,
+          s.last_sent_date as "lastSentDate",
+          s.sent_via as "sentVia",
+          s.due_date as "dueDate",
+          s.notes,
+          (
+            SELECT COUNT(*)::int
+            FROM statement_line_items li
+            WHERE li.statement_id = s.id AND li.tenant_id = s.tenant_id
+          ) as "lineItemCount"
+        FROM patient_statements s
+        WHERE s.patient_id = $1 AND s.tenant_id = $2
+        ORDER BY s.statement_date DESC
+        LIMIT 50`,
+        [patientId, tenantId]
+      );
+
+      return res.json({ statements: result.rows });
+    } catch (error) {
+      console.error("Get statements error:", error);
+      return res.status(500).json({ error: "Failed to get statements" });
+    }
+  }
+);
+
+/**
+ * GET /api/patient-portal/billing/statements/:id
+ * Get statement with line items (portal view)
+ */
+portalBillingRouter.get(
+  "/statements/:id",
+  requirePatientAuth,
+  async (req: PatientPortalRequest, res) => {
+    try {
+      const { patientId, tenantId } = req.patient!;
+      const statementId = String(req.params.id);
+
+      const statementResult = await pool.query(
+        `SELECT
+          s.id,
+          s.statement_number as "statementNumber",
+          s.statement_date as "statementDate",
+          s.balance_cents as "balanceCents",
+          s.status,
+          s.last_sent_date as "lastSentDate",
+          s.sent_via as "sentVia",
+          s.due_date as "dueDate",
+          s.notes
+        FROM patient_statements s
+        WHERE s.id = $1 AND s.patient_id = $2 AND s.tenant_id = $3`,
+        [statementId, patientId, tenantId]
+      );
+
+      if (statementResult.rows.length === 0) {
+        return res.status(404).json({ error: "Statement not found" });
+      }
+
+      const lineItemsResult = await pool.query(
+        `SELECT
+          id,
+          claim_id as "claimId",
+          service_date as "serviceDate",
+          description,
+          amount_cents as "amountCents",
+          insurance_paid_cents as "insurancePaidCents",
+          patient_responsibility_cents as "patientResponsibilityCents"
+        FROM statement_line_items
+        WHERE statement_id = $1 AND tenant_id = $2
+        ORDER BY service_date ASC`,
+        [statementId, tenantId]
+      );
+
+      return res.json({
+        statement: statementResult.rows[0],
+        lineItems: lineItemsResult.rows,
+      });
+    } catch (error) {
+      console.error("Get statement error:", error);
+      return res.status(500).json({ error: "Failed to get statement" });
+    }
+  }
+);
+
 // ============================================================================
 // PAYMENT METHODS
 // ============================================================================

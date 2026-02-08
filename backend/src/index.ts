@@ -4,6 +4,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import swaggerUi from "swagger-ui-express";
 import { env } from "./config/env";
+import config from "./config";
 import { logger } from "./lib/logger";
 import { swaggerSpec } from "./config/swagger";
 import { securityHeaders } from "./middleware/security";
@@ -13,6 +14,7 @@ import { registerRoutes } from "./routes/registerRoutes";
 import path from "path";
 import fs from "fs";
 import { waitlistAutoFillService } from "./services/waitlistAutoFillService";
+import { initializeJobScheduler, stopJobScheduler } from "./services/jobRunner";
 
 const app = express();
 
@@ -24,18 +26,44 @@ app.use(securityHeaders);
 app.use(cookieParser());
 app.use(sanitizeInputs);
 
-// CORS configuration - support multiple dev ports
-const allowedOrigins = process.env.FRONTEND_URL
-  ? [process.env.FRONTEND_URL]
-  : ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'];
+// CORS configuration - support explicit origin allowlist
+const allowedOrigins = config.cors.origin;
+const allowAnyOrigin = allowedOrigins.includes('*');
+const allowedOriginUrls = allowedOrigins
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0 && origin !== '*')
+  .map((origin) => {
+    try {
+      return new URL(origin);
+    } catch (error) {
+      logger.warn('Invalid CORS origin ignored', { origin });
+      return null;
+    }
+  })
+  .filter((origin): origin is URL => origin !== null);
+
+function isOriginAllowed(origin: string): boolean {
+  if (allowAnyOrigin && !config.cors.credentials) {
+    return true;
+  }
+  let originUrl: URL;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    return false;
+  }
+  return allowedOriginUrls.some((allowed) => {
+    if (allowed.port) {
+      return originUrl.origin === allowed.origin;
+    }
+    return originUrl.protocol === allowed.protocol && originUrl.hostname === allowed.hostname;
+  });
+}
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.some(allowed => origin.startsWith(allowed.replace(/:\d+$/, '')))) {
-      return callback(null, true);
-    }
-    return callback(null, false);
+    return callback(null, isOriginAllowed(origin));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
@@ -91,7 +119,7 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
   });
 
   // Don't leak error details in production
-  const message = process.env.NODE_ENV === 'production'
+  const message = config.isProduction
     ? 'Internal server error'
     : err.message;
 
@@ -106,7 +134,7 @@ initializeWebSocket(httpServer);
 
 httpServer.listen(env.port, () => {
   logger.info(`API server started on port ${env.port}`, {
-    nodeEnv: process.env.NODE_ENV,
+    nodeEnv: config.env,
     port: env.port,
   });
 
@@ -117,5 +145,39 @@ httpServer.listen(env.port, () => {
     logger.error('Failed to start waitlist hold expiration worker', {
       error: error.message,
     });
+  });
+
+  // Initialize and start the job scheduler
+  // Only start in production or if explicitly enabled
+  const enableJobScheduler = process.env.ENABLE_JOB_SCHEDULER !== 'false';
+  if (enableJobScheduler) {
+    initializeJobScheduler().then(() => {
+      logger.info('Job scheduler system initialized and running');
+    }).catch((error: any) => {
+      logger.error('Failed to initialize job scheduler', {
+        error: error.message,
+      });
+    });
+  } else {
+    logger.info('Job scheduler disabled by configuration');
+  }
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, shutting down gracefully');
+  stopJobScheduler();
+  httpServer.close(() => {
+    logger.info('HTTP server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  stopJobScheduler();
+  httpServer.close(() => {
+    logger.info('HTTP server closed');
+    process.exit(0);
   });
 });

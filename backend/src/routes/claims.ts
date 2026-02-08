@@ -977,3 +977,169 @@ claimsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
     charges: chargesResult.rows,
   });
 });
+
+// Import workflow orchestrator for ERA processing
+import { workflowOrchestrator } from "../services/workflowOrchestrator";
+
+// ERA/EOB import schema
+const eraImportSchema = z.object({
+  filename: z.string().optional(),
+  claims: z.array(z.object({
+    claimNumber: z.string().optional(),
+    claimId: z.string().optional(),
+    patientName: z.string().optional(),
+    serviceDate: z.string().optional(),
+    paidAmountCents: z.number().int(),
+    paymentDate: z.string().optional(),
+    payerName: z.string().optional(),
+    checkNumber: z.string().optional(),
+    denialCode: z.string().optional(),
+    denialReason: z.string().optional(),
+    patientResponsibilityCents: z.number().int().optional(),
+    adjustments: z.array(z.object({
+      code: z.string(),
+      reason: z.string().optional(),
+      amountCents: z.number().int(),
+    })).optional(),
+  })),
+});
+
+// POST /api/claims/era/import - Import ERA/EOB file and auto-post payments
+claimsRouter.post("/era/import", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
+  const parsed = eraImportSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
+  const tenantId = req.user!.tenantId;
+  const userId = req.user!.id;
+  const { filename, claims } = parsed.data;
+
+  // Create ERA import record
+  const eraId = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO era_imports (id, tenant_id, filename, claim_count, status, imported_by, created_at)
+     VALUES ($1, $2, $3, $4, 'processing', $5, NOW())
+     ON CONFLICT DO NOTHING`,
+    [eraId, tenantId, filename || `ERA-${Date.now()}`, claims.length, userId]
+  );
+
+  // Process through workflow orchestrator for auto-posting
+  try {
+    await workflowOrchestrator.processEvent({
+      type: 'era_imported',
+      tenantId,
+      userId,
+      entityType: 'era',
+      entityId: eraId,
+      data: { claims, filename },
+      timestamp: new Date(),
+    });
+
+    // Update ERA status
+    await pool.query(
+      `UPDATE era_imports SET status = 'completed', completed_at = NOW() WHERE id = $1`,
+      [eraId]
+    );
+
+    await auditLog(tenantId, userId, "era_imported", "era", eraId);
+
+    res.status(201).json({
+      eraId,
+      claimsProcessed: claims.length,
+      message: "ERA imported and payments auto-posted successfully",
+    });
+  } catch (error: any) {
+    // Update ERA status to failed
+    await pool.query(
+      `UPDATE era_imports SET status = 'failed', error_message = $1 WHERE id = $2`,
+      [error.message, eraId]
+    );
+
+    logger.error("ERA import failed", { eraId, error: error.message });
+    res.status(500).json({ error: "Failed to process ERA import", details: error.message });
+  }
+});
+
+// GET /api/claims/era - List ERA imports
+claimsRouter.get("/era", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const { status, limit } = req.query;
+
+  let query = `SELECT id, filename, claim_count as "claimCount", status,
+                      imported_by as "importedBy", created_at as "createdAt",
+                      completed_at as "completedAt", error_message as "errorMessage"
+               FROM era_imports
+               WHERE tenant_id = $1`;
+
+  const params: any[] = [tenantId];
+  let paramCount = 1;
+
+  if (status) {
+    paramCount++;
+    query += ` AND status = $${paramCount}`;
+    params.push(status);
+  }
+
+  query += ` ORDER BY created_at DESC LIMIT $${paramCount + 1}`;
+  params.push(parseInt(limit as string) || 50);
+
+  const result = await pool.query(query, params);
+  res.json({ eraImports: result.rows });
+});
+
+// GET /api/claims/workflow-analytics - Get workflow analytics for billing dashboard
+claimsRouter.get("/workflow-analytics", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const days = parseInt(req.query.days as string) || 30;
+
+  try {
+    // Get daily analytics for the period
+    const analyticsResult = await pool.query(
+      `SELECT date, metric, value
+       FROM daily_analytics
+       WHERE tenant_id = $1 AND date >= CURRENT_DATE - $2::INT
+       ORDER BY date DESC, metric`,
+      [tenantId, days]
+    );
+
+    // Pivot the data into a more usable format
+    const analyticsMap: Record<string, Record<string, number>> = {};
+    for (const row of analyticsResult.rows) {
+      const dateKey = row.date.toISOString().split('T')[0];
+      if (!analyticsMap[dateKey]) {
+        analyticsMap[dateKey] = {};
+      }
+      analyticsMap[dateKey][row.metric] = parseFloat(row.value);
+    }
+
+    // Get recent workflow events for debugging
+    const eventsResult = await pool.query(
+      `SELECT event_type, entity_type, COUNT(*) as count
+       FROM workflow_events
+       WHERE tenant_id = $1 AND created_at >= NOW() - ($2 || ' days')::INTERVAL
+       GROUP BY event_type, entity_type
+       ORDER BY count DESC
+       LIMIT 20`,
+      [tenantId, days]
+    );
+
+    // Get recent workflow errors
+    const errorsResult = await pool.query(
+      `SELECT event_type, entity_type, error_message, COUNT(*) as count
+       FROM workflow_errors
+       WHERE tenant_id = $1 AND created_at >= NOW() - ($2 || ' days')::INTERVAL
+       GROUP BY event_type, entity_type, error_message
+       ORDER BY count DESC
+       LIMIT 10`,
+      [tenantId, days]
+    );
+
+    res.json({
+      dailyAnalytics: analyticsMap,
+      workflowEventCounts: eventsResult.rows,
+      recentErrors: errorsResult.rows,
+    });
+  } catch (error: any) {
+    logger.error("Error fetching workflow analytics", { error: error.message });
+    res.status(500).json({ error: "Failed to fetch analytics" });
+  }
+});

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 interface AnalyticsData {
   stats: {
@@ -52,9 +53,8 @@ export default function ClaimAnalytics() {
 
     setLoading(true);
     try {
-      const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
       const response = await fetch(
-        `${apiBase}/api/claims/analytics`,
+        `${API_BASE_URL}/api/claims/analytics`,
         {
           headers: {
             Authorization: `Bearer ${session.accessToken}`,

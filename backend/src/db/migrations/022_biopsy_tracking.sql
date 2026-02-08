@@ -412,7 +412,7 @@ SELECT
   b.patient_id,
   p.first_name || ' ' || p.last_name AS patient_name,
   p.mrn,
-  p.date_of_birth,
+  p.dob as date_of_birth,
   b.body_location,
   b.specimen_type,
   b.status,

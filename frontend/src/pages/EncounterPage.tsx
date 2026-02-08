@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -6,6 +6,7 @@ import { Skeleton, Modal } from '../components/ui';
 import { PatientBanner, BodyMap, TemplateSelector } from '../components/clinical';
 import { DiagnosisSearchModal, ProcedureSearchModal } from '../components/billing';
 import { EncounterPrescriptions } from '../components/prescriptions';
+import { ScribePanel } from '../components/ScribePanel';
 import type { Lesion } from '../components/clinical';
 import {
   fetchPatients,
@@ -28,10 +29,19 @@ import {
   generateAiNoteDraft,
   fetchNoteTemplates,
   fetchProviders,
+  fetchEncounterAmbientNotes,
 } from '../api';
 import type { Patient, Encounter, Vitals, Order, EncounterDiagnosis, Charge, ICD10Code, CPTCode } from '../types';
-import type { NoteTemplate, AINoteDraft } from '../api';
+import type { NoteTemplate, AINoteDraft, AmbientGeneratedNote } from '../api';
 import { useAutosave } from '../hooks/useAutosave';
+import { ScribeSummaryCard } from '../components/ScribeSummaryCard';
+import {
+  buildConcerns,
+  buildDiagnoses,
+  buildSummaryText,
+  buildSymptoms,
+  buildTests
+} from '../utils/scribeSummary';
 
 type EncounterSection = 'note' | 'exam' | 'orders' | 'prescriptions' | 'billing';
 
@@ -104,6 +114,8 @@ export function EncounterPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [diagnoses, setDiagnoses] = useState<EncounterDiagnosis[]>([]);
   const [charges, setCharges] = useState<Charge[]>([]);
+  const [scribeNote, setScribeNote] = useState<AmbientGeneratedNote | null>(null);
+  const [scribeNoteLoading, setScribeNoteLoading] = useState(false);
 
   // Check if encounter is locked/read-only
   const isLocked = encounter.status === 'signed' || encounter.status === 'locked';
@@ -133,6 +145,7 @@ export function EncounterPage() {
 
   // Providers for encounter creation
   const [providers, setProviders] = useState<{ id: string; fullName: string }[]>([]);
+  const autoCreateEncounterRef = useRef(false);
 
   // Form data
   const [vitalsForm, setVitalsForm] = useState<VitalsFormData>({
@@ -189,7 +202,14 @@ export function EncounterPage() {
           (e: Encounter) => e.id === encounterId
         );
         if (foundEncounter) {
-          setEncounter(foundEncounter);
+          setEncounter({
+            ...foundEncounter,
+            chiefComplaint: foundEncounter.chiefComplaint ?? '',
+            hpi: foundEncounter.hpi ?? '',
+            ros: foundEncounter.ros ?? '',
+            exam: foundEncounter.exam ?? '',
+            assessmentPlan: foundEncounter.assessmentPlan ?? '',
+          });
 
           // Load vitals, orders, diagnoses, and charges for existing encounter
           const [vitalsRes, ordersRes, diagnosesRes, chargesRes] = await Promise.all([
@@ -220,17 +240,74 @@ export function EncounterPage() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    if (!session || !encounterId || isNew) return;
+    let cancelled = false;
+    setScribeNoteLoading(true);
+
+    fetchEncounterAmbientNotes(session.tenantId, session.accessToken, encounterId)
+      .then((data) => {
+        if (cancelled) return;
+        const notes = data.notes || [];
+        const approved = notes.filter((note) => note.reviewStatus === 'approved');
+        const pool = approved.length ? approved : notes;
+        const sorted = [...pool].sort((a, b) => {
+          const aTime = new Date(a.completedAt || a.createdAt).getTime();
+          const bTime = new Date(b.completedAt || b.createdAt).getTime();
+          return bTime - aTime;
+        });
+        setScribeNote(sorted[0] || null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setScribeNote(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setScribeNoteLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session, encounterId, isNew]);
+
+  useEffect(() => {
+    if (!session || !patientId || !isNew) return;
+    if (autoCreateEncounterRef.current) return;
+    if (providers.length === 0) return;
+
+    autoCreateEncounterRef.current = true;
+
+    const providerId = providers.length > 0 ? providers[0].id : session.user.id;
+    createEncounter(session.tenantId, session.accessToken, { patientId, providerId })
+      .then((res) => {
+        const createdId = res?.encounter?.id || res?.id;
+        if (!createdId) {
+          showError('Failed to create encounter');
+          return;
+        }
+        navigate(`/patients/${patientId}/encounter/${createdId}`, { replace: true });
+      })
+      .catch((err: any) => {
+        showError(err.message || 'Failed to create encounter');
+        autoCreateEncounterRef.current = false;
+      });
+  }, [session, patientId, isNew, providers, navigate, showError]);
+
   // Save encounter function for autosave
   const performSave = useCallback(async () => {
     if (!session || !patientId || isNew || isLocked) return;
     if (!encounterId) return;
 
     await updateEncounter(session.tenantId, session.accessToken, encounterId, {
-      chiefComplaint: encounter.chiefComplaint,
-      hpi: encounter.hpi,
-      ros: encounter.ros,
-      exam: encounter.exam,
-      assessmentPlan: encounter.assessmentPlan,
+      chiefComplaint: encounter.chiefComplaint ?? '',
+      hpi: encounter.hpi ?? '',
+      ros: encounter.ros ?? '',
+      exam: encounter.exam ?? '',
+      assessmentPlan: encounter.assessmentPlan ?? '',
     });
   }, [session, patientId, encounterId, isNew, isLocked, encounter]);
 
@@ -289,11 +366,11 @@ export function EncounterPage() {
     try {
       // First save any pending changes
       await updateEncounter(session.tenantId, session.accessToken, encounterId, {
-        chiefComplaint: encounter.chiefComplaint,
-        hpi: encounter.hpi,
-        ros: encounter.ros,
-        exam: encounter.exam,
-        assessmentPlan: encounter.assessmentPlan,
+        chiefComplaint: encounter.chiefComplaint ?? '',
+        hpi: encounter.hpi ?? '',
+        ros: encounter.ros ?? '',
+        exam: encounter.exam ?? '',
+        assessmentPlan: encounter.assessmentPlan ?? '',
       });
 
       // Then update status to signed (locked)
@@ -889,6 +966,20 @@ export function EncounterPage() {
         )}
       </div>
 
+      {!isNew && patient && (
+        <div style={{ marginTop: '1rem' }}>
+          <ScribePanel
+            patientId={patient.id}
+            patientName={`${patient.firstName} ${patient.lastName}`}
+            encounterId={encounterId}
+            providerId={encounter?.providerId}
+            onRecordingComplete={(recordingId) => {
+              navigate(`/ambient-scribe?recordingId=${recordingId}&auto=1`);
+            }}
+          />
+        </div>
+      )}
+
       {/* Section Tabs - EMA Style */}
       <div style={{
         display: 'flex',
@@ -924,6 +1015,25 @@ export function EncounterPage() {
       <div style={{ background: '#ffffff', padding: '1.5rem' }}>
         {activeSection === 'note' && (
           <div style={{ display: 'grid', gap: '1.5rem' }}>
+            {scribeNoteLoading && (
+              <Skeleton variant="card" height={180} />
+            )}
+
+            {!scribeNoteLoading && scribeNote && (
+              <ScribeSummaryCard
+                title="AI Scribe Summary"
+                visitDate={scribeNote.completedAt || scribeNote.createdAt}
+                statusLabel={scribeNote.reviewStatus === 'approved' ? 'Approved' : 'Draft'}
+                symptoms={buildSymptoms(scribeNote, null)}
+                concerns={buildConcerns(scribeNote)}
+                potentialDiagnoses={buildDiagnoses(scribeNote, null)}
+                suggestedTests={buildTests(scribeNote, null)}
+                summaryText={buildSummaryText(scribeNote, null)}
+                summaryLabel="Summary of Appointment"
+                showDetails
+              />
+            )}
+
             {/* Chief Complaint */}
             <div className="ema-form-section">
               <div className="ema-section-header" style={{ marginBottom: '0.5rem' }}>Chief Complaint</div>

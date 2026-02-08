@@ -71,7 +71,7 @@ export async function verifyPatientEligibility(
   try {
     // Fetch patient data
     const patientResult = await pool.query(
-      `SELECT id, first_name, last_name, date_of_birth, insurance_provider,
+      `SELECT id, first_name, last_name, dob as date_of_birth, insurance_provider,
               insurance_member_id, insurance_group_number, insurance_payer_id
        FROM patients
        WHERE id = $1 AND tenant_id = $2`,
@@ -163,7 +163,7 @@ export async function batchVerifyEligibility(
   try {
     // Fetch all patients
     const patientsResult = await pool.query(
-      `SELECT id, first_name, last_name, date_of_birth, insurance_provider,
+      `SELECT id, first_name, last_name, dob as date_of_birth, insurance_provider,
               insurance_member_id, insurance_group_number, insurance_payer_id
        FROM patients
        WHERE id = ANY($1) AND tenant_id = $2`,

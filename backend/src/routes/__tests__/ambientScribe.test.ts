@@ -864,6 +864,7 @@ describe('Ambient Scribe Routes - Patient Summary Endpoints', () => {
         ],
         rowCount: 1,
       })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // existing summary check
       .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // insert summary
 
     const res = await request(app).post('/api/ambient/notes/note-1/generate-patient-summary');

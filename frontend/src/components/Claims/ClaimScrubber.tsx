@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 interface ScrubIssue {
   severity: 'error' | 'warning' | 'info';
@@ -45,9 +46,8 @@ export default function ClaimScrubber({ claimId, onClose }: ClaimScrubberProps) 
     setLoading(true);
     try {
       // Load claim details
-      const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
       const claimResponse = await fetch(
-        `${apiBase}/api/claims/${claimId}`,
+        `${API_BASE_URL}/api/claims/${claimId}`,
         {
           headers: {
             Authorization: `Bearer ${session.accessToken}`,
@@ -75,9 +75,8 @@ export default function ClaimScrubber({ claimId, onClose }: ClaimScrubberProps) 
 
     setScrubbingstate(true);
     try {
-      const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
       const response = await fetch(
-        `${apiBase}/api/claims/scrub`,
+        `${API_BASE_URL}/api/claims/scrub`,
         {
           method: 'POST',
           headers: {

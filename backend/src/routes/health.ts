@@ -5,6 +5,7 @@ import { logger } from "../lib/logger";
 import { register } from "../lib/metrics";
 import { runSeed } from "../db/seed";
 import { runMigrations } from "../db/migrate";
+import { loadEnv } from "../config/validate";
 
 export const healthRouter = Router();
 
@@ -165,12 +166,16 @@ healthRouter.get("/metrics", async (_req, res) => {
 
 // Initialize database (run migrations and seed) - for Railway deployment
 healthRouter.post("/init-db", async (req, res) => {
+  const envVars = loadEnv();
   const secret = req.headers["x-init-secret"];
-  const defaultSecret = "derm-init-2026-secure";
 
   // Simple protection - require a secret in production
-  if (process.env.NODE_ENV === "production") {
-    const expectedSecret = process.env.INIT_SECRET || defaultSecret;
+  if (envVars.NODE_ENV === "production") {
+    if (!envVars.INIT_SECRET) {
+      logger.error("INIT_SECRET not set; init-db disabled in production");
+      return res.status(500).json({ error: "Server not configured" });
+    }
+    const expectedSecret = envVars.INIT_SECRET;
     if (secret !== expectedSecret) {
       logger.warn("Unauthorized database initialization attempt", { ip: req.ip });
       return res.status(403).json({ error: "Forbidden" });
@@ -195,17 +200,23 @@ healthRouter.post("/init-db", async (req, res) => {
 
 // Sync data from local to production - imports patients and appointments
 healthRouter.post("/sync-data", async (req, res) => {
+  const envVars = loadEnv();
   const secret = req.headers["x-init-secret"];
-  const defaultSecret = "derm-init-2026-secure";
 
   // Require proper authentication in production
-  if (process.env.NODE_ENV === "production") {
-    const expectedSecret = process.env.INIT_SECRET || defaultSecret;
+  if (envVars.NODE_ENV === "production") {
+    if (!envVars.INIT_SECRET) {
+      logger.error("INIT_SECRET not set; sync-data disabled in production");
+      return res.status(500).json({ error: "Server not configured" });
+    }
+    const expectedSecret = envVars.INIT_SECRET;
     if (secret !== expectedSecret) {
       logger.warn("Unauthorized data sync attempt", { ip: req.ip });
       return res.status(403).json({ error: "Forbidden" });
     }
   }
+
+  const client = await pool.connect();
 
   try {
     const { patients, appointments } = req.body;
@@ -219,14 +230,15 @@ healthRouter.post("/sync-data", async (req, res) => {
 
     // Clear existing data (in correct order due to foreign keys)
     // Disable FK checks temporarily for clean sync
-    await pool.query(`SET session_replication_role = replica`);
-    await pool.query(`DELETE FROM appointments WHERE tenant_id = $1`, [tenantId]);
-    await pool.query(`DELETE FROM patients WHERE tenant_id = $1`, [tenantId]);
-    await pool.query(`SET session_replication_role = DEFAULT`);
+    await client.query("BEGIN");
+    await client.query(`SET session_replication_role = replica`);
+    await client.query(`DELETE FROM appointments WHERE tenant_id = $1`, [tenantId]);
+    await client.query(`DELETE FROM patients WHERE tenant_id = $1`, [tenantId]);
+    await client.query(`SET session_replication_role = DEFAULT`);
 
     // Insert patients
     for (const p of patients) {
-      await pool.query(`
+      await client.query(`
         INSERT INTO patients(id, tenant_id, first_name, last_name, dob, phone, email, address, city, state, zip, insurance, allergies, medications, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         ON CONFLICT (id) DO UPDATE SET
@@ -252,7 +264,7 @@ healthRouter.post("/sync-data", async (req, res) => {
 
     // Insert appointments (only core columns)
     for (const a of appointments) {
-      await pool.query(`
+      await client.query(`
         INSERT INTO appointments(id, tenant_id, patient_id, provider_id, location_id, appointment_type_id, scheduled_start, scheduled_end, status)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (id) DO UPDATE SET
@@ -269,10 +281,23 @@ healthRouter.post("/sync-data", async (req, res) => {
       ]);
     }
 
+    await client.query("COMMIT");
     logger.info("Sync complete");
     res.json({ status: "ok", message: `Synced ${patients.length} patients and ${appointments.length} appointments` });
   } catch (error: any) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      logger.error("Failed to rollback sync transaction", { error: (rollbackError as Error).message });
+    }
+    try {
+      await client.query("SET session_replication_role = DEFAULT");
+    } catch (resetError) {
+      logger.error("Failed to reset session_replication_role", { error: (resetError as Error).message });
+    }
     logger.error("Sync failed", { error: error.message });
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 });

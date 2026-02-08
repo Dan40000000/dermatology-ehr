@@ -20,7 +20,11 @@ const registerSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   dob: z.string(), // ISO date string
-  verificationCode: z.string().optional(), // Last 4 of phone or SSN for verification
+  ssnLast4: z.string().length(4).regex(/^\d{4}$/).optional(),
+  verificationCode: z.string().length(4).regex(/^\d{4}$/).optional(), // Last 4 of phone or SSN for verification
+}).refine((data) => data.ssnLast4 || data.verificationCode, {
+  message: "verificationCode or ssnLast4 is required",
+  path: ["verificationCode"],
 });
 
 const loginSchema = z.object({
@@ -72,12 +76,7 @@ const verifyIdentitySchema = z.object({
  * Verify patient identity before allowing registration
  * Uses Last Name + DOB + Last 4 of SSN for verification
  *
- * SECURITY NOTE: SSN is currently stored as plaintext in the database.
- * TODO: Implement proper encryption for SSN storage using:
- * - AES-256 encryption at rest
- * - Application-level encryption with key management (AWS KMS, HashiCorp Vault)
- * - Column-level encryption in PostgreSQL
- * - Tokenization for display purposes (show only last 4)
+ * SECURITY NOTE: SSN full values are stored encrypted when available; last 4 is stored separately.
  */
 patientPortalRouter.post(
   "/verify-identity",
@@ -99,13 +98,12 @@ patientPortalRouter.post(
       // Find patient by last name, DOB, and last 4 of SSN
       // This provides strong identity verification without transmitting full SSN
       const patientResult = await pool.query(
-        `SELECT id, first_name, last_name, email, ssn
+        `SELECT id, first_name, last_name, email
          FROM patients
          WHERE tenant_id = $1
          AND LOWER(last_name) = LOWER($2)
          AND dob = $3
-         AND ssn IS NOT NULL
-         AND RIGHT(ssn, 4) = $4`,
+         AND COALESCE(ssn_last4, RIGHT(ssn, 4)) = $4`,
         [tenantId, lastName, dob, ssnLast4]
       );
 
@@ -197,8 +195,8 @@ patientPortalRouter.post(
       return res.status(400).json({ error: parsed.error.format() });
     }
 
-    const { email, password, firstName, lastName, dob } = parsed.data;
-    const ssnLast4 = req.body.ssnLast4; // Get SSN last 4 for re-verification
+    const { email, password, firstName, lastName, dob, ssnLast4, verificationCode } = parsed.data;
+    const ssnLast4Value = ssnLast4 ?? verificationCode;
 
     try {
       // Check if email is already registered
@@ -219,9 +217,9 @@ patientPortalRouter.post(
          AND LOWER(first_name) = LOWER($2)
          AND LOWER(last_name) = LOWER($3)
          AND dob = $4
-         ${ssnLast4 ? "AND ssn IS NOT NULL AND RIGHT(ssn, 4) = $5" : ""}`,
-        ssnLast4
-          ? [tenantId, firstName, lastName, dob, ssnLast4]
+         ${ssnLast4Value ? "AND COALESCE(ssn_last4, RIGHT(ssn, 4)) = $5" : ""}`,
+        ssnLast4Value
+          ? [tenantId, firstName, lastName, dob, ssnLast4Value]
           : [tenantId, firstName, lastName, dob]
       );
 

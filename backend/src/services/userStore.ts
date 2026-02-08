@@ -1,7 +1,8 @@
 import { pool } from "../db/pool";
 import { TenantUser } from "../types";
+import { loadEnv } from "../config/validate";
 
-const DEFAULT_PASSWORD = process.env.DEFAULT_USER_PASSWORD || "Password123!";
+const DEFAULT_PASSWORD = loadEnv().DEFAULT_USER_PASSWORD;
 
 export const userStore = {
   async findByEmailAndTenant(email: string, tenantId: string): Promise<TenantUser | undefined> {

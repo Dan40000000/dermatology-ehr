@@ -700,7 +700,7 @@ prescriptionsRouter.post(
 
       // Get prescription details
       const result = await pool.query(
-        `select p.*, pat.first_name, pat.last_name, pat.date_of_birth, pat.gender,
+        `select p.*, pat.first_name, pat.last_name, pat.dob as date_of_birth, pat.gender,
                 prov.full_name as provider_name, prov.npi as provider_npi
          from prescriptions p
          join patients pat on p.patient_id = pat.id

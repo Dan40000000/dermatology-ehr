@@ -1,9 +1,10 @@
 import { Request, Response, NextFunction } from "express";
+import { loadEnv } from "../config/validate";
 
 type RateBucket = { count: number; resetAt: number };
 
 export function rateLimit({ windowMs, max }: { windowMs: number; max: number }) {
-  if (process.env.DISABLE_RATE_LIMIT === "true") {
+  if (loadEnv().DISABLE_RATE_LIMIT) {
     return (_req: Request, _res: Response, next: NextFunction) => next();
   }
   const buckets = new Map<string, RateBucket>();

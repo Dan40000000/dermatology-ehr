@@ -7,7 +7,7 @@ import path from "path";
 /**
  * Voice Transcription Service
  *
- * Medical dictation using OpenAI Whisper API with:
+ * Medical dictation using OpenAI transcription API with:
  * - Audio file transcription
  * - Medical terminology recognition
  * - Integration with clinical note drafting
@@ -49,8 +49,8 @@ export class VoiceTranscriptionService {
         return await this.createMockTranscription(request, transcriptionId);
       }
 
-      // Transcribe using Whisper API
-      const transcription = await this.transcribeWithWhisper(request.audioFile, request.language);
+      // Transcribe using OpenAI transcription API
+      const transcription = await this.transcribeWithOpenAI(request.audioFile, request.language);
 
       // Store transcription in database
       await pool.query(
@@ -87,23 +87,33 @@ export class VoiceTranscriptionService {
   }
 
   /**
-   * Transcribe using OpenAI Whisper API
+   * Transcribe using OpenAI transcription API
    */
-  private async transcribeWithWhisper(
+  private async transcribeWithOpenAI(
     audioFilePath: string,
     language: string = "en"
   ): Promise<{ text: string; confidence: number; duration: number; segments?: any[] }> {
     try {
       const formData = new FormData();
       formData.append("file", fs.createReadStream(audioFilePath));
-      formData.append("model", "whisper-1");
+      const model = process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-transcribe";
+      formData.append("model", model);
       formData.append("language", language);
-      formData.append("response_format", "verbose_json");
+
+      if (model === "whisper-1") {
+        formData.append("response_format", "verbose_json");
+      } else if (model === "gpt-4o-transcribe-diarize") {
+        formData.append("response_format", "diarized_json");
+      } else {
+        formData.append("response_format", "json");
+      }
 
       // Add medical terminology prompt for better accuracy
       const medicalPrompt = `Medical dictation. Common dermatology terms: melanoma, nevus, lesion,
         erythema, pruritus, dermatitis, eczema, psoriasis, carcinoma, biopsy, dermoscopy, ABCDE criteria.`;
-      formData.append("prompt", medicalPrompt);
+      if (model === "whisper-1") {
+        formData.append("prompt", medicalPrompt);
+      }
 
       const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
         method: "POST",
@@ -115,19 +125,20 @@ export class VoiceTranscriptionService {
       });
 
       if (!response.ok) {
-        throw new Error(`Whisper API error: ${response.statusText}`);
+        throw new Error(`OpenAI transcription error: ${response.statusText}`);
       }
 
       const data = await response.json() as any;
 
+      const segments = Array.isArray(data.segments) ? data.segments : [];
       return {
-        text: data.text,
-        confidence: this.calculateConfidence(data.segments || []),
+        text: data.text || "",
+        confidence: this.calculateConfidence(segments),
         duration: data.duration || 0,
-        segments: data.segments || [],
+        segments,
       };
     } catch (error) {
-      console.error("Whisper API error:", error);
+      console.error("OpenAI transcription error:", error);
       throw error;
     }
   }

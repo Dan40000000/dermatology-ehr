@@ -11,7 +11,7 @@ A complete **Ambient AI Medical Scribe** system for automatic clinical documenta
 - **HIPAA-Compliant**: Encrypted storage with automatic PHI detection and masking
 - **Speaker Diarization**: Automatic identification of doctor vs patient speech
 - **Consent Workflow**: Built-in patient consent tracking (verbal, written, electronic)
-- **Live Transcription**: Simulates OpenAI Whisper API for speech-to-text
+- **Live Transcription**: Streaming transcript updates during recording (WebSocket-based)
 
 ### 2. AI Clinical Note Generation
 - **Structured SOAP Notes**: Auto-generates Chief Complaint, HPI, ROS, Physical Exam, Assessment, and Plan

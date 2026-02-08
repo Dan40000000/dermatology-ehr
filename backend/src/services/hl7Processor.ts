@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
+import { buildSsnFields, normalizeDigits } from "../security/encryption";
 import {
   HL7Message,
   PIDSegment,
@@ -161,6 +162,8 @@ async function upsertPatient(pid: PIDSegment, tenantId: string, client: any): Pr
 
   const dob = parseHL7DateTime(pid.dateOfBirth);
   const phone = pid.phoneHome || pid.phoneBusiness;
+  const { ssnLast4, ssnEncrypted } = buildSsnFields(pid.ssn);
+  const hasSsn = Boolean(pid.ssn && normalizeDigits(pid.ssn));
 
   if (existingPatient.rows.length > 0) {
     // Update existing patient
@@ -169,17 +172,19 @@ async function upsertPatient(pid: PIDSegment, tenantId: string, client: any): Pr
       `UPDATE patients
        SET first_name = $1,
            last_name = $2,
-           date_of_birth = $3,
+           dob = $3,
            sex = $4,
            phone = $5,
            email = $6,
            address = $7,
            city = $8,
            state = $9,
-           zip_code = $10,
-           ssn = $11,
+           zip = $10,
+           ssn_last4 = COALESCE($11, ssn_last4),
+           ssn_encrypted = COALESCE($12, ssn_encrypted),
+           ssn = CASE WHEN $13 THEN NULL ELSE ssn END,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $12 AND tenant_id = $13`,
+       WHERE id = $14 AND tenant_id = $15`,
       [
         pid.patientName?.firstName || null,
         pid.patientName?.lastName || null,
@@ -191,7 +196,9 @@ async function upsertPatient(pid: PIDSegment, tenantId: string, client: any): Pr
         pid.address?.city || null,
         pid.address?.state || null,
         pid.address?.zip || null,
-        pid.ssn,
+        ssnLast4,
+        ssnEncrypted,
+        hasSsn,
         id,
         tenantId,
       ]
@@ -202,9 +209,9 @@ async function upsertPatient(pid: PIDSegment, tenantId: string, client: any): Pr
     const newId = crypto.randomUUID();
     await client.query(
       `INSERT INTO patients (
-        id, tenant_id, first_name, last_name, date_of_birth, sex,
-        phone, address, city, state, zip_code, mrn, external_id, ssn
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        id, tenant_id, first_name, last_name, dob, sex,
+        phone, address, city, state, zip, mrn, external_id, ssn_last4, ssn_encrypted
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
       [
         newId,
         tenantId,
@@ -219,7 +226,8 @@ async function upsertPatient(pid: PIDSegment, tenantId: string, client: any): Pr
         pid.address?.zip || null,
         patientId,
         patientId,
-        pid.ssn,
+        ssnLast4,
+        ssnEncrypted,
       ]
     );
     return newId;

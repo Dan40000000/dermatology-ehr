@@ -8,6 +8,7 @@ import { parsePagination, paginatedResponse } from "../middleware/pagination";
 import { parseFields, buildSelectClause } from "../middleware/fieldSelection";
 import { emitPatientUpdated } from "../websocket/emitter";
 import { logger } from "../lib/logger";
+import { buildSsnFields } from "../security/encryption";
 
 const createPatientSchema = z.object({
   firstName: z.string().min(1).max(100),
@@ -115,13 +116,56 @@ patientsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const selectedFields = parseFields(req);
 
   // Build SELECT clause based on requested fields
-  const defaultFields = `id, first_name as "firstName", last_name as "lastName", dob as "dateOfBirth",
-                          mrn, phone, email, sex, address, city, state, zip, insurance, allergies, medications,
-                          created_at as "createdAt", updated_at as "updatedAt"`;
+  const fieldMap: Record<string, string> = {
+    id: "id",
+    firstName: `first_name as "firstName"`,
+    lastName: `last_name as "lastName"`,
+    dateOfBirth: `dob as "dateOfBirth"`,
+    mrn: "mrn",
+    phone: "phone",
+    email: "email",
+    sex: "sex",
+    address: "address",
+    city: "city",
+    state: "state",
+    zip: "zip",
+    insurance: "insurance",
+    allergies: "allergies",
+    medications: "medications",
+    createdAt: `created_at as "createdAt"`,
+    updatedAt: `updated_at as "updatedAt"`,
+    ssn: `coalesce(ssn_last4, right(ssn, 4)) as "ssn"`,
+  };
+  const defaultFieldList = [
+    "id",
+    "firstName",
+    "lastName",
+    "dateOfBirth",
+    "mrn",
+    "phone",
+    "email",
+    "sex",
+    "address",
+    "city",
+    "state",
+    "zip",
+    "insurance",
+    "allergies",
+    "medications",
+    "createdAt",
+    "updatedAt",
+  ];
+  const defaultFields = defaultFieldList.map((field) => fieldMap[field]).join(", ");
+  const allowedFields = Object.keys(fieldMap);
 
-  const selectClause = selectedFields
-    ? buildSelectClause(selectedFields, defaultFields)
-    : defaultFields;
+  let selectClause = defaultFields;
+  if (selectedFields) {
+    try {
+      selectClause = buildSelectClause(selectedFields, defaultFields, fieldMap, allowedFields);
+    } catch (error: unknown) {
+      return res.status(400).json({ error: (error as Error).message });
+    }
+  }
 
   // Get total count
   const countResult = await pool.query(
@@ -205,19 +249,20 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
     pharmacyName, pharmacyPhone, pharmacyAddress,
     primaryCarePhysician, referralSource, insuranceId, insuranceGroupNumber
   } = parsed.data;
+  const { ssnLast4, ssnEncrypted } = buildSsnFields(ssn);
 
   await pool.query(
     `insert into patients(
       id, tenant_id, first_name, last_name, dob, phone, email, address, city, state, zip,
-      insurance, allergies, medications, sex, ssn,
+      insurance, allergies, medications, sex, ssn_last4, ssn_encrypted,
       emergency_contact_name, emergency_contact_relationship, emergency_contact_phone,
       pharmacy_name, pharmacy_phone, pharmacy_address,
       primary_care_physician, referral_source, insurance_id, insurance_group_number
-    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
     [
       id, tenantId, firstName, lastName, dob || null, phone || null, email || null,
       address || null, city || null, state || null, zip || null,
-      insurance || null, allergies || null, medications || null, sex || null, ssn || null,
+      insurance || null, allergies || null, medications || null, sex || null, ssnLast4, ssnEncrypted,
       emergencyContactName || null, emergencyContactRelationship || null, emergencyContactPhone || null,
       pharmacyName || null, pharmacyPhone || null, pharmacyAddress || null,
       primaryCarePhysician || null, referralSource || null, insuranceId || null, insuranceGroupNumber || null
@@ -275,7 +320,8 @@ patientsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
   try {
     const result = await pool.query(
       `select id, first_name as "firstName", last_name as "lastName", dob, phone, email,
-              address, city, state, zip, insurance, allergies, medications, sex, ssn,
+              address, city, state, zip, insurance, allergies, medications, sex,
+              coalesce(ssn_last4, right(ssn, 4)) as "ssn",
               emergency_contact_name as "emergencyContactName",
               emergency_contact_relationship as "emergencyContactRelationship",
               emergency_contact_phone as "emergencyContactPhone",
@@ -391,12 +437,14 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
     return res.status(400).json({ error: parsed.error.format() });
   }
 
+  const { ssn, ...patientUpdates } = parsed.data;
+
   // Build dynamic update query
   const updates: string[] = [];
   const values: any[] = [];
   let paramIndex = 1;
 
-  Object.entries(parsed.data).forEach(([key, value]) => {
+  Object.entries(patientUpdates).forEach(([key, value]) => {
     if (value !== undefined) {
       // Convert camelCase to snake_case for database columns
       const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
@@ -405,6 +453,19 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
       paramIndex++;
     }
   });
+
+  if (ssn !== undefined) {
+    const { ssnLast4, ssnEncrypted } = buildSsnFields(ssn);
+    updates.push(`ssn_last4 = $${paramIndex}`);
+    values.push(ssnLast4);
+    paramIndex++;
+    updates.push(`ssn_encrypted = $${paramIndex}`);
+    values.push(ssnEncrypted);
+    paramIndex++;
+    updates.push(`ssn = $${paramIndex}`);
+    values.push(null);
+    paramIndex++;
+  }
 
   if (updates.length === 0) {
     return res.status(400).json({ error: 'No fields to update' });
@@ -634,15 +695,15 @@ patientsRouter.get("/:id/encounters", requireAuth, async (req: AuthedRequest, re
   try {
     const result = await pool.query(
       `SELECT e.id, e.patient_id as "patientId", e.provider_id as "providerId",
-              e.appointment_id as "appointmentId", e.encounter_date as "encounterDate",
-              e.chief_complaint as "chiefComplaint", e.hpi, e.ros, e.physical_exam as "physicalExam",
-              e.assessment_plan as "assessmentPlan", e.status, e.signed_at as "signedAt",
+              e.appointment_id as "appointmentId", e.created_at as "encounterDate",
+              e.chief_complaint as "chiefComplaint", e.hpi, e.ros, e.exam as "physicalExam",
+              e.assessment_plan as "assessmentPlan", e.status,
               e.created_at as "createdAt", e.updated_at as "updatedAt",
-              p.first_name || ' ' || p.last_name as "providerName"
+              pr.full_name as "providerName"
        FROM encounters e
-       LEFT JOIN providers p ON e.provider_id = p.id
+       LEFT JOIN providers pr ON e.provider_id = pr.id
        WHERE e.patient_id = $1 AND e.tenant_id = $2
-       ORDER BY e.encounter_date DESC`,
+       ORDER BY e.created_at DESC`,
       [id, tenantId]
     );
 

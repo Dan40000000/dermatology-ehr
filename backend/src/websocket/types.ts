@@ -86,6 +86,15 @@ export interface PatientViewingData {
   startedAt?: string;
 }
 
+export interface AmbientTranscriptEventData {
+  recordingId: string;
+  chunkIndex: number;
+  text: string;
+  confidence: number;
+  receivedAt: string;
+  source: 'live' | 'mock';
+}
+
 // Patient events
 export interface PatientEventData {
   id: string;
@@ -255,6 +264,12 @@ export interface ServerToClientEvents {
   'user:offline': (data: UserPresenceData) => void;
   'user:status': (data: UserPresenceData) => void;
   'patient:viewing': (data: PatientViewingData & { timestamp: string }) => void;
+
+  // Ambient scribe events
+  'ambient:joined': (data: { recordingId: string; joinedAt: string }) => void;
+  'ambient:left': (data: { recordingId: string; leftAt: string }) => void;
+  'ambient:transcript': (data: AmbientTranscriptEventData) => void;
+  'ambient:error': (data: { recordingId?: string; message: string }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -266,6 +281,11 @@ export interface ClientToServerEvents {
   // Presence events
   'user:status': (status: 'online' | 'away') => void;
   'patient:viewing': (data: { patientId: string; isViewing: boolean }) => void;
+
+  // Ambient scribe events
+  'ambient:join': (data: { recordingId: string }) => void;
+  'ambient:leave': (data: { recordingId: string }) => void;
+  'ambient:audio-chunk': (data: { recordingId: string; chunkIndex: number; mimeType?: string; data: ArrayBuffer }) => void;
 }
 
 /**

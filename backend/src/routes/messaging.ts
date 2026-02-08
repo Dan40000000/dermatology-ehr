@@ -185,9 +185,9 @@ messagingRouter.post("/threads", requireAuth, async (req: AuthedRequest, res) =>
     // Add creator as participant
     const creatorParticipantId = crypto.randomUUID();
     await client.query(
-      `insert into message_participants(id, thread_id, user_id)
-       values ($1, $2, $3)`,
-      [creatorParticipantId, threadId, userId]
+      `insert into message_participants(id, tenant_id, thread_id, user_id)
+       values ($1, $2, $3, $4)`,
+      [creatorParticipantId, tenantId, threadId, userId]
     );
 
     // Add other participants
@@ -195,9 +195,9 @@ messagingRouter.post("/threads", requireAuth, async (req: AuthedRequest, res) =>
       if (participantId !== userId) {
         const participantIdUUID = crypto.randomUUID();
         await client.query(
-          `insert into message_participants(id, thread_id, user_id)
-           values ($1, $2, $3)`,
-          [participantIdUUID, threadId, participantId]
+          `insert into message_participants(id, tenant_id, thread_id, user_id)
+           values ($1, $2, $3, $4)`,
+          [participantIdUUID, tenantId, threadId, participantId]
         );
       }
     }

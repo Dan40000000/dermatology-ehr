@@ -187,7 +187,7 @@ router.get('/due', async (req: AuthedRequest, res) => {
         p.last_name,
         p.email,
         p.phone,
-        p.date_of_birth,
+        p.dob as date_of_birth,
         rc.name as campaign_name,
         rc.recall_type,
         (

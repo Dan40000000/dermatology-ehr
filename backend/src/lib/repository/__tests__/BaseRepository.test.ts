@@ -221,7 +221,15 @@ describe("BaseRepository", () => {
       });
 
       const query = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(query).toContain("ORDER BY created_at DESC");
+      expect(query).toContain("ORDER BY test_entities.created_at DESC");
+    });
+
+    it("should reject invalid ordering column", async () => {
+      await expect(
+        repository.findAll("tenant-1", {
+          orderBy: "created_at desc; drop table users; --",
+        })
+      ).rejects.toThrow("BaseRepository: invalid orderBy column");
     });
 
     it("should apply pagination options", async () => {
@@ -564,8 +572,7 @@ describe("BaseRepository", () => {
         .fn()
         .mockResolvedValue(createMockQueryResult([mockEntity]));
 
-      // This is a tricky case - empty update should just fetch
-      // But our implementation adds updated_at, so it will still update
+      // Empty update should short-circuit to a read
       const result = await repository.update("entity-1", {}, "tenant-1");
 
       expect(result).toEqual(mockEntity);

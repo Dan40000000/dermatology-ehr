@@ -53,4 +53,10 @@ describe("fieldSelection utilities", () => {
     const clause = buildSelectClause(["primary"], "id", { primary: "p.primary_id" });
     expect(clause).toBe("p.primary_id");
   });
+
+  it("buildSelectClause rejects fields outside allowlist", () => {
+    expect(() => buildSelectClause(["bad"], "id", undefined, ["id"])).toThrow(
+      "Invalid fields requested: bad"
+    );
+  });
 });

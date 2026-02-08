@@ -807,6 +807,301 @@ const endOfDayReportTemplate: MessageTemplate = {
 };
 
 /**
+ * Template for prior auth needed
+ */
+const priorAuthNeededTemplate: MessageTemplate = {
+  buildSlackMessage(data: {
+    patientName: string;
+    itemName: string;
+    payerName?: string;
+  }): SlackMessage {
+    return {
+      text: `⚠️ Prior Authorization Required for ${data.patientName}`,
+      blocks: [
+        SlackService.createHeaderBlock("⚠️", "Prior Authorization Required"),
+        SlackService.createFieldsBlock([
+          { label: "Patient", value: data.patientName },
+          { label: "Item", value: data.itemName },
+          { label: "Payer", value: data.payerName || "Unknown" },
+        ]),
+        SlackService.createContext(`Action needed - ${new Date().toLocaleString()}`),
+      ],
+    };
+  },
+  buildTeamsMessage(data: {
+    patientName: string;
+    itemName: string;
+    payerName?: string;
+  }): TeamsMessage {
+    const teamsService = new TeamsService();
+    const card = teamsService.createAdaptiveCard({
+      title: "⚠️ Prior Authorization Required",
+      text: `Prior authorization needed for ${data.patientName}`,
+      facts: [
+        TeamsService.createFact("Patient", data.patientName),
+        TeamsService.createFact("Item", data.itemName),
+        TeamsService.createFact("Payer", data.payerName || "Unknown"),
+      ],
+    });
+    return { type: "message", attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }] };
+  },
+};
+
+/**
+ * Template for critical lab result
+ */
+const criticalLabResultTemplate: MessageTemplate = {
+  buildSlackMessage(data: {
+    patientName: string;
+    testName: string;
+    result?: string;
+    criticalFlag?: string;
+  }): SlackMessage {
+    return {
+      text: `🚨 CRITICAL LAB RESULT for ${data.patientName}`,
+      blocks: [
+        SlackService.createHeaderBlock("🚨", "CRITICAL LAB RESULT"),
+        SlackService.createFieldsBlock([
+          { label: "Patient", value: data.patientName },
+          { label: "Test", value: data.testName },
+          { label: "Result", value: data.result || "See chart" },
+          { label: "Flag", value: data.criticalFlag || "Critical" },
+        ]),
+        SlackService.createContext(`URGENT - Immediate physician review required - ${new Date().toLocaleString()}`),
+      ],
+    };
+  },
+  buildTeamsMessage(data: {
+    patientName: string;
+    testName: string;
+    result?: string;
+    criticalFlag?: string;
+  }): TeamsMessage {
+    const teamsService = new TeamsService();
+    const card = teamsService.createAdaptiveCard({
+      title: "🚨 CRITICAL LAB RESULT",
+      text: `URGENT: Critical lab result for ${data.patientName} requires immediate review`,
+      themeColor: "FF0000",
+      facts: [
+        TeamsService.createFact("Patient", data.patientName),
+        TeamsService.createFact("Test", data.testName),
+        TeamsService.createFact("Result", data.result || "See chart"),
+        TeamsService.createFact("Flag", data.criticalFlag || "Critical"),
+      ],
+    });
+    return { type: "message", attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }] };
+  },
+};
+
+/**
+ * Template for claim created
+ */
+const claimCreatedTemplate: MessageTemplate = {
+  buildSlackMessage(data: {
+    claimId?: string;
+    claimNumber?: string;
+    totalAmount?: string;
+  }): SlackMessage {
+    return {
+      text: `📄 New Claim Created: ${data.claimNumber || data.claimId}`,
+      blocks: [
+        SlackService.createHeaderBlock("📄", "New Claim Created"),
+        SlackService.createFieldsBlock([
+          { label: "Claim #", value: data.claimNumber || data.claimId || "N/A" },
+          { label: "Amount", value: `$${data.totalAmount || "0.00"}` },
+        ]),
+        SlackService.createContext(`Created on ${new Date().toLocaleString()}`),
+      ],
+    };
+  },
+  buildTeamsMessage(data: {
+    claimId?: string;
+    claimNumber?: string;
+    totalAmount?: string;
+  }): TeamsMessage {
+    const teamsService = new TeamsService();
+    const card = teamsService.createAdaptiveCard({
+      title: "📄 New Claim Created",
+      text: `Claim ${data.claimNumber || data.claimId || "N/A"} has been created`,
+      facts: [
+        TeamsService.createFact("Claim #", data.claimNumber || data.claimId || "N/A"),
+        TeamsService.createFact("Amount", `$${data.totalAmount || "0.00"}`),
+      ],
+    });
+    return { type: "message", attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }] };
+  },
+};
+
+/**
+ * Template for claim scrub error
+ */
+const claimScrubErrorTemplate: MessageTemplate = {
+  buildSlackMessage(data: {
+    claimId?: string;
+    errors?: any[];
+  }): SlackMessage {
+    const errorList = (data.errors || []).slice(0, 5).map((e: any) => e.message || e).join("\n• ");
+    return {
+      text: `⚠️ Claim Scrub Errors Found`,
+      blocks: [
+        SlackService.createHeaderBlock("⚠️", "Claim Scrub Errors"),
+        SlackService.createFieldsBlock([
+          { label: "Claim ID", value: data.claimId || "N/A" },
+          { label: "Errors", value: errorList || "See claim details" },
+        ]),
+        SlackService.createContext(`Review required - ${new Date().toLocaleString()}`),
+      ],
+    };
+  },
+  buildTeamsMessage(data: {
+    claimId?: string;
+    errors?: any[];
+  }): TeamsMessage {
+    const teamsService = new TeamsService();
+    const card = teamsService.createAdaptiveCard({
+      title: "⚠️ Claim Scrub Errors",
+      text: `Claim ${data.claimId || "N/A"} has errors that need to be resolved`,
+      themeColor: "FFC107",
+      facts: [
+        TeamsService.createFact("Claim ID", data.claimId || "N/A"),
+        TeamsService.createFact("Errors", String((data.errors || []).length)),
+      ],
+    });
+    return { type: "message", attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }] };
+  },
+};
+
+/**
+ * Template for claim denied
+ */
+const claimDeniedTemplate: MessageTemplate = {
+  buildSlackMessage(data: {
+    claimId?: string;
+    claimNumber?: string;
+    denialReason?: string;
+    denialCode?: string;
+    amount?: string;
+  }): SlackMessage {
+    return {
+      text: `❌ Claim Denied: ${data.claimNumber || data.claimId}`,
+      blocks: [
+        SlackService.createHeaderBlock("❌", "Claim Denied"),
+        SlackService.createFieldsBlock([
+          { label: "Claim #", value: data.claimNumber || data.claimId || "N/A" },
+          { label: "Denial Code", value: data.denialCode || "N/A" },
+          { label: "Reason", value: data.denialReason || "Not specified" },
+          { label: "Amount", value: `$${data.amount || "0.00"}` },
+        ]),
+        SlackService.createContext(`Appeal may be needed - ${new Date().toLocaleString()}`),
+      ],
+    };
+  },
+  buildTeamsMessage(data: {
+    claimId?: string;
+    claimNumber?: string;
+    denialReason?: string;
+    denialCode?: string;
+    amount?: string;
+  }): TeamsMessage {
+    const teamsService = new TeamsService();
+    const card = teamsService.createAdaptiveCard({
+      title: "❌ Claim Denied",
+      text: `Claim ${data.claimNumber || data.claimId || "N/A"} has been denied. Appeal may be needed.`,
+      themeColor: "FF4444",
+      facts: [
+        TeamsService.createFact("Claim #", data.claimNumber || data.claimId || "N/A"),
+        TeamsService.createFact("Denial Code", data.denialCode || "N/A"),
+        TeamsService.createFact("Reason", data.denialReason || "Not specified"),
+        TeamsService.createFact("Amount", `$${data.amount || "0.00"}`),
+      ],
+    });
+    return { type: "message", attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }] };
+  },
+};
+
+/**
+ * Template for claim paid
+ */
+const claimPaidTemplate: MessageTemplate = {
+  buildSlackMessage(data: {
+    claimId?: string;
+    claimNumber?: string;
+    amount?: string;
+  }): SlackMessage {
+    return {
+      text: `✅ Claim Paid: ${data.claimNumber || data.claimId}`,
+      blocks: [
+        SlackService.createHeaderBlock("✅", "Claim Paid"),
+        SlackService.createFieldsBlock([
+          { label: "Claim #", value: data.claimNumber || data.claimId || "N/A" },
+          { label: "Amount", value: `$${data.amount || "0.00"}` },
+        ]),
+        SlackService.createContext(`Payment received - ${new Date().toLocaleString()}`),
+      ],
+    };
+  },
+  buildTeamsMessage(data: {
+    claimId?: string;
+    claimNumber?: string;
+    amount?: string;
+  }): TeamsMessage {
+    const teamsService = new TeamsService();
+    const card = teamsService.createAdaptiveCard({
+      title: "✅ Claim Paid",
+      text: `Payment received for claim ${data.claimNumber || data.claimId || "N/A"}`,
+      themeColor: "00C851",
+      facts: [
+        TeamsService.createFact("Claim #", data.claimNumber || data.claimId || "N/A"),
+        TeamsService.createFact("Amount", `$${data.amount || "0.00"}`),
+      ],
+    });
+    return { type: "message", attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }] };
+  },
+};
+
+/**
+ * Template for payment received
+ */
+const paymentReceivedTemplate: MessageTemplate = {
+  buildSlackMessage(data: {
+    amount?: string;
+    payerName?: string;
+    claimCount?: number;
+  }): SlackMessage {
+    return {
+      text: `💰 Payment Received: $${data.amount || "0.00"}`,
+      blocks: [
+        SlackService.createHeaderBlock("💰", "Payment Received"),
+        SlackService.createFieldsBlock([
+          { label: "Amount", value: `$${data.amount || "0.00"}` },
+          { label: "Payer", value: data.payerName || "N/A" },
+          { label: "Claims", value: String(data.claimCount || 1) },
+        ]),
+        SlackService.createContext(`Posted on ${new Date().toLocaleString()}`),
+      ],
+    };
+  },
+  buildTeamsMessage(data: {
+    amount?: string;
+    payerName?: string;
+    claimCount?: number;
+  }): TeamsMessage {
+    const teamsService = new TeamsService();
+    const card = teamsService.createAdaptiveCard({
+      title: "💰 Payment Received",
+      text: `Payment of $${data.amount || "0.00"} received from ${data.payerName || "payer"}`,
+      themeColor: "00C851",
+      facts: [
+        TeamsService.createFact("Amount", `$${data.amount || "0.00"}`),
+        TeamsService.createFact("Payer", data.payerName || "N/A"),
+        TeamsService.createFact("Claims", String(data.claimCount || 1)),
+      ],
+    });
+    return { type: "message", attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", content: card }] };
+  },
+};
+
+/**
  * Message templates registry
  */
 export const messageTemplates: Record<NotificationType, MessageTemplate> = {
@@ -815,8 +1110,15 @@ export const messageTemplates: Record<NotificationType, MessageTemplate> = {
   patient_checked_in: patientCheckedInTemplate,
   prior_auth_approved: priorAuthApprovedTemplate,
   prior_auth_denied: priorAuthDeniedTemplate,
+  prior_auth_needed: priorAuthNeededTemplate,
   lab_results_ready: labResultsReadyTemplate,
+  critical_lab_result: criticalLabResultTemplate,
   urgent_message: urgentMessageTemplate,
   daily_schedule_summary: dailyScheduleSummaryTemplate,
   end_of_day_report: endOfDayReportTemplate,
+  claim_created: claimCreatedTemplate,
+  claim_scrub_error: claimScrubErrorTemplate,
+  claim_denied: claimDeniedTemplate,
+  claim_paid: claimPaidTemplate,
+  payment_received: paymentReceivedTemplate,
 };

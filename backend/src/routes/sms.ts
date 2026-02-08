@@ -1638,4 +1638,153 @@ router.post('/webhook/status', async (req: Request, res: Response) => {
   }
 });
 
+// ============================================================================
+// WORKFLOW SMS ENDPOINTS
+// ============================================================================
+
+import { smsWorkflowService, processScheduledReminders, processFollowUpReminders } from '../services/smsWorkflowService';
+
+/**
+ * POST /api/sms/workflow/appointment-confirmation/:appointmentId
+ * Send appointment confirmation SMS manually
+ */
+router.post('/workflow/appointment-confirmation/:appointmentId', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const appointmentId = req.params.appointmentId as string;
+    if (!appointmentId) {
+      return res.status(400).json({ error: 'Appointment ID required' });
+    }
+
+    const result = await smsWorkflowService.sendAppointmentConfirmation(tenantId, appointmentId);
+
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    await auditLog(tenantId, req.user!.id, 'sms_workflow_confirmation', 'appointment', appointmentId || 'unknown');
+    res.json({ success: true, messageId: result.messageId });
+  } catch (error: any) {
+    logger.error('Error sending appointment confirmation SMS', { error: error.message });
+    res.status(500).json({ error: 'Failed to send confirmation SMS' });
+  }
+});
+
+/**
+ * POST /api/sms/workflow/appointment-reminder/:appointmentId
+ * Send appointment reminder SMS (24h or 2h)
+ */
+router.post('/workflow/appointment-reminder/:appointmentId', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const appointmentId = req.params.appointmentId as string;
+    if (!appointmentId) {
+      return res.status(400).json({ error: 'Appointment ID required' });
+    }
+    const reminderType = (req.body.reminderType as '24h' | '2h') || '24h';
+
+    const result = await smsWorkflowService.sendAppointmentReminder(tenantId, appointmentId, reminderType);
+
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    await auditLog(tenantId, req.user!.id, 'sms_workflow_reminder', 'appointment', appointmentId || 'unknown');
+    res.json({ success: true, messageId: result.messageId });
+  } catch (error: any) {
+    logger.error('Error sending appointment reminder SMS', { error: error.message });
+    res.status(500).json({ error: 'Failed to send reminder SMS' });
+  }
+});
+
+/**
+ * POST /api/sms/workflow/process-reminders
+ * Process all scheduled reminders (admin endpoint for manual trigger)
+ */
+router.post('/workflow/process-reminders', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    // Only allow admin users
+    if (req.user!.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const results = await processScheduledReminders();
+    res.json({ success: true, ...results });
+  } catch (error: any) {
+    logger.error('Error processing scheduled reminders', { error: error.message });
+    res.status(500).json({ error: 'Failed to process reminders' });
+  }
+});
+
+/**
+ * POST /api/sms/workflow/process-followups
+ * Process follow-up and recall reminders (admin endpoint for manual trigger)
+ */
+router.post('/workflow/process-followups', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    // Only allow admin users
+    if (req.user!.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const results = await processFollowUpReminders();
+    res.json({ success: true, ...results });
+  } catch (error: any) {
+    logger.error('Error processing follow-up reminders', { error: error.message });
+    res.status(500).json({ error: 'Failed to process follow-ups' });
+  }
+});
+
+/**
+ * GET /api/sms/workflow/scheduled-reminders
+ * Get scheduled reminders for an appointment or tenant
+ */
+router.get('/workflow/scheduled-reminders', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const appointmentId = req.query.appointmentId as string | undefined;
+    const status = req.query.status as string | undefined;
+
+    let query = `
+      SELECT
+        sr.id,
+        sr.appointment_id as "appointmentId",
+        sr.reminder_type as "reminderType",
+        sr.scheduled_time as "scheduledTime",
+        sr.status,
+        sr.sent_at as "sentAt",
+        sr.error_message as "errorMessage",
+        p.first_name || ' ' || p.last_name as "patientName",
+        a.start_time as "appointmentTime"
+      FROM scheduled_reminders sr
+      JOIN appointments a ON a.id = sr.appointment_id
+      JOIN patients p ON p.id = a.patient_id
+      WHERE sr.tenant_id = $1
+    `;
+
+    const params: any[] = [tenantId];
+    let paramIndex = 2;
+
+    if (appointmentId) {
+      query += ` AND sr.appointment_id = $${paramIndex}`;
+      params.push(appointmentId);
+      paramIndex++;
+    }
+
+    if (status) {
+      query += ` AND sr.status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+
+    query += ` ORDER BY sr.scheduled_time ASC LIMIT 100`;
+
+    const result = await pool.query(query, params);
+    res.json({ reminders: result.rows });
+  } catch (error: any) {
+    logger.error('Error fetching scheduled reminders', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch reminders' });
+  }
+});
+
 export const smsRouter = router;

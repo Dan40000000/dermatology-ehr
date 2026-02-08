@@ -3,6 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 import { API_BASE_URL } from '../utils/apiBase';
 import toast from 'react-hot-toast';
+import { refreshSessionNow } from '../utils/authFetch';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -22,6 +23,21 @@ const WebSocketContext = createContext<WebSocketContextValue | null>(null);
 const SOCKET_URL = API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 const RECONNECTION_DELAY = 5000;
 const MAX_RECONNECTION_ATTEMPTS = 10;
+const STORAGE_KEY = 'derm_session';
+
+type SocketAuth = { tenantId: string; accessToken: string };
+
+const readStoredAuth = (): SocketAuth | null => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored);
+    if (!parsed?.tenantId || !parsed?.accessToken) return null;
+    return { tenantId: parsed.tenantId, accessToken: parsed.accessToken };
+  } catch {
+    return null;
+  }
+};
 
 export function WebSocketProvider({ children }: { children: ReactNode }) {
   const { session, isAuthenticated } = useAuth();
@@ -30,17 +46,16 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [reconnectionAttempts, setReconnectionAttempts] = useState(0);
 
   // Initialize socket connection
-  const initializeSocket = useCallback(() => {
-    if (!isAuthenticated || !session) {
-      return;
-    }
+  const initializeSocket = useCallback((overrideAuth?: SocketAuth) => {
+    const activeAuth = overrideAuth ?? (session ? { tenantId: session.tenantId, accessToken: session.accessToken } : readStoredAuth());
+    if (!activeAuth) return;
 
     setStatus('connecting');
 
     const newSocket = io(SOCKET_URL, {
       auth: {
-        token: session.accessToken,
-        tenantId: session.tenantId,
+        token: activeAuth.accessToken,
+        tenantId: activeAuth.tenantId,
       },
       transports: ['websocket', 'polling'],
       reconnection: true,
@@ -75,6 +90,20 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       setStatus('error');
       setReconnectionAttempts((prev) => prev + 1);
 
+      const message = (error as any)?.message || '';
+      if (message.includes('Invalid authentication token') || message.includes('Authentication token required')) {
+        refreshSessionNow().then((updated) => {
+          if (updated) {
+            const nextAuth = { tenantId: updated.tenantId, accessToken: updated.accessToken };
+            setTimeout(() => {
+              reconnect(nextAuth);
+            }, 500);
+          }
+        }).catch(() => {
+          // ignore refresh failures; user will re-login
+        });
+      }
+
       if (reconnectionAttempts < MAX_RECONNECTION_ATTEMPTS) {
         toast.error(`Connection error. Retrying... (${reconnectionAttempts + 1}/${MAX_RECONNECTION_ATTEMPTS})`, {
           duration: 2000,
@@ -98,11 +127,14 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     return () => {
       newSocket.close();
     };
-  }, [isAuthenticated, session, reconnectionAttempts]);
+  }, [session, reconnectionAttempts]);
 
   // Initialize socket when authenticated
   useEffect(() => {
     if (isAuthenticated && session) {
+      const cleanup = initializeSocket({ tenantId: session.tenantId, accessToken: session.accessToken });
+      return cleanup;
+    } else if (readStoredAuth()) {
       const cleanup = initializeSocket();
       return cleanup;
     } else {
@@ -116,12 +148,12 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   }, [isAuthenticated, session]);
 
   // Manual reconnection function
-  const reconnect = useCallback(() => {
+  const reconnect = useCallback((overrideAuth?: SocketAuth) => {
     if (socket) {
       socket.close();
     }
     setReconnectionAttempts(0);
-    initializeSocket();
+    initializeSocket(overrideAuth);
   }, [socket, initializeSocket]);
 
   // Event subscription helpers

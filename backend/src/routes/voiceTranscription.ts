@@ -11,7 +11,7 @@ const router = express.Router();
 /**
  * Voice Transcription Routes
  *
- * Medical dictation endpoints using Whisper API
+ * Medical dictation endpoints using OpenAI transcription API
  */
 
 // Configure multer for audio file uploads

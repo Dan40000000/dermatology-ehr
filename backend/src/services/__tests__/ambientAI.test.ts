@@ -26,6 +26,9 @@ describe('AmbientAI Service', () => {
     jest.clearAllMocks();
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_TRANSCRIBE_MODEL;
+    delete process.env.OPENAI_NOTE_MODEL;
+    delete process.env.ANTHROPIC_NOTE_MODEL;
     process.env.AMBIENT_AI_MOCK_DELAY_MS = '0';
   });
 
@@ -55,29 +58,30 @@ describe('AmbientAI Service', () => {
       );
     });
 
-    it('should use OpenAI Whisper when API key available', async () => {
+    it('should use OpenAI transcription when API key available', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.OPENAI_TRANSCRIBE_MODEL = 'gpt-4o-transcribe-diarize';
 
       const mockAudioBuffer = Buffer.from('fake audio data');
       (fs.readFile as jest.Mock).mockResolvedValueOnce(mockAudioBuffer);
 
-      const mockWhisperResponse = {
+      const mockTranscribeResponse = {
         ok: true,
         json: async () => ({
-          text: 'Transcribed text from Whisper',
+          text: 'Transcribed text from OpenAI',
           segments: [
             {
-              text: 'Transcribed text from Whisper',
+              text: 'Transcribed text from OpenAI',
               start: 0,
               end: 10,
-              confidence: 0.95,
+              speaker: 'A'
             },
           ],
           language: 'en',
         }),
       };
 
-      (global.fetch as jest.Mock).mockResolvedValueOnce(mockWhisperResponse);
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockTranscribeResponse);
 
       const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds);
 
@@ -91,15 +95,16 @@ describe('AmbientAI Service', () => {
           }),
         })
       );
-      expect(result.text).toBe('Transcribed text from Whisper');
+      expect(result.text).toBe('Transcribed text from OpenAI');
       expect(logger.info).toHaveBeenCalledWith(
-        'Transcribing audio with OpenAI Whisper',
-        expect.objectContaining({ durationSeconds })
+        'Transcribing audio with OpenAI',
+        expect.objectContaining({ durationSeconds, model: 'gpt-4o-transcribe-diarize' })
       );
     });
 
-    it('should fallback to mock when Whisper API fails', async () => {
+    it('should fallback to mock when OpenAI transcription fails', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.OPENAI_TRANSCRIBE_MODEL = 'gpt-4o-transcribe-diarize';
 
       (fs.readFile as jest.Mock).mockResolvedValueOnce(Buffer.from('fake audio'));
       (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('API Error'));
@@ -107,14 +112,15 @@ describe('AmbientAI Service', () => {
       const result = await ambientAI.transcribeAudio(audioFilePath, durationSeconds);
 
       expect(logger.warn).toHaveBeenCalledWith(
-        'OpenAI Whisper transcription failed, falling back to mock',
-        expect.objectContaining({ error: 'API Error' })
+        'OpenAI transcription failed, falling back to mock',
+        expect.objectContaining({ error: 'API Error', model: 'gpt-4o-transcribe-diarize' })
       );
       expect(result.segments.length).toBeGreaterThan(0);
     });
 
-    it('should handle Whisper non-ok response', async () => {
+    it('should handle OpenAI non-ok response', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.OPENAI_TRANSCRIBE_MODEL = 'gpt-4o-transcribe-diarize';
 
       (fs.readFile as jest.Mock).mockResolvedValueOnce(Buffer.from('fake audio'));
 
@@ -266,8 +272,9 @@ describe('AmbientAI Service', () => {
       );
     });
 
-    it('should use GPT-4 when only OpenAI key available', async () => {
+    it('should use OpenAI when only OpenAI key available', async () => {
       process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.OPENAI_NOTE_MODEL = 'gpt-4o';
 
       const mockGPT4Response = {
         ok: true,
@@ -325,7 +332,7 @@ describe('AmbientAI Service', () => {
       );
       expect(result.chiefComplaint).toBe('Rash');
       expect(logger.info).toHaveBeenCalledWith(
-        'Generating clinical note with GPT-4',
+        'Generating clinical note with OpenAI',
         expect.any(Object)
       );
     });

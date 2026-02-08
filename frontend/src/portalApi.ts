@@ -1,7 +1,9 @@
 // Patient Portal API Functions
 // Separate file for portal-specific API calls to keep api.ts manageable
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+import { API_BASE_URL } from "./utils/apiBase";
+
+const API_BASE = API_BASE_URL;
 const TENANT_HEADER = "x-tenant-id";
 
 // ============================================================================
@@ -100,6 +102,29 @@ export interface AutoPayEnrollment {
   cardBrand?: string;
 }
 
+export interface PortalStatement {
+  id: string;
+  statementNumber: string;
+  statementDate: string;
+  balanceCents: number;
+  status: string;
+  lastSentDate?: string | null;
+  sentVia?: string | null;
+  dueDate?: string | null;
+  notes?: string | null;
+  lineItemCount?: number;
+}
+
+export interface PortalStatementLineItem {
+  id: string;
+  claimId?: string | null;
+  serviceDate: string;
+  description: string;
+  amountCents: number;
+  insurancePaidCents?: number;
+  patientResponsibilityCents: number;
+}
+
 // ============================================================================
 // PORTAL PROFILE
 // ============================================================================
@@ -192,6 +217,39 @@ export async function fetchPortalCharges(
     credentials: 'include',
   });
   if (!res.ok) throw new Error('Failed to fetch charges');
+  return res.json();
+}
+
+// Get patient statements
+export async function fetchPortalStatements(
+  tenantId: string,
+  portalToken: string
+): Promise<{ statements: PortalStatement[] }> {
+  const res = await fetch(`${API_BASE}/api/patient-portal/billing/statements`, {
+    headers: {
+      Authorization: `Bearer ${portalToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch statements');
+  return res.json();
+}
+
+// Get statement details
+export async function fetchPortalStatementDetails(
+  tenantId: string,
+  portalToken: string,
+  statementId: string
+): Promise<{ statement: PortalStatement; lineItems: PortalStatementLineItem[] }> {
+  const res = await fetch(`${API_BASE}/api/patient-portal/billing/statements/${statementId}`, {
+    headers: {
+      Authorization: `Bearer ${portalToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch statement');
   return res.json();
 }
 

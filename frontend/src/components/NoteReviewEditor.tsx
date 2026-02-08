@@ -18,12 +18,21 @@ import {
   fetchAmbientTranscript,
   updateAmbientNote,
   reviewAmbientNote,
+  generatePatientSummary,
   applyAmbientNoteToEncounter,
   fetchAmbientNoteEdits,
   type AmbientGeneratedNote,
   type AmbientTranscript,
   type AmbientNoteEdit
 } from '../api';
+import { ScribeSummaryCard } from './ScribeSummaryCard';
+import {
+  buildConcerns,
+  buildDiagnoses,
+  buildSummaryText,
+  buildSymptoms,
+  buildTests
+} from '../utils/scribeSummary';
 
 interface NoteReviewEditorProps {
   noteId: string;
@@ -122,7 +131,21 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
         action
       );
 
-      showSuccess(result.message);
+      let successMessage = result.message;
+      if (action === 'approve') {
+        try {
+          const summaryResult = await generatePatientSummary(
+            session!.tenantId,
+            session!.accessToken,
+            noteId
+          );
+          successMessage = `Note approved - ${summaryResult.message}`;
+        } catch (summaryError: any) {
+          showError(summaryError.message || 'Note approved, but summary generation failed');
+        }
+      }
+
+      showSuccess(successMessage);
 
       if (action === 'approve' && onApproved) {
         onApproved();
@@ -133,6 +156,27 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
       await loadData();
     } catch (error: any) {
       showError(error.message || 'Failed to review note');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePublishSummary = async () => {
+    if (!note) return;
+    try {
+      setSaving(true);
+      if (note.reviewStatus !== 'approved') {
+        await reviewAmbientNote(session!.tenantId, session!.accessToken, noteId, 'approve');
+      }
+      const summaryResult = await generatePatientSummary(
+        session!.tenantId,
+        session!.accessToken,
+        noteId
+      );
+      showSuccess(summaryResult.message || 'Patient summary saved to profile');
+      await loadData();
+    } catch (error: any) {
+      showError(error.message || 'Failed to publish patient summary');
     } finally {
       setSaving(false);
     }
@@ -161,6 +205,12 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
     return 'text-red-600 bg-red-50';
   };
 
+  const getConfidenceTone = (confidence: number) => {
+    if (confidence >= 0.9) return 'high';
+    if (confidence >= 0.75) return 'medium';
+    return 'low';
+  };
+
   const getConfidenceLabel = (confidence: number) => {
     if (confidence >= 0.9) return 'High';
     if (confidence >= 0.75) return 'Medium';
@@ -183,6 +233,12 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
     { key: 'assessment', label: 'Assessment', field: 'assessment' },
     { key: 'plan', label: 'Plan', field: 'plan' }
   ];
+
+  const summarySymptoms = buildSymptoms(note, null);
+  const summaryConcerns = buildConcerns(note);
+  const summaryDiagnoses = buildDiagnoses(note, null);
+  const summaryTests = buildTests(note, null);
+  const summaryText = buildSummaryText(note, null);
 
   return (
     <div style={{ background: 'white', borderRadius: '0.5rem', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}>
@@ -243,36 +299,50 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
               </p>
             </div>
 
+            <ScribeSummaryCard
+              title="Patient Summary Preview"
+              visitDate={note.completedAt || note.createdAt}
+              statusLabel={note.reviewStatus === 'approved' ? 'Ready to share' : 'Draft'}
+              symptoms={summarySymptoms}
+              concerns={summaryConcerns}
+              potentialDiagnoses={summaryDiagnoses}
+              suggestedTests={summaryTests}
+              summaryText={summaryText}
+              summaryLabel="Summary of Appointment"
+              showDetails
+            />
+
             {/* Note Sections */}
             {sections.map(({ key, label, field }) => {
               const confidence = note.sectionConfidence?.[key] || 0;
               const isEditing = editMode === key;
+              const confidenceTone = getConfidenceTone(confidence);
 
               return (
-                <div key={key} className="border border-gray-200 rounded-lg overflow-hidden">
-                  <div className={`px-4 py-3 flex justify-between items-center ${getConfidenceColor(confidence)}`}>
-                    <div className="flex items-center space-x-3">
-                      <h3 className="font-semibold">{label}</h3>
-                      <span className="text-xs px-2 py-1 rounded">
+                <div key={key} className="scribe-note-section">
+                  <div className="scribe-note-section__header">
+                    <div className="scribe-note-section__title-group">
+                      <span className="scribe-note-section__label">{label}</span>
+                      <span className={`scribe-note-section__confidence scribe-note-section__confidence--${confidenceTone}`}>
                         {(confidence * 100).toFixed(0)}% confidence
                       </span>
                     </div>
                     {!isEditing && note.reviewStatus !== 'approved' && (
                       <button
                         onClick={() => handleEdit(key)}
-                        className="text-sm text-purple-600 hover:text-purple-700 font-medium"
+                        className="scribe-summary-button"
                       >
                         Edit
                       </button>
                     )}
                   </div>
-                  <div className="p-4 bg-white">
+                  <div className="scribe-note-section__body">
                     {isEditing ? (
-                      <div className="space-y-3">
+                      <div className="space-y-3 scribe-note-section__edit">
                         <textarea
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                          className="w-full px-3 py-2 border border-gray-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                           rows={8}
                         />
                         <input
@@ -280,7 +350,7 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                           value={editReason}
                           onChange={(e) => setEditReason(e.target.value)}
                           placeholder="Reason for edit (optional)"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                          className="w-full px-3 py-2 border border-gray-300 text-sm"
                         />
                         <div className="flex space-x-2">
                           <button
@@ -299,8 +369,8 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                         </div>
                       </div>
                     ) : (
-                      <div className="whitespace-pre-wrap text-gray-800">
-                        {note[field] || <span className="text-gray-400 italic">No content generated</span>}
+                      <div className="scribe-note-section__content">
+                        {note[field] || <span className="scribe-note-section__empty">No content generated</span>}
                       </div>
                     )}
                   </div>
@@ -310,50 +380,31 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
 
             {/* Differential Diagnoses Section */}
             {note.differentialDiagnoses && note.differentialDiagnoses.length > 0 && (
-              <div className="border border-purple-200 rounded-lg overflow-hidden mt-6">
-                <div className="px-4 py-3 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-200">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-semibold text-gray-900 flex items-center">
-                      <span className="mr-2">🔬</span>
-                      Differential Diagnoses (AI Recommendations)
-                    </h3>
+              <div className="scribe-insight-card">
+                <div className="scribe-insight-card__header">
+                  <div>
+                    <div className="scribe-insight-card__title">Differential Diagnoses</div>
+                    <div className="scribe-insight-card__subtitle">Provider reference only</div>
                   </div>
-                  <p className="text-xs text-gray-600 mt-1 italic">
-                    For provider reference only - not shared with patient
-                  </p>
+                  <span className="scribe-summary-pill">AI</span>
                 </div>
-                <div className="p-4 bg-white space-y-3">
+                <div className="scribe-insight-card__body">
                   {note.differentialDiagnoses.map((diagnosis, idx) => {
-                    const confidencePercent = diagnosis.confidence * 100;
-                    const confidenceColorClass =
-                      confidencePercent > 80 ? 'bg-green-500' :
-                      confidencePercent >= 50 ? 'bg-yellow-500' :
-                      'bg-red-500';
-
+                    const confidenceTone = getConfidenceTone(diagnosis.confidence);
                     return (
-                      <div key={idx} className="border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
-                        <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-bold text-gray-900">{diagnosis.condition}</h4>
-                          <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded">
-                            {diagnosis.icd10Code}
-                          </span>
-                        </div>
-
-                        {/* Confidence Bar */}
-                        <div className="mb-2">
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-xs font-medium text-gray-600">Confidence</span>
-                            <span className="text-xs font-bold text-gray-900">{confidencePercent.toFixed(0)}%</span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div
-                              className={`h-2 rounded-full ${confidenceColorClass}`}
-                              style={{ width: `${confidencePercent}%` }}
-                            />
+                      <div key={idx} className="scribe-insight-item">
+                        <div className="scribe-insight-item__header">
+                          <span className="scribe-insight-item__title">{diagnosis.condition}</span>
+                          <div className="scribe-insight-pill-group">
+                            {diagnosis.icd10Code && (
+                              <span className="scribe-summary-pill">{diagnosis.icd10Code}</span>
+                            )}
+                            <span className={`scribe-insight-pill scribe-insight-pill--${confidenceTone}`}>
+                              {Math.round(diagnosis.confidence * 100)}%
+                            </span>
                           </div>
                         </div>
-
-                        <p className="text-sm text-gray-700">{diagnosis.reasoning}</p>
+                        <div className="scribe-insight-item__body">{diagnosis.reasoning}</div>
                       </div>
                     );
                   })}
@@ -363,47 +414,29 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
 
             {/* Recommended Tests Section */}
             {note.recommendedTests && note.recommendedTests.length > 0 && (
-              <div className="border border-purple-200 rounded-lg overflow-hidden mt-6">
-                <div className="px-4 py-3 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-200">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-semibold text-gray-900 flex items-center">
-                      <span className="mr-2">🧪</span>
-                      Recommended Tests
-                    </h3>
+              <div className="scribe-insight-card">
+                <div className="scribe-insight-card__header">
+                  <div>
+                    <div className="scribe-insight-card__title">Recommended Tests</div>
+                    <div className="scribe-insight-card__subtitle">Provider reference only</div>
                   </div>
-                  <p className="text-xs text-gray-600 mt-1 italic">
-                    For provider reference only - not shared with patient
-                  </p>
+                  <span className="scribe-summary-pill">AI</span>
                 </div>
-                <div className="p-4 bg-white space-y-3">
-                  {note.recommendedTests.map((test, idx) => {
-                    const urgencyConfig = {
-                      routine: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Routine' },
-                      soon: { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Soon' },
-                      urgent: { bg: 'bg-red-100', text: 'text-red-700', label: 'Urgent' }
-                    };
-                    const config = urgencyConfig[test.urgency];
-
-                    return (
-                      <div key={idx} className="border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
-                        <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-bold text-gray-900">{test.testName}</h4>
-                          <div className="flex items-center gap-2">
-                            <span className={`px-2 py-1 ${config.bg} ${config.text} text-xs font-medium rounded`}>
-                              {config.label}
-                            </span>
-                            {test.cptCode && (
-                              <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded">
-                                {test.cptCode}
-                              </span>
-                            )}
-                          </div>
+                <div className="scribe-insight-card__body">
+                  {note.recommendedTests.map((test, idx) => (
+                    <div key={idx} className="scribe-insight-item">
+                      <div className="scribe-insight-item__header">
+                        <span className="scribe-insight-item__title">{test.testName}</span>
+                        <div className="scribe-insight-pill-group">
+                          <span className={`scribe-insight-pill scribe-insight-pill--${test.urgency}`}>
+                            {test.urgency}
+                          </span>
+                          {test.cptCode && <span className="scribe-summary-pill">{test.cptCode}</span>}
                         </div>
-
-                        <p className="text-sm text-gray-700">{test.rationale}</p>
                       </div>
-                    );
-                  })}
+                      <div className="scribe-insight-item__body">{test.rationale}</div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -435,14 +468,25 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
               </div>
             )}
 
-            {note.reviewStatus === 'approved' && note.encounterId && (
-              <button
-                onClick={handleApplyToEncounter}
-                disabled={saving}
-                className="w-full px-6 py-3 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 disabled:bg-gray-300"
-              >
-                Apply to Encounter
-              </button>
+            {note.reviewStatus === 'approved' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {note.encounterId && (
+                  <button
+                    onClick={handleApplyToEncounter}
+                    disabled={saving}
+                    className="px-6 py-3 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 disabled:bg-gray-300"
+                  >
+                    Apply to Encounter
+                  </button>
+                )}
+                <button
+                  onClick={handlePublishSummary}
+                  disabled={saving}
+                  className="px-6 py-3 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 disabled:bg-gray-300"
+                >
+                  Publish to Patient Profile
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -497,20 +541,25 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
 
                 {/* CPT Codes */}
                 {note.suggestedCptCodes && note.suggestedCptCodes.length > 0 && (
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <h4 className="font-semibold text-gray-900 mb-3">Suggested CPT Codes</h4>
-                    <div className="space-y-2">
-                      {note.suggestedCptCodes.map((code, idx) => (
-                        <div key={idx} className="flex justify-between items-start text-sm">
-                          <div>
-                            <span className="font-medium text-purple-600">{code.code}</span>
-                            <p className="text-gray-600 text-xs">{code.description}</p>
+                  <div className="scribe-insight-card">
+                    <div className="scribe-insight-card__header">
+                      <div className="scribe-insight-card__title">Suggested CPT Codes</div>
+                    </div>
+                    <div className="scribe-insight-card__body">
+                      {note.suggestedCptCodes.map((code, idx) => {
+                        const confidenceTone = getConfidenceTone(code.confidence);
+                        return (
+                          <div key={idx} className="scribe-insight-item">
+                            <div className="scribe-insight-item__header">
+                              <span className="scribe-insight-item__title">{code.code}</span>
+                              <span className={`scribe-insight-pill scribe-insight-pill--${confidenceTone}`}>
+                                {(code.confidence * 100).toFixed(0)}%
+                              </span>
+                            </div>
+                            <div className="scribe-insight-item__meta">{code.description}</div>
                           </div>
-                          <span className={`text-xs px-2 py-1 rounded ${getConfidenceColor(code.confidence)}`}>
-                            {(code.confidence * 100).toFixed(0)}%
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -532,23 +581,21 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
 
                 {/* Follow-up Tasks */}
                 {note.followUpTasks && note.followUpTasks.length > 0 && (
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <h4 className="font-semibold text-gray-900 mb-3">Follow-up Tasks</h4>
-                    <div className="space-y-2">
+                  <div className="scribe-insight-card">
+                    <div className="scribe-insight-card__header">
+                      <div className="scribe-insight-card__title">Follow-up Tasks</div>
+                    </div>
+                    <div className="scribe-insight-card__body">
                       {note.followUpTasks.map((task, idx) => (
-                        <div key={idx} className="text-sm">
-                          <div className="flex items-start space-x-2">
-                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                              task.priority === 'high' ? 'bg-red-100 text-red-800' :
-                              task.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                              'bg-green-100 text-green-800'
-                            }`}>
+                        <div key={idx} className="scribe-insight-item">
+                          <div className="scribe-insight-item__header">
+                            <span className="scribe-insight-item__title">{task.task}</span>
+                            <span className={`scribe-insight-pill scribe-insight-pill--${task.priority}`}>
                               {task.priority}
                             </span>
-                            <p className="text-gray-800 flex-1">{task.task}</p>
                           </div>
                           {task.dueDate && (
-                            <p className="text-gray-500 text-xs mt-1 ml-2">Due: {task.dueDate}</p>
+                            <div className="scribe-insight-item__meta">Due: {task.dueDate}</div>
                           )}
                         </div>
                       ))}

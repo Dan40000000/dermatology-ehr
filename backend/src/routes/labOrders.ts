@@ -120,7 +120,7 @@ router.get('/:id', async (req: AuthedRequest, res: Response) => {
         lo.*,
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
-        p.date_of_birth,
+        p.dob as date_of_birth,
         p.gender,
         pr.first_name || ' ' || pr.last_name as ordering_provider_name,
         pr.npi as provider_npi,
@@ -290,7 +290,7 @@ router.post('/:id/submit', async (req: AuthedRequest, res: Response) => {
       `SELECT
         lo.*,
         p.id as patient_uuid, p.mrn, p.first_name as patient_first_name,
-        p.last_name as patient_last_name, p.date_of_birth, p.gender,
+        p.last_name as patient_last_name, p.dob as date_of_birth, p.gender,
         pr.id as provider_uuid, pr.npi, pr.first_name as provider_first_name,
         pr.last_name as provider_last_name,
         lv.name as vendor_name, lv.api_endpoint, lv.hl7_enabled

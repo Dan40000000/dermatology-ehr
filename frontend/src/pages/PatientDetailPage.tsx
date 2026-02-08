@@ -1,13 +1,13 @@
-import { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
 import { PatientBanner, BodyMap } from '../components/clinical';
-import { QuickRecordButton } from '../components/QuickRecordButton';
+import { ScribePanel } from '../components/ScribePanel';
 import { ClinicalTrendsTab } from '../components/clinical/ClinicalTrendsTab';
 import type { Lesion } from '../components/clinical';
-import { TasksTab } from '../components/patient';
+import { TasksTab, PatientScribeSummaries, PatientScribeSnapshot } from '../components/patient';
 import { RxHistoryTab } from '../components/RxHistoryTab';
 import { ActiveMedicationsCard } from '../components/prescriptions';
 import { CoverageSummaryCard } from '../components/Insurance/CoverageSummaryCard';
@@ -28,13 +28,18 @@ import {
 } from '../api';
 import type { Patient, Encounter, Appointment, Document, Photo, Prescription, Task, Order } from '../types';
 
-type TabId = 'overview' | 'demographics' | 'insurance' | 'medical-history' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks';
+type TabId = 'overview' | 'demographics' | 'insurance' | 'medical-history' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks' | 'scribe';
 
 export function PatientDetailPage() {
   const { patientId } = useParams<{ patientId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { session } = useAuth();
   const { showError, showSuccess } = useToast();
+  const scribeParam = searchParams.get('scribe') === '1';
+  const autoStartScribe = scribeParam && searchParams.get('auto') === '1';
+  const encounterIdParam = searchParams.get('encounterId') || undefined;
+  const providerIdParam = searchParams.get('providerId') || undefined;
 
   const [loading, setLoading] = useState(true);
   const [patient, setPatient] = useState<Patient | null>(null);
@@ -48,6 +53,9 @@ export function PatientDetailPage() {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [bodyMapView, setBodyMapView] = useState<'anterior' | 'posterior'>('anterior');
   const [showFaceSheet, setShowFaceSheet] = useState(false);
+  const [highlightScribe, setHighlightScribe] = useState(false);
+  const scribeContainerRef = useRef<HTMLDivElement | null>(null);
+  const highlightTimeoutRef = useRef<number | null>(null);
 
   // Modal states
   const [editDemographicsOpen, setEditDemographicsOpen] = useState(false);
@@ -173,6 +181,29 @@ export function PatientDetailPage() {
     loadPatientData();
   }, [loadPatientData]);
 
+  useEffect(() => {
+    if (!scribeParam || !patient) return;
+    const target = scribeContainerRef.current;
+    if (target) {
+      requestAnimationFrame(() => {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    }
+    setHighlightScribe(true);
+    if (highlightTimeoutRef.current) {
+      window.clearTimeout(highlightTimeoutRef.current);
+    }
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightScribe(false);
+    }, 3500);
+
+    return () => {
+      if (highlightTimeoutRef.current) {
+        window.clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, [scribeParam, patient?.id]);
+
   const handleStartEncounter = () => {
     navigate(`/patients/${patientId}/encounter/new`);
   };
@@ -246,6 +277,7 @@ export function PatientDetailPage() {
     { id: 'documents', label: 'Documents', icon: '', count: documents.length },
     { id: 'photos', label: 'Photos', icon: '', count: photos.length },
     { id: 'tasks', label: 'Tasks', icon: '✓', count: tasks.filter(t => t.status !== 'completed').length },
+    { id: 'scribe', label: 'AI Scribe', icon: '✨' },
     { id: 'timeline', label: 'Timeline', icon: '', count: encounters.length + appointments.length + documents.length + photos.length },
   ];
 
@@ -257,22 +289,22 @@ export function PatientDetailPage() {
         onStartEncounter={handleStartEncounter}
       />
 
-      {/* Quick Record Button for AI Scribe */}
-      <div style={{ padding: '16px 24px', background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', borderBottom: '1px solid #bbf7d0' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', maxWidth: '1200px', margin: '0 auto' }}>
-          <QuickRecordButton
-            patientId={patient.id}
-            patientName={`${patient.firstName} ${patient.lastName}`}
-            onRecordingComplete={(recordingId) => {
-              console.log('Recording complete:', recordingId);
-              // Navigate to review the generated note
-              navigate(`/ambient-scribe?recording=${recordingId}`);
-            }}
-          />
-          <div style={{ fontSize: '14px', color: '#166534' }}>
-            <strong>AI Scribe:</strong> Click to start recording your appointment. The AI will transcribe and generate clinical notes.
-          </div>
-        </div>
+      {/* AI Scribe Panel */}
+      <div style={{ padding: '16px 24px', maxWidth: '1200px', margin: '0 auto' }}>
+        <ScribePanel
+          ref={scribeContainerRef}
+          patientId={patient.id}
+          patientName={`${patient.firstName} ${patient.lastName}`}
+          encounterId={encounterIdParam}
+          providerId={providerIdParam}
+          autoStart={autoStartScribe}
+          highlighted={highlightScribe}
+          showScheduleBadge={scribeParam}
+          onRecordingComplete={(recordingId) => {
+            console.log('Recording complete:', recordingId);
+            navigate(`/ambient-scribe?recordingId=${recordingId}&auto=1`);
+          }}
+        />
       </div>
 
       {/* Action Bar */}
@@ -601,6 +633,20 @@ export function PatientDetailPage() {
                 )}
               </div>
 
+              {/* AI Scribe Snapshot */}
+              {patient && (
+                <div>
+                  <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
+                    AI Scribe Snapshot
+                  </div>
+                  <PatientScribeSnapshot
+                    patientId={patient.id}
+                    patientName={`${patient.firstName} ${patient.lastName}`}
+                    onViewArchive={() => setActiveTab('scribe')}
+                  />
+                </div>
+              )}
+
               {/* Active Medications */}
               {patientId && (
                 <div style={{ marginBottom: '1.5rem' }}>
@@ -852,6 +898,13 @@ export function PatientDetailPage() {
 
         {activeTab === 'tasks' && patientId && (
           <TasksTab patientId={patientId} />
+        )}
+
+        {activeTab === 'scribe' && patient && (
+          <PatientScribeSummaries
+            patientId={patient.id}
+            patientName={`${patient.firstName} ${patient.lastName}`}
+          />
         )}
 
         {activeTab === 'timeline' && (
@@ -2161,18 +2214,32 @@ function TimelineTab({
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     const now = new Date();
-    const diffTime = now.getTime() - date.getTime();
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const dayDiff = Math.round(
+      (startOfDay(date).getTime() - startOfDay(now).getTime()) / (1000 * 60 * 60 * 24)
+    );
 
-    if (diffDays === 0) {
+    if (dayDiff === 0) {
       return `Today at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-    } else if (diffDays === 1) {
-      return `Yesterday at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-    } else if (diffDays < 7) {
-      return `${diffDays} days ago`;
-    } else {
+    }
+
+    if (dayDiff > 0) {
+      if (dayDiff === 1) {
+        return `Tomorrow at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      }
+      if (dayDiff < 7) {
+        return `In ${dayDiff} days`;
+      }
       return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
     }
+
+    if (dayDiff === -1) {
+      return `Yesterday at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    if (dayDiff > -7) {
+      return `${Math.abs(dayDiff)} days ago`;
+    }
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
   const filterButtons = [

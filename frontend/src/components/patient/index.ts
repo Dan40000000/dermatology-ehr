@@ -8,3 +8,5 @@ export { PatientPriorAuthsList } from './PatientPriorAuthsList';
 export { PatientBiopsyHistory } from './PatientBiopsyHistory';
 export { PatientPhotoGallery } from './PatientPhotoGallery';
 export { PatientBodyMapPreview } from './PatientBodyMapPreview';
+export { PatientScribeSummaries } from './PatientScribeSummaries';
+export { PatientScribeSnapshot } from './PatientScribeSnapshot';

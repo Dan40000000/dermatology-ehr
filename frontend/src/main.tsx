@@ -14,6 +14,7 @@ import './index.css';
 import './App.css';
 import './styles/print.css';
 import './styles/animations.css';
+import './utils/authFetch';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

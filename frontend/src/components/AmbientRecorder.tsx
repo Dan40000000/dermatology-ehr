@@ -12,7 +12,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
+import { useWebSocketContext } from '../contexts/WebSocketContext';
 import { AudioVisualizer } from './AudioVisualizer';
+import { createSilenceMonitor, type SilenceMonitor } from '../utils/audioMonitor';
+import { ENABLE_LIVE_DRAFT } from '../utils/featureFlags';
 import {
   startAmbientRecording,
   uploadAmbientRecording,
@@ -38,6 +41,7 @@ export function AmbientRecorder({
 }: AmbientRecorderProps) {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const { emit, on, off, isConnected } = useWebSocketContext();
 
   const [recordingState, setRecordingState] = useState<'idle' | 'consent' | 'recording' | 'stopped' | 'uploading'>('idle');
   const [consentObtained, setConsentObtained] = useState(false);
@@ -45,11 +49,22 @@ export function AmbientRecorder({
   const [recordingId, setRecordingId] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [liveTranscript, setLiveTranscript] = useState<string[]>([]);
+  const [liveStatus, setLiveStatus] = useState<'idle' | 'connecting' | 'streaming' | 'error'>('idle');
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const [showContinuePrompt, setShowContinuePrompt] = useState(false);
+  const [promptReason, setPromptReason] = useState<'duration' | 'silence' | null>(null);
+  const [durationPrompted, setDurationPrompted] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const chunkIndexRef = useRef(0);
+  const silenceMonitorRef = useRef<SilenceMonitor | null>(null);
+
+  const MAX_RECORDING_SECONDS = 30 * 60;
+  const SILENCE_PROMPT_SECONDS = 5 * 60;
 
   // Cleanup on unmount
   useEffect(() => {
@@ -89,17 +104,38 @@ export function AmbientRecorder({
       );
 
       setRecordingId(result.recordingId);
-      await startRecording();
+      chunkIndexRef.current = 0;
+      setLiveTranscript([]);
+      setLiveStatus(ENABLE_LIVE_DRAFT && isConnected ? 'connecting' : 'idle');
+      setLiveError(null);
+
+      if (ENABLE_LIVE_DRAFT && isConnected) {
+        emit('ambient:join', { recordingId: result.recordingId });
+      }
+      await startRecording(result.recordingId);
     } catch (error: any) {
       showError(error.message || 'Failed to start recording');
       setRecordingState('idle');
     }
   };
 
-  const startRecording = async () => {
+  const startRecording = async (activeRecordingId: string) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+
+      if (silenceMonitorRef.current) {
+        silenceMonitorRef.current.stop();
+      }
+      silenceMonitorRef.current = createSilenceMonitor(stream, {
+        silenceMs: SILENCE_PROMPT_SECONDS * 1000,
+        onSilence: () => {
+          if (!showContinuePrompt) {
+            setPromptReason('silence');
+            setShowContinuePrompt(true);
+          }
+        }
+      });
 
       const mediaRecorder = new MediaRecorder(stream, {
         mimeType: 'audio/webm;codecs=opus'
@@ -111,6 +147,19 @@ export function AmbientRecorder({
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           audioChunksRef.current.push(event.data);
+          if (ENABLE_LIVE_DRAFT && isConnected && activeRecordingId) {
+            const currentChunk = chunkIndexRef.current++;
+            event.data.arrayBuffer().then((buffer) => {
+              emit('ambient:audio-chunk', {
+                recordingId: activeRecordingId,
+                chunkIndex: currentChunk,
+                mimeType: event.data.type,
+                data: buffer
+              });
+            }).catch(() => {
+              // Ignore chunk streaming errors to avoid disrupting recording
+            });
+          }
         }
       };
 
@@ -144,10 +193,19 @@ export function AmbientRecorder({
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
+    if (silenceMonitorRef.current) {
+      silenceMonitorRef.current.stop();
+      silenceMonitorRef.current = null;
+    }
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    if (ENABLE_LIVE_DRAFT && recordingId) {
+      emit('ambient:leave', { recordingId });
+    }
+    setLiveStatus('idle');
+    setLiveError(null);
   };
 
   const handleUpload = async () => {
@@ -160,13 +218,14 @@ export function AmbientRecorder({
 
     try {
       const audioFile = new File([audioBlob], `recording-${recordingId}.webm`, { type: 'audio/webm' });
+      const safeDurationSeconds = Math.max(1, Math.round(Number(duration) || 0));
 
       await uploadAmbientRecording(
         session!.tenantId,
         session!.accessToken,
         recordingId,
         audioFile,
-        duration
+        safeDurationSeconds
       );
 
       showSuccess('Recording uploaded successfully. Transcription started automatically.');
@@ -201,13 +260,140 @@ export function AmbientRecorder({
     setDuration(0);
     setAudioBlob(null);
     audioChunksRef.current = [];
+    setLiveTranscript([]);
+    setLiveStatus('idle');
+    setLiveError(null);
+    setShowContinuePrompt(false);
+    setPromptReason(null);
+    setDurationPrompted(false);
   };
+
+  useEffect(() => {
+    if (recordingState !== 'recording' || durationPrompted) return;
+    if (duration >= MAX_RECORDING_SECONDS && !showContinuePrompt) {
+      setPromptReason('duration');
+      setShowContinuePrompt(true);
+      setDurationPrompted(true);
+    }
+  }, [duration, recordingState, durationPrompted, showContinuePrompt]);
+
+  useEffect(() => {
+    if (!ENABLE_LIVE_DRAFT) return;
+    if (!recordingId || recordingState !== 'recording' || !isConnected) return;
+
+    emit('ambient:join', { recordingId });
+    setLiveStatus('connecting');
+
+    const handleTranscript = (data: { recordingId: string; text: string }) => {
+      if (data.recordingId !== recordingId || !data.text) return;
+      setLiveStatus('streaming');
+      setLiveError(null);
+      setLiveTranscript((prev) => {
+        const next = [...prev, data.text.trim()].filter(Boolean);
+        return next.slice(-8);
+      });
+    };
+
+    const handleJoined = (data: { recordingId: string }) => {
+      if (data.recordingId !== recordingId) return;
+      setLiveStatus('streaming');
+      setLiveError(null);
+    };
+
+    const handleError = (data: { recordingId?: string; message: string }) => {
+      if (data.recordingId && data.recordingId !== recordingId) return;
+      setLiveStatus('error');
+      setLiveError(data.message || 'Live transcription paused');
+    };
+
+    on('ambient:joined', handleJoined);
+    on('ambient:transcript', handleTranscript);
+    on('ambient:error', handleError);
+
+    return () => {
+      off('ambient:joined', handleJoined);
+      off('ambient:transcript', handleTranscript);
+      off('ambient:error', handleError);
+    };
+  }, [recordingId, recordingState, isConnected, emit, on, off]);
 
   const formatDuration = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const continuePrompt = showContinuePrompt ? (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(15, 23, 42, 0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 50
+      }}
+    >
+      <div
+        style={{
+          background: 'white',
+          borderRadius: '16px',
+          padding: '24px',
+          width: 'min(420px, 92vw)',
+          boxShadow: '0 24px 60px rgba(15, 23, 42, 0.25)',
+          border: '1px solid #e2e8f0'
+        }}
+      >
+        <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '8px', color: '#0f172a' }}>
+          Continue recording?
+        </h3>
+        <p style={{ fontSize: '14px', color: '#475569', marginBottom: '16px' }}>
+          {promptReason === 'duration'
+            ? 'You have been recording for 30 minutes. Do you want to keep recording?'
+            : 'No speech detected for 5 minutes. Do you want to keep recording?'}
+        </p>
+        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => {
+              setShowContinuePrompt(false);
+              setPromptReason(null);
+              silenceMonitorRef.current?.resetTimer();
+            }}
+            style={{
+              padding: '10px 16px',
+              borderRadius: '10px',
+              border: '1px solid #cbd5f5',
+              background: '#f8fafc',
+              color: '#1e293b',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            Continue
+          </button>
+          <button
+            onClick={() => {
+              setShowContinuePrompt(false);
+              setPromptReason(null);
+              stopRecording();
+            }}
+            style={{
+              padding: '10px 16px',
+              borderRadius: '10px',
+              border: 'none',
+              background: '#ef4444',
+              color: 'white',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            Stop & Upload
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   if (compact) {
     // Compact view for embedding in encounter page
@@ -343,6 +529,28 @@ export function AmbientRecorder({
           </div>
         )}
 
+        {ENABLE_LIVE_DRAFT && (recordingState === 'recording' || liveTranscript.length > 0) && (
+          <div className="mb-4 border border-slate-200 rounded-lg p-4 bg-slate-50">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Live Draft</div>
+              <div className={`text-xs ${liveStatus === 'error' ? 'text-red-600' : 'text-slate-500'}`}>
+                {liveStatus === 'streaming' ? 'Streaming' : liveStatus === 'connecting' ? 'Connecting…' : liveStatus === 'error' ? 'Paused' : 'Idle'}
+              </div>
+            </div>
+            {liveTranscript.length === 0 ? (
+              <div className={`text-sm ${liveStatus === 'error' ? 'text-red-600' : 'text-slate-500'}`}>
+                {liveStatus === 'error' && liveError ? liveError : 'Listening for speech… this draft updates in real time.'}
+              </div>
+            ) : (
+              <div className="space-y-2 text-sm text-slate-800">
+                {liveTranscript.map((line, idx) => (
+                  <div key={`${idx}-${line.slice(0, 12)}`}>{line}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="flex space-x-4">
           {recordingState === 'idle' && (
             <button
@@ -400,9 +608,9 @@ export function AmbientRecorder({
       </div>
 
       {/* Consent Modal */}
-      {recordingState === 'consent' && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-8 max-w-lg w-full mx-4">
+        {recordingState === 'consent' && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-8 max-w-lg w-full mx-4">
             <h3 className="text-2xl font-bold text-gray-900 mb-6">Patient Consent Required</h3>
 
             <div className="mb-6">
@@ -462,9 +670,11 @@ export function AmbientRecorder({
                 Cancel
               </button>
             </div>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
+        )}
+
+        {continuePrompt}
+      </div>
+    );
+  }

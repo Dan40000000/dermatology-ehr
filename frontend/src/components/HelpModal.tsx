@@ -1,4 +1,5 @@
 import { Modal } from './ui';
+import { API_BASE_URL } from '../utils/apiBase';
 
 interface HelpModalProps {
   isOpen: boolean;
@@ -174,7 +175,7 @@ export function HelpModal({ isOpen, onClose }: HelpModalProps) {
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.25rem 0' }}>
               <span>Environment:</span>
               <span style={{ fontWeight: 500, color: '#374151' }}>
-                {import.meta.env.VITE_API_BASE_URL?.includes('localhost') ? 'Development' : 'Production'}
+                {API_BASE_URL.includes('localhost') ? 'Development' : 'Production'}
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.25rem 0' }}>

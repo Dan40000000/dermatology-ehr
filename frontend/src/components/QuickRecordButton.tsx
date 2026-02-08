@@ -12,6 +12,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
+import { useRecording } from '../contexts/RecordingContext';
+import { useWebSocketContext } from '../contexts/WebSocketContext';
+import { createSilenceMonitor, type SilenceMonitor } from '../utils/audioMonitor';
+import { ENABLE_LIVE_DRAFT } from '../utils/featureFlags';
 import {
   startAmbientRecording,
   uploadAmbientRecording,
@@ -23,6 +27,7 @@ interface QuickRecordButtonProps {
   patientName: string;
   encounterId?: string;
   providerId?: string;
+  autoStart?: boolean;
   onRecordingComplete?: (recordingId: string) => void;
 }
 
@@ -31,21 +36,44 @@ export function QuickRecordButton({
   patientName,
   encounterId,
   providerId: propProviderId,
+  autoStart = false,
   onRecordingComplete
 }: QuickRecordButtonProps) {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const { emit, on, off, isConnected } = useWebSocketContext();
+  const {
+    isRecording,
+    recordingId,
+    duration,
+    setIsRecording,
+    setRecordingId,
+    setDuration,
+    setPatientId,
+    setPatientName,
+    resetRecording,
+  } = useRecording();
 
-  const [isRecording, setIsRecording] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [recordingId, setRecordingId] = useState<string | null>(null);
   const [defaultProviderId, setDefaultProviderId] = useState<string | null>(null);
+  const [liveTranscript, setLiveTranscript] = useState<string[]>([]);
+  const [liveStatus, setLiveStatus] = useState<'idle' | 'connecting' | 'streaming' | 'error'>('idle');
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const [showContinuePrompt, setShowContinuePrompt] = useState(false);
+  const [promptReason, setPromptReason] = useState<'duration' | 'silence' | null>(null);
+  const [durationPrompted, setDurationPrompted] = useState(false);
+  const autoStartTriggeredRef = useRef(false);
+  const recordingIdRef = useRef<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const chunkIndexRef = useRef(0);
+  const silenceMonitorRef = useRef<SilenceMonitor | null>(null);
+
+  const MAX_RECORDING_SECONDS = 30 * 60;
+  const SILENCE_PROMPT_SECONDS = 5 * 60;
 
   // Fetch default provider on mount if not provided
   useEffect(() => {
@@ -59,6 +87,8 @@ export function QuickRecordButton({
         .catch(err => console.error('Failed to fetch providers:', err));
     }
   }, [propProviderId, session]);
+
+  const effectiveProviderId = propProviderId || defaultProviderId;
 
   // Cleanup on unmount
   useEffect(() => {
@@ -80,14 +110,15 @@ export function QuickRecordButton({
   };
 
   const startRecording = async () => {
-    const effectiveProviderId = propProviderId || defaultProviderId;
-
     if (!effectiveProviderId) {
       showError('No provider available. Please try again in a moment.');
       return;
     }
 
     try {
+      setPatientId(patientId);
+      setPatientName(patientName);
+
       // Create recording session on server first
       const result = await startAmbientRecording(
         session!.tenantId,
@@ -102,10 +133,32 @@ export function QuickRecordButton({
       );
 
       setRecordingId(result.recordingId);
+      recordingIdRef.current = result.recordingId;
+      chunkIndexRef.current = 0;
+      setLiveTranscript([]);
+      setLiveStatus(ENABLE_LIVE_DRAFT && isConnected ? 'connecting' : 'idle');
+      setLiveError(null);
+
+      if (ENABLE_LIVE_DRAFT && isConnected) {
+        emit('ambient:join', { recordingId: result.recordingId });
+      }
 
       // Get microphone access
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+
+      if (silenceMonitorRef.current) {
+        silenceMonitorRef.current.stop();
+      }
+      silenceMonitorRef.current = createSilenceMonitor(stream, {
+        silenceMs: SILENCE_PROMPT_SECONDS * 1000,
+        onSilence: () => {
+          if (!showContinuePrompt) {
+            setPromptReason('silence');
+            setShowContinuePrompt(true);
+          }
+        }
+      });
 
       // Create MediaRecorder
       const mediaRecorder = new MediaRecorder(stream, {
@@ -118,6 +171,19 @@ export function QuickRecordButton({
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           audioChunksRef.current.push(event.data);
+          if (ENABLE_LIVE_DRAFT && isConnected && result.recordingId) {
+            const currentChunk = chunkIndexRef.current++;
+            event.data.arrayBuffer().then((buffer) => {
+              emit('ambient:audio-chunk', {
+                recordingId: result.recordingId,
+                chunkIndex: currentChunk,
+                mimeType: event.data.type,
+                data: buffer
+              });
+            }).catch(() => {
+              // Ignore chunk streaming errors to avoid disrupting recording
+            });
+          }
         }
       };
 
@@ -138,9 +204,19 @@ export function QuickRecordButton({
       showSuccess(`Recording started for ${patientName}`);
     } catch (error: any) {
       showError('Failed to start recording: ' + error.message);
+      resetRecording();
       setIsRecording(false);
     }
   };
+
+  useEffect(() => {
+    if (!autoStart) return;
+    if (autoStartTriggeredRef.current) return;
+    if (!session || !effectiveProviderId) return;
+    if (isRecording || isUploading) return;
+    autoStartTriggeredRef.current = true;
+    startRecording();
+  }, [autoStart, session, effectiveProviderId, isRecording, isUploading]);
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -150,15 +226,25 @@ export function QuickRecordButton({
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
+    if (silenceMonitorRef.current) {
+      silenceMonitorRef.current.stop();
+      silenceMonitorRef.current = null;
+    }
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
     setIsRecording(false);
+    if (ENABLE_LIVE_DRAFT && recordingId) {
+      emit('ambient:leave', { recordingId });
+    }
+    setLiveStatus('idle');
+    setLiveError(null);
   };
 
   const handleUpload = async (audioBlob: Blob) => {
-    if (!recordingId) {
+    const activeRecordingId = recordingIdRef.current || recordingId;
+    if (!activeRecordingId) {
       showError('No recording session found');
       return;
     }
@@ -166,26 +252,33 @@ export function QuickRecordButton({
     setIsUploading(true);
 
     try {
-      const audioFile = new File([audioBlob], `recording-${recordingId}.webm`, { type: 'audio/webm' });
+      const audioFile = new File([audioBlob], `recording-${activeRecordingId}.webm`, { type: 'audio/webm' });
+      const safeDurationSeconds = Math.max(1, Math.round(Number(duration) || 0));
 
       await uploadAmbientRecording(
         session!.tenantId,
         session!.accessToken,
-        recordingId,
+        activeRecordingId,
         audioFile,
-        duration
+        safeDurationSeconds
       );
 
       showSuccess('Recording uploaded successfully. Transcription started.');
 
       if (onRecordingComplete) {
-        onRecordingComplete(recordingId);
+        onRecordingComplete(activeRecordingId);
       }
 
       // Reset state
-      setRecordingId(null);
-      setDuration(0);
+      resetRecording();
+      recordingIdRef.current = null;
       audioChunksRef.current = [];
+      setLiveTranscript([]);
+      setLiveStatus('idle');
+      setLiveError(null);
+      setShowContinuePrompt(false);
+      setPromptReason(null);
+      setDurationPrompted(false);
     } catch (error: any) {
       showError(error.message || 'Failed to upload recording');
     } finally {
@@ -200,6 +293,63 @@ export function QuickRecordButton({
       startRecording();
     }
   };
+
+  useEffect(() => {
+    if (!isRecording || durationPrompted) return;
+    if (duration >= MAX_RECORDING_SECONDS && !showContinuePrompt) {
+      setPromptReason('duration');
+      setShowContinuePrompt(true);
+      setDurationPrompted(true);
+    }
+  }, [duration, isRecording, durationPrompted, showContinuePrompt]);
+
+  useEffect(() => {
+    if (!ENABLE_LIVE_DRAFT) return;
+    if (!recordingId || !isRecording || !isConnected) return;
+
+    emit('ambient:join', { recordingId });
+    setLiveStatus('connecting');
+
+    const handleTranscript = (data: {
+      recordingId: string;
+      text: string;
+      receivedAt: string;
+    }) => {
+      if (data.recordingId !== recordingId || !data.text) return;
+      setLiveStatus('streaming');
+      setLiveError(null);
+      setLiveTranscript((prev) => {
+        const next = [...prev, data.text.trim()].filter(Boolean);
+        return next.slice(-8);
+      });
+    };
+
+    const handleJoined = (data: { recordingId: string }) => {
+      if (data.recordingId !== recordingId) return;
+      setLiveStatus('streaming');
+      setLiveError(null);
+    };
+
+    const handleError = (data: { recordingId?: string; message: string }) => {
+      if (data.recordingId && data.recordingId !== recordingId) return;
+      setLiveStatus('error');
+      setLiveError(data.message || 'Live transcription paused');
+    };
+
+    on('ambient:joined', handleJoined);
+    on('ambient:transcript', handleTranscript);
+    on('ambient:error', handleError);
+
+    return () => {
+      off('ambient:joined', handleJoined);
+      off('ambient:transcript', handleTranscript);
+      off('ambient:error', handleError);
+    };
+  }, [recordingId, isRecording, isConnected, emit, on, off]);
+
+  useEffect(() => {
+    recordingIdRef.current = recordingId;
+  }, [recordingId]);
 
   // Inline styles for animations
   const pulseKeyframes = `
@@ -259,43 +409,151 @@ export function QuickRecordButton({
   return (
     <>
       <style>{pulseKeyframes}</style>
-      <button
-        onClick={handleButtonClick}
-        disabled={isUploading}
-        style={buttonStyle}
-        onMouseEnter={(e) => {
-          if (!isUploading) {
-            e.currentTarget.style.transform = 'translateY(-2px)';
+      <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <button
+          onClick={handleButtonClick}
+          disabled={isUploading}
+          style={buttonStyle}
+          onMouseEnter={(e) => {
+            if (!isUploading) {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = isRecording
+                ? '0 6px 16px rgba(239, 68, 68, 0.5)'
+                : '0 6px 16px rgba(34, 197, 94, 0.4)';
+            }
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
             e.currentTarget.style.boxShadow = isRecording
-              ? '0 6px 16px rgba(239, 68, 68, 0.5)'
-              : '0 6px 16px rgba(34, 197, 94, 0.4)';
-          }
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'translateY(0)';
-          e.currentTarget.style.boxShadow = isRecording
-            ? '0 4px 12px rgba(239, 68, 68, 0.4)'
-            : '0 4px 12px rgba(34, 197, 94, 0.3)';
-        }}
-      >
-        {isUploading ? (
-          <>
-            <span>Uploading...</span>
-          </>
-        ) : isRecording ? (
-          <>
-            <span style={{ fontSize: '24px' }}>⏹️</span>
-            <span>Stop Recording</span>
-            <div style={dotStyle} />
-            <span style={timerStyle}>{formatDuration(duration)}</span>
-          </>
-        ) : (
-          <>
-            <span style={{ fontSize: '24px' }}>🎙️</span>
-            <span>Start Recording</span>
-          </>
+              ? '0 4px 12px rgba(239, 68, 68, 0.4)'
+              : '0 4px 12px rgba(34, 197, 94, 0.3)';
+          }}
+        >
+          {isUploading ? (
+            <>
+              <span>Uploading...</span>
+            </>
+          ) : isRecording ? (
+            <>
+              <span style={{ fontSize: '24px' }}>⏹️</span>
+              <span>Stop Recording</span>
+              <div style={dotStyle} />
+              <span style={timerStyle}>{formatDuration(duration)}</span>
+            </>
+          ) : (
+            <>
+              <span style={{ fontSize: '24px' }}>🎙️</span>
+              <span>Start Recording</span>
+            </>
+          )}
+        </button>
+
+        {ENABLE_LIVE_DRAFT && (isRecording || liveTranscript.length > 0) && (
+          <div
+            style={{
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              borderRadius: '12px',
+              padding: '12px 16px',
+              color: '#0f172a'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Live Draft
+              </div>
+              <div style={{ fontSize: '12px', color: liveStatus === 'error' ? '#dc2626' : '#64748b' }}>
+                {liveStatus === 'streaming' ? 'Streaming' : liveStatus === 'connecting' ? 'Connecting…' : liveStatus === 'error' ? 'Paused' : 'Idle'}
+              </div>
+            </div>
+            {liveTranscript.length === 0 ? (
+              <div style={{ fontSize: '14px', color: liveStatus === 'error' ? '#dc2626' : '#64748b' }}>
+                {liveStatus === 'error' && liveError ? liveError : 'Listening for speech… this draft updates in real time.'}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {liveTranscript.map((line, idx) => (
+                  <div key={`${idx}-${line.slice(0, 12)}`} style={{ fontSize: '14px', lineHeight: 1.4 }}>
+                    {line}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
-      </button>
+      </div>
+
+      {showContinuePrompt && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 50
+          }}
+        >
+          <div
+            style={{
+              background: 'white',
+              borderRadius: '16px',
+              padding: '24px',
+              width: 'min(420px, 92vw)',
+              boxShadow: '0 24px 60px rgba(15, 23, 42, 0.25)',
+              border: '1px solid #e2e8f0'
+            }}
+          >
+            <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '8px', color: '#0f172a' }}>
+              Continue recording?
+            </h3>
+            <p style={{ fontSize: '14px', color: '#475569', marginBottom: '16px' }}>
+              {promptReason === 'duration'
+                ? 'You have been recording for 30 minutes. Do you want to keep recording?'
+                : 'No speech detected for 5 minutes. Do you want to keep recording?'}
+            </p>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => {
+                  setShowContinuePrompt(false);
+                  setPromptReason(null);
+                  silenceMonitorRef.current?.resetTimer();
+                }}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '10px',
+                  border: '1px solid #cbd5f5',
+                  background: '#f8fafc',
+                  color: '#1e293b',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Continue
+              </button>
+              <button
+                onClick={() => {
+                  setShowContinuePrompt(false);
+                  setPromptReason(null);
+                  stopRecording();
+                }}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  background: '#ef4444',
+                  color: 'white',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Stop & Upload
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

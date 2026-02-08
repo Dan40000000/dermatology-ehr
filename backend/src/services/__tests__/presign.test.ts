@@ -33,15 +33,15 @@ describe('presignUpload', () => {
   });
 
   it('returns a signed url and storage key', async () => {
-    const result = await presignUpload('image/png', 'photo.png');
+    const result = await presignUpload('image/png', 'photo.png', 'tenant-1');
 
     expect(result).toEqual({
       url: 'https://signed.example.com',
-      key: '1700000000000-uuid-photo.png',
+      key: 'tenants/tenant-1/1700000000000-uuid-photo.png',
     });
     expect(PutObjectCommand).toHaveBeenCalledWith({
       Bucket: expect.any(String),
-      Key: '1700000000000-uuid-photo.png',
+      Key: 'tenants/tenant-1/1700000000000-uuid-photo.png',
       ContentType: 'image/png',
     });
     expect(getSignedUrl).toHaveBeenCalledWith(expect.any(Object), expect.any(Object), { expiresIn: 900 });

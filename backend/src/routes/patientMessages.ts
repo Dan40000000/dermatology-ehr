@@ -205,7 +205,7 @@ router.get("/threads/:id", requireAuth, async (req: AuthedRequest, res) => {
         t.*,
         p.first_name || ' ' || p.last_name as "patientName",
         p.mrn as "patientMrn",
-        p.date_of_birth as "patientDob",
+        p.dob as "patientDob",
         p.email as "patientEmail",
         p.phone as "patientPhone",
         u.name as "assignedToName"

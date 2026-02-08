@@ -78,10 +78,18 @@ export function fieldSelectionMiddleware(
 export function buildSelectClause(
   fields: string[] | null,
   defaultFields: string,
-  fieldMap?: Record<string, string>
+  fieldMap?: Record<string, string>,
+  allowedFields?: string[]
 ): string {
   if (!fields || fields.length === 0) {
     return defaultFields;
+  }
+
+  if (allowedFields && allowedFields.length > 0) {
+    const invalidFields = fields.filter((field) => !allowedFields.includes(field));
+    if (invalidFields.length > 0) {
+      throw new Error(`Invalid fields requested: ${invalidFields.join(", ")}`);
+    }
   }
 
   const mappedFields = fields.map((field) => {

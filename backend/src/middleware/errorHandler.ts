@@ -5,6 +5,7 @@
 
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../lib/logger';
+import { loadEnv } from '../config/validate';
 
 /**
  * Custom API Error class
@@ -137,11 +138,13 @@ export function errorHandler(
   res: Response,
   next: NextFunction
 ): void {
+  const env = loadEnv();
+
   // Convert unknown errors to ApiError
   const error = err instanceof ApiError
     ? err
     : new ApiError(
-        process.env.NODE_ENV === 'production'
+        env.NODE_ENV === 'production'
           ? 'Internal server error'
           : err.message,
         500,
@@ -156,7 +159,7 @@ export function errorHandler(
   }
 
   // Determine if we should include stack trace
-  const includeStack = process.env.NODE_ENV === 'development';
+  const includeStack = env.NODE_ENV === 'development';
 
   // Send error response
   const response = formatErrorResponse(error, includeStack);

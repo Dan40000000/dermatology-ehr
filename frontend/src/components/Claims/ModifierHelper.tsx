@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 interface ModifierSuggestion {
   modifier: string;
@@ -44,9 +45,8 @@ export default function ModifierHelper({ claimId, onClose, onApplyModifier }: Mo
     setLoading(true);
     try {
       // Get suggestions for this claim
-      const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
       const suggestResponse = await fetch(
-        `${apiBase}/api/claims/${claimId}/suggest-modifiers`,
+        `${API_BASE_URL}/api/claims/${claimId}/suggest-modifiers`,
         {
           method: 'POST',
           headers: {
@@ -64,7 +64,7 @@ export default function ModifierHelper({ claimId, onClose, onApplyModifier }: Mo
 
       // Get all modifier rules
       const modifiersResponse = await fetch(
-        `${apiBase}/api/claims/modifiers`,
+        `${API_BASE_URL}/api/claims/modifiers`,
         {
           headers: {
             Authorization: `Bearer ${session.accessToken}`,

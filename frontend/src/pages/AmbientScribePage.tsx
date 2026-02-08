@@ -12,6 +12,7 @@ import { AmbientRecorder } from '../components/AmbientRecorder';
 import { NoteReviewEditor } from '../components/NoteReviewEditor';
 import {
   fetchAmbientRecordings,
+  fetchAmbientRecording,
   fetchRecordingTranscript,
   generateAmbientNote,
   fetchAmbientNote,
@@ -27,6 +28,7 @@ export default function AmbientScribePage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
+  const autoGenerate = searchParams.get('auto') === '1';
 
   const [view, setView] = useState<View>('dashboard');
   const [loading, setLoading] = useState(true);
@@ -74,6 +76,17 @@ export default function AmbientScribePage() {
     if (recording) {
       setSelectedRecording(recording);
       setView('view-recording');
+      return;
+    }
+
+    try {
+      const data = await fetchAmbientRecording(session!.tenantId, session!.accessToken, recordingId);
+      setSelectedRecording(data.recording);
+      setView('view-recording');
+    } catch (error: any) {
+      showError(error.message || 'Failed to load recording');
+      setView('dashboard');
+      setSearchParams({});
     }
   };
 
@@ -277,7 +290,7 @@ export default function AmbientScribePage() {
 
         <AmbientRecorder
           patientId="demo-patient"
-          providerId={session!.userId}
+          providerId={session!.user.id}
           patientName="Demo Patient"
           onRecordingComplete={handleRecordingComplete}
         />
@@ -303,6 +316,7 @@ export default function AmbientScribePage() {
 
         <RecordingDetails
           recording={selectedRecording}
+          autoGenerate={autoGenerate}
           onGenerateNote={(noteId) => {
             setSelectedNoteId(noteId);
             setView('review-note');
@@ -360,10 +374,12 @@ export default function AmbientScribePage() {
 // Recording Details Component
 function RecordingDetails({
   recording,
-  onGenerateNote
+  onGenerateNote,
+  autoGenerate = false
 }: {
   recording: AmbientRecording;
   onGenerateNote: (noteId: string) => void;
+  autoGenerate?: boolean;
 }) {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
@@ -374,28 +390,76 @@ function RecordingDetails({
   const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
-    loadTranscript();
+    let cancelled = false;
+    let attempts = 0;
+
+    const pollTranscript = async () => {
+      if (cancelled) return;
+      try {
+        const data = await fetchRecordingTranscript(session!.tenantId, session!.accessToken, recording.id);
+        if (cancelled) return;
+        setTranscript(data.transcript);
+        setLoading(false);
+
+        const status = data.transcript?.transcriptionStatus;
+        if (status !== 'completed' && status !== 'failed' && attempts < 40) {
+          attempts += 1;
+          setTimeout(pollTranscript, 3000);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        if (attempts < 40) {
+          attempts += 1;
+          setTimeout(pollTranscript, 3000);
+          return;
+        }
+        setLoading(false);
+        console.error('No transcript found:', error);
+      }
+    };
+
+    setLoading(true);
+    pollTranscript();
+
+    return () => {
+      cancelled = true;
+    };
   }, [recording.id]);
 
-  const loadTranscript = async () => {
-    try {
-      setLoading(true);
-      const data = await fetchRecordingTranscript(session!.tenantId, session!.accessToken, recording.id);
-      setTranscript(data.transcript);
+  useEffect(() => {
+    if (!autoGenerate) return;
+    if (!transcript) return;
+    if (generatedNote || generating) return;
+    if (transcript.transcriptionStatus !== 'completed') return;
+    handleGenerateNote(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoGenerate, transcript]);
 
-      // Check if note already exists
-      if (data.transcript.encounterId) {
-        // Could fetch existing notes here
+  const pollNote = async (noteId: string, attempts = 0) => {
+    try {
+      const noteData = await fetchAmbientNote(session!.tenantId, session!.accessToken, noteId);
+      setGeneratedNote(noteData.note);
+      if (noteData.note.generationStatus === 'completed') {
+        onGenerateNote(noteId);
+        return;
+      }
+      if (noteData.note.generationStatus === 'failed') {
+        showError('Note generation failed');
+        return;
+      }
+      if (attempts < 40) {
+        setTimeout(() => pollNote(noteId, attempts + 1), 3000);
       }
     } catch (error: any) {
-      // Transcript might not exist yet
-      console.error('No transcript found:', error);
-    } finally {
-      setLoading(false);
+      if (attempts < 40) {
+        setTimeout(() => pollNote(noteId, attempts + 1), 3000);
+        return;
+      }
+      showError(error.message || 'Failed to load note');
     }
   };
 
-  const handleGenerateNote = async () => {
+  const handleGenerateNote = async (silent = false) => {
     if (!transcript) {
       showError('Transcript not available');
       return;
@@ -404,20 +468,20 @@ function RecordingDetails({
     try {
       setGenerating(true);
       const result = await generateAmbientNote(session!.tenantId, session!.accessToken, transcript.id);
-      showSuccess('Note generation started');
-
-      // Poll for completion (simplified - in production use websockets or polling)
-      setTimeout(async () => {
-        const noteData = await fetchAmbientNote(session!.tenantId, session!.accessToken, result.noteId);
-        setGeneratedNote(noteData.note);
-        onGenerateNote(result.noteId);
-      }, 3000);
+      if (!silent) {
+        showSuccess('Note generation started');
+      }
+      pollNote(result.noteId);
     } catch (error: any) {
       showError(error.message || 'Failed to generate note');
     } finally {
       setGenerating(false);
     }
   };
+
+  const transcriptSegments = Array.isArray(transcript?.transcriptSegments)
+    ? transcript.transcriptSegments
+    : [];
 
   return (
     <div className="space-y-6">
@@ -467,21 +531,27 @@ function RecordingDetails({
             )}
           </div>
 
-          <div className="space-y-3 max-h-96 overflow-y-auto">
-            {transcript.transcriptSegments.map((segment, idx) => (
-              <div key={idx} className={`p-3 rounded-lg ${
-                segment.speaker === 'speaker_0' ? 'bg-blue-50 border border-blue-200' : 'bg-green-50 border border-green-200'
-              }`}>
-                <div className="flex justify-between items-center mb-1">
-                  <span className="font-semibold text-sm">
-                    {segment.speaker === 'speaker_0' ? 'Doctor' : 'Patient'}
-                  </span>
-                  <span className="text-xs text-gray-500">{Math.floor(segment.start)}s</span>
+          {transcriptSegments.length === 0 ? (
+            <div className="text-sm text-gray-600 whitespace-pre-wrap">
+              {transcript.transcriptText || 'Transcription is processing. Transcript segments will appear shortly.'}
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-96 overflow-y-auto">
+              {transcriptSegments.map((segment, idx) => (
+                <div key={idx} className={`p-3 rounded-lg ${
+                  segment.speaker === 'speaker_0' ? 'bg-blue-50 border border-blue-200' : 'bg-green-50 border border-green-200'
+                }`}>
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="font-semibold text-sm">
+                      {segment.speaker === 'speaker_0' ? 'Doctor' : 'Patient'}
+                    </span>
+                    <span className="text-xs text-gray-500">{Math.floor(segment.start)}s</span>
+                  </div>
+                  <p className="text-gray-800">{segment.text}</p>
                 </div>
-                <p className="text-gray-800">{segment.text}</p>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       ) : (
         <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">

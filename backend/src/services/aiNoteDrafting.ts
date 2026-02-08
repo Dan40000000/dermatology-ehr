@@ -119,7 +119,7 @@ export class AINoteDraftingService {
       `select
         p.first_name,
         p.last_name,
-        p.date_of_birth,
+        p.dob as date_of_birth,
         p.sex,
         p.medical_history,
         p.allergies,

@@ -1,5 +1,7 @@
 // Financial API client functions
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+import { API_BASE_URL } from "../utils/apiBase";
+
+const API_BASE = API_BASE_URL;
 const TENANT_HEADER = "x-tenant-id";
 
 interface FetchOptions {

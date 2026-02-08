@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate, Link } from 'react-router-dom';
+import { API_BASE_URL } from '../utils/apiBase';
 
 interface Facility {
   id: string;
@@ -34,8 +35,6 @@ interface User {
   fullName: string;
   role: string;
 }
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 
 const pageStyle: React.CSSProperties = {
   minHeight: '100vh',
@@ -278,25 +277,25 @@ export function AdminPage() {
 
       switch (activeTab) {
         case 'facilities':
-          const facRes = await fetch(`${API_BASE}/api/admin/facilities`, { headers });
+          const facRes = await fetch(`${API_BASE_URL}/api/admin/facilities`, { headers });
           const facData = await facRes.json();
           setFacilities(facData.facilities || []);
           break;
 
         case 'rooms':
-          const roomRes = await fetch(`${API_BASE}/api/admin/rooms`, { headers });
+          const roomRes = await fetch(`${API_BASE_URL}/api/admin/rooms`, { headers });
           const roomData = await roomRes.json();
           setRooms(roomData.rooms || []);
           break;
 
         case 'providers':
-          const provRes = await fetch(`${API_BASE}/api/admin/providers`, { headers });
+          const provRes = await fetch(`${API_BASE_URL}/api/admin/providers`, { headers });
           const provData = await provRes.json();
           setProviders(provData.providers || []);
           break;
 
         case 'users':
-          const userRes = await fetch(`${API_BASE}/api/admin/users`, { headers });
+          const userRes = await fetch(`${API_BASE_URL}/api/admin/users`, { headers });
           const userData = await userRes.json();
           setUsers(userData.users || []);
           break;
@@ -318,7 +317,7 @@ export function AdminPage() {
     };
 
     try {
-      const endpoint = `${API_BASE}/api/admin/${activeTab}`;
+      const endpoint = `${API_BASE_URL}/api/admin/${activeTab}`;
       const method = editingItem?.id ? 'PUT' : 'POST';
       const url = editingItem?.id ? `${endpoint}/${editingItem.id}` : endpoint;
 
@@ -340,7 +339,7 @@ export function AdminPage() {
     if (!session || !confirm('Are you sure you want to delete this item?')) return;
 
     try {
-      await fetch(`${API_BASE}/api/admin/${activeTab}/${id}`, {
+      await fetch(`${API_BASE_URL}/api/admin/${activeTab}/${id}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${session.accessToken}`,

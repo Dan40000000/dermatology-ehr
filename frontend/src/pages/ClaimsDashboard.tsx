@@ -5,6 +5,7 @@ import ClaimScrubber from '../components/Claims/ClaimScrubber';
 import ClaimEditor from '../components/Claims/ClaimEditor';
 import DenialWorkList from '../components/Claims/DenialWorkList';
 import ClaimAnalytics from '../components/Claims/ClaimAnalytics';
+import { API_BASE_URL } from '../utils/apiBase';
 
 interface Claim {
   id: string;
@@ -65,17 +66,15 @@ export default function ClaimsDashboard() {
 
     setLoading(true);
     try {
-      const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
-
       // Load claims and metrics in parallel
       const [claimsResponse, metricsResponse] = await Promise.all([
-        fetch(`${apiBase}/api/claims`, {
+        fetch(`${API_BASE_URL}/api/claims`, {
           headers: {
             Authorization: `Bearer ${session.accessToken}`,
             'x-tenant-id': session.tenantId,
           },
         }),
-        fetch(`${apiBase}/api/claims/metrics`, {
+        fetch(`${API_BASE_URL}/api/claims/metrics`, {
           headers: {
             Authorization: `Bearer ${session.accessToken}`,
             'x-tenant-id': session.tenantId,
@@ -141,9 +140,8 @@ export default function ClaimsDashboard() {
     if (!session) return;
 
     try {
-      const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
       const response = await fetch(
-        `${apiBase}/api/claims/submit`,
+        `${API_BASE_URL}/api/claims/submit`,
         {
           method: 'POST',
           headers: {

@@ -4,6 +4,10 @@ import { authenticateSocket, AuthenticatedSocket } from "./auth";
 import { logger } from "../lib/logger";
 import { registerMessageHandlers } from "./handlers/messageHandlers";
 import { registerPresenceHandlers } from "./handlers/presenceHandlers";
+import { registerAmbientScribeHandlers } from "./handlers/ambientScribeHandlers";
+import { loadEnv } from "../config/validate";
+
+const envVars = loadEnv();
 
 // Export the io instance for use in other parts of the application
 let io: Server | null = null;
@@ -14,7 +18,7 @@ let io: Server | null = null;
 export function initializeWebSocket(httpServer: HTTPServer): Server {
   const socketOptions: Partial<ServerOptions> = {
     cors: {
-      origin: process.env.FRONTEND_URL || "http://localhost:5173",
+      origin: envVars.FRONTEND_URL,
       credentials: true,
       methods: ["GET", "POST"],
     },
@@ -70,6 +74,7 @@ export function initializeWebSocket(httpServer: HTTPServer): Server {
     // Register event handlers
     registerMessageHandlers(io!, socket);
     registerPresenceHandlers(io!, socket);
+    registerAmbientScribeHandlers(io!, socket);
 
     // Handle errors
     socket.on("error", (error) => {

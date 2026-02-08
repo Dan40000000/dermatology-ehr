@@ -13,6 +13,7 @@
 import { pool } from "../db/pool";
 import { auditLog } from "./audit";
 import { logger } from "../lib/logger";
+import { config } from "../config";
 
 // Email configuration interface
 interface EmailConfig {
@@ -293,13 +294,13 @@ Dermatology EHR System
  * Helper functions
  */
 function getPortalUrl(tenantId: string): string {
-  // In production, this would be environment-specific
-  return `https://portal.dermatologyehr.com/${tenantId}/messages`;
+  const baseUrl = config.frontendUrl || "http://localhost:5173";
+  return `${baseUrl}/portal/messages?tenantId=${tenantId}`;
 }
 
 function getStaffPortalUrl(tenantId: string): string {
-  // In production, this would be environment-specific
-  return `http://localhost:5173/mail?tab=patient-messages`;
+  const baseUrl = config.frontendUrl || "http://localhost:5173";
+  return `${baseUrl}/mail?tab=patient-messages&tenantId=${tenantId}`;
 }
 
 /**

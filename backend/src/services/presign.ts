@@ -1,9 +1,14 @@
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import crypto from "crypto";
+import path from "path";
 import { env } from "../config/env";
 
 let presignClient: S3Client | null = null;
+
+function tenantPrefix(tenantId: string): string {
+  return `tenants/${tenantId}/`;
+}
 
 function getPresignClient() {
   if (presignClient) return presignClient;
@@ -17,8 +22,13 @@ function getPresignClient() {
   return presignClient;
 }
 
-export async function presignUpload(contentType: string, filename: string) {
-  const key = `${Date.now()}-${crypto.randomUUID()}-${filename}`;
+export async function presignUpload(
+  contentType: string,
+  filename: string,
+  tenantId: string
+) {
+  const safeName = path.basename(filename).replace(/[^\w.-]+/g, "_");
+  const key = `${tenantPrefix(tenantId)}${Date.now()}-${crypto.randomUUID()}-${safeName}`;
   const client = getPresignClient();
   const command = new PutObjectCommand({
     Bucket: env.s3Bucket,

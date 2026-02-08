@@ -2,6 +2,7 @@ import { Router } from "express";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { redisCache, CacheKeys, CacheTTL } from "../services/redisCache";
+import { loadEnv } from "../config/validate";
 
 export const providersRouter = Router();
 
@@ -37,7 +38,7 @@ export const providersRouter = Router();
  */
 providersRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
-  const useCache = process.env.NODE_ENV !== "test";
+  const useCache = loadEnv().NODE_ENV !== "test";
 
   // Try to get from cache first
   const cacheKey = CacheKeys.providers(tenantId);

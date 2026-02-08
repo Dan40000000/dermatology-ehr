@@ -8,8 +8,8 @@ import {
   fetchDirectMessageAttachments,
   fetchDirectStats,
 } from '../api-direct';
+import { API_BASE_URL } from '../utils/apiBase';
 
-const baseUrl = 'http://localhost:4000';
 const tenantId = 'tenant-1';
 const token = 'token-1';
 
@@ -33,7 +33,7 @@ describe('api-direct', () => {
     {
       name: 'fetchDirectMessages',
       call: () => fetchDirectMessages(tenantId, token, 'inbox'),
-      url: `${baseUrl}/api/direct/messages?folder=inbox`,
+      url: `${API_BASE_URL}/api/direct/messages?folder=inbox`,
     },
     {
       name: 'sendDirectMessage',
@@ -42,7 +42,7 @@ describe('api-direct', () => {
           toAddress: 'doc@example.com',
           subject: 'Hello',
         }),
-      url: `${baseUrl}/api/direct/send`,
+      url: `${API_BASE_URL}/api/direct/send`,
       method: 'POST',
       body: JSON.stringify({ toAddress: 'doc@example.com', subject: 'Hello' }),
       contentType: true,
@@ -54,7 +54,7 @@ describe('api-direct', () => {
           search: 'Smith',
           favoritesOnly: true,
         }),
-      url: `${baseUrl}/api/direct/contacts?search=Smith&favoritesOnly=true`,
+      url: `${API_BASE_URL}/api/direct/contacts?search=Smith&favoritesOnly=true`,
     },
     {
       name: 'createDirectContact',
@@ -63,7 +63,7 @@ describe('api-direct', () => {
           providerName: 'Dr. Smith',
           directAddress: 'doc@example.com',
         }),
-      url: `${baseUrl}/api/direct/contacts`,
+      url: `${API_BASE_URL}/api/direct/contacts`,
       method: 'POST',
       body: JSON.stringify({
         providerName: 'Dr. Smith',
@@ -74,7 +74,7 @@ describe('api-direct', () => {
     {
       name: 'markDirectMessageRead',
       call: () => markDirectMessageRead(tenantId, token, 'message-1', true),
-      url: `${baseUrl}/api/direct/messages/message-1`,
+      url: `${API_BASE_URL}/api/direct/messages/message-1`,
       method: 'PATCH',
       body: JSON.stringify({ read: true }),
       contentType: true,
@@ -82,12 +82,12 @@ describe('api-direct', () => {
     {
       name: 'fetchDirectMessageAttachments',
       call: () => fetchDirectMessageAttachments(tenantId, token, 'message-1'),
-      url: `${baseUrl}/api/direct/messages/message-1/attachments`,
+      url: `${API_BASE_URL}/api/direct/messages/message-1/attachments`,
     },
     {
       name: 'fetchDirectStats',
       call: () => fetchDirectStats(tenantId, token),
-      url: `${baseUrl}/api/direct/stats`,
+      url: `${API_BASE_URL}/api/direct/stats`,
     },
   ])('calls $name with expected request details', async ({ call, url, method, body, contentType }) => {
     fetchMock.mockResolvedValueOnce(okResponse({}));

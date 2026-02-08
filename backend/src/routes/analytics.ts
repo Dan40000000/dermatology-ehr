@@ -1,9 +1,22 @@
-import { Router } from "express";
+import { Router, Response } from "express";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rateLimit";
+import { analyticsService, DateRange } from "../services/analyticsService";
+import { logger } from "../lib/logger";
 
 export const analyticsRouter = Router();
+
+// Helper to parse date range from query params
+function parseDateRange(query: any): DateRange {
+  const today = new Date();
+  const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  return {
+    startDate: query.startDate || (thirtyDaysAgo.toISOString().split('T')[0] ?? ''),
+    endDate: query.endDate || (today.toISOString().split('T')[0] ?? ''),
+  };
+}
 
 analyticsRouter.use(rateLimit({ windowMs: 60_000, max: 120 }));
 
@@ -856,3 +869,836 @@ analyticsRouter.get("/quality", requireAuth, async (req: AuthedRequest, res) => 
     },
   });
 });
+
+// ============================================================================
+// COMPREHENSIVE DASHBOARD ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/analytics/dashboard/practice
+ * Practice overview dashboard - today's snapshot
+ */
+analyticsRouter.get("/dashboard/practice", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const date = req.query.date as string | undefined;
+
+    // Check cache first
+    const cacheKey = `practice_overview_${date || 'today'}`;
+    const cached = await analyticsService.getCached(tenantId, cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const overview = await analyticsService.getPracticeOverview(tenantId, date);
+
+    // Cache for 1 minute
+    await analyticsService.setCache(tenantId, cacheKey, overview, 60);
+
+    return res.json(overview);
+  } catch (error) {
+    logger.error('Error getting practice overview', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to get practice overview' });
+  }
+});
+
+/**
+ * GET /api/analytics/dashboard/provider/:id
+ * Provider performance dashboard
+ */
+analyticsRouter.get("/dashboard/provider/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const providerId = req.params.id!;
+    const dateRange = parseDateRange(req.query);
+
+    // Check cache
+    const cacheKey = `provider_${providerId}_${dateRange.startDate}_${dateRange.endDate}`;
+    const cached = await analyticsService.getCached(tenantId, cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const performance = await analyticsService.getProviderPerformance(tenantId, providerId, dateRange);
+
+    // Cache for 5 minutes
+    await analyticsService.setCache(tenantId, cacheKey, performance, 300);
+
+    return res.json(performance);
+  } catch (error) {
+    logger.error('Error getting provider performance', { error, tenantId: req.user?.tenantId, providerId: req.params.id });
+    return res.status(500).json({ error: 'Failed to get provider performance' });
+  }
+});
+
+/**
+ * GET /api/analytics/dashboard/revenue
+ * Revenue analytics dashboard
+ */
+analyticsRouter.get("/dashboard/revenue", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const dateRange = parseDateRange(req.query);
+
+    // Check cache
+    const cacheKey = `revenue_${dateRange.startDate}_${dateRange.endDate}`;
+    const cached = await analyticsService.getCached(tenantId, cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const analytics = await analyticsService.getRevenueAnalytics(tenantId, dateRange);
+
+    // Cache for 5 minutes
+    await analyticsService.setCache(tenantId, cacheKey, analytics, 300);
+
+    return res.json(analytics);
+  } catch (error) {
+    logger.error('Error getting revenue analytics', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to get revenue analytics' });
+  }
+});
+
+/**
+ * GET /api/analytics/dashboard/quality
+ * Quality measures dashboard
+ */
+analyticsRouter.get("/dashboard/quality", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const dateRange = parseDateRange(req.query);
+
+    // Check cache
+    const cacheKey = `quality_${dateRange.startDate}_${dateRange.endDate}`;
+    const cached = await analyticsService.getCached(tenantId, cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const dashboard = await analyticsService.getQualityDashboard(tenantId, dateRange);
+
+    // Cache for 10 minutes (quality data changes less frequently)
+    await analyticsService.setCache(tenantId, cacheKey, dashboard, 600);
+
+    return res.json(dashboard);
+  } catch (error) {
+    logger.error('Error getting quality dashboard', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to get quality dashboard' });
+  }
+});
+
+/**
+ * GET /api/analytics/dashboard/operations
+ * Operations metrics dashboard
+ */
+analyticsRouter.get("/dashboard/operations", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const dateRange = parseDateRange(req.query);
+
+    // Check cache
+    const cacheKey = `operations_${dateRange.startDate}_${dateRange.endDate}`;
+    const cached = await analyticsService.getCached(tenantId, cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const dashboard = await analyticsService.getOperationsDashboard(tenantId, dateRange);
+
+    // Cache for 5 minutes
+    await analyticsService.setCache(tenantId, cacheKey, dashboard, 300);
+
+    return res.json(dashboard);
+  } catch (error) {
+    logger.error('Error getting operations dashboard', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to get operations dashboard' });
+  }
+});
+
+/**
+ * GET /api/analytics/dashboard/engagement
+ * Patient engagement dashboard
+ */
+analyticsRouter.get("/dashboard/engagement", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const dateRange = parseDateRange(req.query);
+
+    // Check cache
+    const cacheKey = `engagement_${dateRange.startDate}_${dateRange.endDate}`;
+    const cached = await analyticsService.getCached(tenantId, cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const dashboard = await analyticsService.getEngagementDashboard(tenantId, dateRange);
+
+    // Cache for 5 minutes
+    await analyticsService.setCache(tenantId, cacheKey, dashboard, 300);
+
+    return res.json(dashboard);
+  } catch (error) {
+    logger.error('Error getting engagement dashboard', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to get engagement dashboard' });
+  }
+});
+
+/**
+ * GET /api/analytics/dashboard/inventory
+ * Inventory status dashboard
+ */
+analyticsRouter.get("/dashboard/inventory", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+
+    // Check cache
+    const cacheKey = 'inventory_dashboard';
+    const cached = await analyticsService.getCached(tenantId, cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const dashboard = await analyticsService.getInventoryDashboard(tenantId);
+
+    // Cache for 5 minutes
+    await analyticsService.setCache(tenantId, cacheKey, dashboard, 300);
+
+    return res.json(dashboard);
+  } catch (error) {
+    logger.error('Error getting inventory dashboard', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to get inventory dashboard' });
+  }
+});
+
+// ============================================================================
+// METRICS ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/analytics/metrics/:type
+ * Get specific metrics by type
+ */
+analyticsRouter.get("/metrics/:type", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const metricType = req.params.type;
+    const dateRange = parseDateRange(req.query);
+
+    let data: any;
+    switch (metricType) {
+      case 'practice':
+        data = await analyticsService.getPracticeOverview(tenantId);
+        break;
+      case 'revenue':
+        data = await analyticsService.getRevenueAnalytics(tenantId, dateRange);
+        break;
+      case 'quality':
+        data = await analyticsService.getQualityDashboard(tenantId, dateRange);
+        break;
+      case 'operations':
+        data = await analyticsService.getOperationsDashboard(tenantId, dateRange);
+        break;
+      case 'engagement':
+        data = await analyticsService.getEngagementDashboard(tenantId, dateRange);
+        break;
+      case 'inventory':
+        data = await analyticsService.getInventoryDashboard(tenantId);
+        break;
+      default:
+        return res.status(400).json({ error: `Unknown metric type: ${metricType}` });
+    }
+
+    return res.json(data);
+  } catch (error) {
+    logger.error('Error getting metrics', { error, tenantId: req.user?.tenantId, type: req.params.type });
+    return res.status(500).json({ error: 'Failed to get metrics' });
+  }
+});
+
+/**
+ * GET /api/analytics/trends/:metric
+ * Get trend data for a specific metric
+ */
+analyticsRouter.get("/trends/:metric", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const metricName = req.params.metric!;
+    const dateRange = parseDateRange(req.query);
+    const granularity = (req.query.granularity as 'daily' | 'weekly' | 'monthly') || 'daily';
+
+    const trend = await analyticsService.getTrendData(tenantId, metricName, dateRange, granularity);
+
+    return res.json(trend);
+  } catch (error) {
+    logger.error('Error getting trend data', { error, tenantId: req.user?.tenantId, metric: req.params.metric });
+    return res.status(500).json({ error: 'Failed to get trend data' });
+  }
+});
+
+/**
+ * GET /api/analytics/compare
+ * Compare current period to previous period
+ */
+analyticsRouter.get("/compare", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const metricName = req.query.metric as string;
+
+    if (!metricName) {
+      return res.status(400).json({ error: 'metric parameter is required' });
+    }
+
+    const currentRange = parseDateRange(req.query);
+
+    // Calculate previous period (same duration before current period)
+    const currentStart = new Date(currentRange.startDate);
+    const currentEnd = new Date(currentRange.endDate);
+    const duration = currentEnd.getTime() - currentStart.getTime();
+
+    const previousEnd = new Date(currentStart.getTime() - 1);
+    const previousStart = new Date(previousEnd.getTime() - duration);
+
+    const previousRange: DateRange = {
+      startDate: previousStart.toISOString().split('T')[0] ?? '',
+      endDate: previousEnd.toISOString().split('T')[0] ?? '',
+    };
+
+    const comparison = await analyticsService.comparePeriods(tenantId, metricName, currentRange, previousRange);
+
+    return res.json({
+      metric: metricName,
+      currentPeriod: currentRange,
+      previousPeriod: previousRange,
+      comparison,
+    });
+  } catch (error) {
+    logger.error('Error comparing periods', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to compare periods' });
+  }
+});
+
+// ============================================================================
+// KPI ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/analytics/kpis
+ * Get all KPIs with targets and current values
+ */
+analyticsRouter.get("/kpis", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const kpis = await analyticsService.getKPIsWithTargets(tenantId);
+    return res.json({ kpis });
+  } catch (error) {
+    logger.error('Error getting KPIs', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to get KPIs' });
+  }
+});
+
+/**
+ * GET /api/analytics/kpis/:name
+ * Get specific KPI details
+ */
+analyticsRouter.get("/kpis/:name", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const kpiName = req.params.name;
+
+    const kpis = await analyticsService.getKPIsWithTargets(tenantId);
+    const kpi = kpis.find((k) => k.kpiName === kpiName);
+
+    if (!kpi) {
+      return res.status(404).json({ error: 'KPI not found' });
+    }
+
+    // Get trend data for the KPI
+    const dateRange: DateRange = {
+      startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] ?? '',
+      endDate: new Date().toISOString().split('T')[0] ?? '',
+    };
+    const trend = await analyticsService.getTrendData(tenantId, kpiName!, dateRange, 'weekly');
+
+    return res.json({ kpi, trend });
+  } catch (error) {
+    logger.error('Error getting KPI', { error, tenantId: req.user?.tenantId, name: req.params.name });
+    return res.status(500).json({ error: 'Failed to get KPI' });
+  }
+});
+
+/**
+ * POST /api/analytics/kpis/targets
+ * Set or update KPI targets
+ */
+analyticsRouter.post("/kpis/targets", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const { targets } = req.body;
+
+    if (!Array.isArray(targets)) {
+      return res.status(400).json({ error: 'targets array is required' });
+    }
+
+    for (const target of targets) {
+      await pool.query(
+        `INSERT INTO kpi_targets (
+          tenant_id, kpi_name, kpi_category, target_value, target_type,
+          warning_threshold, critical_threshold, period_type, effective_date, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (tenant_id, kpi_name, period_type, effective_date, provider_id, location_id)
+        DO UPDATE SET
+          target_value = $4,
+          warning_threshold = $6,
+          critical_threshold = $7,
+          updated_at = NOW()`,
+        [
+          tenantId,
+          target.kpiName,
+          target.kpiCategory || 'general',
+          target.targetValue,
+          target.targetType || 'minimum',
+          target.warningThreshold || null,
+          target.criticalThreshold || null,
+          target.periodType || 'monthly',
+          target.effectiveDate || new Date().toISOString().split('T')[0],
+          userId,
+        ]
+      );
+    }
+
+    // Invalidate KPI cache
+    await analyticsService.invalidateCache(tenantId, 'kpi');
+
+    logger.info('KPI targets updated', { tenantId, count: targets.length });
+
+    return res.json({ success: true, updatedCount: targets.length });
+  } catch (error) {
+    logger.error('Error setting KPI targets', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to set KPI targets' });
+  }
+});
+
+// ============================================================================
+// SAVED REPORTS ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/analytics/reports
+ * Get saved reports for user
+ */
+analyticsRouter.get("/reports", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const reports = await analyticsService.getSavedReports(tenantId, userId);
+    return res.json({ reports });
+  } catch (error) {
+    logger.error('Error getting saved reports', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to get saved reports' });
+  }
+});
+
+/**
+ * POST /api/analytics/reports
+ * Save a new report configuration
+ */
+analyticsRouter.post("/reports", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const { name, description, reportType, filters, columns, sortBy, sortOrder, groupBy, isPublic } = req.body;
+
+    if (!name || !reportType || !filters) {
+      return res.status(400).json({ error: 'name, reportType, and filters are required' });
+    }
+
+    const reportId = await analyticsService.saveReport(tenantId, userId, {
+      name,
+      description,
+      reportType,
+      filters,
+      columns,
+      sortBy,
+      sortOrder,
+      groupBy,
+      isPublic,
+    });
+
+    return res.status(201).json({ id: reportId, message: 'Report saved successfully' });
+  } catch (error) {
+    logger.error('Error saving report', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to save report' });
+  }
+});
+
+/**
+ * GET /api/analytics/reports/:id
+ * Get a specific saved report configuration
+ */
+analyticsRouter.get("/reports/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const reportId = req.params.id!;
+
+    const report = await analyticsService.getReport(tenantId, reportId);
+
+    if (!report) {
+      return res.status(404).json({ error: 'Report not found' });
+    }
+
+    return res.json(report);
+  } catch (error) {
+    logger.error('Error getting report', { error, tenantId: req.user?.tenantId, reportId: req.params.id });
+    return res.status(500).json({ error: 'Failed to get report' });
+  }
+});
+
+/**
+ * DELETE /api/analytics/reports/:id
+ * Delete a saved report
+ */
+analyticsRouter.delete("/reports/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const reportId = req.params.id;
+
+    // Only allow deletion by creator or admin
+    const result = await pool.query(
+      `DELETE FROM saved_reports
+      WHERE id = $1 AND tenant_id = $2 AND (created_by = $3 OR $4 = true)
+      RETURNING id`,
+      [reportId, tenantId, userId, req.user?.role === 'admin']
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Report not found or access denied' });
+    }
+
+    logger.info('Report deleted', { tenantId, reportId });
+
+    return res.json({ success: true });
+  } catch (error) {
+    logger.error('Error deleting report', { error, tenantId: req.user?.tenantId, reportId: req.params.id });
+    return res.status(500).json({ error: 'Failed to delete report' });
+  }
+});
+
+/**
+ * POST /api/analytics/reports/:id/run
+ * Execute a saved report and return data
+ */
+analyticsRouter.post("/reports/:id/run", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const reportId = req.params.id!;
+
+    const data = await analyticsService.runReport(tenantId, reportId);
+
+    return res.json({ data });
+  } catch (error) {
+    logger.error('Error running report', { error, tenantId: req.user?.tenantId, reportId: req.params.id });
+    return res.status(500).json({ error: 'Failed to run report' });
+  }
+});
+
+/**
+ * GET /api/analytics/reports/export/:id
+ * Export report to CSV or JSON
+ */
+analyticsRouter.get("/reports/export/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const reportId = req.params.id!;
+    const format = (req.query.format as string) || 'csv';
+
+    // Run the report first
+    const data = await analyticsService.runReport(tenantId, reportId);
+    const report = await analyticsService.getReport(tenantId, reportId);
+
+    if (format === 'csv') {
+      // Generate CSV
+      const rows: string[] = [];
+
+      if (data && typeof data === 'object') {
+        const flatData = flattenObject(data);
+        rows.push(Object.keys(flatData).join(','));
+        rows.push(Object.values(flatData).map((v) => `"${v}"`).join(','));
+      }
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${report.name}_${new Date().toISOString().split('T')[0]}.csv"`);
+
+      return res.send(rows.join('\n'));
+    } else if (format === 'json') {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="${report.name}_${new Date().toISOString().split('T')[0]}.json"`);
+
+      return res.json(data);
+    } else {
+      return res.status(400).json({ error: 'Unsupported format. Use csv or json' });
+    }
+  } catch (error) {
+    logger.error('Error exporting report', { error, tenantId: req.user?.tenantId, reportId: req.params.id });
+    return res.status(500).json({ error: 'Failed to export report' });
+  }
+});
+
+// ============================================================================
+// WIDGET ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/analytics/widgets/:dashboardType
+ * Get widget configurations for a dashboard type
+ */
+analyticsRouter.get("/widgets/:dashboardType", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const dashboardType = req.params.dashboardType!;
+
+    const widgets = await analyticsService.getWidgets(tenantId, dashboardType, userId);
+
+    return res.json({ widgets });
+  } catch (error) {
+    logger.error('Error getting widgets', { error, tenantId: req.user?.tenantId, dashboardType: req.params.dashboardType });
+    return res.status(500).json({ error: 'Failed to get widgets' });
+  }
+});
+
+/**
+ * PATCH /api/analytics/widgets/:id
+ * Update widget position or visibility
+ */
+analyticsRouter.patch("/widgets/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const widgetId = req.params.id!;
+    const { position, isVisible, config } = req.body;
+
+    await analyticsService.updateWidget(tenantId, widgetId, { position, isVisible, config });
+
+    logger.info('Widget updated', { tenantId, widgetId });
+
+    return res.json({ success: true });
+  } catch (error) {
+    logger.error('Error updating widget', { error, tenantId: req.user?.tenantId, widgetId: req.params.id });
+    return res.status(500).json({ error: 'Failed to update widget' });
+  }
+});
+
+/**
+ * POST /api/analytics/widgets
+ * Create a custom widget
+ */
+analyticsRouter.post("/widgets", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const { dashboardType, widgetName, widgetType, config, position, width, height } = req.body;
+
+    if (!dashboardType || !widgetName || !widgetType) {
+      return res.status(400).json({ error: 'dashboardType, widgetName, and widgetType are required' });
+    }
+
+    const crypto = await import('crypto');
+    const id = crypto.randomUUID();
+
+    await pool.query(
+      `INSERT INTO dashboard_widgets (
+        id, tenant_id, user_id, dashboard_type, widget_name, widget_type,
+        config, position, width, height, is_visible
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true)`,
+      [
+        id,
+        tenantId,
+        userId,
+        dashboardType,
+        widgetName,
+        widgetType,
+        JSON.stringify(config || {}),
+        position || 0,
+        width || 1,
+        height || 1,
+      ]
+    );
+
+    logger.info('Widget created', { tenantId, widgetId: id });
+
+    return res.status(201).json({ id, message: 'Widget created successfully' });
+  } catch (error) {
+    logger.error('Error creating widget', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to create widget' });
+  }
+});
+
+/**
+ * DELETE /api/analytics/widgets/:id
+ * Delete a custom widget
+ */
+analyticsRouter.delete("/widgets/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const widgetId = req.params.id;
+
+    // Only allow deletion of user-created widgets
+    const result = await pool.query(
+      `DELETE FROM dashboard_widgets
+      WHERE id = $1 AND tenant_id = $2 AND user_id = $3
+      RETURNING id`,
+      [widgetId, tenantId, userId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Widget not found or cannot delete system widgets' });
+    }
+
+    logger.info('Widget deleted', { tenantId, widgetId });
+
+    return res.json({ success: true });
+  } catch (error) {
+    logger.error('Error deleting widget', { error, tenantId: req.user?.tenantId, widgetId: req.params.id });
+    return res.status(500).json({ error: 'Failed to delete widget' });
+  }
+});
+
+// ============================================================================
+// CACHE MANAGEMENT
+// ============================================================================
+
+/**
+ * POST /api/analytics/cache/invalidate
+ * Invalidate analytics cache
+ */
+analyticsRouter.post("/cache/invalidate", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { pattern } = req.body;
+
+    await analyticsService.invalidateCache(tenantId, pattern);
+
+    logger.info('Cache invalidated', { tenantId, pattern });
+
+    return res.json({ success: true });
+  } catch (error) {
+    logger.error('Error invalidating cache', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to invalidate cache' });
+  }
+});
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+/**
+ * GET /api/analytics/alerts
+ * Get unacknowledged analytics alerts
+ */
+analyticsRouter.get("/alerts", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const includeAcknowledged = req.query.includeAcknowledged === 'true';
+
+    const result = await pool.query(
+      `SELECT a.*, r.name as rule_name
+      FROM analytics_alerts a
+      JOIN analytics_alert_rules r ON r.id = a.rule_id
+      WHERE a.tenant_id = $1
+        ${includeAcknowledged ? '' : 'AND a.acknowledged = false'}
+      ORDER BY a.created_at DESC
+      LIMIT $2`,
+      [tenantId, limit]
+    );
+
+    return res.json({ alerts: result.rows });
+  } catch (error) {
+    logger.error('Error getting alerts', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to get alerts' });
+  }
+});
+
+/**
+ * POST /api/analytics/alerts/:id/acknowledge
+ * Acknowledge an alert
+ */
+analyticsRouter.post("/alerts/:id/acknowledge", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const alertId = req.params.id;
+
+    const result = await pool.query(
+      `UPDATE analytics_alerts
+      SET acknowledged = true, acknowledged_by = $3, acknowledged_at = NOW()
+      WHERE id = $1 AND tenant_id = $2
+      RETURNING id`,
+      [alertId, tenantId, userId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Alert not found' });
+    }
+
+    logger.info('Alert acknowledged', { tenantId, alertId });
+
+    return res.json({ success: true });
+  } catch (error) {
+    logger.error('Error acknowledging alert', { error, tenantId: req.user?.tenantId, alertId: req.params.id });
+    return res.status(500).json({ error: 'Failed to acknowledge alert' });
+  }
+});
+
+// ============================================================================
+// BENCHMARKS
+// ============================================================================
+
+/**
+ * GET /api/analytics/benchmarks
+ * Get industry benchmarks for comparison
+ */
+analyticsRouter.get("/benchmarks", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const specialty = (req.query.specialty as string) || 'dermatology';
+    const practiceSize = req.query.practiceSize as string;
+    const year = parseInt(req.query.year as string) || new Date().getFullYear();
+
+    let query = `SELECT * FROM benchmark_data WHERE specialty = $1 AND year = $2`;
+    const params: any[] = [specialty, year];
+
+    if (practiceSize) {
+      query += ` AND practice_size = $3`;
+      params.push(practiceSize);
+    }
+
+    query += ` ORDER BY metric_name`;
+
+    const result = await pool.query(query, params);
+
+    return res.json({ benchmarks: result.rows });
+  } catch (error) {
+    logger.error('Error getting benchmarks', { error });
+    return res.status(500).json({ error: 'Failed to get benchmarks' });
+  }
+});
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+function flattenObject(obj: any, prefix = ''): Record<string, any> {
+  return Object.keys(obj).reduce((acc: Record<string, any>, k) => {
+    const pre = prefix.length ? `${prefix}_` : '';
+    if (typeof obj[k] === 'object' && obj[k] !== null && !Array.isArray(obj[k])) {
+      Object.assign(acc, flattenObject(obj[k], pre + k));
+    } else if (Array.isArray(obj[k])) {
+      acc[pre + k] = JSON.stringify(obj[k]);
+    } else {
+      acc[pre + k] = obj[k];
+    }
+    return acc;
+  }, {});
+}

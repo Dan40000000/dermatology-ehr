@@ -26,6 +26,11 @@ const checkinDemographicsSchema = z.object({
   emergencyContactPhone: z.string().optional(),
 });
 
+const portalRefillRequestSchema = z.object({
+  prescriptionId: z.string().uuid(),
+  notes: z.string().optional(),
+});
+
 /**
  * POST /api/patient-portal-data/checkin/start
  * Allow patient to start pre-check-in for an upcoming appointment
@@ -579,12 +584,19 @@ patientPortalDataRouter.get("/medications", async (req: PatientPortalRequest, re
 
     // Get from prescriptions with active status
     const result = await pool.query(
-      `SELECT medication_name as "medicationName",
-              sig, quantity, refills,
-              prescribed_date as "prescribedDate",
-              pr.name as "providerName"
+      `SELECT p.id,
+              p.medication_name as "medicationName",
+              p.strength,
+              p.sig,
+              p.quantity,
+              p.refills,
+              p.prescribed_date as "prescribedDate",
+              pr.name as "providerName",
+              p.pharmacy_id as "pharmacyId",
+              pharm.name as "pharmacyName"
        FROM prescriptions p
        LEFT JOIN providers pr ON p.provider_id = pr.id
+       LEFT JOIN pharmacies pharm ON p.pharmacy_id = pharm.id
        WHERE p.patient_id = $1
        AND p.tenant_id = $2
        AND p.status = 'active'
@@ -596,6 +608,101 @@ patientPortalDataRouter.get("/medications", async (req: PatientPortalRequest, re
   } catch (error) {
     console.error("Get medications error:", error);
     return res.status(500).json({ error: "Failed to get medications" });
+  }
+});
+
+/**
+ * POST /api/patient-portal-data/refill-requests
+ * Create a refill request from the patient portal
+ */
+patientPortalDataRouter.post("/refill-requests", async (req: PatientPortalRequest, res) => {
+  try {
+    const parsed = portalRefillRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { prescriptionId, notes } = parsed.data;
+    const patientId = req.patient!.patientId;
+    const tenantId = req.patient!.tenantId;
+
+    const prescriptionResult = await pool.query(
+      `SELECT
+        p.id,
+        p.medication_name,
+        p.strength,
+        p.drug_description,
+        p.prescribed_date,
+        p.provider_id,
+        p.pharmacy_id,
+        pharm.name as pharmacy_name,
+        pharm.ncpdp_id as pharmacy_ncpdp
+       FROM prescriptions p
+       LEFT JOIN pharmacies pharm ON p.pharmacy_id = pharm.id
+       WHERE p.id = $1 AND p.patient_id = $2 AND p.tenant_id = $3`,
+      [prescriptionId, patientId, tenantId]
+    );
+
+    if (prescriptionResult.rows.length === 0) {
+      return res.status(404).json({ error: "Prescription not found" });
+    }
+
+    const prescription = prescriptionResult.rows[0];
+
+    const existingRequest = await pool.query(
+      `SELECT id FROM refill_requests
+       WHERE tenant_id = $1 AND patient_id = $2 AND original_prescription_id = $3
+       AND status = 'pending'
+       LIMIT 1`,
+      [tenantId, patientId, prescription.id]
+    );
+
+    if (existingRequest.rows.length > 0) {
+      return res.status(409).json({ error: "A refill request is already pending for this medication" });
+    }
+    const requestId = crypto.randomUUID();
+
+    await pool.query(
+      `INSERT INTO refill_requests(
+        id,
+        tenant_id,
+        patient_id,
+        original_prescription_id,
+        medication_name,
+        strength,
+        drug_description,
+        original_rx_date,
+        provider_id,
+        pharmacy_id,
+        pharmacy_name,
+        pharmacy_ncpdp,
+        request_source,
+        request_method,
+        notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+      [
+        requestId,
+        tenantId,
+        patientId,
+        prescription.id,
+        prescription.medication_name,
+        prescription.strength || null,
+        prescription.drug_description || null,
+        prescription.prescribed_date || null,
+        prescription.provider_id || null,
+        prescription.pharmacy_id || null,
+        prescription.pharmacy_name || null,
+        prescription.pharmacy_ncpdp || null,
+        "portal",
+        "portal",
+        notes || null,
+      ]
+    );
+
+    return res.status(201).json({ id: requestId, message: "Refill request submitted" });
+  } catch (error) {
+    console.error("Create portal refill request error:", error);
+    return res.status(500).json({ error: "Failed to submit refill request" });
   }
 });
 

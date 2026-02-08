@@ -86,11 +86,11 @@ CREATE INDEX IF NOT EXISTS idx_claims_provider_fk ON claims(provider_id) WHERE d
 -- ================================================
 
 -- Patient search optimization (name + DOB verification)
-CREATE INDEX IF NOT EXISTS idx_patients_search_composite ON patients(tenant_id, last_name, first_name, date_of_birth)
+CREATE INDEX IF NOT EXISTS idx_patients_search_composite ON patients(tenant_id, last_name, first_name, dob)
 WHERE deleted_at IS NULL;
 
 -- Patient portal login
-CREATE INDEX IF NOT EXISTS idx_patients_portal_login ON patients(email, date_of_birth)
+CREATE INDEX IF NOT EXISTS idx_patients_portal_login ON patients(email, dob)
 WHERE deleted_at IS NULL AND email IS NOT NULL;
 
 -- MRN lookup (medical record number)

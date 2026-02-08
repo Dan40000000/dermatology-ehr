@@ -3483,6 +3483,238 @@ Consider age-appropriate treatments and include family counseling points.',
     create index if not exists idx_portal_accounts_tenant on patient_portal_accounts(tenant_id);
     `,
   },
+  {
+    name: "071_patient_ssn_encryption",
+    sql: `
+    alter table patients add column if not exists ssn_last4 text;
+    alter table patients add column if not exists ssn_encrypted text;
+
+    update patients
+    set ssn_last4 = right(ssn, 4)
+    where ssn is not null and (ssn_last4 is null or ssn_last4 = '');
+    `,
+  },
+  {
+    name: "072_ambient_scribe_v2_schema",
+    sql: `
+    -- Align ambient scribe schema with v2 routes
+    create table if not exists ambient_transcripts (
+      id text primary key,
+      tenant_id text not null references tenants(id) on delete cascade,
+      recording_id text not null references ambient_recordings(id) on delete cascade,
+      encounter_id text references encounters(id) on delete cascade,
+      transcript_text text,
+      transcript_segments jsonb,
+      language text default 'en',
+      speakers jsonb,
+      speaker_count integer default 2,
+      confidence_score decimal(3,2),
+      word_count integer default 0,
+      original_text text,
+      phi_entities jsonb,
+      phi_masked boolean default false,
+      transcription_status text not null default 'pending' check (transcription_status in ('pending','processing','completed','failed')),
+      error_message text,
+      started_at timestamptz,
+      completed_at timestamptz,
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    create index if not exists idx_ambient_transcripts_tenant on ambient_transcripts(tenant_id);
+    create index if not exists idx_ambient_transcripts_recording on ambient_transcripts(recording_id);
+    create index if not exists idx_ambient_transcripts_encounter on ambient_transcripts(encounter_id);
+    create index if not exists idx_ambient_transcripts_status on ambient_transcripts(transcription_status);
+    create index if not exists idx_ambient_transcripts_created on ambient_transcripts(created_at desc);
+
+    create table if not exists ambient_note_edits (
+      id text primary key,
+      tenant_id text not null references tenants(id) on delete cascade,
+      generated_note_id text not null references ambient_generated_notes(id) on delete cascade,
+      edited_by text not null references users(id),
+      section text not null,
+      previous_value text,
+      new_value text,
+      change_type text not null check (change_type in ('create','update','delete','approve','reject')),
+      edit_reason text,
+      is_significant boolean default false,
+      created_at timestamptz default now()
+    );
+
+    create index if not exists idx_ambient_edits_tenant on ambient_note_edits(tenant_id);
+    create index if not exists idx_ambient_edits_note on ambient_note_edits(generated_note_id);
+    create index if not exists idx_ambient_edits_editor on ambient_note_edits(edited_by);
+    create index if not exists idx_ambient_edits_created on ambient_note_edits(created_at desc);
+
+    create table if not exists ambient_scribe_settings (
+      id text primary key,
+      tenant_id text not null references tenants(id) on delete cascade,
+      provider_id text references providers(id) on delete cascade,
+      auto_start_recording boolean default false,
+      auto_generate_notes boolean default false,
+      require_review boolean default true,
+      preferred_note_style text default 'soap',
+      verbosity_level text default 'standard',
+      include_time_markers boolean default true,
+      min_transcription_confidence decimal(3,2) default 0.70,
+      min_generation_confidence decimal(3,2) default 0.75,
+      auto_mask_phi boolean default true,
+      phi_mask_level text default 'full',
+      default_consent_method text default 'verbal',
+      recording_quality text default 'standard',
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    create unique index if not exists idx_ambient_settings_unique on ambient_scribe_settings(tenant_id, provider_id);
+    create index if not exists idx_ambient_settings_tenant on ambient_scribe_settings(tenant_id);
+    create index if not exists idx_ambient_settings_provider on ambient_scribe_settings(provider_id);
+
+    alter table ambient_recordings add column if not exists recording_status text default 'recording';
+    alter table ambient_recordings add column if not exists file_path text;
+    alter table ambient_recordings add column if not exists file_size_bytes bigint default 0;
+    alter table ambient_recordings add column if not exists mime_type text default 'audio/webm';
+    alter table ambient_recordings add column if not exists consent_obtained boolean default false;
+    alter table ambient_recordings add column if not exists consent_timestamp timestamptz;
+    alter table ambient_recordings add column if not exists consent_method text;
+    alter table ambient_recordings add column if not exists encryption_key_id text;
+    alter table ambient_recordings add column if not exists is_encrypted boolean default true;
+    alter table ambient_recordings add column if not exists contains_phi boolean default true;
+    alter table ambient_recordings add column if not exists phi_redacted boolean default false;
+    alter table ambient_recordings add column if not exists completed_at timestamptz;
+    alter table ambient_recordings add column if not exists updated_at timestamptz default now();
+
+    update ambient_recordings
+    set recording_status = coalesce(recording_status, status, 'recording')
+    where recording_status is null;
+
+    create index if not exists idx_ambient_recordings_recording_status on ambient_recordings(recording_status);
+    create index if not exists idx_ambient_recordings_created_v2 on ambient_recordings(created_at desc);
+
+    alter table ambient_generated_notes add column if not exists transcript_id text references ambient_transcripts(id) on delete cascade;
+    alter table ambient_generated_notes add column if not exists chief_complaint text;
+    alter table ambient_generated_notes add column if not exists hpi text;
+    alter table ambient_generated_notes add column if not exists ros text;
+    alter table ambient_generated_notes add column if not exists physical_exam text;
+    alter table ambient_generated_notes add column if not exists assessment text;
+    alter table ambient_generated_notes add column if not exists plan text;
+    alter table ambient_generated_notes add column if not exists suggested_icd10_codes jsonb;
+    alter table ambient_generated_notes add column if not exists suggested_cpt_codes jsonb;
+    alter table ambient_generated_notes add column if not exists mentioned_medications jsonb;
+    alter table ambient_generated_notes add column if not exists mentioned_allergies jsonb;
+    alter table ambient_generated_notes add column if not exists follow_up_tasks jsonb;
+    alter table ambient_generated_notes add column if not exists ai_model text default 'gpt-4-medical';
+    alter table ambient_generated_notes add column if not exists ai_version text;
+    alter table ambient_generated_notes add column if not exists generation_prompt text;
+    alter table ambient_generated_notes add column if not exists overall_confidence decimal(3,2);
+    alter table ambient_generated_notes add column if not exists section_confidence jsonb;
+    alter table ambient_generated_notes add column if not exists differential_diagnoses jsonb;
+    alter table ambient_generated_notes add column if not exists recommended_tests jsonb;
+    alter table ambient_generated_notes add column if not exists review_status text default 'pending';
+    alter table ambient_generated_notes add column if not exists reviewed_by text references users(id);
+    alter table ambient_generated_notes add column if not exists reviewed_at timestamptz;
+    alter table ambient_generated_notes add column if not exists generation_status text default 'pending';
+    alter table ambient_generated_notes add column if not exists error_message text;
+    alter table ambient_generated_notes add column if not exists started_at timestamptz;
+    alter table ambient_generated_notes add column if not exists completed_at timestamptz;
+
+    alter table ambient_generated_notes alter column note_content drop not null;
+    alter table ambient_generated_notes alter column recording_id drop not null;
+
+    create index if not exists idx_ambient_notes_transcript on ambient_generated_notes(transcript_id);
+    create index if not exists idx_ambient_notes_review_status on ambient_generated_notes(review_status);
+    create index if not exists idx_ambient_notes_created_v2 on ambient_generated_notes(created_at desc);
+
+    insert into ambient_scribe_settings (id, tenant_id, provider_id)
+    select 'settings-' || t.id || '-default', t.id, null
+    from tenants t
+    on conflict (tenant_id, provider_id) do nothing;
+    `,
+  },
+  {
+    name: "073_messaging_and_direct_fixes",
+    sql: `
+    -- Internal messaging schema fixes
+    alter table message_threads add column if not exists patient_id text references patients(id);
+    alter table message_threads add column if not exists created_by text references users(id);
+    create index if not exists idx_message_threads_patient on message_threads(patient_id);
+    create index if not exists idx_message_threads_created_by on message_threads(created_by);
+
+    -- Direct messaging tables (provider-to-provider)
+    create table if not exists direct_messages (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      from_address text not null,
+      to_address text not null,
+      subject text not null,
+      body text,
+      attachments jsonb default '[]'::jsonb,
+      status text default 'sent',
+      sent_at timestamptz default now(),
+      delivered_at timestamptz,
+      read_at timestamptz,
+      transmission_id text,
+      error_message text,
+      sent_by text references users(id),
+      reply_to_message_id text references direct_messages(id),
+      created_at timestamptz default now(),
+      updated_at timestamptz default now()
+    );
+
+    create index if not exists idx_direct_messages_tenant on direct_messages(tenant_id);
+    create index if not exists idx_direct_messages_from on direct_messages(from_address);
+    create index if not exists idx_direct_messages_to on direct_messages(to_address);
+    create index if not exists idx_direct_messages_status on direct_messages(status);
+    create index if not exists idx_direct_messages_sent_at on direct_messages(sent_at desc);
+
+    create table if not exists direct_contacts (
+      id text primary key,
+      tenant_id text not null references tenants(id),
+      provider_name text not null,
+      specialty text,
+      organization text,
+      direct_address text not null,
+      phone text,
+      fax text,
+      address text,
+      notes text,
+      is_favorite boolean default false,
+      created_at timestamptz default now(),
+      updated_at timestamptz default now(),
+      created_by text references users(id)
+    );
+
+    create index if not exists idx_direct_contacts_tenant on direct_contacts(tenant_id);
+    create index if not exists idx_direct_contacts_address on direct_contacts(direct_address);
+    create index if not exists idx_direct_contacts_specialty on direct_contacts(specialty);
+    create index if not exists idx_direct_contacts_favorite on direct_contacts(is_favorite);
+    create unique index if not exists idx_direct_contacts_tenant_address on direct_contacts(tenant_id, direct_address);
+    `,
+  },
+  {
+    name: "074_vitals_schema_fix",
+    sql: `
+    alter table vitals add column if not exists patient_id text references patients(id);
+    alter table vitals add column if not exists recorded_by_id text references users(id);
+    alter table vitals add column if not exists recorded_at timestamptz;
+    alter table vitals add column if not exists respiratory_rate int;
+    alter table vitals add column if not exists o2_saturation int;
+    alter table vitals alter column encounter_id drop not null;
+
+    update vitals v
+    set patient_id = e.patient_id
+    from encounters e
+    where v.encounter_id = e.id
+      and v.patient_id is null;
+
+    update vitals
+    set recorded_at = coalesce(recorded_at, created_at);
+
+    create index if not exists idx_vitals_patient on vitals(patient_id);
+    create index if not exists idx_vitals_encounter on vitals(encounter_id);
+    create index if not exists idx_vitals_recorded_at on vitals(recorded_at desc);
+    `,
+  },
 ];
 
 async function ensureMigrationsTable() {

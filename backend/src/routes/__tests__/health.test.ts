@@ -20,6 +20,7 @@ jest.mock('../../lib/logger', () => ({
 jest.mock('../../db/pool', () => ({
   pool: {
     query: jest.fn(),
+    connect: jest.fn(),
   },
 }));
 
@@ -44,16 +45,19 @@ app.use(express.json());
 app.use('/health', healthRouter);
 
 const queryMock = pool.query as jest.Mock;
+const connectMock = pool.connect as jest.Mock;
 const metricsMock = register.metrics as jest.Mock;
 const seedMock = runSeed as jest.Mock;
 const migrationsMock = runMigrations as jest.Mock;
 
 beforeEach(() => {
   queryMock.mockReset();
+  connectMock.mockReset();
   metricsMock.mockReset();
   seedMock.mockReset();
   migrationsMock.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
+  connectMock.mockResolvedValue({ query: queryMock, release: jest.fn() });
   metricsMock.mockResolvedValue('# Metrics');
 });
 

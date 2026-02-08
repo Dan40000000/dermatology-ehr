@@ -3,6 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import ModifierHelper from './ModifierHelper';
 import CosmeticClassifier from './CosmeticClassifier';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 interface LineItem {
   cpt: string;
@@ -41,9 +42,8 @@ export default function ClaimEditor({ claimId, onClose }: ClaimEditorProps) {
 
     setLoading(true);
     try {
-      const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
       const response = await fetch(
-        `${apiBase}/api/claims/${claimId}`,
+        `${API_BASE_URL}/api/claims/${claimId}`,
         {
           headers: {
             Authorization: `Bearer ${session.accessToken}`,
@@ -71,9 +71,8 @@ export default function ClaimEditor({ claimId, onClose }: ClaimEditorProps) {
 
     setSaving(true);
     try {
-      const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
       const response = await fetch(
-        `${apiBase}/api/claims/${claimId}`,
+        `${API_BASE_URL}/api/claims/${claimId}`,
         {
           method: 'PUT',
           headers: {

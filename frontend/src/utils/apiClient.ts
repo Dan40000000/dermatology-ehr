@@ -3,6 +3,7 @@
  * Centralized API client with comprehensive error handling, retry logic, and timeout support
  */
 
+import { API_BASE_URL } from './apiBase';
 import {
   ApiException,
   handleApiResponse,
@@ -12,7 +13,7 @@ import {
   isAuthError,
 } from './errorHandling';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
+const API_BASE = API_BASE_URL;
 const TENANT_HEADER = 'x-tenant-id';
 
 export interface ApiRequestOptions extends RequestInit {

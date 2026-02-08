@@ -6,6 +6,7 @@ import { Skeleton, DataTable, ExportButtons, Modal } from '../components/ui';
 import type { Column } from '../components/ui';
 import type { ExportColumn } from '../utils/export';
 import { formatDate as formatExportDate } from '../utils/export';
+import { API_BASE_URL } from '../utils/apiBase';
 import {
   fetchPatients,
   fetchAppointments,
@@ -117,7 +118,7 @@ export function HomePage() {
           fetchEncounters(session.tenantId, session.accessToken),
           fetchTasks(session.tenantId, session.accessToken),
           fetchAnalytics(session.tenantId, session.accessToken),
-          fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'}/api/providers`, {
+          fetch(`${API_BASE_URL}/api/providers`, {
             headers: {
               Authorization: `Bearer ${session.accessToken}`,
               'x-tenant-id': session.tenantId,

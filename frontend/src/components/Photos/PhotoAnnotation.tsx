@@ -72,6 +72,7 @@ export function PhotoAnnotation({
   const [textPosition, setTextPosition] = useState<{ x: number; y: number } | null>(null);
   const [showClean, setShowClean] = useState(false);
   const [pixelsPerMm, setPixelsPerMm] = useState<number | null>(null);
+  const activePointerId = useRef<number | null>(null);
 
   useEffect(() => {
     drawCanvas();
@@ -183,7 +184,7 @@ export function PhotoAnnotation({
     }
   };
 
-  const getCanvasCoordinates = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const getCanvasCoordinates = (point: { clientX: number; clientY: number }) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
 
@@ -192,15 +193,28 @@ export function PhotoAnnotation({
     const scaleY = canvas.height / rect.height;
 
     return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY,
+      x: (point.clientX - rect.left) * scaleX,
+      y: (point.clientY - rect.top) * scaleY,
     };
   };
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (tool === 'select' || tool === 'text') return;
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (tool === 'select') return;
+    if (activePointerId.current !== null) return;
 
     const { x, y } = getCanvasCoordinates(e);
+
+    if (tool === 'text') {
+      setTextPosition({ x, y });
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.setPointerCapture(e.pointerId);
+      activePointerId.current = e.pointerId;
+    }
+
     setIsDrawing(true);
 
     const newShape: AnnotationShape = {
@@ -215,7 +229,8 @@ export function PhotoAnnotation({
     setCurrentShape(newShape);
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointerId.current !== e.pointerId) return;
     if (!isDrawing || !currentShape) return;
 
     const { x, y } = getCanvasCoordinates(e);
@@ -228,7 +243,15 @@ export function PhotoAnnotation({
     }
   };
 
-  const handleMouseUp = () => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointerId.current !== e.pointerId) return;
+
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.releasePointerCapture(e.pointerId);
+    }
+    activePointerId.current = null;
+
     if (!isDrawing || !currentShape) return;
 
     const newAnnotations = [...annotations, currentShape];
@@ -236,13 +259,6 @@ export function PhotoAnnotation({
     addToHistory(newAnnotations);
     setCurrentShape(null);
     setIsDrawing(false);
-  };
-
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (tool === 'text') {
-      const { x, y } = getCanvasCoordinates(e);
-      setTextPosition({ x, y });
-    }
   };
 
   const addText = () => {
@@ -434,14 +450,15 @@ export function PhotoAnnotation({
           />
           <canvas
             ref={canvasRef}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-            onClick={handleCanvasClick}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerLeave={handlePointerUp}
+            onPointerCancel={handlePointerUp}
             className="max-w-full max-h-[calc(100vh-200px)] cursor-crosshair"
             style={{
               cursor: tool === 'select' ? 'default' : 'crosshair',
+              touchAction: 'none',
             }}
           />
         </div>

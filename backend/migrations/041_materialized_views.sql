@@ -14,11 +14,11 @@ SELECT
   COUNT(*) as total_patients,
   COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '30 days') as new_patients_30d,
   COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '90 days') as new_patients_90d,
-  COUNT(*) FILTER (WHERE date_of_birth IS NOT NULL AND
-    EXTRACT(YEAR FROM age(date_of_birth)) < 18) as pediatric_patients,
-  COUNT(*) FILTER (WHERE date_of_birth IS NOT NULL AND
-    EXTRACT(YEAR FROM age(date_of_birth)) >= 65) as geriatric_patients,
-  AVG(EXTRACT(YEAR FROM age(COALESCE(date_of_birth, CURRENT_DATE)))) as avg_patient_age
+  COUNT(*) FILTER (WHERE dob IS NOT NULL AND
+    EXTRACT(YEAR FROM age(dob)) < 18) as pediatric_patients,
+  COUNT(*) FILTER (WHERE dob IS NOT NULL AND
+    EXTRACT(YEAR FROM age(dob)) >= 65) as geriatric_patients,
+  AVG(EXTRACT(YEAR FROM age(COALESCE(dob, CURRENT_DATE)))) as avg_patient_age
 FROM patients
 WHERE deleted_at IS NULL
 GROUP BY tenant_id;
@@ -151,7 +151,7 @@ SELECT
   COUNT(*) as diagnosis_count,
   COUNT(DISTINCT d.patient_id) as unique_patients,
   COUNT(DISTINCT e.provider_id) as providers_diagnosing,
-  AVG(EXTRACT(YEAR FROM age(p.date_of_birth))) as avg_patient_age
+  AVG(EXTRACT(YEAR FROM age(p.dob))) as avg_patient_age
 FROM diagnoses d
 JOIN encounters e ON e.id = d.encounter_id AND e.deleted_at IS NULL
 LEFT JOIN patients p ON p.id = d.patient_id AND p.deleted_at IS NULL
@@ -174,7 +174,7 @@ SELECT
   p.tenant_id,
   p.first_name,
   p.last_name,
-  p.date_of_birth,
+  p.dob as date_of_birth,
   COUNT(DISTINCT e.id) as total_encounters,
   MAX(e.service_date) as last_visit_date,
   MIN(e.service_date) as first_visit_date,
@@ -194,7 +194,7 @@ LEFT JOIN photos ph ON ph.patient_id = p.id AND ph.deleted_at IS NULL
 LEFT JOIN prescriptions pr ON pr.patient_id = p.id AND pr.deleted_at IS NULL AND pr.status = 'active'
 LEFT JOIN charges c ON c.patient_id = p.id AND c.deleted_at IS NULL
 WHERE p.deleted_at IS NULL
-GROUP BY p.id, p.tenant_id, p.first_name, p.last_name, p.date_of_birth;
+GROUP BY p.id, p.tenant_id, p.first_name, p.last_name, p.dob;
 
 CREATE UNIQUE INDEX idx_mv_patient_summary_id ON mv_patient_encounter_summary(patient_id);
 CREATE INDEX idx_mv_patient_summary_tenant ON mv_patient_encounter_summary(tenant_id, last_name, first_name);

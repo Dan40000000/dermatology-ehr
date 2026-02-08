@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 interface Denial {
   id: string;
@@ -44,9 +45,8 @@ export default function DenialWorkList({ onReload }: DenialWorkListProps) {
 
     setLoading(true);
     try {
-      const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
       const response = await fetch(
-        `${apiBase}/api/claims/denials`,
+        `${API_BASE_URL}/api/claims/denials`,
         {
           headers: {
             Authorization: `Bearer ${session.accessToken}`,
@@ -77,9 +77,8 @@ export default function DenialWorkList({ onReload }: DenialWorkListProps) {
 
     setAppealSubmitting(true);
     try {
-      const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
       const response = await fetch(
-        `${apiBase}/api/claims/${selectedDenial.id}/appeal`,
+        `${API_BASE_URL}/api/claims/${selectedDenial.id}/appeal`,
         {
           method: 'POST',
           headers: {

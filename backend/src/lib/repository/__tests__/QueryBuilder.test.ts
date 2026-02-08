@@ -62,14 +62,14 @@ describe("QueryBuilder", () => {
       expect(values).toEqual([]);
     });
 
-    it("should handle undefined values as IS NULL", () => {
+    it("should ignore undefined values", () => {
       const { text, values } = new QueryBuilder()
         .select(["id", "name"])
         .from("users")
         .where({ deleted_at: undefined })
         .build();
 
-      expect(text).toBe("SELECT id, name FROM users WHERE deleted_at IS NULL");
+      expect(text).toBe("SELECT id, name FROM users");
       expect(values).toEqual([]);
     });
 

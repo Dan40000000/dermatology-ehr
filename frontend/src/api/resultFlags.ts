@@ -1,6 +1,7 @@
 import type { ResultFlagType } from '../types';
+import { API_BASE_URL } from '../utils/apiBase';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+const API_BASE = API_BASE_URL;
 const TENANT_HEADER = 'x-tenant-id';
 
 export interface UpdateResultFlagRequest {

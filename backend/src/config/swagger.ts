@@ -1,5 +1,8 @@
 import swaggerJsdoc from 'swagger-jsdoc';
 import { env } from './env';
+import { loadEnv } from './validate';
+
+const envVars = loadEnv();
 
 const options: swaggerJsdoc.Options = {
   definition: {
@@ -15,7 +18,7 @@ const options: swaggerJsdoc.Options = {
     },
     servers: [
       {
-        url: process.env.API_URL || 'http://localhost:3000',
+        url: envVars.API_URL,
         description: 'API Server',
       },
     ],
@@ -110,7 +113,7 @@ const options: swaggerJsdoc.Options = {
             allergies: { type: 'string', nullable: true },
             medications: { type: 'string', nullable: true },
             sex: { type: 'string', enum: ['M', 'F', 'O'], nullable: true },
-            ssn: { type: 'string', maxLength: 4, nullable: true },
+            ssn: { type: 'string', maxLength: 4, nullable: true, description: 'Last 4 digits only' },
             emergencyContactName: { type: 'string', nullable: true },
             emergencyContactRelationship: { type: 'string', nullable: true },
             emergencyContactPhone: { type: 'string', nullable: true },
@@ -142,7 +145,7 @@ const options: swaggerJsdoc.Options = {
             allergies: { type: 'string' },
             medications: { type: 'string' },
             sex: { type: 'string', enum: ['M', 'F', 'O'] },
-            ssn: { type: 'string', maxLength: 4 },
+            ssn: { type: 'string', maxLength: 4, description: 'Last 4 digits only' },
             emergencyContactName: { type: 'string' },
             emergencyContactRelationship: { type: 'string' },
             emergencyContactPhone: { type: 'string' },
@@ -162,7 +165,7 @@ const options: swaggerJsdoc.Options = {
             lastName: { type: 'string', minLength: 1, maxLength: 100 },
             dob: { type: 'string', format: 'date' },
             sex: { type: 'string', enum: ['M', 'F', 'O'] },
-            ssn: { type: 'string' },
+            ssn: { type: 'string', maxLength: 4, description: 'Last 4 digits only' },
             phone: { type: 'string' },
             email: { type: 'string', format: 'email' },
             address: { type: 'string' },

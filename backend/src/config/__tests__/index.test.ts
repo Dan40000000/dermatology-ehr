@@ -18,9 +18,15 @@ afterAll(() => {
 });
 
 describe('config validation', () => {
-  it('throws when required env vars are missing', () => {
+  it('throws when required env vars are missing in production', () => {
+    process.env.NODE_ENV = 'production';
     process.env.DB_PASSWORD = '';
+    process.env.DATABASE_URL = '';
     process.env.JWT_SECRET = '';
+    process.env.CSRF_SECRET = 'x'.repeat(32);
+    process.env.SESSION_SECRET = 'x'.repeat(32);
+    process.env.SENTRY_DSN = 'https://example.com/123';
+    process.env.STORAGE_PROVIDER = 'local';
 
     expect(() => loadConfig()).toThrow(/Missing required environment variable/);
   });
@@ -49,6 +55,7 @@ describe('config validation', () => {
     process.env.CSRF_SECRET = 'x'.repeat(32);
     process.env.SESSION_SECRET = 'x'.repeat(32);
     process.env.ENCRYPTION_KEY = 'x'.repeat(32);
+    process.env.PHI_ENCRYPTION_ENABLED = 'true';
     process.env.SENTRY_DSN = 'https://example.com/123';
     process.env.STORAGE_PROVIDER = 's3';
     process.env.AWS_S3_BUCKET = '';
@@ -63,6 +70,7 @@ describe('config validation', () => {
     process.env.CSRF_SECRET = 'x'.repeat(32);
     process.env.SESSION_SECRET = 'x'.repeat(32);
     process.env.ENCRYPTION_KEY = 'x'.repeat(32);
+    process.env.PHI_ENCRYPTION_ENABLED = 'true';
     process.env.SENTRY_DSN = 'https://example.com/123';
     process.env.STORAGE_PROVIDER = 'local';
     process.env.API_URL = 'https://example.com';

@@ -10,6 +10,7 @@ import { pool } from '../db/pool';
 import { randomUUID } from 'crypto';
 import { notificationService } from '../services/integrations/notificationService';
 import { logger } from '../lib/logger';
+import { loadEnv } from '../config/validate';
 
 const router = Router();
 router.use(requireAuth);
@@ -630,7 +631,7 @@ router.post('/:id/submit', async (req: AuthedRequest, res, next) => {
       [new Date().toISOString(), new Date().toISOString(), id, tenantId]
     );
 
-    if (process.env.NODE_ENV !== 'test') {
+    if (loadEnv().NODE_ENV !== 'test') {
       const timer = setTimeout(async () => {
         try {
           const random = Math.random();

@@ -7,6 +7,7 @@ import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
 import { waitlistAutoFillService } from "../services/waitlistAutoFillService";
 import { notificationService } from "../services/integrations/notificationService";
+import { workflowOrchestrator } from "../services/workflowOrchestrator";
 import { logger } from "../lib/logger";
 import {
   emitAppointmentCreated,
@@ -161,7 +162,7 @@ appointmentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
     paramIndex++;
   }
 
-  query += ` order by a.scheduled_start asc limit 200`;
+  query += ` order by a.scheduled_start asc`;
 
   const result = await pool.query(query, params);
   return res.json({ appointments: result.rows });
@@ -296,6 +297,24 @@ appointmentsRouter.post("/", requireAuth, requireRoles(["admin", "front_desk", "
         appointmentTypeId: appt.appointment_type_id,
         appointmentTypeName: appt.appointment_type,
       });
+
+      // WORKFLOW: Trigger appointment scheduled workflow
+      // This schedules reminders, checks eligibility, and checks for prior auth requirements
+      await workflowOrchestrator.processEvent({
+        type: 'appointment_scheduled',
+        tenantId,
+        userId: req.user!.id,
+        entityType: 'appointment',
+        entityId: id,
+        data: {
+          patientId: appt.patient_id,
+          providerId: appt.provider_id,
+          appointmentType: appt.appointment_type,
+          scheduledStart: appt.scheduled_start,
+        },
+        timestamp: new Date(),
+      });
+      logger.info("Workflow appointment scheduled triggered", { appointmentId: id });
     }
   } catch (error: any) {
     // Log error but don't fail the appointment creation
@@ -590,9 +609,69 @@ appointmentsRouter.post("/:id/status", requireAuth, requireRoles(["admin", "fron
 
         // Emit WebSocket event for check-in
         emitAppointmentCheckedIn(tenantId, apptId, appt.patient_id, appt.patient_name);
+
+        // WORKFLOW: Trigger check-in workflow (auto-creates encounter, collects copay, etc.)
+        await workflowOrchestrator.processEvent({
+          type: 'appointment_checkin',
+          tenantId,
+          userId: req.user!.id,
+          entityType: 'appointment',
+          entityId: apptId,
+          data: {
+            patientId: appt.patient_id,
+            providerId: appt.provider_id,
+            appointmentType: appt.appointment_type,
+          },
+          timestamp: new Date(),
+        });
+        logger.info("Workflow check-in triggered", { appointmentId: apptId });
       }
     } catch (error: any) {
       logger.error("Failed to send patient checked in notification", {
+        error: error.message,
+        appointmentId: apptId,
+      });
+    }
+  }
+
+  // WORKFLOW: Trigger checkout workflow (follow-up scheduling, surveys, etc.)
+  if (parsed.data.status === 'checked_out' || parsed.data.status === 'completed') {
+    try {
+      await workflowOrchestrator.processEvent({
+        type: 'appointment_checkout',
+        tenantId,
+        userId: req.user!.id,
+        entityType: 'appointment',
+        entityId: apptId,
+        data: {
+          followUpDays: req.body.followUpDays,
+          followUpType: req.body.followUpType,
+        },
+        timestamp: new Date(),
+      });
+      logger.info("Workflow checkout triggered", { appointmentId: apptId });
+    } catch (error: any) {
+      logger.error("Failed to trigger checkout workflow", {
+        error: error.message,
+        appointmentId: apptId,
+      });
+    }
+  }
+
+  // WORKFLOW: Trigger roomed workflow for wait time tracking
+  if (parsed.data.status === 'roomed') {
+    try {
+      await workflowOrchestrator.processEvent({
+        type: 'appointment_roomed',
+        tenantId,
+        userId: req.user!.id,
+        entityType: 'appointment',
+        entityId: apptId,
+        data: {},
+        timestamp: new Date(),
+      });
+    } catch (error: any) {
+      logger.error("Failed to trigger roomed workflow", {
         error: error.message,
         appointmentId: apptId,
       });

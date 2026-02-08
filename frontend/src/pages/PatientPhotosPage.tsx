@@ -18,8 +18,7 @@ import { PhotoAnnotation } from '../components/Photos/PhotoAnnotation';
 import { PhotoUpload } from '../components/Photos/PhotoUpload';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:4000');
+import { API_BASE_URL } from '../utils/apiBase';
 
 /**
  * PatientPhotosPage - Main patient photo management page
@@ -71,7 +70,7 @@ export function PatientPhotosPage({ patientId, patientName }: PatientPhotosPageP
     if (!session) return;
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE}/api/patients/${patientId}/photos`, {
+      const response = await fetch(`${API_BASE_URL}/api/patients/${patientId}/photos`, {
         headers: {
           Authorization: `Bearer ${session.accessToken}`,
           'x-tenant-id': session.tenantId,
@@ -91,7 +90,7 @@ export function PatientPhotosPage({ patientId, patientName }: PatientPhotosPageP
   const fetchStats = async () => {
     if (!session) return;
     try {
-      const response = await fetch(`${API_BASE}/api/patients/${patientId}/photos/stats`, {
+      const response = await fetch(`${API_BASE_URL}/api/patients/${patientId}/photos/stats`, {
         headers: {
           Authorization: `Bearer ${session.accessToken}`,
           'x-tenant-id': session.tenantId,
@@ -118,7 +117,7 @@ export function PatientPhotosPage({ patientId, patientName }: PatientPhotosPageP
         })
       );
 
-      const response = await fetch(`${API_BASE}/api/patients/${patientId}/photos`, {
+      const response = await fetch(`${API_BASE_URL}/api/patients/${patientId}/photos`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${session.accessToken}`,

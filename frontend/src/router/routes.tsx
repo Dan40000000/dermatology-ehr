@@ -18,6 +18,8 @@ import {
   PortalDocumentsPage,
   PortalHealthRecordPage,
   PortalProfilePage,
+  PortalBillingPage,
+  PortalBookAppointmentPage,
 } from '../pages/patient-portal';
 
 // Lazy load all other pages for better performance
@@ -117,6 +119,7 @@ export const routes: RouteObject[] = [
       { path: 'register', element: <PortalRegisterPage /> },
       { path: 'dashboard', element: <PortalDashboardPage /> },
       { path: 'appointments', element: <PortalAppointmentsPage /> },
+      { path: 'book-appointment', element: <PortalBookAppointmentPage /> },
       { path: 'visits', element: <PortalVisitSummariesPage /> },
       { path: 'documents', element: <PortalDocumentsPage /> },
       { path: 'health-record', element: <PortalHealthRecordPage /> },

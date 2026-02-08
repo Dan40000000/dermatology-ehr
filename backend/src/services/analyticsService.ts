@@ -2110,6 +2110,650 @@ export class AnalyticsService {
       );
     }
   }
+
+  // ==========================================================================
+  // Dermatology-Specific Metrics
+  // ==========================================================================
+
+  /**
+   * Get dermatology-specific metrics including biopsy stats, cosmetic/medical split,
+   * top skin conditions, and lesion tracking
+   */
+  async getDermatologyMetrics(tenantId: string, dateRange: DateRange): Promise<DermatologyMetrics> {
+    const { startDate, endDate } = dateRange;
+
+    const [
+      biopsyResult,
+      biopsyResultsResult,
+      cosmeticMedicalResult,
+      topConditionsResult,
+      lesionTrackingResult,
+    ] = await Promise.all([
+      // Biopsy counts
+      pool.query(
+        `SELECT
+          COUNT(*) as total_biopsies,
+          COUNT(*) FILTER (WHERE procedure_type = 'shave_biopsy') as shave_biopsies,
+          COUNT(*) FILTER (WHERE procedure_type = 'punch_biopsy') as punch_biopsies,
+          COUNT(*) FILTER (WHERE procedure_type = 'excisional_biopsy') as excisional_biopsies,
+          COUNT(*) FILTER (WHERE procedure_type = 'incisional_biopsy') as incisional_biopsies
+        FROM procedures
+        WHERE tenant_id = $1
+          AND procedure_type IN ('shave_biopsy', 'punch_biopsy', 'excisional_biopsy', 'incisional_biopsy')
+          AND performed_at >= $2
+          AND performed_at <= $3`,
+        [tenantId, startDate, endDate]
+      ),
+
+      // Biopsy results breakdown
+      pool.query(
+        `SELECT
+          COALESCE(pathology_result, 'pending') as result,
+          COUNT(*) as count
+        FROM procedures
+        WHERE tenant_id = $1
+          AND procedure_type IN ('shave_biopsy', 'punch_biopsy', 'excisional_biopsy', 'incisional_biopsy')
+          AND performed_at >= $2
+          AND performed_at <= $3
+        GROUP BY COALESCE(pathology_result, 'pending')
+        ORDER BY count DESC`,
+        [tenantId, startDate, endDate]
+      ),
+
+      // Cosmetic vs Medical procedure split
+      pool.query(
+        `SELECT
+          COUNT(*) FILTER (WHERE category = 'cosmetic') as cosmetic_count,
+          COUNT(*) FILTER (WHERE category = 'medical') as medical_count,
+          COUNT(*) FILTER (WHERE category = 'surgical') as surgical_count,
+          COALESCE(SUM(CASE WHEN category = 'cosmetic' THEN charges_cents ELSE 0 END), 0) as cosmetic_revenue,
+          COALESCE(SUM(CASE WHEN category = 'medical' THEN charges_cents ELSE 0 END), 0) as medical_revenue,
+          COALESCE(SUM(CASE WHEN category = 'surgical' THEN charges_cents ELSE 0 END), 0) as surgical_revenue
+        FROM procedures
+        WHERE tenant_id = $1
+          AND performed_at >= $2
+          AND performed_at <= $3`,
+        [tenantId, startDate, endDate]
+      ),
+
+      // Top skin conditions treated
+      pool.query(
+        `SELECT
+          ed.icd_code,
+          ed.description as condition_name,
+          COUNT(*) as treatment_count,
+          COUNT(DISTINCT e.patient_id) as unique_patients
+        FROM encounter_diagnoses ed
+        JOIN encounters e ON e.id = ed.encounter_id
+        WHERE e.tenant_id = $1
+          AND e.created_at >= $2
+          AND e.created_at <= $3
+          AND (
+            ed.icd_code LIKE 'L%' OR  -- Skin diseases (L00-L99)
+            ed.icd_code LIKE 'C43%' OR -- Melanoma
+            ed.icd_code LIKE 'C44%' OR -- Other skin cancers
+            ed.icd_code LIKE 'D22%' OR -- Melanocytic nevi
+            ed.icd_code LIKE 'D23%'    -- Benign skin neoplasms
+          )
+        GROUP BY ed.icd_code, ed.description
+        ORDER BY treatment_count DESC
+        LIMIT 15`,
+        [tenantId, startDate, endDate]
+      ),
+
+      // Lesion tracking statistics
+      pool.query(
+        `SELECT
+          COUNT(*) as total_lesions_tracked,
+          COUNT(*) FILTER (WHERE status = 'new') as new_lesions,
+          COUNT(*) FILTER (WHERE status = 'monitoring') as monitoring_lesions,
+          COUNT(*) FILTER (WHERE status = 'resolved') as resolved_lesions,
+          COUNT(*) FILTER (WHERE status = 'biopsied') as biopsied_lesions,
+          COUNT(*) FILTER (WHERE risk_level = 'high') as high_risk_lesions,
+          COUNT(*) FILTER (WHERE risk_level = 'medium') as medium_risk_lesions,
+          COUNT(*) FILTER (WHERE risk_level = 'low') as low_risk_lesions,
+          COUNT(DISTINCT patient_id) as patients_with_lesions
+        FROM lesion_tracking
+        WHERE tenant_id = $1
+          AND created_at >= $2
+          AND created_at <= $3`,
+        [tenantId, startDate, endDate]
+      ),
+    ]);
+
+    const biopsy = biopsyResult.rows[0];
+    const cosmeticMedical = cosmeticMedicalResult.rows[0];
+    const lesions = lesionTrackingResult.rows[0];
+
+    const totalProcedures =
+      (parseInt(cosmeticMedical.cosmetic_count) || 0) +
+      (parseInt(cosmeticMedical.medical_count) || 0) +
+      (parseInt(cosmeticMedical.surgical_count) || 0) || 1;
+
+    return {
+      dateRange,
+      biopsyStats: {
+        total: parseInt(biopsy.total_biopsies) || 0,
+        byType: {
+          shave: parseInt(biopsy.shave_biopsies) || 0,
+          punch: parseInt(biopsy.punch_biopsies) || 0,
+          excisional: parseInt(biopsy.excisional_biopsies) || 0,
+          incisional: parseInt(biopsy.incisional_biopsies) || 0,
+        },
+        resultsBreakdown: biopsyResultsResult.rows.map((row) => ({
+          result: row.result,
+          count: parseInt(row.count) || 0,
+        })),
+      },
+      procedureSplit: {
+        cosmetic: {
+          count: parseInt(cosmeticMedical.cosmetic_count) || 0,
+          revenue: parseInt(cosmeticMedical.cosmetic_revenue) || 0,
+          percentage: Math.round(((parseInt(cosmeticMedical.cosmetic_count) || 0) / totalProcedures) * 100 * 100) / 100,
+        },
+        medical: {
+          count: parseInt(cosmeticMedical.medical_count) || 0,
+          revenue: parseInt(cosmeticMedical.medical_revenue) || 0,
+          percentage: Math.round(((parseInt(cosmeticMedical.medical_count) || 0) / totalProcedures) * 100 * 100) / 100,
+        },
+        surgical: {
+          count: parseInt(cosmeticMedical.surgical_count) || 0,
+          revenue: parseInt(cosmeticMedical.surgical_revenue) || 0,
+          percentage: Math.round(((parseInt(cosmeticMedical.surgical_count) || 0) / totalProcedures) * 100 * 100) / 100,
+        },
+      },
+      topConditions: topConditionsResult.rows.map((row) => ({
+        icdCode: row.icd_code,
+        conditionName: row.condition_name,
+        treatmentCount: parseInt(row.treatment_count) || 0,
+        uniquePatients: parseInt(row.unique_patients) || 0,
+      })),
+      lesionTracking: {
+        totalTracked: parseInt(lesions.total_lesions_tracked) || 0,
+        byStatus: {
+          new: parseInt(lesions.new_lesions) || 0,
+          monitoring: parseInt(lesions.monitoring_lesions) || 0,
+          resolved: parseInt(lesions.resolved_lesions) || 0,
+          biopsied: parseInt(lesions.biopsied_lesions) || 0,
+        },
+        byRiskLevel: {
+          high: parseInt(lesions.high_risk_lesions) || 0,
+          medium: parseInt(lesions.medium_risk_lesions) || 0,
+          low: parseInt(lesions.low_risk_lesions) || 0,
+        },
+        patientsWithLesions: parseInt(lesions.patients_with_lesions) || 0,
+      },
+    };
+  }
+
+  // ==========================================================================
+  // Year-over-Year Comparison
+  // ==========================================================================
+
+  /**
+   * Compare current period metrics to the same period last year
+   */
+  async getYearOverYearComparison(tenantId: string, dateRange: DateRange): Promise<YearOverYearComparison> {
+    const { startDate, endDate } = dateRange;
+
+    // Calculate last year's equivalent period
+    const currentStart = new Date(startDate);
+    const currentEnd = new Date(endDate);
+    const lastYearStart = new Date(currentStart);
+    lastYearStart.setFullYear(lastYearStart.getFullYear() - 1);
+    const lastYearEnd = new Date(currentEnd);
+    lastYearEnd.setFullYear(lastYearEnd.getFullYear() - 1);
+
+    const lastYearStartStr = lastYearStart.toISOString().split('T')[0];
+    const lastYearEndStr = lastYearEnd.toISOString().split('T')[0];
+
+    const [
+      currentMetrics,
+      lastYearMetrics,
+    ] = await Promise.all([
+      // Current period metrics
+      pool.query(
+        `SELECT
+          (SELECT COUNT(*) FROM patients WHERE tenant_id = $1 AND created_at >= $2 AND created_at <= $3) as new_patients,
+          (SELECT COUNT(*) FROM appointments WHERE tenant_id = $1 AND scheduled_start >= $2 AND scheduled_start <= $3) as total_appointments,
+          (SELECT COUNT(*) FROM appointments WHERE tenant_id = $1 AND scheduled_start >= $2 AND scheduled_start <= $3 AND status = 'completed') as completed_appointments,
+          (SELECT COUNT(*) FROM appointments WHERE tenant_id = $1 AND scheduled_start >= $2 AND scheduled_start <= $3 AND status = 'no_show') as no_shows,
+          (SELECT COALESCE(SUM(amount_cents), 0) FROM charges WHERE tenant_id = $1 AND created_at >= $2 AND created_at <= $3) as revenue,
+          (SELECT COUNT(*) FROM encounters WHERE tenant_id = $1 AND created_at >= $2 AND created_at <= $3) as encounters,
+          (SELECT COUNT(*) FROM procedures WHERE tenant_id = $1 AND performed_at >= $2 AND performed_at <= $3) as procedures`,
+        [tenantId, startDate, endDate]
+      ),
+      // Last year same period metrics
+      pool.query(
+        `SELECT
+          (SELECT COUNT(*) FROM patients WHERE tenant_id = $1 AND created_at >= $2 AND created_at <= $3) as new_patients,
+          (SELECT COUNT(*) FROM appointments WHERE tenant_id = $1 AND scheduled_start >= $2 AND scheduled_start <= $3) as total_appointments,
+          (SELECT COUNT(*) FROM appointments WHERE tenant_id = $1 AND scheduled_start >= $2 AND scheduled_start <= $3 AND status = 'completed') as completed_appointments,
+          (SELECT COUNT(*) FROM appointments WHERE tenant_id = $1 AND scheduled_start >= $2 AND scheduled_start <= $3 AND status = 'no_show') as no_shows,
+          (SELECT COALESCE(SUM(amount_cents), 0) FROM charges WHERE tenant_id = $1 AND created_at >= $2 AND created_at <= $3) as revenue,
+          (SELECT COUNT(*) FROM encounters WHERE tenant_id = $1 AND created_at >= $2 AND created_at <= $3) as encounters,
+          (SELECT COUNT(*) FROM procedures WHERE tenant_id = $1 AND performed_at >= $2 AND performed_at <= $3) as procedures`,
+        [tenantId, lastYearStartStr, lastYearEndStr]
+      ),
+    ]);
+
+    const current = currentMetrics.rows[0];
+    const lastYear = lastYearMetrics.rows[0];
+
+    const calculateChange = (curr: number, prev: number): number => {
+      if (prev === 0) return curr > 0 ? 100 : 0;
+      return Math.round(((curr - prev) / prev) * 100 * 100) / 100;
+    };
+
+    const currNewPatients = parseInt(current.new_patients) || 0;
+    const prevNewPatients = parseInt(lastYear.new_patients) || 0;
+    const currAppointments = parseInt(current.total_appointments) || 0;
+    const prevAppointments = parseInt(lastYear.total_appointments) || 0;
+    const currCompleted = parseInt(current.completed_appointments) || 0;
+    const prevCompleted = parseInt(lastYear.completed_appointments) || 0;
+    const currNoShows = parseInt(current.no_shows) || 0;
+    const prevNoShows = parseInt(lastYear.no_shows) || 0;
+    const currRevenue = parseInt(current.revenue) || 0;
+    const prevRevenue = parseInt(lastYear.revenue) || 0;
+    const currEncounters = parseInt(current.encounters) || 0;
+    const prevEncounters = parseInt(lastYear.encounters) || 0;
+    const currProcedures = parseInt(current.procedures) || 0;
+    const prevProcedures = parseInt(lastYear.procedures) || 0;
+
+    return {
+      currentPeriod: dateRange,
+      comparisonPeriod: {
+        startDate: lastYearStartStr!,
+        endDate: lastYearEndStr!,
+      },
+      metrics: {
+        newPatients: {
+          current: currNewPatients,
+          lastYear: prevNewPatients,
+          percentChange: calculateChange(currNewPatients, prevNewPatients),
+          trend: currNewPatients >= prevNewPatients ? 'up' : 'down',
+        },
+        totalAppointments: {
+          current: currAppointments,
+          lastYear: prevAppointments,
+          percentChange: calculateChange(currAppointments, prevAppointments),
+          trend: currAppointments >= prevAppointments ? 'up' : 'down',
+        },
+        completedAppointments: {
+          current: currCompleted,
+          lastYear: prevCompleted,
+          percentChange: calculateChange(currCompleted, prevCompleted),
+          trend: currCompleted >= prevCompleted ? 'up' : 'down',
+        },
+        noShows: {
+          current: currNoShows,
+          lastYear: prevNoShows,
+          percentChange: calculateChange(currNoShows, prevNoShows),
+          trend: currNoShows <= prevNoShows ? 'up' : 'down', // Lower no-shows is better
+        },
+        revenue: {
+          current: currRevenue,
+          lastYear: prevRevenue,
+          percentChange: calculateChange(currRevenue, prevRevenue),
+          trend: currRevenue >= prevRevenue ? 'up' : 'down',
+        },
+        encounters: {
+          current: currEncounters,
+          lastYear: prevEncounters,
+          percentChange: calculateChange(currEncounters, prevEncounters),
+          trend: currEncounters >= prevEncounters ? 'up' : 'down',
+        },
+        procedures: {
+          current: currProcedures,
+          lastYear: prevProcedures,
+          percentChange: calculateChange(currProcedures, prevProcedures),
+          trend: currProcedures >= prevProcedures ? 'up' : 'down',
+        },
+      },
+    };
+  }
+
+  // ==========================================================================
+  // Predictive No-Show Analysis
+  // ==========================================================================
+
+  /**
+   * Calculate no-show probability factors and patterns
+   */
+  async getNoShowRiskAnalysis(tenantId: string, dateRange: DateRange): Promise<NoShowRiskAnalysis> {
+    const { startDate, endDate } = dateRange;
+
+    const [
+      dayOfWeekResult,
+      timeOfDayResult,
+      appointmentTypeResult,
+      patientHistoryResult,
+      leadTimeResult,
+      overallRateResult,
+    ] = await Promise.all([
+      // No-show rate by day of week
+      pool.query(
+        `SELECT
+          TO_CHAR(scheduled_start, 'Day') as day_of_week,
+          EXTRACT(DOW FROM scheduled_start) as day_num,
+          COUNT(*) as total,
+          COUNT(*) FILTER (WHERE status = 'no_show') as no_shows,
+          ROUND(COUNT(*) FILTER (WHERE status = 'no_show')::numeric / NULLIF(COUNT(*), 0) * 100, 2) as no_show_rate
+        FROM appointments
+        WHERE tenant_id = $1
+          AND scheduled_start >= $2
+          AND scheduled_start <= $3
+          AND status IN ('completed', 'no_show', 'cancelled')
+        GROUP BY TO_CHAR(scheduled_start, 'Day'), EXTRACT(DOW FROM scheduled_start)
+        ORDER BY day_num`,
+        [tenantId, startDate, endDate]
+      ),
+
+      // No-show rate by time of day
+      pool.query(
+        `SELECT
+          CASE
+            WHEN EXTRACT(HOUR FROM scheduled_start) < 9 THEN 'Early Morning (Before 9am)'
+            WHEN EXTRACT(HOUR FROM scheduled_start) < 12 THEN 'Morning (9am-12pm)'
+            WHEN EXTRACT(HOUR FROM scheduled_start) < 14 THEN 'Early Afternoon (12pm-2pm)'
+            WHEN EXTRACT(HOUR FROM scheduled_start) < 17 THEN 'Afternoon (2pm-5pm)'
+            ELSE 'Evening (After 5pm)'
+          END as time_slot,
+          EXTRACT(HOUR FROM scheduled_start) as hour,
+          COUNT(*) as total,
+          COUNT(*) FILTER (WHERE status = 'no_show') as no_shows,
+          ROUND(COUNT(*) FILTER (WHERE status = 'no_show')::numeric / NULLIF(COUNT(*), 0) * 100, 2) as no_show_rate
+        FROM appointments
+        WHERE tenant_id = $1
+          AND scheduled_start >= $2
+          AND scheduled_start <= $3
+          AND status IN ('completed', 'no_show', 'cancelled')
+        GROUP BY 1, 2
+        ORDER BY hour`,
+        [tenantId, startDate, endDate]
+      ),
+
+      // No-show rate by appointment type
+      pool.query(
+        `SELECT
+          at.name as appointment_type,
+          COUNT(*) as total,
+          COUNT(*) FILTER (WHERE a.status = 'no_show') as no_shows,
+          ROUND(COUNT(*) FILTER (WHERE a.status = 'no_show')::numeric / NULLIF(COUNT(*), 0) * 100, 2) as no_show_rate
+        FROM appointments a
+        JOIN appointment_types at ON at.id = a.appointment_type_id
+        WHERE a.tenant_id = $1
+          AND a.scheduled_start >= $2
+          AND a.scheduled_start <= $3
+          AND a.status IN ('completed', 'no_show', 'cancelled')
+        GROUP BY at.name
+        ORDER BY no_show_rate DESC`,
+        [tenantId, startDate, endDate]
+      ),
+
+      // Patient no-show history (repeat offenders)
+      pool.query(
+        `SELECT
+          patient_id,
+          COUNT(*) as total_appointments,
+          COUNT(*) FILTER (WHERE status = 'no_show') as no_show_count,
+          ROUND(COUNT(*) FILTER (WHERE status = 'no_show')::numeric / NULLIF(COUNT(*), 0) * 100, 2) as no_show_rate
+        FROM appointments
+        WHERE tenant_id = $1
+          AND scheduled_start >= NOW() - INTERVAL '1 year'
+          AND status IN ('completed', 'no_show', 'cancelled')
+        GROUP BY patient_id
+        HAVING COUNT(*) >= 3
+        ORDER BY no_show_rate DESC
+        LIMIT 50`,
+        [tenantId]
+      ),
+
+      // No-show rate by lead time (days between booking and appointment)
+      pool.query(
+        `SELECT
+          CASE
+            WHEN EXTRACT(DAY FROM scheduled_start - created_at) <= 1 THEN 'Same/Next Day'
+            WHEN EXTRACT(DAY FROM scheduled_start - created_at) <= 7 THEN '2-7 Days'
+            WHEN EXTRACT(DAY FROM scheduled_start - created_at) <= 14 THEN '1-2 Weeks'
+            WHEN EXTRACT(DAY FROM scheduled_start - created_at) <= 30 THEN '2-4 Weeks'
+            ELSE 'Over 1 Month'
+          END as lead_time,
+          COUNT(*) as total,
+          COUNT(*) FILTER (WHERE status = 'no_show') as no_shows,
+          ROUND(COUNT(*) FILTER (WHERE status = 'no_show')::numeric / NULLIF(COUNT(*), 0) * 100, 2) as no_show_rate
+        FROM appointments
+        WHERE tenant_id = $1
+          AND scheduled_start >= $2
+          AND scheduled_start <= $3
+          AND status IN ('completed', 'no_show', 'cancelled')
+        GROUP BY 1
+        ORDER BY no_show_rate DESC`,
+        [tenantId, startDate, endDate]
+      ),
+
+      // Overall no-show rate
+      pool.query(
+        `SELECT
+          COUNT(*) as total_appointments,
+          COUNT(*) FILTER (WHERE status = 'no_show') as no_shows,
+          ROUND(COUNT(*) FILTER (WHERE status = 'no_show')::numeric / NULLIF(COUNT(*), 0) * 100, 2) as overall_rate
+        FROM appointments
+        WHERE tenant_id = $1
+          AND scheduled_start >= $2
+          AND scheduled_start <= $3
+          AND status IN ('completed', 'no_show', 'cancelled')`,
+        [tenantId, startDate, endDate]
+      ),
+    ]);
+
+    const overall = overallRateResult.rows[0];
+
+    // Calculate high-risk patient count
+    const highRiskPatients = patientHistoryResult.rows.filter(
+      (p) => parseFloat(p.no_show_rate) >= 30
+    ).length;
+
+    return {
+      dateRange,
+      overallNoShowRate: parseFloat(overall.overall_rate) || 0,
+      totalAppointments: parseInt(overall.total_appointments) || 0,
+      totalNoShows: parseInt(overall.no_shows) || 0,
+      riskFactors: {
+        byDayOfWeek: dayOfWeekResult.rows.map((row) => ({
+          day: row.day_of_week.trim(),
+          total: parseInt(row.total) || 0,
+          noShows: parseInt(row.no_shows) || 0,
+          noShowRate: parseFloat(row.no_show_rate) || 0,
+          riskLevel: parseFloat(row.no_show_rate) >= 15 ? 'high' : parseFloat(row.no_show_rate) >= 10 ? 'medium' : 'low',
+        })),
+        byTimeOfDay: timeOfDayResult.rows.map((row) => ({
+          timeSlot: row.time_slot,
+          total: parseInt(row.total) || 0,
+          noShows: parseInt(row.no_shows) || 0,
+          noShowRate: parseFloat(row.no_show_rate) || 0,
+          riskLevel: parseFloat(row.no_show_rate) >= 15 ? 'high' : parseFloat(row.no_show_rate) >= 10 ? 'medium' : 'low',
+        })),
+        byAppointmentType: appointmentTypeResult.rows.map((row) => ({
+          appointmentType: row.appointment_type,
+          total: parseInt(row.total) || 0,
+          noShows: parseInt(row.no_shows) || 0,
+          noShowRate: parseFloat(row.no_show_rate) || 0,
+          riskLevel: parseFloat(row.no_show_rate) >= 15 ? 'high' : parseFloat(row.no_show_rate) >= 10 ? 'medium' : 'low',
+        })),
+        byLeadTime: leadTimeResult.rows.map((row) => ({
+          leadTime: row.lead_time,
+          total: parseInt(row.total) || 0,
+          noShows: parseInt(row.no_shows) || 0,
+          noShowRate: parseFloat(row.no_show_rate) || 0,
+          riskLevel: parseFloat(row.no_show_rate) >= 15 ? 'high' : parseFloat(row.no_show_rate) >= 10 ? 'medium' : 'low',
+        })),
+      },
+      highRiskPatients: {
+        count: highRiskPatients,
+        patients: patientHistoryResult.rows.slice(0, 20).map((row) => ({
+          patientId: row.patient_id,
+          totalAppointments: parseInt(row.total_appointments) || 0,
+          noShowCount: parseInt(row.no_show_count) || 0,
+          noShowRate: parseFloat(row.no_show_rate) || 0,
+        })),
+      },
+      recommendations: this.generateNoShowRecommendations(
+        dayOfWeekResult.rows,
+        timeOfDayResult.rows,
+        appointmentTypeResult.rows,
+        parseFloat(overall.overall_rate) || 0
+      ),
+    };
+  }
+
+  private generateNoShowRecommendations(
+    dayData: any[],
+    timeData: any[],
+    typeData: any[],
+    overallRate: number
+  ): string[] {
+    const recommendations: string[] = [];
+
+    // Find highest risk day
+    const highRiskDays = dayData.filter((d) => parseFloat(d.no_show_rate) >= 15);
+    if (highRiskDays.length > 0) {
+      const worstDay = highRiskDays.sort((a, b) => parseFloat(b.no_show_rate) - parseFloat(a.no_show_rate))[0];
+      recommendations.push(
+        `Consider overbooking or sending extra reminders for ${worstDay.day_of_week.trim()} appointments (${worstDay.no_show_rate}% no-show rate)`
+      );
+    }
+
+    // Find highest risk time slots
+    const highRiskTimes = timeData.filter((t) => parseFloat(t.no_show_rate) >= 15);
+    if (highRiskTimes.length > 0) {
+      const worstTime = highRiskTimes.sort((a, b) => parseFloat(b.no_show_rate) - parseFloat(a.no_show_rate))[0];
+      recommendations.push(
+        `${worstTime.time_slot} appointments have higher no-show rates (${worstTime.no_show_rate}%). Consider scheduling important procedures during lower-risk times.`
+      );
+    }
+
+    // Find highest risk appointment types
+    const highRiskTypes = typeData.filter((t) => parseFloat(t.no_show_rate) >= 15);
+    if (highRiskTypes.length > 0) {
+      const worstType = highRiskTypes[0];
+      recommendations.push(
+        `"${worstType.appointment_type}" appointments have a ${worstType.no_show_rate}% no-show rate. Consider requiring deposits or confirmation calls.`
+      );
+    }
+
+    // General recommendations based on overall rate
+    if (overallRate >= 10) {
+      recommendations.push('Implement automated reminder calls 24-48 hours before appointments');
+      recommendations.push('Consider implementing a waitlist to fill cancelled or no-show slots');
+    }
+
+    if (overallRate >= 15) {
+      recommendations.push('Review your patient communication and engagement strategies');
+      recommendations.push('Consider implementing a no-show policy with consequences for repeat offenders');
+    }
+
+    return recommendations;
+  }
+}
+
+// ============================================================================
+// Additional Types for New Features
+// ============================================================================
+
+export interface DermatologyMetrics {
+  dateRange: DateRange;
+  biopsyStats: {
+    total: number;
+    byType: {
+      shave: number;
+      punch: number;
+      excisional: number;
+      incisional: number;
+    };
+    resultsBreakdown: { result: string; count: number }[];
+  };
+  procedureSplit: {
+    cosmetic: { count: number; revenue: number; percentage: number };
+    medical: { count: number; revenue: number; percentage: number };
+    surgical: { count: number; revenue: number; percentage: number };
+  };
+  topConditions: {
+    icdCode: string;
+    conditionName: string;
+    treatmentCount: number;
+    uniquePatients: number;
+  }[];
+  lesionTracking: {
+    totalTracked: number;
+    byStatus: {
+      new: number;
+      monitoring: number;
+      resolved: number;
+      biopsied: number;
+    };
+    byRiskLevel: {
+      high: number;
+      medium: number;
+      low: number;
+    };
+    patientsWithLesions: number;
+  };
+}
+
+export interface YearOverYearComparison {
+  currentPeriod: DateRange;
+  comparisonPeriod: DateRange;
+  metrics: {
+    newPatients: YoYMetric;
+    totalAppointments: YoYMetric;
+    completedAppointments: YoYMetric;
+    noShows: YoYMetric;
+    revenue: YoYMetric;
+    encounters: YoYMetric;
+    procedures: YoYMetric;
+  };
+}
+
+export interface YoYMetric {
+  current: number;
+  lastYear: number;
+  percentChange: number;
+  trend: 'up' | 'down';
+}
+
+export interface NoShowRiskAnalysis {
+  dateRange: DateRange;
+  overallNoShowRate: number;
+  totalAppointments: number;
+  totalNoShows: number;
+  riskFactors: {
+    byDayOfWeek: NoShowFactor[];
+    byTimeOfDay: NoShowFactor[];
+    byAppointmentType: NoShowFactor[];
+    byLeadTime: NoShowFactor[];
+  };
+  highRiskPatients: {
+    count: number;
+    patients: {
+      patientId: string;
+      totalAppointments: number;
+      noShowCount: number;
+      noShowRate: number;
+    }[];
+  };
+  recommendations: string[];
+}
+
+export interface NoShowFactor {
+  day?: string;
+  timeSlot?: string;
+  appointmentType?: string;
+  leadTime?: string;
+  total: number;
+  noShows: number;
+  noShowRate: number;
+  riskLevel: 'high' | 'medium' | 'low';
 }
 
 // Export singleton instance

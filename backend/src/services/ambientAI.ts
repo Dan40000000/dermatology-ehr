@@ -15,6 +15,137 @@ import FormData from 'form-data';
 import { logger } from '../lib/logger';
 import { AgentConfiguration } from './agentConfigService';
 
+// ============================================================================
+// RETRY CONFIGURATION
+// ============================================================================
+
+interface RetryConfig {
+  maxRetries: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+  backoffMultiplier: number;
+}
+
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 3,
+  initialDelayMs: 1000,
+  maxDelayMs: 10000,
+  backoffMultiplier: 2,
+};
+
+/**
+ * Custom error class for API errors with additional context
+ */
+export class AmbientAIError extends Error {
+  public readonly statusCode?: number;
+  public readonly provider: 'openai' | 'anthropic' | 'unknown';
+  public readonly isRetryable: boolean;
+  public readonly originalError?: Error;
+
+  constructor(
+    message: string,
+    options: {
+      statusCode?: number;
+      provider?: 'openai' | 'anthropic' | 'unknown';
+      isRetryable?: boolean;
+      originalError?: Error;
+    } = {}
+  ) {
+    super(message);
+    this.name = 'AmbientAIError';
+    this.statusCode = options.statusCode;
+    this.provider = options.provider || 'unknown';
+    this.isRetryable = options.isRetryable ?? true;
+    this.originalError = options.originalError;
+  }
+}
+
+/**
+ * Determines if an error is retryable based on status code and error type
+ */
+function isRetryableError(error: unknown, statusCode?: number): boolean {
+  // Network errors are retryable
+  if (error instanceof TypeError && error.message.includes('fetch')) {
+    return true;
+  }
+
+  // Rate limiting (429) and server errors (5xx) are retryable
+  if (statusCode) {
+    return statusCode === 429 || (statusCode >= 500 && statusCode < 600);
+  }
+
+  // Timeout errors are retryable
+  if (error instanceof Error && error.message.toLowerCase().includes('timeout')) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Sleep utility for retry delays
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Execute a function with exponential backoff retry logic
+ */
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  operationName: string,
+  config: RetryConfig = DEFAULT_RETRY_CONFIG
+): Promise<T> {
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      // Extract status code if available
+      let statusCode: number | undefined;
+      if (error instanceof AmbientAIError) {
+        statusCode = error.statusCode;
+        if (!error.isRetryable) {
+          throw error;
+        }
+      }
+
+      // Check if we should retry
+      const shouldRetry = attempt < config.maxRetries && isRetryableError(error, statusCode);
+
+      if (!shouldRetry) {
+        logger.error(`${operationName} failed after ${attempt + 1} attempts`, {
+          error: lastError.message,
+          attempt: attempt + 1,
+          maxRetries: config.maxRetries,
+        });
+        throw error;
+      }
+
+      // Calculate delay with exponential backoff and jitter
+      const baseDelay = config.initialDelayMs * Math.pow(config.backoffMultiplier, attempt);
+      const jitter = Math.random() * 0.3 * baseDelay; // Add up to 30% jitter
+      const delay = Math.min(baseDelay + jitter, config.maxDelayMs);
+
+      logger.warn(`${operationName} failed, retrying in ${Math.round(delay)}ms`, {
+        error: lastError.message,
+        attempt: attempt + 1,
+        maxRetries: config.maxRetries,
+        statusCode,
+      });
+
+      await sleep(delay);
+    }
+  }
+
+  // This should never be reached, but TypeScript needs it
+  throw lastError || new Error(`${operationName} failed after retries`);
+}
+
 // Environment configuration
 const getOpenAIKey = () => process.env.OPENAI_API_KEY;
 const getAnthropicKey = () => process.env.ANTHROPIC_API_KEY;
@@ -250,21 +381,37 @@ async function transcribeWithOpenAI(
   const formBuffer = formData.getBuffer();
   const formHeaders = formData.getHeaders();
 
-  const response = await fetch(OPENAI_TRANSCRIPTION_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${openAIKey}`,
-      ...formHeaders
+  // Execute API call with retry logic
+  const transcription = await withRetry(
+    async () => {
+      const response = await fetch(OPENAI_TRANSCRIPTION_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${openAIKey}`,
+          ...formHeaders
+        },
+        body: formBuffer
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        const statusCode = response.status;
+
+        throw new AmbientAIError(
+          `OpenAI transcription error: ${statusCode} - ${errorText}`,
+          {
+            statusCode,
+            provider: 'openai',
+            isRetryable: isRetryableError(null, statusCode)
+          }
+        );
+      }
+
+      return response.json() as Promise<any>;
     },
-    body: formBuffer
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI transcription error: ${response.status} - ${errorText}`);
-  }
-
-  const transcription = await response.json() as any;
+    'OpenAI transcription',
+    DEFAULT_RETRY_CONFIG
+  );
 
   if (isWhisper) {
     const segments = processWhisperSegments(transcription.segments || [], durationSeconds);
@@ -399,21 +546,45 @@ export async function transcribeLiveAudioChunk(
       formData.append('response_format', 'json');
     }
 
-    const response = await fetch(OPENAI_TRANSCRIPTION_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${openAIKey}`,
-        ...formData.getHeaders()
+    // Use shorter retry config for live transcription (real-time use case)
+    const liveRetryConfig: RetryConfig = {
+      maxRetries: 2,
+      initialDelayMs: 500,
+      maxDelayMs: 2000,
+      backoffMultiplier: 2,
+    };
+
+    const transcription = await withRetry(
+      async () => {
+        const response = await fetch(OPENAI_TRANSCRIPTION_URL, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${openAIKey}`,
+            ...formData.getHeaders()
+          },
+          body: formData
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          const statusCode = response.status;
+
+          throw new AmbientAIError(
+            `OpenAI live transcription error: ${statusCode} - ${errorText}`,
+            {
+              statusCode,
+              provider: 'openai',
+              isRetryable: isRetryableError(null, statusCode)
+            }
+          );
+        }
+
+        return response.json() as Promise<any>;
       },
-      body: formData
-    });
+      'OpenAI live transcription',
+      liveRetryConfig
+    );
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`OpenAI live transcription error: ${response.status} - ${errorText}`);
-    }
-
-    const transcription = await response.json() as any;
     const text = transcription.text || '';
     return {
       text,
@@ -423,7 +594,8 @@ export async function transcribeLiveAudioChunk(
   } catch (error: any) {
     logger.warn('OpenAI live transcription failed, falling back to mock', {
       error: error?.message,
-      model
+      model,
+      isRetryable: error instanceof AmbientAIError ? error.isRetryable : 'unknown'
     });
     return mockLiveTranscription(chunkIndex);
   }
@@ -668,36 +840,195 @@ function generateMockConversation(durationSeconds: number): TranscriptionSegment
 }
 
 /**
+ * PHI Pattern Definitions for HIPAA-compliant detection
+ */
+interface PHIPattern {
+  type: string;
+  regex: RegExp;
+  maskedValue: string | ((match: string) => string);
+  description: string;
+}
+
+const PHI_PATTERNS: PHIPattern[] = [
+  // Social Security Numbers - various formats
+  {
+    type: 'ssn',
+    regex: /\b(?!000|666|9\d{2})\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4}\b/g,
+    maskedValue: '***-**-****',
+    description: 'Social Security Number'
+  },
+  // Phone numbers - multiple formats
+  {
+    type: 'phone',
+    regex: /\b(?:\+?1[-.\s]?)?(?:\(?[2-9]\d{2}\)?[-.\s]?)?[2-9]\d{2}[-.\s]?\d{4}\b/g,
+    maskedValue: '***-***-****',
+    description: 'Phone number'
+  },
+  // Dates of Birth - multiple formats (MM/DD/YYYY, MM-DD-YYYY, YYYY-MM-DD, etc.)
+  {
+    type: 'dob',
+    regex: /\b(?:(?:0?[1-9]|1[0-2])[-\/](?:0?[1-9]|[12]\d|3[01])[-\/](?:19|20)\d{2}|(?:19|20)\d{2}[-\/](?:0?[1-9]|1[0-2])[-\/](?:0?[1-9]|[12]\d|3[01]))\b/g,
+    maskedValue: '**/**/****',
+    description: 'Date (possible DOB)'
+  },
+  // Date patterns with month names (January 15, 1990)
+  {
+    type: 'dob',
+    regex: /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+(?:19|20)\d{2}\b/gi,
+    maskedValue: '[DATE REDACTED]',
+    description: 'Date with month name (possible DOB)'
+  },
+  // Medical Record Numbers - common patterns (MRN, MR#, Medical Record #)
+  {
+    type: 'mrn',
+    regex: /\b(?:MRN|MR#?|Medical\s+Record\s*#?|Patient\s+ID|Pt\.\s*ID)[\s:#]*([A-Z0-9]{4,12})\b/gi,
+    maskedValue: 'MRN: [REDACTED]',
+    description: 'Medical Record Number'
+  },
+  // Numeric MRNs (6-12 digit numbers that could be MRNs, with context)
+  {
+    type: 'mrn',
+    regex: /\b(?:record|patient|chart|id)\s*(?:number|#|no\.?)?\s*:?\s*([A-Z]?\d{6,12})\b/gi,
+    maskedValue: '[ID REDACTED]',
+    description: 'Possible Medical Record Number'
+  },
+  // Email addresses
+  {
+    type: 'email',
+    regex: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
+    maskedValue: '[EMAIL REDACTED]',
+    description: 'Email address'
+  },
+  // Street addresses - basic pattern
+  {
+    type: 'address',
+    regex: /\b\d{1,5}\s+(?:[A-Z][a-z]+\s*)+(?:Street|St|Avenue|Ave|Boulevard|Blvd|Road|Rd|Drive|Dr|Lane|Ln|Way|Court|Ct|Circle|Cir|Place|Pl|Terrace|Ter|Highway|Hwy)\.?\b/gi,
+    maskedValue: '[ADDRESS REDACTED]',
+    description: 'Street address'
+  },
+  // PO Box addresses
+  {
+    type: 'address',
+    regex: /\bP\.?\s*O\.?\s*Box\s+\d+\b/gi,
+    maskedValue: '[PO BOX REDACTED]',
+    description: 'PO Box address'
+  },
+  // ZIP codes (5 digit or 5+4)
+  {
+    type: 'zip',
+    regex: /\b\d{5}(?:-\d{4})?\b/g,
+    maskedValue: (match) => match.length === 5 ? '*****' : '*****-****',
+    description: 'ZIP code'
+  },
+  // Insurance/Policy numbers
+  {
+    type: 'insurance_id',
+    regex: /\b(?:policy|insurance|member|subscriber|group)\s*(?:number|#|no\.?|id)?\s*:?\s*([A-Z0-9]{6,20})\b/gi,
+    maskedValue: '[INSURANCE ID REDACTED]',
+    description: 'Insurance/Policy number'
+  },
+  // Credit card numbers (basic pattern)
+  {
+    type: 'credit_card',
+    regex: /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b/g,
+    maskedValue: '****-****-****-****',
+    description: 'Credit card number'
+  },
+  // IP addresses
+  {
+    type: 'ip_address',
+    regex: /\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/g,
+    maskedValue: '***.***.***.***',
+    description: 'IP address'
+  },
+  // Driver's license patterns (generic - state-specific patterns vary)
+  {
+    type: 'drivers_license',
+    regex: /\b(?:DL|Driver'?s?\s*License|License)\s*#?\s*:?\s*([A-Z0-9]{5,15})\b/gi,
+    maskedValue: '[DL REDACTED]',
+    description: "Driver's license number"
+  },
+  // Account numbers (generic)
+  {
+    type: 'account_number',
+    regex: /\b(?:account|acct)\s*(?:number|#|no\.?)?\s*:?\s*([A-Z0-9]{6,20})\b/gi,
+    maskedValue: '[ACCT REDACTED]',
+    description: 'Account number'
+  }
+];
+
+/**
  * Detect PHI (Protected Health Information) in text
+ * Uses comprehensive regex patterns for HIPAA-defined identifiers
  */
 function detectPHI(text: string): PHIEntity[] {
   const entities: PHIEntity[] = [];
+  const processedRanges: Set<string> = new Set();
 
-  // Simulate PHI detection - in production, use a medical NLP library
-  // This is a simplified mock
+  for (const pattern of PHI_PATTERNS) {
+    // Reset regex lastIndex for global patterns
+    pattern.regex.lastIndex = 0;
 
-  // Detect phone numbers
-  const phoneRegex = /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g;
-  let match;
-  while ((match = phoneRegex.exec(text)) !== null) {
-    entities.push({
-      type: 'phone',
-      text: match[0],
-      start: match.index,
-      end: match.index + match[0].length,
-      masked_value: '***-***-****'
-    });
+    let match;
+    while ((match = pattern.regex.exec(text)) !== null) {
+      const start = match.index;
+      const end = match.index + match[0].length;
+      const rangeKey = `${start}-${end}`;
+
+      // Avoid duplicate detections for overlapping patterns
+      if (processedRanges.has(rangeKey)) {
+        continue;
+      }
+
+      // Check if this range overlaps with any existing entity
+      let overlaps = false;
+      const rangesArray = Array.from(processedRanges);
+      for (let i = 0; i < rangesArray.length; i++) {
+        const existingRange = rangesArray[i]!;
+        const rangeParts = existingRange.split('-').map(Number);
+        const existingStart = rangeParts[0] ?? 0;
+        const existingEnd = rangeParts[1] ?? 0;
+        if ((start >= existingStart && start < existingEnd) ||
+            (end > existingStart && end <= existingEnd) ||
+            (start <= existingStart && end >= existingEnd)) {
+          overlaps = true;
+          break;
+        }
+      }
+
+      if (overlaps) {
+        continue;
+      }
+
+      processedRanges.add(rangeKey);
+
+      const maskedValue = typeof pattern.maskedValue === 'function'
+        ? pattern.maskedValue(match[0])
+        : pattern.maskedValue;
+
+      entities.push({
+        type: pattern.type,
+        text: match[0],
+        start,
+        end,
+        masked_value: maskedValue
+      });
+
+      logger.debug('PHI detected', {
+        type: pattern.type,
+        description: pattern.description,
+        position: { start, end }
+      });
+    }
   }
 
-  // Detect dates that might be DOB
-  const dateRegex = /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g;
-  while ((match = dateRegex.exec(text)) !== null) {
-    entities.push({
-      type: 'date',
-      text: match[0],
-      start: match.index,
-      end: match.index + match[0].length,
-      masked_value: '**/**/****'
+  // Sort entities by start position for consistent ordering
+  entities.sort((a, b) => a.start - b.start);
+
+  if (entities.length > 0) {
+    logger.info('PHI detection completed', {
+      totalEntities: entities.length,
+      types: Array.from(new Set(entities.map(e => e.type)))
     });
   }
 
@@ -800,33 +1131,50 @@ async function generateNoteWithClaude(
   const temperature = agentConfig?.temperature || 0.3;
   const maxTokens = agentConfig?.maxTokens || 4000;
 
-  const response = await fetch(ANTHROPIC_MESSAGES_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': anthropicKey!,
-      'anthropic-version': '2023-06-01'
+  // Execute API call with retry logic
+  const result = await withRetry(
+    async () => {
+      const response = await fetch(ANTHROPIC_MESSAGES_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': anthropicKey!,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: model,
+          max_tokens: maxTokens,
+          temperature: temperature,
+          system: agentConfig?.systemPrompt || undefined,
+          messages: [
+            {
+              role: 'user',
+              content: prompt
+            }
+          ]
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        const statusCode = response.status;
+
+        throw new AmbientAIError(
+          `Claude API error: ${statusCode} - ${errorText}`,
+          {
+            statusCode,
+            provider: 'anthropic',
+            isRetryable: isRetryableError(null, statusCode)
+          }
+        );
+      }
+
+      return response.json() as Promise<any>;
     },
-    body: JSON.stringify({
-      model: model,
-      max_tokens: maxTokens,
-      temperature: temperature,
-      system: agentConfig?.systemPrompt || undefined,
-      messages: [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ]
-    })
-  });
+    'Claude note generation',
+    DEFAULT_RETRY_CONFIG
+  );
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Claude API error: ${response.status} - ${errorText}`);
-  }
-
-  const result = await response.json() as any;
   const noteText = result.content[0].text;
 
   return parseAIGeneratedNote(noteText, segments, agentConfig);
@@ -861,36 +1209,53 @@ async function generateNoteWithGPT4(
   const systemPrompt = agentConfig?.systemPrompt ||
     'You are an expert dermatology medical scribe. Generate accurate, detailed clinical notes following medical documentation standards.';
 
-  const response = await fetch(OPENAI_CHAT_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${openAIKey}`
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        {
-          role: 'system',
-          content: systemPrompt
+  // Execute API call with retry logic
+  const result = await withRetry(
+    async () => {
+      const response = await fetch(OPENAI_CHAT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openAIKey}`
         },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      temperature: temperature,
-      max_tokens: maxTokens,
-      response_format: { type: 'json_object' }
-    })
-  });
+        body: JSON.stringify({
+          model: model,
+          messages: [
+            {
+              role: 'system',
+              content: systemPrompt
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          temperature: temperature,
+          max_tokens: maxTokens,
+          response_format: { type: 'json_object' }
+        })
+      });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
-  }
+      if (!response.ok) {
+        const errorText = await response.text();
+        const statusCode = response.status;
 
-  const result = await response.json() as any;
+        throw new AmbientAIError(
+          `OpenAI API error: ${statusCode} - ${errorText}`,
+          {
+            statusCode,
+            provider: 'openai',
+            isRetryable: isRetryableError(null, statusCode)
+          }
+        );
+      }
+
+      return response.json() as Promise<any>;
+    },
+    'OpenAI note generation',
+    DEFAULT_RETRY_CONFIG
+  );
+
   const noteText = result.choices[0].message.content;
 
   return parseAIGeneratedNote(noteText, segments, agentConfig);

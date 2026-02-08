@@ -719,6 +719,42 @@ export async function fetchQualityAnalytics(tenantId: string, accessToken: strin
   return res.json();
 }
 
+// Dermatology-specific analytics
+export async function fetchDermatologyMetrics(tenantId: string, accessToken: string, filter?: AnalyticsFilter) {
+  const res = await fetch(`${API_BASE}/api/analytics/dermatology-metrics${buildQuery(filter)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load dermatology metrics");
+  return res.json();
+}
+
+// Year-over-year comparison
+export async function fetchYoYComparison(tenantId: string, accessToken: string, filter?: AnalyticsFilter) {
+  const res = await fetch(`${API_BASE}/api/analytics/yoy-comparison${buildQuery(filter)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load year-over-year comparison");
+  return res.json();
+}
+
+// No-show risk analysis
+export async function fetchNoShowRiskAnalysis(tenantId: string, accessToken: string, filter?: AnalyticsFilter) {
+  const res = await fetch(`${API_BASE}/api/analytics/no-show-risk${buildQuery(filter)}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load no-show risk analysis");
+  return res.json();
+}
+
+// Patient-specific no-show risk
+export async function fetchPatientNoShowRisk(tenantId: string, accessToken: string, patientId: string) {
+  const res = await fetch(`${API_BASE}/api/analytics/no-show-risk/patient/${patientId}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load patient no-show risk");
+  return res.json();
+}
+
 export const updateOrderStatus = (tenantId: string, accessToken: string, id: string, status: string) =>
   authedPost(tenantId, accessToken, `/api/orders/${id}/status`, { status });
 export const sendErx = (tenantId: string, accessToken: string, payload: any) =>

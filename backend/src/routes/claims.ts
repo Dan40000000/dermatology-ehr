@@ -65,7 +65,157 @@ const paymentSchema = z.object({
 const appealSchema = z.object({
   appealNotes: z.string(),
   denialReason: z.string().optional(),
+  templateId: z.string().optional(),
+  appealDeadline: z.string().optional(),
+  appealLevel: z.enum(["first", "second", "external"]).optional(),
 });
+
+const appealOutcomeSchema = z.object({
+  outcome: z.enum(["approved", "denied", "partial"]),
+  approvedAmountCents: z.number().int().optional(),
+  denialReason: z.string().optional(),
+  notes: z.string().optional(),
+  decisionDate: z.string().optional(),
+});
+
+// Appeal letter templates for common denial types
+const APPEAL_TEMPLATES: Record<string, { name: string; category: string; template: string }> = {
+  "cosmetic_medical_necessity": {
+    name: "Medical Necessity - Cosmetic Denial",
+    category: "cosmetic_vs_medical",
+    template: `Dear Claims Review Department,
+
+I am writing to appeal the denial of claim [CLAIM_NUMBER] for patient [PATIENT_NAME], date of service [SERVICE_DATE].
+
+The claim was denied as cosmetic/not medically necessary. However, this procedure was performed for the following medical indication:
+
+Diagnosis: [DIAGNOSIS_CODE] - [DIAGNOSIS_DESCRIPTION]
+
+Clinical Justification:
+- [CLINICAL_NOTES]
+
+The patient presented with documented symptoms including [SYMPTOMS] that significantly impacted their [FUNCTIONAL_IMPACT].
+
+Attached documentation includes:
+- Clinical photographs showing [PHOTO_DESCRIPTION]
+- Pathology report (if applicable)
+- Prior treatment history
+
+Based on the above, I respectfully request reconsideration of this claim.
+
+Sincerely,
+[PROVIDER_NAME]
+[PRACTICE_NAME]`,
+  },
+  "modifier_correction": {
+    name: "Modifier Correction Appeal",
+    category: "modifier_issue",
+    template: `Dear Claims Review Department,
+
+I am writing regarding claim [CLAIM_NUMBER] denied due to modifier issues.
+
+This letter serves to clarify that the services performed were distinct and separately identifiable:
+
+Original Claim Details:
+- Patient: [PATIENT_NAME]
+- Date of Service: [SERVICE_DATE]
+- Procedures: [PROCEDURE_CODES]
+
+Clarification of Services:
+[SERVICE_CLARIFICATION]
+
+The appropriate modifier(s) have been applied to reflect:
+- [MODIFIER_JUSTIFICATION]
+
+Please reprocess this claim with the corrected information.
+
+Sincerely,
+[PROVIDER_NAME]`,
+  },
+  "prior_auth_retroactive": {
+    name: "Retroactive Prior Authorization",
+    category: "prior_auth",
+    template: `Dear Prior Authorization Department,
+
+I am requesting retroactive authorization for claim [CLAIM_NUMBER].
+
+Patient Information:
+- Name: [PATIENT_NAME]
+- Member ID: [MEMBER_ID]
+- Date of Service: [SERVICE_DATE]
+
+Procedure(s) Performed: [PROCEDURE_CODES]
+Diagnosis: [DIAGNOSIS_CODE] - [DIAGNOSIS_DESCRIPTION]
+
+Reason for Retroactive Request:
+[REASON_FOR_RETROACTIVE]
+
+Clinical Justification:
+This procedure was medically necessary due to [MEDICAL_NECESSITY].
+
+The urgency of the patient's condition required [URGENCY_EXPLANATION].
+
+Enclosed documentation:
+- Clinical notes
+- Supporting medical records
+- [ADDITIONAL_DOCS]
+
+Please contact our office if additional information is required.
+
+Sincerely,
+[PROVIDER_NAME]`,
+  },
+  "documentation_supplement": {
+    name: "Documentation Supplement",
+    category: "documentation",
+    template: `Dear Claims Review Department,
+
+Re: Claim [CLAIM_NUMBER] - Request for Reconsideration with Additional Documentation
+
+I am submitting additional documentation in support of the above-referenced claim for patient [PATIENT_NAME], date of service [SERVICE_DATE].
+
+The claim was denied due to insufficient documentation. Please find enclosed:
+
+1. [DOCUMENT_1]
+2. [DOCUMENT_2]
+3. [DOCUMENT_3]
+
+This documentation clearly demonstrates:
+- Medical necessity for the procedure(s) performed
+- The clinical decision-making process
+- [ADDITIONAL_JUSTIFICATION]
+
+Please reprocess this claim with the enclosed supporting documentation.
+
+Sincerely,
+[PROVIDER_NAME]`,
+  },
+  "duplicate_clarification": {
+    name: "Duplicate Claim Clarification",
+    category: "duplicate",
+    template: `Dear Claims Processing Department,
+
+I am writing to clarify that claim [CLAIM_NUMBER] is NOT a duplicate submission.
+
+Patient: [PATIENT_NAME]
+Date of Service: [SERVICE_DATE]
+
+This claim represents a distinct service from the previously processed claim because:
+
+[DISTINCTION_EXPLANATION]
+
+Key Differences:
+- [DIFFERENCE_1]
+- [DIFFERENCE_2]
+
+Supporting documentation is attached to verify these were separate services.
+
+Please reprocess this claim accordingly.
+
+Sincerely,
+[PROVIDER_NAME]`,
+  },
+};
 
 const scrubSchema = z.object({
   claimId: z.string(),
@@ -552,18 +702,46 @@ claimsRouter.get("/denials", requireAuth, async (req: AuthedRequest, res) => {
   res.json({ denials: result.rows });
 });
 
-// POST /api/claims/:id/appeal - Create appeal
+// GET /api/claims/appeal-templates - Get appeal letter templates
+claimsRouter.get("/appeal-templates", requireAuth, async (req: AuthedRequest, res) => {
+  const { category } = req.query;
+
+  let templates = Object.entries(APPEAL_TEMPLATES).map(([id, template]) => ({
+    id,
+    ...template,
+  }));
+
+  if (category && typeof category === "string") {
+    templates = templates.filter((t) => t.category === category);
+  }
+
+  res.json({ templates });
+});
+
+// GET /api/claims/appeal-templates/:id - Get specific appeal template
+claimsRouter.get("/appeal-templates/:templateId", requireAuth, async (req: AuthedRequest, res) => {
+  const templateId = String(req.params.templateId);
+  const template = APPEAL_TEMPLATES[templateId];
+
+  if (!template) {
+    return res.status(404).json({ error: "Template not found" });
+  }
+
+  res.json({ id: templateId, ...template });
+});
+
+// POST /api/claims/:id/appeal - Create appeal with enhanced tracking
 claimsRouter.post("/:id/appeal", requireAuth, requireRoles(["provider", "admin"]), async (req: AuthedRequest, res) => {
   const parsed = appealSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
   const tenantId = req.user!.tenantId;
   const claimId = String(req.params.id);
-  const { appealNotes, denialReason } = parsed.data;
+  const { appealNotes, denialReason, templateId, appealDeadline, appealLevel } = parsed.data;
 
   // Check if claim is denied
   const claimResult = await pool.query(
-    `select status from claims where id = $1 and tenant_id = $2`,
+    `select status, denial_date, denial_code, denial_category, payer_name from claims where id = $1 and tenant_id = $2`,
     [claimId, tenantId]
   );
 
@@ -571,27 +749,240 @@ claimsRouter.post("/:id/appeal", requireAuth, requireRoles(["provider", "admin"]
     return res.status(404).json({ error: "Claim not found" });
   }
 
-  if (claimResult.rows[0].status !== "denied") {
+  const claim = claimResult.rows[0];
+
+  if (claim.status !== "denied" && claim.status !== "appealed") {
     return res.status(400).json({ error: "Can only appeal denied claims" });
   }
 
+  // Calculate default appeal deadline if not provided (typically 60-180 days from denial)
+  let deadline = appealDeadline;
+  if (!deadline && claim.denial_date) {
+    const denialDate = new Date(claim.denial_date);
+    denialDate.setDate(denialDate.getDate() + 60); // Default 60 days
+    deadline = denialDate.toISOString().split("T")[0];
+  }
+
+  // Create appeal record
+  const appealId = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO claim_appeals (id, tenant_id, claim_id, appeal_level, appeal_status,
+       appeal_notes, template_used, appeal_deadline, submitted_at, submitted_by, created_at)
+     VALUES ($1, $2, $3, $4, 'submitted', $5, $6, $7, NOW(), $8, NOW())
+     ON CONFLICT DO NOTHING`,
+    [
+      appealId,
+      tenantId,
+      claimId,
+      appealLevel || "first",
+      appealNotes,
+      templateId || null,
+      deadline || null,
+      req.user!.id,
+    ]
+  );
+
   // Update claim with appeal info
   await pool.query(
-    `update claims
-     set status = 'appealed', appeal_status = 'pending', appeal_notes = $1,
-         appeal_submitted_at = now(), denial_reason = COALESCE($2, denial_reason)
-     where id = $3 and tenant_id = $4`,
+    `UPDATE claims
+     SET status = 'appealed',
+         appeal_status = 'submitted',
+         appeal_notes = $1,
+         appeal_submitted_at = NOW(),
+         denial_reason = COALESCE($2, denial_reason)
+     WHERE id = $3 AND tenant_id = $4`,
     [appealNotes, denialReason || null, claimId, tenantId]
   );
 
   await pool.query(
-    `insert into claim_status_history(id, tenant_id, claim_id, status, notes, changed_by, changed_at)
-     values ($1, $2, $3, $4, $5, $6, now())`,
-    [crypto.randomUUID(), tenantId, claimId, "appealed", appealNotes, req.user!.id]
+    `INSERT INTO claim_status_history(id, tenant_id, claim_id, status, notes, changed_by, changed_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+    [crypto.randomUUID(), tenantId, claimId, "appealed", `Appeal submitted (Level: ${appealLevel || "first"})`, req.user!.id]
   );
 
   await auditLog(tenantId, req.user!.id, "claim_appeal_submitted", "claim", claimId);
-  res.json({ ok: true });
+
+  res.json({
+    ok: true,
+    appealId,
+    appealDeadline: deadline,
+    appealLevel: appealLevel || "first",
+  });
+});
+
+// POST /api/claims/:id/appeal-outcome - Record appeal outcome
+claimsRouter.post("/:id/appeal-outcome", requireAuth, requireRoles(["provider", "admin"]), async (req: AuthedRequest, res) => {
+  const parsed = appealOutcomeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
+  const tenantId = req.user!.tenantId;
+  const claimId = String(req.params.id);
+  const { outcome, approvedAmountCents, denialReason, notes, decisionDate } = parsed.data;
+
+  // Check if claim exists and is in appeal status
+  const claimResult = await pool.query(
+    `SELECT id, status, appeal_status, total_charges FROM claims WHERE id = $1 AND tenant_id = $2`,
+    [claimId, tenantId]
+  );
+
+  if (!claimResult.rowCount) {
+    return res.status(404).json({ error: "Claim not found" });
+  }
+
+  const claim = claimResult.rows[0];
+
+  if (claim.status !== "appealed") {
+    return res.status(400).json({ error: "Claim is not in appeal status" });
+  }
+
+  const decision = decisionDate || new Date().toISOString().split("T")[0];
+  let newStatus = "denied";
+  let newAppealStatus = "denied";
+
+  if (outcome === "approved") {
+    newStatus = "accepted";
+    newAppealStatus = "approved";
+  } else if (outcome === "partial") {
+    newStatus = "accepted";
+    newAppealStatus = "partial";
+  }
+
+  // Update claim with appeal outcome
+  await pool.query(
+    `UPDATE claims
+     SET status = $1,
+         appeal_status = $2,
+         appeal_decision = $3,
+         appeal_decision_date = $4,
+         appeal_notes = COALESCE(appeal_notes, '') || E'\n\nOutcome: ' || $3 || COALESCE(E'\n' || $5, '')
+     WHERE id = $6 AND tenant_id = $7`,
+    [newStatus, newAppealStatus, outcome, decision, notes || null, claimId, tenantId]
+  );
+
+  // Update the appeal record if exists
+  await pool.query(
+    `UPDATE claim_appeals
+     SET appeal_status = $1,
+         outcome = $2,
+         approved_amount_cents = $3,
+         outcome_notes = $4,
+         decision_date = $5,
+         updated_at = NOW()
+     WHERE claim_id = $6 AND tenant_id = $7
+       AND appeal_status = 'submitted'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [newAppealStatus, outcome, approvedAmountCents || null, notes || null, decision, claimId, tenantId]
+  );
+
+  // If approved or partial, auto-post payment
+  if (outcome === "approved" || outcome === "partial") {
+    const paymentAmount = approvedAmountCents || Math.round(claim.total_charges * 100);
+    const paymentId = crypto.randomUUID();
+
+    await pool.query(
+      `INSERT INTO claim_payments (id, tenant_id, claim_id, amount_cents, payment_date,
+         payment_method, notes, created_by)
+       VALUES ($1, $2, $3, $4, $5, 'Appeal Payment', $6, $7)`,
+      [
+        paymentId,
+        tenantId,
+        claimId,
+        paymentAmount,
+        decision,
+        `Appeal ${outcome}: ${notes || "Payment from successful appeal"}`,
+        req.user!.id,
+      ]
+    );
+
+    // Check if claim is fully paid
+    const totalPaidResult = await pool.query(
+      `SELECT COALESCE(SUM(amount_cents), 0) as total FROM claim_payments WHERE claim_id = $1`,
+      [claimId]
+    );
+    const totalPaid = totalPaidResult.rows[0].total;
+    const totalChargesCents = Math.round(claim.total_charges * 100);
+
+    if (totalPaid >= totalChargesCents) {
+      await pool.query(
+        `UPDATE claims SET status = 'paid', paid_amount = total_charges WHERE id = $1`,
+        [claimId]
+      );
+      newStatus = "paid";
+    }
+  }
+
+  // Add to status history
+  await pool.query(
+    `INSERT INTO claim_status_history (id, tenant_id, claim_id, status, notes, changed_by, changed_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+    [
+      crypto.randomUUID(),
+      tenantId,
+      claimId,
+      newStatus,
+      `Appeal outcome: ${outcome}${notes ? ` - ${notes}` : ""}`,
+      req.user!.id,
+    ]
+  );
+
+  await auditLog(tenantId, req.user!.id, `claim_appeal_${outcome}`, "claim", claimId);
+
+  res.json({
+    ok: true,
+    outcome,
+    newStatus,
+    approvedAmountCents: outcome === "approved" || outcome === "partial" ? approvedAmountCents : null,
+  });
+});
+
+// GET /api/claims/:id/appeals - Get appeal history for a claim
+claimsRouter.get("/:id/appeals", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const claimId = String(req.params.id);
+
+  const result = await pool.query(
+    `SELECT
+       id, appeal_level as "appealLevel", appeal_status as "appealStatus",
+       appeal_notes as "appealNotes", template_used as "templateUsed",
+       appeal_deadline as "appealDeadline", outcome,
+       approved_amount_cents as "approvedAmountCents",
+       outcome_notes as "outcomeNotes", decision_date as "decisionDate",
+       submitted_at as "submittedAt", submitted_by as "submittedBy",
+       created_at as "createdAt"
+     FROM claim_appeals
+     WHERE claim_id = $1 AND tenant_id = $2
+     ORDER BY created_at DESC`,
+    [claimId, tenantId]
+  );
+
+  res.json({ appeals: result.rows });
+});
+
+// GET /api/claims/appeals/pending - Get all pending appeals with deadlines
+claimsRouter.get("/appeals/pending", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+
+  const result = await pool.query(
+    `SELECT
+       c.id as "claimId", c.claim_number as "claimNumber",
+       c.patient_id as "patientId", c.total_charges as "totalCharges",
+       c.denial_reason as "denialReason", c.denial_code as "denialCode",
+       ca.id as "appealId", ca.appeal_level as "appealLevel",
+       ca.appeal_deadline as "appealDeadline",
+       ca.submitted_at as "submittedAt",
+       p.first_name as "patientFirstName", p.last_name as "patientLastName",
+       EXTRACT(DAY FROM ca.appeal_deadline::date - CURRENT_DATE) as "daysUntilDeadline"
+     FROM claim_appeals ca
+     JOIN claims c ON c.id = ca.claim_id
+     JOIN patients p ON p.id = c.patient_id
+     WHERE ca.tenant_id = $1
+       AND ca.appeal_status = 'submitted'
+     ORDER BY ca.appeal_deadline ASC NULLS LAST, ca.submitted_at DESC`,
+    [tenantId]
+  );
+
+  res.json({ pendingAppeals: result.rows });
 });
 
 // GET /api/claims/metrics - Dashboard metrics with aging buckets
@@ -1004,7 +1395,7 @@ const eraImportSchema = z.object({
   })),
 });
 
-// POST /api/claims/era/import - Import ERA/EOB file and auto-post payments
+// POST /api/claims/era/import - Import ERA/EOB file with enhanced auto-matching and posting
 claimsRouter.post("/era/import", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
   const parsed = eraImportSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
@@ -1015,37 +1406,274 @@ claimsRouter.post("/era/import", requireAuth, requireRoles(["admin", "billing"])
 
   // Create ERA import record
   const eraId = crypto.randomUUID();
-  await pool.query(
-    `INSERT INTO era_imports (id, tenant_id, filename, claim_count, status, imported_by, created_at)
-     VALUES ($1, $2, $3, $4, 'processing', $5, NOW())
-     ON CONFLICT DO NOTHING`,
-    [eraId, tenantId, filename || `ERA-${Date.now()}`, claims.length, userId]
-  );
 
-  // Process through workflow orchestrator for auto-posting
+  // Tracking for summary
+  const summary = {
+    totalClaims: claims.length,
+    matched: 0,
+    autoPosted: 0,
+    unmatched: 0,
+    denied: 0,
+    partialPayments: 0,
+    totalPaidCents: 0,
+    totalAdjustmentsCents: 0,
+    errors: [] as { claimNumber: string; error: string }[],
+    matchedClaims: [] as { claimNumber: string; claimId: string; paidCents: number; status: string }[],
+    unmatchedClaims: [] as { claimNumber: string; patientName?: string; serviceDate?: string; paidCents: number }[],
+  };
+
   try {
-    await workflowOrchestrator.processEvent({
-      type: 'era_imported',
-      tenantId,
-      userId,
-      entityType: 'era',
-      entityId: eraId,
-      data: { claims, filename },
-      timestamp: new Date(),
-    });
-
-    // Update ERA status
     await pool.query(
-      `UPDATE era_imports SET status = 'completed', completed_at = NOW() WHERE id = $1`,
-      [eraId]
+      `INSERT INTO era_imports (id, tenant_id, filename, claim_count, status, imported_by, created_at)
+       VALUES ($1, $2, $3, $4, 'processing', $5, NOW())
+       ON CONFLICT DO NOTHING`,
+      [eraId, tenantId, filename || `ERA-${Date.now()}`, claims.length, userId]
+    );
+
+    // Process each claim payment
+    for (const claimPayment of claims) {
+      try {
+        // Enhanced matching: try multiple strategies
+        let matchedClaim = null;
+
+        // Strategy 1: Match by claim ID (if provided)
+        if (claimPayment.claimId) {
+          const result = await pool.query(
+            `SELECT id, claim_number, total_charges, status, patient_id
+             FROM claims WHERE id = $1 AND tenant_id = $2`,
+            [claimPayment.claimId, tenantId]
+          );
+          if (result.rowCount) matchedClaim = result.rows[0];
+        }
+
+        // Strategy 2: Match by claim number (most common)
+        if (!matchedClaim && claimPayment.claimNumber) {
+          const result = await pool.query(
+            `SELECT id, claim_number, total_charges, status, patient_id
+             FROM claims WHERE claim_number = $1 AND tenant_id = $2`,
+            [claimPayment.claimNumber, tenantId]
+          );
+          if (result.rowCount) matchedClaim = result.rows[0];
+        }
+
+        // Strategy 3: Match by patient name + service date (fuzzy matching)
+        if (!matchedClaim && claimPayment.patientName && claimPayment.serviceDate) {
+          // Parse patient name (try "Last, First" or "First Last")
+          const nameParts = claimPayment.patientName.includes(",")
+            ? claimPayment.patientName.split(",").map((s) => s.trim())
+            : claimPayment.patientName.split(" ");
+
+          const lastName = nameParts[0];
+          const firstName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : "";
+
+          const result = await pool.query(
+            `SELECT c.id, c.claim_number, c.total_charges, c.status, c.patient_id
+             FROM claims c
+             JOIN patients p ON p.id = c.patient_id
+             WHERE c.tenant_id = $1
+               AND c.service_date = $2
+               AND (LOWER(p.last_name) = LOWER($3) OR LOWER(p.last_name) LIKE LOWER($4))
+               AND (LOWER(p.first_name) = LOWER($5) OR LOWER(p.first_name) LIKE LOWER($6))
+               AND c.status IN ('submitted', 'accepted', 'appealed')
+             ORDER BY c.created_at DESC
+             LIMIT 1`,
+            [tenantId, claimPayment.serviceDate, lastName, `${lastName}%`, firstName, `${firstName}%`]
+          );
+          if (result.rowCount) matchedClaim = result.rows[0];
+        }
+
+        if (!matchedClaim) {
+          summary.unmatched++;
+          summary.unmatchedClaims.push({
+            claimNumber: claimPayment.claimNumber || "Unknown",
+            patientName: claimPayment.patientName,
+            serviceDate: claimPayment.serviceDate,
+            paidCents: claimPayment.paidAmountCents,
+          });
+          continue;
+        }
+
+        summary.matched++;
+
+        // Auto-post payment
+        const paymentId = crypto.randomUUID();
+        await pool.query(
+          `INSERT INTO claim_payments
+           (id, tenant_id, claim_id, amount_cents, payment_date, payment_method,
+            payer, check_number, notes, created_by)
+           VALUES ($1, $2, $3, $4, $5, 'ERA', $6, $7, $8, $9)`,
+          [
+            paymentId,
+            tenantId,
+            matchedClaim.id,
+            claimPayment.paidAmountCents,
+            claimPayment.paymentDate || new Date().toISOString().split("T")[0],
+            claimPayment.payerName || null,
+            claimPayment.checkNumber || null,
+            `Auto-posted from ERA ${filename || eraId}`,
+            userId,
+          ]
+        );
+
+        summary.autoPosted++;
+        summary.totalPaidCents += claimPayment.paidAmountCents;
+
+        // Process adjustments
+        if (claimPayment.adjustments && claimPayment.adjustments.length > 0) {
+          for (const adj of claimPayment.adjustments) {
+            await pool.query(
+              `INSERT INTO claim_adjustments
+               (id, tenant_id, claim_id, adjustment_code, adjustment_reason,
+                amount_cents, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+              [
+                crypto.randomUUID(),
+                tenantId,
+                matchedClaim.id,
+                adj.code,
+                adj.reason || null,
+                adj.amountCents,
+              ]
+            );
+            summary.totalAdjustmentsCents += adj.amountCents;
+          }
+        }
+
+        // Determine new claim status
+        let newStatus = matchedClaim.status;
+        const totalChargesCents = Math.round(matchedClaim.total_charges * 100);
+
+        // Check total paid so far
+        const totalPaidResult = await pool.query(
+          `SELECT COALESCE(SUM(amount_cents), 0) as total FROM claim_payments WHERE claim_id = $1`,
+          [matchedClaim.id]
+        );
+        const totalPaid = parseInt(totalPaidResult.rows[0].total);
+
+        if (claimPayment.denialCode) {
+          // Claim was denied
+          newStatus = "denied";
+          summary.denied++;
+          await pool.query(
+            `UPDATE claims
+             SET status = 'denied', denial_code = $1, denial_reason = $2, denial_date = NOW()
+             WHERE id = $3`,
+            [claimPayment.denialCode, claimPayment.denialReason || null, matchedClaim.id]
+          );
+        } else if (totalPaid >= totalChargesCents) {
+          // Fully paid
+          newStatus = "paid";
+          await pool.query(
+            `UPDATE claims SET status = 'paid', paid_amount = total_charges, adjudicated_at = NOW() WHERE id = $1`,
+            [matchedClaim.id]
+          );
+        } else if (claimPayment.paidAmountCents > 0 && totalPaid < totalChargesCents) {
+          // Partial payment
+          summary.partialPayments++;
+          await pool.query(
+            `UPDATE claims SET paid_amount = $1, adjudicated_at = NOW() WHERE id = $2`,
+            [totalPaid / 100, matchedClaim.id]
+          );
+        }
+
+        // Handle patient responsibility
+        if (claimPayment.patientResponsibilityCents && claimPayment.patientResponsibilityCents > 0) {
+          await pool.query(
+            `UPDATE claims SET patient_responsibility = $1 WHERE id = $2`,
+            [claimPayment.patientResponsibilityCents / 100, matchedClaim.id]
+          );
+        }
+
+        // Add to status history
+        await pool.query(
+          `INSERT INTO claim_status_history (id, tenant_id, claim_id, status, notes, changed_by, changed_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+          [
+            crypto.randomUUID(),
+            tenantId,
+            matchedClaim.id,
+            newStatus,
+            `ERA auto-post: $${(claimPayment.paidAmountCents / 100).toFixed(2)} paid`,
+            userId,
+          ]
+        );
+
+        summary.matchedClaims.push({
+          claimNumber: matchedClaim.claim_number,
+          claimId: matchedClaim.id,
+          paidCents: claimPayment.paidAmountCents,
+          status: newStatus,
+        });
+
+        // Emit payment received event
+        const todayStr = new Date().toISOString().split("T")[0] as string;
+        emitPaymentReceived(tenantId, {
+          id: paymentId,
+          patientId: matchedClaim.patient_id,
+          claimId: matchedClaim.id,
+          amount: claimPayment.paidAmountCents / 100,
+          paymentDate: claimPayment.paymentDate || todayStr,
+          paymentMethod: "ERA",
+          payer: claimPayment.payerName,
+          createdAt: new Date().toISOString(),
+        });
+
+      } catch (claimError: any) {
+        summary.errors.push({
+          claimNumber: claimPayment.claimNumber || "Unknown",
+          error: claimError.message,
+        });
+        logger.error("Error processing ERA claim", {
+          claimNumber: claimPayment.claimNumber,
+          error: claimError.message,
+        });
+      }
+    }
+
+    // Update ERA import record with results
+    await pool.query(
+      `UPDATE era_imports
+       SET status = 'completed',
+           completed_at = NOW(),
+           matched_count = $1,
+           unmatched_count = $2,
+           total_paid_cents = $3,
+           summary = $4
+       WHERE id = $5`,
+      [
+        summary.matched,
+        summary.unmatched,
+        summary.totalPaidCents,
+        JSON.stringify(summary),
+        eraId,
+      ]
     );
 
     await auditLog(tenantId, userId, "era_imported", "era", eraId);
 
+    logger.info("ERA import completed", {
+      eraId,
+      matched: summary.matched,
+      unmatched: summary.unmatched,
+      autoPosted: summary.autoPosted,
+    });
+
     res.status(201).json({
       eraId,
-      claimsProcessed: claims.length,
-      message: "ERA imported and payments auto-posted successfully",
+      filename: filename || `ERA-${eraId.substring(0, 8)}`,
+      summary: {
+        totalClaims: summary.totalClaims,
+        matched: summary.matched,
+        autoPosted: summary.autoPosted,
+        unmatched: summary.unmatched,
+        denied: summary.denied,
+        partialPayments: summary.partialPayments,
+        totalPaid: (summary.totalPaidCents / 100).toFixed(2),
+        totalAdjustments: (summary.totalAdjustmentsCents / 100).toFixed(2),
+      },
+      matchedClaims: summary.matchedClaims,
+      unmatchedClaims: summary.unmatchedClaims,
+      errors: summary.errors.length > 0 ? summary.errors : undefined,
     });
   } catch (error: any) {
     // Update ERA status to failed
@@ -1066,7 +1694,9 @@ claimsRouter.get("/era", requireAuth, async (req: AuthedRequest, res) => {
 
   let query = `SELECT id, filename, claim_count as "claimCount", status,
                       imported_by as "importedBy", created_at as "createdAt",
-                      completed_at as "completedAt", error_message as "errorMessage"
+                      completed_at as "completedAt", error_message as "errorMessage",
+                      matched_count as "matchedCount", unmatched_count as "unmatchedCount",
+                      total_paid_cents as "totalPaidCents"
                FROM era_imports
                WHERE tenant_id = $1`;
 
@@ -1084,6 +1714,413 @@ claimsRouter.get("/era", requireAuth, async (req: AuthedRequest, res) => {
 
   const result = await pool.query(query, params);
   res.json({ eraImports: result.rows });
+});
+
+// ============================================
+// UNDERPAYMENT DETECTION
+// ============================================
+
+/**
+ * Compare paid amount vs expected (from fee schedule)
+ * Returns claims with significant variance (configurable threshold, default >10%)
+ */
+async function detectUnderpayment(
+  tenantId: string,
+  claimId: string
+): Promise<{
+  isUnderpaid: boolean;
+  expectedCents: number;
+  paidCents: number;
+  variancePercent: number;
+  varianceCents: number;
+  lineItemAnalysis: {
+    cpt: string;
+    expectedCents: number;
+    paidCents: number;
+    variancePercent: number;
+  }[];
+}> {
+  // Get claim with line items
+  const claimResult = await pool.query(
+    `SELECT c.id, c.line_items, c.total_charges, c.payer_id, c.payer_name,
+            COALESCE(SUM(cp.amount_cents), 0) as total_paid_cents
+     FROM claims c
+     LEFT JOIN claim_payments cp ON cp.claim_id = c.id
+     WHERE c.id = $1 AND c.tenant_id = $2
+     GROUP BY c.id`,
+    [claimId, tenantId]
+  );
+
+  if (!claimResult.rowCount) {
+    throw new Error("Claim not found");
+  }
+
+  const claim = claimResult.rows[0];
+  const lineItems = claim.line_items || [];
+  const totalPaidCents = parseInt(claim.total_paid_cents);
+
+  // Get payer contract if exists (for expected reimbursement)
+  let contractReimbursementPercent: number | null = null;
+  if (claim.payer_id || claim.payer_name) {
+    const contractResult = await pool.query(
+      `SELECT reimbursement_percentage, medicare_percentage, fee_schedule_id
+       FROM payer_contracts
+       WHERE tenant_id = $1
+         AND (payer_id = $2 OR payer_name = $3)
+         AND status = 'active'
+       ORDER BY effective_date DESC
+       LIMIT 1`,
+      [tenantId, claim.payer_id, claim.payer_name]
+    );
+
+    if (contractResult.rowCount) {
+      contractReimbursementPercent = contractResult.rows[0].reimbursement_percentage ||
+        contractResult.rows[0].medicare_percentage;
+    }
+  }
+
+  // Get default fee schedule for expected amounts
+  const feeScheduleResult = await pool.query(
+    `SELECT fsi.cpt_code, fsi.fee_cents
+     FROM fee_schedule_items fsi
+     JOIN fee_schedules fs ON fs.id = fsi.fee_schedule_id
+     WHERE fs.tenant_id = $1 AND fs.is_default = true`,
+    [tenantId]
+  );
+
+  const feeScheduleMap: Record<string, number> = {};
+  for (const row of feeScheduleResult.rows) {
+    feeScheduleMap[row.cpt_code] = row.fee_cents;
+  }
+
+  // Calculate expected amounts for each line item
+  let totalExpectedCents = 0;
+  const lineItemAnalysis: {
+    cpt: string;
+    expectedCents: number;
+    paidCents: number;
+    variancePercent: number;
+  }[] = [];
+
+  for (const item of lineItems) {
+    const cptCode = item.cpt;
+    const units = item.units || 1;
+
+    // Get expected from fee schedule
+    let expectedCents = 0;
+    if (feeScheduleMap[cptCode]) {
+      expectedCents = feeScheduleMap[cptCode] * units;
+    } else {
+      // Fall back to the charge amount from the claim
+      expectedCents = Math.round((item.charge || 0) * 100 * units);
+    }
+
+    // Apply contract reimbursement percentage if available
+    if (contractReimbursementPercent && expectedCents > 0) {
+      expectedCents = Math.round(expectedCents * (contractReimbursementPercent / 100));
+    }
+
+    totalExpectedCents += expectedCents;
+
+    // We don't have per-line-item paid amounts in this schema,
+    // so we'll distribute proportionally for analysis
+    const proportion = expectedCents / (totalExpectedCents || 1);
+    const estimatedPaidCents = Math.round(totalPaidCents * proportion);
+    const itemVariancePercent = expectedCents > 0
+      ? ((expectedCents - estimatedPaidCents) / expectedCents) * 100
+      : 0;
+
+    lineItemAnalysis.push({
+      cpt: cptCode,
+      expectedCents,
+      paidCents: estimatedPaidCents,
+      variancePercent: Math.round(itemVariancePercent * 100) / 100,
+    });
+  }
+
+  // If no fee schedule data, use claim's total_charges as expected
+  if (totalExpectedCents === 0) {
+    totalExpectedCents = Math.round(claim.total_charges * 100);
+    if (contractReimbursementPercent) {
+      totalExpectedCents = Math.round(totalExpectedCents * (contractReimbursementPercent / 100));
+    }
+  }
+
+  // Calculate overall variance
+  const varianceCents = totalExpectedCents - totalPaidCents;
+  const variancePercent = totalExpectedCents > 0
+    ? (varianceCents / totalExpectedCents) * 100
+    : 0;
+
+  return {
+    isUnderpaid: variancePercent > 10,
+    expectedCents: totalExpectedCents,
+    paidCents: totalPaidCents,
+    variancePercent: Math.round(variancePercent * 100) / 100,
+    varianceCents,
+    lineItemAnalysis,
+  };
+}
+
+// GET /api/claims/:id/underpayment - Check single claim for underpayment
+claimsRouter.get("/:id/underpayment", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const claimId = String(req.params.id);
+
+  try {
+    const analysis = await detectUnderpayment(tenantId, claimId);
+    res.json(analysis);
+  } catch (error: any) {
+    logger.error("Error checking underpayment", { claimId, error: error.message });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/claims/underpaid - List all underpaid claims
+claimsRouter.get("/underpaid/list", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const thresholdPercent = parseFloat(req.query.threshold as string) || 10;
+  const limit = parseInt(req.query.limit as string) || 100;
+  const minVarianceCents = parseInt(req.query.minVariance as string) || 0;
+
+  try {
+    // Get all paid claims with payment data
+    const claimsResult = await pool.query(
+      `SELECT
+         c.id, c.claim_number as "claimNumber", c.patient_id as "patientId",
+         c.service_date as "serviceDate", c.total_charges as "totalCharges",
+         c.payer_name as "payerName", c.line_items as "lineItems",
+         c.status, c.paid_amount as "paidAmount",
+         p.first_name as "patientFirstName", p.last_name as "patientLastName",
+         COALESCE(SUM(cp.amount_cents), 0) as "totalPaidCents"
+       FROM claims c
+       JOIN patients p ON p.id = c.patient_id
+       LEFT JOIN claim_payments cp ON cp.claim_id = c.id
+       WHERE c.tenant_id = $1
+         AND c.status IN ('paid', 'accepted')
+         AND c.total_charges > 0
+       GROUP BY c.id, p.first_name, p.last_name
+       HAVING COALESCE(SUM(cp.amount_cents), 0) > 0
+       ORDER BY c.service_date DESC
+       LIMIT $2`,
+      [tenantId, limit * 3] // Get more to filter
+    );
+
+    // Get fee schedule for comparison
+    const feeScheduleResult = await pool.query(
+      `SELECT fsi.cpt_code, fsi.fee_cents
+       FROM fee_schedule_items fsi
+       JOIN fee_schedules fs ON fs.id = fsi.fee_schedule_id
+       WHERE fs.tenant_id = $1 AND fs.is_default = true`,
+      [tenantId]
+    );
+
+    const feeScheduleMap: Record<string, number> = {};
+    for (const row of feeScheduleResult.rows) {
+      feeScheduleMap[row.cpt_code] = row.fee_cents;
+    }
+
+    // Get payer contracts for reimbursement rates
+    const contractsResult = await pool.query(
+      `SELECT payer_id, payer_name, reimbursement_percentage, medicare_percentage
+       FROM payer_contracts
+       WHERE tenant_id = $1 AND status = 'active'`,
+      [tenantId]
+    );
+
+    const contractMap: Record<string, number> = {};
+    for (const contract of contractsResult.rows) {
+      const rate = contract.reimbursement_percentage || contract.medicare_percentage;
+      if (rate) {
+        if (contract.payer_id) contractMap[contract.payer_id] = rate;
+        if (contract.payer_name) contractMap[contract.payer_name] = rate;
+      }
+    }
+
+    // Analyze each claim for underpayment
+    const underpaidClaims: any[] = [];
+
+    for (const claim of claimsResult.rows) {
+      const lineItems = claim.lineItems || [];
+      const totalPaidCents = parseInt(claim.totalPaidCents);
+
+      // Calculate expected amount
+      let expectedCents = 0;
+      for (const item of lineItems) {
+        const cptCode = item.cpt;
+        const units = item.units || 1;
+
+        if (feeScheduleMap[cptCode]) {
+          expectedCents += feeScheduleMap[cptCode] * units;
+        } else {
+          expectedCents += Math.round((item.charge || 0) * 100 * units);
+        }
+      }
+
+      // Apply contract rate if available
+      const contractRate = contractMap[claim.payerName] || contractMap[claim.payerId];
+      if (contractRate && expectedCents > 0) {
+        expectedCents = Math.round(expectedCents * (contractRate / 100));
+      }
+
+      // Fall back to total_charges if no line items
+      if (expectedCents === 0) {
+        expectedCents = Math.round(claim.totalCharges * 100);
+        if (contractRate) {
+          expectedCents = Math.round(expectedCents * (contractRate / 100));
+        }
+      }
+
+      // Calculate variance
+      const varianceCents = expectedCents - totalPaidCents;
+      const variancePercent = expectedCents > 0 ? (varianceCents / expectedCents) * 100 : 0;
+
+      // Check if meets threshold
+      if (variancePercent >= thresholdPercent && varianceCents >= minVarianceCents) {
+        underpaidClaims.push({
+          claimId: claim.id,
+          claimNumber: claim.claimNumber,
+          patientId: claim.patientId,
+          patientName: `${claim.patientFirstName} ${claim.patientLastName}`,
+          serviceDate: claim.serviceDate,
+          payerName: claim.payerName,
+          expectedAmount: (expectedCents / 100).toFixed(2),
+          paidAmount: (totalPaidCents / 100).toFixed(2),
+          varianceAmount: (varianceCents / 100).toFixed(2),
+          variancePercent: Math.round(variancePercent * 100) / 100,
+          status: claim.status,
+        });
+      }
+    }
+
+    // Sort by variance amount descending
+    underpaidClaims.sort((a, b) => parseFloat(b.varianceAmount) - parseFloat(a.varianceAmount));
+
+    // Apply limit
+    const limitedResults = underpaidClaims.slice(0, limit);
+
+    // Calculate summary stats
+    const totalUnderpayment = limitedResults.reduce(
+      (sum, c) => sum + parseFloat(c.varianceAmount),
+      0
+    );
+
+    res.json({
+      underpaidClaims: limitedResults,
+      summary: {
+        totalClaims: limitedResults.length,
+        totalUnderpayment: totalUnderpayment.toFixed(2),
+        averageVariancePercent: limitedResults.length > 0
+          ? (limitedResults.reduce((sum, c) => sum + c.variancePercent, 0) / limitedResults.length).toFixed(2)
+          : "0.00",
+        thresholdUsed: thresholdPercent,
+      },
+    });
+  } catch (error: any) {
+    logger.error("Error listing underpaid claims", { error: error.message });
+    res.status(500).json({ error: "Failed to analyze underpaid claims" });
+  }
+});
+
+// POST /api/claims/:id/flag-underpayment - Flag a claim as underpaid for review
+claimsRouter.post("/:id/flag-underpayment", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const claimId = String(req.params.id);
+  const { notes, expectedAmountCents, actualPaidCents, variancePercent } = req.body;
+
+  try {
+    // Verify claim exists
+    const claimResult = await pool.query(
+      `SELECT id, claim_number FROM claims WHERE id = $1 AND tenant_id = $2`,
+      [claimId, tenantId]
+    );
+
+    if (!claimResult.rowCount) {
+      return res.status(404).json({ error: "Claim not found" });
+    }
+
+    // Create underpayment flag record
+    const flagId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO claim_underpayment_flags
+       (id, tenant_id, claim_id, expected_amount_cents, actual_paid_cents,
+        variance_percent, notes, status, flagged_by, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, NOW())`,
+      [
+        flagId,
+        tenantId,
+        claimId,
+        expectedAmountCents || null,
+        actualPaidCents || null,
+        variancePercent || null,
+        notes || null,
+        req.user!.id,
+      ]
+    );
+
+    // Add to status history
+    await pool.query(
+      `INSERT INTO claim_status_history (id, tenant_id, claim_id, status, notes, changed_by, changed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+      [
+        crypto.randomUUID(),
+        tenantId,
+        claimId,
+        "underpayment_flagged",
+        `Underpayment flagged: expected $${((expectedAmountCents || 0) / 100).toFixed(2)}, received $${((actualPaidCents || 0) / 100).toFixed(2)}`,
+        req.user!.id,
+      ]
+    );
+
+    await auditLog(tenantId, req.user!.id, "claim_underpayment_flagged", "claim", claimId);
+
+    res.json({ ok: true, flagId });
+  } catch (error: any) {
+    logger.error("Error flagging underpayment", { claimId, error: error.message });
+    res.status(500).json({ error: "Failed to flag underpayment" });
+  }
+});
+
+// GET /api/claims/underpayment-flags - List all underpayment flags for review
+claimsRouter.get("/underpayment-flags/list", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const { status } = req.query;
+
+  let query = `
+    SELECT
+      uf.id as "flagId",
+      uf.claim_id as "claimId",
+      c.claim_number as "claimNumber",
+      c.patient_id as "patientId",
+      p.first_name as "patientFirstName",
+      p.last_name as "patientLastName",
+      c.payer_name as "payerName",
+      c.service_date as "serviceDate",
+      uf.expected_amount_cents as "expectedAmountCents",
+      uf.actual_paid_cents as "actualPaidCents",
+      uf.variance_percent as "variancePercent",
+      uf.notes,
+      uf.status,
+      uf.resolution_notes as "resolutionNotes",
+      uf.created_at as "createdAt",
+      uf.resolved_at as "resolvedAt"
+    FROM claim_underpayment_flags uf
+    JOIN claims c ON c.id = uf.claim_id
+    JOIN patients p ON p.id = c.patient_id
+    WHERE uf.tenant_id = $1
+  `;
+
+  const params: any[] = [tenantId];
+
+  if (status && typeof status === "string") {
+    query += ` AND uf.status = $2`;
+    params.push(status);
+  }
+
+  query += ` ORDER BY uf.created_at DESC`;
+
+  const result = await pool.query(query, params);
+  res.json({ underpaymentFlags: result.rows });
 });
 
 // GET /api/claims/workflow-analytics - Get workflow analytics for billing dashboard

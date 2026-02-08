@@ -28,6 +28,9 @@ import {
   fetchProviderProductivity,
   fetchPatientDemographics,
   fetchAppointmentTypesAnalytics,
+  fetchDermatologyMetrics,
+  fetchYoYComparison,
+  fetchNoShowRiskAnalysis,
 } from '../api';
 
 interface DashboardKPIs {
@@ -66,8 +69,69 @@ interface AppointmentType {
   count: number;
 }
 
+interface DermatologyMetrics {
+  biopsyStats: {
+    total: number;
+    byType: {
+      shave: number;
+      punch: number;
+      excisional: number;
+      incisional: number;
+    };
+    resultsBreakdown: { result: string; count: number }[];
+  };
+  procedureSplit: {
+    cosmetic: { count: number; revenue: number; percentage: number };
+    medical: { count: number; revenue: number; percentage: number };
+    surgical: { count: number; revenue: number; percentage: number };
+  };
+  topConditions: {
+    icdCode: string;
+    conditionName: string;
+    treatmentCount: number;
+    uniquePatients: number;
+  }[];
+  lesionTracking: {
+    totalTracked: number;
+    byStatus: { new: number; monitoring: number; resolved: number; biopsied: number };
+    byRiskLevel: { high: number; medium: number; low: number };
+    patientsWithLesions: number;
+  };
+}
+
+interface YoYMetric {
+  current: number;
+  lastYear: number;
+  percentChange: number;
+  trend: 'up' | 'down';
+}
+
+interface YoYComparison {
+  metrics: {
+    newPatients: YoYMetric;
+    totalAppointments: YoYMetric;
+    completedAppointments: YoYMetric;
+    noShows: YoYMetric;
+    revenue: YoYMetric;
+    encounters: YoYMetric;
+    procedures: YoYMetric;
+  };
+}
+
+interface NoShowRiskAnalysis {
+  overallNoShowRate: number;
+  totalAppointments: number;
+  totalNoShows: number;
+  riskFactors: {
+    byDayOfWeek: { day: string; noShowRate: number; riskLevel: string }[];
+    byTimeOfDay: { timeSlot: string; noShowRate: number; riskLevel: string }[];
+    byAppointmentType: { appointmentType: string; noShowRate: number; riskLevel: string }[];
+  };
+  recommendations: string[];
+}
+
 type DateRangePreset = 'today' | 'week' | 'month' | '30days' | 'year';
-type AnalyticsTab = 'financials' | 'clinical' | 'compliance' | 'inventory';
+type AnalyticsTab = 'financials' | 'clinical' | 'compliance' | 'inventory' | 'dermatology';
 
 const COLORS = ['#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6'];
 
@@ -91,6 +155,9 @@ export function AnalyticsPage() {
   const [providerStats, setProviderStats] = useState<ProviderStats[]>([]);
   const [demographics, setDemographics] = useState<Demographics | null>(null);
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
+  const [dermMetrics, setDermMetrics] = useState<DermatologyMetrics | null>(null);
+  const [yoyComparison, setYoyComparison] = useState<YoYComparison | null>(null);
+  const [noShowRisk, setNoShowRisk] = useState<NoShowRiskAnalysis | null>(null);
 
   const getDateFilter = useCallback(() => {
     if (useCustomRange && customStartDate && customEndDate) {
@@ -145,6 +212,9 @@ export function AnalyticsPage() {
         providerProductivityRes,
         demographicsRes,
         appointmentTypesRes,
+        dermMetricsRes,
+        yoyComparisonRes,
+        noShowRiskRes,
       ] = await Promise.all([
         fetchDashboardKPIs(session.tenantId, session.accessToken, filter),
         fetchAppointmentsTrend(session.tenantId, session.accessToken, filter),
@@ -154,6 +224,9 @@ export function AnalyticsPage() {
         fetchProviderProductivity(session.tenantId, session.accessToken, filter),
         fetchPatientDemographics(session.tenantId, session.accessToken),
         fetchAppointmentTypesAnalytics(session.tenantId, session.accessToken, filter),
+        fetchDermatologyMetrics(session.tenantId, session.accessToken, filter).catch(() => null),
+        fetchYoYComparison(session.tenantId, session.accessToken, filter).catch(() => null),
+        fetchNoShowRiskAnalysis(session.tenantId, session.accessToken, filter).catch(() => null),
       ]);
 
       setKpis(kpisRes);
@@ -164,6 +237,9 @@ export function AnalyticsPage() {
       setProviderStats(Array.isArray(providerProductivityRes.data) ? providerProductivityRes.data : []);
       setDemographics(demographicsRes);
       setAppointmentTypes(Array.isArray(appointmentTypesRes.data) ? appointmentTypesRes.data : []);
+      setDermMetrics(dermMetricsRes);
+      setYoyComparison(yoyComparisonRes);
+      setNoShowRisk(noShowRiskRes);
 
       if (isRefresh) {
         showSuccess('Dashboard refreshed');
@@ -285,6 +361,13 @@ export function AnalyticsPage() {
           onClick={() => setActiveTab('inventory')}
         >
           Inventory
+        </button>
+        <button
+          type="button"
+          className={`analytics-tab ${activeTab === 'dermatology' ? 'active' : ''}`}
+          onClick={() => setActiveTab('dermatology')}
+        >
+          Dermatology
         </button>
       </div>
 
@@ -552,6 +635,293 @@ export function AnalyticsPage() {
             </div>
             <p className="link-box-description">Monitor inventory levels, track usage patterns, and generate detailed inventory reports.</p>
             <button className="analytics-learn-more">Analytics 2.0: Click to Learn More</button>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'dermatology' && (
+        <div className="tab-content">
+          <div className="analytics-section-header">
+            <div className="section-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ec4899" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 8v4M12 16h.01" />
+              </svg>
+            </div>
+            <div className="section-header-content">
+              <h2>Dermatology Analytics</h2>
+              <p>Specialized metrics for dermatology practices including biopsy stats, procedure breakdowns, and skin condition tracking.</p>
+            </div>
+          </div>
+
+          {/* Dermatology Metrics Grid */}
+          <div className="derm-metrics-grid">
+            {/* Biopsy Statistics */}
+            <Panel title="Biopsy Statistics">
+              {!dermMetrics ? (
+                <div className="empty-chart">
+                  <p className="muted">No biopsy data available</p>
+                </div>
+              ) : (
+                <div className="biopsy-stats">
+                  <div className="biopsy-total">
+                    <span className="stat-value">{dermMetrics.biopsyStats.total}</span>
+                    <span className="stat-label">Total Biopsies</span>
+                  </div>
+                  <div className="biopsy-breakdown">
+                    <div className="biopsy-type">
+                      <span className="type-name">Shave</span>
+                      <span className="type-count">{dermMetrics.biopsyStats.byType.shave}</span>
+                    </div>
+                    <div className="biopsy-type">
+                      <span className="type-name">Punch</span>
+                      <span className="type-count">{dermMetrics.biopsyStats.byType.punch}</span>
+                    </div>
+                    <div className="biopsy-type">
+                      <span className="type-name">Excisional</span>
+                      <span className="type-count">{dermMetrics.biopsyStats.byType.excisional}</span>
+                    </div>
+                    <div className="biopsy-type">
+                      <span className="type-name">Incisional</span>
+                      <span className="type-count">{dermMetrics.biopsyStats.byType.incisional}</span>
+                    </div>
+                  </div>
+                  {dermMetrics.biopsyStats.resultsBreakdown.length > 0 && (
+                    <div className="results-breakdown">
+                      <h4>Results Breakdown</h4>
+                      {dermMetrics.biopsyStats.resultsBreakdown.map((result) => (
+                        <div key={result.result} className="result-item">
+                          <span className="result-name">{result.result}</span>
+                          <span className="result-count">{result.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Panel>
+
+            {/* Cosmetic vs Medical Split */}
+            <Panel title="Procedure Categories">
+              {!dermMetrics ? (
+                <div className="empty-chart">
+                  <p className="muted">No procedure data available</p>
+                </div>
+              ) : (
+                <div className="procedure-split">
+                  <ResponsiveContainer width="100%" height={200}>
+                    <PieChart>
+                      <Pie
+                        data={[
+                          { name: 'Cosmetic', value: dermMetrics.procedureSplit.cosmetic.count, revenue: dermMetrics.procedureSplit.cosmetic.revenue },
+                          { name: 'Medical', value: dermMetrics.procedureSplit.medical.count, revenue: dermMetrics.procedureSplit.medical.revenue },
+                          { name: 'Surgical', value: dermMetrics.procedureSplit.surgical.count, revenue: dermMetrics.procedureSplit.surgical.revenue },
+                        ]}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={70}
+                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      >
+                        <Cell fill="#ec4899" />
+                        <Cell fill="#8b5cf6" />
+                        <Cell fill="#06b6d4" />
+                      </Pie>
+                      <Tooltip formatter={(value: any, name: any, props: any) => [
+                        `${value} procedures (${formatCurrency(props.payload.revenue)})`,
+                        name
+                      ]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="split-details">
+                    <div className="split-item cosmetic">
+                      <div className="split-color" style={{ background: '#ec4899' }}></div>
+                      <div className="split-info">
+                        <span className="split-name">Cosmetic</span>
+                        <span className="split-count">{dermMetrics.procedureSplit.cosmetic.count} ({dermMetrics.procedureSplit.cosmetic.percentage}%)</span>
+                        <span className="split-revenue">{formatCurrency(dermMetrics.procedureSplit.cosmetic.revenue)}</span>
+                      </div>
+                    </div>
+                    <div className="split-item medical">
+                      <div className="split-color" style={{ background: '#8b5cf6' }}></div>
+                      <div className="split-info">
+                        <span className="split-name">Medical</span>
+                        <span className="split-count">{dermMetrics.procedureSplit.medical.count} ({dermMetrics.procedureSplit.medical.percentage}%)</span>
+                        <span className="split-revenue">{formatCurrency(dermMetrics.procedureSplit.medical.revenue)}</span>
+                      </div>
+                    </div>
+                    <div className="split-item surgical">
+                      <div className="split-color" style={{ background: '#06b6d4' }}></div>
+                      <div className="split-info">
+                        <span className="split-name">Surgical</span>
+                        <span className="split-count">{dermMetrics.procedureSplit.surgical.count} ({dermMetrics.procedureSplit.surgical.percentage}%)</span>
+                        <span className="split-revenue">{formatCurrency(dermMetrics.procedureSplit.surgical.revenue)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Panel>
+
+            {/* Lesion Tracking */}
+            <Panel title="Lesion Tracking">
+              {!dermMetrics ? (
+                <div className="empty-chart">
+                  <p className="muted">No lesion tracking data available</p>
+                </div>
+              ) : (
+                <div className="lesion-tracking">
+                  <div className="lesion-summary">
+                    <div className="lesion-stat">
+                      <span className="stat-value">{dermMetrics.lesionTracking.totalTracked}</span>
+                      <span className="stat-label">Total Tracked</span>
+                    </div>
+                    <div className="lesion-stat">
+                      <span className="stat-value">{dermMetrics.lesionTracking.patientsWithLesions}</span>
+                      <span className="stat-label">Patients</span>
+                    </div>
+                  </div>
+                  <div className="lesion-status">
+                    <h4>By Status</h4>
+                    <div className="status-bar">
+                      <div className="status-item new" style={{ flex: dermMetrics.lesionTracking.byStatus.new }}>
+                        <span>{dermMetrics.lesionTracking.byStatus.new} New</span>
+                      </div>
+                      <div className="status-item monitoring" style={{ flex: dermMetrics.lesionTracking.byStatus.monitoring }}>
+                        <span>{dermMetrics.lesionTracking.byStatus.monitoring} Monitoring</span>
+                      </div>
+                      <div className="status-item resolved" style={{ flex: dermMetrics.lesionTracking.byStatus.resolved }}>
+                        <span>{dermMetrics.lesionTracking.byStatus.resolved} Resolved</span>
+                      </div>
+                      <div className="status-item biopsied" style={{ flex: dermMetrics.lesionTracking.byStatus.biopsied }}>
+                        <span>{dermMetrics.lesionTracking.byStatus.biopsied} Biopsied</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="lesion-risk">
+                    <h4>By Risk Level</h4>
+                    <div className="risk-items">
+                      <div className="risk-item high">
+                        <span className="risk-count">{dermMetrics.lesionTracking.byRiskLevel.high}</span>
+                        <span className="risk-label">High Risk</span>
+                      </div>
+                      <div className="risk-item medium">
+                        <span className="risk-count">{dermMetrics.lesionTracking.byRiskLevel.medium}</span>
+                        <span className="risk-label">Medium Risk</span>
+                      </div>
+                      <div className="risk-item low">
+                        <span className="risk-count">{dermMetrics.lesionTracking.byRiskLevel.low}</span>
+                        <span className="risk-label">Low Risk</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Panel>
+
+            {/* Top Skin Conditions */}
+            <Panel title="Top Skin Conditions Treated">
+              {!dermMetrics || dermMetrics.topConditions.length === 0 ? (
+                <div className="empty-chart">
+                  <p className="muted">No condition data available</p>
+                </div>
+              ) : (
+                <div className="conditions-list">
+                  {dermMetrics.topConditions.slice(0, 10).map((condition, index) => (
+                    <div key={condition.icdCode} className="condition-item">
+                      <span className="condition-rank">{index + 1}</span>
+                      <div className="condition-info">
+                        <span className="condition-name">{condition.conditionName}</span>
+                        <span className="condition-code">{condition.icdCode}</span>
+                      </div>
+                      <div className="condition-stats">
+                        <span className="condition-count">{condition.treatmentCount} treatments</span>
+                        <span className="condition-patients">{condition.uniquePatients} patients</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
+
+            {/* Year-over-Year Comparison */}
+            <Panel title="Year-over-Year Comparison">
+              {!yoyComparison ? (
+                <div className="empty-chart">
+                  <p className="muted">No comparison data available</p>
+                </div>
+              ) : (
+                <div className="yoy-comparison">
+                  {Object.entries(yoyComparison.metrics).map(([key, metric]) => (
+                    <div key={key} className="yoy-metric">
+                      <span className="yoy-name">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
+                      <div className="yoy-values">
+                        <span className="yoy-current">{key === 'revenue' ? formatCurrency(metric.current) : metric.current.toLocaleString()}</span>
+                        <span className={`yoy-change ${metric.trend === 'up' ? 'positive' : 'negative'}`}>
+                          {metric.trend === 'up' ? '+' : ''}{metric.percentChange}%
+                        </span>
+                      </div>
+                      <span className="yoy-lastyear">Last year: {key === 'revenue' ? formatCurrency(metric.lastYear) : metric.lastYear.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
+
+            {/* No-Show Risk Analysis */}
+            <Panel title="No-Show Risk Analysis">
+              {!noShowRisk ? (
+                <div className="empty-chart">
+                  <p className="muted">No no-show data available</p>
+                </div>
+              ) : (
+                <div className="noshow-analysis">
+                  <div className="noshow-summary">
+                    <div className="noshow-stat">
+                      <span className="stat-value">{noShowRisk.overallNoShowRate}%</span>
+                      <span className="stat-label">Overall No-Show Rate</span>
+                    </div>
+                    <div className="noshow-stat">
+                      <span className="stat-value">{noShowRisk.totalNoShows}</span>
+                      <span className="stat-label">Total No-Shows</span>
+                    </div>
+                  </div>
+                  <div className="noshow-factors">
+                    <h4>High Risk Factors</h4>
+                    <div className="risk-factor-list">
+                      {noShowRisk.riskFactors.byDayOfWeek
+                        .filter((d) => d.riskLevel === 'high')
+                        .map((day) => (
+                          <div key={day.day} className="risk-factor high">
+                            <span className="factor-name">{day.day}</span>
+                            <span className="factor-rate">{day.noShowRate}%</span>
+                          </div>
+                        ))}
+                      {noShowRisk.riskFactors.byAppointmentType
+                        .filter((t) => t.riskLevel === 'high')
+                        .slice(0, 3)
+                        .map((type) => (
+                          <div key={type.appointmentType} className="risk-factor high">
+                            <span className="factor-name">{type.appointmentType}</span>
+                            <span className="factor-rate">{type.noShowRate}%</span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                  {noShowRisk.recommendations.length > 0 && (
+                    <div className="noshow-recommendations">
+                      <h4>Recommendations</h4>
+                      <ul>
+                        {noShowRisk.recommendations.slice(0, 3).map((rec, index) => (
+                          <li key={index}>{rec}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Panel>
           </div>
         </div>
       )}
@@ -1162,6 +1532,427 @@ export function AnalyticsPage() {
 
         .muted {
           color: #6b7280;
+        }
+
+        /* Dermatology Tab Styles */
+        .derm-metrics-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+          gap: 1.5rem;
+          margin-top: 2rem;
+        }
+
+        .biopsy-stats {
+          padding: 1rem 0;
+        }
+
+        .biopsy-total {
+          text-align: center;
+          margin-bottom: 1.5rem;
+        }
+
+        .biopsy-total .stat-value {
+          display: block;
+          font-size: 3rem;
+          font-weight: 700;
+          color: #ec4899;
+        }
+
+        .biopsy-total .stat-label {
+          color: #6b7280;
+          font-size: 0.9rem;
+        }
+
+        .biopsy-breakdown {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 1rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .biopsy-type {
+          background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%);
+          padding: 1rem;
+          border-radius: 8px;
+          text-align: center;
+        }
+
+        .biopsy-type .type-name {
+          display: block;
+          font-size: 0.85rem;
+          color: #6b7280;
+          margin-bottom: 0.25rem;
+        }
+
+        .biopsy-type .type-count {
+          display: block;
+          font-size: 1.5rem;
+          font-weight: 600;
+          color: #be185d;
+        }
+
+        .results-breakdown {
+          border-top: 1px solid #f3e8ff;
+          padding-top: 1rem;
+        }
+
+        .results-breakdown h4 {
+          margin: 0 0 0.75rem 0;
+          font-size: 0.9rem;
+          color: #6b7280;
+        }
+
+        .result-item {
+          display: flex;
+          justify-content: space-between;
+          padding: 0.5rem 0;
+          border-bottom: 1px solid #f9fafb;
+        }
+
+        .result-name {
+          text-transform: capitalize;
+          color: #374151;
+        }
+
+        .result-count {
+          font-weight: 600;
+          color: #be185d;
+        }
+
+        .procedure-split {
+          padding: 1rem 0;
+        }
+
+        .split-details {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+          margin-top: 1rem;
+        }
+
+        .split-item {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          padding: 0.75rem;
+          background: #f9fafb;
+          border-radius: 8px;
+        }
+
+        .split-color {
+          width: 12px;
+          height: 12px;
+          border-radius: 3px;
+        }
+
+        .split-info {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+          align-items: center;
+          flex: 1;
+        }
+
+        .split-name {
+          font-weight: 600;
+          color: #374151;
+          min-width: 80px;
+        }
+
+        .split-count {
+          color: #6b7280;
+          font-size: 0.9rem;
+        }
+
+        .split-revenue {
+          margin-left: auto;
+          font-weight: 600;
+          color: #059669;
+        }
+
+        .lesion-tracking {
+          padding: 1rem 0;
+        }
+
+        .lesion-summary {
+          display: flex;
+          justify-content: space-around;
+          margin-bottom: 1.5rem;
+        }
+
+        .lesion-stat {
+          text-align: center;
+        }
+
+        .lesion-stat .stat-value {
+          display: block;
+          font-size: 2rem;
+          font-weight: 700;
+          color: #8b5cf6;
+        }
+
+        .lesion-stat .stat-label {
+          color: #6b7280;
+          font-size: 0.85rem;
+        }
+
+        .lesion-status h4,
+        .lesion-risk h4 {
+          margin: 0 0 0.75rem 0;
+          font-size: 0.9rem;
+          color: #6b7280;
+        }
+
+        .status-bar {
+          display: flex;
+          border-radius: 8px;
+          overflow: hidden;
+          margin-bottom: 1.5rem;
+        }
+
+        .status-item {
+          padding: 0.5rem;
+          text-align: center;
+          min-width: 60px;
+        }
+
+        .status-item span {
+          font-size: 0.75rem;
+          font-weight: 500;
+          color: white;
+        }
+
+        .status-item.new { background: #3b82f6; }
+        .status-item.monitoring { background: #f59e0b; }
+        .status-item.resolved { background: #10b981; }
+        .status-item.biopsied { background: #8b5cf6; }
+
+        .risk-items {
+          display: flex;
+          gap: 1rem;
+        }
+
+        .risk-item {
+          flex: 1;
+          text-align: center;
+          padding: 1rem;
+          border-radius: 8px;
+        }
+
+        .risk-item.high { background: #fee2e2; }
+        .risk-item.medium { background: #fef3c7; }
+        .risk-item.low { background: #d1fae5; }
+
+        .risk-count {
+          display: block;
+          font-size: 1.5rem;
+          font-weight: 700;
+        }
+
+        .risk-item.high .risk-count { color: #dc2626; }
+        .risk-item.medium .risk-count { color: #d97706; }
+        .risk-item.low .risk-count { color: #059669; }
+
+        .risk-label {
+          font-size: 0.8rem;
+          color: #6b7280;
+        }
+
+        .conditions-list {
+          max-height: 400px;
+          overflow-y: auto;
+        }
+
+        .condition-item {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          padding: 0.75rem;
+          border-bottom: 1px solid #f3e8ff;
+        }
+
+        .condition-item:hover {
+          background: #faf5ff;
+        }
+
+        .condition-rank {
+          width: 24px;
+          height: 24px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #8b5cf6;
+          color: white;
+          border-radius: 50%;
+          font-size: 0.75rem;
+          font-weight: 600;
+        }
+
+        .condition-info {
+          flex: 1;
+        }
+
+        .condition-name {
+          display: block;
+          font-weight: 500;
+          color: #374151;
+          font-size: 0.9rem;
+        }
+
+        .condition-code {
+          font-size: 0.75rem;
+          color: #9ca3af;
+        }
+
+        .condition-stats {
+          text-align: right;
+        }
+
+        .condition-count {
+          display: block;
+          font-weight: 600;
+          color: #8b5cf6;
+        }
+
+        .condition-patients {
+          font-size: 0.75rem;
+          color: #6b7280;
+        }
+
+        .yoy-comparison {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+
+        .yoy-metric {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0.75rem;
+          background: #f9fafb;
+          border-radius: 8px;
+        }
+
+        .yoy-name {
+          font-weight: 500;
+          color: #374151;
+          text-transform: capitalize;
+          flex: 1;
+        }
+
+        .yoy-values {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+        }
+
+        .yoy-current {
+          font-weight: 700;
+          color: #1f2937;
+        }
+
+        .yoy-change {
+          padding: 0.25rem 0.5rem;
+          border-radius: 4px;
+          font-size: 0.85rem;
+          font-weight: 600;
+        }
+
+        .yoy-change.positive {
+          background: #d1fae5;
+          color: #059669;
+        }
+
+        .yoy-change.negative {
+          background: #fee2e2;
+          color: #dc2626;
+        }
+
+        .yoy-lastyear {
+          font-size: 0.75rem;
+          color: #9ca3af;
+          min-width: 120px;
+          text-align: right;
+        }
+
+        .noshow-analysis {
+          padding: 1rem 0;
+        }
+
+        .noshow-summary {
+          display: flex;
+          justify-content: space-around;
+          margin-bottom: 1.5rem;
+        }
+
+        .noshow-stat {
+          text-align: center;
+        }
+
+        .noshow-stat .stat-value {
+          display: block;
+          font-size: 2rem;
+          font-weight: 700;
+          color: #ef4444;
+        }
+
+        .noshow-stat .stat-label {
+          color: #6b7280;
+          font-size: 0.85rem;
+        }
+
+        .noshow-factors h4,
+        .noshow-recommendations h4 {
+          margin: 0 0 0.75rem 0;
+          font-size: 0.9rem;
+          color: #6b7280;
+        }
+
+        .risk-factor-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .risk-factor {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.5rem 0.75rem;
+          border-radius: 6px;
+        }
+
+        .risk-factor.high {
+          background: #fee2e2;
+        }
+
+        .factor-name {
+          font-weight: 500;
+          color: #374151;
+        }
+
+        .factor-rate {
+          font-weight: 700;
+          color: #dc2626;
+        }
+
+        .noshow-recommendations ul {
+          margin: 0;
+          padding-left: 1.25rem;
+        }
+
+        .noshow-recommendations li {
+          margin-bottom: 0.5rem;
+          color: #4b5563;
+          font-size: 0.9rem;
+        }
+
+        @media (max-width: 768px) {
+          .derm-metrics-grid {
+            grid-template-columns: 1fr;
+          }
         }
       `}</style>
     </div>

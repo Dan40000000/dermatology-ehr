@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 import { patientPortalFetch } from '../../contexts/PatientPortalAuthContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -113,8 +114,17 @@ export function PortalAppointmentsPage() {
     <PatientPortalLayout>
       <div className="portal-appointments-page">
         <header className="portal-page-header">
-          <h1>My Appointments</h1>
-          <p>View and manage your appointments</p>
+          <div className="header-content">
+            <h1>My Appointments</h1>
+            <p>View and manage your appointments</p>
+          </div>
+          <Link to="/portal/book-appointment" className="book-appointment-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"/>
+              <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            <span>Book Appointment</span>
+          </Link>
         </header>
 
         {/* Tabs */}
@@ -139,13 +149,25 @@ export function PortalAppointmentsPage() {
             <div className="portal-loading">Loading appointments...</div>
           ) : appointments.length === 0 ? (
             <div className="portal-empty-state">
-              <div className="empty-icon"></div>
+              <div className="empty-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                  <line x1="16" y1="2" x2="16" y2="6"/>
+                  <line x1="8" y1="2" x2="8" y2="6"/>
+                  <line x1="3" y1="10" x2="21" y2="10"/>
+                </svg>
+              </div>
               <h3>No {tab} appointments</h3>
               <p>
                 {tab === 'upcoming'
                   ? 'You don\'t have any upcoming appointments scheduled.'
                   : 'Your past appointments will appear here.'}
               </p>
+              {tab === 'upcoming' && (
+                <Link to="/portal/book-appointment" className="empty-book-btn">
+                  Book an Appointment
+                </Link>
+              )}
             </div>
           ) : (
             <div className="appointments-list">
@@ -236,6 +258,52 @@ export function PortalAppointmentsPage() {
           max-width: 900px;
         }
 
+        .portal-page-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          flex-wrap: wrap;
+          gap: 1rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .portal-page-header h1 {
+          font-size: 1.75rem;
+          font-weight: 700;
+          color: #1e293b;
+          margin: 0 0 0.25rem 0;
+        }
+
+        .portal-page-header p {
+          color: #64748b;
+          margin: 0;
+        }
+
+        .book-appointment-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.75rem 1.25rem;
+          background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+          color: white;
+          border-radius: 10px;
+          text-decoration: none;
+          font-weight: 600;
+          font-size: 0.9rem;
+          transition: all 0.2s;
+          box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+        }
+
+        .book-appointment-btn:hover {
+          box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+          transform: translateY(-1px);
+        }
+
+        .book-appointment-btn svg {
+          width: 18px;
+          height: 18px;
+        }
+
         .portal-tabs {
           display: flex;
           gap: 1rem;
@@ -276,8 +344,15 @@ export function PortalAppointmentsPage() {
         }
 
         .empty-icon {
-          font-size: 4rem;
-          margin-bottom: 1rem;
+          width: 64px;
+          height: 64px;
+          margin: 0 auto 1rem;
+          color: #cbd5e1;
+        }
+
+        .empty-icon svg {
+          width: 100%;
+          height: 100%;
         }
 
         .portal-empty-state h3 {
@@ -287,7 +362,27 @@ export function PortalAppointmentsPage() {
 
         .portal-empty-state p {
           color: #6b7280;
-          margin: 0;
+          margin: 0 0 1.5rem 0;
+        }
+
+        .empty-book-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.75rem 1.5rem;
+          background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+          color: white;
+          border-radius: 10px;
+          text-decoration: none;
+          font-weight: 600;
+          font-size: 0.9rem;
+          transition: all 0.2s;
+          box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+        }
+
+        .empty-book-btn:hover {
+          box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+          transform: translateY(-1px);
         }
 
         .appointments-list {

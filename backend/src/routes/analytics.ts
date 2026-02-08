@@ -1686,6 +1686,176 @@ analyticsRouter.get("/benchmarks", requireAuth, async (req: AuthedRequest, res: 
 });
 
 // ============================================================================
+// DERMATOLOGY-SPECIFIC METRICS ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/analytics/dermatology-metrics
+ * Get dermatology-specific metrics including biopsies, cosmetic/medical split, skin conditions
+ */
+analyticsRouter.get("/dermatology-metrics", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const dateRange = parseDateRange(req.query);
+
+    // Check cache
+    const cacheKey = `derm_metrics_${dateRange.startDate}_${dateRange.endDate}`;
+    const cached = await analyticsService.getCached(tenantId, cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const metrics = await analyticsService.getDermatologyMetrics(tenantId, dateRange);
+
+    // Cache for 5 minutes
+    await analyticsService.setCache(tenantId, cacheKey, metrics, 300);
+
+    return res.json(metrics);
+  } catch (error) {
+    logger.error('Error getting dermatology metrics', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to get dermatology metrics' });
+  }
+});
+
+// ============================================================================
+// YEAR-OVER-YEAR COMPARISON ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/analytics/yoy-comparison
+ * Compare current period to same period last year
+ */
+analyticsRouter.get("/yoy-comparison", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const dateRange = parseDateRange(req.query);
+
+    // Check cache
+    const cacheKey = `yoy_comparison_${dateRange.startDate}_${dateRange.endDate}`;
+    const cached = await analyticsService.getCached(tenantId, cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const comparison = await analyticsService.getYearOverYearComparison(tenantId, dateRange);
+
+    // Cache for 10 minutes (historical data changes less frequently)
+    await analyticsService.setCache(tenantId, cacheKey, comparison, 600);
+
+    return res.json(comparison);
+  } catch (error) {
+    logger.error('Error getting YoY comparison', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to get year-over-year comparison' });
+  }
+});
+
+// ============================================================================
+// PREDICTIVE NO-SHOW ANALYSIS ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/analytics/no-show-risk
+ * Get predictive no-show analysis and risk factors
+ */
+analyticsRouter.get("/no-show-risk", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const dateRange = parseDateRange(req.query);
+
+    // Check cache
+    const cacheKey = `no_show_risk_${dateRange.startDate}_${dateRange.endDate}`;
+    const cached = await analyticsService.getCached(tenantId, cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const analysis = await analyticsService.getNoShowRiskAnalysis(tenantId, dateRange);
+
+    // Cache for 15 minutes
+    await analyticsService.setCache(tenantId, cacheKey, analysis, 900);
+
+    return res.json(analysis);
+  } catch (error) {
+    logger.error('Error getting no-show risk analysis', { error, tenantId: req.user?.tenantId });
+    return res.status(500).json({ error: 'Failed to get no-show risk analysis' });
+  }
+});
+
+/**
+ * GET /api/analytics/no-show-risk/patient/:patientId
+ * Get no-show risk score for a specific patient
+ */
+analyticsRouter.get("/no-show-risk/patient/:patientId", requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const patientId = req.params.patientId;
+
+    // Get patient's appointment history
+    const historyResult = await pool.query(
+      `SELECT
+        COUNT(*) as total_appointments,
+        COUNT(*) FILTER (WHERE status = 'completed') as completed,
+        COUNT(*) FILTER (WHERE status = 'no_show') as no_shows,
+        COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
+        MAX(scheduled_start) as last_appointment,
+        MIN(scheduled_start) as first_appointment
+      FROM appointments
+      WHERE tenant_id = $1 AND patient_id = $2`,
+      [tenantId, patientId]
+    );
+
+    const history = historyResult.rows[0];
+    const total = parseInt(history.total_appointments) || 0;
+    const noShows = parseInt(history.no_shows) || 0;
+    const completed = parseInt(history.completed) || 0;
+
+    // Calculate risk score (0-100)
+    let riskScore = 0;
+
+    if (total > 0) {
+      const noShowRate = (noShows / total) * 100;
+      riskScore = Math.min(100, Math.round(noShowRate * 1.5)); // Weight no-shows heavily
+
+      // Adjust for completed appointments (reliability)
+      const completionRate = completed / total;
+      if (completionRate > 0.9) riskScore = Math.max(0, riskScore - 10);
+      if (completionRate > 0.95) riskScore = Math.max(0, riskScore - 10);
+    } else {
+      // New patient - default moderate risk
+      riskScore = 25;
+    }
+
+    let riskLevel: 'low' | 'medium' | 'high';
+    if (riskScore >= 50) riskLevel = 'high';
+    else if (riskScore >= 25) riskLevel = 'medium';
+    else riskLevel = 'low';
+
+    return res.json({
+      patientId,
+      riskScore,
+      riskLevel,
+      history: {
+        totalAppointments: total,
+        completed,
+        noShows,
+        cancelled: parseInt(history.cancelled) || 0,
+        noShowRate: total > 0 ? Math.round((noShows / total) * 100 * 100) / 100 : 0,
+        lastAppointment: history.last_appointment,
+        firstAppointment: history.first_appointment,
+      },
+      recommendations: riskScore >= 50
+        ? ['Send additional reminders', 'Consider requiring confirmation call', 'Flag for overbooking consideration']
+        : riskScore >= 25
+        ? ['Send standard reminders', 'Consider text confirmation']
+        : ['Standard scheduling practices apply'],
+    });
+  } catch (error) {
+    logger.error('Error getting patient no-show risk', { error, tenantId: req.user?.tenantId, patientId: req.params.patientId });
+    return res.status(500).json({ error: 'Failed to get patient no-show risk' });
+  }
+});
+
+// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 

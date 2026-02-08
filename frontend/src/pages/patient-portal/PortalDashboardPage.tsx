@@ -257,9 +257,33 @@ export function PortalDashboardPage() {
                   <div className="no-appointment">
                     <div className="no-appointment-icon">{getIcon('calendar')}</div>
                     <p>No upcoming appointments</p>
-                    <Link to="/portal/appointments" className="schedule-btn">Schedule Now</Link>
+                    <Link to="/portal/book-appointment" className="schedule-btn">Schedule Now</Link>
                   </div>
                 )}
+              </div>
+
+              {/* Book Appointment Card */}
+              <div className="widget-card book-appointment-card">
+                <div className="book-appointment-content">
+                  <div className="book-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                      <line x1="16" y1="2" x2="16" y2="6"/>
+                      <line x1="8" y1="2" x2="8" y2="6"/>
+                      <line x1="3" y1="10" x2="21" y2="10"/>
+                      <line x1="12" y1="14" x2="12" y2="18"/>
+                      <line x1="10" y1="16" x2="14" y2="16"/>
+                    </svg>
+                  </div>
+                  <div className="book-text">
+                    <h3>Book an Appointment</h3>
+                    <p>Schedule your next visit online</p>
+                  </div>
+                  <Link to="/portal/book-appointment" className="book-btn">
+                    Book Now
+                    {getIcon('arrowRight')}
+                  </Link>
+                </div>
               </div>
 
               {/* Quick Actions Card */}
@@ -268,6 +292,10 @@ export function PortalDashboardPage() {
                   <h2>Quick Actions</h2>
                 </div>
                 <div className="actions-grid">
+                  <Link to="/portal/book-appointment" className="action-item">
+                    <div className="action-icon calendar-icon">{getIcon('calendar')}</div>
+                    <span>Book Appointment</span>
+                  </Link>
                   <Link to="/portal/visits" className="action-item">
                     <div className="action-icon visits-icon">{getIcon('clipboard')}</div>
                     <span>Visit Summaries</span>
@@ -279,10 +307,6 @@ export function PortalDashboardPage() {
                   <Link to="/portal/health-record" className="action-item">
                     <div className="action-icon health-icon">{getIcon('heart')}</div>
                     <span>Health Record</span>
-                  </Link>
-                  <Link to="/portal/profile" className="action-item">
-                    <div className="action-icon profile-icon">{getIcon('user')}</div>
-                    <span>My Profile</span>
                   </Link>
                 </div>
               </div>
@@ -726,6 +750,11 @@ export function PortalDashboardPage() {
           height: 20px;
         }
 
+        .action-icon.calendar-icon {
+          background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+          color: #059669;
+        }
+
         .action-icon.visits-icon {
           background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
           color: #d97706;
@@ -820,6 +849,77 @@ export function PortalDashboardPage() {
 
         .contact-btn.secondary:hover {
           background: rgba(255, 255, 255, 0.3);
+        }
+
+        /* Book Appointment Card */
+        .book-appointment-card {
+          background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+          border-color: #a7f3d0;
+        }
+
+        .book-appointment-content {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+        }
+
+        .book-icon {
+          width: 48px;
+          height: 48px;
+          background: white;
+          border-radius: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #059669;
+          box-shadow: 0 2px 8px rgba(5, 150, 105, 0.15);
+        }
+
+        .book-icon svg {
+          width: 24px;
+          height: 24px;
+        }
+
+        .book-text {
+          flex: 1;
+        }
+
+        .book-text h3 {
+          font-size: 1rem;
+          font-weight: 600;
+          color: #065f46;
+          margin: 0 0 0.25rem 0;
+        }
+
+        .book-text p {
+          font-size: 0.85rem;
+          color: #047857;
+          margin: 0;
+        }
+
+        .book-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.625rem 1.25rem;
+          background: #059669;
+          color: white;
+          border-radius: 10px;
+          text-decoration: none;
+          font-weight: 600;
+          font-size: 0.875rem;
+          transition: all 0.2s;
+        }
+
+        .book-btn:hover {
+          background: #047857;
+          box-shadow: 0 4px 12px rgba(5, 150, 105, 0.3);
+          transform: translateY(-1px);
+        }
+
+        .book-btn svg {
+          width: 16px;
+          height: 16px;
         }
 
         /* Tip Card */

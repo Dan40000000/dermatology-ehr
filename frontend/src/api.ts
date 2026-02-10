@@ -6786,6 +6786,519 @@ export async function fetchPatientMedicationHistory(
 }
 
 // ============================================================================
+// MIPS/MACRA REPORTING API
+// ============================================================================
+
+export interface MIPSMeasure {
+  id: string;
+  measureId: string;
+  measureName: string;
+  description: string;
+  category: 'quality' | 'pi' | 'ia' | 'cost';
+  specialty: string;
+  numeratorCriteria: Record<string, unknown>;
+  denominatorCriteria: Record<string, unknown>;
+  exclusionCriteria: Record<string, unknown>;
+  benchmarkData: { national_average?: number; top_decile?: number };
+  points: number;
+  highPriority: boolean;
+  isActive: boolean;
+  cmsMeasureId?: string;
+}
+
+export interface PatientMeasureStatus {
+  id: string;
+  patientId: string;
+  measureId: string;
+  encounterId?: string;
+  status: 'eligible' | 'met' | 'not_met' | 'excluded' | 'pending';
+  statusDate: string;
+  documentation?: string;
+  documentationData: Record<string, unknown>;
+  exclusionReason?: string;
+  performanceMet: boolean;
+}
+
+export interface MIPSProviderDashboard {
+  providerId: string;
+  year: number;
+  scores: {
+    quality: number;
+    pi: number;
+    ia: number;
+    cost: number;
+    final: number;
+    paymentAdjustment: number;
+    trajectory: 'improving' | 'declining' | 'stable';
+  };
+  measures: Array<{
+    measureId: string;
+    measureName: string;
+    highPriority: boolean;
+    numerator: number;
+    denominator: number;
+    exclusions: number;
+    performanceRate: number;
+    benchmark: number;
+    gap: number;
+    status: 'above' | 'meeting' | 'below';
+  }>;
+  careGapCount: number;
+  patientCount: number;
+}
+
+export interface MIPSReport {
+  reportId: string;
+  providerId?: string;
+  reportingYear: number;
+  generatedAt: string;
+  qualityScore: number;
+  piScore: number;
+  iaScore: number;
+  costScore: number;
+  finalScore: number;
+  paymentAdjustment: number;
+  qualityMeasures: Array<{
+    measureId: string;
+    measureCode: string;
+    measureName: string;
+    numeratorCount: number;
+    denominatorCount: number;
+    exclusionCount: number;
+    performanceRate: number;
+    benchmark: number;
+    gap: number;
+    metThreshold: boolean;
+    decileScore: number;
+    pointsEarned: number;
+  }>;
+  piMeasures: Array<{
+    measureName: string;
+    numerator: number;
+    denominator: number;
+    performanceRate: number;
+    isRequired: boolean;
+    threshold: number;
+    metThreshold: boolean;
+  }>;
+  iaActivities: Array<{
+    activityId: string;
+    activityName: string;
+    weight: 'medium' | 'high';
+    points: number;
+    isAttested: boolean;
+    attestationDate?: string;
+  }>;
+  recommendations: string[];
+  careGapCount: number;
+  patientCount: number;
+}
+
+export interface IAActivity {
+  activityId: string;
+  activityName: string;
+  weight: 'medium' | 'high';
+  points: number;
+  isAttested: boolean;
+  attestationDate?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface EncounterMeasureChecklist {
+  encounterId: string;
+  patientId: string;
+  measures: Array<{
+    measureId: string;
+    measureCode: string;
+    measureName: string;
+    isApplicable: boolean;
+    isCompleted: boolean;
+    status: 'pending' | 'met' | 'not_met' | 'excluded' | 'not_applicable';
+    requiredActions: string[];
+    completedActions: string[];
+    notes?: string;
+  }>;
+}
+
+export interface MeasureAlert {
+  id: string;
+  patientId: string;
+  patientName: string;
+  measureId: string;
+  measureCode: string;
+  measureName: string;
+  alertType: 'gap' | 'pending' | 'expiring' | 'reminder' | 'opportunity';
+  alertPriority: 'low' | 'medium' | 'high' | 'critical';
+  alertTitle: string;
+  alertMessage: string;
+  recommendedAction?: string;
+  createdAt?: string;
+}
+
+/**
+ * Fetch MIPS quality measures
+ */
+export async function fetchMIPSMeasures(
+  tenantId: string,
+  accessToken: string,
+  options?: { category?: string; dermatology?: boolean; active?: boolean }
+): Promise<{ measures: MIPSMeasure[]; count: number }> {
+  const params = new URLSearchParams();
+  if (options?.category) params.append('category', options.category);
+  if (options?.dermatology) params.append('dermatology', 'true');
+  if (options?.active !== undefined) params.append('active', String(options.active));
+
+  const url = `${API_BASE}/api/mips/measures${params.toString() ? '?' + params.toString() : ''}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch MIPS measures');
+  return res.json();
+}
+
+/**
+ * Fetch patient measure status
+ */
+export async function fetchPatientMeasureStatus(
+  tenantId: string,
+  accessToken: string,
+  patientId: string,
+  year?: number
+): Promise<{ statuses: PatientMeasureStatus[]; alerts: MeasureAlert[]; year: number }> {
+  const params = year ? `?year=${year}` : '';
+  const res = await fetch(`${API_BASE}/api/mips/patient/${patientId}/status${params}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch patient measure status');
+  return res.json();
+}
+
+/**
+ * Record patient measure status
+ */
+export async function recordPatientMeasure(
+  tenantId: string,
+  accessToken: string,
+  patientId: string,
+  data: {
+    measureId: string;
+    encounterId?: string;
+    status: 'eligible' | 'met' | 'not_met' | 'excluded' | 'pending';
+    documentation?: string;
+    exclusionReason?: string;
+    documentationData?: Record<string, unknown>;
+  }
+): Promise<{ success: boolean; status: PatientMeasureStatus }> {
+  const res = await fetch(`${API_BASE}/api/mips/patient/${patientId}/measure`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to record patient measure');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch provider MIPS dashboard
+ */
+export async function fetchMIPSProviderDashboard(
+  tenantId: string,
+  accessToken: string,
+  providerId: string,
+  year?: number
+): Promise<MIPSProviderDashboard> {
+  const params = year ? `?year=${year}` : '';
+  const res = await fetch(`${API_BASE}/api/mips/provider/${providerId}/dashboard${params}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch provider dashboard');
+  return res.json();
+}
+
+/**
+ * Generate MIPS report for provider
+ */
+export async function generateMIPSProviderReport(
+  tenantId: string,
+  accessToken: string,
+  providerId: string,
+  year?: number
+): Promise<MIPSReport> {
+  const params = year ? `?year=${year}` : '';
+  const res = await fetch(`${API_BASE}/api/mips/provider/${providerId}/report${params}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to generate MIPS report');
+  return res.json();
+}
+
+/**
+ * Fetch improvement activities
+ */
+export async function fetchImprovementActivities(
+  tenantId: string,
+  accessToken: string,
+  year?: number
+): Promise<{ attested: IAActivity[]; available: IAActivity[]; totalPoints: number; requiredPoints: number }> {
+  const params = year ? `?year=${year}` : '';
+  const res = await fetch(`${API_BASE}/api/mips/ia${params}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch improvement activities');
+  return res.json();
+}
+
+/**
+ * Attest to improvement activity
+ */
+export async function attestImprovementActivity(
+  tenantId: string,
+  accessToken: string,
+  data: {
+    activityId: string;
+    startDate: string;
+    endDate?: string;
+    documentation?: Record<string, unknown>;
+  }
+): Promise<{ success: boolean; activity: IAActivity }> {
+  const res = await fetch(`${API_BASE}/api/mips/ia/attest`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to attest improvement activity');
+  }
+  return res.json();
+}
+
+/**
+ * Evaluate encounter measures
+ */
+export async function evaluateEncounterMeasures(
+  tenantId: string,
+  accessToken: string,
+  encounterId: string,
+  patientId: string,
+  providerId?: string
+): Promise<{
+  success: boolean;
+  evaluated: number;
+  results: PatientMeasureStatus[];
+  checklist: EncounterMeasureChecklist | null;
+  alerts: MeasureAlert[];
+}> {
+  const res = await fetch(`${API_BASE}/api/mips/encounter/${encounterId}/evaluate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify({ patientId, providerId }),
+  });
+  if (!res.ok) throw new Error('Failed to evaluate encounter measures');
+  return res.json();
+}
+
+/**
+ * Fetch encounter measure checklist
+ */
+export async function fetchEncounterMeasureChecklist(
+  tenantId: string,
+  accessToken: string,
+  encounterId: string
+): Promise<EncounterMeasureChecklist> {
+  const res = await fetch(`${API_BASE}/api/mips/encounter/${encounterId}/checklist`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch encounter checklist');
+  return res.json();
+}
+
+/**
+ * Update encounter checklist item
+ */
+export async function updateEncounterChecklistItem(
+  tenantId: string,
+  accessToken: string,
+  encounterId: string,
+  measureId: string,
+  data: {
+    status: 'pending' | 'met' | 'not_met' | 'excluded' | 'not_applicable';
+    completedActions?: string[];
+    notes?: string;
+  }
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/mips/encounter/${encounterId}/checklist/${measureId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to update checklist item');
+  return res.json();
+}
+
+/**
+ * Fetch measure alerts
+ */
+export async function fetchMeasureAlerts(
+  tenantId: string,
+  accessToken: string,
+  options?: { patientId?: string; providerId?: string; type?: string; priority?: string }
+): Promise<{ alerts: MeasureAlert[]; count: number }> {
+  const params = new URLSearchParams();
+  if (options?.patientId) params.append('patientId', options.patientId);
+  if (options?.providerId) params.append('providerId', options.providerId);
+  if (options?.type) params.append('type', options.type);
+  if (options?.priority) params.append('priority', options.priority);
+
+  const url = `${API_BASE}/api/mips/alerts${params.toString() ? '?' + params.toString() : ''}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch measure alerts');
+  return res.json();
+}
+
+/**
+ * Dismiss measure alert
+ */
+export async function dismissMeasureAlert(
+  tenantId: string,
+  accessToken: string,
+  alertId: string,
+  reason?: string
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/mips/alerts/${alertId}/dismiss`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) throw new Error('Failed to dismiss alert');
+  return res.json();
+}
+
+/**
+ * Submit MIPS data
+ */
+export async function submitMIPSReportData(
+  tenantId: string,
+  accessToken: string,
+  data: {
+    year: number;
+    quarter?: number;
+    providerId?: string;
+    submissionType?: 'quality' | 'pi' | 'ia' | 'cost' | 'final' | 'interim';
+  }
+): Promise<{
+  success: boolean;
+  submissionId: string;
+  confirmationNumber: string;
+  scores: {
+    quality: number;
+    pi: number;
+    ia: number;
+    cost: number;
+    final: number;
+    paymentAdjustment: number;
+  };
+}> {
+  const res = await fetch(`${API_BASE}/api/mips/submit`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to submit MIPS data');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch MIPS score history
+ */
+export async function fetchMIPSScoreHistory(
+  tenantId: string,
+  accessToken: string,
+  year?: number,
+  providerId?: string
+): Promise<{
+  history: Array<{
+    id: string;
+    calculationDate: string;
+    year: number;
+    qualityScore: number;
+    piScore: number;
+    iaScore: number;
+    costScore: number;
+    finalScore: number;
+    paymentAdjustment: number;
+  }>;
+}> {
+  const params = new URLSearchParams();
+  if (year) params.append('year', String(year));
+  if (providerId) params.append('providerId', providerId);
+
+  const url = `${API_BASE}/api/mips/score-history${params.toString() ? '?' + params.toString() : ''}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) throw new Error('Failed to fetch score history');
+  return res.json();
+}
+
+// ============================================================================
 // Default Export - Axios-like API Client
 // ============================================================================
 // This provides an axios-like interface for components that use `import api from '../api'`
@@ -7171,6 +7684,728 @@ export async function fetchProtocolStats(tenantId: string, accessToken: string) 
   });
   if (!res.ok) {
     throw new Error('Failed to load protocol statistics');
+  }
+  return res.json();
+}
+
+// ==================== SUPERBILL API ====================
+
+import type {
+  Superbill,
+  SuperbillLineItem,
+  SuperbillDetails,
+  CommonDermCode,
+  SuperbillStatus,
+} from './types/superbill';
+
+export type { Superbill, SuperbillLineItem, SuperbillDetails, CommonDermCode, SuperbillStatus };
+
+/**
+ * Generate a superbill from an encounter
+ */
+export async function generateSuperbill(
+  tenantId: string,
+  accessToken: string,
+  encounterId: string,
+  serviceDate?: string
+): Promise<Superbill> {
+  const res = await fetch(`${API_BASE}/api/superbills/generate/${encounterId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify({ serviceDate }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to generate superbill');
+  }
+  return res.json();
+}
+
+/**
+ * Get superbill by ID with all details
+ */
+export async function getSuperbillById(
+  tenantId: string,
+  accessToken: string,
+  superbillId: string
+): Promise<SuperbillDetails> {
+  const res = await fetch(`${API_BASE}/api/superbills/${superbillId}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch superbill');
+  }
+  return res.json();
+}
+
+/**
+ * Get superbill by encounter ID
+ */
+export async function getSuperbillByEncounter(
+  tenantId: string,
+  accessToken: string,
+  encounterId: string
+): Promise<SuperbillDetails> {
+  const res = await fetch(`${API_BASE}/api/superbills/encounter/${encounterId}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch superbill');
+  }
+  return res.json();
+}
+
+/**
+ * Add a line item to a superbill
+ */
+export async function addSuperbillLineItem(
+  tenantId: string,
+  accessToken: string,
+  superbillId: string,
+  data: {
+    cptCode: string;
+    description?: string;
+    icd10Codes?: string[];
+    units?: number;
+    fee?: number;
+    modifier?: string;
+  }
+): Promise<SuperbillLineItem> {
+  const res = await fetch(`${API_BASE}/api/superbills/${superbillId}/items`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to add line item');
+  }
+  return res.json();
+}
+
+/**
+ * Update a line item on a superbill
+ */
+export async function updateSuperbillLineItem(
+  tenantId: string,
+  accessToken: string,
+  superbillId: string,
+  itemId: string,
+  data: Partial<{
+    cptCode: string;
+    description: string;
+    icd10Codes: string[];
+    units: number;
+    fee: number;
+    modifier: string;
+  }>
+): Promise<SuperbillLineItem> {
+  const res = await fetch(`${API_BASE}/api/superbills/${superbillId}/items/${itemId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update line item');
+  }
+  return res.json();
+}
+
+/**
+ * Delete a line item from a superbill
+ */
+export async function deleteSuperbillLineItem(
+  tenantId: string,
+  accessToken: string,
+  superbillId: string,
+  itemId: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/superbills/${superbillId}/items/${itemId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to delete line item');
+  }
+}
+
+/**
+ * Get calculated totals for a superbill
+ */
+export async function getSuperbillTotals(
+  tenantId: string,
+  accessToken: string,
+  superbillId: string
+): Promise<{ totalCharges: number; lineCount: number; lineItems: SuperbillLineItem[] }> {
+  const res = await fetch(`${API_BASE}/api/superbills/${superbillId}/totals`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to calculate totals');
+  }
+  return res.json();
+}
+
+/**
+ * Finalize a superbill for billing
+ */
+export async function finalizeSuperbill(
+  tenantId: string,
+  accessToken: string,
+  superbillId: string
+): Promise<Superbill> {
+  const res = await fetch(`${API_BASE}/api/superbills/${superbillId}/finalize`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to finalize superbill');
+  }
+  return res.json();
+}
+
+/**
+ * Void a superbill
+ */
+export async function voidSuperbill(
+  tenantId: string,
+  accessToken: string,
+  superbillId: string,
+  reason?: string
+): Promise<Superbill> {
+  const res = await fetch(`${API_BASE}/api/superbills/${superbillId}/void`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to void superbill');
+  }
+  return res.json();
+}
+
+/**
+ * Get patient's superbill history
+ */
+export async function getPatientSuperbills(
+  tenantId: string,
+  accessToken: string,
+  patientId: string,
+  options?: { limit?: number; offset?: number; status?: SuperbillStatus }
+): Promise<{ superbills: Superbill[]; total: number }> {
+  const params = new URLSearchParams();
+  if (options?.limit) params.append('limit', String(options.limit));
+  if (options?.offset) params.append('offset', String(options.offset));
+  if (options?.status) params.append('status', options.status);
+
+  const queryString = params.toString();
+  const url = `${API_BASE}/api/superbills/patient/${patientId}${queryString ? '?' + queryString : ''}`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch superbills');
+  }
+  return res.json();
+}
+
+/**
+ * Get common dermatology codes
+ */
+export async function getCommonSuperbillCodes(
+  tenantId: string,
+  accessToken: string,
+  codeType: 'CPT' | 'ICD10',
+  options?: { category?: string; favoritesOnly?: boolean; limit?: number }
+): Promise<{ codes: CommonDermCode[] }> {
+  const params = new URLSearchParams();
+  params.append('type', codeType);
+  if (options?.category) params.append('category', options.category);
+  if (options?.favoritesOnly) params.append('favoritesOnly', 'true');
+  if (options?.limit) params.append('limit', String(options.limit));
+
+  const res = await fetch(`${API_BASE}/api/superbills/codes/common?${params.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch common codes');
+  }
+  return res.json();
+}
+
+/**
+ * Search dermatology codes
+ */
+export async function searchSuperbillCodes(
+  tenantId: string,
+  accessToken: string,
+  codeType: 'CPT' | 'ICD10',
+  searchTerm: string,
+  limit?: number
+): Promise<{ codes: CommonDermCode[] }> {
+  const params = new URLSearchParams();
+  params.append('type', codeType);
+  params.append('q', searchTerm);
+  if (limit) params.append('limit', String(limit));
+
+  const res = await fetch(`${API_BASE}/api/superbills/codes/search?${params.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to search codes');
+  }
+  return res.json();
+}
+
+/**
+ * Toggle favorite status for a code
+ */
+export async function toggleSuperbillCodeFavorite(
+  tenantId: string,
+  accessToken: string,
+  codeId: string
+): Promise<{ isFavorite: boolean }> {
+  const res = await fetch(`${API_BASE}/api/superbills/codes/${codeId}/favorite`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to toggle favorite');
+  }
+  return res.json();
+}
+
+/**
+ * Get fee for a CPT code
+ */
+export async function getSuperbillFee(
+  tenantId: string,
+  accessToken: string,
+  cptCode: string,
+  payerId?: string
+): Promise<{ cptCode: string; fee: number; payerId: string | null }> {
+  const params = payerId ? `?payerId=${encodeURIComponent(payerId)}` : '';
+  const res = await fetch(`${API_BASE}/api/superbills/fee/${cptCode}${params}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch fee');
+  }
+  return res.json();
+}
+
+// Product Sales API
+
+import type {
+  Product,
+  Sale,
+  ProductRecommendation,
+  SalesReport,
+  InventoryStatus,
+  CreateProductData,
+  UpdateProductData,
+  CreateSaleData,
+  SalesReportFilters,
+  ProductCategory,
+  InventoryTransactionType,
+} from './types';
+
+/**
+ * Fetch all products
+ */
+export async function fetchProducts(
+  tenantId: string,
+  accessToken: string,
+  options?: {
+    category?: ProductCategory;
+    isActive?: boolean;
+    search?: string;
+    lowStockOnly?: boolean;
+  }
+): Promise<{ products: Product[] }> {
+  const params = new URLSearchParams();
+  if (options?.category) params.set('category', options.category);
+  if (options?.isActive !== undefined) params.set('isActive', String(options.isActive));
+  if (options?.search) params.set('search', options.search);
+  if (options?.lowStockOnly) params.set('lowStockOnly', 'true');
+
+  const url = params.toString()
+    ? `${API_BASE}/api/products?${params.toString()}`
+    : `${API_BASE}/api/products`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch products');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch a single product by ID
+ */
+export async function fetchProduct(
+  tenantId: string,
+  accessToken: string,
+  productId: string
+): Promise<{ product: Product }> {
+  const res = await fetch(`${API_BASE}/api/products/${productId}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch product');
+  }
+  return res.json();
+}
+
+/**
+ * Create a new product
+ */
+export async function createProduct(
+  tenantId: string,
+  accessToken: string,
+  data: CreateProductData
+): Promise<{ product: Product }> {
+  const res = await fetch(`${API_BASE}/api/products`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to create product');
+  }
+  return res.json();
+}
+
+/**
+ * Update a product
+ */
+export async function updateProduct(
+  tenantId: string,
+  accessToken: string,
+  productId: string,
+  data: UpdateProductData
+): Promise<{ product: Product }> {
+  const res = await fetch(`${API_BASE}/api/products/${productId}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update product');
+  }
+  return res.json();
+}
+
+/**
+ * Create a product sale
+ */
+export async function createProductSale(
+  tenantId: string,
+  accessToken: string,
+  data: CreateSaleData
+): Promise<{ sale: Sale }> {
+  const res = await fetch(`${API_BASE}/api/products/sales`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to create sale');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch a sale by ID
+ */
+export async function fetchSale(
+  tenantId: string,
+  accessToken: string,
+  saleId: string
+): Promise<{ sale: Sale }> {
+  const res = await fetch(`${API_BASE}/api/products/sales/${saleId}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch sale');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch product recommendations for diagnosis codes
+ */
+export async function fetchProductRecommendations(
+  tenantId: string,
+  accessToken: string,
+  diagnosisCodes: string[]
+): Promise<{ recommendations: ProductRecommendation[] }> {
+  const res = await fetch(`${API_BASE}/api/products/recommendations`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ diagnosisCodes }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch recommendations');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch product recommendations for a single diagnosis code
+ */
+export async function fetchProductRecommendationsByCode(
+  tenantId: string,
+  accessToken: string,
+  diagnosisCode: string
+): Promise<{ recommendations: ProductRecommendation[] }> {
+  const res = await fetch(`${API_BASE}/api/products/recommendations/${encodeURIComponent(diagnosisCode)}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch recommendations');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch inventory status
+ */
+export async function fetchInventoryStatus(
+  tenantId: string,
+  accessToken: string
+): Promise<{ status: InventoryStatus }> {
+  const res = await fetch(`${API_BASE}/api/products/inventory/status`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch inventory status');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch low stock products
+ */
+export async function fetchLowStockProducts(
+  tenantId: string,
+  accessToken: string
+): Promise<{ products: Product[] }> {
+  const res = await fetch(`${API_BASE}/api/products/inventory/low-stock`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch low stock products');
+  }
+  return res.json();
+}
+
+/**
+ * Adjust product inventory
+ */
+export async function adjustProductInventory(
+  tenantId: string,
+  accessToken: string,
+  productId: string,
+  quantity: number,
+  reason: InventoryTransactionType,
+  notes?: string
+): Promise<{ newCount: number }> {
+  const res = await fetch(`${API_BASE}/api/products/${productId}/inventory`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ quantity, reason, notes }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to adjust inventory');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch sales report
+ */
+export async function fetchSalesReport(
+  tenantId: string,
+  accessToken: string,
+  filters?: SalesReportFilters
+): Promise<{ report: SalesReport }> {
+  const params = new URLSearchParams();
+  if (filters?.startDate) params.set('startDate', filters.startDate);
+  if (filters?.endDate) params.set('endDate', filters.endDate);
+  if (filters?.category) params.set('category', filters.category);
+  if (filters?.soldBy) params.set('soldBy', filters.soldBy);
+
+  const url = params.toString()
+    ? `${API_BASE}/api/products/sales/report?${params.toString()}`
+    : `${API_BASE}/api/products/sales/report`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch sales report');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch patient sales history
+ */
+export async function fetchPatientSales(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+): Promise<{ sales: Sale[] }> {
+  const res = await fetch(`${API_BASE}/api/products/patients/${patientId}/sales`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch patient sales');
+  }
+  return res.json();
+}
+
+/**
+ * Apply discount to a sale
+ */
+export async function applyProductSaleDiscount(
+  tenantId: string,
+  accessToken: string,
+  saleId: string,
+  discountType: 'percentage' | 'fixed' | 'loyalty',
+  amount: number
+): Promise<{ sale: Sale }> {
+  const res = await fetch(`${API_BASE}/api/products/sales/${saleId}/discount`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ discountType, amount }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to apply discount');
   }
   return res.json();
 }

@@ -615,3 +615,766 @@ function formatDateForApi(date: Date | string): string {
   }
   return date.toISOString().split('T')[0]!;
 }
+
+// ============================================================
+// X12 270/271 Transaction Format Support
+// ============================================================
+
+/**
+ * X12 270 Request Interface
+ * Health Care Eligibility/Benefit Inquiry
+ */
+export interface X12_270_Request {
+  transactionSetControlNumber: string;
+  informationSourceName: string; // Payer name
+  informationSourceId: string; // Payer ID
+  informationReceiverName: string; // Provider/Practice name
+  informationReceiverNPI: string;
+  subscriberLastName: string;
+  subscriberFirstName: string;
+  subscriberMemberId: string;
+  subscriberGroupNumber?: string;
+  subscriberDateOfBirth: string; // YYYYMMDD format
+  dependentLastName?: string;
+  dependentFirstName?: string;
+  dependentDateOfBirth?: string;
+  dependentRelationship?: string; // 01=Spouse, 19=Child, etc.
+  serviceTypeCode: string; // 30=Health Benefit Plan Coverage
+  serviceDate: string; // YYYYMMDD format
+}
+
+/**
+ * X12 271 Response Interface
+ * Health Care Eligibility/Benefit Information
+ */
+export interface X12_271_Response {
+  transactionSetControlNumber: string;
+  informationSourceName: string;
+  informationSourceId: string;
+  subscriberEligibilityInfo: {
+    eligibilityOrBenefitInfo: string; // 1=Active, 6=Inactive, etc.
+    coverageLevel: string; // IND=Individual, FAM=Family
+    serviceTypeCode: string;
+    planCoverageDescription?: string;
+    timePeriodQualifier?: string;
+    monetaryAmount?: number;
+    percentageAsDecimal?: number;
+    quantityQualifier?: string;
+    quantity?: number;
+  }[];
+  subscriberName: string;
+  subscriberMemberId: string;
+  subscriberGroupNumber?: string;
+  additionalInfo?: {
+    loopIdentifier: string;
+    referenceId?: string;
+    date?: string;
+    message?: string;
+  }[];
+  rejectReasons?: {
+    code: string;
+    message: string;
+  }[];
+}
+
+/**
+ * Generate X12 270 transaction string
+ * This creates a production-ready X12 format request
+ */
+export function generateX12_270_Request(request: X12_270_Request): string {
+  const today = new Date();
+  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+  const timeStr = today.toTimeString().slice(0, 5).replace(':', '');
+
+  const segments: string[] = [];
+
+  // ISA - Interchange Control Header
+  segments.push(
+    `ISA*00*          *00*          *ZZ*${padRight(request.informationReceiverNPI, 15)}*ZZ*${padRight(request.informationSourceId, 15)}*${dateStr.slice(2)}*${timeStr}*^*00501*${padLeft(request.transactionSetControlNumber, 9, '0')}*0*P*:~`
+  );
+
+  // GS - Functional Group Header
+  segments.push(
+    `GS*HS*${request.informationReceiverNPI}*${request.informationSourceId}*${dateStr}*${timeStr}*1*X*005010X279A1~`
+  );
+
+  // ST - Transaction Set Header
+  segments.push(
+    `ST*270*0001*005010X279A1~`
+  );
+
+  // BHT - Beginning of Hierarchical Transaction
+  segments.push(
+    `BHT*0022*13*${request.transactionSetControlNumber}*${dateStr}*${timeStr}~`
+  );
+
+  // 2000A - Information Source Level
+  segments.push(`HL*1**20*1~`);
+
+  // 2100A - Information Source Name
+  segments.push(
+    `NM1*PR*2*${request.informationSourceName}*****PI*${request.informationSourceId}~`
+  );
+
+  // 2000B - Information Receiver Level
+  segments.push(`HL*2*1*21*1~`);
+
+  // 2100B - Information Receiver Name
+  segments.push(
+    `NM1*1P*2*${request.informationReceiverName}*****XX*${request.informationReceiverNPI}~`
+  );
+
+  // 2000C - Subscriber Level
+  segments.push(`HL*3*2*22*0~`);
+
+  // TRN - Trace Number
+  segments.push(
+    `TRN*1*${request.transactionSetControlNumber}*${request.informationReceiverNPI}~`
+  );
+
+  // 2100C - Subscriber Name
+  segments.push(
+    `NM1*IL*1*${request.subscriberLastName}*${request.subscriberFirstName}****MI*${request.subscriberMemberId}~`
+  );
+
+  // DMG - Subscriber Demographics
+  segments.push(
+    `DMG*D8*${request.subscriberDateOfBirth}~`
+  );
+
+  // DTP - Service Date
+  segments.push(
+    `DTP*291*D8*${request.serviceDate}~`
+  );
+
+  // EQ - Eligibility/Benefit Inquiry
+  segments.push(
+    `EQ*${request.serviceTypeCode}~`
+  );
+
+  // SE - Transaction Set Trailer
+  const segmentCount = segments.length - 2 + 1; // Exclude ISA and GS, add SE
+  segments.push(
+    `SE*${segmentCount}*0001~`
+  );
+
+  // GE - Functional Group Trailer
+  segments.push(`GE*1*1~`);
+
+  // IEA - Interchange Control Trailer
+  segments.push(
+    `IEA*1*${padLeft(request.transactionSetControlNumber, 9, '0')}~`
+  );
+
+  return segments.join('\n');
+}
+
+/**
+ * Parse X12 271 response string into structured data
+ */
+export function parseX12_271_Response(x12Response: string): X12_271_Response {
+  const segments = x12Response.split('~').map(s => s.trim()).filter(s => s);
+  const response: X12_271_Response = {
+    transactionSetControlNumber: '',
+    informationSourceName: '',
+    informationSourceId: '',
+    subscriberEligibilityInfo: [],
+    subscriberName: '',
+    subscriberMemberId: '',
+  };
+
+  for (const segment of segments) {
+    const elements = segment.split('*');
+    const segmentId = elements[0];
+
+    switch (segmentId) {
+      case 'ST':
+        response.transactionSetControlNumber = elements[2] || '';
+        break;
+
+      case 'NM1':
+        if (elements[1] === 'PR') {
+          // Information Source (Payer)
+          response.informationSourceName = elements[3] || '';
+          response.informationSourceId = elements[9] || '';
+        } else if (elements[1] === 'IL') {
+          // Subscriber
+          response.subscriberName = `${elements[4] || ''} ${elements[3] || ''}`.trim();
+          response.subscriberMemberId = elements[9] || '';
+        }
+        break;
+
+      case 'REF':
+        if (elements[1] === '6P') {
+          response.subscriberGroupNumber = elements[2];
+        }
+        break;
+
+      case 'EB':
+        // Eligibility/Benefit Information
+        const ebInfo: X12_271_Response['subscriberEligibilityInfo'][0] = {
+          eligibilityOrBenefitInfo: elements[1] || '',
+          coverageLevel: elements[2] || '',
+          serviceTypeCode: elements[3] || '',
+          planCoverageDescription: elements[4],
+          timePeriodQualifier: elements[5],
+          monetaryAmount: elements[6] ? parseFloat(elements[6]) : undefined,
+          percentageAsDecimal: elements[7] ? parseFloat(elements[7]) : undefined,
+        };
+        response.subscriberEligibilityInfo.push(ebInfo);
+        break;
+
+      case 'AAA':
+        // Reject/Error information
+        if (!response.rejectReasons) response.rejectReasons = [];
+        response.rejectReasons.push({
+          code: elements[3] || 'UNKNOWN',
+          message: elements[4] || 'Unknown error',
+        });
+        break;
+    }
+  }
+
+  return response;
+}
+
+// Helper functions for X12 formatting
+function padRight(str: string, length: number, char = ' '): string {
+  return str.padEnd(length, char).slice(0, length);
+}
+
+function padLeft(str: string, length: number, char = ' '): string {
+  return str.padStart(length, char).slice(0, length);
+}
+
+// ============================================================
+// Caching System (24-hour cache)
+// ============================================================
+
+const CACHE_DURATION_HOURS = 24;
+
+/**
+ * Generate cache key for eligibility lookup
+ */
+function generateCacheKey(patientId: string, payerId: string, serviceType = '30'): string {
+  return `eligibility:${patientId}:${payerId}:${serviceType}`;
+}
+
+/**
+ * Check cache for existing eligibility result
+ */
+export async function getCachedEligibility(
+  tenantId: string,
+  patientId: string,
+  payerId: string,
+  serviceType = '30'
+): Promise<EligibilityCheckResult | null> {
+  const cacheKey = generateCacheKey(patientId, payerId, serviceType);
+
+  try {
+    const result = await pool.query(
+      `SELECT er.*, ec.cached_at, ec.expires_at
+       FROM eligibility_cache ec
+       JOIN eligibility_responses er ON ec.response_id = er.id
+       WHERE ec.tenant_id = $1
+         AND ec.cache_key = $2
+         AND ec.expires_at > NOW()
+       LIMIT 1`,
+      [tenantId, cacheKey]
+    );
+
+    if (result.rows.length > 0) {
+      const cached = result.rows[0];
+
+      // Update hit count
+      await pool.query(
+        `UPDATE eligibility_cache
+         SET hit_count = hit_count + 1, last_accessed_at = NOW()
+         WHERE tenant_id = $1 AND cache_key = $2`,
+        [tenantId, cacheKey]
+      );
+
+      logger.info('Eligibility cache hit', { patientId, payerId, cacheKey });
+
+      return {
+        success: true,
+        cached: true,
+        cachedAt: cached.cached_at,
+        expiresAt: cached.expires_at,
+        coverageActive: cached.coverage_active,
+        copayAmount: cached.copay_amount,
+        deductibleRemaining: cached.deductible_remaining,
+        coinsurancePct: cached.coinsurance_pct,
+        outOfPocketRemaining: cached.out_of_pocket_remaining,
+        coverageDetails: cached.coverage_details,
+      };
+    }
+
+    return null;
+  } catch (error) {
+    logger.warn('Error checking eligibility cache', {
+      error: (error as Error).message,
+      patientId,
+      payerId,
+    });
+    return null;
+  }
+}
+
+/**
+ * Store eligibility result in cache
+ */
+export async function cacheEligibilityResult(
+  tenantId: string,
+  patientId: string,
+  payerId: string,
+  responseId: string,
+  response: {
+    coverageActive: boolean;
+    copayAmount?: number;
+    deductibleRemaining?: number;
+    coinsurancePct?: number;
+    outOfPocketRemaining?: number;
+  },
+  serviceType = '30'
+): Promise<void> {
+  const cacheKey = generateCacheKey(patientId, payerId, serviceType);
+  const expiresAt = new Date();
+  expiresAt.setHours(expiresAt.getHours() + CACHE_DURATION_HOURS);
+
+  try {
+    await pool.query(
+      `INSERT INTO eligibility_cache (
+        tenant_id, cache_key, patient_id, payer_id, service_type,
+        response_id, expires_at, coverage_active, copay_amount,
+        deductible_remaining, coinsurance_pct, out_of_pocket_remaining
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      ON CONFLICT (tenant_id, cache_key)
+      DO UPDATE SET
+        response_id = EXCLUDED.response_id,
+        expires_at = EXCLUDED.expires_at,
+        coverage_active = EXCLUDED.coverage_active,
+        copay_amount = EXCLUDED.copay_amount,
+        deductible_remaining = EXCLUDED.deductible_remaining,
+        coinsurance_pct = EXCLUDED.coinsurance_pct,
+        out_of_pocket_remaining = EXCLUDED.out_of_pocket_remaining,
+        hit_count = 0,
+        cached_at = NOW()`,
+      [
+        tenantId, cacheKey, patientId, payerId, serviceType,
+        responseId, expiresAt, response.coverageActive,
+        response.copayAmount || null, response.deductibleRemaining || null,
+        response.coinsurancePct || null, response.outOfPocketRemaining || null,
+      ]
+    );
+
+    logger.info('Eligibility result cached', {
+      patientId, payerId, cacheKey, expiresAt,
+    });
+  } catch (error) {
+    logger.error('Error caching eligibility result', {
+      error: (error as Error).message,
+      patientId, payerId,
+    });
+  }
+}
+
+// ============================================================
+// Retry Logic with Exponential Backoff
+// ============================================================
+
+interface RetryConfig {
+  maxRetries: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+  backoffMultiplier: number;
+}
+
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 3,
+  initialDelayMs: 1000,
+  maxDelayMs: 30000,
+  backoffMultiplier: 2,
+};
+
+/**
+ * Execute function with retry logic and exponential backoff
+ */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  config: Partial<RetryConfig> = {}
+): Promise<T> {
+  const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...config };
+  let lastError: Error | null = null;
+  let delay = retryConfig.initialDelayMs;
+
+  for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error as Error;
+
+      if (attempt === retryConfig.maxRetries) {
+        break;
+      }
+
+      // Check if error is retryable
+      if (!isRetryableError(error)) {
+        throw error;
+      }
+
+      logger.warn('Eligibility check failed, retrying', {
+        attempt: attempt + 1,
+        maxRetries: retryConfig.maxRetries,
+        delay,
+        error: lastError.message,
+      });
+
+      // Wait before retry
+      await sleep(delay);
+
+      // Calculate next delay with exponential backoff
+      delay = Math.min(delay * retryConfig.backoffMultiplier, retryConfig.maxDelayMs);
+    }
+  }
+
+  throw lastError || new Error('Max retries exceeded');
+}
+
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    // Retry on timeout, network, or temporary errors
+    return (
+      message.includes('timeout') ||
+      message.includes('network') ||
+      message.includes('econnreset') ||
+      message.includes('econnrefused') ||
+      message.includes('temporary') ||
+      message.includes('unavailable') ||
+      message.includes('503') ||
+      message.includes('504')
+    );
+  }
+  return false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ============================================================
+// Enhanced Eligibility Check with All Features
+// ============================================================
+
+export interface EligibilityCheckResult {
+  success: boolean;
+  cached?: boolean;
+  cachedAt?: Date;
+  expiresAt?: Date;
+  coverageActive: boolean;
+  copayAmount?: number;
+  deductibleRemaining?: number;
+  coinsurancePct?: number;
+  outOfPocketRemaining?: number;
+  coverageDetails?: Record<string, unknown>;
+  requestId?: string;
+  responseId?: string;
+  error?: string;
+}
+
+export interface CheckEligibilityOptions {
+  patientId: string;
+  payerId: string;
+  serviceDate?: Date;
+  serviceType?: string;
+  bypassCache?: boolean;
+  timeout?: number;
+}
+
+/**
+ * Main eligibility check function with caching and retry support
+ */
+export async function checkEligibility(
+  tenantId: string,
+  options: CheckEligibilityOptions
+): Promise<EligibilityCheckResult> {
+  const {
+    patientId,
+    payerId,
+    serviceDate = new Date(),
+    serviceType = '30',
+    bypassCache = false,
+    timeout = 30000,
+  } = options;
+
+  logger.info('Starting eligibility check', {
+    tenantId, patientId, payerId, serviceType, bypassCache,
+  });
+
+  // Check cache first (unless bypassed)
+  if (!bypassCache) {
+    const cached = await getCachedEligibility(tenantId, patientId, payerId, serviceType);
+    if (cached) {
+      return cached;
+    }
+  }
+
+  // Create request record
+  const requestId = `REQ-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+  try {
+    await pool.query(
+      `INSERT INTO eligibility_requests (
+        id, tenant_id, patient_id, payer_id, service_type,
+        service_date, status, processing_started_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, 'processing', NOW())`,
+      [requestId, tenantId, patientId, payerId, serviceType, serviceDate]
+    );
+  } catch (insertError) {
+    logger.warn('Could not create eligibility request record', {
+      error: (insertError as Error).message,
+    });
+  }
+
+  try {
+    // Execute with retry logic and timeout
+    const result = await withRetry(
+      async () => {
+        // Get payer configuration
+        const payerConfig = await getPayerConfiguration(tenantId, payerId);
+
+        // Create timeout promise
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Request timeout')), timeout)
+        );
+
+        // Execute eligibility check with timeout
+        const checkPromise = executeEligibilityCheck(
+          tenantId, patientId, payerId, payerConfig, serviceDate, serviceType
+        );
+
+        return await Promise.race([checkPromise, timeoutPromise]);
+      },
+      { maxRetries: 3, initialDelayMs: 1000 }
+    );
+
+    // Store response
+    const responseId = `RES-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+    try {
+      await pool.query(
+        `INSERT INTO eligibility_responses (
+          id, tenant_id, request_id, coverage_active, copay_amount,
+          deductible_remaining, coinsurance_pct, out_of_pocket_remaining,
+          coverage_details, response_source
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'mock')`,
+        [
+          responseId, tenantId, requestId, result.coverageActive,
+          result.copayAmount, result.deductibleRemaining,
+          result.coinsurancePct, result.outOfPocketRemaining,
+          JSON.stringify(result.coverageDetails || {}),
+        ]
+      );
+
+      // Update request as completed
+      await pool.query(
+        `UPDATE eligibility_requests
+         SET status = 'completed',
+             processing_completed_at = NOW(),
+             processing_duration_ms = EXTRACT(EPOCH FROM (NOW() - processing_started_at)) * 1000
+         WHERE id = $1`,
+        [requestId]
+      );
+
+      // Cache the result
+      await cacheEligibilityResult(
+        tenantId, patientId, payerId, responseId,
+        {
+          coverageActive: result.coverageActive,
+          copayAmount: result.copayAmount,
+          deductibleRemaining: result.deductibleRemaining,
+          coinsurancePct: result.coinsurancePct,
+          outOfPocketRemaining: result.outOfPocketRemaining,
+        },
+        serviceType
+      );
+    } catch (storeError) {
+      logger.warn('Could not store eligibility response', {
+        error: (storeError as Error).message,
+      });
+    }
+
+    return {
+      ...result,
+      requestId,
+      responseId,
+    };
+  } catch (error) {
+    // Update request as failed
+    try {
+      await pool.query(
+        `UPDATE eligibility_requests
+         SET status = 'failed',
+             error_code = 'CHECK_FAILED',
+             error_message = $1,
+             processing_completed_at = NOW()
+         WHERE id = $2`,
+        [(error as Error).message, requestId]
+      );
+    } catch (updateError) {
+      logger.warn('Could not update failed eligibility request', {
+        error: (updateError as Error).message,
+      });
+    }
+
+    logger.error('Eligibility check failed', {
+      patientId, payerId, error: (error as Error).message,
+    });
+
+    return {
+      success: false,
+      coverageActive: false,
+      error: (error as Error).message,
+      requestId,
+    };
+  }
+}
+
+/**
+ * Get payer configuration from database
+ */
+async function getPayerConfiguration(tenantId: string, payerId: string): Promise<{
+  timeoutMs: number;
+  maxRetries: number;
+  cacheDurationHours: number;
+  eligibilityEndpoint?: string;
+}> {
+  try {
+    const result = await pool.query(
+      `SELECT timeout_ms, max_retries, cache_duration_hours, eligibility_endpoint
+       FROM payer_configurations
+       WHERE (tenant_id = $1 OR tenant_id = 'default')
+         AND payer_id = $2
+         AND is_active = true
+       ORDER BY CASE WHEN tenant_id = $1 THEN 0 ELSE 1 END
+       LIMIT 1`,
+      [tenantId, payerId]
+    );
+
+    if (result.rows.length > 0) {
+      return result.rows[0];
+    }
+
+    // Return defaults if no configuration found
+    return {
+      timeoutMs: 30000,
+      maxRetries: 3,
+      cacheDurationHours: 24,
+    };
+  } catch (error) {
+    logger.warn('Could not get payer configuration, using defaults', {
+      error: (error as Error).message,
+      payerId,
+    });
+    return {
+      timeoutMs: 30000,
+      maxRetries: 3,
+      cacheDurationHours: 24,
+    };
+  }
+}
+
+/**
+ * Execute the actual eligibility check (uses mock for now)
+ */
+async function executeEligibilityCheck(
+  tenantId: string,
+  patientId: string,
+  payerId: string,
+  _payerConfig: { eligibilityEndpoint?: string },
+  serviceDate: Date,
+  _serviceType: string
+): Promise<EligibilityCheckResult> {
+  // Get patient data
+  const patientResult = await pool.query(
+    `SELECT first_name, last_name, dob, insurance_member_id
+     FROM patients
+     WHERE id = $1 AND tenant_id = $2`,
+    [patientId, tenantId]
+  );
+
+  if (patientResult.rows.length === 0) {
+    throw new Error('Patient not found');
+  }
+
+  const patient = patientResult.rows[0];
+
+  // Use mock eligibility check for now
+  // In production, this would call the actual payer API
+  const response = await mockEligibilityCheck({
+    payerId,
+    memberId: patient.insurance_member_id || '',
+    patientFirstName: patient.first_name,
+    patientLastName: patient.last_name,
+    patientDob: formatDateForApi(patient.dob),
+    serviceDate: formatDateForApi(serviceDate),
+  });
+
+  return {
+    success: response.success,
+    coverageActive: response.coverage.status === 'active',
+    copayAmount: response.benefits.copays?.specialist,
+    deductibleRemaining: response.benefits.deductible?.individual?.remaining,
+    coinsurancePct: response.benefits.coinsurance?.percentage,
+    outOfPocketRemaining: response.benefits.outOfPocketMax?.individual?.remaining,
+    coverageDetails: {
+      planName: response.coverage.planName,
+      planType: response.coverage.planType,
+      effectiveDate: response.coverage.effectiveDate,
+      terminationDate: response.coverage.terminationDate,
+      network: response.network,
+      priorAuth: response.benefits.priorAuth,
+      referral: response.benefits.referral,
+    },
+  };
+}
+
+/**
+ * Get eligibility by patient ID (convenience wrapper)
+ */
+export async function getPatientEligibility(
+  tenantId: string,
+  patientId: string
+): Promise<EligibilityCheckResult | null> {
+  // First try to get from existing insurance_verifications table
+  const result = await pool.query(
+    `SELECT
+      verification_status,
+      copay_specialist_cents,
+      deductible_remaining_cents,
+      coinsurance_pct,
+      oop_remaining_cents,
+      verified_at
+     FROM insurance_verifications
+     WHERE tenant_id = $1 AND patient_id = $2
+     ORDER BY verified_at DESC
+     LIMIT 1`,
+    [tenantId, patientId]
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  const row = result.rows[0];
+
+  return {
+    success: true,
+    coverageActive: row.verification_status === 'active',
+    copayAmount: row.copay_specialist_cents,
+    deductibleRemaining: row.deductible_remaining_cents,
+    coinsurancePct: row.coinsurance_pct,
+    outOfPocketRemaining: row.oop_remaining_cents,
+  };
+}

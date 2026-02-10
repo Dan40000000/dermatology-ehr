@@ -1358,3 +1358,365 @@ export interface PrescriptionFilters {
   patientId?: string;
   search?: string;
 }
+
+// Product Sales Types
+export type ProductCategory = 'skincare' | 'sunscreen' | 'cosmetic' | 'prescription' | 'post_procedure';
+export type PaymentMethod = 'cash' | 'credit' | 'debit' | 'check' | 'insurance' | 'gift_card';
+export type SaleStatus = 'pending' | 'completed' | 'refunded' | 'cancelled';
+export type InventoryTransactionType = 'received' | 'sold' | 'adjustment' | 'return' | 'damaged' | 'expired';
+export type DiscountType = 'percentage' | 'fixed' | 'loyalty';
+
+export interface Product {
+  id: string;
+  tenantId: string;
+  sku: string;
+  name: string;
+  description?: string;
+  category: ProductCategory;
+  brand?: string;
+  price: number;
+  cost: number;
+  inventoryCount: number;
+  reorderPoint: number;
+  isActive: boolean;
+  imageUrl?: string;
+  barcode?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaleItem {
+  productId: string;
+  quantity: number;
+  unitPrice?: number;
+  discountAmount?: number;
+}
+
+export interface SaleItemDetail {
+  id: string;
+  saleId: string;
+  productId: string;
+  quantity: number;
+  unitPrice: number;
+  discountAmount: number;
+  lineTotal: number;
+  productName: string;
+  productSku: string;
+}
+
+export interface Sale {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  encounterId?: string;
+  soldBy: string;
+  saleDate: string;
+  subtotal: number;
+  tax: number;
+  discount: number;
+  total: number;
+  paymentMethod: PaymentMethod;
+  paymentReference?: string;
+  status: SaleStatus;
+  items?: SaleItemDetail[];
+  patientFirstName?: string;
+  patientLastName?: string;
+}
+
+export interface ProductRecommendation {
+  id: string;
+  tenantId: string;
+  conditionCode: string;
+  conditionDescription?: string;
+  productIds: string[];
+  recommendationText?: string;
+  priority: number;
+  isActive: boolean;
+  products?: Product[];
+}
+
+export interface CreateProductData {
+  sku: string;
+  name: string;
+  description?: string;
+  category: ProductCategory;
+  brand?: string;
+  price: number;
+  cost?: number;
+  inventoryCount?: number;
+  reorderPoint?: number;
+  imageUrl?: string;
+  barcode?: string;
+}
+
+export interface UpdateProductData {
+  sku?: string;
+  name?: string;
+  description?: string;
+  category?: ProductCategory;
+  brand?: string;
+  price?: number;
+  cost?: number;
+  reorderPoint?: number;
+  isActive?: boolean;
+  imageUrl?: string;
+  barcode?: string;
+}
+
+export interface CreateSaleData {
+  patientId: string;
+  encounterId?: string;
+  items: SaleItem[];
+  paymentMethod: PaymentMethod;
+  paymentReference?: string;
+  discountAmount?: number;
+}
+
+export interface SalesReportFilters {
+  startDate?: string;
+  endDate?: string;
+  category?: ProductCategory;
+  soldBy?: string;
+}
+
+export interface SalesReport {
+  totalSales: number;
+  totalRevenue: number;
+  totalDiscounts: number;
+  totalTax: number;
+  uniqueCustomers: number;
+  topProducts: Array<{
+    productId: string;
+    productName: string;
+    quantitySold: number;
+    revenue: number;
+  }>;
+  salesByCategory: Array<{
+    category: ProductCategory;
+    count: number;
+    revenue: number;
+  }>;
+  dailySales: Array<{
+    date: string;
+    count: number;
+    revenue: number;
+  }>;
+}
+
+export interface InventoryStatus {
+  totalProducts: number;
+  totalValue: number;
+  lowStockCount: number;
+  outOfStockCount: number;
+  byCategory: Array<{
+    category: ProductCategory;
+    count: number;
+    value: number;
+  }>;
+}
+
+export interface CartItem extends Product {
+  quantity: number;
+  discountAmount?: number;
+}
+
+// Clearinghouse Types
+export type ClearinghouseType = 'change_healthcare' | 'availity' | 'trizetto' | 'waystar' | 'custom';
+export type ClearinghouseSubmissionFormat = '837P' | '837I' | 'CMS1500' | 'UB04';
+export type ClearinghouseSubmissionMethod = 'api' | 'sftp' | 'direct';
+export type ClaimSubmissionStatus =
+  | 'pending'
+  | 'submitted'
+  | 'acknowledged'
+  | 'accepted'
+  | 'rejected'
+  | 'paid'
+  | 'denied'
+  | 'pended'
+  | 'additional_info_requested';
+
+export interface ClearinghouseConfig {
+  id: string;
+  tenantId: string;
+  name: string;
+  type: ClearinghouseType;
+  isActive: boolean;
+  isDefault: boolean;
+  apiEndpoint?: string;
+  apiVersion?: string;
+  sftpHost?: string;
+  sftpPort?: number;
+  senderId?: string;
+  senderQualifier?: string;
+  receiverId?: string;
+  receiverQualifier?: string;
+  submitterId?: string;
+  tradingPartnerId?: string;
+  submissionFormat: ClearinghouseSubmissionFormat;
+  submissionMethod: ClearinghouseSubmissionMethod;
+  batchEnabled: boolean;
+  maxBatchSize: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ClaimSubmission {
+  id: string;
+  tenantId: string;
+  claimId: string;
+  superbillId?: string;
+  clearinghouseId?: string;
+  submissionDate: string;
+  submissionBatchId?: string;
+  submissionNumber?: string;
+  x12ClaimId?: string;
+  isaControlNumber?: string;
+  gsControlNumber?: string;
+  stControlNumber?: string;
+  status: ClaimSubmissionStatus;
+  statusCode?: string;
+  statusMessage?: string;
+  acknowledgmentDate?: string;
+  acknowledgmentType?: string;
+  responseData?: Record<string, unknown>;
+  errorCode?: string;
+  errorMessage?: string;
+  retryCount: number;
+  maxRetries: number;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface RemittanceAdvice {
+  id: string;
+  tenantId: string;
+  claimId?: string;
+  claimSubmissionId?: string;
+  eraNumber: string;
+  eraDate: string;
+  payerName?: string;
+  payerId?: string;
+  paymentAmount: number;
+  paymentAmountCents: number;
+  paymentDate?: string;
+  paymentMethod?: string;
+  checkNumber?: string;
+  eftTraceNumber?: string;
+  adjustmentCodes?: Array<{
+    code: string;
+    group: string;
+    reason: string;
+    amount: number;
+  }>;
+  totalAdjustmentsCents: number;
+  patientResponsibility: number;
+  patientResponsibilityCents: number;
+  allowedAmount?: number;
+  deductibleAmount?: number;
+  coinsuranceAmount?: number;
+  copayAmount?: number;
+  serviceLines?: Array<{
+    lineNumber: number;
+    cptCode: string;
+    chargeAmount: number;
+    paidAmount: number;
+    adjustments: Array<{
+      code: string;
+      reason: string;
+      amount: number;
+    }>;
+    remarkCodes?: string[];
+  }>;
+  remarkCodes?: Array<{ code: string; description?: string }>;
+  status: 'received' | 'pending_review' | 'posted' | 'disputed';
+  postedAt?: string;
+  postedBy?: string;
+  reconciled: boolean;
+  reconciledAt?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface ClaimSubmissionBatch {
+  id: string;
+  tenantId: string;
+  clearinghouseId?: string;
+  batchNumber: string;
+  batchDate: string;
+  totalClaims: number;
+  totalAmountCents: number;
+  submittedCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  pendingCount: number;
+  status: 'draft' | 'ready' | 'submitted' | 'partial' | 'completed' | 'failed';
+  isaControlNumber?: string;
+  gsControlNumber?: string;
+  submittedAt?: string;
+  submittedBy?: string;
+  acknowledgmentReceived: boolean;
+  acknowledgmentDate?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface CreateClearinghouseConfigData {
+  name: string;
+  type: ClearinghouseType;
+  isActive?: boolean;
+  isDefault?: boolean;
+  apiEndpoint?: string;
+  apiVersion?: string;
+  sftpHost?: string;
+  sftpPort?: number;
+  senderId?: string;
+  senderQualifier?: string;
+  receiverId?: string;
+  receiverQualifier?: string;
+  submitterId?: string;
+  tradingPartnerId?: string;
+  submissionFormat?: ClearinghouseSubmissionFormat;
+  submissionMethod?: ClearinghouseSubmissionMethod;
+  batchEnabled?: boolean;
+  maxBatchSize?: number;
+  notes?: string;
+}
+
+export interface SubmitClaimData {
+  claimId: string;
+  clearinghouseId?: string;
+}
+
+export interface BatchSubmitData {
+  claimIds: string[];
+  clearinghouseId?: string;
+}
+
+export interface ProcessRemittanceData {
+  era835Data?: string;
+  remittance?: {
+    claimId?: string;
+    eraNumber: string;
+    paymentAmount: number;
+    adjustmentCodes: Array<{
+      code: string;
+      group: string;
+      reason: string;
+      amount: number;
+    }>;
+    patientResponsibility: number;
+    serviceLines: Array<{
+      lineNumber: number;
+      cptCode: string;
+      chargeAmount: number;
+      paidAmount: number;
+      adjustments: Array<{
+        code: string;
+        reason: string;
+        amount: number;
+      }>;
+      remarkCodes?: string[];
+    }>;
+  };
+}

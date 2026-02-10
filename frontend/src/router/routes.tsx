@@ -54,6 +54,7 @@ const FinancialsHub = lazy(() => import('../pages/FinancialsHub').then(m => ({ d
 const QuotesPage = lazy(() => import('../pages/QuotesPage').then(m => ({ default: m.QuotesPage })));
 const OfficeFlowPage = lazy(() => import('../pages/OfficeFlowPage').then(m => ({ default: m.OfficeFlowPage })));
 const AppointmentFlowPage = lazy(() => import('../pages/AppointmentFlowPage').then(m => ({ default: m.AppointmentFlowPage })));
+const RoomBoardPage = lazy(() => import('../pages/RoomBoardPage').then(m => ({ default: m.RoomBoardPage })));
 const FeeSchedulePage = lazy(() => import('../pages/FeeSchedulePage').then(m => ({ default: m.FeeSchedulePage })));
 const ClaimsPage = lazy(() => import('../pages/ClaimsPage').then(m => ({ default: m.ClaimsPage })));
 const NoteTemplatesPage = lazy(() => import('../pages/NoteTemplatesPage').then(m => ({ default: m.NoteTemplatesPage })));
@@ -140,6 +141,7 @@ export const routes: RouteObject[] = [
       { path: 'appt-flow', element: lazyWithSuspense(AppointmentFlowPage) },
       { path: 'front-desk', element: lazyWithSuspense(FrontDeskDashboard) },
       { path: 'waitlist', element: lazyWithSuspense(WaitlistPage) },
+      { path: 'room-board', element: lazyWithSuspense(RoomBoardPage) },
 
       // Patients
       { path: 'patients', element: lazyWithSuspense(PatientsPage) },

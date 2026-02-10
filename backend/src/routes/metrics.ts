@@ -1,7 +1,7 @@
 import express, { type Request, type Response } from 'express';
-import { metricsService, type MetricEvent } from '../services/metricsService.js';
-import { requireAuth, type AuthedRequest } from '../middleware/auth.js';
-import { pool } from '../db/pool.js';
+import { metricsService, type MetricEvent } from '../services/metricsService';
+import { requireAuth, type AuthedRequest } from '../middleware/auth';
+import { pool } from '../db/pool';
 
 const router = express.Router();
 

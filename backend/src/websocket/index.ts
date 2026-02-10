@@ -5,6 +5,7 @@ import { logger } from "../lib/logger";
 import { registerMessageHandlers } from "./handlers/messageHandlers";
 import { registerPresenceHandlers } from "./handlers/presenceHandlers";
 import { registerAmbientScribeHandlers } from "./handlers/ambientScribeHandlers";
+import { registerPatientFlowHandlers } from "./handlers/patientFlowHandlers";
 import { loadEnv } from "../config/validate";
 
 const envVars = loadEnv();
@@ -75,6 +76,7 @@ export function initializeWebSocket(httpServer: HTTPServer): Server {
     registerMessageHandlers(io!, socket);
     registerPresenceHandlers(io!, socket);
     registerAmbientScribeHandlers(io!, socket);
+    registerPatientFlowHandlers(io!, socket);
 
     // Handle errors
     socket.on("error", (error) => {

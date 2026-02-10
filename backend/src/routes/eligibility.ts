@@ -1061,3 +1061,342 @@ eligibilityRouter.get(
     }
   }
 );
+
+/**
+ * @swagger
+ * /api/eligibility/check:
+ *   post:
+ *     summary: Trigger real-time eligibility check with caching
+ *     description: Performs eligibility check with 24-hour caching and retry logic
+ *     tags:
+ *       - Insurance Eligibility
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - patientId
+ *               - payerId
+ *             properties:
+ *               patientId:
+ *                 type: string
+ *                 format: uuid
+ *               payerId:
+ *                 type: string
+ *               serviceDate:
+ *                 type: string
+ *                 format: date
+ *               serviceType:
+ *                 type: string
+ *                 default: '30'
+ *               bypassCache:
+ *                 type: boolean
+ *                 default: false
+ *     responses:
+ *       200:
+ *         description: Eligibility check result
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+import {
+  checkEligibility,
+  getPatientEligibility,
+} from '../services/eligibilityService';
+
+const checkEligibilitySchema = z.object({
+  patientId: z.string().uuid(),
+  payerId: z.string().min(1),
+  serviceDate: z.string().optional(),
+  serviceType: z.string().default('30'),
+  bypassCache: z.boolean().default(false),
+});
+
+eligibilityRouter.post(
+  '/check',
+  requireAuth,
+  requireRoles(['admin', 'provider', 'front_desk', 'billing']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const validatedData = checkEligibilitySchema.parse(req.body);
+      const tenantId = req.headers['x-tenant-id'] as string;
+      const userId = req.user?.id;
+
+      logger.info('Triggering eligibility check', {
+        tenantId,
+        userId,
+        patientId: validatedData.patientId,
+        payerId: validatedData.payerId,
+        bypassCache: validatedData.bypassCache,
+      });
+
+      const result = await checkEligibility(tenantId, {
+        patientId: validatedData.patientId,
+        payerId: validatedData.payerId,
+        serviceDate: validatedData.serviceDate ? new Date(validatedData.serviceDate) : undefined,
+        serviceType: validatedData.serviceType,
+        bypassCache: validatedData.bypassCache,
+      });
+
+      // Audit log
+      await createAuditLog({
+        tenantId,
+        userId,
+        action: 'insurance.eligibility.check',
+        resourceType: 'patient',
+        resourceId: validatedData.patientId,
+        metadata: {
+          payerId: validatedData.payerId,
+          cached: result.cached,
+          coverageActive: result.coverageActive,
+        },
+      });
+
+      res.json({
+        success: true,
+        result,
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid request data',
+          details: error.issues,
+        });
+      }
+
+      logger.error('Error in eligibility check', {
+        error: (error as Error).message,
+      });
+
+      res.status(500).json({
+        success: false,
+        error: 'Failed to check eligibility',
+        message: (error as Error).message,
+      });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/eligibility/patient/{patientId}:
+ *   get:
+ *     summary: Get latest eligibility for a patient
+ *     description: Returns the most recent eligibility information for a patient
+ *     tags:
+ *       - Insurance Eligibility
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     parameters:
+ *       - in: path
+ *         name: patientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Latest eligibility data
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: No eligibility data found
+ *       500:
+ *         description: Server error
+ */
+eligibilityRouter.get(
+  '/patient/:patientId',
+  requireAuth,
+  requireRoles(['admin', 'provider', 'front_desk', 'billing']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const { patientId } = req.params;
+      const tenantId = req.headers['x-tenant-id'] as string;
+
+      const eligibility = await getPatientEligibility(tenantId, patientId!);
+
+      if (!eligibility) {
+        return res.status(404).json({
+          success: false,
+          error: 'No eligibility data found for patient',
+        });
+      }
+
+      res.json({
+        success: true,
+        eligibility,
+      });
+    } catch (error) {
+      logger.error('Error fetching patient eligibility', {
+        error: (error as Error).message,
+        patientId: req.params.patientId,
+      });
+
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch patient eligibility',
+        message: (error as Error).message,
+      });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/eligibility/payers:
+ *   get:
+ *     summary: Get configured payers
+ *     description: Returns list of payers configured for eligibility checking
+ *     tags:
+ *       - Insurance Eligibility
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     responses:
+ *       200:
+ *         description: List of payers
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+eligibilityRouter.get(
+  '/payers',
+  requireAuth,
+  requireRoles(['admin', 'provider', 'front_desk', 'billing']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const tenantId = req.headers['x-tenant-id'] as string;
+
+      const result = await pool.query(
+        `SELECT
+          payer_id,
+          payer_name,
+          payer_type,
+          supports_real_time,
+          supports_270_271,
+          cache_duration_hours,
+          last_successful_check,
+          is_active
+         FROM payer_configurations
+         WHERE (tenant_id = $1 OR tenant_id = 'default')
+           AND is_active = true
+         ORDER BY payer_name`,
+        [tenantId]
+      );
+
+      res.json({
+        success: true,
+        payers: result.rows,
+      });
+    } catch (error) {
+      logger.error('Error fetching payers', {
+        error: (error as Error).message,
+      });
+
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch payers',
+        message: (error as Error).message,
+      });
+    }
+  }
+);
+
+/**
+ * @swagger
+ * /api/eligibility/cache/clear:
+ *   post:
+ *     summary: Clear eligibility cache for a patient
+ *     description: Clears cached eligibility data to force fresh check
+ *     tags:
+ *       - Insurance Eligibility
+ *     security:
+ *       - bearerAuth: []
+ *       - tenantHeader: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - patientId
+ *             properties:
+ *               patientId:
+ *                 type: string
+ *                 format: uuid
+ *               payerId:
+ *                 type: string
+ *                 description: Optional - if not provided, clears all payer caches for patient
+ *     responses:
+ *       200:
+ *         description: Cache cleared
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+eligibilityRouter.post(
+  '/cache/clear',
+  requireAuth,
+  requireRoles(['admin', 'provider', 'front_desk', 'billing']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const { patientId, payerId } = req.body;
+      const tenantId = req.headers['x-tenant-id'] as string;
+
+      if (!patientId) {
+        return res.status(400).json({
+          success: false,
+          error: 'patientId is required',
+        });
+      }
+
+      let result;
+      if (payerId) {
+        result = await pool.query(
+          `DELETE FROM eligibility_cache
+           WHERE tenant_id = $1 AND patient_id = $2 AND payer_id = $3`,
+          [tenantId, patientId, payerId]
+        );
+      } else {
+        result = await pool.query(
+          `DELETE FROM eligibility_cache
+           WHERE tenant_id = $1 AND patient_id = $2`,
+          [tenantId, patientId]
+        );
+      }
+
+      logger.info('Eligibility cache cleared', {
+        tenantId,
+        patientId,
+        payerId,
+        deletedCount: result.rowCount,
+      });
+
+      res.json({
+        success: true,
+        message: `Cleared ${result.rowCount} cached entries`,
+      });
+    } catch (error) {
+      logger.error('Error clearing eligibility cache', {
+        error: (error as Error).message,
+      });
+
+      res.status(500).json({
+        success: false,
+        error: 'Failed to clear eligibility cache',
+        message: (error as Error).message,
+      });
+    }
+  }
+);

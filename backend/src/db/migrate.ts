@@ -3715,6 +3715,161 @@ Consider age-appropriate treatments and include family counseling points.',
     create index if not exists idx_vitals_recorded_at on vitals(recorded_at desc);
     `,
   },
+  {
+    name: "094_room_status_board",
+    sql: `
+    -- Exam Rooms Table
+    CREATE TABLE IF NOT EXISTS exam_rooms (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      room_name TEXT NOT NULL,
+      room_number TEXT NOT NULL,
+      location_id TEXT NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+      room_type TEXT NOT NULL DEFAULT 'exam',
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      display_order INTEGER DEFAULT 0,
+      equipment TEXT[],
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, location_id, room_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_exam_rooms_tenant ON exam_rooms(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_exam_rooms_location ON exam_rooms(location_id);
+    CREATE INDEX IF NOT EXISTS idx_exam_rooms_active ON exam_rooms(is_active) WHERE is_active = TRUE;
+    CREATE INDEX IF NOT EXISTS idx_exam_rooms_type ON exam_rooms(room_type);
+
+    -- Patient Flow Table
+    CREATE TABLE IF NOT EXISTS patient_flow (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      appointment_id TEXT NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      room_id TEXT REFERENCES exam_rooms(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'checked_in',
+      status_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      checked_in_at TIMESTAMPTZ,
+      rooming_at TIMESTAMPTZ,
+      vitals_complete_at TIMESTAMPTZ,
+      ready_for_provider_at TIMESTAMPTZ,
+      with_provider_at TIMESTAMPTZ,
+      checkout_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      assigned_provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+      assigned_ma_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      priority TEXT DEFAULT 'normal',
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, appointment_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_flow_tenant ON patient_flow(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_flow_appointment ON patient_flow(appointment_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_flow_patient ON patient_flow(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_flow_room ON patient_flow(room_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_flow_status ON patient_flow(status);
+    CREATE INDEX IF NOT EXISTS idx_patient_flow_provider ON patient_flow(assigned_provider_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_flow_ma ON patient_flow(assigned_ma_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_flow_date ON patient_flow(created_at);
+
+    -- Flow Status History Table
+    CREATE TABLE IF NOT EXISTS flow_status_history (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      flow_id TEXT NOT NULL REFERENCES patient_flow(id) ON DELETE CASCADE,
+      from_status TEXT,
+      to_status TEXT NOT NULL,
+      changed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      notes TEXT,
+      room_id TEXT REFERENCES exam_rooms(id) ON DELETE SET NULL,
+      duration_seconds INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_flow_history_tenant ON flow_status_history(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_flow_history_flow ON flow_status_history(flow_id);
+    CREATE INDEX IF NOT EXISTS idx_flow_history_changed_at ON flow_status_history(changed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_flow_history_status ON flow_status_history(to_status);
+
+    -- Room Assignments Table
+    CREATE TABLE IF NOT EXISTS room_assignments (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      room_id TEXT NOT NULL REFERENCES exam_rooms(id) ON DELETE CASCADE,
+      provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+      time_slot TEXT,
+      day_of_week INTEGER NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+      effective_date DATE,
+      end_date DATE,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE NULLS NOT DISTINCT (tenant_id, room_id, day_of_week, time_slot, effective_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_room_assignments_tenant ON room_assignments(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_room_assignments_room ON room_assignments(room_id);
+    CREATE INDEX IF NOT EXISTS idx_room_assignments_provider ON room_assignments(provider_id);
+    CREATE INDEX IF NOT EXISTS idx_room_assignments_day ON room_assignments(day_of_week);
+    CREATE INDEX IF NOT EXISTS idx_room_assignments_active ON room_assignments(is_active) WHERE is_active = TRUE;
+
+    -- Helper function
+    CREATE OR REPLACE FUNCTION calculate_stage_wait_time(
+      p_flow_id TEXT,
+      p_from_status TEXT,
+      p_to_status TEXT
+    ) RETURNS INTEGER AS $$
+    DECLARE
+      v_from_time TIMESTAMPTZ;
+      v_to_time TIMESTAMPTZ;
+    BEGIN
+      SELECT
+        CASE p_from_status
+          WHEN 'checked_in' THEN checked_in_at
+          WHEN 'rooming' THEN rooming_at
+          WHEN 'vitals_complete' THEN vitals_complete_at
+          WHEN 'ready_for_provider' THEN ready_for_provider_at
+          WHEN 'with_provider' THEN with_provider_at
+          WHEN 'checkout' THEN checkout_at
+        END,
+        CASE p_to_status
+          WHEN 'rooming' THEN rooming_at
+          WHEN 'vitals_complete' THEN vitals_complete_at
+          WHEN 'ready_for_provider' THEN ready_for_provider_at
+          WHEN 'with_provider' THEN with_provider_at
+          WHEN 'checkout' THEN checkout_at
+          WHEN 'completed' THEN completed_at
+        END
+      INTO v_from_time, v_to_time
+      FROM patient_flow
+      WHERE id = p_flow_id;
+
+      IF v_from_time IS NOT NULL AND v_to_time IS NOT NULL THEN
+        RETURN EXTRACT(EPOCH FROM (v_to_time - v_from_time))::INTEGER;
+      END IF;
+
+      RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    -- Seed demo exam rooms
+    INSERT INTO exam_rooms (id, tenant_id, room_name, room_number, location_id, room_type, display_order, equipment)
+    SELECT
+      'room-' || generate_series,
+      'tenant-demo',
+      'Exam Room ' || generate_series,
+      generate_series::text,
+      (SELECT id FROM locations WHERE tenant_id = 'tenant-demo' LIMIT 1),
+      CASE WHEN generate_series <= 6 THEN 'exam' WHEN generate_series = 7 THEN 'procedure' ELSE 'consult' END,
+      generate_series,
+      CASE WHEN generate_series = 7 THEN ARRAY['surgical light', 'procedure table'] ELSE ARRAY['exam table', 'dermatoscope'] END
+    FROM generate_series(1, 8)
+    WHERE EXISTS (SELECT 1 FROM locations WHERE tenant_id = 'tenant-demo')
+    ON CONFLICT DO NOTHING;
+    `,
+  },
 ];
 
 async function ensureMigrationsTable() {

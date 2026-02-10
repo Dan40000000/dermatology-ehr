@@ -329,7 +329,7 @@ rcmRouter.post('/action-items/:id/resolve', requireAuth, async (req: AuthedReque
   const { notes } = req.body;
 
   try {
-    const { pool } = await import('../db/pool.js');
+    const { pool } = await import('../db/pool');
 
     await pool.query(
       `update rcm_action_items
@@ -358,7 +358,7 @@ rcmRouter.post('/metrics/calculate', requireAuth, async (req: AuthedRequest, res
   const { date } = req.body;
 
   try {
-    const { pool } = await import('../db/pool.js');
+    const { pool } = await import('../db/pool');
     const metricDate = date ? new Date(date) : new Date();
 
     await pool.query('select calculate_rcm_daily_metrics($1, $2)', [

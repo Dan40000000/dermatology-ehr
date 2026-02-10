@@ -462,29 +462,66 @@ router.get('/messages/patient/:patientId', requireAuth, async (req: AuthedReques
 router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
+    const status = req.query.status as string | undefined;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = parseInt(req.query.offset as string) || 0;
 
+    // First try to use sms_conversations if it exists, otherwise fall back to aggregation
+    const conversationsResult = await pool.query(
+      `SELECT
+        c.id,
+        c.patient_id as "patientId",
+        p.first_name || ' ' || p.last_name as "patientName",
+        p.mrn as "patientMrn",
+        c.phone_number as "phoneNumber",
+        c.status,
+        c.last_message_at as "lastMessageAt",
+        c.last_message_direction as "lastMessageDirection",
+        c.last_message_preview as "lastMessagePreview",
+        c.unread_count as "unreadCount"
+       FROM sms_conversations c
+       JOIN patients p ON p.id = c.patient_id
+       WHERE c.tenant_id = $1
+         ${status ? 'AND c.status = $4' : 'AND c.status != \'blocked\''}
+       ORDER BY c.last_message_at DESC NULLS LAST
+       LIMIT $2 OFFSET $3`,
+      status ? [tenantId, limit, offset, status] : [tenantId, limit, offset]
+    ).catch(() => null);
+
+    if (conversationsResult && conversationsResult.rows.length > 0) {
+      return res.json({ conversations: conversationsResult.rows });
+    }
+
+    // Fall back to aggregating from sms_messages table
     const result = await pool.query(
       `SELECT DISTINCT ON (p.id)
+        gen_random_uuid() as "id",
         p.id as "patientId",
-        p.first_name as "firstName",
-        p.last_name as "lastName",
-        p.phone,
-        COALESCE(prefs.opted_in, true) as "smsOptIn",
-        prefs.opted_out_at as "optedOutAt",
-        (
-          SELECT m.message_body
-          FROM sms_messages m
-          WHERE m.patient_id = p.id AND m.tenant_id = $1
-          ORDER BY m.created_at DESC
-          LIMIT 1
-        ) as "lastMessage",
+        p.first_name || ' ' || p.last_name as "patientName",
+        p.mrn as "patientMrn",
+        p.phone as "phoneNumber",
+        'active' as "status",
         (
           SELECT m.created_at
           FROM sms_messages m
           WHERE m.patient_id = p.id AND m.tenant_id = $1
           ORDER BY m.created_at DESC
           LIMIT 1
-        ) as "lastMessageTime",
+        ) as "lastMessageAt",
+        (
+          SELECT m.direction
+          FROM sms_messages m
+          WHERE m.patient_id = p.id AND m.tenant_id = $1
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) as "lastMessageDirection",
+        (
+          SELECT LEFT(m.message_body, 160)
+          FROM sms_messages m
+          WHERE m.patient_id = p.id AND m.tenant_id = $1
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) as "lastMessagePreview",
         (
           SELECT COUNT(*)::int
           FROM sms_messages m
@@ -497,7 +534,6 @@ router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Respon
             ), '1970-01-01'::timestamp)
         ) as "unreadCount"
       FROM patients p
-      LEFT JOIN patient_sms_preferences prefs ON prefs.patient_id = p.id AND prefs.tenant_id = $1
       WHERE p.tenant_id = $1
         AND p.phone IS NOT NULL
         AND EXISTS (
@@ -510,8 +546,9 @@ router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Respon
         WHERE m.patient_id = p.id AND m.tenant_id = $1
         ORDER BY m.created_at DESC
         LIMIT 1
-      ) DESC NULLS LAST`,
-      [tenantId]
+      ) DESC NULLS LAST
+      LIMIT $2 OFFSET $3`,
+      [tenantId, limit, offset]
     );
 
     res.json({ conversations: result.rows });
@@ -942,6 +979,81 @@ router.put('/patient-preferences/:patientId', requireAuth, async (req: AuthedReq
 });
 
 /**
+ * POST /api/sms/opt-out
+ * Opt out a patient from SMS messaging
+ */
+const optOutSchema = z.object({
+  patientId: z.string().uuid(),
+  reason: z.string().optional(),
+});
+
+router.post('/opt-out', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+
+    const parsed = optOutSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { patientId, reason } = parsed.data;
+
+    // Get patient phone
+    const patientResult = await pool.query(
+      `SELECT phone FROM patients WHERE id = $1 AND tenant_id = $2`,
+      [patientId, tenantId]
+    );
+
+    if (patientResult.rows.length === 0 || !patientResult.rows[0].phone) {
+      return res.status(404).json({ error: 'Patient not found or has no phone' });
+    }
+
+    const phoneNumber = formatPhoneE164(patientResult.rows[0].phone);
+    if (!phoneNumber) {
+      return res.status(400).json({ error: 'Invalid phone number' });
+    }
+
+    // Add to opt-out table
+    await pool.query(
+      `INSERT INTO sms_opt_out (tenant_id, phone_number, patient_id, reason, opted_out_via)
+       VALUES ($1, $2, $3, $4, 'staff')
+       ON CONFLICT (tenant_id, phone_number) DO UPDATE SET
+         is_active = true,
+         opted_out_at = CURRENT_TIMESTAMP,
+         reason = $4,
+         opted_in_at = NULL`,
+      [tenantId, phoneNumber, patientId, reason || 'Staff action']
+    );
+
+    // Update patient preferences
+    await pool.query(
+      `INSERT INTO patient_sms_preferences (tenant_id, patient_id, opted_in, opted_out_at, opted_out_via)
+       VALUES ($1, $2, false, CURRENT_TIMESTAMP, 'staff')
+       ON CONFLICT (tenant_id, patient_id) DO UPDATE SET
+         opted_in = false,
+         opted_out_at = CURRENT_TIMESTAMP,
+         opted_out_via = 'staff',
+         updated_at = CURRENT_TIMESTAMP`,
+      [tenantId, patientId]
+    );
+
+    await auditLog(tenantId, userId, 'sms_opt_out', 'patient', patientId);
+
+    logger.info('Patient opted out of SMS', {
+      patientId,
+      tenantId,
+      reason,
+    });
+
+    res.json({ success: true });
+  } catch (error: any) {
+    logger.error('Error opting out patient', { error: error.message });
+    res.status(500).json({ error: 'Failed to opt out patient' });
+  }
+});
+
+/**
  * POST /api/sms/send-reminder/:appointmentId
  * Send immediate reminder for appointment
  */
@@ -987,6 +1099,7 @@ router.get('/templates', requireAuth, async (req: AuthedRequest, res: Response) 
         description,
         message_body as "messageBody",
         category,
+        COALESCE(variables, '{}') as "variables",
         is_system_template as "isSystemTemplate",
         is_active as "isActive",
         usage_count as "usageCount",

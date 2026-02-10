@@ -425,7 +425,7 @@ erxRouter.post('/check-interactions', requireAuth, async (req: AuthedRequest, re
     return res.json({
       interactions,
       count: interactions.length,
-      hasSevere: interactions.some(i => i.severity === 'severe'),
+      hasSevere: interactions.some(i => i.severity === 'contraindicated' || i.severity === 'major'),
     });
   } catch (error) {
     console.error('Error checking interactions:', error);
@@ -481,9 +481,10 @@ erxRouter.post('/safety-check', requireAuth, async (req: AuthedRequest, res) => 
     }
 
     const safetyCheck = await comprehensiveSafetyCheck(
-      medicationName,
       patientId,
-      tenantId
+      medicationName,
+      medicationName,
+      tenantId ?? ''
     );
 
     return res.json(safetyCheck);

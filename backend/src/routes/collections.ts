@@ -5,6 +5,7 @@ import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
 import * as collectionsService from "../services/collectionsService";
 import * as costEstimator from "../services/costEstimator";
+import * as copayCollectionService from "../services/copayCollectionService";
 import { pool } from "../db/pool";
 import crypto from "crypto";
 
@@ -624,6 +625,667 @@ collectionsRouter.get(
     } catch (error) {
       console.error("Error fetching statements:", error);
       res.status(500).json({ error: "Failed to fetch statements" });
+    }
+  }
+);
+
+// ============================================
+// COPAY COLLECTION AND PAYMENT PROMPTS
+// ============================================
+
+// Validation schemas for copay collection
+const recordCopayPaymentSchema = z.object({
+  promptId: z.string().uuid().optional(),
+  appointmentId: z.string().uuid().optional(),
+  patientId: z.string().uuid(),
+  amountCents: z.number().int().positive(),
+  method: z.enum(['cash', 'check', 'credit_card', 'debit_card', 'hsa_fsa', 'card_on_file']),
+  referenceNumber: z.string().optional(),
+  promptType: z.enum(['copay', 'balance', 'deductible', 'coinsurance', 'prepayment', 'deposit']).optional(),
+  collectionPoint: z.enum(['pre_visit', 'check_in', 'checkout', 'post_visit']).optional(),
+});
+
+const saveCardSchema = z.object({
+  lastFour: z.string().length(4),
+  cardType: z.enum(['visa', 'mastercard', 'amex', 'discover', 'other']),
+  expiryMonth: z.number().int().min(1).max(12),
+  expiryYear: z.number().int().min(2024).max(2050),
+  cardholderName: z.string().optional(),
+  billingZip: z.string().optional(),
+  stripePaymentMethodId: z.string().optional(),
+  stripeCustomerId: z.string().optional(),
+  isDefault: z.boolean().optional(),
+  consentMethod: z.enum(['in_person', 'patient_portal', 'phone', 'written']).optional(),
+});
+
+const chargeCardSchema = z.object({
+  patientId: z.string().uuid(),
+  amountCents: z.number().int().positive(),
+  description: z.string().optional(),
+  cardId: z.string().uuid().optional(),
+});
+
+const skipPromptSchema = z.object({
+  reason: z.enum([
+    'patient_refused',
+    'no_card_available',
+    'dispute',
+    'hardship',
+    'insurance_issue',
+    'will_pay_later',
+    'manager_override',
+    'other',
+  ]),
+  notes: z.string().optional(),
+});
+
+const createPromptSchema = z.object({
+  appointmentId: z.string().uuid().optional(),
+  patientId: z.string().uuid(),
+  promptType: z.enum(['copay', 'balance', 'deductible', 'coinsurance', 'prepayment', 'deposit']),
+  amountCents: z.number().int().nonnegative(),
+  collectionPoint: z.enum(['pre_visit', 'check_in', 'checkout', 'post_visit']),
+});
+
+/**
+ * GET /api/collections/appointment/:id/due
+ * Get expected copay amount due for an appointment at check-in
+ */
+collectionsRouter.get(
+  "/appointment/:id/due",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    try {
+      const tenantId = req.user!.tenantId;
+      const appointmentId = String(req.params.id);
+
+      const copay = await copayCollectionService.getExpectedCopay(tenantId, appointmentId);
+
+      if (!copay) {
+        return res.status(404).json({ error: "Appointment not found" });
+      }
+
+      return res.json({
+        appointmentId: copay.appointmentId,
+        patientId: copay.patientId,
+        copayAmount: copay.copayAmountCents / 100,
+        copayAmountCents: copay.copayAmountCents,
+        source: copay.source,
+        visitType: copay.visitType,
+        payer: {
+          id: copay.payerId,
+          name: copay.payerName,
+        },
+        patientBalance: copay.patientBalance,
+        totalDue: copay.totalDue,
+      });
+    } catch (error: unknown) {
+      console.error("Error getting expected copay:", error);
+      return res.status(500).json({ error: "Failed to get expected copay" });
+    }
+  }
+);
+
+/**
+ * POST /api/collections/copay-payment
+ * Record a copay payment with enhanced tracking
+ */
+collectionsRouter.post(
+  "/copay-payment",
+  requireAuth,
+  requireRoles(["provider", "admin", "front_desk", "billing"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = recordCopayPaymentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    try {
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+      const data = parsed.data;
+
+      let promptId = data.promptId;
+
+      // If no prompt ID, create one first
+      if (!promptId && data.appointmentId) {
+        const prompt = await copayCollectionService.createCollectionPrompt(
+          tenantId,
+          data.appointmentId,
+          data.patientId,
+          data.promptType || 'copay',
+          data.amountCents,
+          data.collectionPoint || 'check_in'
+        );
+        promptId = prompt.id;
+      }
+
+      if (!promptId) {
+        // Create a standalone prompt without appointment
+        const prompt = await copayCollectionService.createCollectionPrompt(
+          tenantId,
+          '', // No appointment
+          data.patientId,
+          data.promptType || 'balance',
+          data.amountCents,
+          data.collectionPoint || 'checkout'
+        );
+        promptId = prompt.id;
+      }
+
+      const result = await copayCollectionService.recordPayment(
+        tenantId,
+        promptId,
+        data.amountCents,
+        data.method,
+        userId,
+        data.referenceNumber
+      );
+
+      await auditLog(
+        tenantId,
+        userId,
+        "copay_payment_recorded",
+        "payment",
+        result.paymentId
+      );
+
+      return res.status(201).json({
+        success: true,
+        promptId: result.promptId,
+        paymentId: result.paymentId,
+        receiptNumber: result.receiptNumber,
+      });
+    } catch (error: unknown) {
+      console.error("Error recording copay payment:", error);
+      const message = error instanceof Error ? error.message : "Failed to record payment";
+      return res.status(500).json({ error: message });
+    }
+  }
+);
+
+/**
+ * GET /api/collections/patient/:id/cards
+ * Get patient's cards on file
+ */
+collectionsRouter.get(
+  "/patient/:id/cards",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    try {
+      const tenantId = req.user!.tenantId;
+      const patientId = String(req.params.id);
+
+      const cards = await copayCollectionService.getCardOnFile(tenantId, patientId);
+
+      return res.json({
+        cards: cards.map((card) => ({
+          id: card.id,
+          lastFour: card.lastFour,
+          cardType: card.cardType,
+          expiryMonth: card.expiryMonth,
+          expiryYear: card.expiryYear,
+          cardholderName: card.cardholderName,
+          isDefault: card.isDefault,
+          isValid: card.isValid,
+          displayName: `${card.cardType.toUpperCase()} ****${card.lastFour}`,
+        })),
+      });
+    } catch (error: unknown) {
+      console.error("Error getting cards on file:", error);
+      return res.status(500).json({ error: "Failed to get cards on file" });
+    }
+  }
+);
+
+/**
+ * POST /api/collections/patient/:id/cards
+ * Save a new card on file
+ */
+collectionsRouter.post(
+  "/patient/:id/cards",
+  requireAuth,
+  requireRoles(["provider", "admin", "front_desk", "billing"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = saveCardSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    try {
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+      const patientId = String(req.params.id);
+      const data = parsed.data;
+
+      const card = await copayCollectionService.saveCardOnFile(
+        tenantId,
+        patientId,
+        {
+          lastFour: data.lastFour,
+          cardType: data.cardType,
+          expiryMonth: data.expiryMonth,
+          expiryYear: data.expiryYear,
+          cardholderName: data.cardholderName,
+          billingZip: data.billingZip,
+          stripePaymentMethodId: data.stripePaymentMethodId,
+          stripeCustomerId: data.stripeCustomerId,
+          isDefault: data.isDefault,
+          consentMethod: data.consentMethod,
+        },
+        userId
+      );
+
+      await auditLog(
+        tenantId,
+        userId,
+        "card_on_file_saved",
+        "card_on_file",
+        card.id
+      );
+
+      return res.status(201).json({
+        id: card.id,
+        lastFour: card.lastFour,
+        cardType: card.cardType,
+        expiryMonth: card.expiryMonth,
+        expiryYear: card.expiryYear,
+        isDefault: card.isDefault,
+        displayName: `${card.cardType.toUpperCase()} ****${card.lastFour}`,
+      });
+    } catch (error: unknown) {
+      console.error("Error saving card on file:", error);
+      const message = error instanceof Error ? error.message : "Failed to save card on file";
+      return res.status(500).json({ error: message });
+    }
+  }
+);
+
+/**
+ * POST /api/collections/charge-card
+ * Charge a card on file
+ */
+collectionsRouter.post(
+  "/charge-card",
+  requireAuth,
+  requireRoles(["admin", "billing"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = chargeCardSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    try {
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+      const data = parsed.data;
+
+      const result = await copayCollectionService.chargeCardOnFile(
+        tenantId,
+        data.patientId,
+        data.amountCents,
+        data.description,
+        data.cardId
+      );
+
+      if (!result.success) {
+        await auditLog(
+          tenantId,
+          userId,
+          "card_charge_failed",
+          "patient",
+          data.patientId
+        );
+
+        return res.status(400).json({
+          success: false,
+          error: result.error,
+          declineCode: result.declineCode,
+        });
+      }
+
+      await auditLog(
+        tenantId,
+        userId,
+        "card_charged",
+        "patient",
+        data.patientId
+      );
+
+      return res.json({
+        success: true,
+        transactionId: result.transactionId,
+        amount: data.amountCents / 100,
+      });
+    } catch (error: unknown) {
+      console.error("Error charging card:", error);
+      const message = error instanceof Error ? error.message : "Failed to charge card";
+      return res.status(500).json({ error: message });
+    }
+  }
+);
+
+/**
+ * GET /api/collections/summary
+ * Get collection summary for a date range
+ */
+collectionsRouter.get(
+  "/summary",
+  requireAuth,
+  requireRoles(["admin", "billing", "manager"]),
+  async (req: AuthedRequest, res) => {
+    try {
+      const tenantId = req.user!.tenantId!;
+      const defaultDate = new Date().toISOString().split("T")[0];
+      const startDate = String(req.query.startDate || defaultDate);
+      const endDate = String(req.query.endDate || startDate);
+
+      const summary = await copayCollectionService.getCollectionSummary(tenantId, startDate, endDate);
+
+      // Calculate totals if date range
+      const totals = summary.reduce(
+        (acc, day) => ({
+          copaysDueCents: acc.copaysDueCents + day.copaysDueCents,
+          copaysCollectedCents: acc.copaysCollectedCents + day.copaysCollectedCents,
+          copaysCollectedCount: acc.copaysCollectedCount + day.copaysCollectedCount,
+          balancesDueCents: acc.balancesDueCents + day.balancesDueCents,
+          balancesCollectedCents: acc.balancesCollectedCents + day.balancesCollectedCents,
+          paymentPlansCreated: acc.paymentPlansCreated + day.paymentPlansCreated,
+        }),
+        {
+          copaysDueCents: 0,
+          copaysCollectedCents: 0,
+          copaysCollectedCount: 0,
+          balancesDueCents: 0,
+          balancesCollectedCents: 0,
+          paymentPlansCreated: 0,
+        }
+      );
+
+      const totalDue = totals.copaysDueCents + totals.balancesDueCents;
+      const totalCollected = totals.copaysCollectedCents + totals.balancesCollectedCents;
+
+      return res.json({
+        startDate,
+        endDate,
+        days: summary,
+        totals: {
+          copaysDue: totals.copaysDueCents / 100,
+          copaysCollected: totals.copaysCollectedCents / 100,
+          copaysCollectedCount: totals.copaysCollectedCount,
+          balancesDue: totals.balancesDueCents / 100,
+          balancesCollected: totals.balancesCollectedCents / 100,
+          totalDue: totalDue / 100,
+          totalCollected: totalCollected / 100,
+          collectionRate: totalDue > 0 ? ((totalCollected / totalDue) * 100).toFixed(1) : "0",
+          paymentPlansCreated: totals.paymentPlansCreated,
+        },
+      });
+    } catch (error: unknown) {
+      console.error("Error getting collection summary:", error);
+      return res.status(500).json({ error: "Failed to get collection summary" });
+    }
+  }
+);
+
+/**
+ * POST /api/collections/prompt
+ * Create a collection prompt
+ */
+collectionsRouter.post(
+  "/prompt",
+  requireAuth,
+  requireRoles(["provider", "admin", "front_desk", "billing"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = createPromptSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    try {
+      const tenantId = req.user!.tenantId;
+      const data = parsed.data;
+
+      const prompt = await copayCollectionService.createCollectionPrompt(
+        tenantId,
+        data.appointmentId || '',
+        data.patientId,
+        data.promptType,
+        data.amountCents,
+        data.collectionPoint
+      );
+
+      return res.status(201).json({
+        id: prompt.id,
+        appointmentId: prompt.appointmentId,
+        patientId: prompt.patientId,
+        promptType: prompt.promptType,
+        collectionPoint: prompt.collectionPoint,
+        amountDue: prompt.amountDueCents / 100,
+        amountDueCents: prompt.amountDueCents,
+        status: prompt.status,
+      });
+    } catch (error: unknown) {
+      console.error("Error creating collection prompt:", error);
+      const message = error instanceof Error ? error.message : "Failed to create collection prompt";
+      return res.status(500).json({ error: message });
+    }
+  }
+);
+
+/**
+ * GET /api/collections/appointment/:id/prompts
+ * Get pending prompts for an appointment
+ */
+collectionsRouter.get(
+  "/appointment/:id/prompts",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    try {
+      const tenantId = req.user!.tenantId;
+      const appointmentId = String(req.params.id);
+
+      const prompts = await copayCollectionService.getPendingPrompts(tenantId, appointmentId);
+
+      return res.json({
+        prompts: prompts.map((prompt) => ({
+          id: prompt.id,
+          promptType: prompt.promptType,
+          collectionPoint: prompt.collectionPoint,
+          amountDue: prompt.amountDueCents / 100,
+          amountDueCents: prompt.amountDueCents,
+          collectedAmount: prompt.collectedAmountCents / 100,
+          status: prompt.status,
+          displayedAt: prompt.displayedAt,
+        })),
+      });
+    } catch (error: unknown) {
+      console.error("Error getting prompts:", error);
+      return res.status(500).json({ error: "Failed to get prompts" });
+    }
+  }
+);
+
+/**
+ * POST /api/collections/prompt/:id/skip
+ * Skip/defer a collection prompt
+ */
+collectionsRouter.post(
+  "/prompt/:id/skip",
+  requireAuth,
+  requireRoles(["provider", "admin", "front_desk", "manager"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = skipPromptSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    try {
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+      const promptId = String(req.params.id);
+      const data = parsed.data;
+
+      await copayCollectionService.skipCollectionPrompt(
+        tenantId,
+        promptId,
+        data.reason,
+        data.notes || null,
+        userId
+      );
+
+      await auditLog(
+        tenantId,
+        userId,
+        "collection_skipped",
+        "collection_prompt",
+        promptId
+      );
+
+      return res.json({ success: true });
+    } catch (error: unknown) {
+      console.error("Error skipping prompt:", error);
+      const message = error instanceof Error ? error.message : "Failed to skip prompt";
+      return res.status(500).json({ error: message });
+    }
+  }
+);
+
+/**
+ * POST /api/collections/prompt/:id/waive
+ * Waive a collection prompt
+ */
+collectionsRouter.post(
+  "/prompt/:id/waive",
+  requireAuth,
+  requireRoles(["admin", "billing", "manager"]),
+  async (req: AuthedRequest, res) => {
+    const { reason } = req.body;
+
+    if (!reason || typeof reason !== "string") {
+      return res.status(400).json({ error: "Reason is required" });
+    }
+
+    try {
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+      const promptId = String(req.params.id);
+
+      await copayCollectionService.waiveCollectionPrompt(tenantId, promptId, reason, userId);
+
+      await auditLog(
+        tenantId,
+        userId,
+        "collection_waived",
+        "collection_prompt",
+        promptId
+      );
+
+      return res.json({ success: true });
+    } catch (error: unknown) {
+      console.error("Error waiving prompt:", error);
+      const message = error instanceof Error ? error.message : "Failed to waive prompt";
+      return res.status(500).json({ error: message });
+    }
+  }
+);
+
+/**
+ * POST /api/collections/notify-previsit
+ * Send pre-visit payment notification
+ */
+collectionsRouter.post(
+  "/notify-previsit",
+  requireAuth,
+  requireRoles(["provider", "admin", "front_desk", "billing"]),
+  async (req: AuthedRequest, res) => {
+    const { appointmentId, method = "both" } = req.body;
+
+    if (!appointmentId) {
+      return res.status(400).json({ error: "Appointment ID is required" });
+    }
+
+    try {
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+
+      const result = await copayCollectionService.sendPreVisitNotification(
+        tenantId,
+        appointmentId,
+        method
+      );
+
+      await auditLog(
+        tenantId,
+        userId,
+        "previsit_notification_sent",
+        "appointment",
+        appointmentId
+      );
+
+      return res.json(result);
+    } catch (error: unknown) {
+      console.error("Error sending notification:", error);
+      const message = error instanceof Error ? error.message : "Failed to send notification";
+      return res.status(500).json({ error: message });
+    }
+  }
+);
+
+/**
+ * GET /api/collections/receipt/:paymentId
+ * Generate a receipt
+ */
+collectionsRouter.get(
+  "/receipt/:paymentId",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    try {
+      const tenantId = req.user!.tenantId;
+      const paymentId = String(req.params.paymentId);
+
+      const receipt = await copayCollectionService.generateReceipt(tenantId, paymentId);
+
+      return res.json(receipt);
+    } catch (error: unknown) {
+      console.error("Error generating receipt:", error);
+      const message = error instanceof Error ? error.message : "Failed to generate receipt";
+      return res.status(500).json({ error: message });
+    }
+  }
+);
+
+/**
+ * GET /api/collections/patient/:id/payment-plans
+ * Get patient's payment plans (enhanced version)
+ */
+collectionsRouter.get(
+  "/patient/:id/payment-plans",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    try {
+      const tenantId = req.user!.tenantId;
+      const patientId = String(req.params.id);
+
+      const plans = await copayCollectionService.getPatientPaymentPlans(tenantId, patientId);
+
+      return res.json({
+        paymentPlans: plans.map((plan) => ({
+          id: plan.id,
+          planNumber: plan.planNumber,
+          originalAmount: plan.originalAmountCents / 100,
+          remainingAmount: plan.remainingAmountCents / 100,
+          monthlyPayment: plan.monthlyPaymentCents / 100,
+          numberOfPayments: plan.numberOfPayments,
+          paymentsMade: plan.paymentsMade,
+          nextDueDate: plan.nextDueDate,
+          status: plan.status,
+          autoCharge: plan.autoCharge,
+        })),
+      });
+    } catch (error: unknown) {
+      console.error("Error getting payment plans:", error);
+      return res.status(500).json({ error: "Failed to get payment plans" });
     }
   }
 );

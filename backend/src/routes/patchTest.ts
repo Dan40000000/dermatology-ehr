@@ -179,7 +179,7 @@ router.get('/sessions', async (req: AuthedRequest, res: Response) => {
     query += ` ORDER BY pts.application_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     params.push(parseInt(limit as string), parseInt(offset as string));
 
-    const { pool } = await import('../db/pool');
+    const { pool } = await import('../db/pool.js');
     const result = await pool.query(query, params);
 
     res.json({

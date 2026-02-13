@@ -259,7 +259,7 @@ router.post('/webhook/hl7', async (req: AuthedRequest, res: Response) => {
     try {
       const parsedMessage = parseHL7Message(hl7Message);
       const ackCode = result.success ? 'AA' : 'AE';
-      const { generateACK } = await import('../services/hl7Parser');
+      const { generateACK } = await import('../services/hl7Parser.js');
       const ackMessage = generateACK(parsedMessage, ackCode);
 
       res.set('Content-Type', 'text/plain');

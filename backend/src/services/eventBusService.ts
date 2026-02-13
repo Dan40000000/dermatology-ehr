@@ -701,16 +701,16 @@ export class EventBusService {
   private async getService(serviceName: string): Promise<any> {
     // Map service names to actual service modules
     const serviceMap: Record<string, () => Promise<any>> = {
-      smsWorkflowService: async () => (await import('./smsWorkflowService')).smsWorkflowService,
-      patientEngagementService: async () => (await import('./patientEngagementService')).patientEngagementService,
-      referralService: async () => (await import('./referralService')).referralService,
-      patientIntakeService: async () => (await import('./patientIntakeService')).patientIntakeService,
-      revenueCycleService: async () => (await import('./revenueCycleService')).revenueCycleService,
-      inventoryService: async () => (await import('./inventoryService')).inventoryService,
-      qualityMeasuresService: async () => (await import('./qualityMeasuresService')).QualityMeasuresService,
-      staffSchedulingService: async () => (await import('./staffSchedulingService')),
-      notificationService: async () => (await import('./integrations/notificationService')).notificationService,
-      workflowOrchestrator: async () => (await import('./workflowOrchestrator')).workflowOrchestrator,
+      smsWorkflowService: async () => (await import('./smsWorkflowService.js')).smsWorkflowService,
+      patientEngagementService: async () => (await import('./patientEngagementService.js')).patientEngagementService,
+      referralService: async () => (await import('./referralService.js')).referralService,
+      patientIntakeService: async () => (await import('./patientIntakeService.js')).patientIntakeService,
+      revenueCycleService: async () => (await import('./revenueCycleService.js')).revenueCycleService,
+      inventoryService: async () => (await import('./inventoryService.js')).inventoryService,
+      qualityMeasuresService: async () => (await import('./qualityMeasuresService.js')).QualityMeasuresService,
+      staffSchedulingService: async () => (await import('./staffSchedulingService.js')),
+      notificationService: async () => (await import('./integrations/notificationService.js')).notificationService,
+      workflowOrchestrator: async () => (await import('./workflowOrchestrator.js')).workflowOrchestrator,
     };
 
     const loader = serviceMap[serviceName];

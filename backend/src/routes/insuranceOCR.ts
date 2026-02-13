@@ -608,7 +608,7 @@ insuranceOCRRouter.get(
   requireRoles(['admin', 'provider', 'front_desk', 'billing', 'medical_assistant']),
   async (req: AuthedRequest, res) => {
     try {
-      const { pool } = await import('../db/pool');
+      const { pool } = await import('../db/pool.js');
 
       const result = await pool.query(
         `SELECT payer_id, payer_name, payer_aliases, card_layout_type

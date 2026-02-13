@@ -3870,6 +3870,3231 @@ Consider age-appropriate treatments and include family counseling points.',
     ON CONFLICT DO NOTHING;
     `,
   },
+  {
+    name: "089_eligibility_checking",
+    sql: `
+    -- Real-time Insurance Eligibility Checking System
+    CREATE TABLE IF NOT EXISTS eligibility_requests (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      payer_id TEXT NOT NULL,
+      payer_name TEXT,
+      service_type TEXT NOT NULL DEFAULT 'health_benefit_plan_coverage',
+      request_date TIMESTAMPTZ DEFAULT NOW(),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'submitted', 'completed', 'error', 'timeout')),
+      subscriber_id TEXT,
+      subscriber_name TEXT,
+      dependent_sequence TEXT,
+      provider_npi TEXT,
+      service_date DATE,
+      x12_270_request TEXT,
+      submitted_at TIMESTAMPTZ,
+      response_received_at TIMESTAMPTZ,
+      error_message TEXT,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_eligibility_requests_tenant ON eligibility_requests(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_eligibility_requests_patient ON eligibility_requests(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_eligibility_requests_status ON eligibility_requests(status);
+    CREATE INDEX IF NOT EXISTS idx_eligibility_requests_date ON eligibility_requests(request_date);
+
+    CREATE TABLE IF NOT EXISTS eligibility_responses (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      request_id TEXT NOT NULL REFERENCES eligibility_requests(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      is_eligible BOOLEAN,
+      coverage_active BOOLEAN,
+      coverage_begin_date DATE,
+      coverage_end_date DATE,
+      plan_name TEXT,
+      plan_number TEXT,
+      group_number TEXT,
+      subscriber_id TEXT,
+      copay_amount DECIMAL(10,2),
+      coinsurance_percent INTEGER,
+      deductible_amount DECIMAL(10,2),
+      deductible_met DECIMAL(10,2),
+      deductible_remaining DECIMAL(10,2),
+      out_of_pocket_max DECIMAL(10,2),
+      out_of_pocket_met DECIMAL(10,2),
+      benefits_json JSONB,
+      x12_271_response TEXT,
+      raw_response JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_eligibility_responses_request ON eligibility_responses(request_id);
+    CREATE INDEX IF NOT EXISTS idx_eligibility_responses_patient ON eligibility_responses(patient_id);
+
+    CREATE TABLE IF NOT EXISTS payer_configurations (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      payer_id TEXT NOT NULL,
+      payer_name TEXT NOT NULL,
+      clearinghouse TEXT DEFAULT 'availity',
+      api_endpoint TEXT,
+      trading_partner_id TEXT,
+      is_active BOOLEAN DEFAULT true,
+      supports_realtime BOOLEAN DEFAULT true,
+      timeout_seconds INTEGER DEFAULT 30,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, payer_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS eligibility_cache (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      payer_id TEXT NOT NULL,
+      cache_key TEXT NOT NULL,
+      response_id TEXT REFERENCES eligibility_responses(id),
+      cached_at TIMESTAMPTZ DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      UNIQUE(tenant_id, cache_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_eligibility_cache_lookup ON eligibility_cache(tenant_id, cache_key, expires_at);
+    `,
+  },
+  {
+    name: "090_superbill_system",
+    sql: `
+    -- Superbill and Auto-Charge Capture System
+    CREATE TABLE IF NOT EXISTS superbills (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      encounter_id TEXT NOT NULL REFERENCES encounters(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      provider_id TEXT NOT NULL REFERENCES providers(id),
+      service_date DATE NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'pending_review', 'approved', 'submitted', 'posted', 'void')),
+      total_charges DECIMAL(10,2) DEFAULT 0,
+      diagnosis_codes TEXT[],
+      primary_diagnosis TEXT,
+      place_of_service TEXT DEFAULT '11',
+      rendering_provider_npi TEXT,
+      referring_provider_npi TEXT,
+      authorization_number TEXT,
+      notes TEXT,
+      approved_by TEXT REFERENCES users(id),
+      approved_at TIMESTAMPTZ,
+      posted_at TIMESTAMPTZ,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_superbills_tenant ON superbills(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_superbills_encounter ON superbills(encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_superbills_patient ON superbills(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_superbills_status ON superbills(status);
+    CREATE INDEX IF NOT EXISTS idx_superbills_date ON superbills(service_date);
+
+    CREATE TABLE IF NOT EXISTS superbill_line_items (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      superbill_id TEXT NOT NULL REFERENCES superbills(id) ON DELETE CASCADE,
+      cpt_code TEXT NOT NULL,
+      description TEXT,
+      modifier1 TEXT,
+      modifier2 TEXT,
+      modifier3 TEXT,
+      modifier4 TEXT,
+      units INTEGER DEFAULT 1,
+      unit_charge DECIMAL(10,2) NOT NULL,
+      total_charge DECIMAL(10,2) NOT NULL,
+      diagnosis_pointers TEXT[],
+      ndc_code TEXT,
+      ndc_units DECIMAL(10,3),
+      ndc_unit_type TEXT,
+      is_auto_captured BOOLEAN DEFAULT false,
+      source TEXT,
+      line_number INTEGER,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_superbill_items_superbill ON superbill_line_items(superbill_id);
+    CREATE INDEX IF NOT EXISTS idx_superbill_items_cpt ON superbill_line_items(cpt_code);
+
+    CREATE TABLE IF NOT EXISTS fee_schedules (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      payer_id TEXT,
+      is_default BOOLEAN DEFAULT false,
+      effective_date DATE NOT NULL,
+      end_date DATE,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS fee_schedule_items (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      fee_schedule_id TEXT NOT NULL REFERENCES fee_schedules(id) ON DELETE CASCADE,
+      cpt_code TEXT NOT NULL,
+      description TEXT,
+      fee_amount DECIMAL(10,2) NOT NULL,
+      rvu_work DECIMAL(8,4),
+      rvu_pe DECIMAL(8,4),
+      rvu_mp DECIMAL(8,4),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(fee_schedule_id, cpt_code)
+    );
+
+    CREATE TABLE IF NOT EXISTS common_derm_codes (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT,
+      code_type TEXT NOT NULL CHECK (code_type IN ('cpt', 'icd10', 'hcpcs')),
+      code TEXT NOT NULL,
+      description TEXT NOT NULL,
+      category TEXT,
+      is_common BOOLEAN DEFAULT true,
+      display_order INTEGER,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    `,
+  },
+  {
+    name: "091_clearinghouse_claims",
+    sql: `
+    -- Clearinghouse Claims Submission System
+    CREATE TABLE IF NOT EXISTS clearinghouse_configs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      clearinghouse_name TEXT NOT NULL,
+      api_endpoint TEXT,
+      sftp_host TEXT,
+      sftp_port INTEGER DEFAULT 22,
+      sftp_username TEXT,
+      credentials_encrypted TEXT,
+      submitter_id TEXT,
+      is_active BOOLEAN DEFAULT true,
+      is_primary BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, clearinghouse_name)
+    );
+
+    CREATE TABLE IF NOT EXISTS claim_submissions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      superbill_id TEXT REFERENCES superbills(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      payer_id TEXT NOT NULL,
+      clearinghouse_id TEXT REFERENCES clearinghouse_configs(id),
+      claim_number TEXT,
+      original_claim_id TEXT REFERENCES claim_submissions(id),
+      submission_type TEXT NOT NULL DEFAULT 'original' CHECK (submission_type IN ('original', 'corrected', 'void', 'replacement')),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'validating', 'submitted', 'accepted', 'rejected', 'paid', 'denied', 'appealed')),
+      total_charge DECIMAL(10,2) NOT NULL,
+      x12_837_content TEXT,
+      submitted_at TIMESTAMPTZ,
+      accepted_at TIMESTAMPTZ,
+      payer_claim_number TEXT,
+      rejection_reasons JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_claim_submissions_tenant ON claim_submissions(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_claim_submissions_patient ON claim_submissions(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_claim_submissions_status ON claim_submissions(status);
+    CREATE INDEX IF NOT EXISTS idx_claim_submissions_date ON claim_submissions(submitted_at);
+
+    CREATE TABLE IF NOT EXISTS remittance_advices (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      claim_id TEXT NOT NULL REFERENCES claim_submissions(id),
+      era_date DATE,
+      check_number TEXT,
+      check_date DATE,
+      payment_amount DECIMAL(10,2),
+      patient_responsibility DECIMAL(10,2),
+      adjustments JSONB,
+      x12_835_content TEXT,
+      auto_posted BOOLEAN DEFAULT false,
+      posted_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_remittance_claim ON remittance_advices(claim_id);
+    `,
+  },
+  {
+    name: "092_drug_interactions",
+    sql: `
+    -- Drug Interaction Checking System
+    CREATE TABLE IF NOT EXISTS drug_database (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      rxcui TEXT UNIQUE,
+      ndc TEXT,
+      name TEXT NOT NULL,
+      generic_name TEXT,
+      brand_name TEXT,
+      drug_class TEXT,
+      dea_schedule TEXT,
+      route TEXT,
+      dosage_form TEXT,
+      strength TEXT,
+      manufacturer TEXT,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_drug_database_rxcui ON drug_database(rxcui);
+    CREATE INDEX IF NOT EXISTS idx_drug_database_name ON drug_database(name);
+    CREATE INDEX IF NOT EXISTS idx_drug_database_generic ON drug_database(generic_name);
+
+    CREATE TABLE IF NOT EXISTS drug_interactions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      drug1_rxcui TEXT NOT NULL,
+      drug2_rxcui TEXT NOT NULL,
+      severity TEXT NOT NULL CHECK (severity IN ('minor', 'moderate', 'major', 'contraindicated')),
+      description TEXT NOT NULL,
+      clinical_effects TEXT,
+      management TEXT,
+      documentation_level TEXT,
+      source TEXT DEFAULT 'internal',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(drug1_rxcui, drug2_rxcui)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_drug_interactions_drug1 ON drug_interactions(drug1_rxcui);
+    CREATE INDEX IF NOT EXISTS idx_drug_interactions_drug2 ON drug_interactions(drug2_rxcui);
+    CREATE INDEX IF NOT EXISTS idx_drug_interactions_severity ON drug_interactions(severity);
+
+    CREATE TABLE IF NOT EXISTS drug_allergy_classes (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      allergy_class TEXT NOT NULL,
+      drug_class TEXT NOT NULL,
+      cross_reactivity_level TEXT CHECK (cross_reactivity_level IN ('high', 'moderate', 'low')),
+      description TEXT,
+      UNIQUE(allergy_class, drug_class)
+    );
+
+    CREATE TABLE IF NOT EXISTS patient_drug_alerts (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      prescription_id TEXT,
+      alert_type TEXT NOT NULL CHECK (alert_type IN ('interaction', 'allergy', 'duplicate', 'contraindication', 'dose_warning')),
+      severity TEXT NOT NULL,
+      drug_name TEXT,
+      interacting_item TEXT,
+      alert_message TEXT NOT NULL,
+      clinical_significance TEXT,
+      override_reason TEXT,
+      overridden_by TEXT REFERENCES users(id),
+      overridden_at TIMESTAMPTZ,
+      status TEXT DEFAULT 'active' CHECK (status IN ('active', 'overridden', 'resolved')),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_drug_alerts_patient ON patient_drug_alerts(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_drug_alerts_status ON patient_drug_alerts(status);
+    `,
+  },
+  {
+    name: "093_consent_forms",
+    sql: `
+    -- Digital Consent Form System with E-Signatures
+    CREATE TABLE IF NOT EXISTS consent_templates (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id VARCHAR(255) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      name VARCHAR(255) NOT NULL,
+      form_type VARCHAR(100) NOT NULL,
+      content_html TEXT NOT NULL,
+      required_fields JSONB DEFAULT '[]'::jsonb,
+      procedure_codes TEXT[] DEFAULT '{}',
+      is_active BOOLEAN DEFAULT true,
+      version VARCHAR(50) DEFAULT '1.0',
+      effective_date DATE DEFAULT CURRENT_DATE,
+      expiration_date DATE,
+      created_by UUID,
+      updated_by UUID,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_consent_templates_tenant ON consent_templates(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_consent_templates_form_type ON consent_templates(form_type);
+    CREATE INDEX IF NOT EXISTS idx_consent_templates_active ON consent_templates(tenant_id, is_active) WHERE is_active = true;
+
+    CREATE TABLE IF NOT EXISTS patient_consents (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id VARCHAR(255) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id UUID NOT NULL,
+      template_id UUID NOT NULL REFERENCES consent_templates(id) ON DELETE RESTRICT,
+      encounter_id UUID,
+      signed_at TIMESTAMP,
+      signature_data TEXT,
+      signature_type VARCHAR(50) DEFAULT 'drawn',
+      signer_name VARCHAR(255),
+      signer_relationship VARCHAR(100),
+      ip_address INET,
+      user_agent TEXT,
+      device_fingerprint VARCHAR(255),
+      signature_hash VARCHAR(64),
+      witness_name VARCHAR(255),
+      witness_signature_data TEXT,
+      witness_signed_at TIMESTAMP,
+      form_content_snapshot TEXT,
+      form_version VARCHAR(50),
+      field_values JSONB DEFAULT '{}'::jsonb,
+      status VARCHAR(50) DEFAULT 'pending',
+      revoked_at TIMESTAMP,
+      revoked_by UUID,
+      revocation_reason TEXT,
+      pdf_url TEXT,
+      pdf_generated_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_consents_tenant ON patient_consents(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_consents_patient ON patient_consents(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_consents_status ON patient_consents(status);
+
+    CREATE TABLE IF NOT EXISTS consent_form_fields (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      template_id UUID NOT NULL REFERENCES consent_templates(id) ON DELETE CASCADE,
+      field_name VARCHAR(100) NOT NULL,
+      field_label VARCHAR(255) NOT NULL,
+      field_type VARCHAR(50) NOT NULL,
+      required BOOLEAN DEFAULT false,
+      position INTEGER DEFAULT 0,
+      options JSONB,
+      placeholder VARCHAR(255),
+      help_text TEXT,
+      validation_pattern VARCHAR(255),
+      default_value TEXT,
+      depends_on_field VARCHAR(100),
+      depends_on_value TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (template_id, field_name)
+    );
+
+    CREATE TABLE IF NOT EXISTS consent_audit_log (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id VARCHAR(255) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      consent_id UUID NOT NULL REFERENCES patient_consents(id) ON DELETE CASCADE,
+      action VARCHAR(100) NOT NULL,
+      performed_by UUID,
+      performed_by_type VARCHAR(50),
+      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      details JSONB,
+      ip_address INET,
+      user_agent TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_consent_audit_consent ON consent_audit_log(consent_id);
+
+    CREATE TABLE IF NOT EXISTS consent_sessions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id VARCHAR(255) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id UUID NOT NULL,
+      template_id UUID NOT NULL REFERENCES consent_templates(id) ON DELETE RESTRICT,
+      encounter_id UUID,
+      session_token VARCHAR(255) NOT NULL UNIQUE,
+      status VARCHAR(50) DEFAULT 'active',
+      expires_at TIMESTAMP NOT NULL,
+      field_values JSONB DEFAULT '{}'::jsonb,
+      created_by UUID,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      completed_at TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_consent_sessions_token ON consent_sessions(session_token);
+    `,
+  },
+  {
+    name: "095_quickpick_coding",
+    sql: `
+    -- Quick-Pick Coding System
+    CREATE TABLE IF NOT EXISTS quickpick_categories (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      description TEXT,
+      parent_category_id TEXT REFERENCES quickpick_categories(id),
+      display_order INTEGER DEFAULT 0,
+      icon TEXT,
+      color TEXT,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, name, parent_category_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_quickpick_categories_tenant ON quickpick_categories(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_quickpick_categories_parent ON quickpick_categories(parent_category_id);
+
+    CREATE TABLE IF NOT EXISTS quickpick_items (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      category_id TEXT REFERENCES quickpick_categories(id),
+      code_type TEXT NOT NULL CHECK (code_type IN ('cpt', 'icd10', 'hcpcs', 'modifier')),
+      code TEXT NOT NULL,
+      description TEXT NOT NULL,
+      short_description TEXT,
+      default_units INTEGER DEFAULT 1,
+      default_modifiers TEXT[],
+      associated_diagnoses TEXT[],
+      associated_procedures TEXT[],
+      fee_override DECIMAL(10,2),
+      usage_count INTEGER DEFAULT 0,
+      last_used_at TIMESTAMPTZ,
+      is_favorite BOOLEAN DEFAULT false,
+      display_order INTEGER DEFAULT 0,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_quickpick_items_tenant ON quickpick_items(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_quickpick_items_category ON quickpick_items(category_id);
+    CREATE INDEX IF NOT EXISTS idx_quickpick_items_code_type ON quickpick_items(code_type);
+    CREATE INDEX IF NOT EXISTS idx_quickpick_items_code ON quickpick_items(code);
+    CREATE INDEX IF NOT EXISTS idx_quickpick_items_favorite ON quickpick_items(tenant_id, is_favorite) WHERE is_favorite = true;
+
+    CREATE TABLE IF NOT EXISTS provider_quickpicks (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      provider_id TEXT NOT NULL REFERENCES providers(id),
+      quickpick_item_id TEXT NOT NULL REFERENCES quickpick_items(id),
+      is_favorite BOOLEAN DEFAULT true,
+      custom_order INTEGER,
+      usage_count INTEGER DEFAULT 0,
+      last_used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(provider_id, quickpick_item_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_provider_quickpicks_provider ON provider_quickpicks(provider_id);
+
+    CREATE TABLE IF NOT EXISTS quickpick_bundles (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      description TEXT,
+      diagnosis_codes TEXT[],
+      procedure_codes TEXT[],
+      is_template BOOLEAN DEFAULT false,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS encounter_codes (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      encounter_id TEXT NOT NULL REFERENCES encounters(id),
+      code_type TEXT NOT NULL CHECK (code_type IN ('cpt', 'icd10', 'hcpcs')),
+      code TEXT NOT NULL,
+      description TEXT,
+      modifiers TEXT[],
+      units INTEGER DEFAULT 1,
+      is_primary BOOLEAN DEFAULT false,
+      sequence_number INTEGER,
+      source TEXT DEFAULT 'manual',
+      quickpick_item_id TEXT REFERENCES quickpick_items(id),
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_encounter_codes_encounter ON encounter_codes(encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_encounter_codes_code ON encounter_codes(code);
+    `,
+  },
+  {
+    name: "096_severity_scores",
+    sql: `
+    -- Dermatology Severity Assessment Scores
+    CREATE TABLE IF NOT EXISTS assessment_templates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      short_name TEXT NOT NULL,
+      description TEXT,
+      assessment_type TEXT NOT NULL,
+      applicable_conditions TEXT[],
+      scoring_method TEXT NOT NULL,
+      min_score DECIMAL(10,2),
+      max_score DECIMAL(10,2),
+      score_ranges JSONB,
+      fields JSONB NOT NULL,
+      calculation_formula TEXT,
+      is_system_template BOOLEAN DEFAULT false,
+      is_active BOOLEAN DEFAULT true,
+      version TEXT DEFAULT '1.0',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_assessment_templates_type ON assessment_templates(assessment_type);
+    CREATE INDEX IF NOT EXISTS idx_assessment_templates_name ON assessment_templates(short_name);
+
+    CREATE TABLE IF NOT EXISTS severity_assessments (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      template_id TEXT NOT NULL REFERENCES assessment_templates(id),
+      assessment_date TIMESTAMPTZ DEFAULT NOW(),
+      field_values JSONB NOT NULL,
+      total_score DECIMAL(10,2),
+      severity_level TEXT,
+      interpretation TEXT,
+      body_regions_affected TEXT[],
+      photos TEXT[],
+      notes TEXT,
+      assessed_by TEXT NOT NULL REFERENCES users(id),
+      reviewed_by TEXT REFERENCES users(id),
+      reviewed_at TIMESTAMPTZ,
+      previous_assessment_id TEXT REFERENCES severity_assessments(id),
+      score_change DECIMAL(10,2),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_severity_assessments_patient ON severity_assessments(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_severity_assessments_template ON severity_assessments(template_id);
+    CREATE INDEX IF NOT EXISTS idx_severity_assessments_date ON severity_assessments(assessment_date);
+    CREATE INDEX IF NOT EXISTS idx_severity_assessments_encounter ON severity_assessments(encounter_id);
+
+    CREATE TABLE IF NOT EXISTS assessment_history (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      assessment_type TEXT NOT NULL,
+      assessment_id TEXT NOT NULL REFERENCES severity_assessments(id),
+      assessment_date TIMESTAMPTZ NOT NULL,
+      total_score DECIMAL(10,2),
+      severity_level TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_assessment_history_patient ON assessment_history(patient_id, assessment_type, assessment_date);
+    `,
+  },
+  {
+    name: "097_patient_texting",
+    sql: `
+    -- Patient SMS/Texting System
+    CREATE TABLE IF NOT EXISTS sms_conversations (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      phone_number TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived', 'blocked')),
+      last_message_at TIMESTAMPTZ,
+      last_message_direction TEXT CHECK (last_message_direction IN ('inbound', 'outbound')),
+      unread_count INTEGER DEFAULT 0,
+      assigned_to TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, patient_id, phone_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sms_conversations_tenant ON sms_conversations(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_sms_conversations_patient ON sms_conversations(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_sms_conversations_phone ON sms_conversations(phone_number);
+    CREATE INDEX IF NOT EXISTS idx_sms_conversations_unread ON sms_conversations(tenant_id, unread_count) WHERE unread_count > 0;
+
+    CREATE TABLE IF NOT EXISTS sms_messages (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      conversation_id TEXT NOT NULL REFERENCES sms_conversations(id),
+      direction TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+      from_number TEXT NOT NULL,
+      to_number TEXT NOT NULL,
+      body TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'queued', 'sent', 'delivered', 'failed', 'received')),
+      external_id TEXT,
+      error_code TEXT,
+      error_message TEXT,
+      sent_by TEXT REFERENCES users(id),
+      read_at TIMESTAMPTZ,
+      read_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sms_messages_conversation ON sms_messages(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_sms_messages_created ON sms_messages(created_at);
+    CREATE INDEX IF NOT EXISTS idx_sms_messages_external ON sms_messages(external_id);
+
+    CREATE TABLE IF NOT EXISTS sms_opt_out (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      phone_number TEXT NOT NULL,
+      opted_out_at TIMESTAMPTZ DEFAULT NOW(),
+      opted_in_at TIMESTAMPTZ,
+      reason TEXT,
+      UNIQUE(tenant_id, phone_number)
+    );
+
+    CREATE TABLE IF NOT EXISTS sms_provider_config (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      provider TEXT NOT NULL DEFAULT 'twilio',
+      from_number TEXT NOT NULL,
+      credentials_encrypted TEXT,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS scheduled_reminders (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      appointment_id TEXT REFERENCES appointments(id),
+      reminder_type TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK (channel IN ('sms', 'email', 'both')),
+      scheduled_for TIMESTAMPTZ NOT NULL,
+      sent_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'cancelled')),
+      message_template TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scheduled_reminders_pending ON scheduled_reminders(scheduled_for) WHERE status = 'pending';
+    `,
+  },
+  {
+    name: "098_insurance_card_ocr",
+    sql: `
+    -- Insurance Card OCR System
+    CREATE TABLE IF NOT EXISTS insurance_card_scans (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      scan_date TIMESTAMPTZ DEFAULT NOW(),
+      front_image_url TEXT,
+      back_image_url TEXT,
+      ocr_status TEXT NOT NULL DEFAULT 'pending' CHECK (ocr_status IN ('pending', 'processing', 'completed', 'failed', 'verified')),
+      extracted_data JSONB,
+      payer_id TEXT,
+      payer_name TEXT,
+      member_id TEXT,
+      group_number TEXT,
+      subscriber_name TEXT,
+      relationship_to_subscriber TEXT,
+      plan_type TEXT,
+      effective_date DATE,
+      copay_pcp DECIMAL(10,2),
+      copay_specialist DECIMAL(10,2),
+      copay_er DECIMAL(10,2),
+      phone_claims TEXT,
+      phone_preauth TEXT,
+      confidence_score DECIMAL(5,2),
+      verified_by TEXT REFERENCES users(id),
+      verified_at TIMESTAMPTZ,
+      applied_to_patient BOOLEAN DEFAULT false,
+      applied_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_insurance_card_scans_patient ON insurance_card_scans(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_insurance_card_scans_status ON insurance_card_scans(ocr_status);
+    CREATE INDEX IF NOT EXISTS idx_insurance_card_scans_date ON insurance_card_scans(scan_date);
+
+    CREATE TABLE IF NOT EXISTS ocr_field_mappings (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT REFERENCES tenants(id),
+      payer_pattern TEXT NOT NULL,
+      field_name TEXT NOT NULL,
+      extraction_regex TEXT,
+      extraction_area JSONB,
+      confidence_threshold DECIMAL(5,2) DEFAULT 0.8,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS known_payers (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      payer_id TEXT NOT NULL UNIQUE,
+      payer_name TEXT NOT NULL,
+      aliases TEXT[],
+      logo_url TEXT,
+      card_patterns JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    `,
+  },
+  {
+    name: "099_procedure_templates",
+    sql: `
+    -- Procedure Documentation Templates
+    CREATE TABLE IF NOT EXISTS procedure_templates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      procedure_type TEXT NOT NULL,
+      cpt_codes TEXT[],
+      description TEXT,
+      default_consent_template_id TEXT,
+      pre_procedure_checklist JSONB,
+      intra_procedure_fields JSONB,
+      post_procedure_fields JSONB,
+      default_supplies TEXT[],
+      estimated_duration_minutes INTEGER,
+      is_system_template BOOLEAN DEFAULT false,
+      is_active BOOLEAN DEFAULT true,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_procedure_templates_type ON procedure_templates(procedure_type);
+    CREATE INDEX IF NOT EXISTS idx_procedure_templates_tenant ON procedure_templates(tenant_id);
+
+    CREATE TABLE IF NOT EXISTS procedure_documentation (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      encounter_id TEXT NOT NULL REFERENCES encounters(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      template_id TEXT REFERENCES procedure_templates(id),
+      procedure_name TEXT NOT NULL,
+      procedure_date TIMESTAMPTZ DEFAULT NOW(),
+      provider_id TEXT NOT NULL REFERENCES providers(id),
+      assistant_id TEXT REFERENCES users(id),
+      body_site TEXT,
+      laterality TEXT,
+      anesthesia_type TEXT,
+      anesthesia_amount TEXT,
+      pre_procedure_notes TEXT,
+      procedure_notes TEXT,
+      post_procedure_notes TEXT,
+      complications TEXT,
+      specimen_collected BOOLEAN DEFAULT false,
+      specimen_description TEXT,
+      pathology_order_id TEXT,
+      supplies_used JSONB,
+      time_start TIMESTAMPTZ,
+      time_end TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'in_progress' CHECK (status IN ('planned', 'in_progress', 'completed', 'cancelled')),
+      cpt_codes TEXT[],
+      icd10_codes TEXT[],
+      consent_id TEXT,
+      photos TEXT[],
+      diagram_data JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_procedure_docs_encounter ON procedure_documentation(encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_procedure_docs_patient ON procedure_documentation(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_procedure_docs_date ON procedure_documentation(procedure_date);
+
+    CREATE TABLE IF NOT EXISTS procedure_supplies (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      category TEXT,
+      unit TEXT,
+      cost DECIMAL(10,2),
+      hcpcs_code TEXT,
+      is_billable BOOLEAN DEFAULT false,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    `,
+  },
+  {
+    name: "100_mohs_surgery",
+    sql: `
+    -- Mohs Surgery Workflow System
+    CREATE TABLE IF NOT EXISTS mohs_cases (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      case_number TEXT NOT NULL,
+      case_date DATE NOT NULL,
+      surgeon_id TEXT NOT NULL REFERENCES providers(id),
+      referring_provider_id TEXT REFERENCES providers(id),
+      diagnosis TEXT NOT NULL,
+      diagnosis_icd10 TEXT,
+      tumor_type TEXT,
+      body_site TEXT NOT NULL,
+      laterality TEXT,
+      pre_op_size_length_mm DECIMAL(8,2),
+      pre_op_size_width_mm DECIMAL(8,2),
+      anesthesia_type TEXT,
+      anesthesia_amount TEXT,
+      status TEXT NOT NULL DEFAULT 'in_progress' CHECK (status IN ('scheduled', 'in_progress', 'stages_complete', 'reconstruction', 'completed', 'cancelled')),
+      total_stages INTEGER DEFAULT 0,
+      final_defect_length_mm DECIMAL(8,2),
+      final_defect_width_mm DECIMAL(8,2),
+      final_defect_depth_mm DECIMAL(8,2),
+      closure_type TEXT,
+      closure_details TEXT,
+      complications TEXT,
+      pathology_notes TEXT,
+      clinical_notes TEXT,
+      post_op_instructions TEXT,
+      follow_up_date DATE,
+      time_start TIMESTAMPTZ,
+      time_end TIMESTAMPTZ,
+      photos TEXT[],
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, case_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mohs_cases_patient ON mohs_cases(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_mohs_cases_date ON mohs_cases(case_date);
+    CREATE INDEX IF NOT EXISTS idx_mohs_cases_surgeon ON mohs_cases(surgeon_id);
+    CREATE INDEX IF NOT EXISTS idx_mohs_cases_status ON mohs_cases(status);
+
+    CREATE TABLE IF NOT EXISTS mohs_stages (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      case_id TEXT NOT NULL REFERENCES mohs_cases(id) ON DELETE CASCADE,
+      stage_number INTEGER NOT NULL,
+      time_excised TIMESTAMPTZ,
+      time_processed TIMESTAMPTZ,
+      time_read TIMESTAMPTZ,
+      excision_notes TEXT,
+      margin_status TEXT CHECK (margin_status IN ('clear', 'positive', 'pending')),
+      tumor_present BOOLEAN,
+      tumor_location TEXT,
+      block_count INTEGER DEFAULT 1,
+      processing_notes TEXT,
+      pathology_findings TEXT,
+      diagram_data JSONB,
+      photos TEXT[],
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(case_id, stage_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mohs_stages_case ON mohs_stages(case_id);
+
+    CREATE TABLE IF NOT EXISTS mohs_stage_blocks (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      stage_id TEXT NOT NULL REFERENCES mohs_stages(id) ON DELETE CASCADE,
+      block_label TEXT NOT NULL,
+      orientation TEXT,
+      sections_cut INTEGER,
+      tumor_present BOOLEAN,
+      tumor_type TEXT,
+      depth_involved BOOLEAN,
+      margin_distance_mm DECIMAL(5,2),
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS mohs_closures (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      case_id TEXT NOT NULL REFERENCES mohs_cases(id) ON DELETE CASCADE,
+      closure_type TEXT NOT NULL,
+      closure_method TEXT,
+      flap_type TEXT,
+      graft_type TEXT,
+      graft_donor_site TEXT,
+      suture_type TEXT,
+      suture_size TEXT,
+      undermining_extent TEXT,
+      drain_placed BOOLEAN DEFAULT false,
+      reconstruction_notes TEXT,
+      performed_by TEXT REFERENCES providers(id),
+      time_start TIMESTAMPTZ,
+      time_end TIMESTAMPTZ,
+      photos TEXT[],
+      diagram_data JSONB,
+      cpt_codes TEXT[],
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS mohs_maps (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      case_id TEXT NOT NULL REFERENCES mohs_cases(id) ON DELETE CASCADE,
+      stage_id TEXT REFERENCES mohs_stages(id),
+      map_type TEXT NOT NULL,
+      svg_data TEXT,
+      annotations JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    `,
+  },
+  {
+    name: "101_cosmetic_packages",
+    sql: `
+    -- Cosmetic Services and Membership Packages
+    CREATE TABLE IF NOT EXISTS cosmetic_services (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      description TEXT,
+      base_price DECIMAL(10,2) NOT NULL,
+      unit_type TEXT,
+      average_duration_minutes INTEGER,
+      cpt_code TEXT,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cosmetic_services_tenant ON cosmetic_services(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_cosmetic_services_category ON cosmetic_services(category);
+
+    CREATE TABLE IF NOT EXISTS cosmetic_packages (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      description TEXT,
+      package_price DECIMAL(10,2) NOT NULL,
+      retail_value DECIMAL(10,2),
+      savings_amount DECIMAL(10,2),
+      services JSONB NOT NULL,
+      validity_days INTEGER DEFAULT 365,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS patient_packages (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      package_id TEXT NOT NULL REFERENCES cosmetic_packages(id),
+      purchase_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      expiration_date DATE,
+      purchase_price DECIMAL(10,2) NOT NULL,
+      services_remaining JSONB NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'expired', 'completed', 'cancelled')),
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_packages_patient ON patient_packages(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_packages_status ON patient_packages(status);
+
+    CREATE TABLE IF NOT EXISTS package_redemptions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_package_id TEXT NOT NULL REFERENCES patient_packages(id),
+      service_id TEXT NOT NULL REFERENCES cosmetic_services(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      redemption_date TIMESTAMPTZ DEFAULT NOW(),
+      quantity INTEGER DEFAULT 1,
+      redeemed_by TEXT REFERENCES users(id),
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS membership_plans (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      description TEXT,
+      tier TEXT,
+      monthly_fee DECIMAL(10,2) NOT NULL,
+      annual_fee DECIMAL(10,2),
+      benefits JSONB NOT NULL,
+      discount_percent DECIMAL(5,2),
+      included_services JSONB,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS patient_memberships (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      plan_id TEXT NOT NULL REFERENCES membership_plans(id),
+      start_date DATE NOT NULL,
+      end_date DATE,
+      billing_frequency TEXT NOT NULL DEFAULT 'monthly',
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'cancelled', 'expired')),
+      auto_renew BOOLEAN DEFAULT true,
+      payment_method_id TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_memberships_patient ON patient_memberships(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_memberships_status ON patient_memberships(status);
+
+    CREATE TABLE IF NOT EXISTS loyalty_points (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      current_balance INTEGER DEFAULT 0,
+      lifetime_earned INTEGER DEFAULT 0,
+      lifetime_redeemed INTEGER DEFAULT 0,
+      tier TEXT DEFAULT 'standard',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, patient_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS loyalty_transactions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      transaction_type TEXT NOT NULL CHECK (transaction_type IN ('earn', 'redeem', 'expire', 'adjust')),
+      points INTEGER NOT NULL,
+      balance_after INTEGER NOT NULL,
+      description TEXT,
+      reference_type TEXT,
+      reference_id TEXT,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_loyalty_transactions_patient ON loyalty_transactions(patient_id);
+    `,
+  },
+  {
+    name: "102_lesion_tracking",
+    sql: `
+    -- Lesion Tracking and Comparison System
+    CREATE TABLE IF NOT EXISTS tracked_lesions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      lesion_identifier TEXT NOT NULL,
+      body_site TEXT NOT NULL,
+      body_site_specific TEXT,
+      laterality TEXT,
+      clock_position TEXT,
+      distance_from_landmark TEXT,
+      description TEXT,
+      initial_diagnosis TEXT,
+      current_diagnosis TEXT,
+      monitoring_frequency TEXT,
+      risk_level TEXT CHECK (risk_level IN ('low', 'moderate', 'high', 'very_high')),
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'resolved', 'excised', 'monitoring_complete')),
+      notes TEXT,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, patient_id, lesion_identifier)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tracked_lesions_patient ON tracked_lesions(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_tracked_lesions_status ON tracked_lesions(status);
+    CREATE INDEX IF NOT EXISTS idx_tracked_lesions_risk ON tracked_lesions(risk_level);
+
+    CREATE TABLE IF NOT EXISTS lesion_images (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      lesion_id TEXT NOT NULL REFERENCES tracked_lesions(id) ON DELETE CASCADE,
+      encounter_id TEXT REFERENCES encounters(id),
+      image_url TEXT NOT NULL,
+      thumbnail_url TEXT,
+      image_type TEXT NOT NULL DEFAULT 'clinical' CHECK (image_type IN ('clinical', 'dermoscopic', 'comparison')),
+      capture_date TIMESTAMPTZ DEFAULT NOW(),
+      camera_settings JSONB,
+      magnification TEXT,
+      lighting_conditions TEXT,
+      is_baseline BOOLEAN DEFAULT false,
+      notes TEXT,
+      captured_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lesion_images_lesion ON lesion_images(lesion_id);
+    CREATE INDEX IF NOT EXISTS idx_lesion_images_date ON lesion_images(capture_date);
+    CREATE INDEX IF NOT EXISTS idx_lesion_images_type ON lesion_images(image_type);
+
+    CREATE TABLE IF NOT EXISTS lesion_tracking_measurements (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      lesion_id TEXT NOT NULL REFERENCES tracked_lesions(id) ON DELETE CASCADE,
+      image_id TEXT REFERENCES lesion_images(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      measurement_date TIMESTAMPTZ DEFAULT NOW(),
+      length_mm DECIMAL(8,2),
+      width_mm DECIMAL(8,2),
+      height_mm DECIMAL(8,2),
+      area_mm2 DECIMAL(10,2),
+      color TEXT[],
+      border_regularity TEXT,
+      symmetry TEXT,
+      dermoscopic_features JSONB,
+      measured_by TEXT REFERENCES users(id),
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lesion_measurements_lesion ON lesion_tracking_measurements(lesion_id);
+    CREATE INDEX IF NOT EXISTS idx_lesion_measurements_date ON lesion_tracking_measurements(measurement_date);
+
+    CREATE TABLE IF NOT EXISTS lesion_abcde_scores (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      measurement_id TEXT NOT NULL REFERENCES lesion_tracking_measurements(id) ON DELETE CASCADE,
+      asymmetry_score INTEGER CHECK (asymmetry_score BETWEEN 0 AND 2),
+      border_score INTEGER CHECK (border_score BETWEEN 0 AND 2),
+      color_score INTEGER CHECK (color_score BETWEEN 0 AND 2),
+      diameter_score INTEGER CHECK (diameter_score BETWEEN 0 AND 2),
+      evolution_score INTEGER CHECK (evolution_score BETWEEN 0 AND 2),
+      total_score INTEGER,
+      risk_assessment TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS lesion_outcomes (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      lesion_id TEXT NOT NULL REFERENCES tracked_lesions(id),
+      outcome_date DATE NOT NULL,
+      outcome_type TEXT NOT NULL,
+      pathology_id TEXT,
+      diagnosis TEXT,
+      diagnosis_icd10 TEXT,
+      is_malignant BOOLEAN,
+      treatment_provided TEXT,
+      follow_up_plan TEXT,
+      notes TEXT,
+      documented_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS lesion_change_alerts (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      lesion_id TEXT NOT NULL REFERENCES tracked_lesions(id),
+      alert_type TEXT NOT NULL,
+      alert_message TEXT NOT NULL,
+      severity TEXT NOT NULL CHECK (severity IN ('low', 'medium', 'high', 'urgent')),
+      comparison_data JSONB,
+      status TEXT DEFAULT 'active' CHECK (status IN ('active', 'acknowledged', 'dismissed')),
+      acknowledged_by TEXT REFERENCES users(id),
+      acknowledged_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lesion_alerts_lesion ON lesion_change_alerts(lesion_id);
+    CREATE INDEX IF NOT EXISTS idx_lesion_alerts_status ON lesion_change_alerts(status);
+    `,
+  },
+  {
+    name: "103_ai_lesion_analysis",
+    sql: `
+    -- AI Lesion Analysis System
+    CREATE TABLE IF NOT EXISTS ai_model_configs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT REFERENCES tenants(id),
+      model_name TEXT NOT NULL,
+      model_version TEXT NOT NULL,
+      model_type TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      api_endpoint TEXT,
+      is_active BOOLEAN DEFAULT true,
+      confidence_threshold DECIMAL(5,4) DEFAULT 0.7,
+      supported_lesion_types TEXT[],
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_lesion_analyses (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      lesion_id TEXT REFERENCES tracked_lesions(id),
+      image_id TEXT REFERENCES lesion_images(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      model_config_id TEXT REFERENCES ai_model_configs(id),
+      analysis_date TIMESTAMPTZ DEFAULT NOW(),
+      input_image_url TEXT NOT NULL,
+      preprocessed_image_url TEXT,
+      analysis_status TEXT NOT NULL DEFAULT 'pending' CHECK (analysis_status IN ('pending', 'processing', 'completed', 'failed')),
+      primary_classification TEXT,
+      primary_confidence DECIMAL(5,4),
+      differential_diagnoses JSONB,
+      malignancy_risk_score DECIMAL(5,4),
+      risk_level TEXT,
+      detected_features JSONB,
+      segmentation_mask_url TEXT,
+      heatmap_url TEXT,
+      recommendations TEXT[],
+      raw_model_output JSONB,
+      processing_time_ms INTEGER,
+      error_message TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ai_analyses_lesion ON ai_lesion_analyses(lesion_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_analyses_patient ON ai_lesion_analyses(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_analyses_status ON ai_lesion_analyses(analysis_status);
+    CREATE INDEX IF NOT EXISTS idx_ai_analyses_date ON ai_lesion_analyses(analysis_date);
+
+    CREATE TABLE IF NOT EXISTS ai_analysis_feedback (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      analysis_id TEXT NOT NULL REFERENCES ai_lesion_analyses(id),
+      feedback_type TEXT NOT NULL CHECK (feedback_type IN ('correct', 'incorrect', 'partially_correct', 'uncertain')),
+      actual_diagnosis TEXT,
+      pathology_confirmed BOOLEAN,
+      pathology_id TEXT,
+      feedback_notes TEXT,
+      provided_by TEXT NOT NULL REFERENCES users(id),
+      provided_at TIMESTAMPTZ DEFAULT NOW(),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ai_feedback_analysis ON ai_analysis_feedback(analysis_id);
+
+    CREATE TABLE IF NOT EXISTS ai_comparison_analyses (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      lesion_id TEXT NOT NULL REFERENCES tracked_lesions(id),
+      baseline_image_id TEXT NOT NULL REFERENCES lesion_images(id),
+      comparison_image_id TEXT NOT NULL REFERENCES lesion_images(id),
+      analysis_date TIMESTAMPTZ DEFAULT NOW(),
+      size_change_percent DECIMAL(8,2),
+      color_change_detected BOOLEAN,
+      color_change_details JSONB,
+      border_change_detected BOOLEAN,
+      shape_change_detected BOOLEAN,
+      new_features_detected TEXT[],
+      overall_change_score DECIMAL(5,2),
+      change_classification TEXT,
+      attention_areas JSONB,
+      comparison_overlay_url TEXT,
+      recommendations TEXT[],
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ai_comparison_lesion ON ai_comparison_analyses(lesion_id);
+
+    CREATE TABLE IF NOT EXISTS ai_analysis_audit_log (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      analysis_id TEXT NOT NULL REFERENCES ai_lesion_analyses(id),
+      action TEXT NOT NULL,
+      performed_by TEXT REFERENCES users(id),
+      performed_at TIMESTAMPTZ DEFAULT NOW(),
+      details JSONB,
+      ip_address TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    `,
+  },
+  {
+    name: "104_appointment_reminders",
+    sql: `
+    -- Appointment Reminders System
+    CREATE TABLE IF NOT EXISTS reminder_schedules (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      appointment_type_id TEXT REFERENCES appointment_types(id) ON DELETE CASCADE,
+      reminder_type TEXT NOT NULL CHECK (reminder_type IN ('sms', 'email', 'both')),
+      hours_before INTEGER NOT NULL CHECK (hours_before > 0),
+      template_id TEXT,
+      is_active BOOLEAN DEFAULT true,
+      include_confirmation_request BOOLEAN DEFAULT false,
+      priority INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, appointment_type_id, hours_before, reminder_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reminder_schedules_tenant ON reminder_schedules(tenant_id);
+
+    CREATE TABLE IF NOT EXISTS reminder_queue (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      appointment_id TEXT NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      schedule_id TEXT REFERENCES reminder_schedules(id) ON DELETE SET NULL,
+      reminder_type TEXT NOT NULL CHECK (reminder_type IN ('sms', 'email')),
+      reminder_category TEXT NOT NULL DEFAULT 'standard',
+      scheduled_for TIMESTAMPTZ NOT NULL,
+      sent_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'cancelled', 'skipped')),
+      delivery_status TEXT,
+      message_content TEXT,
+      external_message_id TEXT,
+      error_message TEXT,
+      retry_count INTEGER DEFAULT 0,
+      max_retries INTEGER DEFAULT 3,
+      next_retry_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reminder_queue_tenant ON reminder_queue(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_reminder_queue_appointment ON reminder_queue(appointment_id);
+    CREATE INDEX IF NOT EXISTS idx_reminder_queue_status ON reminder_queue(status);
+    CREATE INDEX IF NOT EXISTS idx_reminder_queue_scheduled ON reminder_queue(scheduled_for);
+    CREATE INDEX IF NOT EXISTS idx_reminder_queue_pending ON reminder_queue(tenant_id, status, scheduled_for) WHERE status = 'pending';
+
+    CREATE TABLE IF NOT EXISTS reminder_responses (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      reminder_id TEXT NOT NULL REFERENCES reminder_queue(id) ON DELETE CASCADE,
+      appointment_id TEXT NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      response_type TEXT NOT NULL CHECK (response_type IN ('confirmed', 'cancelled', 'rescheduled', 'unknown')),
+      response_channel TEXT,
+      response_at TIMESTAMPTZ DEFAULT NOW(),
+      raw_response TEXT,
+      processed BOOLEAN DEFAULT false,
+      processed_at TIMESTAMPTZ,
+      processed_by TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reminder_responses_reminder ON reminder_responses(reminder_id);
+    CREATE INDEX IF NOT EXISTS idx_reminder_responses_appointment ON reminder_responses(appointment_id);
+
+    CREATE TABLE IF NOT EXISTS patient_reminder_preferences (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      preferred_channel TEXT NOT NULL DEFAULT 'both' CHECK (preferred_channel IN ('sms', 'email', 'both', 'none')),
+      quiet_hours_start TIME,
+      quiet_hours_end TIME,
+      opted_out BOOLEAN DEFAULT false,
+      opted_out_at TIMESTAMPTZ,
+      opted_out_reason TEXT,
+      preferred_language TEXT DEFAULT 'en',
+      advance_notice_hours INTEGER DEFAULT 24,
+      receive_no_show_followup BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, patient_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS reminder_templates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      template_type TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK (channel IN ('sms', 'email')),
+      subject TEXT,
+      body TEXT NOT NULL,
+      is_active BOOLEAN DEFAULT true,
+      is_default BOOLEAN DEFAULT false,
+      variables JSONB DEFAULT '[]'::jsonb,
+      created_by TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS reminder_statistics (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      date DATE NOT NULL,
+      reminder_category TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      total_scheduled INTEGER DEFAULT 0,
+      total_sent INTEGER DEFAULT 0,
+      total_delivered INTEGER DEFAULT 0,
+      total_failed INTEGER DEFAULT 0,
+      total_confirmed INTEGER DEFAULT 0,
+      total_cancelled INTEGER DEFAULT 0,
+      total_no_shows INTEGER DEFAULT 0,
+      confirmation_rate DECIMAL(5,2),
+      delivery_rate DECIMAL(5,2),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, date, reminder_category, channel)
+    );
+    `,
+  },
+  {
+    name: "105_lab_pathology_integration",
+    sql: `
+    -- Lab and Pathology Integration System
+    CREATE TABLE IF NOT EXISTS lab_interfaces (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      lab_name VARCHAR(255) NOT NULL,
+      interface_type VARCHAR(50) NOT NULL CHECK (interface_type IN ('HL7', 'API', 'SFTP')),
+      endpoint VARCHAR(500),
+      credentials_encrypted TEXT,
+      is_active BOOLEAN DEFAULT true,
+      supported_test_types TEXT[],
+      hl7_version VARCHAR(20) DEFAULT '2.5.1',
+      connection_timeout_ms INTEGER DEFAULT 30000,
+      retry_attempts INTEGER DEFAULT 3,
+      last_connection_at TIMESTAMP,
+      last_error TEXT,
+      metadata JSONB DEFAULT '{}',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lab_interfaces_tenant_active ON lab_interfaces(tenant_id, is_active);
+
+    CREATE TABLE IF NOT EXISTS lab_orders_v2 (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      ordering_provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,
+      lab_id TEXT REFERENCES lab_interfaces(id),
+      order_number VARCHAR(100),
+      order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      priority VARCHAR(20) DEFAULT 'routine',
+      specimens JSONB DEFAULT '[]',
+      clinical_indication TEXT,
+      clinical_notes TEXT,
+      icd10_codes TEXT[],
+      is_fasting BOOLEAN DEFAULT false,
+      collection_date TIMESTAMP,
+      collected_by TEXT,
+      specimen_source VARCHAR(100),
+      specimen_site VARCHAR(255),
+      hl7_message_id VARCHAR(100),
+      hl7_sent_at TIMESTAMP,
+      hl7_ack_received BOOLEAN DEFAULT false,
+      external_order_id VARCHAR(255),
+      results_received_at TIMESTAMP,
+      results_reviewed_at TIMESTAMP,
+      results_reviewed_by TEXT,
+      created_by TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lab_orders_v2_tenant ON lab_orders_v2(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_lab_orders_v2_patient ON lab_orders_v2(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_lab_orders_v2_status ON lab_orders_v2(status);
+
+    CREATE TABLE IF NOT EXISTS lab_results_v2 (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      order_id TEXT NOT NULL REFERENCES lab_orders_v2(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      result_date TIMESTAMP,
+      result_status VARCHAR(50) DEFAULT 'preliminary',
+      result_data JSONB NOT NULL DEFAULT '{}',
+      abnormal_flags TEXT[],
+      critical_flags TEXT[],
+      test_code VARCHAR(50),
+      test_name VARCHAR(255),
+      result_value TEXT,
+      result_value_numeric DECIMAL(15,5),
+      result_unit VARCHAR(50),
+      reference_range_low DECIMAL(15,5),
+      reference_range_high DECIMAL(15,5),
+      reference_range_text VARCHAR(255),
+      interpretation TEXT,
+      performing_lab VARCHAR(255),
+      performing_lab_clia VARCHAR(50),
+      hl7_message_id VARCHAR(100),
+      reviewed_by TEXT,
+      reviewed_at TIMESTAMP,
+      review_notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lab_results_v2_order ON lab_results_v2(order_id);
+    CREATE INDEX IF NOT EXISTS idx_lab_results_v2_patient ON lab_results_v2(patient_id);
+
+    CREATE TABLE IF NOT EXISTS pathology_orders (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      procedure_doc_id TEXT,
+      ordering_provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,
+      pathology_lab_id TEXT REFERENCES lab_interfaces(id),
+      order_number VARCHAR(100),
+      order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      specimen_type VARCHAR(100) NOT NULL,
+      specimen_site VARCHAR(255),
+      specimen_laterality VARCHAR(20),
+      clinical_history TEXT,
+      clinical_diagnosis TEXT,
+      gross_description TEXT,
+      specimen_count INTEGER DEFAULT 1,
+      specimen_size_mm DECIMAL(8,2),
+      fixative VARCHAR(100) DEFAULT 'formalin',
+      status VARCHAR(50) DEFAULT 'pending',
+      priority VARCHAR(20) DEFAULT 'routine',
+      special_stains_requested TEXT[],
+      immunohistochemistry_requested TEXT[],
+      molecular_testing_requested TEXT[],
+      icd10_codes TEXT[],
+      cpt_codes TEXT[],
+      collection_date TIMESTAMP,
+      collected_by TEXT,
+      external_order_id VARCHAR(255),
+      accession_number VARCHAR(100),
+      created_by TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pathology_orders_patient ON pathology_orders(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_pathology_orders_status ON pathology_orders(status);
+
+    CREATE TABLE IF NOT EXISTS pathology_results (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      order_id TEXT NOT NULL REFERENCES pathology_orders(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      received_date TIMESTAMP,
+      report_date TIMESTAMP,
+      result_status VARCHAR(50) DEFAULT 'preliminary',
+      diagnosis TEXT,
+      diagnosis_codes TEXT[],
+      microscopic_description TEXT,
+      gross_description TEXT,
+      clinical_correlation TEXT,
+      special_stains JSONB DEFAULT '{}',
+      immunohistochemistry JSONB DEFAULT '{}',
+      molecular_results JSONB DEFAULT '{}',
+      synoptic_report JSONB DEFAULT '{}',
+      margins_status VARCHAR(50),
+      margin_distance_mm DECIMAL(5,2),
+      tumor_size_mm DECIMAL(8,2),
+      tumor_depth_mm DECIMAL(5,2),
+      mitotic_rate VARCHAR(100),
+      breslow_depth_mm DECIMAL(5,2),
+      clark_level VARCHAR(20),
+      ulceration BOOLEAN,
+      perineural_invasion BOOLEAN,
+      lymphovascular_invasion BOOLEAN,
+      tumor_grade VARCHAR(50),
+      pathologist_name VARCHAR(255),
+      pathologist_npi VARCHAR(20),
+      signed_at TIMESTAMP,
+      addendum_notes TEXT,
+      is_malignant BOOLEAN,
+      is_precancerous BOOLEAN,
+      follow_up_recommended TEXT,
+      reviewed_by TEXT,
+      reviewed_at TIMESTAMP,
+      review_notes TEXT,
+      external_report_url TEXT,
+      pdf_report_path TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pathology_results_order ON pathology_results(order_id);
+    CREATE INDEX IF NOT EXISTS idx_pathology_results_patient ON pathology_results(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_pathology_results_malignant ON pathology_results(tenant_id) WHERE is_malignant = true;
+
+    CREATE TABLE IF NOT EXISTS result_notifications (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      order_id TEXT NOT NULL,
+      order_type VARCHAR(20) NOT NULL CHECK (order_type IN ('lab', 'pathology')),
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      provider_id TEXT,
+      notification_type VARCHAR(50) NOT NULL,
+      notification_method VARCHAR(50),
+      priority VARCHAR(20) DEFAULT 'normal',
+      message TEXT,
+      sent_at TIMESTAMP,
+      delivered_at TIMESTAMP,
+      acknowledged_at TIMESTAMP,
+      acknowledged_by TEXT,
+      action_taken TEXT,
+      metadata JSONB DEFAULT '{}',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_result_notifications_order ON result_notifications(order_id, order_type);
+    CREATE INDEX IF NOT EXISTS idx_result_notifications_unacknowledged ON result_notifications(tenant_id) WHERE acknowledged_at IS NULL;
+
+    CREATE TABLE IF NOT EXISTS derm_lab_catalog (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT,
+      test_code VARCHAR(50) NOT NULL,
+      test_name VARCHAR(255) NOT NULL,
+      test_category VARCHAR(100) NOT NULL,
+      specimen_type VARCHAR(100),
+      description TEXT,
+      loinc_code VARCHAR(20),
+      cpt_code VARCHAR(20),
+      is_common BOOLEAN DEFAULT false,
+      turnaround_days INTEGER,
+      fasting_required BOOLEAN DEFAULT false,
+      special_instructions TEXT,
+      reference_ranges JSONB DEFAULT '{}',
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS lab_hl7_messages (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      message_type VARCHAR(20) NOT NULL,
+      message_direction VARCHAR(10) NOT NULL CHECK (message_direction IN ('inbound', 'outbound')),
+      message_control_id VARCHAR(100),
+      order_id TEXT,
+      order_type VARCHAR(20),
+      lab_interface_id TEXT REFERENCES lab_interfaces(id),
+      raw_message TEXT NOT NULL,
+      parsed_data JSONB,
+      status VARCHAR(20) DEFAULT 'pending',
+      error_message TEXT,
+      acknowledgment TEXT,
+      processed_at TIMESTAMP,
+      retry_count INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lab_hl7_messages_order ON lab_hl7_messages(order_id, order_type);
+    CREATE INDEX IF NOT EXISTS idx_lab_hl7_messages_status ON lab_hl7_messages(status);
+    `,
+  },
+  {
+    name: "106_intake_forms",
+    sql: `
+    -- Digital Pre-Visit Intake Forms System
+    CREATE TABLE IF NOT EXISTS intake_form_templates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      description TEXT,
+      form_type TEXT NOT NULL,
+      sections JSONB NOT NULL DEFAULT '[]',
+      is_active BOOLEAN DEFAULT true,
+      is_default BOOLEAN DEFAULT false,
+      version INTEGER DEFAULT 1,
+      appointment_types TEXT[],
+      required_before_checkin BOOLEAN DEFAULT false,
+      expiration_days INTEGER DEFAULT 365,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_intake_templates_tenant ON intake_form_templates(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_intake_templates_type ON intake_form_templates(form_type);
+    CREATE INDEX IF NOT EXISTS idx_intake_templates_active ON intake_form_templates(tenant_id, is_active) WHERE is_active = true;
+
+    CREATE TABLE IF NOT EXISTS intake_form_sections (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      template_id TEXT NOT NULL REFERENCES intake_form_templates(id) ON DELETE CASCADE,
+      section_name TEXT NOT NULL,
+      section_title TEXT NOT NULL,
+      description TEXT,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      fields JSONB NOT NULL DEFAULT '[]',
+      conditional_display JSONB,
+      is_required BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_intake_sections_template ON intake_form_sections(template_id);
+
+    CREATE TABLE IF NOT EXISTS intake_form_assignments (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      template_id TEXT NOT NULL REFERENCES intake_form_templates(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      appointment_id TEXT REFERENCES appointments(id),
+      assigned_at TIMESTAMPTZ DEFAULT NOW(),
+      due_date TIMESTAMPTZ,
+      sent_via TEXT[],
+      access_token TEXT UNIQUE,
+      token_expires_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'started', 'completed', 'expired', 'cancelled')),
+      reminder_count INTEGER DEFAULT 0,
+      last_reminder_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_intake_assignments_patient ON intake_form_assignments(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_intake_assignments_appointment ON intake_form_assignments(appointment_id);
+    CREATE INDEX IF NOT EXISTS idx_intake_assignments_status ON intake_form_assignments(status);
+    CREATE INDEX IF NOT EXISTS idx_intake_assignments_token ON intake_form_assignments(access_token);
+
+    CREATE TABLE IF NOT EXISTS intake_form_responses (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      assignment_id TEXT NOT NULL REFERENCES intake_form_assignments(id),
+      template_id TEXT NOT NULL REFERENCES intake_form_templates(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      response_data JSONB NOT NULL DEFAULT '{}',
+      section_responses JSONB DEFAULT '{}',
+      submission_date TIMESTAMPTZ,
+      is_complete BOOLEAN DEFAULT false,
+      completion_percentage INTEGER DEFAULT 0,
+      ip_address TEXT,
+      user_agent TEXT,
+      signature_data TEXT,
+      signed_at TIMESTAMPTZ,
+      reviewed_by TEXT REFERENCES users(id),
+      reviewed_at TIMESTAMPTZ,
+      review_notes TEXT,
+      imported_to_chart BOOLEAN DEFAULT false,
+      imported_at TIMESTAMPTZ,
+      imported_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_intake_responses_assignment ON intake_form_responses(assignment_id);
+    CREATE INDEX IF NOT EXISTS idx_intake_responses_patient ON intake_form_responses(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_intake_responses_complete ON intake_form_responses(is_complete);
+
+    CREATE TABLE IF NOT EXISTS intake_form_imports (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      response_id TEXT NOT NULL REFERENCES intake_form_responses(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      import_type TEXT NOT NULL,
+      field_mappings JSONB NOT NULL,
+      imported_data JSONB NOT NULL,
+      target_table TEXT NOT NULL,
+      target_record_id TEXT,
+      imported_by TEXT REFERENCES users(id),
+      imported_at TIMESTAMPTZ DEFAULT NOW(),
+      status TEXT NOT NULL DEFAULT 'success' CHECK (status IN ('success', 'partial', 'failed')),
+      error_details TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_intake_imports_response ON intake_form_imports(response_id);
+    CREATE INDEX IF NOT EXISTS idx_intake_imports_patient ON intake_form_imports(patient_id);
+    `,
+  },
+  {
+    name: "107_patient_surveys",
+    sql: `
+    -- Patient Surveys and NPS System
+    CREATE TABLE IF NOT EXISTS survey_templates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      description TEXT,
+      survey_type TEXT NOT NULL,
+      questions JSONB NOT NULL DEFAULT '[]',
+      is_active BOOLEAN DEFAULT true,
+      is_anonymous BOOLEAN DEFAULT false,
+      trigger_type TEXT,
+      trigger_delay_hours INTEGER DEFAULT 24,
+      appointment_types TEXT[],
+      provider_ids TEXT[],
+      max_responses_per_patient INTEGER,
+      response_window_days INTEGER DEFAULT 30,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_survey_templates_tenant ON survey_templates(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_survey_templates_type ON survey_templates(survey_type);
+    CREATE INDEX IF NOT EXISTS idx_survey_templates_active ON survey_templates(tenant_id, is_active) WHERE is_active = true;
+
+    CREATE TABLE IF NOT EXISTS survey_invitations (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      template_id TEXT NOT NULL REFERENCES survey_templates(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      appointment_id TEXT REFERENCES appointments(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      provider_id TEXT REFERENCES providers(id),
+      access_token TEXT UNIQUE NOT NULL,
+      token_expires_at TIMESTAMPTZ,
+      sent_at TIMESTAMPTZ,
+      sent_via TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'opened', 'started', 'completed', 'expired', 'opted_out')),
+      reminder_count INTEGER DEFAULT 0,
+      last_reminder_at TIMESTAMPTZ,
+      opened_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_survey_invitations_patient ON survey_invitations(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_survey_invitations_status ON survey_invitations(status);
+    CREATE INDEX IF NOT EXISTS idx_survey_invitations_token ON survey_invitations(access_token);
+
+    CREATE TABLE IF NOT EXISTS survey_responses (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      invitation_id TEXT NOT NULL REFERENCES survey_invitations(id),
+      template_id TEXT NOT NULL REFERENCES survey_templates(id),
+      patient_id TEXT REFERENCES patients(id),
+      provider_id TEXT REFERENCES providers(id),
+      appointment_id TEXT REFERENCES appointments(id),
+      response_data JSONB NOT NULL DEFAULT '{}',
+      nps_score INTEGER CHECK (nps_score >= 0 AND nps_score <= 10),
+      overall_rating INTEGER CHECK (overall_rating >= 1 AND overall_rating <= 5),
+      comments TEXT,
+      is_anonymous BOOLEAN DEFAULT false,
+      submission_date TIMESTAMPTZ DEFAULT NOW(),
+      ip_address TEXT,
+      user_agent TEXT,
+      response_time_seconds INTEGER,
+      flagged_for_review BOOLEAN DEFAULT false,
+      reviewed_by TEXT REFERENCES users(id),
+      reviewed_at TIMESTAMPTZ,
+      review_notes TEXT,
+      follow_up_required BOOLEAN DEFAULT false,
+      follow_up_completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_survey_responses_invitation ON survey_responses(invitation_id);
+    CREATE INDEX IF NOT EXISTS idx_survey_responses_template ON survey_responses(template_id);
+    CREATE INDEX IF NOT EXISTS idx_survey_responses_provider ON survey_responses(provider_id);
+    CREATE INDEX IF NOT EXISTS idx_survey_responses_nps ON survey_responses(nps_score);
+    CREATE INDEX IF NOT EXISTS idx_survey_responses_flagged ON survey_responses(flagged_for_review) WHERE flagged_for_review = true;
+
+    CREATE TABLE IF NOT EXISTS nps_scores (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+      period_type TEXT NOT NULL,
+      provider_id TEXT REFERENCES providers(id),
+      location_id TEXT REFERENCES locations(id),
+      total_responses INTEGER DEFAULT 0,
+      promoters INTEGER DEFAULT 0,
+      passives INTEGER DEFAULT 0,
+      detractors INTEGER DEFAULT 0,
+      nps_score DECIMAL(5,2),
+      response_rate DECIMAL(5,2),
+      average_rating DECIMAL(3,2),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, period_start, period_end, period_type, provider_id, location_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_nps_scores_tenant_period ON nps_scores(tenant_id, period_start, period_end);
+    CREATE INDEX IF NOT EXISTS idx_nps_scores_provider ON nps_scores(provider_id);
+
+    CREATE TABLE IF NOT EXISTS review_requests (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      survey_response_id TEXT NOT NULL REFERENCES survey_responses(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      platform TEXT NOT NULL,
+      review_url TEXT,
+      sent_at TIMESTAMPTZ,
+      sent_via TEXT,
+      clicked_at TIMESTAMPTZ,
+      review_posted BOOLEAN DEFAULT false,
+      review_posted_at TIMESTAMPTZ,
+      status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'clicked', 'posted', 'declined')),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_review_requests_survey ON review_requests(survey_response_id);
+    CREATE INDEX IF NOT EXISTS idx_review_requests_patient ON review_requests(patient_id);
+    `,
+  },
+  {
+    name: "108_patient_photo_upload",
+    sql: `
+    -- Async Care / Patient Photo Upload System
+    CREATE TABLE IF NOT EXISTS async_care_requests (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      request_number TEXT NOT NULL,
+      request_type TEXT NOT NULL,
+      chief_complaint TEXT NOT NULL,
+      symptom_duration TEXT,
+      symptom_description TEXT,
+      affected_body_areas TEXT[],
+      previous_treatments TEXT,
+      current_medications TEXT,
+      allergies TEXT,
+      medical_history_relevant TEXT,
+      additional_notes TEXT,
+      urgency TEXT DEFAULT 'routine',
+      status TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'pending_photos', 'under_review', 'responded', 'completed', 'cancelled')),
+      assigned_provider_id TEXT REFERENCES providers(id),
+      assigned_at TIMESTAMPTZ,
+      submitted_at TIMESTAMPTZ DEFAULT NOW(),
+      reviewed_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      access_token TEXT UNIQUE,
+      token_expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, request_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_async_care_patient ON async_care_requests(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_async_care_status ON async_care_requests(status);
+    CREATE INDEX IF NOT EXISTS idx_async_care_provider ON async_care_requests(assigned_provider_id);
+    CREATE INDEX IF NOT EXISTS idx_async_care_token ON async_care_requests(access_token);
+
+    CREATE TABLE IF NOT EXISTS patient_uploaded_photos (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      async_request_id TEXT REFERENCES async_care_requests(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      original_filename TEXT,
+      file_path TEXT NOT NULL,
+      thumbnail_path TEXT,
+      file_size_bytes INTEGER,
+      mime_type TEXT,
+      body_site TEXT,
+      body_site_description TEXT,
+      photo_type TEXT DEFAULT 'clinical',
+      capture_date TIMESTAMPTZ DEFAULT NOW(),
+      patient_notes TEXT,
+      is_approved BOOLEAN,
+      approved_by TEXT REFERENCES users(id),
+      approved_at TIMESTAMPTZ,
+      rejection_reason TEXT,
+      linked_to_chart BOOLEAN DEFAULT false,
+      linked_photo_id TEXT,
+      linked_at TIMESTAMPTZ,
+      linked_by TEXT REFERENCES users(id),
+      metadata JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_photos_request ON patient_uploaded_photos(async_request_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_photos_patient ON patient_uploaded_photos(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_photos_approved ON patient_uploaded_photos(is_approved);
+
+    CREATE TABLE IF NOT EXISTS async_care_responses (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      request_id TEXT NOT NULL REFERENCES async_care_requests(id),
+      provider_id TEXT NOT NULL REFERENCES providers(id),
+      response_type TEXT NOT NULL,
+      assessment TEXT,
+      diagnosis TEXT,
+      diagnosis_codes TEXT[],
+      treatment_plan TEXT,
+      prescriptions_ordered TEXT[],
+      follow_up_recommended TEXT,
+      in_person_visit_required BOOLEAN DEFAULT false,
+      urgency_level TEXT,
+      patient_instructions TEXT,
+      internal_notes TEXT,
+      response_date TIMESTAMPTZ DEFAULT NOW(),
+      sent_to_patient BOOLEAN DEFAULT false,
+      sent_at TIMESTAMPTZ,
+      patient_viewed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_async_responses_request ON async_care_responses(request_id);
+    CREATE INDEX IF NOT EXISTS idx_async_responses_provider ON async_care_responses(provider_id);
+
+    CREATE TABLE IF NOT EXISTS async_care_templates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      request_type TEXT NOT NULL,
+      description TEXT,
+      intake_questions JSONB NOT NULL DEFAULT '[]',
+      required_photos INTEGER DEFAULT 1,
+      photo_instructions TEXT,
+      body_site_options TEXT[],
+      auto_assign_provider_id TEXT REFERENCES providers(id),
+      expected_response_hours INTEGER DEFAULT 24,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_async_templates_tenant ON async_care_templates(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_async_templates_type ON async_care_templates(request_type);
+    `,
+  },
+  {
+    name: "109_patch_testing",
+    sql: `
+    -- Contact Dermatitis Patch Testing System
+    CREATE TABLE IF NOT EXISTS allergen_database (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      allergen_name TEXT NOT NULL,
+      allergen_category TEXT NOT NULL,
+      cas_number TEXT,
+      concentration TEXT,
+      vehicle TEXT,
+      common_sources TEXT[],
+      cross_reactors TEXT[],
+      clinical_relevance TEXT,
+      patch_test_concentration TEXT,
+      is_standard_series BOOLEAN DEFAULT false,
+      series_name TEXT,
+      synonyms TEXT[],
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_allergen_category ON allergen_database(allergen_category);
+    CREATE INDEX IF NOT EXISTS idx_allergen_series ON allergen_database(series_name);
+    CREATE INDEX IF NOT EXISTS idx_allergen_standard ON allergen_database(is_standard_series) WHERE is_standard_series = true;
+
+    CREATE TABLE IF NOT EXISTS patch_test_panels (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      description TEXT,
+      allergen_ids TEXT[],
+      is_standard BOOLEAN DEFAULT false,
+      is_active BOOLEAN DEFAULT true,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patch_panels_tenant ON patch_test_panels(tenant_id);
+
+    CREATE TABLE IF NOT EXISTS patch_test_sessions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      provider_id TEXT NOT NULL REFERENCES providers(id),
+      panel_id TEXT REFERENCES patch_test_panels(id),
+      custom_allergens TEXT[],
+      session_number TEXT,
+      indication TEXT,
+      clinical_history TEXT,
+      current_medications TEXT[],
+      application_date TIMESTAMPTZ NOT NULL,
+      application_site TEXT DEFAULT 'upper back',
+      applied_by TEXT REFERENCES users(id),
+      day2_reading_date TIMESTAMPTZ,
+      day2_read_by TEXT REFERENCES users(id),
+      day3_reading_date TIMESTAMPTZ,
+      day3_read_by TEXT REFERENCES users(id),
+      day7_reading_date TIMESTAMPTZ,
+      day7_read_by TEXT REFERENCES users(id),
+      status TEXT NOT NULL DEFAULT 'applied' CHECK (status IN ('scheduled', 'applied', 'day2_read', 'day3_read', 'completed', 'cancelled')),
+      overall_interpretation TEXT,
+      clinical_relevance_summary TEXT,
+      recommendations TEXT,
+      photos TEXT[],
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patch_sessions_patient ON patch_test_sessions(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patch_sessions_status ON patch_test_sessions(status);
+    CREATE INDEX IF NOT EXISTS idx_patch_sessions_dates ON patch_test_sessions(application_date);
+
+    CREATE TABLE IF NOT EXISTS patch_test_results (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      session_id TEXT NOT NULL REFERENCES patch_test_sessions(id) ON DELETE CASCADE,
+      allergen_id TEXT NOT NULL REFERENCES allergen_database(id),
+      allergen_name TEXT NOT NULL,
+      chamber_position TEXT,
+      day2_reaction TEXT,
+      day2_score INTEGER,
+      day2_notes TEXT,
+      day3_reaction TEXT,
+      day3_score INTEGER,
+      day3_notes TEXT,
+      day7_reaction TEXT,
+      day7_score INTEGER,
+      day7_notes TEXT,
+      final_interpretation TEXT,
+      is_positive BOOLEAN,
+      is_irritant BOOLEAN DEFAULT false,
+      clinical_relevance TEXT,
+      relevance_score INTEGER,
+      avoidance_instructions TEXT,
+      photos JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patch_results_session ON patch_test_results(session_id);
+    CREATE INDEX IF NOT EXISTS idx_patch_results_allergen ON patch_test_results(allergen_id);
+    CREATE INDEX IF NOT EXISTS idx_patch_results_positive ON patch_test_results(is_positive) WHERE is_positive = true;
+
+    CREATE TABLE IF NOT EXISTS patch_test_reports (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      session_id TEXT NOT NULL REFERENCES patch_test_sessions(id),
+      report_type TEXT NOT NULL DEFAULT 'standard',
+      generated_at TIMESTAMPTZ DEFAULT NOW(),
+      generated_by TEXT REFERENCES users(id),
+      report_content JSONB,
+      pdf_path TEXT,
+      sent_to_patient BOOLEAN DEFAULT false,
+      sent_at TIMESTAMPTZ,
+      sent_to_referring BOOLEAN DEFAULT false,
+      referring_sent_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    `,
+  },
+  {
+    name: "110_phototherapy",
+    sql: `
+    -- Phototherapy (UV Light Therapy) Tracking System
+    CREATE TABLE IF NOT EXISTS phototherapy_protocols (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      name TEXT NOT NULL,
+      condition TEXT NOT NULL,
+      light_type TEXT NOT NULL CHECK (light_type IN ('NB-UVB', 'BB-UVB', 'PUVA', 'UVA1')),
+      wavelength_nm TEXT,
+      description TEXT,
+      starting_dose_type_i NUMERIC(10,2),
+      starting_dose_type_ii NUMERIC(10,2),
+      starting_dose_type_iii NUMERIC(10,2),
+      starting_dose_type_iv NUMERIC(10,2),
+      starting_dose_type_v NUMERIC(10,2),
+      starting_dose_type_vi NUMERIC(10,2),
+      starting_dose NUMERIC(10,2),
+      increment_percent NUMERIC(5,2) DEFAULT 10.00,
+      max_dose NUMERIC(10,2),
+      frequency TEXT DEFAULT '3x_weekly',
+      min_hours_between_treatments INTEGER DEFAULT 48,
+      psoralen_type TEXT,
+      psoralen_dose_mg NUMERIC(8,2),
+      psoralen_timing_minutes INTEGER,
+      max_cumulative_dose NUMERIC(12,2),
+      high_cumulative_warning NUMERIC(12,2),
+      is_template BOOLEAN DEFAULT false,
+      is_active BOOLEAN DEFAULT true,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_phototherapy_protocols_tenant ON phototherapy_protocols(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_phototherapy_protocols_light_type ON phototherapy_protocols(light_type);
+
+    CREATE TABLE IF NOT EXISTS phototherapy_cabinets (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      cabinet_name TEXT NOT NULL,
+      location_id TEXT REFERENCES locations(id),
+      light_type TEXT NOT NULL CHECK (light_type IN ('NB-UVB', 'BB-UVB', 'PUVA', 'UVA1')),
+      manufacturer TEXT,
+      model TEXT,
+      serial_number TEXT,
+      bulb_type TEXT,
+      number_of_bulbs INTEGER,
+      bulb_hours NUMERIC(10,2) DEFAULT 0,
+      bulb_max_hours NUMERIC(10,2),
+      bulb_installed_date DATE,
+      calibration_date DATE,
+      next_calibration_due DATE,
+      calibration_factor NUMERIC(6,4) DEFAULT 1.0000,
+      last_service_date DATE,
+      next_service_due DATE,
+      service_notes TEXT,
+      is_active BOOLEAN DEFAULT true,
+      out_of_service_reason TEXT,
+      out_of_service_date DATE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, cabinet_name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_phototherapy_cabinets_tenant ON phototherapy_cabinets(tenant_id);
+
+    CREATE TABLE IF NOT EXISTS phototherapy_courses (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      protocol_id TEXT NOT NULL REFERENCES phototherapy_protocols(id),
+      prescribing_provider_id TEXT NOT NULL REFERENCES providers(id),
+      diagnosis_code TEXT,
+      diagnosis_description TEXT,
+      indication TEXT,
+      fitzpatrick_skin_type INTEGER CHECK (fitzpatrick_skin_type BETWEEN 1 AND 6),
+      target_body_areas TEXT[],
+      treatment_percentage_bsa NUMERIC(5,2),
+      start_date DATE NOT NULL,
+      end_date DATE,
+      target_treatment_count INTEGER,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'discontinued', 'on_hold')),
+      discontinuation_reason TEXT,
+      discontinuation_date DATE,
+      clinical_notes TEXT,
+      precautions TEXT,
+      total_treatments INTEGER DEFAULT 0,
+      cumulative_dose_course NUMERIC(12,2) DEFAULT 0,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_phototherapy_courses_patient ON phototherapy_courses(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_phototherapy_courses_status ON phototherapy_courses(status);
+
+    CREATE TABLE IF NOT EXISTS phototherapy_treatments (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      course_id TEXT NOT NULL REFERENCES phototherapy_courses(id),
+      cabinet_id TEXT REFERENCES phototherapy_cabinets(id),
+      treatment_number INTEGER NOT NULL,
+      treatment_date DATE NOT NULL,
+      treatment_time TIME,
+      dose_mj NUMERIC(10,2) NOT NULL,
+      duration_seconds INTEGER,
+      body_areas TEXT[],
+      skin_type INTEGER,
+      pre_treatment_notes TEXT,
+      erythema_response TEXT CHECK (erythema_response IN ('none', 'minimal', 'mild', 'moderate', 'severe', 'blistering')),
+      erythema_score INTEGER CHECK (erythema_score BETWEEN 0 AND 4),
+      response_notes TEXT,
+      dose_adjustment_reason TEXT,
+      previous_dose_mj NUMERIC(10,2),
+      psoralen_taken BOOLEAN,
+      psoralen_time TIMESTAMPTZ,
+      psoralen_dose_mg NUMERIC(8,2),
+      eye_protection_verified BOOLEAN DEFAULT true,
+      administered_by TEXT REFERENCES users(id),
+      supervised_by TEXT REFERENCES providers(id),
+      treatment_completed BOOLEAN DEFAULT true,
+      early_termination_reason TEXT,
+      actual_duration_seconds INTEGER,
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(course_id, treatment_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_phototherapy_treatments_course ON phototherapy_treatments(course_id);
+    CREATE INDEX IF NOT EXISTS idx_phototherapy_treatments_date ON phototherapy_treatments(treatment_date DESC);
+
+    CREATE TABLE IF NOT EXISTS phototherapy_cumulative_doses (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      nb_uvb_lifetime_dose NUMERIC(12,2) DEFAULT 0,
+      bb_uvb_lifetime_dose NUMERIC(12,2) DEFAULT 0,
+      puva_lifetime_dose NUMERIC(12,2) DEFAULT 0,
+      uva1_lifetime_dose NUMERIC(12,2) DEFAULT 0,
+      nb_uvb_treatment_count INTEGER DEFAULT 0,
+      bb_uvb_treatment_count INTEGER DEFAULT 0,
+      puva_treatment_count INTEGER DEFAULT 0,
+      uva1_treatment_count INTEGER DEFAULT 0,
+      nb_uvb_last_treatment DATE,
+      bb_uvb_last_treatment DATE,
+      puva_last_treatment DATE,
+      uva1_last_treatment DATE,
+      high_exposure_alert_sent BOOLEAN DEFAULT false,
+      high_exposure_alert_date TIMESTAMPTZ,
+      external_nb_uvb_dose NUMERIC(12,2) DEFAULT 0,
+      external_bb_uvb_dose NUMERIC(12,2) DEFAULT 0,
+      external_puva_dose NUMERIC(12,2) DEFAULT 0,
+      external_uva1_dose NUMERIC(12,2) DEFAULT 0,
+      external_history_notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, patient_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_phototherapy_cumulative_patient ON phototherapy_cumulative_doses(patient_id);
+
+    CREATE TABLE IF NOT EXISTS phototherapy_alerts (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT REFERENCES patients(id),
+      course_id TEXT REFERENCES phototherapy_courses(id),
+      treatment_id TEXT REFERENCES phototherapy_treatments(id),
+      alert_type TEXT NOT NULL,
+      severity TEXT NOT NULL CHECK (severity IN ('low', 'medium', 'high', 'critical')),
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT DEFAULT 'active' CHECK (status IN ('active', 'acknowledged', 'resolved', 'dismissed')),
+      acknowledged_by TEXT REFERENCES users(id),
+      acknowledged_at TIMESTAMPTZ,
+      resolved_by TEXT REFERENCES users(id),
+      resolved_at TIMESTAMPTZ,
+      resolution_notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_phototherapy_alerts_patient ON phototherapy_alerts(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_phototherapy_alerts_status ON phototherapy_alerts(status) WHERE status = 'active';
+    `,
+  },
+  {
+    name: "111_allergy_alerts",
+    sql: `
+    -- Allergy Alert System - Enhancements to existing patient_allergies table
+    -- Add missing columns to existing patient_allergies table
+    ALTER TABLE patient_allergies ADD COLUMN IF NOT EXISTS rxcui VARCHAR(20);
+    ALTER TABLE patient_allergies ADD COLUMN IF NOT EXISTS reaction_type VARCHAR(100);
+    ALTER TABLE patient_allergies ADD COLUMN IF NOT EXISTS source VARCHAR(50);
+    ALTER TABLE patient_allergies ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES users(id);
+    ALTER TABLE patient_allergies ADD COLUMN IF NOT EXISTS updated_by TEXT REFERENCES users(id);
+
+    CREATE INDEX IF NOT EXISTS idx_patient_allergies_rxcui ON patient_allergies(rxcui) WHERE rxcui IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS allergy_reactions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      allergy_id TEXT NOT NULL REFERENCES patient_allergies(id) ON DELETE CASCADE,
+      reaction_description TEXT NOT NULL,
+      symptoms TEXT[] DEFAULT '{}',
+      onset_timing VARCHAR(50),
+      duration VARCHAR(50),
+      treatment_required BOOLEAN DEFAULT false,
+      hospitalization_required BOOLEAN DEFAULT false,
+      documented_date DATE,
+      documented_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_allergy_reactions_allergy ON allergy_reactions(allergy_id);
+
+    CREATE TABLE IF NOT EXISTS allergy_cross_reactivity (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      primary_allergen VARCHAR(255) NOT NULL,
+      primary_allergen_rxcui VARCHAR(20),
+      primary_drug_class VARCHAR(100),
+      cross_reactive_allergens TEXT[] NOT NULL DEFAULT '{}',
+      cross_reactive_rxcuis TEXT[] DEFAULT '{}',
+      cross_reactivity_type VARCHAR(50) NOT NULL CHECK (cross_reactivity_type IN ('drug_class', 'chemical_structure', 'immunologic', 'unknown')),
+      cross_reactivity_rate DECIMAL(5,2),
+      clinical_significance VARCHAR(20) CHECK (clinical_significance IN ('high', 'moderate', 'low', 'theoretical')),
+      evidence_level VARCHAR(20),
+      clinical_notes TEXT,
+      recommendations TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT unique_cross_reactivity UNIQUE (primary_allergen, cross_reactivity_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cross_reactivity_primary ON allergy_cross_reactivity(primary_allergen);
+
+    CREATE TABLE IF NOT EXISTS allergy_alerts_log (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      alert_type VARCHAR(50) NOT NULL CHECK (alert_type IN ('drug_allergy', 'cross_reactivity', 'latex', 'adhesive', 'contact', 'food')),
+      trigger_drug VARCHAR(255),
+      trigger_rxcui VARCHAR(20),
+      allergy_id TEXT REFERENCES patient_allergies(id) ON DELETE SET NULL,
+      alert_severity VARCHAR(20) NOT NULL CHECK (alert_severity IN ('info', 'warning', 'critical', 'contraindicated')),
+      alert_message TEXT,
+      cross_reactive_with VARCHAR(255),
+      displayed_to TEXT NOT NULL REFERENCES users(id),
+      displayed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      display_context VARCHAR(50),
+      action_taken VARCHAR(50) CHECK (action_taken IN ('override', 'cancelled', 'changed', 'acknowledged', 'pending')),
+      action_at TIMESTAMPTZ,
+      action_reason TEXT,
+      override_reason TEXT,
+      encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      prescription_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_allergy_alerts_patient ON allergy_alerts_log(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_allergy_alerts_type ON allergy_alerts_log(alert_type);
+    CREATE INDEX IF NOT EXISTS idx_allergy_alerts_severity ON allergy_alerts_log(alert_severity);
+    `,
+  },
+  {
+    name: "112_mips_reporting",
+    sql: `
+    -- MIPS/MACRA Quality Reporting System - Enhancements to existing tables
+    -- Add missing columns to quality_measures
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS measure_type TEXT;
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS domain TEXT;
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS high_priority BOOLEAN DEFAULT false;
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS applicable_to_derm BOOLEAN DEFAULT true;
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS numerator_description TEXT;
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS denominator_description TEXT;
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS exclusions TEXT;
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS performance_rate_threshold DECIMAL(5,2);
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS benchmark_decile_3 DECIMAL(5,2);
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS benchmark_decile_10 DECIMAL(5,2);
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS points_possible INTEGER DEFAULT 10;
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS is_inverse BOOLEAN DEFAULT false;
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS collection_type TEXT[];
+    ALTER TABLE quality_measures ADD COLUMN IF NOT EXISTS submission_methods TEXT[];
+
+    -- Add missing columns to measure_performance
+    ALTER TABLE measure_performance ADD COLUMN IF NOT EXISTS exception_count INTEGER DEFAULT 0;
+    ALTER TABLE measure_performance ADD COLUMN IF NOT EXISTS performance_met BOOLEAN;
+    ALTER TABLE measure_performance ADD COLUMN IF NOT EXISTS points_earned DECIMAL(5,2);
+    ALTER TABLE measure_performance ADD COLUMN IF NOT EXISTS benchmark_comparison TEXT;
+
+    CREATE TABLE IF NOT EXISTS patient_measure_status (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      measure_id TEXT NOT NULL REFERENCES quality_measures(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      provider_id TEXT REFERENCES providers(id),
+      reporting_year INTEGER NOT NULL,
+      in_denominator BOOLEAN DEFAULT false,
+      in_numerator BOOLEAN DEFAULT false,
+      is_excluded BOOLEAN DEFAULT false,
+      is_exception BOOLEAN DEFAULT false,
+      exclusion_reason TEXT,
+      exception_reason TEXT,
+      status TEXT DEFAULT 'pending',
+      action_required TEXT,
+      due_date DATE,
+      completed_date DATE,
+      documentation JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_patient ON patient_measure_status(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_measure ON patient_measure_status(measure_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_encounter ON patient_measure_status(encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_year ON patient_measure_status(reporting_year);
+    CREATE INDEX IF NOT EXISTS idx_patient_measure_action ON patient_measure_status(action_required) WHERE action_required IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS mips_submissions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      submission_year INTEGER NOT NULL,
+      submission_type TEXT NOT NULL,
+      provider_id TEXT REFERENCES providers(id),
+      tin TEXT,
+      npi TEXT,
+      submission_date TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'draft',
+      quality_category_score DECIMAL(5,2),
+      pi_category_score DECIMAL(5,2),
+      ia_category_score DECIMAL(5,2),
+      cost_category_score DECIMAL(5,2),
+      final_score DECIMAL(5,2),
+      payment_adjustment_percent DECIMAL(5,2),
+      submission_data JSONB,
+      confirmation_number TEXT,
+      errors JSONB,
+      submitted_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mips_submissions_tenant ON mips_submissions(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_mips_submissions_year ON mips_submissions(submission_year);
+    CREATE INDEX IF NOT EXISTS idx_mips_submissions_provider ON mips_submissions(provider_id);
+
+    CREATE TABLE IF NOT EXISTS ia_activities (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      activity_id TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      description TEXT,
+      subcategory TEXT,
+      weight TEXT,
+      is_high_weight BOOLEAN DEFAULT false,
+      applicable_to_derm BOOLEAN DEFAULT true,
+      documentation_requirements TEXT,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS provider_ia_attestations (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      provider_id TEXT NOT NULL REFERENCES providers(id),
+      activity_id TEXT NOT NULL REFERENCES ia_activities(id),
+      reporting_year INTEGER NOT NULL,
+      attested BOOLEAN DEFAULT false,
+      attestation_date DATE,
+      documentation TEXT,
+      attested_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, provider_id, activity_id, reporting_year)
+    );
+
+    CREATE TABLE IF NOT EXISTS measure_alerts (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      measure_id TEXT NOT NULL REFERENCES quality_measures(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      provider_id TEXT REFERENCES providers(id),
+      alert_type TEXT NOT NULL,
+      alert_message TEXT NOT NULL,
+      priority TEXT DEFAULT 'medium',
+      status TEXT DEFAULT 'active',
+      due_date DATE,
+      acknowledged_by TEXT REFERENCES users(id),
+      acknowledged_at TIMESTAMPTZ,
+      resolved_by TEXT REFERENCES users(id),
+      resolved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_measure_alerts_patient ON measure_alerts(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_measure_alerts_status ON measure_alerts(status) WHERE status = 'active';
+    `,
+  },
+  {
+    name: "113_telemedicine",
+    sql: `
+    -- Telemedicine/Virtual Visit System
+    CREATE TABLE IF NOT EXISTS telemedicine_configs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      provider_name TEXT NOT NULL,
+      api_key_encrypted TEXT,
+      api_secret_encrypted TEXT,
+      webhook_secret TEXT,
+      is_active BOOLEAN DEFAULT true,
+      default_waiting_room_enabled BOOLEAN DEFAULT true,
+      recording_enabled BOOLEAN DEFAULT false,
+      max_participants INTEGER DEFAULT 2,
+      settings JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS virtual_visits (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      appointment_id TEXT REFERENCES appointments(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      provider_id TEXT NOT NULL REFERENCES providers(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      visit_type TEXT NOT NULL DEFAULT 'video',
+      scheduled_start TIMESTAMPTZ NOT NULL,
+      scheduled_duration_minutes INTEGER DEFAULT 15,
+      room_name TEXT UNIQUE,
+      room_url TEXT,
+      host_url TEXT,
+      participant_url TEXT,
+      patient_join_url TEXT,
+      status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'waiting', 'in_progress', 'completed', 'cancelled', 'no_show', 'technical_issue')),
+      patient_joined_at TIMESTAMPTZ,
+      provider_joined_at TIMESTAMPTZ,
+      visit_started_at TIMESTAMPTZ,
+      visit_ended_at TIMESTAMPTZ,
+      actual_duration_minutes INTEGER,
+      waiting_room_time_seconds INTEGER,
+      technical_issues JSONB,
+      patient_device_info JSONB,
+      provider_device_info JSONB,
+      connection_quality TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_virtual_visits_patient ON virtual_visits(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_virtual_visits_provider ON virtual_visits(provider_id);
+    CREATE INDEX IF NOT EXISTS idx_virtual_visits_appointment ON virtual_visits(appointment_id);
+    CREATE INDEX IF NOT EXISTS idx_virtual_visits_status ON virtual_visits(status);
+    CREATE INDEX IF NOT EXISTS idx_virtual_visits_scheduled ON virtual_visits(scheduled_start);
+
+    CREATE TABLE IF NOT EXISTS telemedicine_consents (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      virtual_visit_id TEXT REFERENCES virtual_visits(id),
+      consent_type TEXT NOT NULL DEFAULT 'telemedicine',
+      consented BOOLEAN NOT NULL,
+      consent_date TIMESTAMPTZ DEFAULT NOW(),
+      consent_method TEXT,
+      ip_address TEXT,
+      signature_data TEXT,
+      consent_text TEXT,
+      valid_until DATE,
+      revoked_at TIMESTAMPTZ,
+      revoked_reason TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_telemedicine_consents_patient ON telemedicine_consents(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_telemedicine_consents_visit ON telemedicine_consents(virtual_visit_id);
+
+    CREATE TABLE IF NOT EXISTS telemedicine_recordings (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      virtual_visit_id TEXT NOT NULL REFERENCES virtual_visits(id),
+      recording_url TEXT,
+      recording_path TEXT,
+      duration_seconds INTEGER,
+      file_size_bytes BIGINT,
+      format TEXT,
+      transcription_status TEXT DEFAULT 'pending',
+      transcription_text TEXT,
+      retention_until DATE,
+      deleted_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS telemedicine_waiting_room (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      virtual_visit_id TEXT NOT NULL REFERENCES virtual_visits(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      joined_at TIMESTAMPTZ DEFAULT NOW(),
+      admitted_at TIMESTAMPTZ,
+      admitted_by TEXT REFERENCES users(id),
+      left_at TIMESTAMPTZ,
+      status TEXT DEFAULT 'waiting' CHECK (status IN ('waiting', 'admitted', 'left', 'removed')),
+      position_in_queue INTEGER,
+      estimated_wait_minutes INTEGER,
+      messages JSONB DEFAULT '[]',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_waiting_room_visit ON telemedicine_waiting_room(virtual_visit_id);
+    CREATE INDEX IF NOT EXISTS idx_waiting_room_status ON telemedicine_waiting_room(status) WHERE status = 'waiting';
+    `,
+  },
+  {
+    name: "114_audit_reports",
+    sql: `
+    -- Enhanced Audit Reports and HIPAA Compliance
+    CREATE TABLE IF NOT EXISTS audit_report_templates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      report_type TEXT NOT NULL CHECK (report_type IN ('access', 'changes', 'phi', 'security', 'login', 'prescription', 'export')),
+      filters JSONB DEFAULT '{}',
+      columns TEXT[] DEFAULT ARRAY['timestamp', 'user', 'action', 'resource', 'status'],
+      schedule_cron TEXT,
+      schedule_enabled BOOLEAN DEFAULT false,
+      recipients TEXT[] DEFAULT ARRAY[]::TEXT[],
+      last_run_at TIMESTAMPTZ,
+      next_run_at TIMESTAMPTZ,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      is_active BOOLEAN DEFAULT true
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_report_templates_tenant ON audit_report_templates(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_report_templates_type ON audit_report_templates(report_type);
+
+    CREATE TABLE IF NOT EXISTS audit_report_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      template_id TEXT REFERENCES audit_report_templates(id) ON DELETE SET NULL,
+      template_name TEXT,
+      report_type TEXT NOT NULL,
+      run_date TIMESTAMPTZ DEFAULT NOW(),
+      date_range_start TIMESTAMPTZ,
+      date_range_end TIMESTAMPTZ,
+      filters_applied JSONB DEFAULT '{}',
+      generated_by TEXT REFERENCES users(id),
+      generated_by_name TEXT,
+      row_count INTEGER DEFAULT 0,
+      file_url TEXT,
+      file_size_bytes INTEGER,
+      file_format TEXT DEFAULT 'csv' CHECK (file_format IN ('csv', 'pdf', 'json', 'xlsx')),
+      status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'expired')),
+      error_message TEXT,
+      expires_at TIMESTAMPTZ,
+      checksum TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_report_runs_tenant ON audit_report_runs(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_report_runs_date ON audit_report_runs(run_date DESC);
+
+    CREATE TABLE IF NOT EXISTS suspicious_activity_log (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT REFERENCES users(id),
+      user_name TEXT,
+      user_email TEXT,
+      activity_type TEXT NOT NULL,
+      risk_score INTEGER NOT NULL CHECK (risk_score BETWEEN 1 AND 100),
+      details JSONB DEFAULT '{}',
+      ip_address TEXT,
+      user_agent TEXT,
+      related_audit_ids TEXT[],
+      related_patient_ids TEXT[],
+      detected_at TIMESTAMPTZ DEFAULT NOW(),
+      detection_method TEXT,
+      reviewed BOOLEAN DEFAULT false,
+      reviewed_by TEXT REFERENCES users(id),
+      reviewed_at TIMESTAMPTZ,
+      review_notes TEXT,
+      action_taken TEXT,
+      requires_follow_up BOOLEAN DEFAULT false,
+      follow_up_due_date DATE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_suspicious_activity_tenant ON suspicious_activity_log(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_suspicious_activity_user ON suspicious_activity_log(user_id);
+    CREATE INDEX IF NOT EXISTS idx_suspicious_activity_risk ON suspicious_activity_log(risk_score DESC);
+    CREATE INDEX IF NOT EXISTS idx_suspicious_activity_unreviewed ON suspicious_activity_log(tenant_id, reviewed, detected_at DESC) WHERE reviewed = false;
+
+    CREATE TABLE IF NOT EXISTS phi_access_log (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      audit_log_id TEXT REFERENCES audit_log(id),
+      user_id TEXT REFERENCES users(id),
+      patient_id TEXT NOT NULL,
+      patient_name TEXT,
+      access_type TEXT NOT NULL CHECK (access_type IN ('view', 'create', 'update', 'delete', 'export', 'print', 'fax', 'share')),
+      resource_type TEXT NOT NULL,
+      resource_id TEXT,
+      access_reason TEXT,
+      is_break_glass BOOLEAN DEFAULT false,
+      is_own_record BOOLEAN DEFAULT false,
+      relationship_to_patient TEXT,
+      ip_address TEXT,
+      session_id TEXT,
+      accessed_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_phi_access_patient ON phi_access_log(patient_id, accessed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_phi_access_user ON phi_access_log(user_id, accessed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_phi_access_break_glass ON phi_access_log(tenant_id, is_break_glass) WHERE is_break_glass = true;
+
+    CREATE TABLE IF NOT EXISTS login_activity_log (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT REFERENCES users(id),
+      user_email TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      ip_address TEXT,
+      user_agent TEXT,
+      browser TEXT,
+      os TEXT,
+      device_type TEXT,
+      location_city TEXT,
+      location_country TEXT,
+      session_id TEXT,
+      failure_reason TEXT,
+      is_suspicious BOOLEAN DEFAULT false,
+      risk_factors JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_login_activity_user ON login_activity_log(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_login_activity_email ON login_activity_log(user_email, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_login_activity_suspicious ON login_activity_log(tenant_id, is_suspicious, created_at DESC) WHERE is_suspicious = true;
+
+    CREATE TABLE IF NOT EXISTS break_glass_log (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      user_name TEXT,
+      patient_id TEXT NOT NULL,
+      patient_name TEXT,
+      reason TEXT NOT NULL,
+      reason_category TEXT,
+      authorized_by TEXT REFERENCES users(id),
+      access_duration_minutes INTEGER,
+      resources_accessed TEXT[],
+      audit_log_ids TEXT[],
+      accessed_at TIMESTAMPTZ DEFAULT NOW(),
+      access_ended_at TIMESTAMPTZ,
+      reviewed BOOLEAN DEFAULT false,
+      reviewed_by TEXT REFERENCES users(id),
+      reviewed_at TIMESTAMPTZ,
+      review_outcome TEXT,
+      review_notes TEXT,
+      follow_up_required BOOLEAN DEFAULT false
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_break_glass_user ON break_glass_log(user_id, accessed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_break_glass_patient ON break_glass_log(patient_id, accessed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_break_glass_unreviewed ON break_glass_log(tenant_id, reviewed, accessed_at DESC) WHERE reviewed = false;
+    `,
+  },
+  {
+    name: "115_wait_time_display",
+    sql: `
+    -- Wait Time Display System
+    CREATE TABLE IF NOT EXISTS wait_time_displays (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      location_id TEXT REFERENCES locations(id),
+      display_name TEXT NOT NULL,
+      display_type TEXT NOT NULL DEFAULT 'lobby',
+      is_active BOOLEAN DEFAULT true,
+      settings JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS wait_time_snapshots (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      location_id TEXT REFERENCES locations(id),
+      snapshot_time TIMESTAMPTZ DEFAULT NOW(),
+      average_wait_minutes INTEGER,
+      current_waiting_count INTEGER,
+      longest_wait_minutes INTEGER,
+      patients_seen_today INTEGER,
+      provider_availability JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_wait_time_snapshots_location ON wait_time_snapshots(location_id, snapshot_time DESC);
+
+    CREATE TABLE IF NOT EXISTS patient_wait_times (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      appointment_id TEXT REFERENCES appointments(id),
+      check_in_time TIMESTAMPTZ NOT NULL,
+      called_back_time TIMESTAMPTZ,
+      provider_arrival_time TIMESTAMPTZ,
+      checkout_time TIMESTAMPTZ,
+      wait_time_minutes INTEGER,
+      total_visit_minutes INTEGER,
+      provider_id TEXT REFERENCES providers(id),
+      location_id TEXT REFERENCES locations(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_wait_times_appointment ON patient_wait_times(appointment_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_wait_times_provider ON patient_wait_times(provider_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_wait_times_date ON patient_wait_times(check_in_time);
+    `,
+  },
+  {
+    name: "116_copay_collection",
+    sql: `
+    -- Point-of-Service Copay Collection System
+    CREATE TABLE IF NOT EXISTS copay_estimates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      appointment_id TEXT REFERENCES appointments(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      insurance_id TEXT,
+      estimated_copay DECIMAL(10,2),
+      estimated_coinsurance DECIMAL(10,2),
+      estimated_deductible DECIMAL(10,2),
+      estimated_total DECIMAL(10,2),
+      estimation_method TEXT,
+      estimation_date TIMESTAMPTZ DEFAULT NOW(),
+      valid_until DATE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_copay_estimates_patient ON copay_estimates(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_copay_estimates_appointment ON copay_estimates(appointment_id);
+
+    CREATE TABLE IF NOT EXISTS copay_collections (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      appointment_id TEXT REFERENCES appointments(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      estimate_id TEXT REFERENCES copay_estimates(id),
+      amount_due DECIMAL(10,2) NOT NULL,
+      amount_collected DECIMAL(10,2) NOT NULL,
+      collection_type TEXT NOT NULL,
+      payment_method TEXT NOT NULL,
+      payment_reference TEXT,
+      collected_by TEXT REFERENCES users(id),
+      collected_at TIMESTAMPTZ DEFAULT NOW(),
+      receipt_number TEXT,
+      notes TEXT,
+      voided BOOLEAN DEFAULT false,
+      voided_at TIMESTAMPTZ,
+      voided_by TEXT REFERENCES users(id),
+      void_reason TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_copay_collections_patient ON copay_collections(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_copay_collections_appointment ON copay_collections(appointment_id);
+    CREATE INDEX IF NOT EXISTS idx_copay_collections_date ON copay_collections(collected_at);
+
+    CREATE TABLE IF NOT EXISTS payment_plans (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      total_amount DECIMAL(10,2) NOT NULL,
+      down_payment DECIMAL(10,2) DEFAULT 0,
+      remaining_balance DECIMAL(10,2) NOT NULL,
+      monthly_payment DECIMAL(10,2) NOT NULL,
+      number_of_payments INTEGER NOT NULL,
+      payments_made INTEGER DEFAULT 0,
+      start_date DATE NOT NULL,
+      next_payment_date DATE,
+      status TEXT NOT NULL DEFAULT 'active',
+      auto_charge BOOLEAN DEFAULT false,
+      payment_method_id TEXT,
+      created_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_payment_plans_patient ON payment_plans(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_plans_status ON payment_plans(status);
+
+    CREATE TABLE IF NOT EXISTS payment_plan_transactions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      plan_id TEXT NOT NULL REFERENCES payment_plans(id),
+      payment_number INTEGER NOT NULL,
+      amount DECIMAL(10,2) NOT NULL,
+      payment_date TIMESTAMPTZ,
+      due_date DATE NOT NULL,
+      status TEXT NOT NULL DEFAULT 'scheduled',
+      payment_method TEXT,
+      payment_reference TEXT,
+      failure_reason TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_plan_transactions_plan ON payment_plan_transactions(plan_id);
+    `,
+  },
+  {
+    name: "117_product_sales",
+    sql: `
+    -- Skincare Product Sales System
+    CREATE TABLE IF NOT EXISTS product_catalog (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      sku TEXT NOT NULL,
+      name TEXT NOT NULL,
+      brand TEXT,
+      category TEXT NOT NULL,
+      description TEXT,
+      retail_price DECIMAL(10,2) NOT NULL,
+      cost_price DECIMAL(10,2),
+      tax_rate DECIMAL(5,4) DEFAULT 0,
+      is_taxable BOOLEAN DEFAULT true,
+      is_prescription BOOLEAN DEFAULT false,
+      requires_consultation BOOLEAN DEFAULT false,
+      active_ingredients TEXT[],
+      skin_types TEXT[],
+      conditions_treated TEXT[],
+      image_url TEXT,
+      barcode TEXT,
+      reorder_point INTEGER DEFAULT 10,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, sku)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_product_catalog_tenant ON product_catalog(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_product_catalog_category ON product_catalog(category);
+    CREATE INDEX IF NOT EXISTS idx_product_catalog_sku ON product_catalog(sku);
+
+    CREATE TABLE IF NOT EXISTS product_inventory (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      product_id TEXT NOT NULL REFERENCES product_catalog(id),
+      location_id TEXT REFERENCES locations(id),
+      quantity_on_hand INTEGER NOT NULL DEFAULT 0,
+      quantity_reserved INTEGER DEFAULT 0,
+      quantity_available INTEGER GENERATED ALWAYS AS (quantity_on_hand - quantity_reserved) STORED,
+      last_count_date DATE,
+      last_count_quantity INTEGER,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(product_id, location_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_product_inventory_product ON product_inventory(product_id);
+    CREATE INDEX IF NOT EXISTS idx_product_inventory_location ON product_inventory(location_id);
+
+    CREATE TABLE IF NOT EXISTS product_sales (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      sale_number TEXT NOT NULL,
+      patient_id TEXT REFERENCES patients(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      sold_by TEXT REFERENCES users(id),
+      sale_date TIMESTAMPTZ DEFAULT NOW(),
+      subtotal DECIMAL(10,2) NOT NULL,
+      tax_amount DECIMAL(10,2) DEFAULT 0,
+      discount_amount DECIMAL(10,2) DEFAULT 0,
+      total_amount DECIMAL(10,2) NOT NULL,
+      payment_method TEXT,
+      payment_reference TEXT,
+      status TEXT NOT NULL DEFAULT 'completed',
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, sale_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_product_sales_patient ON product_sales(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_product_sales_date ON product_sales(sale_date);
+
+    CREATE TABLE IF NOT EXISTS product_sale_items (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      sale_id TEXT NOT NULL REFERENCES product_sales(id) ON DELETE CASCADE,
+      product_id TEXT NOT NULL REFERENCES product_catalog(id),
+      quantity INTEGER NOT NULL,
+      unit_price DECIMAL(10,2) NOT NULL,
+      discount_percent DECIMAL(5,2) DEFAULT 0,
+      line_total DECIMAL(10,2) NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON product_sale_items(sale_id);
+    CREATE INDEX IF NOT EXISTS idx_sale_items_product ON product_sale_items(product_id);
+
+    CREATE TABLE IF NOT EXISTS product_recommendations (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      provider_id TEXT REFERENCES providers(id),
+      product_id TEXT NOT NULL REFERENCES product_catalog(id),
+      recommendation_reason TEXT,
+      usage_instructions TEXT,
+      recommended_at TIMESTAMPTZ DEFAULT NOW(),
+      purchased BOOLEAN DEFAULT false,
+      purchased_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_recommendations_patient ON product_recommendations(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_recommendations_product ON product_recommendations(product_id);
+    `,
+  },
+  {
+    name: "118_referral_tracking",
+    sql: `
+    -- Referral Tracking System
+    CREATE TABLE IF NOT EXISTS referral_sources (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      source_type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      contact_name TEXT,
+      phone TEXT,
+      fax TEXT,
+      email TEXT,
+      address TEXT,
+      npi TEXT,
+      specialty TEXT,
+      is_active BOOLEAN DEFAULT true,
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_referral_sources_tenant ON referral_sources(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_referral_sources_type ON referral_sources(source_type);
+
+    CREATE TABLE IF NOT EXISTS inbound_referrals (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      referral_number TEXT NOT NULL,
+      patient_id TEXT REFERENCES patients(id),
+      source_id TEXT REFERENCES referral_sources(id),
+      referring_provider_name TEXT,
+      referring_provider_npi TEXT,
+      referral_date DATE NOT NULL,
+      received_date DATE DEFAULT CURRENT_DATE,
+      reason_for_referral TEXT,
+      diagnosis_codes TEXT[],
+      urgency TEXT DEFAULT 'routine',
+      authorization_number TEXT,
+      authorization_valid_until DATE,
+      visits_authorized INTEGER,
+      visits_used INTEGER DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'received',
+      scheduled_appointment_id TEXT REFERENCES appointments(id),
+      notes TEXT,
+      documents TEXT[],
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, referral_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_inbound_referrals_patient ON inbound_referrals(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_inbound_referrals_source ON inbound_referrals(source_id);
+    CREATE INDEX IF NOT EXISTS idx_inbound_referrals_status ON inbound_referrals(status);
+    CREATE INDEX IF NOT EXISTS idx_inbound_referrals_date ON inbound_referrals(referral_date);
+
+    CREATE TABLE IF NOT EXISTS outbound_referrals (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      referral_number TEXT NOT NULL,
+      patient_id TEXT NOT NULL REFERENCES patients(id),
+      encounter_id TEXT REFERENCES encounters(id),
+      referring_provider_id TEXT REFERENCES providers(id),
+      referred_to_name TEXT NOT NULL,
+      referred_to_npi TEXT,
+      referred_to_specialty TEXT,
+      referred_to_phone TEXT,
+      referred_to_fax TEXT,
+      referred_to_address TEXT,
+      referral_date DATE DEFAULT CURRENT_DATE,
+      reason_for_referral TEXT NOT NULL,
+      diagnosis_codes TEXT[],
+      urgency TEXT DEFAULT 'routine',
+      clinical_notes TEXT,
+      documents_sent TEXT[],
+      status TEXT NOT NULL DEFAULT 'pending',
+      sent_date DATE,
+      sent_method TEXT,
+      acknowledged_date DATE,
+      appointment_scheduled_date DATE,
+      follow_up_received BOOLEAN DEFAULT false,
+      follow_up_date DATE,
+      follow_up_notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, referral_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_outbound_referrals_patient ON outbound_referrals(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_outbound_referrals_provider ON outbound_referrals(referring_provider_id);
+    CREATE INDEX IF NOT EXISTS idx_outbound_referrals_status ON outbound_referrals(status);
+    CREATE INDEX IF NOT EXISTS idx_outbound_referrals_date ON outbound_referrals(referral_date);
+
+    CREATE TABLE IF NOT EXISTS referral_communications (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      referral_id TEXT NOT NULL,
+      referral_type TEXT NOT NULL CHECK (referral_type IN ('inbound', 'outbound')),
+      communication_type TEXT NOT NULL,
+      direction TEXT NOT NULL CHECK (direction IN ('sent', 'received')),
+      communication_date TIMESTAMPTZ DEFAULT NOW(),
+      contact_name TEXT,
+      contact_method TEXT,
+      subject TEXT,
+      content TEXT,
+      documents TEXT[],
+      sent_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_referral_comms_referral ON referral_communications(referral_id, referral_type);
+
+    CREATE TABLE IF NOT EXISTS referral_statistics (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+      source_id TEXT REFERENCES referral_sources(id),
+      inbound_total INTEGER DEFAULT 0,
+      inbound_converted INTEGER DEFAULT 0,
+      outbound_total INTEGER DEFAULT 0,
+      outbound_completed INTEGER DEFAULT 0,
+      average_time_to_schedule_days DECIMAL(5,2),
+      conversion_rate DECIMAL(5,2),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(tenant_id, period_start, period_end, source_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_referral_stats_tenant ON referral_statistics(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_referral_stats_period ON referral_statistics(period_start, period_end);
+    `,
+  },
 ];
 
 async function ensureMigrationsTable() {

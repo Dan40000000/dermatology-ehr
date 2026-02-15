@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { AuthenticatedRequestUser } from "../types";
+import { buildEffectiveRoles, normalizeRoleArray } from "../lib/roles";
 
 export interface AuthedRequest extends Request {
   user?: AuthenticatedRequestUser;
@@ -20,7 +21,15 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
     if (!tenantId || tenantId !== decoded.tenantId) {
       return res.status(403).json({ error: "Invalid tenant" });
     }
-    req.user = decoded;
+
+    const secondaryRoles = normalizeRoleArray(decoded.secondaryRoles);
+    const roles = buildEffectiveRoles(decoded.role, decoded.roles || secondaryRoles);
+
+    req.user = {
+      ...decoded,
+      secondaryRoles,
+      roles,
+    };
     req.tenantId = tenantId;
     return next();
   } catch (err) {

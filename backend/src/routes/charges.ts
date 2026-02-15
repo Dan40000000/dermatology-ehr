@@ -57,7 +57,7 @@ chargesRouter.get("/encounter/:encounterId", requireAuth, async (req: AuthedRequ
   res.json({ charges: result.rows });
 });
 
-chargesRouter.post("/", requireAuth, requireRoles(["provider", "admin"]), async (req: AuthedRequest, res) => {
+chargesRouter.post("/", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
   const parsed = chargeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
   const id = crypto.randomUUID();
@@ -84,7 +84,7 @@ chargesRouter.post("/", requireAuth, requireRoles(["provider", "admin"]), async 
 });
 
 // Update charge
-chargesRouter.put("/:id", requireAuth, requireRoles(["provider", "admin"]), async (req: AuthedRequest, res) => {
+chargesRouter.put("/:id", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
   const parsed = updateChargeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -135,7 +135,7 @@ chargesRouter.put("/:id", requireAuth, requireRoles(["provider", "admin"]), asyn
 });
 
 // Delete charge
-chargesRouter.delete("/:id", requireAuth, requireRoles(["provider", "admin"]), async (req: AuthedRequest, res) => {
+chargesRouter.delete("/:id", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
 

@@ -51,7 +51,13 @@ app.use('/api/recalls', recallsRouter);
 
 describe('Recalls Routes', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    queryMock.mockReset();
+    generateRecallsMock.mockReset();
+    generateAllRecallsMock.mockReset();
+    logReminderMock.mockReset();
+    getPatientPreferencesMock.mockReset();
+    updatePatientPreferencesMock.mockReset();
+    canContactPatientMock.mockReset();
   });
 
   describe('GET /api/recalls/campaigns', () => {

@@ -69,6 +69,10 @@ const completeRecordingSchema = z.object({
   durationSeconds: z.coerce.number().min(1)
 });
 
+const stopRecordingSchema = z.object({
+  durationSeconds: z.coerce.number().min(1).max(8 * 60 * 60).optional()
+});
+
 const updateNoteSchema = z.object({
   chiefComplaint: z.string().optional(),
   hpi: z.string().optional(),
@@ -169,6 +173,75 @@ router.post('/recordings/start', requireAuth, requireRoles(['provider', 'ma', 'a
 });
 
 /**
+ * POST /api/ambient/recordings/:id/stop
+ * Stop an in-progress recording session (without uploading audio yet)
+ */
+router.post('/recordings/:id/stop', requireAuth, requireRoles(['provider', 'ma', 'admin']), async (req: AuthedRequest, res) => {
+  try {
+    const recordingId = req.params.id!;
+    const tenantId = req.user!.tenantId;
+
+    const parsed = stopRecordingSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { durationSeconds } = parsed.data;
+
+    const recordingCheck = await pool.query(
+      `SELECT id, recording_status as "recordingStatus", duration_seconds as "durationSeconds",
+              started_at as "startedAt", completed_at as "completedAt"
+       FROM ambient_recordings
+       WHERE id = $1 AND tenant_id = $2`,
+      [recordingId, tenantId]
+    );
+
+    if (recordingCheck.rowCount === 0) {
+      return res.status(404).json({ error: 'Recording not found' });
+    }
+
+    const current = recordingCheck.rows[0];
+    const currentStatus = String(current.recordingStatus || '');
+
+    if (currentStatus === 'completed') {
+      return res.status(409).json({ error: 'Recording already completed' });
+    }
+    if (currentStatus === 'failed') {
+      return res.status(409).json({ error: 'Cannot stop a failed recording' });
+    }
+
+    await pool.query(
+      `UPDATE ambient_recordings
+       SET recording_status = 'stopped',
+           duration_seconds = GREATEST(
+             COALESCE($1, 0),
+             COALESCE(duration_seconds, 0),
+             1
+           ),
+           completed_at = COALESCE(
+             completed_at,
+             NOW()
+           ),
+           updated_at = NOW()
+       WHERE id = $2 AND tenant_id = $3`,
+      [durationSeconds || null, recordingId, tenantId]
+    );
+
+    await auditLog(tenantId, req.user?.id || null, 'ambient_recording_stop', 'ambient_recording', recordingId);
+
+    res.json({
+      recordingId,
+      status: 'stopped',
+      duration: durationSeconds ?? current.durationSeconds ?? null,
+      completedAt: current.completedAt || new Date().toISOString()
+    });
+  } catch (error: any) {
+    console.error('Stop recording error:', error);
+    res.status(500).json({ error: 'Failed to stop recording' });
+  }
+});
+
+/**
  * POST /api/ambient/recordings/:id/upload
  * Upload audio file for an existing recording
  */
@@ -190,12 +263,21 @@ router.post('/recordings/:id/upload', requireAuth, upload.single('audio'), async
 
     // Verify recording exists and belongs to tenant
     const recordingCheck = await pool.query(
-      'SELECT id FROM ambient_recordings WHERE id = $1 AND tenant_id = $2',
+      `SELECT id, recording_status as "recordingStatus"
+       FROM ambient_recordings
+       WHERE id = $1 AND tenant_id = $2`,
       [recordingId, tenantId]
     );
 
     if (recordingCheck.rowCount === 0) {
       return res.status(404).json({ error: 'Recording not found' });
+    }
+    const recordingStatus = recordingCheck.rows[0]?.recordingStatus;
+    if (recordingStatus === 'completed') {
+      return res.status(409).json({ error: 'Recording already uploaded' });
+    }
+    if (recordingStatus === 'failed') {
+      return res.status(409).json({ error: 'Cannot upload a failed recording' });
     }
 
     // Update recording with file info
@@ -204,10 +286,10 @@ router.post('/recordings/:id/upload', requireAuth, upload.single('audio'), async
        SET file_path = $1,
            file_size_bytes = $2,
            mime_type = $3,
-           duration_seconds = $4,
+           duration_seconds = GREATEST($4, COALESCE(duration_seconds, 0), 1),
            recording_status = 'completed',
            status = 'completed',
-           completed_at = NOW(),
+           completed_at = COALESCE(completed_at, NOW()),
            updated_at = NOW()
        WHERE id = $5 AND tenant_id = $6`,
       [req.file.path, req.file.size, req.file.mimetype, durationSeconds, recordingId, tenantId]
@@ -529,6 +611,7 @@ router.get('/notes/:id', requireAuth, async (req: AuthedRequest, res) => {
         n.follow_up_tasks as "followUpTasks",
         n.differential_diagnoses as "differentialDiagnoses",
         n.recommended_tests as "recommendedTests",
+        n.note_content as "noteContent",
         n.overall_confidence as "overallConfidence",
         n.section_confidence as "sectionConfidence",
         n.review_status as "reviewStatus",
@@ -585,6 +668,7 @@ router.get('/encounters/:encounterId/notes', requireAuth, async (req: AuthedRequ
         n.follow_up_tasks as "followUpTasks",
         n.differential_diagnoses as "differentialDiagnoses",
         n.recommended_tests as "recommendedTests",
+        n.note_content as "noteContent",
         n.overall_confidence as "overallConfidence",
         n.section_confidence as "sectionConfidence",
         n.review_status as "reviewStatus",
@@ -909,6 +993,120 @@ router.delete('/recordings/:id', requireAuth, requireRoles(['provider', 'admin']
 // HELPER FUNCTIONS
 // ============================================================================
 
+const SYMPTOM_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
+  { label: 'Rash', pattern: /\brash|eruption|lesion/ },
+  { label: 'Itching', pattern: /\bitch|pruritus/ },
+  { label: 'Pain', pattern: /\bpain|tender/ },
+  { label: 'Burning', pattern: /\bburn|stinging/ },
+  { label: 'Redness', pattern: /\bred|erythema/ },
+  { label: 'Swelling', pattern: /\bswell|edema/ },
+  { label: 'Scaling', pattern: /\bscale|scaly|flak/ },
+  { label: 'Bleeding', pattern: /\bbleed|bleeding/ },
+  { label: 'Blistering', pattern: /\bblister|vesicle|bulla/ },
+  { label: 'Drainage', pattern: /\bdrain|ooz|discharge/ },
+  { label: 'Fever', pattern: /\bfever|febrile/ },
+];
+
+type FormalAppointmentSummary = {
+  symptoms: string[];
+  probableDiagnoses: Array<{
+    condition: string;
+    probabilityPercent: number;
+    reasoning: string;
+    icd10Code?: string;
+  }>;
+  suggestedTests: Array<{
+    testName: string;
+    urgency: 'routine' | 'soon' | 'urgent';
+    rationale: string;
+    cptCode?: string;
+  }>;
+};
+
+function toProbabilityPercent(value: unknown): number {
+  let parsed = typeof value === 'number' ? value : Number(value);
+  if (Number.isNaN(parsed)) {
+    return 0;
+  }
+  if (parsed > 1) {
+    parsed = parsed / 100;
+  }
+  const clamped = Math.max(0, Math.min(1, parsed));
+  return Math.round(clamped * 100);
+}
+
+function extractSymptomsForSummary(note: {
+  chiefComplaint?: string;
+  hpi?: string;
+  patientSummary?: { yourConcerns?: string[] };
+}): string[] {
+  const symptoms: string[] = [];
+  const seen = new Set<string>();
+
+  const pushUnique = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (seen.has(trimmed.toLowerCase())) return;
+    seen.add(trimmed.toLowerCase());
+    symptoms.push(trimmed);
+  };
+
+  for (const concern of note.patientSummary?.yourConcerns || []) {
+    pushUnique(String(concern));
+  }
+
+  const sourceText = `${note.chiefComplaint || ''} ${note.hpi || ''}`.toLowerCase();
+  for (const symptom of SYMPTOM_PATTERNS) {
+    if (symptom.pattern.test(sourceText)) {
+      pushUnique(symptom.label);
+    }
+  }
+
+  if (symptoms.length === 0 && note.chiefComplaint) {
+    pushUnique(note.chiefComplaint.split('.')[0] || note.chiefComplaint);
+  }
+
+  return symptoms.slice(0, 8);
+}
+
+function buildFormalAppointmentSummary(result: Awaited<ReturnType<typeof generateClinicalNote>>): FormalAppointmentSummary {
+  const probableDiagnoses = (result.differentialDiagnoses || [])
+    .slice(0, 5)
+    .map((diagnosis: any) => ({
+      condition: diagnosis?.condition || 'Unspecified diagnosis',
+      probabilityPercent: toProbabilityPercent(diagnosis?.confidence),
+      reasoning: diagnosis?.reasoning || 'Based on documented symptom and exam pattern.',
+      icd10Code: diagnosis?.icd10Code || undefined
+    }))
+    .filter((diagnosis) => diagnosis.condition);
+
+  const suggestedTests = (result.recommendedTests || [])
+    .slice(0, 5)
+    .map((test: any) => ({
+      testName: test?.testName || 'Follow-up clinical evaluation',
+      urgency: (test?.urgency === 'urgent' || test?.urgency === 'soon' || test?.urgency === 'routine')
+        ? test.urgency
+        : 'routine',
+      rationale: test?.rationale || 'Recommended from visit findings.',
+      cptCode: test?.cptCode || undefined
+    }))
+    .filter((test) => test.testName);
+
+  return {
+    symptoms: extractSymptomsForSummary(result),
+    probableDiagnoses,
+    suggestedTests
+  };
+}
+
+function buildNoteContent(result: Awaited<ReturnType<typeof generateClinicalNote>>) {
+  return {
+    formalAppointmentSummary: buildFormalAppointmentSummary(result),
+    patientSummary: result.patientSummary || null,
+    generatedAt: new Date().toISOString()
+  };
+}
+
 /**
  * Start transcription process for a recording
  */
@@ -1080,10 +1278,11 @@ async function processNoteGeneration(
            section_confidence = $13,
            differential_diagnoses = $14,
            recommended_tests = $15,
-           generation_status = $16,
+           note_content = $16,
+           generation_status = $17,
            completed_at = NOW(),
            updated_at = NOW()
-       WHERE id = $17 AND tenant_id = $18`,
+       WHERE id = $18 AND tenant_id = $19`,
       [
         result.chiefComplaint,
         result.hpi,
@@ -1100,6 +1299,7 @@ async function processNoteGeneration(
         JSON.stringify(result.sectionConfidence),
         JSON.stringify(result.differentialDiagnoses || []),
         JSON.stringify(result.recommendedTests || []),
+        JSON.stringify(buildNoteContent(result)),
         'completed',
         noteId,
         tenantId
@@ -1177,16 +1377,11 @@ router.post('/notes/:noteId/generate-patient-summary', requireAuth, requireRoles
     // Generate patient-friendly summary
     const visitDate = note.encounter_date || new Date();
 
-    // Extract symptoms from HPI
-    const symptomsDiscussed: string[] = [];
-    if (note.hpi) {
-      const hpiLower = note.hpi.toLowerCase();
-      if (hpiLower.includes('rash')) symptomsDiscussed.push('Rash');
-      if (hpiLower.includes('itch') || hpiLower.includes('pruritus')) symptomsDiscussed.push('Itching');
-      if (hpiLower.includes('pain')) symptomsDiscussed.push('Pain');
-      if (hpiLower.includes('swell')) symptomsDiscussed.push('Swelling');
-      if (hpiLower.includes('red') || hpiLower.includes('erythema')) symptomsDiscussed.push('Redness');
-    }
+    const symptomsDiscussed = extractSymptomsForSummary({
+      chiefComplaint: note.chief_complaint || '',
+      hpi: note.hpi || '',
+      patientSummary: note.note_content?.patientSummary
+    });
 
     // Extract diagnosis from assessment
     let diagnosisShared = '';

@@ -104,7 +104,7 @@ const recordPaymentSchema = z.object({
 revenueCycleRouter.post(
   '/charges',
   requireAuth,
-  requireRoles(['admin', 'billing', 'provider']),
+  requireRoles(['admin', 'billing']),
   async (req: AuthedRequest, res) => {
     const parsed = captureChargesSchema.safeParse(req.body);
     if (!parsed.success) {

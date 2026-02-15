@@ -61,7 +61,7 @@ export const clearinghouseRouter = Router();
 // ============================================================================
 
 // Submit claim to clearinghouse (mock implementation)
-clearinghouseRouter.post("/submit-claim", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+clearinghouseRouter.post("/submit-claim", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = submitClaimSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -239,7 +239,7 @@ clearinghouseRouter.get("/era", requireAuth, async (req: AuthedRequest, res) => 
 });
 
 // Create ERA (for testing/simulation)
-clearinghouseRouter.post("/era", requireAuth, requireRoles(["admin", "front_desk"]), async (req: AuthedRequest, res) => {
+clearinghouseRouter.post("/era", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = eraCreateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -348,7 +348,7 @@ clearinghouseRouter.get("/era/:id", requireAuth, async (req: AuthedRequest, res)
 });
 
 // Post ERA payments to claims
-clearinghouseRouter.post("/era/:id/post", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+clearinghouseRouter.post("/era/:id/post", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const eraId = String(req.params.id);
 
@@ -483,7 +483,7 @@ clearinghouseRouter.get("/eft", requireAuth, async (req: AuthedRequest, res) => 
 });
 
 // Create EFT transaction (for testing/simulation)
-clearinghouseRouter.post("/eft", requireAuth, requireRoles(["admin", "front_desk"]), async (req: AuthedRequest, res) => {
+clearinghouseRouter.post("/eft", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = eftCreateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -518,7 +518,7 @@ clearinghouseRouter.post("/eft", requireAuth, requireRoles(["admin", "front_desk
 // ============================================================================
 
 // Reconcile ERA with EFT
-clearinghouseRouter.post("/reconcile", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+clearinghouseRouter.post("/reconcile", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = reconcileSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 

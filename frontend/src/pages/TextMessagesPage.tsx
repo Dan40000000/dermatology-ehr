@@ -337,7 +337,7 @@ export default function TextMessagesPage() {
     try {
       await sendBulkSMS(session.tenantId, session.accessToken, {
         patientIds: Array.from(selectedPatients),
-        message: bulkMessageText,
+        messageBody: bulkMessageText,
         templateId: bulkTemplateId || undefined,
       });
       showSuccess(`Messages sent to ${selectedPatients.size} patients`);
@@ -354,10 +354,18 @@ export default function TextMessagesPage() {
 
     try {
       if (editingTemplate) {
-        await updateSMSTemplate(session.tenantId, session.accessToken, editingTemplate.id, data);
+        await updateSMSTemplate(session.tenantId, session.accessToken, editingTemplate.id, {
+          name: data.name,
+          messageBody: data.body,
+          category: data.category,
+        });
         showSuccess('Template updated');
       } else {
-        await createSMSTemplate(session.tenantId, session.accessToken, data);
+        await createSMSTemplate(session.tenantId, session.accessToken, {
+          name: data.name,
+          messageBody: data.body,
+          category: data.category,
+        });
         showSuccess('Template created');
       }
       loadTemplates();
@@ -768,15 +776,18 @@ export default function TextMessagesPage() {
               </div>
             ) : (
               <>
-                {['appointment_reminders', 'follow_up_care', 'billing_payment', 'general_communication'].map(category => {
+                {['appointment', 'appointment_reminders', 'recall', 'follow_up_care', 'billing_payment', 'general_communication', 'general'].map(category => {
                   const categoryTemplates = templates.filter(t => (t.category || 'general_communication') === category);
                   if (categoryTemplates.length === 0) return null;
 
                   const categoryLabels: { [key: string]: string } = {
+                    appointment: 'Appointment',
                     appointment_reminders: 'Appointment Reminders',
+                    recall: 'Recall',
                     follow_up_care: 'Follow-up Care',
                     billing_payment: 'Billing/Payment',
                     general_communication: 'General Communication',
+                    general: 'General',
                   };
 
                   return (
@@ -958,11 +969,20 @@ export default function TextMessagesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {scheduledMessages.map(msg => (
+                    {scheduledMessages.map(msg => {
+                      const recipientLabel =
+                        msg.patientName ||
+                        (msg as ScheduledMessage & { recipientName?: string }).recipientName ||
+                        (msg as ScheduledMessage & { recipientPhone?: string }).recipientPhone ||
+                        'Unknown';
+                      const scheduledTimestamp =
+                        msg.scheduledSendTime ||
+                        (msg as ScheduledMessage & { scheduledFor?: string }).scheduledFor;
+                      return (
                       <tr key={msg.id}>
-                        <td className="strong">{msg.recipientName || msg.recipientPhone}</td>
+                        <td className="strong">{recipientLabel}</td>
                         <td className="sms-preview-cell">{msg.messageBody}</td>
-                        <td>{new Date(msg.scheduledFor).toLocaleString()}</td>
+                        <td>{scheduledTimestamp ? new Date(scheduledTimestamp).toLocaleString() : '-'}</td>
                         <td>
                           <span className={`sms-status-badge ${msg.status}`}>
                             {msg.status}
@@ -983,7 +1003,8 @@ export default function TextMessagesPage() {
                           )}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </Panel>
@@ -1331,7 +1352,7 @@ function ScheduleForm({
   patients: PatientWithSMS[];
   templates: SMSTemplate[];
   selectedPatientId: string | null;
-  onSave: (data: { patientId: string; messageBody: string; scheduledFor: string }) => void;
+  onSave: (data: { patientId: string; messageBody: string; scheduledSendTime: string }) => void;
   onCancel: () => void;
 }) {
   const [patientId, setPatientId] = useState(selectedPatientId || '');
@@ -1344,8 +1365,8 @@ function ScheduleForm({
     e.preventDefault();
     if (!patientId || !messageBody.trim() || !scheduledDate) return;
 
-    const scheduledFor = new Date(`${scheduledDate}T${scheduledTime}`).toISOString();
-    onSave({ patientId, messageBody, scheduledFor });
+    const scheduledSendTime = new Date(`${scheduledDate}T${scheduledTime}`).toISOString();
+    onSave({ patientId, messageBody, scheduledSendTime });
   };
 
   return (

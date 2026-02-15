@@ -761,7 +761,7 @@ describe('SMS routes', () => {
   });
 
   it('GET /sms/conversations returns 500 on error', async () => {
-    queryMock.mockRejectedValueOnce(new Error('boom'));
+    queryMock.mockRejectedValue(new Error('boom'));
 
     const res = await request(app).get('/sms/conversations');
 
@@ -951,6 +951,15 @@ describe('SMS routes', () => {
     expect(res.status).toBe(400);
   });
 
+  it('POST /sms/templates rejects legacy body field', async () => {
+    const res = await request(app).post('/sms/templates').send({
+      name: 'Reminder',
+      body: 'Legacy payload',
+    });
+
+    expect(res.status).toBe(400);
+  });
+
   it('POST /sms/templates returns 500 on error', async () => {
     queryMock.mockRejectedValueOnce(new Error('boom'));
 
@@ -1010,6 +1019,15 @@ describe('SMS routes', () => {
 
   it('POST /sms/send-bulk rejects invalid payload', async () => {
     const res = await request(app).post('/sms/send-bulk').send({ messageBody: 'Hello' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /sms/send-bulk rejects legacy message field', async () => {
+    const res = await request(app).post('/sms/send-bulk').send({
+      patientIds: ['00000000-0000-4000-8000-000000000001'],
+      message: 'Legacy payload',
+    });
 
     expect(res.status).toBe(400);
   });
@@ -1107,6 +1125,16 @@ describe('SMS routes', () => {
     const res = await request(app).post('/sms/scheduled').send({
       messageBody: '',
       scheduledSendTime: 'bad',
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /sms/scheduled rejects legacy scheduledFor field', async () => {
+    const res = await request(app).post('/sms/scheduled').send({
+      patientId: '00000000-0000-4000-8000-000000000001',
+      messageBody: 'Hello',
+      scheduledFor: '2024-01-01T10:00:00Z',
     });
 
     expect(res.status).toBe(400);

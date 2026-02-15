@@ -7,6 +7,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { fetchPatients } from '../../api';
 import type { Patient } from '../../types';
 import { canAccessModule, getModuleForPath } from '../../config/moduleAccess';
+import { getEffectiveRoles } from '../../utils/roles';
 
 export function AppLayout() {
   const { isAuthenticated, session, user } = useAuth();
@@ -33,7 +34,8 @@ export function AppLayout() {
   }
 
   const activeModule = getModuleForPath(location.pathname);
-  if (activeModule && !canAccessModule(user?.role, activeModule)) {
+  const effectiveRoles = getEffectiveRoles(user);
+  if (activeModule && !canAccessModule(effectiveRoles, activeModule)) {
     return <Navigate to="/home" replace />;
   }
 

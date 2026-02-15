@@ -104,6 +104,7 @@ describe('Admin pages', () => {
       'cfg-1',
       expect.objectContaining({ isActive: false })
     );
+    await waitFor(() => expect(apiMocks.fetchAIAgentConfigs).toHaveBeenCalledTimes(2));
 
     fireEvent.click(screen.getByRole('button', { name: 'Clone' }));
     fireEvent.change(screen.getByPlaceholderText('My Custom Configuration'), { target: { value: 'Copy' } });
@@ -112,20 +113,24 @@ describe('Admin pages', () => {
     expect(cloneContainer).toBeTruthy();
     fireEvent.click(within(cloneContainer as HTMLElement).getByRole('button', { name: 'Clone' }));
     expect(apiMocks.cloneAIAgentConfig).toHaveBeenCalledWith('tenant-1', 'token-1', 'cfg-1', 'Copy');
+    await waitFor(() => expect(apiMocks.fetchAIAgentConfigs).toHaveBeenCalledTimes(3));
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     expect(await screen.findByText('Edit Configuration')).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText('e.g., Medical Dermatology Standard'), { target: { value: 'Updated' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
     await waitFor(() => expect(apiMocks.updateAIAgentConfig).toHaveBeenCalled());
+    await waitFor(() => expect(apiMocks.fetchAIAgentConfigs).toHaveBeenCalledTimes(4));
 
     fireEvent.click(screen.getByRole('button', { name: '+ Add Configuration' }));
     fireEvent.change(screen.getByPlaceholderText('e.g., Medical Dermatology Standard'), { target: { value: 'New Config' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Configuration' }));
     await waitFor(() => expect(apiMocks.createAIAgentConfig).toHaveBeenCalled());
+    await waitFor(() => expect(apiMocks.fetchAIAgentConfigs).toHaveBeenCalledTimes(5));
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     expect(apiMocks.deleteAIAgentConfig).toHaveBeenCalledWith('tenant-1', 'token-1', 'cfg-1');
+    await waitFor(() => expect(apiMocks.fetchAIAgentConfigs).toHaveBeenCalledTimes(6));
     confirmSpy.mockRestore();
   });
 

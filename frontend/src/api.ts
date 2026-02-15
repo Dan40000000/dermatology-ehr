@@ -12,6 +12,8 @@ export interface LoginResponse {
     id: string;
     email: string;
     role: string;
+    secondaryRoles?: string[];
+    roles?: string[];
     fullName: string;
     tenantId: string;
   };
@@ -5133,6 +5135,31 @@ export interface AmbientGeneratedNote {
     urgency: 'routine' | 'soon' | 'urgent';
     cptCode?: string;
   }>;
+  noteContent?: {
+    formalAppointmentSummary?: {
+      symptoms?: string[];
+      probableDiagnoses?: Array<{
+        condition: string;
+        probabilityPercent: number;
+        reasoning: string;
+        icd10Code?: string;
+      }>;
+      suggestedTests?: Array<{
+        testName: string;
+        urgency: 'routine' | 'soon' | 'urgent';
+        rationale: string;
+        cptCode?: string;
+      }>;
+    };
+    patientSummary?: {
+      whatWeDiscussed?: string;
+      yourConcerns?: string[];
+      diagnosis?: string;
+      treatmentPlan?: string;
+      followUp?: string;
+    };
+    generatedAt?: string;
+  };
   overallConfidence: number;
   sectionConfidence: any;
   reviewStatus: 'pending' | 'in_review' | 'approved' | 'rejected' | 'regenerating';
@@ -5202,6 +5229,32 @@ export async function startAmbientRecording(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to start recording');
+  }
+  return res.json();
+}
+
+/**
+ * Stop an active recording session (without uploading audio)
+ */
+export async function stopAmbientRecording(
+  tenantId: string,
+  accessToken: string,
+  recordingId: string,
+  durationSeconds?: number
+): Promise<{ recordingId: string; status: 'stopped'; duration?: number; completedAt?: string }> {
+  const res = await fetch(`${API_BASE}/api/ambient/recordings/${recordingId}/stop`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(durationSeconds ? { durationSeconds } : {}),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to stop recording');
   }
   return res.json();
 }

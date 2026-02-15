@@ -346,7 +346,7 @@ batchesRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-batchesRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+batchesRouter.post("/", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = batchCreateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -461,7 +461,7 @@ batchesRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_d
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-batchesRouter.put("/:id", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+batchesRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = batchUpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -571,7 +571,7 @@ batchesRouter.put("/:id", requireAuth, requireRoles(["provider", "admin", "front
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-batchesRouter.post("/:id/close", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+batchesRouter.post("/:id/close", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const batchId = String(req.params.id);
 
@@ -637,7 +637,7 @@ batchesRouter.post("/:id/close", requireAuth, requireRoles(["provider", "admin",
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-batchesRouter.post("/:id/post", requireAuth, requireRoles(["provider", "admin"]), async (req: AuthedRequest, res) => {
+batchesRouter.post("/:id/post", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const batchId = String(req.params.id);
 

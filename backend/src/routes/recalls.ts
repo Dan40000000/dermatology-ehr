@@ -194,11 +194,7 @@ router.get('/due', async (req: AuthedRequest, res) => {
           SELECT COUNT(*)
           FROM reminder_log rl
           WHERE rl.recall_id = pr.id
-        ) as contact_attempts,
-        pr.doctor_notes,
-        pr.preferred_contact_method,
-        pr.notified_on,
-        pr.notification_count
+        ) as contact_attempts
       FROM patient_recalls pr
       JOIN patients p ON p.id = pr.patient_id
       LEFT JOIN recall_campaigns rc ON rc.id = pr.campaign_id
@@ -644,14 +640,8 @@ router.post('/bulk-notify', async (req: AuthedRequest, res) => {
           [recallId, tenantId]
         );
 
-        // Create notification history entry
-        const notificationId = randomUUID();
-        await pool.query(
-          `INSERT INTO reminder_notification_history (
-            id, tenant_id, recall_id, patient_id, notification_type, status, message_content, sent_by
-          ) VALUES ($1, $2, $3, $4, $5, 'sent', $6, $7)`,
-          [notificationId, tenantId, recallId, recall.patientId, notificationType, messageContent, userId]
-        );
+        // Note: reminder_notification_history table not yet created - skip for now
+        // The reminder_log table already captures contact history
 
         results.successful++;
       } catch (err: any) {
@@ -677,14 +667,23 @@ router.get('/:id/notification-history', async (req: AuthedRequest, res) => {
     const { tenantId } = req.user!;
     const { id } = req.params;
 
+    // Use reminder_log table instead of reminder_notification_history
     const result = await pool.query(
       `SELECT
-        rnh.*,
+        rl.id,
+        rl.tenant_id,
+        rl.recall_id,
+        rl.patient_id,
+        rl.reminder_type as notification_type,
+        rl.delivery_status as status,
+        rl.message_content,
+        rl.sent_by,
+        rl.sent_at,
         u.full_name as sent_by_name
-      FROM reminder_notification_history rnh
-      LEFT JOIN users u ON rnh.sent_by = u.id
-      WHERE rnh.recall_id = $1 AND rnh.tenant_id = $2
-      ORDER BY rnh.sent_at DESC`,
+      FROM reminder_log rl
+      LEFT JOIN users u ON rl.sent_by = u.id::text
+      WHERE rl.recall_id = $1 AND rl.tenant_id = $2
+      ORDER BY rl.sent_at DESC`,
       [id, tenantId]
     );
 

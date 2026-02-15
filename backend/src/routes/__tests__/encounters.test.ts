@@ -136,6 +136,22 @@ describe("Encounters routes", () => {
     expect(learningMock).toHaveBeenCalledWith("enc-1");
   });
 
+  it("POST /encounters/:id/status auto-stops ambient recordings for closed states", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] }) // encounter status update
+      .mockResolvedValueOnce({ rows: [] }) // audit insert
+      .mockResolvedValueOnce({ rows: [{ id: "rec-1" }], rowCount: 1 }); // ambient auto-stop update
+
+    const res = await request(app).post("/encounters/enc-1/status").send({ status: "closed" });
+
+    expect(res.status).toBe(200);
+    const ambientUpdateCall = queryMock.mock.calls.find((call) =>
+      typeof call[0] === "string" && call[0].includes("UPDATE ambient_recordings")
+    );
+    expect(ambientUpdateCall).toBeTruthy();
+    expect(auditMock).toHaveBeenCalledWith("tenant-1", "user-1", "ambient_recording_auto_stop", "ambient_recording", "rec-1");
+  });
+
   it("POST /encounters/:id/status ignores learning errors", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [] })
@@ -270,6 +286,20 @@ describe("Encounters routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.encounterId).toBe("enc-1");
     expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /encounters/:id/complete auto-stops ambient recordings", async () => {
+    encounterServiceMock.completeEncounter.mockResolvedValueOnce(undefined as any);
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "rec-1" }], rowCount: 1 });
+
+    const res = await request(app).post("/encounters/enc-1/complete");
+
+    expect(res.status).toBe(200);
+    const ambientUpdateCall = queryMock.mock.calls.find((call) =>
+      typeof call[0] === "string" && call[0].includes("UPDATE ambient_recordings")
+    );
+    expect(ambientUpdateCall).toBeTruthy();
+    expect(auditMock).toHaveBeenCalledWith("tenant-1", "user-1", "ambient_recording_auto_stop", "ambient_recording", "rec-1");
   });
 
   it("POST /encounters/:id/create-claim returns claim", async () => {

@@ -973,6 +973,7 @@ export function EncounterPage() {
             patientName={`${patient.firstName} ${patient.lastName}`}
             encounterId={encounterId}
             providerId={encounter?.providerId}
+            encounterStatus={encounter?.status}
             onRecordingComplete={(recordingId) => {
               navigate(`/ambient-scribe?recordingId=${recordingId}&auto=1`);
             }}

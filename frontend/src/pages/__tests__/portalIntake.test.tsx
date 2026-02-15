@@ -49,7 +49,7 @@ describe('IntakePage', () => {
     render(<IntakePage tenantId="tenant-1" portalToken="token-1" />);
 
     expect(await screen.findByText('Intake Forms')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Continue Form' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue Form' }));
 
     expect(await screen.findByDisplayValue('Peanuts')).toBeInTheDocument();
     expect(apiMocks.startPortalIntakeForm).not.toHaveBeenCalled();
@@ -86,7 +86,7 @@ describe('IntakePage', () => {
     render(<IntakePage tenantId="tenant-1" portalToken="token-1" />);
 
     expect(await screen.findByText('Intake Forms')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Start Form' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Form' }));
 
     await screen.findByLabelText(/Symptoms/i);
     fireEvent.click(screen.getByRole('button', { name: 'Submit Form' }));

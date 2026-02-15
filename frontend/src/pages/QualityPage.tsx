@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { hasAnyRole } from "../utils/roles";
 import {
   fetchQualityMeasures,
   fetchMeasurePerformance,
@@ -36,7 +37,7 @@ export default function QualityPage() {
   const accessToken = session?.accessToken || "";
   const tenantId = session?.tenantId || "";
 
-  if (!user || (user.role !== 'admin' && user.role !== 'provider')) {
+  if (!hasAnyRole(user, ['admin', 'provider'])) {
     return <Navigate to="/home" replace />;
   }
 

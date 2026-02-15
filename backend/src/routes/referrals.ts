@@ -25,8 +25,8 @@ import { logger } from "../lib/logger";
 // =====================================================
 
 const createReferralSchema = z.object({
-  patientId: z.string().uuid(),
-  referringProviderId: z.string().uuid().optional(),
+  patientId: z.string().min(1),
+  referringProviderId: z.string().min(1).optional(),
   referringProviderName: z.string().optional(),
   referringPractice: z.string().optional(),
   priority: z.enum(["routine", "urgent", "stat"]).optional().default("routine"),
@@ -51,7 +51,7 @@ const updateReferralSchema = z.object({
     "completed", "report_sent", "declined", "cancelled"
   ]).optional(),
   priority: z.enum(["routine", "urgent", "stat"]).optional(),
-  assignedProviderId: z.string().uuid().optional(),
+  assignedProviderId: z.string().min(1).optional(),
   clinicalNotes: z.string().optional(),
   notes: z.string().optional(),
   insuranceAuthStatus: z.enum(["not_required", "pending", "approved", "denied"]).optional(),
@@ -67,15 +67,15 @@ const updateStatusSchema = z.object({
 });
 
 const scheduleAppointmentSchema = z.object({
-  providerId: z.string().uuid(),
-  locationId: z.string().uuid(),
-  appointmentTypeId: z.string().uuid(),
+  providerId: z.string().min(1),
+  locationId: z.string().min(1),
+  appointmentTypeId: z.string().min(1),
   scheduledStart: z.string().refine((v) => !isNaN(Date.parse(v)), { message: "Invalid start date" }),
   scheduledEnd: z.string().refine((v) => !isNaN(Date.parse(v)), { message: "Invalid end date" }),
 });
 
 const sendReportSchema = z.object({
-  encounterId: z.string().uuid().optional(),
+  encounterId: z.string().min(1).optional(),
   diagnosis: z.array(z.string()).optional(),
   treatmentPlan: z.string().optional(),
   followUpRecommendations: z.string().optional(),
@@ -114,6 +114,25 @@ const updateProviderSchema = createProviderSchema.partial();
 export const referralsRouter = Router();
 
 referralsRouter.use(requireAuth);
+
+function respondWithReferralWorkflowError(
+  res: any,
+  error: any,
+  fallbackMessage: string
+) {
+  const message = error?.message || fallbackMessage;
+  const normalized = String(message).toLowerCase();
+
+  if (normalized.includes("not found")) {
+    return res.status(404).json({ error: message });
+  }
+
+  if (normalized.includes("invalid status transition")) {
+    return res.status(400).json({ error: message });
+  }
+
+  return res.status(500).json({ error: message });
+}
 
 // =====================================================
 // REFERRING PROVIDER ENDPOINTS (must come before /:id routes)
@@ -534,7 +553,7 @@ referralsRouter.get("/", async (req: AuthedRequest, res) => {
     }
 
     const countResult = await pool.query(countQuery, countParams);
-    const total = parseInt(countResult.rows[0].count);
+    const total = parseInt(String(countResult.rows[0]?.count ?? "0"), 10);
 
     res.json({
       referrals: result.rows,
@@ -776,7 +795,7 @@ referralsRouter.patch("/:id", requireRoles(["admin", "front_desk", "ma", "provid
     res.json({ id: referralId });
   } catch (error: any) {
     logger.error("Error updating referral", { error: error.message });
-    res.status(500).json({ error: error.message || "Failed to update referral" });
+    respondWithReferralWorkflowError(res, error, "Failed to update referral");
   }
 });
 
@@ -857,7 +876,7 @@ referralsRouter.put("/:id", requireRoles(["admin", "front_desk", "ma", "provider
     res.json({ id: referralId });
   } catch (error: any) {
     logger.error("Error updating referral", { error: error.message });
-    res.status(500).json({ error: error.message || "Failed to update referral" });
+    respondWithReferralWorkflowError(res, error, "Failed to update referral");
   }
 });
 
@@ -885,7 +904,7 @@ referralsRouter.patch("/:id/status", requireRoles(["admin", "front_desk", "ma", 
     res.json({ id: referralId, status: parsed.data.status });
   } catch (error: any) {
     logger.error("Error updating referral status", { error: error.message });
-    res.status(500).json({ error: error.message || "Failed to update status" });
+    respondWithReferralWorkflowError(res, error, "Failed to update status");
   }
 });
 
@@ -1023,6 +1042,6 @@ referralsRouter.delete("/:id", requireRoles(["admin"]), async (req: AuthedReques
     res.json({ id: referralId, message: "Referral cancelled" });
   } catch (error: any) {
     logger.error("Error deleting referral", { error: error.message });
-    res.status(500).json({ error: error.message || "Failed to delete referral" });
+    respondWithReferralWorkflowError(res, error, "Failed to delete referral");
   }
 });

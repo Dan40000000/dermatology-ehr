@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate, Link } from 'react-router-dom';
 import { API_BASE_URL } from '../utils/apiBase';
+import { buildEffectiveRoles, hasRole, normalizeRoleArray } from '../utils/roles';
 
 interface Facility {
   id: string;
@@ -34,6 +35,8 @@ interface User {
   email: string;
   fullName: string;
   role: string;
+  secondaryRoles?: string[];
+  roles?: string[];
 }
 
 const pageStyle: React.CSSProperties = {
@@ -169,6 +172,28 @@ const roomTypeLabels: Record<string, string> = {
   lab: 'Lab Room',
 };
 
+const MANAGEABLE_USER_ROLES = [
+  'admin',
+  'provider',
+  'billing',
+  'front_desk',
+  'ma',
+  'nurse',
+  'manager',
+  'compliance_officer',
+] as const;
+
+const roleLabels: Record<string, string> = {
+  admin: 'Administrator',
+  provider: 'Provider',
+  billing: 'Billing',
+  front_desk: 'Front Desk',
+  ma: 'Medical Assistant',
+  nurse: 'Nurse',
+  manager: 'Manager',
+  compliance_officer: 'Compliance Officer',
+};
+
 const formatRoomType = (roomType?: string) => {
   if (!roomType) return 'Exam Room';
   return roomTypeLabels[roomType] || roomType;
@@ -255,19 +280,25 @@ export function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Redirect non-admin users
-  if (user?.role !== 'admin') {
+  if (!hasRole(user, 'admin')) {
     return <Navigate to="/home" replace />;
   }
 
-  useEffect(() => {
-    loadData();
-  }, [activeTab]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async (signal?: AbortSignal) => {
     if (!session) return;
-    setLoading(true);
+    if (isMountedRef.current) {
+      setLoading(true);
+    }
 
     try {
       const headers = {
@@ -277,35 +308,50 @@ export function AdminPage() {
 
       switch (activeTab) {
         case 'facilities':
-          const facRes = await fetch(`${API_BASE_URL}/api/admin/facilities`, { headers });
+          const facRes = await fetch(`${API_BASE_URL}/api/admin/facilities`, { headers, signal });
           const facData = await facRes.json();
+          if (signal?.aborted || !isMountedRef.current) return;
           setFacilities(facData.facilities || []);
           break;
 
         case 'rooms':
-          const roomRes = await fetch(`${API_BASE_URL}/api/admin/rooms`, { headers });
+          const roomRes = await fetch(`${API_BASE_URL}/api/admin/rooms`, { headers, signal });
           const roomData = await roomRes.json();
+          if (signal?.aborted || !isMountedRef.current) return;
           setRooms(roomData.rooms || []);
           break;
 
         case 'providers':
-          const provRes = await fetch(`${API_BASE_URL}/api/admin/providers`, { headers });
+          const provRes = await fetch(`${API_BASE_URL}/api/admin/providers`, { headers, signal });
           const provData = await provRes.json();
+          if (signal?.aborted || !isMountedRef.current) return;
           setProviders(provData.providers || []);
           break;
 
         case 'users':
-          const userRes = await fetch(`${API_BASE_URL}/api/admin/users`, { headers });
+          const userRes = await fetch(`${API_BASE_URL}/api/admin/users`, { headers, signal });
           const userData = await userRes.json();
+          if (signal?.aborted || !isMountedRef.current) return;
           setUsers(userData.users || []);
           break;
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       console.error('Error loading data:', err);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted && isMountedRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [activeTab, session]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadData(controller.signal);
+    return () => {
+      controller.abort();
+    };
+  }, [loadData]);
 
   const handleSave = async (data: any) => {
     if (!session) return;
@@ -329,7 +375,7 @@ export function AdminPage() {
 
       setShowModal(false);
       setEditingItem(null);
-      loadData();
+      void loadData();
     } catch (err) {
       console.error('Error saving:', err);
     }
@@ -346,7 +392,7 @@ export function AdminPage() {
           'X-Tenant-ID': session.tenantId,
         },
       });
-      loadData();
+      void loadData();
     } catch (err) {
       console.error('Error deleting:', err);
     }
@@ -661,19 +707,16 @@ function UsersTable({ users, onEdit, onDelete }: { users: User[]; onEdit: (u: Us
     return <div style={{ textAlign: 'center', padding: '3rem', color: '#6b7280' }}>No users found.</div>;
   }
 
-  const roleLabels: Record<string, string> = {
-    admin: 'Administrator',
-    provider: 'Provider',
-    ma: 'Medical Assistant',
-    front_desk: 'Front Desk',
-  };
-
   const roleBadgeStyle = (role: string): React.CSSProperties => {
     const colors: Record<string, { bg: string; text: string }> = {
       admin: { bg: '#fae8ff', text: '#86198f' },
       provider: { bg: '#dbeafe', text: '#1e40af' },
+      billing: { bg: '#fef3c7', text: '#92400e' },
       ma: { bg: '#dcfce7', text: '#166534' },
       front_desk: { bg: '#fef3c7', text: '#92400e' },
+      nurse: { bg: '#e0e7ff', text: '#3730a3' },
+      manager: { bg: '#ffe4e6', text: '#be123c' },
+      compliance_officer: { bg: '#f3e8ff', text: '#6b21a8' },
     };
     const c = colors[role] || colors.admin;
     return {
@@ -698,14 +741,20 @@ function UsersTable({ users, onEdit, onDelete }: { users: User[]; onEdit: (u: Us
         </tr>
       </thead>
       <tbody>
-        {users.map((u) => (
+        {users.map((u) => {
+          const effectiveRoles = buildEffectiveRoles(u.role, u.roles || u.secondaryRoles);
+          return (
           <tr key={u.id}>
             <td style={tdStyle}><strong>{u.fullName}</strong></td>
             <td style={tdStyle}>{u.email}</td>
             <td style={tdStyle}>
-              <span style={roleBadgeStyle(u.role)}>
-                {roleLabels[u.role] || u.role}
-              </span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
+                {effectiveRoles.map((role) => (
+                  <span key={`${u.id}-${role}`} style={roleBadgeStyle(role)}>
+                    {roleLabels[role] || role}
+                  </span>
+                ))}
+              </div>
             </td>
             <td style={tdStyle}>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -714,7 +763,8 @@ function UsersTable({ users, onEdit, onDelete }: { users: User[]; onEdit: (u: Us
               </div>
             </td>
           </tr>
-        ))}
+          );
+        })}
       </tbody>
     </table>
   );
@@ -737,11 +787,30 @@ function Modal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (type === 'users') {
+      const primaryRole = typeof formData.role === 'string' ? formData.role : 'front_desk';
+      const secondaryRoles = normalizeRoleArray(formData.secondaryRoles).filter((candidate) => candidate !== primaryRole);
+      onSave({ ...formData, role: primaryRole, secondaryRoles });
+      return;
+    }
     onSave(formData);
   };
 
   const handleChange = (field: string, value: any) => {
     setFormData({ ...formData, [field]: value });
+  };
+
+  const toggleSecondaryRole = (role: string) => {
+    const primaryRole = typeof formData.role === 'string' ? formData.role : 'front_desk';
+    const current = new Set(
+      normalizeRoleArray(formData.secondaryRoles).filter((candidate) => candidate !== primaryRole),
+    );
+    if (current.has(role)) {
+      current.delete(role);
+    } else {
+      current.add(role);
+    }
+    handleChange('secondaryRoles', Array.from(current));
   };
 
   const typeLabel = singularLabels[type] || type.slice(0, -1);
@@ -910,15 +979,41 @@ function Modal({
                 <select
                   id="user-role"
                   value={formData.role || 'front_desk'}
-                  onChange={(e) => handleChange('role', e.target.value)}
+                  onChange={(e) => {
+                    const nextRole = e.target.value;
+                    const nextSecondary = normalizeRoleArray(formData.secondaryRoles).filter((role) => role !== nextRole);
+                    setFormData({ ...formData, role: nextRole, secondaryRoles: nextSecondary });
+                  }}
                   required
                   style={selectStyle}
                 >
-                  <option value="admin">Administrator</option>
-                  <option value="provider">Provider</option>
-                  <option value="ma">Medical Assistant</option>
-                  <option value="front_desk">Front Desk</option>
+                  {MANAGEABLE_USER_ROLES.map((role) => (
+                    <option key={role} value={role}>
+                      {roleLabels[role]}
+                    </option>
+                  ))}
                 </select>
+              </div>
+              <div style={formGroupStyle}>
+                <label style={labelStyle}>Additional Roles</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
+                  {MANAGEABLE_USER_ROLES.filter((candidate) => candidate !== (formData.role || 'front_desk')).map((candidate) => {
+                    const checked = normalizeRoleArray(formData.secondaryRoles).includes(candidate);
+                    return (
+                      <label
+                        key={candidate}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.875rem', color: '#374151' }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleSecondaryRole(candidate)}
+                        />
+                        {roleLabels[candidate]}
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
               {!item?.id && (
                 <div style={formGroupStyle}>

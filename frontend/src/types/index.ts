@@ -1,9 +1,28 @@
 // Authentication Types
+export type UserRole =
+  | 'admin'
+  | 'provider'
+  | 'ma'
+  | 'front_desk'
+  | 'billing'
+  | 'nurse'
+  | 'manager'
+  | 'scheduler'
+  | 'hr'
+  | 'staff'
+  | 'medical_assistant'
+  | 'compliance_officer'
+  | 'patient'
+  | 'user'
+  | string;
+
 export interface User {
   id: string;
   email: string;
   fullName: string;
-  role: 'admin' | 'provider' | 'ma' | 'front_desk';
+  role: UserRole;
+  secondaryRoles?: UserRole[];
+  roles?: UserRole[];
 }
 
 export interface Session {

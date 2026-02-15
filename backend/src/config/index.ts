@@ -29,6 +29,10 @@ export const config = {
     password: envVars.DB_PASSWORD || '',
     maxConnections: envVars.DB_MAX_CONNECTIONS,
     idleTimeout: envVars.DB_IDLE_TIMEOUT,
+    ssl: {
+      enabled: envVars.DB_SSL_ENABLED,
+      rejectUnauthorized: envVars.DB_SSL_REJECT_UNAUTHORIZED,
+    },
   },
 
   // Authentication
@@ -193,6 +197,12 @@ function validateConfig(): void {
 
     if (!process.env.DATABASE_URL && !process.env.DB_PASSWORD) {
       errors.push('Missing required environment variable: DB_PASSWORD (or DATABASE_URL)');
+    }
+
+    const databaseUrl = process.env.DATABASE_URL || '';
+    const databaseUrlHasSslMode = /sslmode=require/i.test(databaseUrl) || /ssl=true/i.test(databaseUrl);
+    if (!config.database.ssl.enabled && !databaseUrlHasSslMode) {
+      errors.push('DB_SSL_ENABLED must be true (or DATABASE_URL must enforce sslmode=require) in production');
     }
 
     // Warn about secure configuration

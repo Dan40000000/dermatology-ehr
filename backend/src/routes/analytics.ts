@@ -4,6 +4,7 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rateLimit";
 import { analyticsService, DateRange } from "../services/analyticsService";
 import { logger } from "../lib/logger";
+import { userHasRole } from "../lib/roles";
 
 export const analyticsRouter = Router();
 
@@ -1369,7 +1370,7 @@ analyticsRouter.delete("/reports/:id", requireAuth, async (req: AuthedRequest, r
       `DELETE FROM saved_reports
       WHERE id = $1 AND tenant_id = $2 AND (created_by = $3 OR $4 = true)
       RETURNING id`,
-      [reportId, tenantId, userId, req.user?.role === 'admin']
+      [reportId, tenantId, userId, userHasRole(req.user, 'admin')]
     );
 
     if (result.rowCount === 0) {

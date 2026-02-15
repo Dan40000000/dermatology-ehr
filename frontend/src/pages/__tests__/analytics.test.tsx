@@ -32,6 +32,9 @@ const apiMocks = vi.hoisted(() => ({
   fetchProviderProductivity: vi.fn(),
   fetchPatientDemographics: vi.fn(),
   fetchAppointmentTypesAnalytics: vi.fn(),
+  fetchDermatologyMetrics: vi.fn(),
+  fetchYoYComparison: vi.fn(),
+  fetchNoShowRiskAnalysis: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -105,6 +108,39 @@ describe('AnalyticsPage', () => {
     apiMocks.fetchAppointmentTypesAnalytics.mockResolvedValue({
       data: [{ type_name: 'New', count: 6 }],
     });
+    apiMocks.fetchDermatologyMetrics.mockResolvedValue({
+      biopsyStats: { total: 0, byType: { shave: 0, punch: 0, excisional: 0, incisional: 0 }, resultsBreakdown: [] },
+      procedureSplit: {
+        cosmetic: { count: 0, revenue: 0, percentage: 0 },
+        medical: { count: 0, revenue: 0, percentage: 0 },
+        surgical: { count: 0, revenue: 0, percentage: 0 },
+      },
+      topConditions: [],
+      lesionTracking: {
+        totalTracked: 0,
+        byStatus: { new: 0, monitoring: 0, resolved: 0, biopsied: 0 },
+        byRiskLevel: { high: 0, medium: 0, low: 0 },
+        patientsWithLesions: 0,
+      },
+    });
+    apiMocks.fetchYoYComparison.mockResolvedValue({
+      metrics: {
+        newPatients: { current: 0, lastYear: 0, percentChange: 0, trend: 'up' },
+        totalAppointments: { current: 0, lastYear: 0, percentChange: 0, trend: 'up' },
+        completedAppointments: { current: 0, lastYear: 0, percentChange: 0, trend: 'up' },
+        noShows: { current: 0, lastYear: 0, percentChange: 0, trend: 'up' },
+        revenue: { current: 0, lastYear: 0, percentChange: 0, trend: 'up' },
+        encounters: { current: 0, lastYear: 0, percentChange: 0, trend: 'up' },
+        procedures: { current: 0, lastYear: 0, percentChange: 0, trend: 'up' },
+      },
+    });
+    apiMocks.fetchNoShowRiskAnalysis.mockResolvedValue({
+      overallNoShowRate: 0,
+      totalAppointments: 0,
+      totalNoShows: 0,
+      riskFactors: { byDayOfWeek: [], byTimeOfDay: [], byAppointmentType: [] },
+      recommendations: [],
+    });
     toastMocks.showError.mockClear();
     toastMocks.showSuccess.mockClear();
   }, 15000);
@@ -115,8 +151,6 @@ describe('AnalyticsPage', () => {
 
   it('renders analytics dashboard and handles interactions', async () => {
     render(<AnalyticsPage />);
-
-    expect(screen.getByText('Analytics Dashboard')).toBeInTheDocument();
 
     await screen.findByText('Analytics & Reports');
     expect(screen.getByText('Total Patients')).toBeInTheDocument();

@@ -62,7 +62,7 @@ describe('Auth Middleware', () => {
 
     it('should reject request with mismatched tenant', () => {
       const token = jwt.sign(
-        { userId: 'user-1', tenantId: 'tenant-123', role: 'admin' },
+        { id: 'user-1', tenantId: 'tenant-123', role: 'admin' },
         mockEnv.jwtSecret
       );
       mockReq.headers = { authorization: `Bearer ${token}` };
@@ -75,7 +75,12 @@ describe('Auth Middleware', () => {
     });
 
     it('should accept valid token with matching tenant', () => {
-      const payload = { userId: 'user-1', tenantId: 'tenant-123', role: 'admin' };
+      const payload = {
+        id: 'user-1',
+        tenantId: 'tenant-123',
+        role: 'provider',
+        secondaryRoles: ['admin'],
+      };
       const token = jwt.sign(payload, mockEnv.jwtSecret);
       mockReq.headers = { authorization: `Bearer ${token}` };
       (mockReq.header as jest.Mock).mockReturnValue('tenant-123');
@@ -83,15 +88,16 @@ describe('Auth Middleware', () => {
       requireAuth(mockReq as AuthedRequest, mockRes as Response, mockNext);
 
       expect(mockReq.user).toBeDefined();
-      expect(mockReq.user?.userId).toBe('user-1');
+      expect(mockReq.user?.id).toBe('user-1');
       expect(mockReq.user?.tenantId).toBe('tenant-123');
+      expect(mockReq.user?.roles).toEqual(['provider', 'admin']);
       expect(mockNext).toHaveBeenCalled();
       expect(mockRes.status).not.toHaveBeenCalled();
     });
 
     it('should reject request without tenant header', () => {
       const token = jwt.sign(
-        { userId: 'user-1', tenantId: 'tenant-123', role: 'admin' },
+        { id: 'user-1', tenantId: 'tenant-123', role: 'admin' },
         mockEnv.jwtSecret
       );
       mockReq.headers = { authorization: `Bearer ${token}` };

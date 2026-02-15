@@ -14,6 +14,7 @@ jest.mock('fs/promises');
 jest.mock('form-data', () => {
   return jest.fn().mockImplementation(() => ({
     append: jest.fn(),
+    getBuffer: jest.fn(() => Buffer.from('mock-form-data')),
     getHeaders: jest.fn(() => ({})),
   }));
 });
@@ -24,6 +25,8 @@ global.fetch = jest.fn();
 describe('AmbientAI Service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (global.fetch as jest.Mock).mockReset();
+    (fs.readFile as jest.Mock).mockReset();
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.OPENAI_TRANSCRIBE_MODEL;
@@ -437,6 +440,67 @@ describe('AmbientAI Service', () => {
       const result = await ambientAI.generateClinicalNote(transcriptText, segments);
 
       expect(result.chiefComplaint).toBe('Test');
+    });
+
+    it('should normalize differential probabilities and summary concerns from imperfect AI JSON', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+      const mockResponse = {
+        ok: true,
+        json: async () => ({
+          content: [
+            {
+              text: JSON.stringify({
+                chiefComplaint: 'Itchy rash on forearms',
+                hpi: 'Patient has itchy red rash with scaling.',
+                ros: 'Negative except skin',
+                physicalExam: 'Erythematous plaques',
+                assessment: 'Dermatitis',
+                plan: 'Topical steroid and follow-up in 2 weeks.',
+                sectionConfidence: {
+                  chiefComplaint: 90,
+                  hpi: 85,
+                  ros: 80,
+                  physicalExam: 88,
+                  assessment: 83,
+                  plan: 87,
+                },
+                suggestedIcd10: [],
+                suggestedCpt: [],
+                medications: [],
+                allergies: [],
+                followUpTasks: [{ task: 'Return visit', priority: 'medium', dueDate: '2026-03-01', confidence: 0.9 }],
+                differentialDiagnoses: [
+                  { condition: 'Allergic contact dermatitis', confidence: 70, reasoning: 'Detergent trigger', icd10Code: 'L23.9' },
+                  { condition: 'Irritant contact dermatitis', confidence: 20, reasoning: 'Irritant exposure', icd10Code: 'L24.9' },
+                  { condition: 'Atopic dermatitis', confidence: 10, reasoning: 'Eczematous features', icd10Code: 'L20.9' },
+                ],
+                recommendedTests: [
+                  { testName: 'Patch testing', rationale: 'Identify culprit allergen', urgency: 'STAT', cptCode: '95044' }
+                ],
+                patientSummary: {
+                  whatWeDiscussed: 'We discussed rash symptoms.',
+                  yourConcerns: [],
+                  treatmentPlan: '',
+                  followUp: '',
+                },
+              }),
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(result.differentialDiagnoses.length).toBeGreaterThanOrEqual(3);
+      const totalProbability = result.differentialDiagnoses
+        .reduce((sum, diagnosis) => sum + diagnosis.confidence, 0);
+      expect(totalProbability).toBeCloseTo(1, 2);
+      expect(result.differentialDiagnoses[0].confidence).toBeGreaterThan(result.differentialDiagnoses[1].confidence);
+      expect(result.recommendedTests[0]?.urgency).toBe('routine');
+      expect(result.patientSummary.yourConcerns.length).toBeGreaterThan(0);
     });
 
     it('should handle malformed JSON from AI', async () => {

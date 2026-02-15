@@ -31,6 +31,7 @@ describe('authService', () => {
     id: 'user-1',
     tenantId: 'tenant-1',
     role: 'admin',
+    secondaryRoles: ['billing'],
     email: 'user@example.com',
     fullName: 'User Example',
   };
@@ -163,6 +164,8 @@ describe('authService', () => {
         id: user.id,
         tenantId: user.tenantId,
         role: user.role,
+        secondaryRoles: ['billing'],
+        roles: ['admin', 'billing'],
         email: user.email,
         fullName: user.fullName,
       },

@@ -154,7 +154,7 @@ describe("eRx routes", () => {
   });
 
   it("POST /erx/check-interactions returns interactions", async () => {
-    drugInteractionMock.mockResolvedValueOnce([{ severity: "severe" }]);
+    drugInteractionMock.mockResolvedValueOnce([{ severity: "major" }]);
     const res = await request(app)
       .post("/erx/check-interactions")
       .send({ medicationName: "Drug", patientId: "p1" });

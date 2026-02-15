@@ -91,7 +91,7 @@ export function DataTable<T extends Record<string, any>>({
           <thead>
             <tr>
               <th className="checkbox-col">
-                <input type="checkbox" disabled aria-label="Select all rows" />
+                <input type="checkbox" checked={false} readOnly disabled aria-label="Select all rows" />
               </th>
               {columns.map(col => (
                 <th key={col.key}>{col.label}</th>
@@ -102,7 +102,7 @@ export function DataTable<T extends Record<string, any>>({
             {Array.from({ length: 5 }).map((_, i) => (
               <tr key={i}>
                 <td className="checkbox-col">
-                  <input type="checkbox" disabled aria-label="Select row" />
+                  <input type="checkbox" checked={false} readOnly disabled aria-label="Select row" />
                 </td>
                 {columns.map(col => (
                   <td key={col.key}>
@@ -125,7 +125,7 @@ export function DataTable<T extends Record<string, any>>({
           <thead>
             <tr>
               <th className="checkbox-col">
-                <input type="checkbox" disabled aria-label="Select all rows" />
+                <input type="checkbox" checked={false} readOnly disabled aria-label="Select all rows" />
               </th>
               {columns.map(col => (
                 <th key={col.key}>{col.label}</th>

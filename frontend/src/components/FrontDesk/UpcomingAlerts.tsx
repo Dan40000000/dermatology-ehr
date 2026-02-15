@@ -1,6 +1,6 @@
 import React from 'react';
 import { format, differenceInMinutes } from 'date-fns';
-import { AppointmentWithDetails } from './TodaySchedulePanel';
+import type { AppointmentWithDetails } from './TodaySchedulePanel';
 
 interface UpcomingAlertsProps {
   upcomingAppointments: AppointmentWithDetails[];

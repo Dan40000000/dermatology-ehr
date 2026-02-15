@@ -148,7 +148,7 @@ payerPaymentsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => 
 });
 
 // Create new payer payment
-payerPaymentsRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+payerPaymentsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = payerPaymentCreateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -254,7 +254,7 @@ payerPaymentsRouter.post("/", requireAuth, requireRoles(["provider", "admin", "f
 });
 
 // Update payer payment
-payerPaymentsRouter.put("/:id", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+payerPaymentsRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = payerPaymentUpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 

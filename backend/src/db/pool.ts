@@ -1,5 +1,6 @@
 import { Pool, QueryResult } from "pg";
 import { env } from "../config/env";
+import config from "../config";
 import { logger } from "../lib/logger";
 import { queryPerformanceMonitor } from "../middleware/performanceMonitoring";
 
@@ -14,6 +15,9 @@ import { queryPerformanceMonitor } from "../middleware/performanceMonitoring";
  */
 export const pool = new Pool({
   connectionString: env.databaseUrl,
+  ssl: config.database.ssl.enabled
+    ? { rejectUnauthorized: config.database.ssl.rejectUnauthorized }
+    : undefined,
 
   // Connection pool settings
   max: 20, // Maximum number of connections in the pool

@@ -80,9 +80,9 @@ export const MODULE_ACCESS: Record<ModuleKey, Role[]> = {
   help: ['admin', 'provider', 'ma', 'front_desk'],
   telehealth: ['admin', 'provider'],
   inventory: ['admin', 'ma', 'front_desk'],
-  financials: ['admin', 'front_desk'],
-  claims: ['admin', 'front_desk'],
-  clearinghouse: ['admin', 'front_desk'],
+  financials: ['admin', 'billing', 'front_desk'],
+  claims: ['admin', 'billing', 'front_desk'],
+  clearinghouse: ['admin', 'billing', 'front_desk'],
   quotes: ['admin', 'front_desk', 'ma'],
   admin: ['admin'],
 };
@@ -135,7 +135,8 @@ export function getModuleForPath(pathname: string): ModuleKey | null {
   return match ? match.module : null;
 }
 
-export function canAccessModule(role: Role | undefined, moduleKey: ModuleKey): boolean {
+export function canAccessModule(role: Role | Role[] | undefined, moduleKey: ModuleKey): boolean {
   if (!role) return false;
-  return MODULE_ACCESS[moduleKey].includes(role);
+  const roles = Array.isArray(role) ? role : [role];
+  return roles.some((candidate) => MODULE_ACCESS[moduleKey].includes(candidate));
 }

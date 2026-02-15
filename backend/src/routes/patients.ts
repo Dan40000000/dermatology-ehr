@@ -9,6 +9,43 @@ import { parseFields, buildSelectClause } from "../middleware/fieldSelection";
 import { emitPatientUpdated } from "../websocket/emitter";
 import { logger } from "../lib/logger";
 import { buildSsnFields } from "../security/encryption";
+import { auditPatientDataAccess } from "../services/audit";
+
+const ssnInputSchema = z.string().refine((value) => {
+  const digits = value.replace(/\D/g, "");
+  return digits.length === 4 || digits.length === 9;
+}, {
+  message: "SSN must be 4 or 9 digits",
+});
+
+const canAccessSsnLast4 = (req: AuthedRequest): boolean => {
+  const role = req.user?.role;
+  return role === "admin" || role === "provider" || role === "ma";
+};
+
+async function safeAuditPatientAccess(params: {
+  tenantId: string;
+  userId?: string;
+  patientId: string;
+  accessType: "view" | "create" | "update" | "delete" | "export";
+  resourceType?: string;
+  resourceId?: string;
+  ipAddress?: string;
+  userAgent?: string;
+}) {
+  try {
+    await auditPatientDataAccess({
+      ...params,
+      userId: params.userId || "system",
+    });
+  } catch (error: any) {
+    logger.warn("Patient audit logging failed", {
+      error: error?.message || "Unknown error",
+      patientId: params.patientId,
+      accessType: params.accessType,
+    });
+  }
+}
 
 const createPatientSchema = z.object({
   firstName: z.string().min(1).max(100),
@@ -31,7 +68,7 @@ const createPatientSchema = z.object({
   medications: z.string().optional(),
   // Additional fields for complete patient record
   sex: z.enum(['M', 'F', 'O']).optional(),
-  ssn: z.string().max(4).optional(),
+  ssn: ssnInputSchema.optional(),
   emergencyContactName: z.string().optional(),
   emergencyContactRelationship: z.string().optional(),
   emergencyContactPhone: z.string().optional(),
@@ -114,6 +151,11 @@ patientsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { page, limit, offset } = parsePagination(req);
   const selectedFields = parseFields(req);
+  const canViewSsn = canAccessSsnLast4(req);
+
+  if (selectedFields?.includes("ssn") && !canViewSsn) {
+    return res.status(403).json({ error: "Insufficient role to access SSN data" });
+  }
 
   // Build SELECT clause based on requested fields
   const fieldMap: Record<string, string> = {
@@ -134,7 +176,7 @@ patientsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
     medications: "medications",
     createdAt: `created_at as "createdAt"`,
     updatedAt: `updated_at as "updatedAt"`,
-    ssn: `coalesce(ssn_last4, right(ssn, 4)) as "ssn"`,
+    ssn: canViewSsn ? `ssn_last4 as "ssn"` : `null::text as "ssn"`,
   };
   const defaultFieldList = [
     "id",
@@ -184,6 +226,16 @@ patientsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
      from patients where tenant_id = $1 order by created_at desc limit $2 offset $3`,
     [tenantId, limit, offset],
   );
+
+  await safeAuditPatientAccess({
+    tenantId,
+    userId: req.user!.id,
+    patientId: "patient-list",
+    accessType: "view",
+    resourceType: "patient_list",
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") || undefined,
+  });
 
   return res.json(paginatedResponse(result.rows, total, page, limit));
 });
@@ -268,6 +320,17 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
       primaryCarePhysician || null, referralSource || null, insuranceId || null, insuranceGroupNumber || null
     ],
   );
+
+  await safeAuditPatientAccess({
+    tenantId,
+    userId: req.user!.id,
+    patientId: id,
+    accessType: "create",
+    resourceType: "patient",
+    resourceId: id,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") || undefined,
+  });
   return res.status(201).json({ id });
 });
 
@@ -314,14 +377,15 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
  *               $ref: '#/components/schemas/Error'
  */
 patientsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
-  const { id } = req.params;
+  const id = req.params.id as string;
   const tenantId = req.user!.tenantId;
+  const canViewSsn = canAccessSsnLast4(req);
 
   try {
     const result = await pool.query(
       `select id, first_name as "firstName", last_name as "lastName", dob, phone, email,
               address, city, state, zip, insurance, allergies, medications, sex,
-              coalesce(ssn_last4, right(ssn, 4)) as "ssn",
+              ${canViewSsn ? `ssn_last4 as "ssn"` : `null::text as "ssn"`},
               emergency_contact_name as "emergencyContactName",
               emergency_contact_relationship as "emergencyContactRelationship",
               emergency_contact_phone as "emergencyContactPhone",
@@ -341,6 +405,17 @@ patientsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
       return res.status(404).json({ error: "Patient not found" });
     }
 
+    await safeAuditPatientAccess({
+      tenantId,
+      userId: req.user!.id,
+      patientId: id,
+      accessType: "view",
+      resourceType: "patient",
+      resourceId: id,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") || undefined,
+    });
+
     return res.json({ patient: result.rows[0] });
   } catch (error) {
     console.error("Error fetching patient:", error);
@@ -353,7 +428,7 @@ const updatePatientSchema = z.object({
   lastName: z.string().min(1).max(100).optional(),
   dob: z.string().optional(),
   sex: z.enum(['M', 'F', 'O']).optional(),
-  ssn: z.string().optional(),
+  ssn: ssnInputSchema.optional(),
   phone: z.string().optional(),
   email: z.string().email().optional(),
   address: z.string().optional(),
@@ -367,6 +442,10 @@ const updatePatientSchema = z.object({
   pharmacyPhone: z.string().optional(),
   pharmacyAddress: z.string().optional(),
   insurance: z.string().optional(),
+  insuranceId: z.string().optional(),
+  insuranceGroupNumber: z.string().optional(),
+  primaryCarePhysician: z.string().optional(),
+  referralSource: z.string().optional(),
   allergies: z.string().optional(),
   medications: z.string().optional(),
 });
@@ -429,7 +508,7 @@ const updatePatientSchema = z.object({
  *               $ref: '#/components/schemas/Error'
  */
 patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk", "provider"]), async (req: AuthedRequest, res) => {
-  const { id } = req.params;
+  const id = req.params.id as string;
   const tenantId = req.user!.tenantId;
 
   const parsed = updatePatientSchema.safeParse(req.body);
@@ -487,6 +566,17 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Patient not found' });
     }
+
+    await safeAuditPatientAccess({
+      tenantId,
+      userId: req.user!.id,
+      patientId: id,
+      accessType: "update",
+      resourceType: "patient",
+      resourceId: id,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") || undefined,
+    });
 
     // Emit WebSocket event for patient update
     try {
@@ -575,7 +665,7 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
  *               $ref: '#/components/schemas/Error'
  */
 patientsRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
-  const { id } = req.params;
+  const id = req.params.id as string;
   const tenantId = req.user!.tenantId;
 
   try {
@@ -612,6 +702,17 @@ patientsRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async (req: 
 
     // Finally delete the patient
     await pool.query(`DELETE FROM patients WHERE id = $1 AND tenant_id = $2`, [id, tenantId]);
+
+    await safeAuditPatientAccess({
+      tenantId,
+      userId: req.user!.id,
+      patientId: id,
+      accessType: "delete",
+      resourceType: "patient",
+      resourceId: id,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") || undefined,
+    });
 
     return res.json({
       success: true,

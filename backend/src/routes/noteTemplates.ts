@@ -6,6 +6,7 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { requireModuleAccess } from "../middleware/moduleAccess";
 import { auditLog } from "../services/audit";
+import { userHasRole } from "../lib/roles";
 
 const templateContentSchema = z.object({
   chiefComplaint: z.string().optional(),
@@ -191,7 +192,7 @@ noteTemplatesRouter.put(
     }
 
     const template = checkResult.rows[0];
-    const isAdmin = req.user!.role === "admin";
+    const isAdmin = userHasRole(req.user, "admin");
 
     // Only template owner or admin can update
     if (template.providerId !== userId && !isAdmin) {
@@ -276,7 +277,7 @@ noteTemplatesRouter.delete(
     }
 
     const template = checkResult.rows[0];
-    const isAdmin = req.user!.role === "admin";
+    const isAdmin = userHasRole(req.user, "admin");
 
     // Only template owner or admin can delete
     if (template.providerId !== userId && !isAdmin) {

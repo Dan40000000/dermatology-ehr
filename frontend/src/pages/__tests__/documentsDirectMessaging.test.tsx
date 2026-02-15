@@ -183,7 +183,7 @@ describe('DocumentsPage', () => {
     await waitFor(() =>
       expect(apiMocks.createDocument).toHaveBeenCalledWith('tenant-1', 'token-1', expect.objectContaining({
         patientId: 'patient-1',
-        category: 'lab-result',
+        category: 'Lab Results',
         title: 'New Lab',
         description: 'Uploaded',
         filename: 'new-lab.pdf',

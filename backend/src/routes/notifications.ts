@@ -7,6 +7,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { auditLog } from '../services/audit';
+import { userHasRole } from '../lib/roles';
 import {
   notificationService,
   NotificationCategory,
@@ -413,7 +414,7 @@ notificationsRouter.post('/send', requireAuth, async (req: AuthedRequest, res) =
     const senderId = req.user!.id;
 
     // Only admins can send arbitrary notifications
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -455,7 +456,7 @@ notificationsRouter.post('/broadcast', requireAuth, async (req: AuthedRequest, r
     const senderId = req.user!.id;
 
     // Only admins can broadcast notifications
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -499,7 +500,7 @@ notificationsRouter.get('/templates', requireAuth, async (req: AuthedRequest, re
     const tenantId = req.user!.tenantId;
 
     // Only admins can view templates
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -522,7 +523,7 @@ notificationsRouter.get('/templates/:name', requireAuth, async (req: AuthedReque
     const templateName = req.params.name;
 
     // Only admins can view templates
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -552,7 +553,7 @@ notificationsRouter.post('/templates', requireAuth, async (req: AuthedRequest, r
     const userId = req.user!.id;
 
     // Only admins can create templates
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -582,7 +583,7 @@ notificationsRouter.patch('/templates/:id', requireAuth, async (req: AuthedReque
     const templateId = req.params.id;
 
     // Only admins can update templates
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -636,7 +637,7 @@ notificationsRouter.get('/queue', requireAuth, async (req: AuthedRequest, res) =
     const tenantId = req.user!.tenantId;
 
     // Only admins can view queue
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -666,7 +667,7 @@ notificationsRouter.post('/queue/process', requireAuth, async (req: AuthedReques
     const userId = req.user!.id;
 
     // Only admins can trigger queue processing
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -693,7 +694,7 @@ notificationsRouter.delete('/queue/:id', requireAuth, async (req: AuthedRequest,
     const queueId = req.params.id;
 
     // Only admins can cancel queue items
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -729,7 +730,7 @@ notificationsRouter.post('/cleanup', requireAuth, async (req: AuthedRequest, res
     const userId = req.user!.id;
 
     // Only admins can run cleanup
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 

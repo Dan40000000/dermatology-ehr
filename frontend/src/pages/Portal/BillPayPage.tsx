@@ -380,10 +380,12 @@ export default function BillPayPage({ tenantId, portalToken }: BillPayPageProps)
                   <Box sx={{ display: 'flex', alignItems: 'center', flex: 1 }}>
                     {getCardIcon(method.cardBrand)}
                     <Box sx={{ ml: 2 }}>
-                      <Typography variant="body1">
-                        {method.cardBrand?.toUpperCase()} ending in {method.lastFour}
-                        {method.isDefault && <Chip label="Default" size="small" sx={{ ml: 1 }} />}
-                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                        <Typography variant="body1" component="span">
+                          {method.cardBrand?.toUpperCase()} ending in {method.lastFour}
+                        </Typography>
+                        {method.isDefault && <Chip label="Default" size="small" />}
+                      </Box>
                       <Typography variant="body2" color="text.secondary">
                         {method.cardholderName}
                         {method.expiryMonth && method.expiryYear && (

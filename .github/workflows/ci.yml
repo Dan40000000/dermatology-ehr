@@ -67,11 +67,180 @@ jobs:
         env:
           NODE_ENV: test
 
+  # Run deterministic Playwright smoke checks for critical process flow
+  e2e_smoke:
+    name: E2E Smoke
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run smoke suite
+        id: smoke_run
+        run: npm run test:e2e:smoke
+        env:
+          CI: '1'
+          PLAYWRIGHT_MOCK_AUTH: '1'
+          PLAYWRIGHT_MOCK_DATA: '1'
+
+      - name: Publish smoke summary
+        if: always()
+        run: |
+          RESULTS_PATH="e2e/test-results/results.json"
+          if [ ! -f "$RESULTS_PATH" ]; then
+            {
+              echo "### E2E Smoke Summary"
+              echo
+              echo "- Status: **UNKNOWN** (results file missing)"
+              echo "- Path checked: \`$RESULTS_PATH\`"
+              echo "- Artifacts are uploaded on failures as \`e2e-smoke-artifacts\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          RESULTS_PATH="$RESULTS_PATH" node <<'NODE'
+          const fs = require('fs');
+
+          const report = JSON.parse(fs.readFileSync(process.env.RESULTS_PATH, 'utf8'));
+          const stats = report.stats || {};
+
+          const passed = Math.max(0, Number(stats.expected || 0) - Number(stats.skipped || 0));
+          const failed = Number(stats.unexpected || 0) + Number(stats.flaky || 0);
+          const skipped = Number(stats.skipped || 0);
+          const durationSeconds = (Number(stats.duration || 0) / 1000).toFixed(1);
+          const status = failed > 0 ? 'FAIL' : 'PASS';
+
+          const summaryLines = [
+            '### E2E Smoke Summary',
+            '',
+            `- Status: **${status}**`,
+            `- Duration: **${durationSeconds}s**`,
+            '',
+            '| Passed | Failed | Skipped |',
+            '|---:|---:|---:|',
+            `| ${passed} | ${failed} | ${skipped} |`,
+            '',
+            '- Artifacts are uploaded on failures as `e2e-smoke-artifacts`.',
+          ];
+
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summaryLines.join('\n') + '\n');
+          NODE
+
+      - name: Upload smoke artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-smoke-artifacts
+          path: |
+            e2e/test-results
+            e2e/playwright-report
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Run targeted backend contract route suites and publish compact summary
+  backend_contracts:
+    name: Backend Route Contracts
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run route contract suites
+        id: route_contract_run
+        run: |
+          mkdir -p backend/test-results
+          npm run test --prefix backend -- src/routes/__tests__/sms.test.ts src/routes/__tests__/documents.test.ts --json --outputFile=test-results/route-contracts.json
+        env:
+          NODE_ENV: test
+
+      - name: Publish backend contract summary
+        if: always()
+        run: |
+          RESULTS_PATH="backend/test-results/route-contracts.json"
+          if [ ! -f "$RESULTS_PATH" ]; then
+            {
+              echo "### Backend Contract Summary"
+              echo
+              echo "- Status: **UNKNOWN** (results file missing)"
+              echo "- Path checked: \`$RESULTS_PATH\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          RESULTS_PATH="$RESULTS_PATH" node <<'NODE'
+          const fs = require('fs');
+
+          const report = JSON.parse(fs.readFileSync(process.env.RESULTS_PATH, 'utf8'));
+          const total = Number(report.numTotalTests || 0);
+          const passed = Number(report.numPassedTests || 0);
+          const failed = Number(report.numFailedTests || 0);
+          const skipped = Number(report.numPendingTests || 0);
+          const suites = Array.isArray(report.testResults) ? report.testResults : [];
+          const durationMs = suites.reduce((sum, suite) => sum + Number(suite.perfStats?.runtime || 0), 0);
+          const durationSeconds = (durationMs / 1000).toFixed(1);
+          const status = failed > 0 ? 'FAIL' : 'PASS';
+
+          const summaryLines = [
+            '### Backend Contract Summary',
+            '',
+            `- Status: **${status}**`,
+            `- Duration: **${durationSeconds}s**`,
+            '',
+            '| Total | Passed | Failed | Skipped |',
+            '|---:|---:|---:|---:|',
+            `| ${total} | ${passed} | ${failed} | ${skipped} |`,
+            '',
+            '- Suites: `sms.test.ts`, `documents.test.ts`',
+          ];
+
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summaryLines.join('\n') + '\n');
+          NODE
+
+      - name: Upload backend contract artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-contract-artifacts
+          path: backend/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
   # Build applications
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, test, e2e_smoke, backend_contracts]
     strategy:
       matrix:
         workspace: [backend, frontend]

@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { AuthenticatedRequestUser } from "../types";
 import { logger } from "../lib/logger";
+import { buildEffectiveRoles, normalizeRoleArray } from "../lib/roles";
 
 export interface AuthenticatedSocket extends Socket {
   user?: AuthenticatedRequestUser;
@@ -47,7 +48,11 @@ export function authenticateSocket(socket: AuthenticatedSocket, next: (err?: Err
     }
 
     // Attach user info to socket
-    socket.user = decoded;
+    socket.user = {
+      ...decoded,
+      secondaryRoles: normalizeRoleArray(decoded.secondaryRoles),
+      roles: buildEffectiveRoles(decoded.role, decoded.roles || decoded.secondaryRoles),
+    };
     socket.tenantId = tenantId;
 
     logger.info("WebSocket authenticated", {
@@ -55,6 +60,7 @@ export function authenticateSocket(socket: AuthenticatedSocket, next: (err?: Err
       userId: decoded.id,
       tenantId: decoded.tenantId,
       role: decoded.role,
+      roles: socket.user.roles,
     });
 
     next();

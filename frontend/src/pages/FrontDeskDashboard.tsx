@@ -1,19 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { QuickStatsBar, DailyStats } from '../components/FrontDesk/QuickStatsBar';
+import { QuickStatsBar, type DailyStats } from '../components/FrontDesk/QuickStatsBar';
 import {
   TodaySchedulePanel,
-  AppointmentWithDetails,
+  type AppointmentWithDetails,
 } from '../components/FrontDesk/TodaySchedulePanel';
-import { WaitingRoom, WaitingRoomPatient } from '../components/FrontDesk/WaitingRoom';
+import { WaitingRoom, type WaitingRoomPatient } from '../components/FrontDesk/WaitingRoom';
 import { UpcomingAlerts } from '../components/FrontDesk/UpcomingAlerts';
 import {
   PatientCheckIn,
-  CheckInData,
+  type CheckInData,
 } from '../components/FrontDesk/PatientCheckIn';
 import {
   PatientCheckOut,
-  CheckOutData,
+  type CheckOutData,
 } from '../components/FrontDesk/PatientCheckOut';
 import api from '../api';
 

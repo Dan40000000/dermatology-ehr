@@ -19,6 +19,7 @@
     "test:e2e:appointments": "playwright test --config=e2e/playwright.config.ts appointments --project=chromium",
     "test:e2e:clinical": "playwright test --config=e2e/playwright.config.ts clinical-workflows --project=chromium",
     "test:e2e:admin": "playwright test --config=e2e/playwright.config.ts admin --project=chromium",
+    "test:e2e:smoke": "PLAYWRIGHT_MOCK_AUTH=1 PLAYWRIGHT_MOCK_DATA=1 playwright test --config=e2e/playwright.config.ts smoke --project=chromium",
     "test:e2e:report": "playwright show-report e2e/playwright-report",
     "test:all": "npm run test && npm run test:e2e",
     "test:ci": "npm run test && npm run test:e2e:all",

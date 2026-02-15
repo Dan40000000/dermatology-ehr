@@ -36,8 +36,8 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
 
     setSubmittingFeedback(true);
     try {
-      // Simulate API call - in production, this would send to a feedback endpoint
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Preserve async behavior without timer-driven state updates.
+      await Promise.resolve();
       setFeedbackText('');
       setShowFeedbackModal(false);
       alert('Thank you for your feedback!');

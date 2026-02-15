@@ -90,6 +90,29 @@ describe("Patients routes", () => {
     expect(res.body.id).toBeTruthy();
   });
 
+  it("POST /patients accepts full SSN input for encrypted storage", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/patients").send({
+      firstName: "Jane",
+      lastName: "Doe",
+      ssn: "123-45-6789",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBeTruthy();
+  });
+
+  it("POST /patients rejects invalid SSN format", async () => {
+    const res = await request(app).post("/patients").send({
+      firstName: "Jane",
+      lastName: "Doe",
+      ssn: "12",
+    });
+
+    expect(res.status).toBe(400);
+  });
+
   it("POST /patients creates patient with full details", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -140,6 +163,11 @@ describe("Patients routes", () => {
     expect(res.status).toBe(400);
   });
 
+  it("PUT /patients/:id rejects invalid SSN format", async () => {
+    const res = await request(app).put("/patients/patient-1").send({ ssn: "abc" });
+    expect(res.status).toBe(400);
+  });
+
   it("PUT /patients/:id rejects empty updates", async () => {
     const res = await request(app).put("/patients/patient-1").send({});
 
@@ -178,6 +206,7 @@ describe("Patients routes", () => {
   it("PUT /patients/:id emits patient update when data available", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ id: "patient-1" }] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [
           {

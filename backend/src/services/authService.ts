@@ -4,12 +4,17 @@ import { env } from "../config/env";
 import { AuthTokens, AuthenticatedRequestUser, TenantUser } from "../types";
 import { pool } from "../db/pool";
 import { userStore } from "./userStore";
+import { buildEffectiveRoles, normalizeRoleArray } from "../lib/roles";
 
 function signAccessToken(user: TenantUser): string {
+  const secondaryRoles = normalizeRoleArray(user.secondaryRoles);
+  const roles = buildEffectiveRoles(user.role, user.roles || secondaryRoles);
   const payload: AuthenticatedRequestUser = {
     id: user.id,
     tenantId: user.tenantId,
     role: user.role,
+    secondaryRoles,
+    roles,
     email: user.email,
     fullName: user.fullName,
   };
@@ -21,6 +26,8 @@ function signAccessToken(user: TenantUser): string {
 }
 
 async function signRefreshToken(user: TenantUser): Promise<string> {
+  const secondaryRoles = normalizeRoleArray(user.secondaryRoles);
+  const roles = buildEffectiveRoles(user.role, user.roles || secondaryRoles);
   const token = jwt.sign(
     {
       sub: user.id,
@@ -28,6 +35,8 @@ async function signRefreshToken(user: TenantUser): Promise<string> {
       type: "refresh",
       email: user.email,
       role: user.role,
+      secondaryRoles,
+      roles,
       fullName: user.fullName,
     },
     env.jwtSecret,
@@ -92,6 +101,8 @@ export async function rotateRefreshToken(
         id: user.id,
         tenantId: user.tenantId,
         role: user.role,
+        secondaryRoles: normalizeRoleArray(user.secondaryRoles),
+        roles: buildEffectiveRoles(user.role, user.roles || user.secondaryRoles),
         email: user.email,
         fullName: user.fullName,
       },

@@ -13,6 +13,7 @@ import { processIncomingSMS, updateSMSStatus } from '../services/smsProcessor';
 import { sendImmediateReminder } from '../services/smsReminderScheduler';
 import { formatPhoneE164, validateAndFormatPhone, formatPhoneDisplay } from '../utils/phone';
 import { logger } from '../lib/logger';
+import { userHasRole } from '../lib/roles';
 import * as crypto from 'crypto';
 
 const router = Router();
@@ -492,14 +493,19 @@ router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Respon
       return res.json({ conversations: conversationsResult.rows });
     }
 
-    // Fall back to aggregating from sms_messages table
+    // Fall back to getting all patients with phone numbers (with message info if available)
     const result = await pool.query(
       `SELECT DISTINCT ON (p.id)
         gen_random_uuid() as "id",
         p.id as "patientId",
+        p.first_name as "firstName",
+        p.last_name as "lastName",
         p.first_name || ' ' || p.last_name as "patientName",
         p.mrn as "patientMrn",
         p.phone as "phoneNumber",
+        p.phone as "phone",
+        COALESCE(prefs.opted_in, true) as "smsOptIn",
+        prefs.opted_out_at as "optedOutAt",
         'active' as "status",
         (
           SELECT m.created_at
@@ -508,6 +514,13 @@ router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Respon
           ORDER BY m.created_at DESC
           LIMIT 1
         ) as "lastMessageAt",
+        (
+          SELECT m.created_at
+          FROM sms_messages m
+          WHERE m.patient_id = p.id AND m.tenant_id = $1
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) as "lastMessageTime",
         (
           SELECT m.direction
           FROM sms_messages m
@@ -523,6 +536,13 @@ router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Respon
           LIMIT 1
         ) as "lastMessagePreview",
         (
+          SELECT LEFT(m.message_body, 160)
+          FROM sms_messages m
+          WHERE m.patient_id = p.id AND m.tenant_id = $1
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) as "lastMessage",
+        (
           SELECT COUNT(*)::int
           FROM sms_messages m
           WHERE m.patient_id = p.id
@@ -534,12 +554,10 @@ router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Respon
             ), '1970-01-01'::timestamp)
         ) as "unreadCount"
       FROM patients p
+      LEFT JOIN patient_sms_preferences prefs ON prefs.patient_id = p.id AND prefs.tenant_id = $1
       WHERE p.tenant_id = $1
         AND p.phone IS NOT NULL
-        AND EXISTS (
-          SELECT 1 FROM sms_messages m
-          WHERE m.patient_id = p.id AND m.tenant_id = $1
-        )
+        AND p.phone != ''
       ORDER BY p.id, (
         SELECT m.created_at
         FROM sms_messages m
@@ -1099,7 +1117,6 @@ router.get('/templates', requireAuth, async (req: AuthedRequest, res: Response) 
         description,
         message_body as "messageBody",
         category,
-        COALESCE(variables, '{}') as "variables",
         is_system_template as "isSystemTemplate",
         is_active as "isActive",
         usage_count as "usageCount",
@@ -1817,7 +1834,7 @@ router.post('/workflow/appointment-reminder/:appointmentId', requireAuth, async 
 router.post('/workflow/process-reminders', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
     // Only allow admin users
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -1836,7 +1853,7 @@ router.post('/workflow/process-reminders', requireAuth, async (req: AuthedReques
 router.post('/workflow/process-followups', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
     // Only allow admin users
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 

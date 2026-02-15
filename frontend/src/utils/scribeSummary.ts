@@ -21,8 +21,15 @@ export const buildSymptoms = (
   note?: AmbientGeneratedNote | null,
   summary?: PatientSummary | null
 ): string[] => {
+  const structuredSymptoms = note?.noteContent?.formalAppointmentSummary?.symptoms;
+  if (structuredSymptoms?.length) {
+    return structuredSymptoms.filter(Boolean);
+  }
   if (summary?.symptomsDiscussed?.length) {
     return summary.symptomsDiscussed.filter(Boolean);
+  }
+  if (note?.noteContent?.patientSummary?.yourConcerns?.length) {
+    return note.noteContent.patientSummary.yourConcerns.filter(Boolean);
   }
   return splitToList(note?.hpi || note?.chiefComplaint);
 };
@@ -35,6 +42,14 @@ export const buildDiagnoses = (
   note?: AmbientGeneratedNote | null,
   summary?: PatientSummary | null
 ): SummaryItem[] => {
+  const structuredDiagnoses = note?.noteContent?.formalAppointmentSummary?.probableDiagnoses;
+  if (structuredDiagnoses?.length) {
+    return structuredDiagnoses.slice(0, 4).map((item) => ({
+      label: item.condition,
+      meta: Number.isFinite(item.probabilityPercent) ? `${item.probabilityPercent}%` : undefined,
+    }));
+  }
+
   if (note?.differentialDiagnoses?.length) {
     return note.differentialDiagnoses.slice(0, 4).map((item) => ({
       label: item.condition,
@@ -60,6 +75,14 @@ export const buildTests = (
   note?: AmbientGeneratedNote | null,
   summary?: PatientSummary | null
 ): SummaryItem[] => {
+  const structuredTests = note?.noteContent?.formalAppointmentSummary?.suggestedTests;
+  if (structuredTests?.length) {
+    return structuredTests.slice(0, 4).map((test) => ({
+      label: test.testName,
+      meta: test.urgency ? test.urgency.toUpperCase() : undefined,
+    }));
+  }
+
   if (note?.recommendedTests?.length) {
     return note.recommendedTests.slice(0, 4).map((test) => ({
       label: test.testName,
@@ -80,6 +103,11 @@ export const buildSummaryText = (
 ): string => {
   if (summary?.summaryText) {
     return summary.summaryText;
+  }
+
+  const patientSummaryText = note?.noteContent?.patientSummary?.whatWeDiscussed;
+  if (patientSummaryText) {
+    return patientSummaryText;
   }
 
   const sections: string[] = [];

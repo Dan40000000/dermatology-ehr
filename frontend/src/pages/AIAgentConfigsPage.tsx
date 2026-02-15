@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router-dom';
+import { hasRole } from '../utils/roles';
 import {
   fetchAIAgentConfigs,
   fetchAIAgentConfig,
@@ -8,8 +9,8 @@ import {
   updateAIAgentConfig,
   deleteAIAgentConfig,
   cloneAIAgentConfig,
-  AIAgentConfiguration,
-  CreateAIAgentConfigInput,
+  type AIAgentConfiguration,
+  type CreateAIAgentConfigInput,
 } from '../api';
 
 const pageStyle: React.CSSProperties = {
@@ -213,31 +214,49 @@ export function AIAgentConfigsPage() {
   const [cloneName, setCloneName] = useState('');
   const [showCloneModal, setShowCloneModal] = useState(false);
   const [cloneSourceId, setCloneSourceId] = useState<string | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Redirect non-admin users
-  if (user?.role !== 'admin') {
+  if (!hasRole(user, 'admin')) {
     return <Navigate to="/home" replace />;
   }
 
-  useEffect(() => {
-    loadConfigs();
-  }, []);
-
-  const loadConfigs = async () => {
+  const loadConfigs = useCallback(async (signal?: AbortSignal) => {
     if (!session) return;
-    setLoading(true);
-    setError(null);
+    if (isMountedRef.current) {
+      setLoading(true);
+      setError(null);
+    }
 
     try {
       const data = await fetchAIAgentConfigs(session.tenantId, session.accessToken, { activeOnly: false });
+      if (signal?.aborted || !isMountedRef.current) return;
       setConfigs(data.configurations || []);
     } catch (err: any) {
+      if (signal?.aborted || !isMountedRef.current) return;
       console.error('Error loading configurations:', err);
       setError(err.message || 'Failed to load configurations');
     } finally {
-      setLoading(false);
+      if (!signal?.aborted && isMountedRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [session]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadConfigs(controller.signal);
+    return () => {
+      controller.abort();
+    };
+  }, [loadConfigs]);
 
   const handleSave = async (data: CreateAIAgentConfigInput) => {
     if (!session) return;
@@ -250,7 +269,7 @@ export function AIAgentConfigsPage() {
       }
       setShowModal(false);
       setEditingConfig(null);
-      loadConfigs();
+      void loadConfigs();
     } catch (err: any) {
       console.error('Error saving configuration:', err);
       alert(err.message || 'Failed to save configuration');
@@ -262,7 +281,7 @@ export function AIAgentConfigsPage() {
 
     try {
       await deleteAIAgentConfig(session.tenantId, session.accessToken, id);
-      loadConfigs();
+      void loadConfigs();
     } catch (err: any) {
       console.error('Error deleting configuration:', err);
       alert(err.message || 'Failed to delete configuration');
@@ -277,7 +296,7 @@ export function AIAgentConfigsPage() {
       setShowCloneModal(false);
       setCloneName('');
       setCloneSourceId(null);
-      loadConfigs();
+      void loadConfigs();
     } catch (err: any) {
       console.error('Error cloning configuration:', err);
       alert(err.message || 'Failed to clone configuration');
@@ -289,7 +308,7 @@ export function AIAgentConfigsPage() {
 
     try {
       await updateAIAgentConfig(session.tenantId, session.accessToken, config.id, { isActive: !config.isActive });
-      loadConfigs();
+      void loadConfigs();
     } catch (err: any) {
       console.error('Error toggling configuration:', err);
       alert(err.message || 'Failed to update configuration');

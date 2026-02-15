@@ -45,6 +45,7 @@ vi.mock('../../contexts/ToastContext', () => ({
 vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateMock,
   useParams: () => routerMocks.params,
+  useSearchParams: () => [new URLSearchParams(), vi.fn()] as const,
 }));
 
 vi.mock('../../components/ui', () => ({
@@ -86,7 +87,16 @@ vi.mock('../../components/clinical', () => ({
       </button>
     </div>
   ),
-  BodyMap: ({ view }: any) => <div data-testid="body-map">{view}</div>,
+}));
+
+vi.mock('../../components/body-diagram', () => ({
+  PatientBodyDiagram: ({ patientId }: any) => (
+    <div data-testid="patient-body-diagram">Body Diagram for {patientId}</div>
+  ),
+}));
+
+vi.mock('../../components/ScribePanel', () => ({
+  ScribePanel: () => <div data-testid="scribe-panel" />,
 }));
 
 vi.mock('../../api', () => apiMocks);
@@ -244,10 +254,8 @@ describe('PatientDetailPage', () => {
     const faceSheetModalAgain = await screen.findByTestId('modal-face-sheet');
     fireEvent.click(within(faceSheetModalAgain).getByRole('button', { name: 'Close Modal' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Posterior' }));
-    expect(screen.getByTestId('body-map')).toHaveTextContent('posterior');
-    fireEvent.click(screen.getByRole('button', { name: 'Anterior' }));
-    expect(screen.getByTestId('body-map')).toHaveTextContent('anterior');
+    // Body diagram is now a self-contained component with its own view controls
+    expect(screen.getByTestId('patient-body-diagram')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Encounter - draft'));
     expect(navigateMock).toHaveBeenCalledWith('/patients/patient-1/encounter/enc-1');

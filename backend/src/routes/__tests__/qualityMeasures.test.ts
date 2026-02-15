@@ -2,6 +2,8 @@ import request from "supertest";
 import express from "express";
 import { qualityMeasuresRouter } from "../qualityMeasures";
 import { pool } from "../../db/pool";
+import { qualityMeasuresService } from "../../services/qualityMeasuresService";
+import { auditLog } from "../../services/audit";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -10,12 +12,12 @@ jest.mock("../../middleware/auth", () => ({
   },
 }));
 
-jest.mock("../../middleware/moduleAccess", () => ({
-  requireModuleAccess: () => (_req: any, _res: any, next: any) => next(),
-}));
-
 jest.mock("../../middleware/rateLimit", () => ({
   rateLimit: () => (_req: any, _res: any, next: any) => next(),
+}));
+
+jest.mock("../../middleware/rbac", () => ({
+  requireRoles: () => (_req: any, _res: any, next: any) => next(),
 }));
 
 jest.mock("../../db/pool", () => ({
@@ -24,161 +26,163 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../services/audit", () => ({
+  auditLog: jest.fn(),
+}));
+
+jest.mock("../../services/qualityMeasuresService", () => ({
+  qualityMeasuresService: {
+    getDermatologyMeasures: jest.fn(),
+    calculateMeasureRate: jest.fn(),
+    getMIPSDashboard: jest.fn(),
+    generateQRDAReport: jest.fn(),
+    generateQuarterlyReport: jest.fn(),
+    getPatientCareGaps: jest.fn(),
+  },
+  DERM_MEASURES: {},
+  PI_MEASURES: {},
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/quality", qualityMeasuresRouter);
 
 const queryMock = pool.query as jest.Mock;
+const serviceMock = qualityMeasuresService as jest.Mocked<typeof qualityMeasuresService>;
+const auditLogMock = auditLog as jest.Mock;
 
 beforeEach(() => {
   queryMock.mockReset();
-  queryMock.mockResolvedValue({ rows: [] });
+  serviceMock.getDermatologyMeasures.mockReset();
+  serviceMock.calculateMeasureRate.mockReset();
+  serviceMock.getMIPSDashboard.mockReset();
+  serviceMock.generateQRDAReport.mockReset();
+  serviceMock.generateQuarterlyReport.mockReset();
+  serviceMock.getPatientCareGaps.mockReset();
+  auditLogMock.mockReset();
 });
 
 describe("Quality measures routes", () => {
-  it("GET /quality/measures filters by category and active", async () => {
+  it("GET /quality/measures returns filtered measures payload", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: "measure-1" }] });
 
     const res = await request(app).get("/quality/measures?category=prevention&active=true");
 
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(1);
-    expect(queryMock).toHaveBeenCalledWith(
-      expect.stringContaining("quality_measures"),
-      ["prevention", true]
-    );
+    expect(res.body.measures).toHaveLength(1);
+    expect(res.body.count).toBe(1);
   });
 
-  it("GET /quality/performance returns cached performance", async () => {
+  it("GET /quality/performance returns cached performance payload", async () => {
     queryMock.mockResolvedValueOnce({
-      rows: [{ measure_id: "measure-1", performance_rate: "88.50" }],
+      rows: [{ measure_code: "measure-1", performance_rate: "88.50" }],
     });
 
     const res = await request(app).get("/quality/performance?year=2024&quarter=1");
 
     expect(res.status).toBe(200);
-    expect(res.body[0].measure_id).toBe("measure-1");
+    expect(res.body.performance).toHaveLength(1);
+    expect(res.body.performance[0].measure_code).toBe("measure-1");
   });
 
-  it("GET /quality/performance calculates performance when missing", async () => {
+  it("GET /quality/performance calculates when cache is missing", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "measure-1",
-            measure_code: "Q1",
-            measure_name: "Measure 1",
-            category: "quality",
-            description: "desc-1",
-          },
-          {
-            id: "measure-2",
-            measure_code: "Q2",
-            measure_name: "Measure 2",
-            category: "quality",
-            description: "desc-2",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        rows: [{ numerator_count: "1", denominator_count: "2", exclusion_count: "0" }],
-      })
-      .mockResolvedValueOnce({
-        rows: [{ numerator_count: "0", denominator_count: "0", exclusion_count: "0" }],
+        rows: [{ measure_id: "Q1", id: "db-1" }, { measure_id: "Q2", id: "db-2" }],
       });
+
+    serviceMock.calculateMeasureRate
+      .mockResolvedValueOnce({
+        numeratorCount: 1,
+        denominatorCount: 2,
+        exclusionCount: 0,
+        performanceRate: "50.00",
+      } as any)
+      .mockResolvedValueOnce({
+        numeratorCount: 0,
+        denominatorCount: 0,
+        exclusionCount: 0,
+        performanceRate: "0.00",
+      } as any);
 
     const res = await request(app).get(
       "/quality/performance?startDate=2025-01-01&endDate=2025-12-31"
     );
 
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(2);
-    expect(res.body[0].performance_rate).toBe("50.00");
-    expect(res.body[1].performance_rate).toBe("0.00");
+    expect(res.body.calculated).toBe(true);
+    expect(res.body.performance).toHaveLength(2);
+    expect(res.body.performance[0].performanceRate).toBe("50.00");
   });
 
-  it("POST /quality/submit requires year, quarter, and measures", async () => {
-    const res = await request(app).post("/quality/submit").send({ year: 2024 });
+  it("POST /quality/submit rejects invalid payload", async () => {
+    const res = await request(app).post("/quality/submit").send({ year: 1900 });
 
     expect(res.status).toBe(400);
   });
 
-  it("POST /quality/submit stores submission", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "submission-1", status: "submitted" }] });
-
-    const res = await request(app).post("/quality/submit").send({
-      year: 2024,
-      quarter: 1,
-      measures: [{ measureId: "measure-1", numerator: 10, denominator: 12 }],
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.id).toBe("submission-1");
-  });
-
-  it("GET /quality/reports/mips requires year", async () => {
-    const res = await request(app).get("/quality/reports/mips");
-
-    expect(res.status).toBe(400);
-  });
-
-  it("GET /quality/reports/mips aggregates scores", async () => {
-    queryMock.mockResolvedValueOnce({
-      rows: [{ score: "50" }, { score: "100" }],
-    });
-
-    const res = await request(app).get("/quality/reports/mips?year=2024");
-
-    expect(res.status).toBe(200);
-    expect(res.body.total_submissions).toBe(2);
-    expect(res.body.average_score).toBe(75);
-  });
-
-  it("GET /quality/reports/pqrs groups by category", async () => {
-    queryMock.mockResolvedValueOnce({
-      rows: [
-        { category: "A", performance_rate: "80" },
-        { category: "B", performance_rate: "90" },
-        { category: "A", performance_rate: "70" },
-      ],
-    });
-
-    const res = await request(app).get("/quality/reports/pqrs?year=2024");
-
-    expect(res.status).toBe(200);
-    expect(res.body.performance_by_category.A).toHaveLength(2);
-    expect(res.body.performance_by_category.B).toHaveLength(1);
-  });
-
-  it("GET /quality/gap-closure returns open gaps by default", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "gap-1" }] });
-
-    const res = await request(app).get("/quality/gap-closure?priority=high");
-
-    expect(res.status).toBe(200);
-    expect(res.body[0].id).toBe("gap-1");
-  });
-
-  it("POST /quality/gap-closure/:id/close returns 404 when missing", async () => {
+  it("POST /quality/submit creates submission payload", async () => {
+    serviceMock.getMIPSDashboard.mockResolvedValueOnce({
+      qualityScore: 82,
+      piScore: 74,
+      iaScore: 90,
+      costScore: 60,
+      estimatedFinalScore: 78,
+      paymentAdjustment: 0.5,
+      measures: [],
+      recommendations: [],
+      careGaps: [],
+    } as any);
     queryMock.mockResolvedValueOnce({ rows: [] });
 
+    const res = await request(app).post("/quality/submit").send({ year: 2024 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.submissionId).toBeTruthy();
+    expect(res.body.confirmationNumber).toContain("MIPS-2024");
+  });
+
+  it("GET /quality/reports/quarterly returns service report", async () => {
+    serviceMock.generateQuarterlyReport.mockResolvedValueOnce({ reportId: "report-1" } as any);
+
+    const res = await request(app).get("/quality/reports/quarterly?year=2024&quarter=2");
+
+    expect(res.status).toBe(200);
+    expect(res.body.reportId).toBe("report-1");
+  });
+
+  it("GET /quality/gaps returns open gaps by default", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "gap-1" }] });
+
+    const res = await request(app).get("/quality/gaps?priority=high");
+
+    expect(res.status).toBe(200);
+    expect(res.body.gaps).toHaveLength(1);
+    expect(res.body.gaps[0].id).toBe("gap-1");
+  });
+
+  it("POST /quality/gaps/:id/close returns 404 when gap missing", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
     const res = await request(app)
-      .post("/quality/gap-closure/gap-1/close")
+      .post("/quality/gaps/gap-1/close")
       .send({ interventionNotes: "done" });
 
     expect(res.status).toBe(404);
   });
 
-  it("POST /quality/gap-closure/:id/close closes gap", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "gap-1", status: "closed" }] });
+  it("POST /quality/gaps/:id/close closes gap", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "gap-1", status: "closed" }], rowCount: 1 });
 
     const res = await request(app)
-      .post("/quality/gap-closure/gap-1/close")
+      .post("/quality/gaps/gap-1/close")
       .send({ interventionNotes: "done" });
 
     expect(res.status).toBe(200);
-    expect(res.body.status).toBe("closed");
+    expect(res.body.success).toBe(true);
+    expect(res.body.gap.status).toBe("closed");
   });
 
   it("POST /quality/recalculate requires date range", async () => {
@@ -187,28 +191,19 @@ describe("Quality measures routes", () => {
     expect(res.status).toBe(400);
   });
 
-  it("POST /quality/recalculate recalculates measures", async () => {
+  it("POST /quality/recalculate recalculates active measures", async () => {
     queryMock
       .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "measure-1",
-            measure_code: "Q1",
-            measure_name: "Measure 1",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            numerator_count: "1",
-            denominator_count: "2",
-            exclusion_count: "0",
-            patient_list: [],
-          },
-        ],
+        rows: [{ id: "measure-db-1", measure_id: "Q1" }],
       })
       .mockResolvedValueOnce({ rows: [] });
+
+    serviceMock.calculateMeasureRate.mockResolvedValueOnce({
+      numeratorCount: 1,
+      denominatorCount: 2,
+      exclusionCount: 0,
+      performanceRate: "50.00",
+    } as any);
 
     const res = await request(app).post("/quality/recalculate").send({
       startDate: "2025-01-01",
@@ -217,6 +212,6 @@ describe("Quality measures routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.recalculated).toBe(1);
-    expect(res.body.results[0].performance_rate).toBe("50.00");
+    expect(res.body.results[0].performanceRate).toBe("50.00");
   });
 });

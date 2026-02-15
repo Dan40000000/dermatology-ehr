@@ -9,6 +9,7 @@ import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { auditLog } from '../services/audit';
 import { logger } from '../lib/logger';
+import { userHasRole } from '../lib/roles';
 import {
   scheduleReminders,
   processReminderQueue,
@@ -997,7 +998,7 @@ router.delete('/templates/:id', requireAuth, async (req: AuthedRequest, res: Res
  */
 router.post('/process-queue', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 

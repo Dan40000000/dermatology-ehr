@@ -20,7 +20,7 @@ describe('userStore', () => {
     const result = await userStore.findByEmailAndTenant('User@Example.com', 'tenant-1');
 
     expect(queryMock).toHaveBeenCalledWith(expect.stringContaining('from users'), ['user@example.com', 'tenant-1']);
-    expect(result).toEqual({ id: 'user-1' });
+    expect(result).toEqual({ id: 'user-1', secondaryRoles: [], roles: [] });
   });
 
   it('finds users by id', async () => {
@@ -29,7 +29,7 @@ describe('userStore', () => {
     const result = await userStore.findById('user-2');
 
     expect(queryMock).toHaveBeenCalledWith(expect.stringContaining('from users'), ['user-2']);
-    expect(result).toEqual({ id: 'user-2' });
+    expect(result).toEqual({ id: 'user-2', secondaryRoles: [], roles: [] });
   });
 
   it('lists users by tenant', async () => {
@@ -39,13 +39,22 @@ describe('userStore', () => {
     const result = await userStore.listByTenant('tenant-1');
 
     expect(queryMock).toHaveBeenCalledWith(expect.stringContaining('from users'), ['tenant-1']);
-    expect(result).toBe(rows);
+    expect(result).toEqual([
+      { id: 'user-1', secondaryRoles: [], roles: [] },
+      { id: 'user-2', secondaryRoles: [], roles: [] },
+    ]);
   });
 
   it('masks passwordHash', () => {
-    const user = { id: 'user-1', email: 'user@example.com', passwordHash: 'hash' };
+    const user = { id: 'user-1', email: 'user@example.com', role: 'provider', secondaryRoles: ['admin'], passwordHash: 'hash' };
 
-    expect(userStore.mask(user as any)).toEqual({ id: 'user-1', email: 'user@example.com' });
+    expect(userStore.mask(user as any)).toEqual({
+      id: 'user-1',
+      email: 'user@example.com',
+      role: 'provider',
+      secondaryRoles: ['admin'],
+      roles: ['provider', 'admin'],
+    });
   });
 
   it('returns default password', () => {

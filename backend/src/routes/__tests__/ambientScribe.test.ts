@@ -292,6 +292,59 @@ describe('Ambient Scribe Routes - Recording Endpoints', () => {
     });
   });
 
+  describe('POST /api/ambient/recordings/:id/stop', () => {
+    it('should return 404 when recording not found', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+      const res = await request(app)
+        .post('/api/ambient/recordings/recording-1/stop')
+        .send({ durationSeconds: 120 });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('Recording not found');
+    });
+
+    it('should reject invalid duration', async () => {
+      const res = await request(app)
+        .post('/api/ambient/recordings/recording-1/stop')
+        .send({ durationSeconds: 0 });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should return 409 for completed recordings', async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [{ id: 'recording-1', recordingStatus: 'completed', durationSeconds: 120, completedAt: '2026-01-01T00:00:00.000Z' }],
+        rowCount: 1,
+      });
+
+      const res = await request(app)
+        .post('/api/ambient/recordings/recording-1/stop')
+        .send({ durationSeconds: 130 });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toContain('completed');
+    });
+
+    it('should stop active recording successfully', async () => {
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{ id: 'recording-1', recordingStatus: 'recording', durationSeconds: null, completedAt: null }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+      const res = await request(app)
+        .post('/api/ambient/recordings/recording-1/stop')
+        .send({ durationSeconds: 180 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.recordingId).toBe('recording-1');
+      expect(res.body.status).toBe('stopped');
+      expect(auditMock).toHaveBeenCalledWith('tenant-1', 'user-1', 'ambient_recording_stop', 'ambient_recording', 'recording-1');
+    });
+  });
+
   describe('GET /api/ambient/recordings', () => {
     it('should return list of recordings', async () => {
       queryMock.mockResolvedValueOnce({
@@ -601,12 +654,23 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
 
     it('should return note details', async () => {
       queryMock.mockResolvedValueOnce({
-        rows: [{ id: 'note-1', chief_complaint: 'Test complaint' }],
+        rows: [{
+          id: 'note-1',
+          chief_complaint: 'Test complaint',
+          noteContent: {
+            formalAppointmentSummary: {
+              symptoms: ['Rash'],
+              probableDiagnoses: [{ condition: 'Dermatitis', probabilityPercent: 72 }],
+              suggestedTests: [{ testName: 'Patch testing' }],
+            },
+          },
+        }],
         rowCount: 1,
       });
       const res = await request(app).get('/api/ambient/notes/note-1');
       expect(res.status).toBe(200);
       expect(res.body.note.id).toBe('note-1');
+      expect(res.body.note.noteContent?.formalAppointmentSummary?.probableDiagnoses?.[0]?.probabilityPercent).toBe(72);
     });
 
     it('should handle database errors', async () => {
@@ -620,11 +684,22 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
   describe('GET /api/ambient/encounters/:encounterId/notes', () => {
     it('should return list of notes for encounter', async () => {
       queryMock.mockResolvedValueOnce({
-        rows: [{ id: 'note-1' }, { id: 'note-2' }],
+        rows: [
+          {
+            id: 'note-1',
+            noteContent: {
+              formalAppointmentSummary: {
+                suggestedTests: [{ testName: 'Patch testing' }],
+              },
+            },
+          },
+          { id: 'note-2' },
+        ],
       });
       const res = await request(app).get('/api/ambient/encounters/encounter-1/notes');
       expect(res.status).toBe(200);
       expect(res.body.notes).toHaveLength(2);
+      expect(res.body.notes[0].noteContent?.formalAppointmentSummary?.suggestedTests?.[0]?.testName).toBe('Patch testing');
     });
 
     it('should handle database errors', async () => {

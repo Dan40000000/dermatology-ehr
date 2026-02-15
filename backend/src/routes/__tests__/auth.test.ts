@@ -20,7 +20,14 @@ jest.mock("../../services/userStore", () => ({
   userStore: {
     findByEmailAndTenant: jest.fn(),
     listByTenant: jest.fn(),
-    mask: jest.fn((user: any) => ({ id: user.id, email: user.email, tenantId: user.tenantId, role: user.role })),
+    mask: jest.fn((user: any) => ({
+      id: user.id,
+      email: user.email,
+      tenantId: user.tenantId,
+      role: user.role,
+      secondaryRoles: user.secondaryRoles || [],
+      roles: user.roles || [user.role],
+    })),
   },
 }));
 
@@ -85,7 +92,15 @@ describe("Auth routes", () => {
   });
 
   it("POST /auth/login returns tokens", async () => {
-    findUserMock.mockResolvedValueOnce({ id: "user-1", tenantId: "tenant-1", email: "a@b.com", role: "admin", passwordHash: "hash" });
+    findUserMock.mockResolvedValueOnce({
+      id: "user-1",
+      tenantId: "tenant-1",
+      email: "a@b.com",
+      role: "provider",
+      secondaryRoles: ["admin"],
+      roles: ["provider", "admin"],
+      passwordHash: "hash",
+    });
     compareMock.mockReturnValueOnce(true);
     issueTokensMock.mockResolvedValueOnce({ accessToken: "access", refreshToken: "refresh" });
     const res = await request(app)
@@ -94,6 +109,7 @@ describe("Auth routes", () => {
       .send({ email: "a@b.com", password: "Password123!" });
     expect(res.status).toBe(200);
     expect(res.body.tokens.accessToken).toBe("access");
+    expect(res.body.user.roles).toEqual(["provider", "admin"]);
   });
 
   it("POST /auth/refresh rejects invalid payload", async () => {
@@ -108,10 +124,13 @@ describe("Auth routes", () => {
   });
 
   it("POST /auth/refresh returns rotated tokens", async () => {
-    rotateRefreshMock.mockResolvedValueOnce({ accessToken: "new-access", refreshToken: "new-refresh" });
+    rotateRefreshMock.mockResolvedValueOnce({
+      tokens: { accessToken: "new-access", refreshToken: "new-refresh", expiresIn: 900 },
+      user: { id: "user-1", tenantId: "tenant-1", role: "admin", roles: ["admin"] },
+    });
     const res = await request(app).post("/auth/refresh").send({ refreshToken: "good-token-123456" });
     expect(res.status).toBe(200);
-    expect(res.body.accessToken).toBe("new-access");
+    expect(res.body.tokens.accessToken).toBe("new-access");
   });
 
   it("GET /auth/me returns current user", async () => {

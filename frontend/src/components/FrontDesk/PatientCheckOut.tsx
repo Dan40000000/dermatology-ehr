@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { format } from 'date-fns';
-import { AppointmentWithDetails } from './TodaySchedulePanel';
+import type { AppointmentWithDetails } from './TodaySchedulePanel';
 
 interface PatientCheckOutProps {
   appointment: AppointmentWithDetails | null;

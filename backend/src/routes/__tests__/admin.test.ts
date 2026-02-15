@@ -313,6 +313,11 @@ describe("Admin routes - Users", () => {
   });
 
   it("PUT /admin/users/:id updates user", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ role: "front_desk", secondaryRoles: [] }],
+      rowCount: 1,
+    });
+
     const res = await request(app).put("/admin/users/user-1").send({
       fullName: "Updated Name",
       role: "admin",

@@ -67,6 +67,24 @@ beforeEach(() => {
 });
 
 describe("Patient portal routes", () => {
+  it("POST /patient-portal/verify-identity uses ssn_last4-only verification query", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .post("/patient-portal/verify-identity")
+      .set(tenantHeader, "tenant-1")
+      .send({
+        lastName: "Ent",
+        dob: "1990-01-01",
+        ssnLast4: "1234",
+      });
+
+    expect(res.status).toBe(400);
+    const verificationQuery = queryMock.mock.calls[0]?.[0] as string;
+    expect(verificationQuery).toContain("ssn_last4 = $4");
+    expect(verificationQuery).not.toContain("RIGHT(ssn, 4)");
+  });
+
   it("POST /patient-portal/register rejects missing tenant header", async () => {
     const res = await request(app).post("/patient-portal/register").send({});
 
@@ -140,6 +158,9 @@ describe("Patient portal routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.accountId).toBeDefined();
     expect(res.body.verificationToken).toBeDefined();
+    const identityRecheckQuery = queryMock.mock.calls[1]?.[0] as string;
+    expect(identityRecheckQuery).toContain("AND ssn_last4 = $5");
+    expect(identityRecheckQuery).not.toContain("RIGHT(ssn, 4)");
   });
 
   it("POST /patient-portal/login rejects missing tenant header", async () => {

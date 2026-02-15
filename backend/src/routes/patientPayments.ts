@@ -138,7 +138,7 @@ patientPaymentsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) =
 });
 
 // Create new patient payment
-patientPaymentsRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+patientPaymentsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = patientPaymentCreateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -245,7 +245,7 @@ patientPaymentsRouter.post("/", requireAuth, requireRoles(["provider", "admin", 
 });
 
 // Update patient payment
-patientPaymentsRouter.put("/:id", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+patientPaymentsRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = patientPaymentUpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -472,7 +472,7 @@ patientPaymentsRouter.get("/plans/list", requireAuth, async (req: AuthedRequest,
 });
 
 // Create payment plan
-patientPaymentsRouter.post("/plans", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+patientPaymentsRouter.post("/plans", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = paymentPlanCreateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -518,7 +518,7 @@ patientPaymentsRouter.post("/plans", requireAuth, requireRoles(["provider", "adm
 });
 
 // Make payment plan payment
-patientPaymentsRouter.post("/plans/:id/pay", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+patientPaymentsRouter.post("/plans/:id/pay", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const planId = String(req.params.id);
   const { amountCents, paymentMethod, cardLastFour } = req.body;
@@ -652,7 +652,7 @@ patientPaymentsRouter.put("/plans/:id/cancel", requireAuth, requireRoles(["admin
 // ============================================
 
 // Send text-to-pay link
-patientPaymentsRouter.post("/text-to-pay/send", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+patientPaymentsRouter.post("/text-to-pay/send", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { patientId, amountCents, message } = req.body;
 
@@ -793,7 +793,7 @@ patientPaymentsRouter.get("/saved-methods/:patientId", requireAuth, async (req: 
 });
 
 // Add saved payment method
-patientPaymentsRouter.post("/saved-methods", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+patientPaymentsRouter.post("/saved-methods", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { patientId, methodType, lastFour, cardBrand, expiryMonth, expiryYear, isDefault, nickname } = req.body;
 
@@ -837,7 +837,7 @@ patientPaymentsRouter.post("/saved-methods", requireAuth, requireRoles(["provide
 });
 
 // Toggle autopay for a saved method
-patientPaymentsRouter.put("/saved-methods/:id/autopay", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+patientPaymentsRouter.put("/saved-methods/:id/autopay", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const methodId = String(req.params.id);
   const { enabled } = req.body;
@@ -895,7 +895,7 @@ patientPaymentsRouter.delete("/saved-methods/:id", requireAuth, requireRoles(["a
 // ============================================
 
 // Create quick pay link
-patientPaymentsRouter.post("/quick-pay/create", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+patientPaymentsRouter.post("/quick-pay/create", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { patientId, amountCents, description, expiryDays = 30 } = req.body;
 

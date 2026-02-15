@@ -25,13 +25,6 @@ jest.mock('../../db/pool', () => ({
 }));
 
 // Mock metrics (if it exists)
-jest.mock('../../lib/metrics', () => ({
-  register: {
-    contentType: 'text/plain',
-    metrics: jest.fn().mockResolvedValue('# Metrics'),
-  },
-}), { virtual: true });
-
 jest.mock('../../db/seed', () => ({
   runSeed: jest.fn(),
 }));
@@ -46,19 +39,16 @@ app.use('/health', healthRouter);
 
 const queryMock = pool.query as jest.Mock;
 const connectMock = pool.connect as jest.Mock;
-const metricsMock = register.metrics as jest.Mock;
 const seedMock = runSeed as jest.Mock;
 const migrationsMock = runMigrations as jest.Mock;
 
 beforeEach(() => {
   queryMock.mockReset();
   connectMock.mockReset();
-  metricsMock.mockReset();
   seedMock.mockReset();
   migrationsMock.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
   connectMock.mockResolvedValue({ query: queryMock, release: jest.fn() });
-  metricsMock.mockResolvedValue('# Metrics');
 });
 
 afterEach(() => {
@@ -150,13 +140,18 @@ describe('Health Routes', () => {
     it('should return metrics output', async () => {
       const res = await request(app).get('/health/metrics');
       expect(res.status).toBe(200);
-      expect(res.text).toContain('# Metrics');
+      expect(res.text).toContain('# HELP');
     });
 
     it('should handle metrics errors', async () => {
-      metricsMock.mockRejectedValueOnce(new Error('metrics failed'));
+      const metricsSpy = jest
+        .spyOn(register, 'metrics')
+        .mockRejectedValueOnce(new Error('metrics failed'));
+
       const res = await request(app).get('/health/metrics');
+
       expect(res.status).toBe(500);
+      metricsSpy.mockRestore();
     });
   });
 

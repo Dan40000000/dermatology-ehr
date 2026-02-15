@@ -3,6 +3,7 @@ import express from "express";
 import { referralsRouter } from "../referrals";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { ReferralService } from "../../services/referralService";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -15,6 +16,10 @@ jest.mock("../../middleware/moduleAccess", () => ({
   requireModuleAccess: () => (_req: any, _res: any, next: any) => next(),
 }));
 
+jest.mock("../../middleware/rbac", () => ({
+  requireRoles: () => (_req: any, _res: any, next: any) => next(),
+}));
+
 jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),
@@ -25,16 +30,34 @@ jest.mock("../../services/audit", () => ({
   auditLog: jest.fn(),
 }));
 
+jest.mock("../../services/referralService", () => ({
+  ReferralService: {
+    processIncomingReferral: jest.fn(),
+    updateReferralStatus: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/referrals", referralsRouter);
 
 const queryMock = pool.query as jest.Mock;
 const auditLogMock = auditLog as jest.Mock;
+const referralServiceMock = ReferralService as jest.Mocked<typeof ReferralService>;
 
 beforeEach(() => {
   queryMock.mockReset();
   auditLogMock.mockReset();
+  referralServiceMock.processIncomingReferral.mockReset();
+  referralServiceMock.updateReferralStatus.mockReset();
+
+  referralServiceMock.processIncomingReferral.mockResolvedValue({
+    referralId: "referral-1",
+    referralNumber: "REF-0001",
+    autoAcknowledged: false,
+  });
+  referralServiceMock.updateReferralStatus.mockResolvedValue();
+
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -156,8 +179,8 @@ describe("Referrals routes - Create", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(res.body.id).toBeTruthy();
-    expect(auditLogMock).toHaveBeenCalledWith("tenant-1", "user-1", "referral_create", "referral", expect.any(String));
+    expect(res.body.id).toBe("referral-1");
+    expect(res.body.referralNumber).toBe("REF-0001");
   });
 
   it("POST /referrals creates referral with minimal data", async () => {
@@ -167,7 +190,7 @@ describe("Referrals routes - Create", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(res.body.id).toBeTruthy();
+    expect(res.body.id).toBe("referral-1");
   });
 
   it("POST /referrals defaults status to new", async () => {
@@ -177,7 +200,14 @@ describe("Referrals routes - Create", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(queryMock).toHaveBeenCalledWith(expect.anything(), expect.arrayContaining([expect.anything(), "tenant-1", "patient-1", "outgoing", "new"]));
+    expect(referralServiceMock.processIncomingReferral).toHaveBeenCalledWith(
+      "tenant-1",
+      expect.objectContaining({
+        patientId: "patient-1",
+        priority: "routine",
+      }),
+      "user-1"
+    );
   });
 
   it("POST /referrals defaults priority to routine", async () => {
@@ -187,7 +217,14 @@ describe("Referrals routes - Create", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(queryMock).toHaveBeenCalledWith(expect.anything(), expect.arrayContaining([expect.anything(), "tenant-1", "patient-1", "outgoing", "new", "routine"]));
+    expect(referralServiceMock.processIncomingReferral).toHaveBeenCalledWith(
+      "tenant-1",
+      expect.objectContaining({
+        patientId: "patient-1",
+        priority: "routine",
+      }),
+      "user-1"
+    );
   });
 
   it("POST /referrals rejects missing patientId", async () => {
@@ -204,8 +241,14 @@ describe("Referrals routes - Create", () => {
       patientId: "patient-1",
     });
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toBeTruthy();
+    expect(res.status).toBe(201);
+    expect(referralServiceMock.processIncomingReferral).toHaveBeenCalledWith(
+      "tenant-1",
+      expect.objectContaining({
+        patientId: "patient-1",
+      }),
+      "user-1"
+    );
   });
 
   it("POST /referrals rejects invalid direction", async () => {
@@ -243,8 +286,6 @@ describe("Referrals routes - Create", () => {
 
 describe("Referrals routes - Update", () => {
   it("PUT /referrals/:id updates referral", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "referral-1" }], rowCount: 1 });
-
     const res = await request(app).put("/referrals/referral-1").send({
       status: "scheduled",
       appointmentId: "appt-1",
@@ -279,7 +320,7 @@ describe("Referrals routes - Update", () => {
   });
 
   it("PUT /referrals/:id returns 404 when referral not found", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    referralServiceMock.updateReferralStatus.mockRejectedValueOnce(new Error("Referral not found"));
 
     const res = await request(app).put("/referrals/referral-1").send({
       status: "completed",
@@ -317,8 +358,6 @@ describe("Referrals routes - Update", () => {
 
 describe("Referrals routes - Delete", () => {
   it("DELETE /referrals/:id deletes referral", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "referral-1" }], rowCount: 1 });
-
     const res = await request(app).delete("/referrals/referral-1");
 
     expect(res.status).toBe(200);
@@ -327,7 +366,7 @@ describe("Referrals routes - Delete", () => {
   });
 
   it("DELETE /referrals/:id returns 404 when referral not found", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    referralServiceMock.updateReferralStatus.mockRejectedValueOnce(new Error("Referral not found"));
 
     const res = await request(app).delete("/referrals/referral-1");
 

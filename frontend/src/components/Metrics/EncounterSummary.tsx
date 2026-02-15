@@ -149,12 +149,12 @@ export function EncounterSummary({
   };
 
   const getPerformanceMessage = (score: number): string => {
-    if (score >= 95) return 'Outstanding! You're a rockstar!';
+    if (score >= 95) return "Outstanding! You're a rockstar!";
     if (score >= 90) return 'Excellent work! Keep it up!';
     if (score >= 80) return 'Great job! Very efficient!';
     if (score >= 70) return 'Good work! Solid performance!';
-    if (score >= 60) return 'Nice! You're on track!';
-    return 'Keep practicing, you'll get faster!';
+    if (score >= 60) return "Nice! You're on track!";
+    return "Keep practicing, you'll get faster!";
   };
 
   // ================================================

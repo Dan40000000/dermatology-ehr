@@ -47,6 +47,16 @@ describe("Documents routes", () => {
     expect(res.status).toBe(400);
   });
 
+  it("POST /documents rejects legacy category token", async () => {
+    const res = await request(app).post("/documents").send({
+      patientId: "p1",
+      title: "Lab report",
+      url: "/uploads/doc.pdf",
+      category: "lab-result",
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("POST /documents creates document", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
     queryMock.mockResolvedValueOnce({ rows: [] });
@@ -172,6 +182,11 @@ describe("Documents routes", () => {
 
   it("PUT /documents/:id/category rejects invalid payload", async () => {
     const res = await request(app).put("/documents/doc-1/category").send({});
+    expect(res.status).toBe(400);
+  });
+
+  it("PUT /documents/:id/category rejects legacy category token", async () => {
+    const res = await request(app).put("/documents/doc-1/category").send({ category: "lab-result" });
     expect(res.status).toBe(400);
   });
 

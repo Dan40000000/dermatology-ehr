@@ -2,6 +2,7 @@ import express, { type Request, type Response } from 'express';
 import { metricsService, type MetricEvent } from '../services/metricsService';
 import { requireAuth, type AuthedRequest } from '../middleware/auth';
 import { pool } from '../db/pool';
+import { userHasRole } from '../lib/roles';
 
 const router = express.Router();
 
@@ -372,7 +373,7 @@ router.post('/benchmarks', async (req: AuthedRequest, res: Response) => {
     const { encounterType, isNewPatient, targetDuration, targetClicks } = req.body;
 
     // Verify admin role
-    if (req.user?.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 

@@ -1,6 +1,7 @@
 import { NextFunction, Response } from "express";
 import { AuthedRequest } from "./auth";
 import { canAccessModule, type ModuleKey } from "../config/moduleAccess";
+import { buildEffectiveRoles } from "../lib/roles";
 
 export function requireModuleAccess(moduleKey: ModuleKey) {
   return (req: AuthedRequest, res: Response, next: NextFunction) => {
@@ -8,7 +9,8 @@ export function requireModuleAccess(moduleKey: ModuleKey) {
       return res.status(401).json({ error: "Unauthenticated" });
     }
 
-    if (!canAccessModule(req.user.role as any, moduleKey)) {
+    const roles = buildEffectiveRoles(req.user.role, req.user.roles || req.user.secondaryRoles);
+    if (!canAccessModule(roles as any, moduleKey)) {
       return res.status(403).json({ error: "Insufficient role" });
     }
 

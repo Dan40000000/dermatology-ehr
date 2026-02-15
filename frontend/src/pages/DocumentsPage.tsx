@@ -23,6 +23,35 @@ const DOC_CATEGORIES: { value: DocCategory; label: string; icon: string }[] = [
   { value: 'other', label: 'Other', icon: '' },
 ];
 
+const DOC_CATEGORY_TO_API: Record<Exclude<DocCategory, 'all'>, string> = {
+  'lab-result': 'Lab Results',
+  imaging: 'Imaging',
+  referral: 'Referrals',
+  consent: 'Consent Forms',
+  other: 'Other',
+};
+
+function toDocCategory(value?: string): Exclude<DocCategory, 'all'> {
+  const normalized = (value || '').trim().toLowerCase();
+  if (normalized === 'lab results' || normalized === 'lab-result' || normalized === 'lab_result') {
+    return 'lab-result';
+  }
+  if (normalized === 'imaging') {
+    return 'imaging';
+  }
+  if (normalized === 'referrals' || normalized === 'referral') {
+    return 'referral';
+  }
+  if (
+    normalized === 'consent forms' ||
+    normalized === 'consent form' ||
+    normalized === 'consent'
+  ) {
+    return 'consent';
+  }
+  return 'other';
+}
+
 export function DocumentsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
@@ -122,7 +151,7 @@ export function DocumentsPage() {
         url: uploadResult.url,
         objectKey: uploadResult.objectKey,
         storage: uploadResult.storage,
-        category: uploadForm.category,
+        category: DOC_CATEGORY_TO_API[uploadForm.category],
         title: uploadForm.title || uploadForm.file.name,
         description: uploadForm.description,
         filename: uploadForm.file.name,
@@ -166,7 +195,7 @@ export function DocumentsPage() {
   };
 
   const filteredDocuments = documents.filter((doc) => {
-    if (categoryFilter !== 'all' && doc.category !== categoryFilter) return false;
+    if (categoryFilter !== 'all' && toDocCategory(doc.category) !== categoryFilter) return false;
     if (selectedPatient !== 'all' && doc.patientId !== selectedPatient) return false;
 
     // Filter for recent documents (last 7 days)
@@ -193,7 +222,8 @@ export function DocumentsPage() {
   });
 
   const getCategoryInfo = (category?: string) => {
-    const cat = DOC_CATEGORIES.find((c) => c.value === category);
+    const normalizedCategory = toDocCategory(category);
+    const cat = DOC_CATEGORIES.find((c) => c.value === normalizedCategory);
     return cat || { value: 'other', label: 'Other', icon: '' };
   };
 
@@ -614,6 +644,7 @@ export function DocumentsPage() {
         <div className="document-grid">
           {filteredDocuments.map((doc) => {
             const catInfo = getCategoryInfo(doc.category);
+            const categoryClass = toDocCategory(doc.category);
             return (
               <a
                 key={doc.id}
@@ -631,7 +662,7 @@ export function DocumentsPage() {
                     {getPatientName(doc.patientId)}
                   </div>
                   <div className="document-meta">
-                    <span className={`pill subtle ${doc.category}`}>
+                    <span className={`pill subtle ${categoryClass}`}>
                       {catInfo.icon} {catInfo.label}
                     </span>
                     <span className="muted tiny">{formatFileSize(doc.fileSize)}</span>
@@ -648,6 +679,7 @@ export function DocumentsPage() {
         <div className="document-list">
           {filteredDocuments.map((doc) => {
             const catInfo = getCategoryInfo(doc.category);
+            const categoryClass = toDocCategory(doc.category);
             return (
               <a
                 key={doc.id}
@@ -660,7 +692,7 @@ export function DocumentsPage() {
                 <div className="document-list-content">
                   <div className="document-list-header">
                     <span className="strong">{doc.title || doc.filename}</span>
-                    <span className={`pill ${doc.category}`}>
+                    <span className={`pill ${categoryClass}`}>
                       {catInfo.icon} {catInfo.label}
                     </span>
                   </div>

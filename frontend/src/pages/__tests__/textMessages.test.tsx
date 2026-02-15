@@ -214,12 +214,12 @@ describe('TextMessagesPage', () => {
     expect(scheduleButton).toBeEnabled();
     fireEvent.click(scheduleButton);
 
-    const scheduledFor = new Date(`${scheduledDateValue}T09:30`).toISOString();
+    const scheduledSendTime = new Date(`${scheduledDateValue}T09:30`).toISOString();
     await waitFor(() =>
       expect(apiMocks.createScheduledMessage).toHaveBeenCalledWith('tenant-1', 'token-1', {
         patientId: 'patient-1',
         messageBody: 'See you soon',
-        scheduledFor,
+        scheduledSendTime,
       }),
     );
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('Message scheduled');
@@ -244,7 +244,7 @@ describe('TextMessagesPage', () => {
     await waitFor(() =>
       expect(apiMocks.createSMSTemplate).toHaveBeenCalledWith('tenant-1', 'token-1', {
         name: 'New Template',
-        body: 'Hello there',
+        messageBody: 'Hello there',
         category: 'general_communication',
       }),
     );
@@ -260,7 +260,7 @@ describe('TextMessagesPage', () => {
     await waitFor(() =>
       expect(apiMocks.updateSMSTemplate).toHaveBeenCalledWith('tenant-1', 'token-1', fixtures.templates[0].id, {
         name: 'Updated Template',
-        body: fixtures.templates[0].body,
+        messageBody: fixtures.templates[0].body,
         category: fixtures.templates[0].category,
       }),
     );
@@ -281,7 +281,7 @@ describe('TextMessagesPage', () => {
     await waitFor(() =>
       expect(apiMocks.sendBulkSMS).toHaveBeenCalledWith('tenant-1', 'token-1', {
         patientIds: ['patient-1'],
-        message: fixtures.templates[1].body,
+        messageBody: fixtures.templates[1].body,
         templateId: fixtures.templates[1].id,
       }),
     );

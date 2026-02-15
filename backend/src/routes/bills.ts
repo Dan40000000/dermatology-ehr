@@ -148,7 +148,7 @@ billsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
 });
 
 // Create bill
-billsRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+billsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = billCreateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -238,7 +238,7 @@ billsRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_des
 });
 
 // Update bill
-billsRouter.put("/:id", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+billsRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = billUpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 

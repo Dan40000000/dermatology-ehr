@@ -43,6 +43,8 @@ export const envSchema = z.object({
   DB_PASSWORD: stringOptional,
   DB_MAX_CONNECTIONS: numberDefault(20),
   DB_IDLE_TIMEOUT: numberDefault(30000),
+  DB_SSL_ENABLED: booleanDefault(false),
+  DB_SSL_REJECT_UNAUTHORIZED: booleanDefault(true),
 
   JWT_SECRET: stringOptional,
   JWT_ISSUER: stringDefault("derm-app"),

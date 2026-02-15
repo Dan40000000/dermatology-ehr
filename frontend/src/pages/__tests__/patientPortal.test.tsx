@@ -69,6 +69,11 @@ vi.mock('../../portalApi', () => portalApiMocks);
 const renderWithRouter = (ui: ReactElement) => render(<MemoryRouter>{ui}</MemoryRouter>);
 
 beforeEach(() => {
+  Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  });
+
   navigateMock.mockReset();
   patientPortalFetchMock.mockReset();
   portalAuthMocks.isAuthenticated = false;
@@ -230,10 +235,51 @@ describe('Patient portal pages', () => {
       },
     ];
 
-    fetchSpy.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ threads }),
-    } as Response);
+    fetchSpy.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith('/api/patient-portal/messages/threads')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ threads }),
+        } as Response);
+      }
+
+      if (url.includes('/api/patient-portal/messages/threads/thread-1/mark-read')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+        } as Response);
+      }
+
+      if (url.includes('/api/patient-portal/messages/threads/thread-1')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              thread: {
+                ...threads[0],
+                status: 'open',
+              },
+              messages: [
+                {
+                  id: 'msg-1',
+                  senderType: 'provider',
+                  senderName: 'Dr. White',
+                  messageText: 'Hello there',
+                  sentAt: new Date().toISOString(),
+                  attachments: [],
+                },
+              ],
+            }),
+        } as Response);
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({}),
+      } as Response);
+    });
 
     render(<PatientPortalMessagesPage />);
 

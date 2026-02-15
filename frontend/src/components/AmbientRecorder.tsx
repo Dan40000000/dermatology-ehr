@@ -18,6 +18,7 @@ import { createSilenceMonitor, type SilenceMonitor } from '../utils/audioMonitor
 import { ENABLE_LIVE_DRAFT } from '../utils/featureFlags';
 import {
   startAmbientRecording,
+  stopAmbientRecording,
   uploadAmbientRecording,
   type AmbientRecording
 } from '../api';
@@ -186,6 +187,20 @@ export function AmbientRecorder({
   };
 
   const stopRecording = () => {
+    const isActive = mediaRecorderRef.current?.state === 'recording';
+    const safeDurationSeconds = Math.max(1, Math.round(Number(duration) || 0));
+
+    if (isActive && recordingId && session) {
+      void stopAmbientRecording(
+        session.tenantId,
+        session.accessToken,
+        recordingId,
+        safeDurationSeconds
+      ).catch(() => {
+        // Preserve local stop/upload flow when stop endpoint is unavailable
+      });
+    }
+
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
     }

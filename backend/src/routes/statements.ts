@@ -133,7 +133,7 @@ statementsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
 });
 
 // Create statement
-statementsRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+statementsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = statementCreateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -207,7 +207,7 @@ statementsRouter.post("/", requireAuth, requireRoles(["provider", "admin", "fron
 });
 
 // Update statement
-statementsRouter.put("/:id", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+statementsRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = statementUpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -260,7 +260,7 @@ statementsRouter.put("/:id", requireAuth, requireRoles(["provider", "admin", "fr
 });
 
 // Send statement
-statementsRouter.post("/:id/send", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+statementsRouter.post("/:id/send", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const statementId = String(req.params.id);
   const { via } = req.body;

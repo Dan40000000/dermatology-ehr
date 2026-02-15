@@ -4,6 +4,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchUnreadCount } from '../../api';
 import { canAccessModule, type ModuleKey } from '../../config/moduleAccess';
+import { getEffectiveRoles } from '../../utils/roles';
 
 interface DropdownItem {
   label: string;
@@ -438,7 +439,7 @@ export function MainNav() {
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
   const navItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const userRole = user?.role;
+  const userRole = getEffectiveRoles(user);
 
   // Filter nav items based on user role
   const filteredNavItems = navItems.filter(item => canAccessModule(userRole, item.module));

@@ -3,14 +3,16 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
-import { PatientBanner, BodyMap } from '../components/clinical';
+import { PatientBanner } from '../components/clinical';
+import { PatientBodyDiagram } from '../components/body-diagram';
 import { ScribePanel } from '../components/ScribePanel';
 import { ClinicalTrendsTab } from '../components/clinical/ClinicalTrendsTab';
-import type { Lesion } from '../components/clinical';
+// Lesion type no longer needed - using PatientBodyDiagram with BodyMarker type
 import { TasksTab, PatientScribeSummaries, PatientScribeSnapshot } from '../components/patient';
 import { RxHistoryTab } from '../components/RxHistoryTab';
 import { ActiveMedicationsCard } from '../components/prescriptions';
 import { CoverageSummaryCard } from '../components/Insurance/CoverageSummaryCard';
+import { hasRole } from '../utils/roles';
 import {
   fetchPatient,
   fetchEncounters,
@@ -51,7 +53,7 @@ export function PatientDetailPage() {
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTab, setActiveTab] = useState<TabId>('overview');
-  const [bodyMapView, setBodyMapView] = useState<'anterior' | 'posterior'>('anterior');
+  // Body diagram state is now managed by the PatientBodyDiagram component
   const [showFaceSheet, setShowFaceSheet] = useState(false);
   const [highlightScribe, setHighlightScribe] = useState(false);
   const scribeContainerRef = useRef<HTMLDivElement | null>(null);
@@ -67,27 +69,7 @@ export function PatientDetailPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Mock lesions for demo
-  const [lesions] = useState<Lesion[]>([
-    {
-      id: '1',
-      regionId: 'face',
-      x: 220,
-      y: 120,
-      type: 'primary',
-      description: 'Actinic keratosis',
-      dateAdded: new Date().toISOString(),
-    },
-    {
-      id: '2',
-      regionId: 'upper-arm-left',
-      x: 305,
-      y: 270,
-      type: 'secondary',
-      description: 'Seborrheic keratosis',
-      dateAdded: new Date().toISOString(),
-    },
-  ]);
+  // Body markers are now managed by PatientBodyDiagram component
 
   const loadPatientData = useCallback(async () => {
     if (!session || !patientId) return;
@@ -333,7 +315,7 @@ export function PatientDetailPage() {
           <span className="icon"></span>
           Refresh
         </button>
-        {session?.user?.role === 'admin' && (
+        {hasRole(session?.user, 'admin') && (
           <button
             type="button"
             className="ema-action-btn"
@@ -433,78 +415,12 @@ export function PatientDetailPage() {
       <div style={{ background: '#ffffff', padding: '1.5rem' }}>
         {activeTab === 'overview' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-            {/* Body Map Section */}
-            <div>
-              <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
-                Body Map - Lesion Locations
-              </div>
-              <div style={{
-                background: '#f9fafb',
-                border: '1px solid #e5e7eb',
-                borderRadius: '8px',
-                padding: '1rem'
-              }}>
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                  <button
-                    type="button"
-                    onClick={() => setBodyMapView('anterior')}
-                    style={{
-                      padding: '0.5rem 1rem',
-                      background: bodyMapView === 'anterior' ? '#0369a1' : '#f3f4f6',
-                      color: bodyMapView === 'anterior' ? '#ffffff' : '#374151',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Anterior
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBodyMapView('posterior')}
-                    style={{
-                      padding: '0.5rem 1rem',
-                      background: bodyMapView === 'posterior' ? '#0369a1' : '#f3f4f6',
-                      color: bodyMapView === 'posterior' ? '#ffffff' : '#374151',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Posterior
-                  </button>
-                </div>
-                <BodyMap
-                  view={bodyMapView}
-                  lesions={lesions}
-                  onLesionClick={(lesion) => {
-                  }}
-                />
-              </div>
-
-              {/* Lesion Legend */}
-              <div style={{
-                display: 'flex',
-                gap: '1.5rem',
-                marginTop: '1rem',
-                padding: '0.75rem',
-                background: '#f9fafb',
-                borderRadius: '8px',
-                fontSize: '0.75rem'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#dc2626' }} />
-                  <span>Primary (Active)</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#f59e0b' }} />
-                  <span>Secondary</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#10b981' }} />
-                  <span>Healed</span>
-                </div>
-              </div>
+            {/* Body Diagram Section - Enhanced Anatomical View */}
+            <div style={{ gridColumn: '1 / -1' }}>
+              <PatientBodyDiagram
+                patientId={patientId || ''}
+                editable={true}
+              />
             </div>
 
             {/* Right Column */}

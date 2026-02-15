@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect, type React
 import type { Session, User } from '../types';
 import { login as apiLogin, fetchMe } from '../api';
 import { API_BASE_URL } from '../utils/apiBase';
+import { buildEffectiveRoles, normalizeRoleArray } from '../utils/roles';
 
 interface AuthContextValue {
   session: Session | null;
@@ -19,13 +20,42 @@ const STORAGE_KEY = 'derm_session';
 const TENANT_HEADER = 'x-tenant-id';
 const API_BASE = API_BASE_URL || '';
 
+type SessionUserLike = Partial<User> & {
+  secondaryRoles?: unknown;
+  roles?: unknown;
+};
+
+type RefreshPayload = {
+  user?: SessionUserLike & { tenantId?: string };
+  tokens: { accessToken: string; refreshToken: string };
+};
+
+function normalizeUser(userData: SessionUserLike | null | undefined, fallback?: User | null): User | null {
+  if (!userData && !fallback) return null;
+  const role = (userData?.role || fallback?.role || 'user') as User['role'];
+  const secondaryRoles = normalizeRoleArray(userData?.secondaryRoles ?? fallback?.secondaryRoles);
+  const roles = buildEffectiveRoles(role, userData?.roles || secondaryRoles);
+
+  return {
+    id: userData?.id || fallback?.id || '',
+    email: userData?.email || fallback?.email || '',
+    fullName: userData?.fullName || fallback?.fullName || '',
+    role,
+    secondaryRoles,
+    roles,
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(() => {
     // Try to restore session from localStorage
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored) as Session;
+        const user = normalizeUser(parsed.user);
+        if (!user) return null;
+        return { ...parsed, user };
       }
     } catch {
       // Invalid stored session
@@ -47,10 +77,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const handleSessionUpdated = (event: Event) => {
-      const detail = (event as CustomEvent).detail;
+      const detail = (event as CustomEvent<Session>).detail;
       if (!detail) return;
-      setSession(detail);
-      setUser(detail.user || null);
+      const normalizedUser = normalizeUser(detail.user);
+      if (!normalizedUser) return;
+      const normalizedSession: Session = { ...detail, user: normalizedUser };
+      setSession(normalizedSession);
+      setUser(normalizedSession.user);
     };
 
     const handleSessionCleared = () => {
@@ -71,16 +104,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     try {
       const resp = await apiLogin(tenantId, email, password);
+      const normalizedUser = normalizeUser(resp.user);
+      if (!normalizedUser) {
+        throw new Error('Invalid user payload');
+      }
       const newSession: Session = {
         tenantId: resp.tenantId,
         accessToken: resp.tokens.accessToken,
         refreshToken: resp.tokens.refreshToken,
-        user: {
-          id: resp.user.id || '',
-          email: resp.user.email,
-          fullName: resp.user.fullName,
-          role: resp.user.role as User['role'],
-        },
+        user: normalizedUser,
       };
       setSession(newSession);
       setUser(newSession.user);
@@ -105,17 +137,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!res.ok) {
         throw new Error('Refresh failed');
       }
-      const data = await res.json();
+      const data = await res.json() as RefreshPayload;
+      const normalizedUser = normalizeUser(data.user, session.user);
+      if (!normalizedUser) {
+        throw new Error('Invalid refresh payload');
+      }
       const updated: Session = {
         tenantId: data.user?.tenantId || session.tenantId,
         accessToken: data.tokens.accessToken,
         refreshToken: data.tokens.refreshToken,
-        user: {
-          id: data.user?.id || session.user?.id || '',
-          email: data.user?.email || session.user?.email || '',
-          fullName: data.user?.fullName || session.user?.fullName || '',
-          role: (data.user?.role || session.user?.role || 'user') as User['role'],
-        },
+        user: normalizedUser,
       };
       setSession(updated);
       setUser(updated.user);
@@ -155,13 +186,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     try {
       const data = await fetchMe(session.tenantId, session.accessToken);
-      if (data.user) {
-        setUser({
-          id: data.user.id || '',
-          email: data.user.email,
-          fullName: data.user.fullName,
-          role: data.user.role as User['role'],
-        });
+      const refreshedUser = normalizeUser(data.user, session.user);
+      if (refreshedUser) {
+        setUser(refreshedUser);
+        setSession((prev) => (prev ? { ...prev, user: refreshedUser } : prev));
       }
     } catch (error) {
       console.error('Failed to refresh user', error);

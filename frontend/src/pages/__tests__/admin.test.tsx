@@ -123,6 +123,10 @@ describe('AdminPage', () => {
 
     expect(screen.getByText('Admin Settings')).toBeInTheDocument();
     expect(screen.getByText(/Manage facilities, rooms, providers, and user accounts/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
+    });
   });
 
   it('should show all tabs', async () => {
@@ -136,6 +140,10 @@ describe('AdminPage', () => {
     expect(screen.getByRole('button', { name: 'Rooms' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Providers' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Users' })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
+    });
   });
 
   it('should load and display facilities by default', async () => {
@@ -295,6 +303,10 @@ describe('AdminPage', () => {
         method: 'DELETE',
       })
     );
+
+    await waitFor(() => {
+      expect((global.fetch as any).mock.calls.length).toBeGreaterThanOrEqual(3);
+    });
   });
 
   it('should not delete when confirmation is cancelled', async () => {

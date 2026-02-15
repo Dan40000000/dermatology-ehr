@@ -6,6 +6,7 @@ import { issueTokens, rotateRefreshToken } from "../services/authService";
 import { userStore } from "../services/userStore";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rateLimit";
+import { authLimiter } from "../middleware/rateLimiter";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -67,7 +68,8 @@ export const authRouter = Router();
  *               $ref: '#/components/schemas/Error'
  */
 // Apply rate limiting to login endpoint to prevent brute force attacks
-authRouter.post("/login", rateLimit({ windowMs: 15 * 60 * 1000, max: 5 }), async (req, res) => {
+// Uses generous limits (100 attempts/15min) suitable for large practices with many staff
+authRouter.post("/login", authLimiter, async (req, res) => {
   try {
     const tenantId = req.header(env.tenantHeader);
     if (!tenantId) {
@@ -138,8 +140,8 @@ authRouter.post("/login", rateLimit({ windowMs: 15 * 60 * 1000, max: 5 }), async
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-// Apply rate limiting to refresh endpoint
-authRouter.post("/refresh", rateLimit({ windowMs: 15 * 60 * 1000, max: 10 }), async (req, res) => {
+// Apply rate limiting to refresh endpoint - generous for active sessions
+authRouter.post("/refresh", rateLimit({ windowMs: 15 * 60 * 1000, max: 500 }), async (req, res) => {
   const parsed = refreshSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.format() });

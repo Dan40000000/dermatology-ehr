@@ -10,6 +10,10 @@ describe('moduleAccess', () => {
     expect(canAccessModule('front_desk', 'quality')).toBe(false);
   });
 
+  it('allows access when any effective role matches', () => {
+    expect(canAccessModule(['provider', 'admin'], 'admin')).toBe(true);
+  });
+
   it('maps path to module key', () => {
     expect(getModuleForPath('/patients/123')).toBe('patients');
   });

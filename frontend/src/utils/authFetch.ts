@@ -1,4 +1,5 @@
 import { API_BASE_URL } from './apiBase';
+import { buildEffectiveRoles, normalizeRoleArray } from './roles';
 
 type StoredSession = {
   tenantId: string;
@@ -9,6 +10,8 @@ type StoredSession = {
     email: string;
     fullName: string;
     role: string;
+    secondaryRoles?: string[];
+    roles?: string[];
   };
 };
 
@@ -23,6 +26,8 @@ type RefreshResponse = {
     email?: string;
     fullName?: string;
     role?: string;
+    secondaryRoles?: string[];
+    roles?: string[];
     tenantId?: string;
   };
 };
@@ -87,6 +92,10 @@ async function refreshSession(originalFetch: typeof window.fetch): Promise<Store
     }
 
     const data = (await res.json()) as RefreshResponse;
+    const role = data.user?.role || current.user?.role || 'user';
+    const secondaryRoles = normalizeRoleArray(data.user?.secondaryRoles ?? current.user?.secondaryRoles);
+    const roles = buildEffectiveRoles(role, data.user?.roles || secondaryRoles);
+
     const nextSession: StoredSession = {
       tenantId: data.user?.tenantId || current.tenantId,
       accessToken: data.tokens.accessToken,
@@ -95,7 +104,9 @@ async function refreshSession(originalFetch: typeof window.fetch): Promise<Store
         id: data.user?.id || current.user?.id || '',
         email: data.user?.email || current.user?.email || '',
         fullName: data.user?.fullName || current.user?.fullName || '',
-        role: data.user?.role || current.user?.role || 'user',
+        role,
+        secondaryRoles,
+        roles,
       },
     };
 

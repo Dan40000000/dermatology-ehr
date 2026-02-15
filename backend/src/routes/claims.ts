@@ -332,7 +332,7 @@ claimsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
 });
 
 // POST /api/claims - Create new claim
-claimsRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+claimsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = claimCreateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -415,7 +415,7 @@ claimsRouter.post("/", requireAuth, requireRoles(["provider", "admin", "front_de
 });
 
 // PUT /api/claims/:id - Update claim
-claimsRouter.put("/:id", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+claimsRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = claimUpdateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -472,7 +472,7 @@ claimsRouter.put("/:id", requireAuth, requireRoles(["provider", "admin", "front_
 });
 
 // PUT /api/claims/:id/status - Update claim status
-claimsRouter.put("/:id/status", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+claimsRouter.put("/:id/status", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = claimStatusSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -624,7 +624,7 @@ claimsRouter.post("/scrub", requireAuth, async (req: AuthedRequest, res) => {
 });
 
 // POST /api/claims/submit - Submit claims batch
-claimsRouter.post("/submit", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+claimsRouter.post("/submit", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = batchSubmitSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -731,7 +731,7 @@ claimsRouter.get("/appeal-templates/:templateId", requireAuth, async (req: Authe
 });
 
 // POST /api/claims/:id/appeal - Create appeal with enhanced tracking
-claimsRouter.post("/:id/appeal", requireAuth, requireRoles(["provider", "admin"]), async (req: AuthedRequest, res) => {
+claimsRouter.post("/:id/appeal", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
   const parsed = appealSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -811,7 +811,7 @@ claimsRouter.post("/:id/appeal", requireAuth, requireRoles(["provider", "admin"]
 });
 
 // POST /api/claims/:id/appeal-outcome - Record appeal outcome
-claimsRouter.post("/:id/appeal-outcome", requireAuth, requireRoles(["provider", "admin"]), async (req: AuthedRequest, res) => {
+claimsRouter.post("/:id/appeal-outcome", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
   const parsed = appealOutcomeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -1178,7 +1178,7 @@ claimsRouter.get("/analytics", requireAuth, async (req: AuthedRequest, res) => {
 });
 
 // POST /api/claims/:id/payments - Post payment to claim
-claimsRouter.post("/:id/payments", requireAuth, requireRoles(["provider", "admin", "front_desk"]), async (req: AuthedRequest, res) => {
+claimsRouter.post("/:id/payments", requireAuth, requireRoles(["admin", "billing", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = paymentSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 

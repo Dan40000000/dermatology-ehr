@@ -18,6 +18,7 @@ import { createSilenceMonitor, type SilenceMonitor } from '../utils/audioMonitor
 import { ENABLE_LIVE_DRAFT } from '../utils/featureFlags';
 import {
   startAmbientRecording,
+  stopAmbientRecording,
   uploadAmbientRecording,
   fetchProviders,
 } from '../api';
@@ -219,6 +220,21 @@ export function QuickRecordButton({
   }, [autoStart, session, effectiveProviderId, isRecording, isUploading]);
 
   const stopRecording = () => {
+    const isActive = mediaRecorderRef.current?.state === 'recording';
+    const activeRecordingId = recordingIdRef.current || recordingId;
+    const safeDurationSeconds = Math.max(1, Math.round(Number(duration) || 0));
+
+    if (isActive && activeRecordingId && session) {
+      void stopAmbientRecording(
+        session.tenantId,
+        session.accessToken,
+        activeRecordingId,
+        safeDurationSeconds
+      ).catch(() => {
+        // Preserve local recording flow even if stop endpoint fails
+      });
+    }
+
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
     }

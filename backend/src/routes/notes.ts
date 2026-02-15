@@ -5,6 +5,7 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
+import { userHasRole } from "../lib/roles";
 
 const noteFilterSchema = z.object({
   status: z.enum(["draft", "preliminary", "final", "signed"]).optional(),
@@ -256,7 +257,7 @@ notesRouter.patch(
       }
 
       // Only allow provider to sign their own notes or admin to sign any
-      if (req.user!.role !== "admin" && note.provider_id !== req.user!.id) {
+      if (!userHasRole(req.user, "admin") && note.provider_id !== req.user!.id) {
         return res.status(403).json({ error: "You can only sign your own notes" });
       }
 
@@ -318,7 +319,7 @@ notesRouter.patch(
       }
 
       // Only allow provider to add addendum to their own notes or admin to add to any
-      if (req.user!.role !== "admin" && note.provider_id !== req.user!.id) {
+      if (!userHasRole(req.user, "admin") && note.provider_id !== req.user!.id) {
         return res.status(403).json({ error: "You can only add addendums to your own notes" });
       }
 

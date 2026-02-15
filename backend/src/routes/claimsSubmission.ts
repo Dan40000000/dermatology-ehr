@@ -111,7 +111,7 @@ export const claimsSubmissionRouter = Router();
 claimsSubmissionRouter.post(
   "/submit",
   requireAuth,
-  requireRoles(["provider", "admin", "front_desk"]),
+  requireRoles(["admin", "billing", "front_desk"]),
   async (req: AuthedRequest, res) => {
     try {
       const parsed = submitClaimSchema.safeParse(req.body);
@@ -196,7 +196,7 @@ claimsSubmissionRouter.get(
 claimsSubmissionRouter.post(
   "/batch-submit",
   requireAuth,
-  requireRoles(["provider", "admin", "front_desk"]),
+  requireRoles(["admin", "billing", "front_desk"]),
   async (req: AuthedRequest, res) => {
     try {
       const parsed = batchSubmitSchema.safeParse(req.body);
@@ -280,7 +280,7 @@ claimsSubmissionRouter.get(
 claimsSubmissionRouter.post(
   "/:id/resubmit",
   requireAuth,
-  requireRoles(["provider", "admin", "front_desk"]),
+  requireRoles(["admin", "billing", "front_desk"]),
   async (req: AuthedRequest, res) => {
     try {
       const parsed = resubmitClaimSchema.safeParse(req.body);
@@ -382,7 +382,7 @@ claimsSubmissionRouter.post(
 claimsSubmissionRouter.get(
   "/:id/x12",
   requireAuth,
-  requireRoles(["provider", "admin"]),
+  requireRoles(["admin", "billing"]),
   async (req: AuthedRequest, res) => {
     try {
       const tenantId = req.user!.tenantId;
@@ -429,7 +429,7 @@ claimsSubmissionRouter.get(
 claimsSubmissionRouter.post(
   "/remittance",
   requireAuth,
-  requireRoles(["provider", "admin", "front_desk"]),
+  requireRoles(["admin", "billing", "front_desk"]),
   async (req: AuthedRequest, res) => {
     try {
       const parsed = processRemittanceSchema.safeParse(req.body);

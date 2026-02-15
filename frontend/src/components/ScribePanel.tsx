@@ -15,6 +15,7 @@ import { createSilenceMonitor, type SilenceMonitor } from '../utils/audioMonitor
 import { ENABLE_LIVE_DRAFT } from '../utils/featureFlags';
 import {
   startAmbientRecording,
+  stopAmbientRecording,
   uploadAmbientRecording,
   fetchProviders,
 } from '../api';
@@ -24,6 +25,7 @@ interface ScribePanelProps {
   patientName: string;
   encounterId?: string;
   providerId?: string;
+  encounterStatus?: string;
   autoStart?: boolean;
   highlighted?: boolean;
   showScheduleBadge?: boolean;
@@ -35,6 +37,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
   patientName,
   encounterId,
   providerId: propProviderId,
+  encounterStatus,
   autoStart = false,
   highlighted = false,
   showScheduleBadge = false,
@@ -66,6 +69,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
   const [durationPrompted, setDurationPrompted] = useState(false);
   const autoStartTriggeredRef = useRef(false);
   const recordingIdRef = useRef<string | null>(null);
+  const encounterAutoStopRef = useRef<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -215,6 +219,21 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
   }, [autoStart, session, effectiveProviderId, isRecording, isUploading]);
 
   const stopRecording = () => {
+    const isActive = mediaRecorderRef.current?.state === 'recording';
+    const activeRecordingId = recordingIdRef.current || recordingId;
+    const safeDurationSeconds = Math.max(1, Math.round(Number(duration) || 0));
+
+    if (isActive && activeRecordingId && session) {
+      void stopAmbientRecording(
+        session.tenantId,
+        session.accessToken,
+        activeRecordingId,
+        safeDurationSeconds
+      ).catch(() => {
+        // Don't block local stop/upload if server stop call fails
+      });
+    }
+
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
     }
@@ -237,6 +256,17 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
     setLiveStatus('idle');
     setLiveError(null);
   };
+
+  useEffect(() => {
+    if (!encounterStatus || !isRecording || !recordingId) return;
+    const normalizedStatus = encounterStatus.toLowerCase();
+    const shouldAutoStop = ['closed', 'completed', 'signed', 'locked', 'finalized'].includes(normalizedStatus);
+    if (!shouldAutoStop) return;
+    if (encounterAutoStopRef.current === recordingId) return;
+    encounterAutoStopRef.current = recordingId;
+    showSuccess('Encounter closed. AI scribe recording stopped and uploading.');
+    stopRecording();
+  }, [encounterStatus, isRecording, recordingId, showSuccess, stopRecording]);
 
   const handleUpload = async (audioBlob: Blob) => {
     const activeRecordingId = recordingIdRef.current || recordingId;

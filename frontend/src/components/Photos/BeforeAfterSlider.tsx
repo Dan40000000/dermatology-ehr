@@ -219,7 +219,6 @@ export function BeforeAfterSlider({
           <div
             ref={containerRef}
             className="relative w-full max-w-5xl aspect-video bg-black rounded-lg overflow-hidden cursor-crosshair"
-            onMouseMove={handleSliderMove}
             onTouchMove={handleSliderMove}
             onMouseDown={handleMouseDown}
             onMouseMove={(e) => {

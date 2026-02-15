@@ -36,6 +36,33 @@ const encounterUpdateSchema = z.object({
   assessmentPlan: z.string().optional(),
 });
 
+const ENCOUNTER_CLOSURE_STATUSES = new Set(["closed", "completed", "signed", "locked", "finalized"]);
+
+function shouldAutoStopAmbientRecording(status: string): boolean {
+  return ENCOUNTER_CLOSURE_STATUSES.has(String(status || "").toLowerCase());
+}
+
+async function autoStopAmbientRecordings(tenantId: string, encounterId: string): Promise<string[]> {
+  const stopped = await pool.query(
+    `UPDATE ambient_recordings
+     SET recording_status = 'stopped',
+         duration_seconds = GREATEST(
+           COALESCE(duration_seconds, 0),
+           COALESCE(FLOOR(EXTRACT(EPOCH FROM (NOW() - COALESCE(started_at, created_at)))), 1)::int,
+           1
+         ),
+         completed_at = COALESCE(completed_at, NOW()),
+         updated_at = NOW()
+     WHERE tenant_id = $1
+       AND encounter_id = $2
+       AND recording_status = 'recording'
+     RETURNING id`,
+    [tenantId, encounterId],
+  );
+
+  return stopped.rows.map((row: any) => row.id).filter(Boolean);
+}
+
 export const encountersRouter = Router();
 
 /**
@@ -280,6 +307,30 @@ encountersRouter.post("/:id/status", requireAuth, requireRoles(["provider", "adm
     [crypto.randomUUID(), tenantId, req.user!.id, `encounter_status_${newStatus}`, "encounter", encId],
   );
   await auditLog(tenantId, req.user!.id, `encounter_status_${newStatus}`, "encounter", encId);
+
+  if (shouldAutoStopAmbientRecording(newStatus)) {
+    try {
+      const stoppedRecordingIds = await autoStopAmbientRecordings(tenantId, encId);
+      if (stoppedRecordingIds.length > 0) {
+        await Promise.all(
+          stoppedRecordingIds.map((recordingId) =>
+            auditLog(tenantId, req.user!.id, "ambient_recording_auto_stop", "ambient_recording", recordingId)
+          ),
+        );
+        logger.info("Auto-stopped ambient recordings for closed encounter", {
+          encounterId: encId,
+          status: newStatus,
+          stoppedCount: stoppedRecordingIds.length,
+        });
+      }
+    } catch (error: any) {
+      logger.error("Failed auto-stop of ambient recordings on encounter status change", {
+        encounterId: encId,
+        status: newStatus,
+        error: error?.message,
+      });
+    }
+  }
 
   // Trigger adaptive learning when encounter is finalized/locked
   if (newStatus === "locked" || newStatus === "finalized") {
@@ -741,6 +792,22 @@ encountersRouter.post("/:id/complete", requireAuth, requireRoles(["provider", "a
   try {
     await encounterService.completeEncounter(tenantId, encId);
     await auditLog(tenantId, req.user!.id, "encounter_completed", "encounter", encId);
+
+    try {
+      const stoppedRecordingIds = await autoStopAmbientRecordings(tenantId, encId);
+      if (stoppedRecordingIds.length > 0) {
+        await Promise.all(
+          stoppedRecordingIds.map((recordingId) =>
+            auditLog(tenantId, req.user!.id, "ambient_recording_auto_stop", "ambient_recording", recordingId)
+          ),
+        );
+      }
+    } catch (error: any) {
+      logger.error("Failed auto-stop of ambient recordings on encounter complete", {
+        encounterId: encId,
+        error: error?.message,
+      });
+    }
 
     return res.status(200).json({
       encounterId: encId,

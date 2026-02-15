@@ -103,7 +103,7 @@ patientPortalRouter.post(
          WHERE tenant_id = $1
          AND LOWER(last_name) = LOWER($2)
          AND dob = $3
-         AND COALESCE(ssn_last4, RIGHT(ssn, 4)) = $4`,
+         AND ssn_last4 = $4`,
         [tenantId, lastName, dob, ssnLast4]
       );
 
@@ -217,7 +217,7 @@ patientPortalRouter.post(
          AND LOWER(first_name) = LOWER($2)
          AND LOWER(last_name) = LOWER($3)
          AND dob = $4
-         ${ssnLast4Value ? "AND COALESCE(ssn_last4, RIGHT(ssn, 4)) = $5" : ""}`,
+         ${ssnLast4Value ? "AND ssn_last4 = $5" : ""}`,
         ssnLast4Value
           ? [tenantId, firstName, lastName, dob, ssnLast4Value]
           : [tenantId, firstName, lastName, dob]

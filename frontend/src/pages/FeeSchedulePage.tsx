@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
+import { hasAnyRole } from '../utils/roles';
 import {
   fetchFeeSchedules,
   fetchFeeSchedule,
@@ -65,7 +66,7 @@ export function FeeSchedulePage() {
   const [scheduleToDelete, setScheduleToDelete] = useState<FeeSchedule | null>(null);
 
   // Check if user has permission
-  const hasPermission = session?.user.role === 'admin';
+  const hasPermission = hasAnyRole(session?.user, ['admin', 'billing', 'front_desk']);
 
   const loadSchedules = useCallback(async () => {
     if (!session) return;

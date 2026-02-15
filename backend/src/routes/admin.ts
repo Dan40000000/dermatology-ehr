@@ -5,8 +5,13 @@ import { pool } from "../db/pool";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { validatePasswordPolicy } from "../middleware/security";
+import { buildEffectiveRoles, normalizeRoleArray } from "../lib/roles";
 
 const router = Router();
+
+function normalizeSecondaryRolesInput(value: unknown, primaryRole: string): string[] {
+  return normalizeRoleArray(value).filter((role) => role !== primaryRole);
+}
 
 // All admin routes require authentication and admin role
 router.use(requireAuth);
@@ -237,20 +242,31 @@ router.get("/users", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
 
   const result = await pool.query(
-    `SELECT id, email, full_name as "fullName", role, created_at as "createdAt"
+    `SELECT id, email, full_name as "fullName", role,
+            coalesce(secondary_roles, '{}'::text[]) as "secondaryRoles",
+            created_at as "createdAt"
      FROM users
      WHERE tenant_id = $1
      ORDER BY full_name`,
     [tenantId]
   );
 
-  res.json({ users: result.rows });
+  res.json({
+    users: result.rows.map((row) => {
+      const secondaryRoles = normalizeRoleArray(row.secondaryRoles);
+      return {
+        ...row,
+        secondaryRoles,
+        roles: buildEffectiveRoles(row.role, secondaryRoles),
+      };
+    }),
+  });
 });
 
 // Create user
 router.post("/users", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
-  const { email, fullName, role, password } = req.body;
+  const { email, fullName, role, password, secondaryRoles } = req.body;
 
   if (!email || !fullName || !password) {
     return res.status(400).json({ error: "Email, name, and password are required" });
@@ -276,27 +292,55 @@ router.post("/users", async (req: AuthedRequest, res) => {
   }
 
   const id = randomUUID();
+  const primaryRole = role || "front_desk";
+  const normalizedSecondaryRoles = normalizeSecondaryRolesInput(secondaryRoles, primaryRole);
   const passwordHash = bcrypt.hashSync(password, 12); // Increased to 12 rounds for better security
 
   await pool.query(
-    `INSERT INTO users (id, tenant_id, email, full_name, role, password_hash)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [id, tenantId, email.toLowerCase(), fullName, role || "front_desk", passwordHash]
+    `INSERT INTO users (id, tenant_id, email, full_name, role, secondary_roles, password_hash)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, tenantId, email.toLowerCase(), fullName, primaryRole, normalizedSecondaryRoles, passwordHash]
   );
 
-  res.status(201).json({ id, email: email.toLowerCase(), fullName, role: role || "front_desk" });
+  res.status(201).json({
+    id,
+    email: email.toLowerCase(),
+    fullName,
+    role: primaryRole,
+    secondaryRoles: normalizedSecondaryRoles,
+    roles: buildEffectiveRoles(primaryRole, normalizedSecondaryRoles),
+  });
 });
 
 // Update user
 router.put("/users/:id", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
-  const { email, fullName, role, password } = req.body;
+  const { email, fullName, role, password, secondaryRoles } = req.body;
+
+  if (!email && !fullName && !role && !password && secondaryRoles === undefined) {
+    return res.status(400).json({ error: "No fields to update" });
+  }
 
   // Build update query dynamically
   const updates: string[] = [];
   const values: any[] = [];
   let paramIndex = 1;
+
+  const existingUserResult = await pool.query(
+    `SELECT role, coalesce(secondary_roles, '{}'::text[]) as "secondaryRoles"
+     FROM users WHERE id = $1 AND tenant_id = $2`,
+    [id, tenantId]
+  );
+
+  const existingUser = existingUserResult.rows[0];
+  if (!existingUser) {
+    return res.status(404).json({ error: "User not found" });
+  }
+
+  const nextPrimaryRole = role || existingUser.role;
+  const requestedSecondaryRoles = secondaryRoles !== undefined ? secondaryRoles : existingUser.secondaryRoles;
+  const normalizedSecondaryRoles = normalizeSecondaryRolesInput(requestedSecondaryRoles, nextPrimaryRole);
 
   if (email) {
     updates.push(`email = $${paramIndex++}`);
@@ -305,6 +349,10 @@ router.put("/users/:id", async (req: AuthedRequest, res) => {
   if (fullName) {
     updates.push(`full_name = $${paramIndex++}`);
     values.push(fullName);
+  }
+  if (role || secondaryRoles !== undefined) {
+    updates.push(`secondary_roles = $${paramIndex++}`);
+    values.push(normalizedSecondaryRoles);
   }
   if (role) {
     updates.push(`role = $${paramIndex++}`);

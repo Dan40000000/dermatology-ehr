@@ -91,6 +91,7 @@ export interface ComprehensiveSafetyCheck {
   duplicateTherapyAlerts: DuplicateTherapyAlert[];
   drugWarnings: DrugWarning[];
   alerts: DrugAlert[];
+  warnings: string[];
   hasCriticalAlerts: boolean;
   hasContraindicated: boolean;
   summary: {
@@ -207,12 +208,17 @@ export async function checkInteractions(
       );
 
       for (const row of dbInteractions.rows) {
+        const normalizedSeverity: InteractionSeverity =
+          row.severity === 'severe'
+            ? 'major'
+            : (row.severity as InteractionSeverity);
+
         interactions.push({
           id: row.id,
-          severity: row.severity as InteractionSeverity,
+          severity: normalizedSeverity,
           description: row.description,
-          medication1: row.drug1_name,
-          medication2: row.drug2_name,
+          medication1: row.drug1_name || row.medication_1 || row.medication1 || newDrugName,
+          medication2: row.drug2_name || row.medication_2 || row.medication2 || '',
           clinicalEffects: row.clinical_effects,
           management: row.management,
           mechanism: row.mechanism,
@@ -734,11 +740,36 @@ async function fetchOpenFDAWarnings(rxcui: string): Promise<DrugWarning[]> {
  * Perform comprehensive safety check for a medication
  */
 export async function comprehensiveSafetyCheck(
-  patientId: string,
-  drugRxcui: string,
-  drugName: string,
-  tenantId: string
+  patientIdOrMedicationName: string,
+  drugRxcuiOrPatientId: string,
+  drugNameOrTenantId: string,
+  tenantIdMaybe?: string
 ): Promise<ComprehensiveSafetyCheck> {
+  // Backward compatibility: (medicationName, patientId, tenantId)
+  let patientId = patientIdOrMedicationName;
+  let drugRxcui = drugRxcuiOrPatientId;
+  let drugName = drugNameOrTenantId;
+  let tenantId = tenantIdMaybe ?? '';
+
+  if (!tenantIdMaybe) {
+    drugName = patientIdOrMedicationName;
+    patientId = drugRxcuiOrPatientId;
+    tenantId = drugNameOrTenantId;
+
+    try {
+      const lookup = await pool.query(
+        `SELECT rxnorm_cui
+         FROM drug_database
+         WHERE drug_name ILIKE $1 OR generic_name ILIKE $1
+         LIMIT 1`,
+        [`%${drugName}%`]
+      );
+      drugRxcui = lookup.rows[0]?.rxnorm_cui || drugName;
+    } catch {
+      drugRxcui = drugName;
+    }
+  }
+
   // Run all checks in parallel for performance
   const [drugInteractions, allergyWarnings, drugWarnings] = await Promise.all([
     checkInteractions(patientId, drugRxcui, tenantId),
@@ -835,6 +866,17 @@ export async function comprehensiveSafetyCheck(
   const majorCount = alerts.filter(a => a.severity === 'major').length;
   const moderateCount = alerts.filter(a => a.severity === 'moderate').length;
   const minorCount = alerts.filter(a => a.severity === 'minor').length;
+  const severeInteractionCount = drugInteractions.filter(
+    i => i.severity === 'contraindicated' || i.severity === 'major'
+  ).length;
+  const warnings: string[] = [];
+
+  if (severeInteractionCount > 0) {
+    warnings.push(`${severeInteractionCount} severe drug interaction(s) detected`);
+  }
+  if (allergyWarnings.length > 0) {
+    warnings.push('Patient has documented allergy to related medication');
+  }
 
   return {
     drugInteractions,
@@ -842,6 +884,7 @@ export async function comprehensiveSafetyCheck(
     duplicateTherapyAlerts,
     drugWarnings,
     alerts,
+    warnings,
     hasCriticalAlerts: contraindicatedCount > 0 || majorCount > 0 || allergyWarnings.length > 0,
     hasContraindicated: contraindicatedCount > 0,
     summary: {
@@ -1109,14 +1152,19 @@ export async function checkDrugDrugInteractions(
   patientId: string,
   tenantId: string
 ): Promise<DrugInteraction[]> {
-  // Try to find RxCUI for the medication name
-  const drugResult = await pool.query(
-    `SELECT rxnorm_cui FROM drug_database WHERE drug_name ILIKE $1 OR generic_name ILIKE $1 LIMIT 1`,
-    [`%${newMedicationName}%`]
-  );
+  try {
+    // Try to find RxCUI for the medication name
+    const drugResult = await pool.query(
+      `SELECT rxnorm_cui FROM drug_database WHERE drug_name ILIKE $1 OR generic_name ILIKE $1 LIMIT 1`,
+      [`%${newMedicationName}%`]
+    );
 
-  const rxcui = drugResult.rows[0]?.rxnorm_cui || newMedicationName;
-  return checkInteractions(patientId, rxcui, tenantId);
+    const rxcui = drugResult.rows[0]?.rxnorm_cui || newMedicationName;
+    return checkInteractions(patientId, rxcui, tenantId);
+  } catch (error) {
+    logger.error('Error in legacy checkDrugDrugInteractions', { error, patientId, newMedicationName });
+    return [];
+  }
 }
 
 /**
@@ -1128,11 +1176,16 @@ export async function checkDrugAllergyInteractions(
   patientId: string,
   tenantId: string
 ): Promise<AllergyWarning[]> {
-  const drugResult = await pool.query(
-    `SELECT rxnorm_cui FROM drug_database WHERE drug_name ILIKE $1 OR generic_name ILIKE $1 LIMIT 1`,
-    [`%${medicationName}%`]
-  );
+  try {
+    const drugResult = await pool.query(
+      `SELECT rxnorm_cui FROM drug_database WHERE drug_name ILIKE $1 OR generic_name ILIKE $1 LIMIT 1`,
+      [`%${medicationName}%`]
+    );
 
-  const rxcui = drugResult.rows[0]?.rxnorm_cui || medicationName;
-  return checkAllergies(patientId, rxcui, tenantId);
+    const rxcui = drugResult.rows[0]?.rxnorm_cui || medicationName;
+    return checkAllergies(patientId, rxcui, tenantId);
+  } catch (error) {
+    logger.error('Error in legacy checkDrugAllergyInteractions', { error, patientId, medicationName });
+    return [];
+  }
 }

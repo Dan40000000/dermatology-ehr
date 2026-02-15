@@ -506,8 +506,8 @@ const MessageThreadView: FC<MessageThreadViewProps> = ({ thread, onClose }) => {
       }
 
       const data = await response.json();
-      setThreadDetails(data.thread);
-      setMessages(data.messages);
+      setThreadDetails(data.thread ?? null);
+      setMessages(Array.isArray(data.messages) ? data.messages : []);
       setError(null);
 
       // Mark thread as read

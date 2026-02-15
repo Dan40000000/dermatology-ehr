@@ -85,7 +85,12 @@ export const moduleAccess: Record<ModuleKey, Role[]> = {
   admin: ["admin"],
 };
 
-export function canAccessModule(role: Role | undefined, moduleKey: ModuleKey): boolean {
-  if (!role) return false;
-  return moduleAccess[moduleKey].includes(role);
+export function canAccessModule(roleOrRoles: Role | Role[] | undefined, moduleKey: ModuleKey): boolean {
+  const roles = Array.isArray(roleOrRoles)
+    ? roleOrRoles
+    : roleOrRoles
+    ? [roleOrRoles]
+    : [];
+  if (roles.length === 0) return false;
+  return roles.some((role) => moduleAccess[moduleKey].includes(role));
 }

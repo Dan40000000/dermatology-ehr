@@ -51,6 +51,7 @@ const apiMocks = vi.hoisted(() => ({
   generateAiNoteDraft: vi.fn(),
   fetchNoteTemplates: vi.fn(),
   fetchProviders: vi.fn(),
+  fetchEncounterAmbientNotes: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -227,6 +228,10 @@ vi.mock('../../components/billing', () => ({
   },
 }));
 
+vi.mock('../../components/ScribePanel', () => ({
+  ScribePanel: () => <div data-testid="scribe-panel" />,
+}));
+
 import { EncounterPage } from '../EncounterPage';
 
 const baseSession = {
@@ -322,6 +327,7 @@ describe('EncounterPage', () => {
     apiMocks.updateEncounter.mockResolvedValue({ ok: true });
     apiMocks.updateEncounterStatus.mockResolvedValue({ ok: true });
     apiMocks.fetchNoteTemplates.mockResolvedValue({ templates: [] });
+    apiMocks.fetchEncounterAmbientNotes.mockResolvedValue({ notes: [] });
     apiMocks.generateAiNoteDraft.mockResolvedValue({
       draft: {
         chiefComplaint: '',

@@ -10,6 +10,7 @@ import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { auditLog } from '../services/audit';
 import { patientEngagementService } from '../services/patientEngagementService';
 import { logger } from '../lib/logger';
+import { userHasRole } from '../lib/roles';
 import crypto from 'crypto';
 
 const router = Router();
@@ -1034,7 +1035,7 @@ router.post('/process/birthdays', requireAuth, async (req: AuthedRequest, res: R
     const userId = req.user!.id;
 
     // Check admin role
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -1058,7 +1059,7 @@ router.post('/process/surveys', requireAuth, async (req: AuthedRequest, res: Res
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
 
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -1082,7 +1083,7 @@ router.post('/process/adherence', requireAuth, async (req: AuthedRequest, res: R
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
 
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -1106,7 +1107,7 @@ router.post('/process/seasonal', requireAuth, async (req: AuthedRequest, res: Re
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
 
-    if (req.user!.role !== 'admin') {
+    if (!userHasRole(req.user, 'admin')) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 

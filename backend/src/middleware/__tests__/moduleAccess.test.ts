@@ -37,7 +37,7 @@ describe('requireModuleAccess', () => {
 
     requireModuleAccess('admin')(req, res as any, next);
 
-    expect(canAccessModuleMock).toHaveBeenCalledWith('provider', 'admin');
+    expect(canAccessModuleMock).toHaveBeenCalledWith(['provider'], 'admin');
     expect(res.status).toHaveBeenCalledWith(403);
     expect(res.json).toHaveBeenCalledWith({ error: 'Insufficient role' });
     expect(next).not.toHaveBeenCalled();
@@ -51,7 +51,7 @@ describe('requireModuleAccess', () => {
 
     requireModuleAccess('home')(req, res as any, next);
 
-    expect(canAccessModuleMock).toHaveBeenCalledWith('admin', 'home');
+    expect(canAccessModuleMock).toHaveBeenCalledWith(['admin'], 'home');
     expect(next).toHaveBeenCalled();
   });
 });

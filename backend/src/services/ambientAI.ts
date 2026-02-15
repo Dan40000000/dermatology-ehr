@@ -1470,6 +1470,283 @@ IMPORTANT: Return ONLY valid JSON, no additional text or markdown formatting.`;
   return prompt;
 }
 
+const SYMPTOM_PATTERN_LIBRARY: Array<{ label: string; pattern: RegExp }> = [
+  { label: 'Rash', pattern: /\brash|eruption|lesion/ },
+  { label: 'Itching', pattern: /\bitch|pruritus/ },
+  { label: 'Pain', pattern: /\bpain|tender/ },
+  { label: 'Burning', pattern: /\bburn|stinging/ },
+  { label: 'Redness', pattern: /\bred|erythema/ },
+  { label: 'Swelling', pattern: /\bswell|edema/ },
+  { label: 'Scaling', pattern: /\bscal(e|y)|flak/ },
+  { label: 'Bleeding', pattern: /\bbleed|bleeding/ },
+  { label: 'Blistering', pattern: /\bblister|vesicle|bulla/ },
+  { label: 'Drainage', pattern: /\bdrain|ooz|discharge/ },
+  { label: 'Fever', pattern: /\bfever|febrile/ },
+];
+
+function toSafeString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeConfidence(value: unknown, fallback = 0.5): number {
+  let numeric = typeof value === 'number' ? value : Number(value);
+  if (Number.isNaN(numeric)) {
+    numeric = fallback;
+  }
+  if (numeric > 1 && numeric <= 100) {
+    numeric /= 100;
+  }
+  if (numeric > 100) {
+    numeric = fallback;
+  }
+  return Math.max(0.01, Math.min(0.99, numeric));
+}
+
+function normalizeUrgency(value: unknown): 'routine' | 'soon' | 'urgent' {
+  const normalized = toSafeString(value).toLowerCase();
+  if (normalized === 'urgent' || normalized === 'soon' || normalized === 'routine') {
+    return normalized;
+  }
+  return 'routine';
+}
+
+function normalizeConcerns(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const concerns: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    const text = toSafeString(entry);
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    concerns.push(text);
+  }
+
+  return concerns.slice(0, 8);
+}
+
+function extractSymptomsFromContent(
+  chiefComplaint: string,
+  hpi: string,
+  transcriptText: string,
+  existingConcerns: string[]
+): string[] {
+  const symptoms: string[] = [];
+  const seen = new Set<string>();
+
+  const pushUnique = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    symptoms.push(trimmed);
+  };
+
+  for (const concern of existingConcerns) {
+    pushUnique(concern);
+  }
+
+  const source = `${chiefComplaint} ${hpi} ${transcriptText}`.toLowerCase();
+  for (const pattern of SYMPTOM_PATTERN_LIBRARY) {
+    if (pattern.pattern.test(source)) {
+      pushUnique(pattern.label);
+    }
+  }
+
+  if (symptoms.length === 0) {
+    const fallback = chiefComplaint || hpi || 'Skin symptoms discussed during visit';
+    pushUnique(fallback.split('.')[0] || fallback);
+  }
+
+  return symptoms.slice(0, 8);
+}
+
+function normalizeFollowUpTasks(
+  raw: unknown
+): Array<{ task: string; priority: string; dueDate?: string; confidence: number }> {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const tasks: Array<{ task: string; priority: string; dueDate?: string; confidence: number }> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const candidate = item as Record<string, unknown>;
+    const task = toSafeString(candidate.task);
+    if (!task) continue;
+    tasks.push({
+      task,
+      priority: toSafeString(candidate.priority) || 'medium',
+      dueDate: toSafeString(candidate.dueDate) || undefined,
+      confidence: normalizeConfidence(candidate.confidence, 0.8),
+    });
+  }
+  return tasks.slice(0, 8);
+}
+
+function normalizeDifferentialDiagnoses(
+  raw: unknown,
+  transcriptText: string
+): DifferentialDiagnosis[] {
+  const normalized: DifferentialDiagnosis[] = [];
+  const seen = new Set<string>();
+
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (!entry || typeof entry !== 'object') continue;
+      const candidate = entry as Record<string, unknown>;
+      const condition = toSafeString(candidate.condition);
+      if (!condition) continue;
+      const key = condition.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      normalized.push({
+        condition,
+        confidence: normalizeConfidence(candidate.confidence, 0.5),
+        reasoning: toSafeString(candidate.reasoning) || 'Based on documented symptom and exam pattern.',
+        icd10Code: toSafeString(candidate.icd10Code) || 'R21'
+      });
+    }
+  }
+
+  const fallback = generateDifferentialDiagnoses(transcriptText);
+  for (const diagnosis of fallback) {
+    if (normalized.length >= 5) break;
+    const key = diagnosis.condition.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(diagnosis);
+  }
+
+  if (normalized.length === 0) {
+    return fallback.slice(0, 3);
+  }
+
+  let weighted = normalized
+    .slice(0, 5)
+    .map((item, index) => ({
+      ...item,
+      confidence: item.confidence > 0 ? item.confidence : Math.max(0.05, 0.6 - (index * 0.1)),
+    }));
+
+  const total = weighted.reduce((sum, item) => sum + item.confidence, 0);
+  if (total > 0) {
+    weighted = weighted.map((item) => ({
+      ...item,
+      confidence: Number((item.confidence / total).toFixed(4)),
+    }));
+  }
+
+  weighted.sort((a, b) => b.confidence - a.confidence);
+  return weighted;
+}
+
+function normalizeRecommendedTests(raw: unknown, transcriptText: string): RecommendedTest[] {
+  const tests: RecommendedTest[] = [];
+  const seen = new Set<string>();
+
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (!entry || typeof entry !== 'object') continue;
+      const candidate = entry as Record<string, unknown>;
+      const testName = toSafeString(candidate.testName);
+      if (!testName) continue;
+      const key = testName.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      tests.push({
+        testName,
+        rationale: toSafeString(candidate.rationale) || 'Suggested by documented presentation and differential.',
+        urgency: normalizeUrgency(candidate.urgency),
+        cptCode: toSafeString(candidate.cptCode) || undefined
+      });
+    }
+  }
+
+  if (tests.length === 0) {
+    return generateRecommendedTests(transcriptText).slice(0, 5);
+  }
+
+  return tests.slice(0, 5);
+}
+
+function normalizeSectionConfidence(raw: unknown): ClinicalNote['sectionConfidence'] {
+  const defaults: ClinicalNote['sectionConfidence'] = {
+    chiefComplaint: 0.85,
+    hpi: 0.85,
+    ros: 0.80,
+    physicalExam: 0.85,
+    assessment: 0.85,
+    plan: 0.85
+  };
+
+  if (!raw || typeof raw !== 'object') {
+    return defaults;
+  }
+
+  const source = raw as Record<string, unknown>;
+  return {
+    chiefComplaint: normalizeConfidence(source.chiefComplaint, defaults.chiefComplaint),
+    hpi: normalizeConfidence(source.hpi, defaults.hpi),
+    ros: normalizeConfidence(source.ros, defaults.ros),
+    physicalExam: normalizeConfidence(source.physicalExam, defaults.physicalExam),
+    assessment: normalizeConfidence(source.assessment, defaults.assessment),
+    plan: normalizeConfidence(source.plan, defaults.plan)
+  };
+}
+
+function normalizePatientSummary(
+  raw: unknown,
+  context: {
+    chiefComplaint: string;
+    hpi: string;
+    transcriptText: string;
+    plan: string;
+    differentialDiagnoses: DifferentialDiagnosis[];
+    followUpTasks: Array<{ task: string; priority: string; dueDate?: string; confidence: number }>;
+  }
+): PatientSummary {
+  const source = raw && typeof raw === 'object'
+    ? (raw as Record<string, unknown>)
+    : {};
+
+  const providedConcerns = normalizeConcerns(source.yourConcerns);
+  const symptoms = extractSymptomsFromContent(
+    context.chiefComplaint,
+    context.hpi,
+    context.transcriptText,
+    providedConcerns
+  );
+  const topDiagnosis = context.differentialDiagnoses[0];
+
+  const whatWeDiscussed = toSafeString(source.whatWeDiscussed)
+    || `We discussed ${context.chiefComplaint || 'your dermatology concerns'} and reviewed exam findings.`;
+
+  const treatmentPlan = toSafeString(source.treatmentPlan)
+    || (context.plan
+      ? context.plan.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 3).join(' ')
+      : 'Follow the treatment plan and skin care instructions reviewed in clinic.');
+
+  const dueDate = context.followUpTasks.find((task) => task.dueDate)?.dueDate;
+  const followUp = toSafeString(source.followUp)
+    || (dueDate ? `Follow up by ${dueDate} or sooner if symptoms worsen.` : 'Follow up as directed by your provider.');
+
+  return {
+    whatWeDiscussed,
+    yourConcerns: symptoms,
+    diagnosis: toSafeString(source.diagnosis) || (topDiagnosis
+      ? `${topDiagnosis.condition} (${Math.round(topDiagnosis.confidence * 100)}% likelihood)`
+      : undefined),
+    treatmentPlan,
+    followUp
+  };
+}
+
 /**
  * Parse AI-generated note text into structured format
  * Handles custom sections from agent configuration
@@ -1494,43 +1771,44 @@ function parseAIGeneratedNote(
     cleanedText = cleanedText.trim();
 
     const parsed = JSON.parse(cleanedText);
+    const transcriptText = segments.map((segment) => segment.text).join(' ');
+    const normalizedSectionConfidence = normalizeSectionConfidence(parsed.sectionConfidence);
+    const followUpTasks = normalizeFollowUpTasks(parsed.followUpTasks);
+    const differentialDiagnoses = normalizeDifferentialDiagnoses(parsed.differentialDiagnoses, transcriptText);
+    const recommendedTests = normalizeRecommendedTests(parsed.recommendedTests, transcriptText);
+    const patientSummary = normalizePatientSummary(parsed.patientSummary, {
+      chiefComplaint: toSafeString(parsed.chiefComplaint),
+      hpi: toSafeString(parsed.hpi),
+      transcriptText,
+      plan: toSafeString(parsed.plan),
+      differentialDiagnoses,
+      followUpTasks
+    });
 
     // Calculate overall confidence
-    const sectionScores = Object.values(parsed.sectionConfidence || {}) as number[];
+    const sectionScores = Object.values(normalizedSectionConfidence);
     const overallConfidence = sectionScores.length > 0
       ? sectionScores.reduce((a, b) => a + b, 0) / sectionScores.length
       : 0.85;
 
     // Build base note with standard sections (backward compatible)
     const note: ClinicalNote & ExtractedData = {
-      chiefComplaint: parsed.chiefComplaint || '',
-      hpi: parsed.hpi || '',
-      ros: parsed.ros || '',
-      physicalExam: parsed.physicalExam || '',
-      assessment: parsed.assessment || '',
-      plan: parsed.plan || '',
+      chiefComplaint: toSafeString(parsed.chiefComplaint),
+      hpi: toSafeString(parsed.hpi),
+      ros: toSafeString(parsed.ros),
+      physicalExam: toSafeString(parsed.physicalExam),
+      assessment: toSafeString(parsed.assessment),
+      plan: toSafeString(parsed.plan),
       overallConfidence: overallConfidence,
-      sectionConfidence: parsed.sectionConfidence || {
-        chiefComplaint: 0.85,
-        hpi: 0.85,
-        ros: 0.80,
-        physicalExam: 0.85,
-        assessment: 0.85,
-        plan: 0.85
-      },
+      sectionConfidence: normalizedSectionConfidence,
       suggestedIcd10: parsed.suggestedIcd10 || [],
       suggestedCpt: parsed.suggestedCpt || [],
       medications: parsed.medications || [],
       allergies: parsed.allergies || [],
-      followUpTasks: parsed.followUpTasks || [],
-      differentialDiagnoses: parsed.differentialDiagnoses || [],
-      recommendedTests: parsed.recommendedTests || [],
-      patientSummary: parsed.patientSummary || {
-        whatWeDiscussed: '',
-        yourConcerns: [],
-        treatmentPlan: '',
-        followUp: ''
-      }
+      followUpTasks,
+      differentialDiagnoses,
+      recommendedTests,
+      patientSummary
     };
 
     // If agent config has custom sections, include those as well

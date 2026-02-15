@@ -1,5 +1,8 @@
 import type { Express } from "express";
 import { apiLimiter, portalLimiter, uploadLimiter } from "../middleware/rateLimiter";
+import { requireAuth } from "../middleware/auth";
+import { requireRoles } from "../middleware/rbac";
+import { FINANCIAL_ROLES } from "../lib/roles";
 import { healthRouter } from "./health";
 import { authRouter } from "./auth";
 import { patientsRouter } from "./patients";
@@ -144,6 +147,8 @@ import waitTimeRouter from "./waitTime";
 import { remindersRouter } from "./reminders";
 
 export function registerRoutes(app: Express) {
+  const requireFinancialAccess = [requireAuth, requireRoles(FINANCIAL_ROLES)];
+
   app.use("/health", healthRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/patients", patientsRouter);
@@ -157,7 +162,7 @@ export function registerRoutes(app: Express) {
   app.use("/api/encounters", encountersRouter);
   app.use("/api/documents", documentsRouter);
   app.use("/api/photos", photosRouter);
-  app.use("/api/charges", chargesRouter);
+  app.use("/api/charges", ...requireFinancialAccess, chargesRouter);
   app.use("/api/diagnoses", diagnosesRouter);
   app.use("/api/tasks", tasksRouter);
   app.use("/api/task-templates", taskTemplatesRouter);
@@ -176,10 +181,10 @@ export function registerRoutes(app: Express) {
   app.use("/api/interop/fhir-payloads", fhirPayloadRouter);
   app.use("/api/presign", presignRouter);
   app.use("/api/uploads", serveUploadsRouter);
-  app.use("/api/fee-schedules", feeSchedulesRouter);
+  app.use("/api/fee-schedules", ...requireFinancialAccess, feeSchedulesRouter);
   app.use("/api/cpt-codes", cptCodesRouter);
   app.use("/api/icd10-codes", icd10CodesRouter);
-  app.use("/api/claims", claimsRouter);
+  app.use("/api/claims", ...requireFinancialAccess, claimsRouter);
   app.use("/api/adaptive", adaptiveLearningRouter);
   app.use("/api/note-templates", noteTemplatesRouter);
   app.use("/api/messaging", messagingRouter);
@@ -233,7 +238,7 @@ export function registerRoutes(app: Express) {
   app.use("/api/fax", faxRouter);
   app.use("/api/notes", notesRouter);
   app.use("/api/direct", directMessagingRouter);
-  app.use("/api/clearinghouse", clearinghouseRouter);
+  app.use("/api/clearinghouse", ...requireFinancialAccess, clearinghouseRouter);
   app.use("/api/quality", qualityMeasuresRouter);
   app.use("/api/mips", mipsRouter);
   app.use("/api/referrals", referralsRouter);
@@ -250,22 +255,22 @@ export function registerRoutes(app: Express) {
   app.use("/api/ai-agent-configs", aiAgentConfigsRouter);
   app.use("/api/inventory", inventoryRouter);
   app.use("/api/inventory-usage", inventoryUsageRouter);
-  app.use("/api/payer-payments", payerPaymentsRouter);
-  app.use("/api/patient-payments", patientPaymentsRouter);
+  app.use("/api/payer-payments", ...requireFinancialAccess, payerPaymentsRouter);
+  app.use("/api/patient-payments", ...requireFinancialAccess, patientPaymentsRouter);
   app.use("/api/integrations", integrationsRouter);
-  app.use("/api/statements", statementsRouter);
-  app.use("/api/batches", batchesRouter);
-  app.use("/api/bills", billsRouter);
-  app.use("/api/financial-metrics", financialMetricsRouter);
+  app.use("/api/statements", ...requireFinancialAccess, statementsRouter);
+  app.use("/api/batches", ...requireFinancialAccess, batchesRouter);
+  app.use("/api/bills", ...requireFinancialAccess, billsRouter);
+  app.use("/api/financial-metrics", ...requireFinancialAccess, financialMetricsRouter);
   app.use("/api/eligibility", eligibilityRouter);
   app.use("/api/check-in", checkInRouter);
-  app.use("/api/billing", billingRouter);
+  app.use("/api/billing", ...requireFinancialAccess, billingRouter);
   app.use("/api/cosmetic-treatments", cosmeticTreatmentsRouter);
   app.use("/api/cosmetic", cosmeticRouter);
   app.use("/api/intake", intakeRouter);
   app.use("/api/intake-forms", intakeFormsRouter);
   app.use("/api/staff-scheduling", apiLimiter, staffSchedulingRouter);
-  app.use("/api/rcm", revenueCycleRouter);
+  app.use("/api/rcm", ...requireFinancialAccess, revenueCycleRouter);
   app.use("/api/engagement", patientEngagementRouter);
   app.use("/api/communications", communicationsRouter);
   app.use("/api/notifications", notificationsRouter);
@@ -278,7 +283,7 @@ export function registerRoutes(app: Express) {
   app.use("/api/rooms", roomsRouter);
   app.use("/api/superbills", superbillsRouter);
   app.use("/api/quickpicks", quickpicksRouter);
-  app.use("/api/claims-submission", claimsSubmissionRouter);
+  app.use("/api/claims-submission", ...requireFinancialAccess, claimsSubmissionRouter);
   app.use("/api/procedure-templates", procedureTemplatesRouter);
   app.use("/api/procedures", procedureTemplatesRouter);
   app.use("/api/consents", consentsRouter);

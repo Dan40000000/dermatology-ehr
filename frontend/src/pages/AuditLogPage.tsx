@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { Fragment, useState, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { API_BASE_URL } from "../utils/apiBase";
+import { hasRole } from "../utils/roles";
 import "../App.css";
 
 interface AuditLog {
@@ -544,7 +545,7 @@ export function AuditLogPage() {
           </button>
         </div>
 
-        {session.user.role === "admin" && (
+        {hasRole(session?.user, "admin") && (
           <button
             onClick={exportAuditLog}
             style={{
@@ -623,9 +624,8 @@ export function AuditLogPage() {
                 </tr>
               ) : (
                 logs.map((log) => (
-                  <>
+                  <Fragment key={log.id}>
                     <tr
-                      key={log.id}
                       style={{
                         borderBottom: "1px solid #e5e7eb",
                         background: isSuspicious(log) ? "#fef2f2" : "white",
@@ -775,7 +775,7 @@ export function AuditLogPage() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 ))
               )}
             </tbody>

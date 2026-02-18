@@ -1,5 +1,6 @@
 import { pool } from '../../db/pool';
 import { AINoteDraftingService } from '../aiNoteDrafting';
+import { logger } from '../../lib/logger';
 
 jest.mock('../../db/pool', () => ({
   pool: {
@@ -7,10 +8,20 @@ jest.mock('../../db/pool', () => ({
   },
 }));
 
+jest.mock('../../lib/logger', () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 // Mock global fetch
 global.fetch = jest.fn();
 
 const queryMock = pool.query as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 describe('AINoteDraftingService', () => {
   let service: AINoteDraftingService;
@@ -22,6 +33,7 @@ describe('AINoteDraftingService', () => {
     jest.clearAllMocks();
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    loggerMock.error.mockReset();
     service = new AINoteDraftingService();
   });
 
@@ -296,6 +308,82 @@ Assessment and Plan: Contact dermatitis, prescribe topical steroid`;
 
       expect(result.chiefComplaint).toContain('Rash on arms');
     });
+
+    it('should de-identify outbound OpenAI prompt fields while retaining clinical context', async () => {
+      process.env.OPENAI_API_KEY = 'test-key';
+      service = new AINoteDraftingService();
+
+      const requestWithIdentifiers = {
+        ...request,
+        chiefComplaint: 'Jane Doe has itchy rash; phone 415-555-1234.',
+        briefNotes: 'SSN 123-45-6789 and email jane.doe@example.com. Eczema flare.',
+      };
+      const mockPatient = {
+        first_name: 'Jane',
+        last_name: 'Doe',
+        date_of_birth: '1990-01-01',
+        sex: 'F',
+        medical_history: 'Eczema with SSN 123-45-6789 and email jane.doe@example.com',
+        allergies: 'Fragrances',
+        current_medications: 'Triamcinolone',
+      };
+      const mockProviderStyle = [
+        {
+          soap_note: 'Patient: Jane Doe\nDOB: 1990-01-01\nAssessment: eczema flare.',
+        },
+      ];
+      const mockPriorNotes = [
+        {
+          encounter_date: '2025-12-11',
+          chief_complaint: 'Jane Doe reports worsening rash and called from 415-555-1234',
+        },
+      ];
+      const mockOpenAIResponse = {
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  chiefComplaint: 'Rash on both arms',
+                  hpi: 'Patient presents with...',
+                  ros: 'Negative except as noted',
+                  exam: 'Erythematous patches',
+                  assessmentPlan: 'Contact dermatitis',
+                }),
+              },
+            },
+          ],
+        }),
+      };
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [mockPatient] })
+        .mockResolvedValueOnce({ rows: mockProviderStyle })
+        .mockResolvedValueOnce({ rows: mockPriorNotes });
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockOpenAIResponse);
+
+      await service.generateNoteDraft(requestWithIdentifiers, tenantId);
+
+      const requestBody = JSON.parse(
+        ((global.fetch as jest.Mock).mock.calls[0]?.[1] as { body?: string })?.body || '{}'
+      );
+      const systemPrompt = String(requestBody?.messages?.[0]?.content || '');
+      const userPrompt = String(requestBody?.messages?.[1]?.content || '');
+      const combinedPrompt = `${systemPrompt}\n${userPrompt}`;
+
+      expect(combinedPrompt).not.toContain('Jane Doe');
+      expect(combinedPrompt).not.toContain('123-45-6789');
+      expect(combinedPrompt).not.toContain('jane.doe@example.com');
+      expect(combinedPrompt).not.toContain('415-555-1234');
+      expect(combinedPrompt).not.toContain('2025-12-11');
+      expect(combinedPrompt).toContain('[PATIENT]');
+      expect(combinedPrompt).toContain('[SSN-REDACTED]');
+      expect(combinedPrompt).toContain('[EMAIL-REDACTED]');
+      expect(combinedPrompt).toContain('[PHONE-REDACTED]');
+      expect(combinedPrompt.toLowerCase()).toContain('eczema');
+      expect(combinedPrompt).toContain('[Visit 1]');
+    });
   });
 
   describe('recordSuggestionFeedback', () => {
@@ -495,23 +583,56 @@ Assessment and Plan: Contact dermatitis, prescribe topical steroid`;
       await expect(
         service.generateNoteDraft({ patientId, providerId }, tenantId)
       ).rejects.toThrow('Failed to generate note draft');
+      expect(loggerMock.error).toHaveBeenCalledWith('Note draft generation error', {
+        error: 'Database error',
+      });
     });
 
-    it('should handle console errors gracefully', async () => {
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
-
-      queryMock.mockRejectedValueOnce(new Error('DB error'));
+    it('should mask non-Error values in logs', async () => {
+      queryMock.mockRejectedValueOnce({ patientName: 'Jane Doe' });
 
       await expect(
         service.generateNoteDraft({ patientId, providerId }, tenantId)
-      ).rejects.toThrow();
+      ).rejects.toThrow('Failed to generate note draft');
+      expect(loggerMock.error).toHaveBeenCalledWith('Note draft generation error', {
+        error: 'Unknown error',
+      });
+    });
 
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        'Note draft generation error:',
-        expect.any(Error)
+    it('should redact PHI in logged provider errors', async () => {
+      process.env.OPENAI_API_KEY = 'test-key';
+      service = new AINoteDraftingService();
+
+      const mockPatient = {
+        first_name: 'John',
+        last_name: 'Doe',
+        date_of_birth: '1990-01-01',
+        sex: 'M',
+      };
+
+      queryMock
+        .mockResolvedValueOnce({ rows: [mockPatient] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+      (global.fetch as jest.Mock).mockRejectedValueOnce(
+        new Error('Provider failure for SSN 123-45-6789 and email jane.doe@example.com')
       );
 
-      consoleErrorSpy.mockRestore();
+      await expect(
+        service.generateNoteDraft({ patientId, providerId }, tenantId)
+      ).rejects.toThrow('Failed to generate note draft');
+      expect(loggerMock.error).toHaveBeenCalledWith('Note draft generation error', {
+        error: expect.not.stringContaining('123-45-6789'),
+      });
+      expect(loggerMock.error).toHaveBeenCalledWith('Note draft generation error', {
+        error: expect.not.stringContaining('jane.doe@example.com'),
+      });
+      expect(loggerMock.error).toHaveBeenCalledWith('Note draft generation error', {
+        error: expect.stringContaining('[SSN-REDACTED]'),
+      });
+      expect(loggerMock.error).toHaveBeenCalledWith('Note draft generation error', {
+        error: expect.stringContaining('[EMAIL-REDACTED]'),
+      });
     });
   });
 });

@@ -133,17 +133,34 @@ export const config = {
   // CORS
   cors: {
     origin: (() => {
+      const origins = new Set<string>();
+      const addOrigin = (origin: string) => {
+        const trimmed = origin.trim();
+        if (trimmed) {
+          origins.add(trimmed);
+        }
+      };
+
       if (envVars.CORS_ORIGIN) {
-        return envVars.CORS_ORIGIN.split(',');
+        envVars.CORS_ORIGIN.split(',').forEach(addOrigin);
       }
-      const origins: string[] = [];
+
       if (envVars.FRONTEND_URL) {
-        origins.push(envVars.FRONTEND_URL);
+        addOrigin(envVars.FRONTEND_URL);
       }
+
       if (envVars.NODE_ENV !== 'production') {
-        origins.push('http://localhost:5174', 'http://localhost:5175');
+        [
+          'http://localhost:5173',
+          'http://127.0.0.1:5173',
+          'http://localhost:5174',
+          'http://127.0.0.1:5174',
+          'http://localhost:5175',
+          'http://127.0.0.1:5175',
+        ].forEach(addOrigin);
       }
-      return origins;
+
+      return Array.from(origins);
     })(),
     credentials: envVars.CORS_CREDENTIALS,
   },
@@ -193,7 +210,6 @@ function validateConfig(): void {
     requireEnv('JWT_SECRET');
     requireEnv('CSRF_SECRET');
     requireEnv('SESSION_SECRET');
-    requireEnv('SENTRY_DSN');
 
     if (!process.env.DATABASE_URL && !process.env.DB_PASSWORD) {
       errors.push('Missing required environment variable: DB_PASSWORD (or DATABASE_URL)');
@@ -224,6 +240,10 @@ function validateConfig(): void {
 
     if (!config.ssl.enabled && config.apiUrl.startsWith('https')) {
       console.warn('WARNING: SSL is not enabled but API_URL uses HTTPS');
+    }
+
+    if (!process.env.SENTRY_DSN) {
+      console.warn('WARNING: SENTRY_DSN is not set in production; error forensics will be limited.');
     }
 
     if (config.storage.provider === 's3' && !config.storage.aws.bucket) {

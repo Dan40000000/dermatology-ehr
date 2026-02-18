@@ -1,5 +1,7 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
+import { logger } from "../lib/logger";
+import { redactValue } from "../utils/phiRedaction";
 
 /**
  * AI Note Drafting Service
@@ -28,6 +30,70 @@ interface NoteDraft {
   assessmentPlan: string;
   confidenceScore: number;
   suggestions: any[];
+}
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return String(redactValue(error.message));
+  }
+
+  if (typeof error === "string") {
+    return String(redactValue(error));
+  }
+
+  return "Unknown error";
+}
+
+function toSafeString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function redactPatientNameMentions(text: string, patientContext?: any): string {
+  if (!text) {
+    return text;
+  }
+
+  const firstName = toSafeString(patientContext?.first_name);
+  const lastName = toSafeString(patientContext?.last_name);
+  const fullName = firstName && lastName ? `${firstName} ${lastName}` : "";
+  const candidates = [fullName, firstName, lastName].filter((candidate): candidate is string => candidate.length >= 2);
+
+  let redacted = text;
+  for (const candidate of candidates) {
+    const pattern = new RegExp(`\\b${escapeRegExp(candidate)}\\b`, "gi");
+    redacted = redacted.replace(pattern, "[PATIENT]");
+  }
+
+  return redacted;
+}
+
+function sanitizePromptTextForModel(value: unknown, patientContext?: any): string {
+  const raw = toSafeString(value);
+  if (!raw) {
+    return "";
+  }
+
+  let sanitized = String(redactValue(raw));
+  sanitized = sanitized.replace(
+    /\b(patient|pt|name)\s*:\s*[^\n]+/gi,
+    (_fullMatch: string, label: string) => `${label}: [PATIENT]`
+  );
+  sanitized = sanitized.replace(
+    /\b(dob|date of birth)\s*:\s*[^\n]+/gi,
+    (_fullMatch: string, label: string) => `${label}: [DATE-REDACTED]`
+  );
+
+  return redactPatientNameMentions(sanitized, patientContext);
+}
+
+function logAINoteDraftingError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
 }
 
 export class AINoteDraftingService {
@@ -95,7 +161,7 @@ export class AINoteDraftingService {
         return this.getMockDraft(request, template);
       }
     } catch (error) {
-      console.error("Note draft generation error:", error);
+      logAINoteDraftingError("Note draft generation error", error);
       if (error instanceof Error) {
         const message = error.message;
         if (
@@ -285,14 +351,22 @@ Guidelines:
 6. Provide actionable assessment and plan`;
 
     if (providerStyle && providerStyle.length > 0) {
+      const sanitizedStyleSamples = providerStyle
+        .slice(0, 2)
+        .map((note) => sanitizePromptTextForModel(note?.soap_note))
+        .filter((sample) => sample.length > 0);
+
+      if (sanitizedStyleSamples.length > 0) {
       prompt += `\n\nProvider Writing Style Context:
 The provider typically writes notes in the following style. Please match their tone and structure:
-${providerStyle.slice(0, 2).map((n) => n.soap_note).join("\n\n---\n\n")}`;
+${sanitizedStyleSamples.join("\n\n---\n\n")}`;
+      }
     }
 
     if (template) {
+      const sanitizedTemplate = sanitizePromptTextForModel(JSON.stringify(template, null, 2));
       prompt += `\n\nTemplate to follow:
-${JSON.stringify(template, null, 2)}`;
+${sanitizedTemplate}`;
     }
 
     prompt += `\n\nProvide your response in the following JSON format:
@@ -316,35 +390,43 @@ ${JSON.stringify(template, null, 2)}`;
     priorNotes: any[]
   ): string {
     let prompt = "Generate a clinical note with the following information:\n\n";
+    const age = this.calculateAge(patientContext.date_of_birth);
+    const sex = toSafeString(patientContext.sex) || "Unknown";
 
-    prompt += `Patient: ${patientContext.first_name} ${patientContext.last_name}
-Age/Sex: ${this.calculateAge(patientContext.date_of_birth)}/${patientContext.sex}
+    prompt += `Patient: [PATIENT]
+Age/Sex: ${age}/${sex}
 `;
 
-    if (patientContext.medical_history) {
-      prompt += `\nMedical History: ${patientContext.medical_history}`;
+    const medicalHistory = sanitizePromptTextForModel(patientContext.medical_history, patientContext);
+    if (medicalHistory) {
+      prompt += `\nMedical History: ${medicalHistory}`;
     }
 
-    if (patientContext.allergies) {
-      prompt += `\nAllergies: ${patientContext.allergies}`;
+    const allergies = sanitizePromptTextForModel(patientContext.allergies, patientContext);
+    if (allergies) {
+      prompt += `\nAllergies: ${allergies}`;
     }
 
-    if (patientContext.current_medications) {
-      prompt += `\nCurrent Medications: ${patientContext.current_medications}`;
+    const medications = sanitizePromptTextForModel(patientContext.current_medications, patientContext);
+    if (medications) {
+      prompt += `\nCurrent Medications: ${medications}`;
     }
 
     if (request.chiefComplaint) {
-      prompt += `\n\nChief Complaint: ${request.chiefComplaint}`;
+      prompt += `\n\nChief Complaint: ${sanitizePromptTextForModel(request.chiefComplaint, patientContext)}`;
     }
 
     if (request.briefNotes) {
-      prompt += `\n\nProvider's Brief Notes:\n${request.briefNotes}`;
+      prompt += `\n\nProvider's Brief Notes:\n${sanitizePromptTextForModel(request.briefNotes, patientContext)}`;
     }
 
     if (priorNotes && priorNotes.length > 0) {
       prompt += `\n\nRecent Visit Context:`;
-      priorNotes.forEach((note) => {
-        prompt += `\n\n[${note.encounter_date}] ${note.chief_complaint || ""}`;
+      priorNotes.forEach((note, index) => {
+        const priorComplaint = sanitizePromptTextForModel(note?.chief_complaint || "", patientContext);
+        if (priorComplaint) {
+          prompt += `\n\n[Visit ${index + 1}] ${priorComplaint}`;
+        }
       });
     }
 
@@ -376,7 +458,7 @@ Age/Sex: ${this.calculateAge(patientContext.date_of_birth)}/${patientContext.sex
       // Fallback: parse as structured text
       return this.parsePlainTextNote(aiResponse);
     } catch (error) {
-      console.error("Failed to parse AI response:", error);
+      logAINoteDraftingError("Failed to parse AI response", error);
       throw new Error("Invalid AI response format");
     }
   }

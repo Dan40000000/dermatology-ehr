@@ -1,6 +1,20 @@
 import { rateLimit } from '../rateLimit';
 
 describe('rateLimit', () => {
+  const originalDisableRateLimit = process.env.DISABLE_RATE_LIMIT;
+
+  beforeEach(() => {
+    process.env.DISABLE_RATE_LIMIT = 'false';
+  });
+
+  afterEach(() => {
+    if (originalDisableRateLimit === undefined) {
+      delete process.env.DISABLE_RATE_LIMIT;
+    } else {
+      process.env.DISABLE_RATE_LIMIT = originalDisableRateLimit;
+    }
+  });
+
   it('limits requests within a window', () => {
     const nowSpy = jest.spyOn(Date, 'now');
     nowSpy.mockReturnValue(1000);

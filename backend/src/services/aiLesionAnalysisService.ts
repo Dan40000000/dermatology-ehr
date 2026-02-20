@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
+import { logger } from "../lib/logger";
 
 /**
  * AI Lesion Analysis Service
@@ -108,6 +109,24 @@ export interface ProviderFeedback {
   biopsyPerformed?: boolean;
   biopsyResult?: string;
   finalPathology?: string;
+}
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logAILesionAnalysisError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
 }
 
 class AILesionAnalysisService {
@@ -233,7 +252,7 @@ class AILesionAnalysisService {
         disclaimer: "AI assistance only - this is not a diagnosis. Clinical correlation and professional evaluation required.",
       };
     } catch (error) {
-      console.error("AI Lesion Analysis Error:", error);
+      logAILesionAnalysisError("AI Lesion Analysis Error", error);
       throw new Error("Failed to analyze lesion image");
     }
   }
@@ -403,7 +422,7 @@ class AILesionAnalysisService {
         ...comparisonResult,
       };
     } catch (error) {
-      console.error("AI Comparison Error:", error);
+      logAILesionAnalysisError("AI Comparison Error", error);
       throw new Error("Failed to compare images");
     }
   }
@@ -478,7 +497,7 @@ class AILesionAnalysisService {
 
       return { id: feedbackId };
     } catch (error) {
-      console.error("Record Feedback Error:", error);
+      logAILesionAnalysisError("Record Feedback Error", error);
       throw new Error("Failed to record feedback");
     }
   }
@@ -679,7 +698,7 @@ class AILesionAnalysisService {
       const analysisResult = JSON.parse(textContent.text);
       return this.normalizeAIResponse(analysisResult, data);
     } catch (error) {
-      console.error("Claude Vision API Error:", error);
+      logAILesionAnalysisError("Claude Vision API Error", error);
       return this.getMockAnalysis(analysisType);
     }
   }
@@ -731,7 +750,7 @@ class AILesionAnalysisService {
       const analysisResult = JSON.parse(data.choices[0].message.content);
       return this.normalizeAIResponse(analysisResult, data);
     } catch (error) {
-      console.error("OpenAI Vision API Error:", error);
+      logAILesionAnalysisError("OpenAI Vision API Error", error);
       return this.getMockAnalysis(analysisType);
     }
   }

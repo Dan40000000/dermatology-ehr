@@ -1,6 +1,7 @@
 import { Router, Response } from "express";
 import { body, param, query, validationResult } from "express-validator";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
+import { logger } from "../lib/logger";
 import {
   createVideoSession,
   joinSession,
@@ -24,6 +25,24 @@ import {
 
 const router = Router();
 router.use(requireAuth);
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logTelemedicineError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // ============================================
 // SESSION MANAGEMENT
@@ -79,7 +98,7 @@ router.post(
 
       res.status(201).json(session);
     } catch (error: unknown) {
-      console.error("Error creating video session:", error);
+      logTelemedicineError("Error creating video session", error);
       const message = error instanceof Error ? error.message : "Failed to create video session";
       res.status(500).json({ error: message });
     }
@@ -112,7 +131,7 @@ router.get("/sessions/:id", async (req: AuthedRequest, res: Response) => {
 
     res.json(session);
   } catch (error) {
-    console.error("Error fetching session:", error);
+    logTelemedicineError("Error fetching session", error);
     res.status(500).json({ error: "Failed to fetch session" });
   }
 });
@@ -171,7 +190,7 @@ router.get(
 
       res.json(joinInfo);
     } catch (error: unknown) {
-      console.error("Error getting join info:", error);
+      logTelemedicineError("Error getting join info", error);
       const message = error instanceof Error ? error.message : "Failed to get join information";
       res.status(500).json({ error: message });
     }
@@ -200,7 +219,7 @@ router.post("/sessions/:id/start", async (req: AuthedRequest, res: Response) => 
     const session = await startSession(tenantId, sessionId, providerId);
     res.json(session);
   } catch (error: unknown) {
-    console.error("Error starting session:", error);
+    logTelemedicineError("Error starting session", error);
     const message = error instanceof Error ? error.message : "Failed to start session";
     res.status(500).json({ error: message });
   }
@@ -227,7 +246,7 @@ router.post("/sessions/:id/end", async (req: AuthedRequest, res: Response) => {
     const session = await endSession(tenantId, sessionId);
     res.json(session);
   } catch (error: unknown) {
-    console.error("Error ending session:", error);
+    logTelemedicineError("Error ending session", error);
     const message = error instanceof Error ? error.message : "Failed to end session";
     res.status(500).json({ error: message });
   }
@@ -293,7 +312,7 @@ router.post(
 
       res.status(201).json(photo);
     } catch (error: unknown) {
-      console.error("Error capturing photo:", error);
+      logTelemedicineError("Error capturing photo", error);
       const message = error instanceof Error ? error.message : "Failed to capture photo";
       res.status(500).json({ error: message });
     }
@@ -319,7 +338,7 @@ router.get("/waiting-room", async (req: AuthedRequest, res: Response) => {
     const queue = await getWaitingRoom(tenantId, providerId);
     res.json(queue);
   } catch (error) {
-    console.error("Error fetching waiting room:", error);
+    logTelemedicineError("Error fetching waiting room", error);
     res.status(500).json({ error: "Failed to fetch waiting room" });
   }
 });
@@ -339,7 +358,7 @@ router.post("/sessions/:id/join-queue", async (req: AuthedRequest, res: Response
     const queueEntry = await addToWaitingRoom(tenantId, sessionId);
     res.status(201).json(queueEntry);
   } catch (error: unknown) {
-    console.error("Error joining waiting room:", error);
+    logTelemedicineError("Error joining waiting room", error);
     const message = error instanceof Error ? error.message : "Failed to join waiting room";
     res.status(500).json({ error: message });
   }
@@ -383,7 +402,7 @@ router.patch(
 
       res.json(updated);
     } catch (error: unknown) {
-      console.error("Error updating device check:", error);
+      logTelemedicineError("Error updating device check", error);
       const message = error instanceof Error ? error.message : "Failed to update device check";
       res.status(500).json({ error: message });
     }
@@ -410,7 +429,7 @@ router.post("/waiting-room/call-next", async (req: AuthedRequest, res: Response)
 
     res.json(nextPatient);
   } catch (error) {
-    console.error("Error calling next patient:", error);
+    logTelemedicineError("Error calling next patient", error);
     res.status(500).json({ error: "Failed to call next patient" });
   }
 });
@@ -455,7 +474,7 @@ router.post(
 
       res.status(201).json(participant);
     } catch (error: unknown) {
-      console.error("Error adding participant:", error);
+      logTelemedicineError("Error adding participant", error);
       const message = error instanceof Error ? error.message : "Failed to add participant";
       res.status(500).json({ error: message });
     }
@@ -509,7 +528,7 @@ router.post(
 
       res.status(201).json(consent);
     } catch (error) {
-      console.error("Error recording consent:", error);
+      logTelemedicineError("Error recording consent", error);
       res.status(500).json({ error: "Failed to record consent" });
     }
   }
@@ -548,7 +567,7 @@ router.get(
       const hasConsent = await checkConsent(tenantId, patientId, consentType);
       res.json({ hasConsent });
     } catch (error) {
-      console.error("Error checking consent:", error);
+      logTelemedicineError("Error checking consent", error);
       res.status(500).json({ error: "Failed to check consent" });
     }
   }
@@ -573,7 +592,7 @@ router.get("/sessions/:id/notes", async (req: AuthedRequest, res: Response) => {
     const notes = await getOrCreateSessionNotes(tenantId, sessionId);
     res.json(notes);
   } catch (error) {
-    console.error("Error fetching notes:", error);
+    logTelemedicineError("Error fetching notes", error);
     res.status(500).json({ error: "Failed to fetch notes" });
   }
 });
@@ -593,7 +612,7 @@ router.patch("/sessions/:id/notes", async (req: AuthedRequest, res: Response) =>
     const notes = await updateSessionNotes(tenantId, sessionId, req.body);
     res.json(notes);
   } catch (error) {
-    console.error("Error updating notes:", error);
+    logTelemedicineError("Error updating notes", error);
     res.status(500).json({ error: "Failed to update notes" });
   }
 });
@@ -637,7 +656,7 @@ router.get(
 
       res.json(sessions);
     } catch (error) {
-      console.error("Error fetching provider sessions:", error);
+      logTelemedicineError("Error fetching provider sessions", error);
       res.status(500).json({ error: "Failed to fetch sessions" });
     }
   }
@@ -662,7 +681,7 @@ router.get("/settings", async (req: AuthedRequest, res: Response) => {
     const settings = await getProviderSettings(tenantId, providerId);
     res.json(settings);
   } catch (error) {
-    console.error("Error fetching settings:", error);
+    logTelemedicineError("Error fetching settings", error);
     res.status(500).json({ error: "Failed to fetch settings" });
   }
 });
@@ -713,7 +732,7 @@ router.patch(
 
       res.json(settings);
     } catch (error) {
-      console.error("Error updating settings:", error);
+      logTelemedicineError("Error updating settings", error);
       res.status(500).json({ error: "Failed to update settings" });
     }
   }

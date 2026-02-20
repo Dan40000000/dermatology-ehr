@@ -12,6 +12,7 @@ import {
   checkFormulary,
   getPatientBenefits,
 } from "../../services/surescriptsService";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -42,6 +43,15 @@ jest.mock("../../services/surescriptsService", () => ({
   getPatientBenefits: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/prescriptions", prescriptionsRouter);
@@ -53,6 +63,7 @@ const allergiesMock = checkAllergies as jest.Mock;
 const sendNewRxMock = sendNewRx as jest.Mock;
 const checkFormularyMock = checkFormulary as jest.Mock;
 const getBenefitsMock = getPatientBenefits as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const uuid = "11111111-1111-1111-8111-111111111111";
 const uuid2 = "22222222-2222-2222-8222-222222222222";
@@ -66,6 +77,7 @@ beforeEach(() => {
   sendNewRxMock.mockReset();
   checkFormularyMock.mockReset();
   getBenefitsMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
   validateMock.mockReturnValue({ valid: true, errors: [], warnings: [] });
   interactionsMock.mockResolvedValue([]);
@@ -76,6 +88,30 @@ beforeEach(() => {
 });
 
 describe("Prescription routes", () => {
+  it("GET /prescriptions logs sanitized Error failures", async () => {
+    queryMock.mockRejectedValueOnce(new Error("db fail"));
+
+    const res = await request(app).get("/prescriptions");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch prescriptions");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching prescriptions:", {
+      error: "db fail",
+    });
+  });
+
+  it("GET /prescriptions masks non-Error thrown values", async () => {
+    queryMock.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+    const res = await request(app).get("/prescriptions");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch prescriptions");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching prescriptions:", {
+      error: "Unknown error",
+    });
+  });
+
   it("GET /prescriptions returns list", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: "rx-1" }] });
 

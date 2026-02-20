@@ -209,7 +209,8 @@ describe('WaitlistPage', () => {
       expect(postCall).toBeTruthy();
     });
 
-    const waitlistRow = screen.getByText('Derm, Ana').closest('tr');
+    const waitlistTable = screen.getByRole('table');
+    const waitlistRow = within(waitlistTable).getByText('Derm, Ana').closest('tr');
     expect(waitlistRow).toBeTruthy();
 
     fireEvent.click(within(waitlistRow as HTMLElement).getByRole('button', { name: 'Notify' }));
@@ -253,7 +254,7 @@ describe('WaitlistPage', () => {
       expect(patchCall).toBeTruthy();
     });
 
-    const updatedRow = screen.getByText('Derm, Ana').closest('tr');
+    const updatedRow = within(waitlistTable).getByText('Derm, Ana').closest('tr');
     expect(updatedRow).toBeTruthy();
 
     await screen.findByRole('button', { name: 'History' });

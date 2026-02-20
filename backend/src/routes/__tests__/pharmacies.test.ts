@@ -3,6 +3,7 @@ import express from "express";
 import crypto from "crypto";
 import { pharmaciesRouter } from "../pharmacies";
 import { pool } from "../../db/pool";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -21,6 +22,15 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("crypto", () => {
   const actual = jest.requireActual("crypto");
   return {
@@ -34,9 +44,11 @@ app.use(express.json());
 app.use("/api/pharmacies", pharmaciesRouter);
 
 const queryMock = pool.query as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -147,6 +159,21 @@ describe("Pharmacies routes", () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to search pharmacies");
+      expect(loggerMock.error).toHaveBeenCalledWith("Error searching pharmacies", {
+        error: "Database error",
+      });
+    });
+
+    it("should mask non-Error values on search failures", async () => {
+      queryMock.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+      const res = await request(app).get("/api/pharmacies/search");
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to search pharmacies");
+      expect(loggerMock.error).toHaveBeenCalledWith("Error searching pharmacies", {
+        error: "Unknown error",
+      });
     });
   });
 

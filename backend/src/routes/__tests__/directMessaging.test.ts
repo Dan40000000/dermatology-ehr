@@ -3,6 +3,7 @@ import express from "express";
 import { directMessagingRouter } from "../directMessaging";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -21,16 +22,27 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/direct", directMessagingRouter);
 
 const queryMock = pool.query as jest.Mock;
 const auditMock = auditLog as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
   auditMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -53,6 +65,20 @@ describe("Direct messaging routes", () => {
     queryMock.mockRejectedValueOnce(new Error("boom"));
     const res = await request(app).get("/direct/messages");
     expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch messages");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching Direct messages:", {
+      error: "boom",
+    });
+  });
+
+  it("GET /direct/messages masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ directAddress: "secret@hisp.example" });
+    const res = await request(app).get("/direct/messages");
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch messages");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching Direct messages:", {
+      error: "Unknown error",
+    });
   });
 
   it("POST /direct/send rejects invalid payload", async () => {

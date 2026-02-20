@@ -23,6 +23,24 @@ const canAccessSsnLast4 = (req: AuthedRequest): boolean => {
   return role === "admin" || role === "provider" || role === "ma";
 };
 
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logPatientsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
+
 async function safeAuditPatientAccess(params: {
   tenantId: string;
   userId?: string;
@@ -40,7 +58,7 @@ async function safeAuditPatientAccess(params: {
     });
   } catch (error: any) {
     logger.warn("Patient audit logging failed", {
-      error: error?.message || "Unknown error",
+      error: toSafeErrorMessage(error),
       patientId: params.patientId,
       accessType: params.accessType,
     });
@@ -418,7 +436,7 @@ patientsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
 
     return res.json({ patient: result.rows[0] });
   } catch (error) {
-    console.error("Error fetching patient:", error);
+    logPatientsError("Error fetching patient", error);
     return res.status(500).json({ error: "Failed to fetch patient" });
   }
 });
@@ -609,7 +627,7 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
 
     return res.json({ success: true, id: result.rows[0].id });
   } catch (error) {
-    console.error('Error updating patient:', error);
+    logPatientsError("Error updating patient", error);
     return res.status(500).json({ error: 'Failed to update patient' });
   }
 });
@@ -719,7 +737,7 @@ patientsRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async (req: 
       message: `Patient ${patient.first_name} ${patient.last_name} has been deleted`
     });
   } catch (error) {
-    console.error('Error deleting patient:', error);
+    logPatientsError("Error deleting patient", error);
     return res.status(500).json({ error: 'Failed to delete patient' });
   }
 });
@@ -777,7 +795,7 @@ patientsRouter.get("/:id/appointments", requireAuth, async (req: AuthedRequest, 
 
     return res.json({ appointments: result.rows });
   } catch (error) {
-    console.error("Error fetching patient appointments:", error);
+    logPatientsError("Error fetching patient appointments", error);
     return res.status(500).json({ error: "Failed to fetch appointments" });
   }
 });
@@ -810,7 +828,7 @@ patientsRouter.get("/:id/encounters", requireAuth, async (req: AuthedRequest, re
 
     return res.json({ encounters: result.rows });
   } catch (error) {
-    console.error("Error fetching patient encounters:", error);
+    logPatientsError("Error fetching patient encounters", error);
     return res.status(500).json({ error: "Failed to fetch encounters" });
   }
 });
@@ -899,7 +917,7 @@ patientsRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest,
       }
     });
   } catch (error) {
-    console.error("Error fetching patient prescriptions:", error);
+    logPatientsError("Error fetching patient prescriptions", error);
     return res.status(500).json({ error: "Failed to fetch prescriptions" });
   }
 });
@@ -932,7 +950,7 @@ patientsRouter.get("/:id/prior-auths", requireAuth, async (req: AuthedRequest, r
 
     return res.json({ priorAuths: result.rows });
   } catch (error) {
-    console.error("Error fetching patient prior authorizations:", error);
+    logPatientsError("Error fetching patient prior authorizations", error);
     return res.status(500).json({ error: "Failed to fetch prior authorizations" });
   }
 });
@@ -972,7 +990,7 @@ patientsRouter.get("/:id/biopsies", requireAuth, async (req: AuthedRequest, res)
 
     return res.json({ biopsies: result.rows });
   } catch (error) {
-    console.error("Error fetching patient biopsies:", error);
+    logPatientsError("Error fetching patient biopsies", error);
     return res.status(500).json({ error: "Failed to fetch biopsies" });
   }
 });
@@ -1039,7 +1057,7 @@ patientsRouter.get("/:id/balance", requireAuth, async (req: AuthedRequest, res) 
       paymentPlans: paymentPlansResult.rows
     });
   } catch (error) {
-    console.error("Error fetching patient balance:", error);
+    logPatientsError("Error fetching patient balance", error);
     return res.status(500).json({ error: "Failed to fetch balance" });
   }
 });
@@ -1069,7 +1087,7 @@ patientsRouter.get("/:id/photos", requireAuth, async (req: AuthedRequest, res) =
 
     return res.json({ photos: result.rows });
   } catch (error) {
-    console.error("Error fetching patient photos:", error);
+    logPatientsError("Error fetching patient photos", error);
     return res.status(500).json({ error: "Failed to fetch photos" });
   }
 });
@@ -1102,7 +1120,7 @@ patientsRouter.get("/:id/body-map", requireAuth, async (req: AuthedRequest, res)
 
     return res.json({ lesions: result.rows });
   } catch (error) {
-    console.error("Error fetching patient body map:", error);
+    logPatientsError("Error fetching patient body map", error);
     return res.status(500).json({ error: "Failed to fetch body map" });
   }
 });
@@ -1152,7 +1170,7 @@ patientsRouter.get("/:id/insurance", requireAuth, async (req: AuthedRequest, res
       eligibility: eligibilityResult.rows[0] || null
     });
   } catch (error) {
-    console.error("Error fetching patient insurance:", error);
+    logPatientsError("Error fetching patient insurance", error);
     return res.status(500).json({ error: "Failed to fetch insurance" });
   }
 });

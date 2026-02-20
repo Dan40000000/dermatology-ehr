@@ -3,9 +3,28 @@ import { body, param, query, validationResult } from "express-validator";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import crypto from "crypto";
+import { logger } from "../lib/logger";
 
 const router = Router();
 router.use(requireAuth);
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logTelehealthError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // ============================================
 // STATS AND ANALYTICS
@@ -54,7 +73,7 @@ router.get("/stats", async (req: AuthedRequest, res: Response) => {
       unassignedCases: parseInt(statsResult.rows[0].unassigned_count) || 0,
     });
   } catch (error) {
-    console.error("Error fetching telehealth stats:", error);
+    logTelehealthError("Error fetching telehealth stats", error);
     res.status(500).json({ error: "Failed to fetch stats" });
   }
 });
@@ -137,7 +156,7 @@ router.post(
 
       res.json(result.rows[0]);
     } catch (error) {
-      console.error("Error creating telehealth session:", error);
+      logTelehealthError("Error creating telehealth session", error);
       res.status(500).json({ error: "Failed to create session" });
     }
   }
@@ -166,7 +185,7 @@ router.get("/sessions/:id", async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error fetching session:", error);
+    logTelehealthError("Error fetching session", error);
     res.status(500).json({ error: "Failed to fetch session" });
   }
 });
@@ -243,7 +262,7 @@ router.get("/sessions", async (req: AuthedRequest, res: Response) => {
     const result = await pool.query(queryText, params);
     res.json(result.rows);
   } catch (error) {
-    console.error("Error fetching sessions:", error);
+    logTelehealthError("Error fetching sessions", error);
     res.status(500).json({ error: "Failed to fetch sessions" });
   }
 });
@@ -288,7 +307,7 @@ router.patch("/sessions/:id/status", async (req: AuthedRequest, res: Response) =
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error updating session status:", error);
+    logTelehealthError("Error updating session status", error);
     res.status(500).json({ error: "Failed to update session" });
   }
 });
@@ -329,7 +348,7 @@ router.post("/waiting-room/join", async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error joining waiting room:", error);
+    logTelehealthError("Error joining waiting room", error);
     res.status(500).json({ error: "Failed to join waiting room" });
   }
 });
@@ -352,7 +371,7 @@ router.patch("/waiting-room/:id/equipment-check", async (req: AuthedRequest, res
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error updating equipment check:", error);
+    logTelehealthError("Error updating equipment check", error);
     res.status(500).json({ error: "Failed to update equipment check" });
   }
 });
@@ -382,7 +401,7 @@ router.post("/waiting-room/:id/chat", async (req: AuthedRequest, res: Response) 
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error adding chat message:", error);
+    logTelehealthError("Error adding chat message", error);
     res.status(500).json({ error: "Failed to add chat message" });
   }
 });
@@ -406,7 +425,7 @@ router.get("/waiting-room", async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error("Error fetching waiting room:", error);
+    logTelehealthError("Error fetching waiting room", error);
     res.status(500).json({ error: "Failed to fetch waiting room" });
   }
 });
@@ -437,7 +456,7 @@ router.post("/waiting-room/:id/call", async (req: AuthedRequest, res: Response) 
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error calling patient:", error);
+    logTelehealthError("Error calling patient", error);
     res.status(500).json({ error: "Failed to call patient" });
   }
 });
@@ -521,7 +540,7 @@ router.post("/sessions/:id/notes", async (req: AuthedRequest, res: Response) => 
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error saving session notes:", error);
+    logTelehealthError("Error saving session notes", error);
     res.status(500).json({ error: "Failed to save notes" });
   }
 });
@@ -543,7 +562,7 @@ router.get("/sessions/:id/notes", async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error fetching notes:", error);
+    logTelehealthError("Error fetching notes", error);
     res.status(500).json({ error: "Failed to fetch notes" });
   }
 });
@@ -565,7 +584,7 @@ router.post("/sessions/:id/notes/finalize", async (req: AuthedRequest, res: Resp
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error finalizing notes:", error);
+    logTelehealthError("Error finalizing notes", error);
     res.status(500).json({ error: "Failed to finalize notes" });
   }
 });
@@ -638,7 +657,7 @@ router.post("/sessions/:id/metrics", async (req: AuthedRequest, res: Response) =
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error saving quality metrics:", error);
+    logTelehealthError("Error saving quality metrics", error);
     res.status(500).json({ error: "Failed to save metrics" });
   }
 });
@@ -659,7 +678,7 @@ router.get("/sessions/:id/metrics", async (req: AuthedRequest, res: Response) =>
 
     res.json(result.rows);
   } catch (error) {
-    console.error("Error fetching metrics:", error);
+    logTelehealthError("Error fetching metrics", error);
     res.status(500).json({ error: "Failed to fetch metrics" });
   }
 });
@@ -704,7 +723,7 @@ router.post("/sessions/:id/recordings/start", async (req: AuthedRequest, res: Re
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error starting recording:", error);
+    logTelehealthError("Error starting recording", error);
     res.status(500).json({ error: "Failed to start recording" });
   }
 });
@@ -726,7 +745,7 @@ router.post("/recordings/:id/stop", async (req: AuthedRequest, res: Response) =>
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error stopping recording:", error);
+    logTelehealthError("Error stopping recording", error);
     res.status(500).json({ error: "Failed to stop recording" });
   }
 });
@@ -746,7 +765,7 @@ router.get("/sessions/:id/recordings", async (req: AuthedRequest, res: Response)
 
     res.json(result.rows);
   } catch (error) {
-    console.error("Error fetching recordings:", error);
+    logTelehealthError("Error fetching recordings", error);
     res.status(500).json({ error: "Failed to fetch recordings" });
   }
 });
@@ -791,7 +810,7 @@ router.post("/sessions/:id/photos", async (req: AuthedRequest, res: Response) =>
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error capturing photo:", error);
+    logTelehealthError("Error capturing photo", error);
     res.status(500).json({ error: "Failed to capture photo" });
   }
 });
@@ -811,7 +830,7 @@ router.get("/sessions/:id/photos", async (req: AuthedRequest, res: Response) => 
 
     res.json(result.rows);
   } catch (error) {
-    console.error("Error fetching photos:", error);
+    logTelehealthError("Error fetching photos", error);
     res.status(500).json({ error: "Failed to fetch photos" });
   }
 });
@@ -850,7 +869,7 @@ router.post("/provider-licenses", async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error adding provider license:", error);
+    logTelehealthError("Error adding provider license", error);
     res.status(500).json({ error: "Failed to add license" });
   }
 });
@@ -870,7 +889,7 @@ router.get("/providers/:id/licenses", async (req: AuthedRequest, res: Response) 
 
     res.json(result.rows);
   } catch (error) {
-    console.error("Error fetching licenses:", error);
+    logTelehealthError("Error fetching licenses", error);
     res.status(500).json({ error: "Failed to fetch licenses" });
   }
 });
@@ -898,7 +917,7 @@ router.get("/educational-content", async (req: AuthedRequest, res: Response) => 
     const result = await pool.query(queryText, params);
     res.json(result.rows);
   } catch (error) {
-    console.error("Error fetching educational content:", error);
+    logTelehealthError("Error fetching educational content", error);
     res.status(500).json({ error: "Failed to fetch content" });
   }
 });
@@ -918,7 +937,7 @@ router.post("/educational-content/:id/view", async (req: AuthedRequest, res: Res
 
     res.json({ success: true });
   } catch (error) {
-    console.error("Error tracking view:", error);
+    logTelehealthError("Error tracking view", error);
     res.status(500).json({ error: "Failed to track view" });
   }
 });
@@ -943,7 +962,7 @@ router.get("/sessions/:id/events", async (req: AuthedRequest, res: Response) => 
 
     res.json(result.rows);
   } catch (error) {
-    console.error("Error fetching events:", error);
+    logTelehealthError("Error fetching events", error);
     res.status(500).json({ error: "Failed to fetch events" });
   }
 });
@@ -974,7 +993,7 @@ router.post("/sessions/:id/events", async (req: AuthedRequest, res: Response) =>
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error logging event:", error);
+    logTelehealthError("Error logging event", error);
     res.status(500).json({ error: "Failed to log event" });
   }
 });

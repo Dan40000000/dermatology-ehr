@@ -17,4 +17,10 @@ describe('moduleAccess', () => {
   it('maps path to module key', () => {
     expect(getModuleForPath('/patients/123')).toBe('patients');
   });
+
+  it('maps ambient scribe route and blocks front desk role', () => {
+    expect(getModuleForPath('/ambient-scribe')).toBe('ambient_scribe');
+    expect(canAccessModule('front_desk', 'ambient_scribe')).toBe(false);
+    expect(canAccessModule('provider', 'ambient_scribe')).toBe(true);
+  });
 });

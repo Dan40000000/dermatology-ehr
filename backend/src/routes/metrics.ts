@@ -3,8 +3,27 @@ import { metricsService, type MetricEvent } from '../services/metricsService';
 import { requireAuth, type AuthedRequest } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { userHasRole } from '../lib/roles';
+import { logger } from '../lib/logger';
 
 const router = express.Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logMetricsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // ================================================
 // MIDDLEWARE
@@ -70,7 +89,7 @@ router.post('/events', async (req: Request, res: Response) => {
             await metricsService.saveEncounterMetrics(metrics);
           }
         } catch (error) {
-          console.error(`Failed to process encounter ${event.encounterId}:`, error);
+          logMetricsError(`Failed to process encounter ${event.encounterId}:`, error);
           // Continue processing other events
         }
       }
@@ -78,7 +97,7 @@ router.post('/events', async (req: Request, res: Response) => {
 
     res.json({ success: true, eventsLogged: events.length });
   } catch (error) {
-    console.error('Error logging metrics:', error);
+    logMetricsError('Error logging metrics:', error);
     res.status(500).json({ error: 'Failed to log metrics' });
   }
 });
@@ -97,7 +116,7 @@ router.get('/summary', async (req: Request, res: Response) => {
 
     res.json(summary);
   } catch (error) {
-    console.error('Error fetching summary:', error);
+    logMetricsError('Error fetching summary:', error);
     res.status(500).json({ error: 'Failed to fetch summary' });
   }
 });
@@ -116,7 +135,7 @@ router.get('/providers', async (req: Request, res: Response) => {
 
     res.json(providers);
   } catch (error) {
-    console.error('Error fetching provider metrics:', error);
+    logMetricsError('Error fetching provider metrics:', error);
     res.status(500).json({ error: 'Failed to fetch provider metrics' });
   }
 });
@@ -135,7 +154,7 @@ router.get('/trends', async (req: Request, res: Response) => {
 
     res.json(trends);
   } catch (error) {
-    console.error('Error fetching trends:', error);
+    logMetricsError('Error fetching trends:', error);
     res.status(500).json({ error: 'Failed to fetch trends' });
   }
 });
@@ -154,7 +173,7 @@ router.get('/features', async (req: Request, res: Response) => {
 
     res.json(features);
   } catch (error) {
-    console.error('Error fetching feature usage:', error);
+    logMetricsError('Error fetching feature usage:', error);
     res.status(500).json({ error: 'Failed to fetch feature usage' });
   }
 });
@@ -281,7 +300,7 @@ router.get('/encounters/:encounterId/summary', async (req: AuthedRequest, res: R
 
     res.json(summary);
   } catch (error) {
-    console.error('Error fetching encounter summary:', error);
+    logMetricsError('Error fetching encounter summary:', error);
     res.status(500).json({ error: 'Failed to fetch encounter summary' });
   }
 });
@@ -322,7 +341,7 @@ router.get('/user/:userId', async (req: Request, res: Response) => {
 
     res.json(rows[0] || {});
   } catch (error) {
-    console.error('Error fetching user metrics:', error);
+    logMetricsError('Error fetching user metrics:', error);
     res.status(500).json({ error: 'Failed to fetch user metrics' });
   }
 });
@@ -357,7 +376,7 @@ router.get('/achievements/:userId', async (req: Request, res: Response) => {
 
     res.json(rows);
   } catch (error) {
-    console.error('Error fetching achievements:', error);
+    logMetricsError('Error fetching achievements:', error);
     res.status(500).json({ error: 'Failed to fetch achievements' });
   }
 });
@@ -405,7 +424,7 @@ router.post('/benchmarks', async (req: AuthedRequest, res: Response) => {
 
     res.json({ success: true });
   } catch (error) {
-    console.error('Error updating benchmark:', error);
+    logMetricsError('Error updating benchmark:', error);
     res.status(500).json({ error: 'Failed to update benchmark' });
   }
 });

@@ -5,6 +5,7 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 const billCreateSchema = z.object({
   patientId: z.string(),
@@ -37,6 +38,24 @@ const billUpdateSchema = z.object({
 });
 
 export const billsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logBillsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // List bills
 billsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
@@ -230,7 +249,7 @@ billsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "front_desk
     res.status(201).json({ id: billId, billNumber });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error("Create bill error:", error);
+    logBillsError("Create bill error:", error);
     return res.status(500).json({ error: "Failed to create bill" });
   } finally {
     client.release();
@@ -318,7 +337,7 @@ billsRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "front_de
     res.json({ success: true });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error("Update bill error:", error);
+    logBillsError("Update bill error:", error);
     return res.status(500).json({ error: "Failed to update bill" });
   } finally {
     client.release();

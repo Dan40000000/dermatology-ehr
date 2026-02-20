@@ -5,8 +5,27 @@ import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
 import { getRxHistory } from '../services/surescriptsService';
+import { logger } from '../lib/logger';
 
 export const rxHistoryRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logRxHistoryError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Validation schemas
 const createRxHistorySchema = z.object({
@@ -104,7 +123,7 @@ rxHistoryRouter.get('/:patientId', requireAuth, async (req: AuthedRequest, res) 
     try {
       surescriptsData = await getRxHistory(patientId!, tenantId);
     } catch (error) {
-      console.error('Error fetching Surescripts Rx history:', error);
+      logRxHistoryError('Error fetching Surescripts Rx history', error);
     }
 
     return res.json({
@@ -113,7 +132,7 @@ rxHistoryRouter.get('/:patientId', requireAuth, async (req: AuthedRequest, res) 
       totalRecords: result.rows.length,
     });
   } catch (error) {
-    console.error('Error fetching Rx history:', error);
+    logRxHistoryError('Error fetching Rx history', error);
     return res.status(500).json({ error: 'Failed to fetch Rx history' });
   }
 });
@@ -154,7 +173,7 @@ rxHistoryRouter.get('/patient/:patientId/summary', requireAuth, async (req: Auth
 
     return res.json({ summary: result.rows });
   } catch (error) {
-    console.error('Error fetching Rx history summary:', error);
+    logRxHistoryError('Error fetching Rx history summary', error);
     return res.status(500).json({ error: 'Failed to fetch Rx history summary' });
   }
 });
@@ -232,7 +251,7 @@ rxHistoryRouter.post(
 
       return res.status(201).json({ id });
     } catch (error) {
-      console.error('Error creating Rx history record:', error);
+      logRxHistoryError('Error creating Rx history record', error);
       return res.status(500).json({ error: 'Failed to create Rx history record' });
     }
   }
@@ -341,7 +360,7 @@ rxHistoryRouter.post(
         totalAvailable: surescriptsData.medications.length,
       });
     } catch (error) {
-      console.error('Error importing Surescripts Rx history:', error);
+      logRxHistoryError('Error importing Surescripts Rx history', error);
       return res.status(500).json({ error: 'Failed to import Rx history' });
     }
   }
@@ -371,7 +390,7 @@ rxHistoryRouter.delete(
 
       return res.json({ success: true });
     } catch (error) {
-      console.error('Error deleting Rx history record:', error);
+      logRxHistoryError('Error deleting Rx history record', error);
       return res.status(500).json({ error: 'Failed to delete Rx history record' });
     }
   }

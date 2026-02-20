@@ -2,6 +2,7 @@ import path from "path";
 import { PhotoService } from "../photoService";
 import { mkdir, writeFile, unlink } from "fs/promises";
 import sharp from "sharp";
+import { logger } from "../../lib/logger";
 
 let metadataQueue: Array<Record<string, any>> = [];
 
@@ -33,7 +34,17 @@ jest.mock("crypto", () => ({
   randomUUID: jest.fn(() => "photo-uuid"),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const sharpMock = sharp as unknown as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   metadataQueue = [];
@@ -41,6 +52,7 @@ beforeEach(() => {
   (mkdir as jest.Mock).mockClear();
   (writeFile as jest.Mock).mockClear();
   (unlink as jest.Mock).mockClear();
+  loggerMock.error.mockReset();
 });
 
 describe("PhotoService", () => {
@@ -118,6 +130,30 @@ describe("PhotoService", () => {
     expect(stats.totalCount).toBe(3);
     expect(stats.byRegion.face).toBe(2);
     expect(stats.totalSizeMB).toBeCloseTo((1024 + 2048 + 4096) / 1024 / 1024, 6);
+  });
+
+  it("deletePhoto logs safe errors for file deletion failures", async () => {
+    (unlink as jest.Mock)
+      .mockRejectedValueOnce(new Error("photo unlink failed"))
+      .mockResolvedValueOnce(undefined);
+
+    await PhotoService.deletePhoto("/tmp/photo.jpg", "/tmp/thumb.jpg");
+
+    expect(loggerMock.error).toHaveBeenCalledWith("Error deleting photo:", {
+      error: "photo unlink failed",
+    });
+  });
+
+  it("deletePhoto masks non-Error failures", async () => {
+    (unlink as jest.Mock)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce({ reason: "bad thumbnail path" });
+
+    await PhotoService.deletePhoto("/tmp/photo.jpg", "/tmp/thumb.jpg");
+
+    expect(loggerMock.error).toHaveBeenCalledWith("Error deleting thumbnail:", {
+      error: "Unknown error",
+    });
   });
 
   it("validateImageFile enforces type and size", () => {

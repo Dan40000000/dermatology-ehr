@@ -3,6 +3,7 @@ import express from "express";
 import { consentFormsRouter } from "../consentForms";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 // Mock crypto with requireActual to preserve createHash
 jest.mock("crypto", () => ({
@@ -31,16 +32,27 @@ jest.mock("../../services/audit", () => ({
   auditLog: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/consent-forms", consentFormsRouter);
 
 const queryMock = pool.query as jest.Mock;
 const auditLogMock = auditLog as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
   auditLogMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -86,6 +98,21 @@ describe("Consent Forms routes", () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to fetch consent forms");
+      expect(loggerMock.error).toHaveBeenCalledWith("Error fetching consent forms:", {
+        error: "Database error",
+      });
+    });
+
+    it("masks non-Error failures", async () => {
+      queryMock.mockRejectedValueOnce({ tenantId: "tenant-1" });
+
+      const res = await request(app).get("/consent-forms");
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to fetch consent forms");
+      expect(loggerMock.error).toHaveBeenCalledWith("Error fetching consent forms:", {
+        error: "Unknown error",
+      });
     });
   });
 

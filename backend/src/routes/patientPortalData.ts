@@ -5,11 +5,30 @@ import { pool } from "../db/pool";
 import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientPortalAuth";
 import path from "path";
 import fs from "fs";
+import { logger } from "../lib/logger";
 
 export const patientPortalDataRouter = Router();
 
 // All routes require patient authentication
 patientPortalDataRouter.use(requirePatientAuth);
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logPatientPortalDataError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 const checkinStartSchema = z.object({
   appointmentId: z.string().uuid().optional(),
@@ -81,7 +100,7 @@ patientPortalDataRouter.post("/checkin/start", async (req: PatientPortalRequest,
 
     return res.status(201).json({ sessionId, appointmentId });
   } catch (error) {
-    console.error("Start portal check-in error:", error);
+    logPatientPortalDataError("Start portal check-in error", error);
     return res.status(500).json({ error: "Failed to start check-in" });
   }
 });
@@ -157,7 +176,7 @@ patientPortalDataRouter.put("/checkin/:sessionId/demographics", async (req: Pati
 
     return res.json({ success: true });
   } catch (error) {
-    console.error("Portal demographics update error:", error);
+    logPatientPortalDataError("Portal demographics update error", error);
     return res.status(500).json({ error: "Failed to update demographics" });
   }
 });
@@ -202,7 +221,7 @@ patientPortalDataRouter.put("/checkin/:sessionId/complete", async (req: PatientP
 
     return res.json({ success: true, appointmentId });
   } catch (error) {
-    console.error("Complete portal check-in error:", error);
+    logPatientPortalDataError("Complete portal check-in error", error);
     return res.status(500).json({ error: "Failed to complete check-in" });
   }
 });
@@ -247,7 +266,7 @@ patientPortalDataRouter.get("/appointments", async (req: PatientPortalRequest, r
 
     return res.json({ appointments: result.rows });
   } catch (error) {
-    console.error("Get appointments error:", error);
+    logPatientPortalDataError("Get appointments error", error);
     return res.status(500).json({ error: "Failed to get appointments" });
   }
 });
@@ -283,7 +302,7 @@ patientPortalDataRouter.get("/visits", async (req: PatientPortalRequest, res) =>
 
     return res.json({ visits: result.rows });
   } catch (error) {
-    console.error("Get visits error:", error);
+    logPatientPortalDataError("Get visits error", error);
     return res.status(500).json({ error: "Failed to get visit summaries" });
   }
 });
@@ -319,7 +338,7 @@ patientPortalDataRouter.get("/visit-summaries", async (req: PatientPortalRequest
 
     return res.json({ summaries: result.rows });
   } catch (error) {
-    console.error("Get visit summaries error:", error);
+    logPatientPortalDataError("Get visit summaries error", error);
     return res.status(500).json({ error: "Failed to get visit summaries" });
   }
 });
@@ -359,7 +378,7 @@ patientPortalDataRouter.get("/documents", async (req: PatientPortalRequest, res)
 
     return res.json({ documents: result.rows });
   } catch (error) {
-    console.error("Get documents error:", error);
+    logPatientPortalDataError("Get documents error", error);
     return res.status(500).json({ error: "Failed to get documents" });
   }
 });
@@ -416,7 +435,7 @@ patientPortalDataRouter.get("/documents/:id/download", async (req: PatientPortal
     const fileStream = fs.createReadStream(filePath);
     fileStream.pipe(res);
   } catch (error) {
-    console.error("Download document error:", error);
+    logPatientPortalDataError("Download document error", error);
     return res.status(500).json({ error: "Failed to download document" });
   }
 });
@@ -446,7 +465,7 @@ patientPortalDataRouter.get("/prescriptions", async (req: PatientPortalRequest, 
 
     return res.json({ prescriptions: result.rows });
   } catch (error) {
-    console.error("Get prescriptions error:", error);
+    logPatientPortalDataError("Get prescriptions error", error);
     return res.status(500).json({ error: "Failed to get prescriptions" });
   }
 });
@@ -484,7 +503,7 @@ patientPortalDataRouter.get("/vitals", async (req: PatientPortalRequest, res) =>
 
     return res.json({ vitals });
   } catch (error) {
-    console.error("Get vitals error:", error);
+    logPatientPortalDataError("Get vitals error", error);
     return res.status(500).json({ error: "Failed to get vital signs" });
   }
 });
@@ -528,7 +547,7 @@ patientPortalDataRouter.get("/lab-results", async (req: PatientPortalRequest, re
 
     return res.json({ labResults: result.rows });
   } catch (error) {
-    console.error("Get lab results error:", error);
+    logPatientPortalDataError("Get lab results error", error);
     // Return empty array if table doesn't exist
     return res.json({ labResults: [] });
   }
@@ -568,7 +587,7 @@ patientPortalDataRouter.get("/allergies", async (req: PatientPortalRequest, res)
 
     return res.json({ allergies });
   } catch (error) {
-    console.error("Get allergies error:", error);
+    logPatientPortalDataError("Get allergies error", error);
     return res.status(500).json({ error: "Failed to get allergies" });
   }
 });
@@ -606,7 +625,7 @@ patientPortalDataRouter.get("/medications", async (req: PatientPortalRequest, re
 
     return res.json({ medications: result.rows });
   } catch (error) {
-    console.error("Get medications error:", error);
+    logPatientPortalDataError("Get medications error", error);
     return res.status(500).json({ error: "Failed to get medications" });
   }
 });
@@ -701,7 +720,7 @@ patientPortalDataRouter.post("/refill-requests", async (req: PatientPortalReques
 
     return res.status(201).json({ id: requestId, message: "Refill request submitted" });
   } catch (error) {
-    console.error("Create portal refill request error:", error);
+    logPatientPortalDataError("Create portal refill request error", error);
     return res.status(500).json({ error: "Failed to submit refill request" });
   }
 });
@@ -778,7 +797,7 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
       }
     });
   } catch (error) {
-    console.error("Get dashboard error:", error);
+    logPatientPortalDataError("Get dashboard error", error);
     return res.status(500).json({ error: "Failed to get dashboard data" });
   }
 });

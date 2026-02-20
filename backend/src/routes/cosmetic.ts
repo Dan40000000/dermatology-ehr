@@ -4,8 +4,27 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { cosmeticService } from "../services/cosmeticService";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 export const cosmeticRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logCosmeticError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // =============================================================================
 // Validation Schemas
@@ -103,7 +122,7 @@ cosmeticRouter.get("/services", requireAuth, async (req: AuthedRequest, res) => 
     return res.json({ services, count: services.length });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error("Error fetching cosmetic services:", error);
+    logCosmeticError("Error fetching cosmetic services:", error);
     return res.status(500).json({ error: errorMessage });
   }
 });
@@ -126,7 +145,7 @@ cosmeticRouter.get("/services/:id", requireAuth, async (req: AuthedRequest, res)
     return res.json(service);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error("Error fetching service:", error);
+    logCosmeticError("Error fetching service:", error);
     return res.status(500).json({ error: errorMessage });
   }
 });
@@ -155,7 +174,7 @@ cosmeticRouter.get("/packages", requireAuth, async (req: AuthedRequest, res) => 
     return res.json({ packages, count: packages.length });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error("Error fetching packages:", error);
+    logCosmeticError("Error fetching packages:", error);
     return res.status(500).json({ error: errorMessage });
   }
 });
@@ -178,7 +197,7 @@ cosmeticRouter.get("/packages/:id", requireAuth, async (req: AuthedRequest, res)
     return res.json(pkg);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error("Error fetching package:", error);
+    logCosmeticError("Error fetching package:", error);
     return res.status(500).json({ error: errorMessage });
   }
 });
@@ -207,7 +226,7 @@ cosmeticRouter.post(
       return res.status(201).json(pkg);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error creating package:", error);
+      logCosmeticError("Error creating package:", error);
       return res.status(500).json({ error: errorMessage });
     }
   }
@@ -244,7 +263,7 @@ cosmeticRouter.post("/packages/purchase", requireAuth, async (req: AuthedRequest
     return res.status(201).json(patientPackage);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error("Error purchasing package:", error);
+    logCosmeticError("Error purchasing package:", error);
     return res.status(500).json({ error: errorMessage });
   }
 });
@@ -271,7 +290,7 @@ cosmeticRouter.get(
       return res.json({ packages, count: packages.length });
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error fetching patient packages:", error);
+      logCosmeticError("Error fetching patient packages:", error);
       return res.status(500).json({ error: errorMessage });
     }
   }
@@ -315,7 +334,7 @@ cosmeticRouter.post(
       return res.json(updatedPackage);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error redeeming service:", error);
+      logCosmeticError("Error redeeming service:", error);
       return res.status(500).json({ error: errorMessage });
     }
   }
@@ -339,7 +358,7 @@ cosmeticRouter.get("/memberships/plans", requireAuth, async (req: AuthedRequest,
     return res.json({ plans, count: plans.length });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error("Error fetching membership plans:", error);
+    logCosmeticError("Error fetching membership plans:", error);
     return res.status(500).json({ error: errorMessage });
   }
 });
@@ -365,7 +384,7 @@ cosmeticRouter.get(
       return res.json(plan);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error fetching plan:", error);
+      logCosmeticError("Error fetching plan:", error);
       return res.status(500).json({ error: errorMessage });
     }
   }
@@ -402,7 +421,7 @@ cosmeticRouter.post("/memberships/enroll", requireAuth, async (req: AuthedReques
     return res.status(201).json(membership);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error("Error enrolling membership:", error);
+    logCosmeticError("Error enrolling membership:", error);
     return res.status(500).json({ error: errorMessage });
   }
 });
@@ -424,7 +443,7 @@ cosmeticRouter.get(
       return res.json({ membership });
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error fetching patient membership:", error);
+      logCosmeticError("Error fetching patient membership:", error);
       return res.status(500).json({ error: errorMessage });
     }
   }
@@ -462,7 +481,7 @@ cosmeticRouter.post(
       return res.json(membership);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error cancelling membership:", error);
+      logCosmeticError("Error cancelling membership:", error);
       return res.status(500).json({ error: errorMessage });
     }
   }
@@ -504,7 +523,7 @@ cosmeticRouter.post(
       return res.json(membership);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error pausing membership:", error);
+      logCosmeticError("Error pausing membership:", error);
       return res.status(500).json({ error: errorMessage });
     }
   }
@@ -531,7 +550,7 @@ cosmeticRouter.get(
       return res.json(loyalty);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error fetching loyalty balance:", error);
+      logCosmeticError("Error fetching loyalty balance:", error);
       return res.status(500).json({ error: errorMessage });
     }
   }
@@ -559,7 +578,7 @@ cosmeticRouter.get(
       return res.json({ transactions, count: transactions.length });
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error fetching loyalty transactions:", error);
+      logCosmeticError("Error fetching loyalty transactions:", error);
       return res.status(500).json({ error: errorMessage });
     }
   }
@@ -596,7 +615,7 @@ cosmeticRouter.post("/loyalty/earn", requireAuth, async (req: AuthedRequest, res
     return res.status(201).json(transaction);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error("Error earning points:", error);
+    logCosmeticError("Error earning points:", error);
     return res.status(500).json({ error: errorMessage });
   }
 });
@@ -632,7 +651,7 @@ cosmeticRouter.post("/loyalty/redeem", requireAuth, async (req: AuthedRequest, r
     return res.json(transaction);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error("Error redeeming points:", error);
+    logCosmeticError("Error redeeming points:", error);
     return res.status(500).json({ error: errorMessage });
   }
 });
@@ -667,7 +686,7 @@ cosmeticRouter.post(
       return res.json(discount);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("Error calculating discount:", error);
+      logCosmeticError("Error calculating discount:", error);
       return res.status(500).json({ error: errorMessage });
     }
   }

@@ -12,6 +12,7 @@ import { requireRoles } from '../middleware/rbac';
 import { PatientPortalRequest, requirePatientAuth } from '../middleware/patientPortalAuth';
 import { asyncCareService } from '../services/asyncCareService';
 import { env } from '../config/env';
+import { logger } from '../lib/logger';
 
 // ============================================================================
 // VALIDATION SCHEMAS
@@ -94,6 +95,24 @@ const upload = multer({
 
 export const asyncCareRouter = Router();
 
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logAsyncCareError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
+
 // ============================================================================
 // PATIENT PORTAL ROUTES
 // ============================================================================
@@ -121,7 +140,7 @@ asyncCareRouter.post('/requests', requirePatientAuth, async (req: PatientPortalR
 
     res.status(201).json({ request });
   } catch (error: any) {
-    console.error('Error creating async care request:', error);
+    logAsyncCareError('Error creating async care request', error);
     res.status(500).json({ error: 'Failed to create request' });
   }
 });
@@ -159,7 +178,7 @@ asyncCareRouter.post(
 
       res.status(201).json({ photo });
     } catch (error: any) {
-      console.error('Error uploading photo:', error);
+      logAsyncCareError('Error uploading photo', error);
       res.status(500).json({ error: error.message || 'Failed to upload photo' });
     }
   }
@@ -186,7 +205,7 @@ asyncCareRouter.delete(
 
       res.json({ success: true });
     } catch (error: any) {
-      console.error('Error deleting photo:', error);
+      logAsyncCareError('Error deleting photo', error);
       res.status(500).json({ error: 'Failed to delete photo' });
     }
   }
@@ -205,7 +224,7 @@ asyncCareRouter.get('/patient/requests', requirePatientAuth, async (req: Patient
 
     res.json({ requests });
   } catch (error: any) {
-    console.error('Error fetching patient requests:', error);
+    logAsyncCareError('Error fetching patient requests', error);
     res.status(500).json({ error: 'Failed to fetch requests' });
   }
 });
@@ -240,7 +259,7 @@ asyncCareRouter.get('/patient/requests/:id', requirePatientAuth, async (req: Pat
 
     res.json({ request });
   } catch (error: any) {
-    console.error('Error fetching request:', error);
+    logAsyncCareError('Error fetching request', error);
     res.status(500).json({ error: 'Failed to fetch request' });
   }
 });
@@ -261,7 +280,7 @@ asyncCareRouter.put(
 
       res.json({ success: true });
     } catch (error: any) {
-      console.error('Error marking response as read:', error);
+      logAsyncCareError('Error marking response as read', error);
       res.status(500).json({ error: 'Failed to mark as read' });
     }
   }
@@ -280,7 +299,7 @@ asyncCareRouter.get('/templates', requirePatientAuth, async (req: PatientPortalR
 
     res.json({ templates });
   } catch (error: any) {
-    console.error('Error fetching templates:', error);
+    logAsyncCareError('Error fetching templates', error);
     res.status(500).json({ error: 'Failed to fetch templates' });
   }
 });
@@ -302,7 +321,7 @@ asyncCareRouter.get('/templates/:id', requirePatientAuth, async (req: PatientPor
 
     res.json({ template });
   } catch (error: any) {
-    console.error('Error fetching template:', error);
+    logAsyncCareError('Error fetching template', error);
     res.status(500).json({ error: 'Failed to fetch template' });
   }
 });
@@ -341,7 +360,7 @@ asyncCareRouter.get(
 
       res.json({ requests, total });
     } catch (error: any) {
-      console.error('Error fetching queue:', error);
+      logAsyncCareError('Error fetching queue', error);
       res.status(500).json({ error: 'Failed to fetch queue' });
     }
   }
@@ -371,7 +390,7 @@ asyncCareRouter.get(
 
       res.json({ request });
     } catch (error: any) {
-      console.error('Error fetching request:', error);
+      logAsyncCareError('Error fetching request', error);
       res.status(500).json({ error: 'Failed to fetch request' });
     }
   }
@@ -407,7 +426,7 @@ asyncCareRouter.put(
 
       res.json({ request });
     } catch (error: any) {
-      console.error('Error assigning request:', error);
+      logAsyncCareError('Error assigning request', error);
       res.status(500).json({ error: 'Failed to assign request' });
     }
   }
@@ -454,7 +473,7 @@ asyncCareRouter.post(
 
       res.status(201).json({ response });
     } catch (error: any) {
-      console.error('Error submitting response:', error);
+      logAsyncCareError('Error submitting response', error);
       res.status(500).json({ error: 'Failed to submit response' });
     }
   }
@@ -492,7 +511,7 @@ asyncCareRouter.put(
 
       res.json({ request });
     } catch (error: any) {
-      console.error('Error updating status:', error);
+      logAsyncCareError('Error updating status', error);
       res.status(500).json({ error: 'Failed to update status' });
     }
   }
@@ -524,7 +543,7 @@ asyncCareRouter.post(
 
       res.json(result);
     } catch (error: any) {
-      console.error('Error escalating request:', error);
+      logAsyncCareError('Error escalating request', error);
       res.status(500).json({ error: error.message || 'Failed to escalate request' });
     }
   }
@@ -547,7 +566,7 @@ asyncCareRouter.get(
 
       res.json({ requests });
     } catch (error: any) {
-      console.error('Error fetching patient requests:', error);
+      logAsyncCareError('Error fetching patient requests', error);
       res.status(500).json({ error: 'Failed to fetch requests' });
     }
   }
@@ -609,7 +628,7 @@ asyncCareRouter.get(
 
       res.json(stats);
     } catch (error: any) {
-      console.error('Error fetching stats:', error);
+      logAsyncCareError('Error fetching stats', error);
       res.status(500).json({ error: 'Failed to fetch statistics' });
     }
   }

@@ -3,6 +3,7 @@ import express from "express";
 import crypto from "crypto";
 import { rxChangeRequestsRouter } from "../rxChangeRequests";
 import { pool } from "../../db/pool";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -21,6 +22,15 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
   randomUUID: jest.fn(() => "uuid-1"),
@@ -32,6 +42,7 @@ app.use("/rx-change-requests", rxChangeRequestsRouter);
 
 const queryMock = pool.query as jest.Mock;
 const randomUUIDMock = crypto.randomUUID as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const patientId = "11111111-1111-4111-8111-111111111111";
 const rxId = "22222222-2222-4222-8222-222222222222";
@@ -39,6 +50,7 @@ const rxId = "22222222-2222-4222-8222-222222222222";
 beforeEach(() => {
   queryMock.mockReset();
   randomUUIDMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
   randomUUIDMock.mockReturnValue("uuid-1");
 });
@@ -51,6 +63,30 @@ describe("Rx change request routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.rxChangeRequests).toHaveLength(1);
+  });
+
+  it("GET /rx-change-requests logs sanitized Error failures", async () => {
+    queryMock.mockRejectedValueOnce(new Error("rx change list failed"));
+
+    const res = await request(app).get("/rx-change-requests");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch Rx change requests");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching Rx change requests:", {
+      error: "rx change list failed",
+    });
+  });
+
+  it("GET /rx-change-requests masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ ssn: "123-45-6789" });
+
+    const res = await request(app).get("/rx-change-requests");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch Rx change requests");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching Rx change requests:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /rx-change-requests/:id returns 404", async () => {

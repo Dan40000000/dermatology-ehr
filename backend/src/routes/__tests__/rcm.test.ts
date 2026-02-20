@@ -2,6 +2,7 @@ import request from "supertest";
 import express from "express";
 import { rcmRouter } from "../rcm";
 import { RCMAnalyticsService } from "../../services/rcmAnalytics";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -25,11 +26,21 @@ jest.mock("../../services/rcmAnalytics", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/rcm", rcmRouter);
 
 const rcmMock = RCMAnalyticsService as jest.Mocked<typeof RCMAnalyticsService>;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   rcmMock.calculateKPIs.mockReset();
@@ -42,6 +53,7 @@ beforeEach(() => {
   rcmMock.getProviderProductivity.mockReset();
   rcmMock.getActionItems.mockReset();
   rcmMock.getFinancialEvents.mockReset();
+  loggerMock.error.mockReset();
 });
 
 describe("RCM routes", () => {
@@ -59,6 +71,30 @@ describe("RCM routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.kpis.arDays).toBe(30);
     expect(res.body.alerts).toHaveLength(1);
+  });
+
+  it("GET /rcm/dashboard logs sanitized Error failures", async () => {
+    rcmMock.calculateKPIs.mockRejectedValueOnce(new Error("dashboard failed"));
+
+    const res = await request(app).get("/rcm/dashboard");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch RCM dashboard data");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching RCM dashboard:", {
+      error: "dashboard failed",
+    });
+  });
+
+  it("GET /rcm/dashboard masks non-Error failures", async () => {
+    rcmMock.calculateKPIs.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+    const res = await request(app).get("/rcm/dashboard");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch RCM dashboard data");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching RCM dashboard:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /rcm/kpis requires date ranges", async () => {

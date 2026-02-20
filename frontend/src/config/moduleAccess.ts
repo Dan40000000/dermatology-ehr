@@ -10,6 +10,7 @@ export type ModuleKey =
   | 'waitlist'
   | 'patients'
   | 'notes'
+  | 'ambient_scribe'
   | 'orders'
   | 'rx'
   | 'epa'
@@ -52,6 +53,7 @@ export const MODULE_ACCESS: Record<ModuleKey, Role[]> = {
   waitlist: ['admin', 'provider', 'ma', 'front_desk'],
   patients: ['admin', 'provider', 'ma', 'front_desk'],
   notes: ['admin', 'provider', 'ma'],
+  ambient_scribe: ['admin', 'provider', 'ma'],
   orders: ['admin', 'provider'],
   rx: ['admin', 'provider'],
   epa: ['admin', 'provider'],
@@ -121,6 +123,7 @@ export const MODULE_PATHS: Array<{ path: string; module: ModuleKey }> = [
   { path: '/prior-auth', module: 'epa' },
   { path: '/rx', module: 'rx' },
   { path: '/orders', module: 'orders' },
+  { path: '/ambient-scribe', module: 'ambient_scribe' },
   { path: '/notes', module: 'notes' },
   { path: '/patients', module: 'patients' },
   { path: '/waitlist', module: 'waitlist' },

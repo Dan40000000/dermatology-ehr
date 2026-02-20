@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { logger } from "../lib/logger";
 import {
   generateAppointmentReport,
   generateFinancialReport,
@@ -15,6 +16,24 @@ import {
 } from "../services/reportService";
 
 export const reportsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logReportsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 const reportFiltersSchema = z.object({
   startDate: z.string().optional(),
@@ -74,7 +93,7 @@ reportsRouter.post(
 
       return res.json({ data, count: data.length });
     } catch (error) {
-      console.error("Error generating appointment report:", error);
+      logReportsError("Error generating appointment report:", error);
       return res.status(500).json({ error: "Failed to generate report" });
     }
   }
@@ -133,7 +152,7 @@ reportsRouter.post(
 
       return res.json({ data, summary, count: data.length });
     } catch (error) {
-      console.error("Error generating financial report:", error);
+      logReportsError("Error generating financial report:", error);
       return res.status(500).json({ error: "Failed to generate report" });
     }
   }
@@ -180,7 +199,7 @@ reportsRouter.post(
 
       return res.json({ data, count: data.length });
     } catch (error) {
-      console.error("Error generating clinical report:", error);
+      logReportsError("Error generating clinical report:", error);
       return res.status(500).json({ error: "Failed to generate report" });
     }
   }
@@ -225,7 +244,7 @@ reportsRouter.post(
 
       return res.json({ data, count: data.length });
     } catch (error) {
-      console.error("Error generating patient list report:", error);
+      logReportsError("Error generating patient list report:", error);
       return res.status(500).json({ error: "Failed to generate report" });
     }
   }
@@ -273,7 +292,7 @@ reportsRouter.post(
 
       return res.json({ data, count: data.length });
     } catch (error) {
-      console.error("Error generating productivity report:", error);
+      logReportsError("Error generating productivity report:", error);
       return res.status(500).json({ error: "Failed to generate report" });
     }
   }
@@ -342,7 +361,7 @@ reportsRouter.post(
         totalAppointments: total,
       });
     } catch (error) {
-      console.error("Error generating no-show report:", error);
+      logReportsError("Error generating no-show report:", error);
       return res.status(500).json({ error: "Failed to generate report" });
     }
   }

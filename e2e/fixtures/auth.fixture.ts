@@ -630,6 +630,85 @@ async function installMockDataRoutes(page: Page) {
   };
 
   const smsState = {
+    settings: {
+      id: 'sms-settings-smoke-1',
+      tenantId: 'tenant-demo',
+      twilioPhoneNumber: '+15555550100',
+      appointmentRemindersEnabled: true,
+      reminderHoursBefore: 24,
+      allowPatientReplies: true,
+      reminderTemplate: 'Hi {patientName}, this is a reminder for {date} at {time}.',
+      confirmationTemplate: 'Reply YES to confirm your appointment.',
+      cancellationTemplate: 'Reply NO to cancel your appointment.',
+      rescheduleTemplate: 'Reply RESCHEDULE and our team will contact you.',
+      isActive: true,
+      isTestMode: true,
+      createdAt: seededAppointmentStart.toISOString(),
+      updatedAt: seededAppointmentStart.toISOString(),
+    } as {
+      id: string;
+      tenantId: string;
+      twilioPhoneNumber: string;
+      appointmentRemindersEnabled: boolean;
+      reminderHoursBefore: number;
+      allowPatientReplies: boolean;
+      reminderTemplate: string;
+      confirmationTemplate: string;
+      cancellationTemplate: string;
+      rescheduleTemplate: string;
+      isActive: boolean;
+      isTestMode: boolean;
+      createdAt: string;
+      updatedAt: string;
+    },
+    autoResponses: [
+      {
+        id: 'sms-rule-stop',
+        keyword: 'STOP',
+        responseText: 'You are now unsubscribed from SMS messages.',
+        action: 'unsubscribe',
+        isActive: true,
+        isSystemKeyword: true,
+        priority: 100,
+        createdAt: seededAppointmentStart.toISOString(),
+      },
+      {
+        id: 'sms-rule-help',
+        keyword: 'HELP',
+        responseText: 'Reply STOP to opt out. Reply START to re-subscribe.',
+        action: 'help',
+        isActive: true,
+        isSystemKeyword: false,
+        priority: 50,
+        createdAt: seededAppointmentStart.toISOString(),
+      },
+    ] as Array<{
+      id: string;
+      keyword: string;
+      responseText: string;
+      action: string;
+      isActive: boolean;
+      isSystemKeyword: boolean;
+      priority: number;
+      createdAt: string;
+    }>,
+    patientPreferences: {
+      [SEEDED_PATIENT.id]: {
+        optedIn: true,
+        appointmentReminders: true,
+        marketingMessages: false,
+        transactionalMessages: true,
+      },
+    } as Record<
+      string,
+      {
+        optedIn: boolean;
+        appointmentReminders: boolean;
+        marketingMessages: boolean;
+        transactionalMessages: boolean;
+        optedOutAt?: string;
+      }
+    >,
     templates: [
       {
         id: 'sms-template-smoke-1',
@@ -2681,8 +2760,10 @@ async function installMockDataRoutes(page: Page) {
       const conversations = smsState.conversations.map((conversation) => {
         const messages = smsState.messagesByPatient[conversation.patientId] || [];
         const latestMessage = messages[messages.length - 1];
+        const patientPrefs = smsState.patientPreferences[conversation.patientId];
         const consent = smsState.consentByPatient[conversation.patientId];
-        const hasConsent = consent?.hasConsent ?? conversation.smsOptIn;
+        const optedIn = patientPrefs?.optedIn ?? conversation.smsOptIn;
+        const hasConsent = consent?.hasConsent ?? optedIn;
         return {
           ...conversation,
           smsOptIn: hasConsent,
@@ -2696,6 +2777,240 @@ async function installMockDataRoutes(page: Page) {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({ conversations }),
+      });
+      return;
+    }
+
+    if (method === 'GET' && path === '/api/sms/settings') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(smsState.settings),
+      });
+      return;
+    }
+
+    if (method === 'PUT' && path === '/api/sms/settings') {
+      let payload: Partial<{
+        twilioPhoneNumber: string;
+        appointmentRemindersEnabled: boolean;
+        reminderHoursBefore: number;
+        allowPatientReplies: boolean;
+        reminderTemplate: string;
+        confirmationTemplate: string;
+        cancellationTemplate: string;
+        rescheduleTemplate: string;
+        isActive: boolean;
+        isTestMode: boolean;
+      }> = {};
+      try {
+        payload = request.postDataJSON() as Partial<{
+          twilioPhoneNumber: string;
+          appointmentRemindersEnabled: boolean;
+          reminderHoursBefore: number;
+          allowPatientReplies: boolean;
+          reminderTemplate: string;
+          confirmationTemplate: string;
+          cancellationTemplate: string;
+          rescheduleTemplate: string;
+          isActive: boolean;
+          isTestMode: boolean;
+        }>;
+      } catch {
+        payload = {};
+      }
+
+      const hasValidUpdate = Object.values(payload).some((value) => value !== undefined);
+      if (!hasValidUpdate) {
+        await route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'No updates provided' }),
+        });
+        return;
+      }
+
+      if (
+        payload.reminderHoursBefore !== undefined &&
+        (payload.reminderHoursBefore < 1 || payload.reminderHoursBefore > 168)
+      ) {
+        await route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Reminder hours must be between 1 and 168' }),
+        });
+        return;
+      }
+
+      smsState.settings = {
+        ...smsState.settings,
+        ...payload,
+        updatedAt: new Date().toISOString(),
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+      return;
+    }
+
+    if (method === 'GET' && path === '/api/sms/auto-responses') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          autoResponses: [...smsState.autoResponses].sort((a, b) => b.priority - a.priority),
+        }),
+      });
+      return;
+    }
+
+    const autoResponseRouteMatch = path.match(/^\/api\/sms\/auto-responses\/([^/]+)$/);
+    if (method === 'PUT' && autoResponseRouteMatch) {
+      const autoResponseId = autoResponseRouteMatch[1];
+      const rule = smsState.autoResponses.find((item) => item.id === autoResponseId);
+
+      if (!rule) {
+        await route.fulfill({
+          status: 404,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Auto-response not found' }),
+        });
+        return;
+      }
+
+      let payload: Partial<{
+        responseText: string;
+        isActive: boolean;
+      }> = {};
+      try {
+        payload = request.postDataJSON() as Partial<{
+          responseText: string;
+          isActive: boolean;
+        }>;
+      } catch {
+        payload = {};
+      }
+
+      if (rule.isSystemKeyword && typeof payload.responseText === 'string') {
+        await route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            error: 'Cannot modify response text of system keywords (STOP, START, HELP)',
+          }),
+        });
+        return;
+      }
+
+      const hasValidUpdate = payload.responseText !== undefined || payload.isActive !== undefined;
+      if (!hasValidUpdate) {
+        await route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'No updates provided' }),
+        });
+        return;
+      }
+
+      if (typeof payload.responseText === 'string') {
+        rule.responseText = payload.responseText;
+      }
+      if (typeof payload.isActive === 'boolean') {
+        rule.isActive = payload.isActive;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+      return;
+    }
+
+    const patientPreferencesMatch = path.match(/^\/api\/sms\/patient-preferences\/([^/]+)$/);
+    if (method === 'GET' && patientPreferencesMatch) {
+      const patientId = patientPreferencesMatch[1];
+      const prefs = smsState.patientPreferences[patientId] || {
+        optedIn: true,
+        appointmentReminders: true,
+        marketingMessages: false,
+        transactionalMessages: true,
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(prefs),
+      });
+      return;
+    }
+
+    if (method === 'PUT' && patientPreferencesMatch) {
+      const patientId = patientPreferencesMatch[1];
+      let payload: Partial<{
+        optedIn: boolean;
+        appointmentReminders: boolean;
+        marketingMessages: boolean;
+      }> = {};
+      try {
+        payload = request.postDataJSON() as Partial<{
+          optedIn: boolean;
+          appointmentReminders: boolean;
+          marketingMessages: boolean;
+        }>;
+      } catch {
+        payload = {};
+      }
+
+      const existing = smsState.patientPreferences[patientId] || {
+        optedIn: true,
+        appointmentReminders: true,
+        marketingMessages: false,
+        transactionalMessages: true,
+      };
+
+      let optedOutAt = existing.optedOutAt;
+      if (payload.optedIn === false) {
+        optedOutAt = new Date().toISOString();
+      } else if (payload.optedIn === true) {
+        optedOutAt = undefined;
+      }
+
+      smsState.patientPreferences[patientId] = {
+        ...existing,
+        ...payload,
+        optedOutAt,
+      };
+
+      const conversation = smsState.conversations.find((item) => item.patientId === patientId);
+      if (conversation && payload.optedIn !== undefined) {
+        conversation.smsOptIn = payload.optedIn;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+      return;
+    }
+
+    if (method === 'POST' && path === '/api/sms/workflow/process-reminders') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, processed: 1, sent: 1, failed: 0 }),
+      });
+      return;
+    }
+
+    if (method === 'POST' && path === '/api/sms/workflow/process-followups') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, processed: 1, sent: 1, failed: 0 }),
       });
       return;
     }

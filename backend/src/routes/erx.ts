@@ -18,8 +18,27 @@ import {
   checkDrugAllergyInteractions,
   comprehensiveSafetyCheck,
 } from '../services/drugInteractionService';
+import { logger } from '../lib/logger';
 
 export const erxRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logErxError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // ============================================================================
 // Drug Database Search
@@ -98,7 +117,7 @@ erxRouter.get('/drugs/search', requireAuth, async (req: AuthedRequest, res) => {
       query: q,
     });
   } catch (error) {
-    console.error('Error searching drugs:', error);
+    logErxError('Error searching drugs:', error);
     return res.status(500).json({ error: 'Failed to search drugs' });
   }
 });
@@ -121,7 +140,7 @@ erxRouter.get('/drugs/:id', requireAuth, async (req: AuthedRequest, res) => {
 
     return res.json({ drug: result.rows[0] });
   } catch (error) {
-    console.error('Error fetching drug:', error);
+    logErxError('Error fetching drug:', error);
     return res.status(500).json({ error: 'Failed to fetch drug' });
   }
 });
@@ -142,7 +161,7 @@ erxRouter.get('/drugs/list/categories', requireAuth, async (_req: AuthedRequest,
       categories: result.rows.map(r => r.category),
     });
   } catch (error) {
-    console.error('Error fetching categories:', error);
+    logErxError('Error fetching categories:', error);
     return res.status(500).json({ error: 'Failed to fetch categories' });
   }
 });
@@ -240,7 +259,7 @@ erxRouter.get('/pharmacies/search', requireAuth, async (req: AuthedRequest, res)
       searchType: 'text',
     });
   } catch (error) {
-    console.error('Error searching pharmacies:', error);
+    logErxError('Error searching pharmacies:', error);
     return res.status(500).json({ error: 'Failed to search pharmacies' });
   }
 });
@@ -264,7 +283,7 @@ erxRouter.get('/pharmacies/preferred', requireAuth, async (_req: AuthedRequest, 
       count: result.rows.length,
     });
   } catch (error) {
-    console.error('Error fetching preferred pharmacies:', error);
+    logErxError('Error fetching preferred pharmacies:', error);
     return res.status(500).json({ error: 'Failed to fetch preferred pharmacies' });
   }
 });
@@ -287,7 +306,7 @@ erxRouter.get('/pharmacies/ncpdp/:ncpdpId', requireAuth, async (req: AuthedReque
 
     return res.json({ pharmacy: result.rows[0] });
   } catch (error) {
-    console.error('Error fetching pharmacy:', error);
+    logErxError('Error fetching pharmacy:', error);
     return res.status(500).json({ error: 'Failed to fetch pharmacy' });
   }
 });
@@ -342,7 +361,7 @@ erxRouter.get(
         try {
           externalHistory = await getRxHistory(patientId!, tenantId);
         } catch (error) {
-          console.error('Error fetching external Rx history:', error);
+          logErxError('Error fetching external Rx history:', error);
         }
       }
 
@@ -352,7 +371,7 @@ erxRouter.get(
         combinedCount: prescriptions.rows.length + externalHistory.medications.length,
       });
     } catch (error) {
-      console.error('Error fetching medication history:', error);
+      logErxError('Error fetching medication history:', error);
       return res.status(500).json({ error: 'Failed to fetch medication history' });
     }
   }
@@ -391,7 +410,7 @@ erxRouter.get(
         count: result.rows.length,
       });
     } catch (error) {
-      console.error('Error fetching current medications:', error);
+      logErxError('Error fetching current medications:', error);
       return res.status(500).json({ error: 'Failed to fetch current medications' });
     }
   }
@@ -428,7 +447,7 @@ erxRouter.post('/check-interactions', requireAuth, async (req: AuthedRequest, re
       hasSevere: interactions.some(i => i.severity === 'contraindicated' || i.severity === 'major'),
     });
   } catch (error) {
-    console.error('Error checking interactions:', error);
+    logErxError('Error checking interactions:', error);
     return res.status(500).json({ error: 'Failed to check interactions' });
   }
 });
@@ -460,7 +479,7 @@ erxRouter.post('/check-allergies', requireAuth, async (req: AuthedRequest, res) 
       hasAllergy: allergies.length > 0,
     });
   } catch (error) {
-    console.error('Error checking allergies:', error);
+    logErxError('Error checking allergies:', error);
     return res.status(500).json({ error: 'Failed to check allergies' });
   }
 });
@@ -489,7 +508,7 @@ erxRouter.post('/safety-check', requireAuth, async (req: AuthedRequest, res) => 
 
     return res.json(safetyCheck);
   } catch (error) {
-    console.error('Error performing safety check:', error);
+    logErxError('Error performing safety check:', error);
     return res.status(500).json({ error: 'Failed to perform safety check' });
   }
 });
@@ -510,7 +529,7 @@ erxRouter.post('/check-formulary', requireAuth, async (req: AuthedRequest, res) 
 
     return res.json(formularyResult);
   } catch (error) {
-    console.error('Error checking formulary:', error);
+    logErxError('Error checking formulary:', error);
     return res.status(500).json({ error: 'Failed to check formulary' });
   }
 });
@@ -547,7 +566,7 @@ erxRouter.get(
 
       return res.json(benefits);
     } catch (error) {
-      console.error('Error fetching patient benefits:', error);
+      logErxError('Error fetching patient benefits:', error);
       return res.status(500).json({ error: 'Failed to fetch patient benefits' });
     }
   }
@@ -583,7 +602,7 @@ erxRouter.get(
         count: result.rows.length,
       });
     } catch (error) {
-      console.error('Error fetching allergies:', error);
+      logErxError('Error fetching allergies:', error);
       return res.status(500).json({ error: 'Failed to fetch allergies' });
     }
   }

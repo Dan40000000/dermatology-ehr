@@ -5,6 +5,7 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 const patientPaymentCreateSchema = z.object({
   patientId: z.string(),
@@ -32,6 +33,24 @@ const patientPaymentUpdateSchema = z.object({
 });
 
 export const patientPaymentsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logPatientPaymentsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // List all patient payments with filters
 patientPaymentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
@@ -466,7 +485,7 @@ patientPaymentsRouter.get("/plans/list", requireAuth, async (req: AuthedRequest,
     const result = await pool.query(query, params);
     res.json({ paymentPlans: result.rows });
   } catch (error) {
-    console.error("Error fetching payment plans:", error);
+    logPatientPaymentsError("Error fetching payment plans", error);
     res.status(500).json({ error: "Failed to fetch payment plans" });
   }
 });
@@ -512,7 +531,7 @@ patientPaymentsRouter.post("/plans", requireAuth, requireRoles(["admin", "billin
     await auditLog(tenantId, req.user!.id, "payment_plan_create", "payment_plan", planId);
     res.status(201).json({ id: planId });
   } catch (error) {
-    console.error("Error creating payment plan:", error);
+    logPatientPaymentsError("Error creating payment plan", error);
     res.status(500).json({ error: "Failed to create payment plan" });
   }
 });
@@ -611,7 +630,7 @@ patientPaymentsRouter.post("/plans/:id/pay", requireAuth, requireRoles(["admin",
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error("Error processing payment plan payment:", error);
+    logPatientPaymentsError("Error processing payment plan payment", error);
     res.status(500).json({ error: "Failed to process payment" });
   } finally {
     client.release();
@@ -642,7 +661,7 @@ patientPaymentsRouter.put("/plans/:id/cancel", requireAuth, requireRoles(["admin
     await auditLog(tenantId, req.user!.id, "payment_plan_cancel", "payment_plan", planId);
     res.json({ success: true });
   } catch (error) {
-    console.error("Error cancelling payment plan:", error);
+    logPatientPaymentsError("Error cancelling payment plan", error);
     res.status(500).json({ error: "Failed to cancel payment plan" });
   }
 });
@@ -704,7 +723,7 @@ patientPaymentsRouter.post("/text-to-pay/send", requireAuth, requireRoles(["admi
       expiresAt: expiresAt.toISOString(),
     });
   } catch (error) {
-    console.error("Error sending text-to-pay:", error);
+    logPatientPaymentsError("Error sending text-to-pay", error);
     res.status(500).json({ error: "Failed to send text-to-pay link" });
   }
 });
@@ -752,7 +771,7 @@ patientPaymentsRouter.get("/text-to-pay/list", requireAuth, async (req: AuthedRe
     const result = await pool.query(query, params);
     res.json({ textToPayLinks: result.rows });
   } catch (error) {
-    console.error("Error fetching text-to-pay links:", error);
+    logPatientPaymentsError("Error fetching text-to-pay links", error);
     res.status(500).json({ error: "Failed to fetch text-to-pay links" });
   }
 });
@@ -787,7 +806,7 @@ patientPaymentsRouter.get("/saved-methods/:patientId", requireAuth, async (req: 
 
     res.json({ savedMethods: result.rows });
   } catch (error) {
-    console.error("Error fetching saved payment methods:", error);
+    logPatientPaymentsError("Error fetching saved payment methods", error);
     res.status(500).json({ error: "Failed to fetch saved payment methods" });
   }
 });
@@ -829,7 +848,7 @@ patientPaymentsRouter.post("/saved-methods", requireAuth, requireRoles(["admin",
     res.status(201).json({ id: methodId });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error("Error adding saved payment method:", error);
+    logPatientPaymentsError("Error adding saved payment method", error);
     res.status(500).json({ error: "Failed to add saved payment method" });
   } finally {
     client.release();
@@ -858,7 +877,7 @@ patientPaymentsRouter.put("/saved-methods/:id/autopay", requireAuth, requireRole
     await auditLog(tenantId, req.user!.id, enabled ? "autopay_enable" : "autopay_disable", "saved_payment_method", methodId);
     res.json({ success: true });
   } catch (error) {
-    console.error("Error updating autopay:", error);
+    logPatientPaymentsError("Error updating autopay", error);
     res.status(500).json({ error: "Failed to update autopay" });
   }
 });
@@ -885,7 +904,7 @@ patientPaymentsRouter.delete("/saved-methods/:id", requireAuth, requireRoles(["a
     await auditLog(tenantId, req.user!.id, "saved_method_delete", "saved_payment_method", methodId);
     res.json({ success: true });
   } catch (error) {
-    console.error("Error deleting saved payment method:", error);
+    logPatientPaymentsError("Error deleting saved payment method", error);
     res.status(500).json({ error: "Failed to delete saved payment method" });
   }
 });
@@ -927,7 +946,7 @@ patientPaymentsRouter.post("/quick-pay/create", requireAuth, requireRoles(["admi
       expiresAt: expiresAt.toISOString(),
     });
   } catch (error) {
-    console.error("Error creating quick pay link:", error);
+    logPatientPaymentsError("Error creating quick pay link", error);
     res.status(500).json({ error: "Failed to create quick pay link" });
   }
 });
@@ -967,7 +986,7 @@ patientPaymentsRouter.get("/quick-pay/list", requireAuth, async (req: AuthedRequ
     const result = await pool.query(query, params);
     res.json({ quickPayLinks: result.rows });
   } catch (error) {
-    console.error("Error fetching quick pay links:", error);
+    logPatientPaymentsError("Error fetching quick pay links", error);
     res.status(500).json({ error: "Failed to fetch quick pay links" });
   }
 });

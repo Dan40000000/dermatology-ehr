@@ -2,6 +2,7 @@ import request from "supertest";
 import express from "express";
 import { pdmpRouter } from "../pdmp";
 import { pool } from "../../db/pool";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -16,14 +17,25 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/pdmp", pdmpRouter);
 
 const queryMock = pool.query as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
 });
 
@@ -74,6 +86,22 @@ describe("PDMP routes", () => {
     });
 
     expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith("Error checking PDMP:", {
+      error: "boom",
+    });
+  });
+
+  it("POST /pdmp/check masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ patientDob: "1990-01-01" });
+
+    const res = await request(app).post("/pdmp/check").send({
+      patientId: "patient-1",
+    });
+
+    expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith("Error checking PDMP:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /pdmp/patients/:patientId/last-check returns null when missing", async () => {

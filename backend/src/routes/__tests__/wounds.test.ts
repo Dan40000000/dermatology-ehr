@@ -4,6 +4,7 @@ import crypto from "crypto";
 import woundsRouter from "../wounds";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -26,6 +27,15 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
   randomUUID: jest.fn(() => "uuid-1"),
@@ -38,11 +48,13 @@ app.use("/wounds", woundsRouter);
 const queryMock = pool.query as jest.Mock;
 const randomUUIDMock = crypto.randomUUID as jest.Mock;
 const auditLogMock = auditLog as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
   randomUUIDMock.mockReset();
   auditLogMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
   randomUUIDMock.mockReturnValue("uuid-1");
 });
@@ -55,6 +67,30 @@ describe("Wound routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.wounds).toHaveLength(1);
+  });
+
+  it("GET /wounds logs sanitized Error failures", async () => {
+    queryMock.mockRejectedValueOnce(new Error("wounds lookup failed"));
+
+    const res = await request(app).get("/wounds");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to retrieve wounds");
+    expect(loggerMock.error).toHaveBeenCalledWith("Get wounds error:", {
+      error: "wounds lookup failed",
+    });
+  });
+
+  it("GET /wounds masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+    const res = await request(app).get("/wounds");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to retrieve wounds");
+    expect(loggerMock.error).toHaveBeenCalledWith("Get wounds error:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /wounds/:id returns 404 when missing", async () => {

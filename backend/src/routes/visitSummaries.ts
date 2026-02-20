@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { logger } from "../lib/logger";
 
 const createVisitSummarySchema = z.object({
   encounterId: z.string().uuid(),
@@ -32,6 +33,24 @@ const updateVisitSummarySchema = createVisitSummarySchema.partial();
 
 export const visitSummariesRouter = Router();
 
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logVisitSummariesError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
+
 // All routes require authentication
 visitSummariesRouter.use(requireAuth);
 
@@ -51,7 +70,7 @@ visitSummariesRouter.get("/", async (req: AuthedRequest, res) => {
              vs.is_released as "isReleased", vs.released_at as "releasedAt",
              vs.created_at as "createdAt", vs.updated_at as "updatedAt",
              p.first_name || ' ' || p.last_name as "patientName",
-             pr.name as "providerName",
+             pr.full_name as "providerName",
              ru.full_name as "releasedBy"
       FROM visit_summaries vs
       JOIN patients p ON vs.patient_id = p.id
@@ -87,7 +106,7 @@ visitSummariesRouter.get("/", async (req: AuthedRequest, res) => {
 
     return res.json({ visitSummaries: result.rows });
   } catch (error) {
-    console.error("Get visit summaries error:", error);
+    logVisitSummariesError("Get visit summaries error:", error);
     return res.status(500).json({ error: "Failed to get visit summaries" });
   }
 });
@@ -111,7 +130,7 @@ visitSummariesRouter.get("/:id", async (req: AuthedRequest, res) => {
               vs.is_released as "isReleased", vs.released_at as "releasedAt",
               vs.created_at as "createdAt", vs.updated_at as "updatedAt",
               p.first_name || ' ' || p.last_name as "patientName",
-              pr.name as "providerName",
+              pr.full_name as "providerName",
               ru.full_name as "releasedBy"
        FROM visit_summaries vs
        JOIN patients p ON vs.patient_id = p.id
@@ -127,7 +146,7 @@ visitSummariesRouter.get("/:id", async (req: AuthedRequest, res) => {
 
     return res.json({ visitSummary: result.rows[0] });
   } catch (error) {
-    console.error("Get visit summary error:", error);
+    logVisitSummariesError("Get visit summary error:", error);
     return res.status(500).json({ error: "Failed to get visit summary" });
   }
 });
@@ -226,7 +245,7 @@ visitSummariesRouter.post(
 
       return res.status(201).json({ id });
     } catch (error) {
-      console.error("Create visit summary error:", error);
+      logVisitSummariesError("Create visit summary error:", error);
       return res.status(500).json({ error: "Failed to create visit summary" });
     }
   }
@@ -251,9 +270,14 @@ visitSummariesRouter.post(
     try {
       // Get encounter data
       const encounterResult = await pool.query(
-        `SELECT e.id, e.patient_id, e.provider_id, e.encounter_date,
-                e.chief_complaint, e.soap_note
+        `SELECT
+                e.id,
+                e.patient_id,
+                e.provider_id,
+                COALESCE(a.scheduled_start, e.created_at) AS encounter_date,
+                e.chief_complaint
          FROM encounters e
+         LEFT JOIN appointments a ON a.id = e.appointment_id
          WHERE e.id = $1 AND e.tenant_id = $2`,
         [encounterId, tenantId]
       );
@@ -315,7 +339,7 @@ visitSummariesRouter.post(
 
       return res.status(201).json({ id, message: "Visit summary auto-generated successfully" });
     } catch (error) {
-      console.error("Auto-generate visit summary error:", error);
+      logVisitSummariesError("Auto-generate visit summary error:", error);
       return res.status(500).json({ error: "Failed to auto-generate visit summary" });
     }
   }
@@ -399,7 +423,7 @@ visitSummariesRouter.put(
 
       return res.json({ success: true, id: result.rows[0].id });
     } catch (error) {
-      console.error('Update visit summary error:', error);
+      logVisitSummariesError('Update visit summary error:', error);
       return res.status(500).json({ error: 'Failed to update visit summary' });
     }
   }
@@ -451,7 +475,7 @@ visitSummariesRouter.post(
 
       return res.json({ message: 'Visit summary released to patient portal' });
     } catch (error) {
-      console.error('Release visit summary error:', error);
+      logVisitSummariesError('Release visit summary error:', error);
       return res.status(500).json({ error: 'Failed to release visit summary' });
     }
   }
@@ -501,7 +525,7 @@ visitSummariesRouter.post(
 
       return res.json({ message: 'Visit summary hidden from patient portal' });
     } catch (error) {
-      console.error('Unrelease visit summary error:', error);
+      logVisitSummariesError('Unrelease visit summary error:', error);
       return res.status(500).json({ error: 'Failed to unrelease visit summary' });
     }
   }
@@ -548,7 +572,7 @@ visitSummariesRouter.delete(
 
       return res.json({ message: 'Visit summary deleted successfully' });
     } catch (error) {
-      console.error('Delete visit summary error:', error);
+      logVisitSummariesError('Delete visit summary error:', error);
       return res.status(500).json({ error: 'Failed to delete visit summary' });
     }
   }

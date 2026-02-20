@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { taskTemplatesRouter } from "../taskTemplates";
 import { pool } from "../../db/pool";
 import { auditLog, createAuditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -23,6 +24,15 @@ jest.mock("../../services/audit", () => ({
   createAuditLog: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
   randomUUID: jest.fn(() => "uuid-1"),
@@ -36,12 +46,14 @@ const queryMock = pool.query as jest.Mock;
 const randomUUIDMock = crypto.randomUUID as jest.Mock;
 const auditLogMock = auditLog as jest.Mock;
 const createAuditLogMock = createAuditLog as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
   randomUUIDMock.mockReset();
   auditLogMock.mockReset();
   createAuditLogMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
   randomUUIDMock.mockReturnValue("uuid-1");
 });
@@ -54,6 +66,30 @@ describe("Task template routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.templates).toHaveLength(1);
+  });
+
+  it("GET /task-templates logs sanitized Error failures", async () => {
+    queryMock.mockRejectedValueOnce(new Error("template list failed"));
+
+    const res = await request(app).get("/task-templates");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch task templates");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching task templates:", {
+      error: "template list failed",
+    });
+  });
+
+  it("GET /task-templates masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ templateName: "Sensitive Template" });
+
+    const res = await request(app).get("/task-templates");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch task templates");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching task templates:", {
+      error: "Unknown error",
+    });
   });
 
   it("POST /task-templates rejects invalid payload", async () => {

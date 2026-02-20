@@ -1635,6 +1635,63 @@ router.delete('/scheduled/:id', requireAuth, async (req: AuthedRequest, res: Res
 // TWILIO WEBHOOK ROUTES (NO AUTHENTICATION - validated by signature)
 // ============================================================================
 
+const SMS_STATUS_ORDER: Record<string, number> = {
+  accepted: 10,
+  scheduled: 20,
+  queued: 30,
+  sending: 40,
+  sent: 50,
+  delivered: 100,
+  read: 110,
+  failed: 100,
+  undelivered: 100,
+  canceled: 100,
+  cancelled: 100,
+};
+
+const TERMINAL_SMS_STATUSES = new Set(['delivered', 'failed', 'undelivered', 'canceled', 'cancelled']);
+
+function normalizeSmsStatus(status: unknown): string | null {
+  if (typeof status !== 'string') {
+    return null;
+  }
+
+  const normalized = status.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function classifySmsStatusTransition(
+  currentStatus: unknown,
+  incomingStatus: string
+): 'apply' | 'duplicate' | 'stale' | 'locked' {
+  const normalizedCurrent = normalizeSmsStatus(currentStatus);
+
+  if (!normalizedCurrent) {
+    return 'apply';
+  }
+
+  if (normalizedCurrent === incomingStatus) {
+    return 'duplicate';
+  }
+
+  if (TERMINAL_SMS_STATUSES.has(normalizedCurrent)) {
+    return 'locked';
+  }
+
+  const currentRank = SMS_STATUS_ORDER[normalizedCurrent];
+  const incomingRank = SMS_STATUS_ORDER[incomingStatus];
+
+  if (
+    currentRank !== undefined &&
+    incomingRank !== undefined &&
+    incomingRank < currentRank
+  ) {
+    return 'stale';
+  }
+
+  return 'apply';
+}
+
 /**
  * POST /api/sms/webhook/incoming
  * Twilio webhook for incoming SMS messages
@@ -1715,16 +1772,19 @@ router.post('/webhook/status', async (req: Request, res: Response) => {
     const signature = req.headers['x-twilio-signature'] as string;
     const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
     const messageSid = req.body.MessageSid;
-    const messageStatus = req.body.MessageStatus;
+    const messageStatus = normalizeSmsStatus(req.body.MessageStatus);
     const errorCode = req.body.ErrorCode;
     const errorMessage = req.body.ErrorMessage;
 
     if (!messageSid) {
       return res.status(400).send('Missing MessageSid');
     }
+    if (!messageStatus) {
+      return res.status(400).send('Missing MessageStatus');
+    }
 
     const tenantResult = await pool.query(
-      `SELECT m.tenant_id, s.twilio_account_sid, s.twilio_auth_token
+      `SELECT m.tenant_id, m.status as current_status, s.twilio_account_sid, s.twilio_auth_token
        FROM sms_messages m
        JOIN sms_settings s ON s.tenant_id = m.tenant_id
        WHERE m.twilio_message_sid = $1
@@ -1754,6 +1814,37 @@ router.post('/webhook/status', async (req: Request, res: Response) => {
       status: messageStatus,
       errorCode,
     });
+
+    const transitionDecision = classifySmsStatusTransition(
+      tenant.current_status,
+      messageStatus
+    );
+
+    if (transitionDecision === 'duplicate') {
+      logger.info('Ignoring duplicate SMS status webhook event', {
+        messageSid,
+        status: messageStatus,
+      });
+      return res.status(200).send('OK');
+    }
+
+    if (transitionDecision === 'locked') {
+      logger.warn('Ignoring SMS status webhook after terminal status set', {
+        messageSid,
+        currentStatus: tenant.current_status,
+        incomingStatus: messageStatus,
+      });
+      return res.status(200).send('OK');
+    }
+
+    if (transitionDecision === 'stale') {
+      logger.warn('Ignoring stale SMS status webhook event', {
+        messageSid,
+        currentStatus: tenant.current_status,
+        incomingStatus: messageStatus,
+      });
+      return res.status(200).send('OK');
+    }
 
     // Update message status in database
     await updateSMSStatus(messageSid, messageStatus, errorCode, errorMessage);

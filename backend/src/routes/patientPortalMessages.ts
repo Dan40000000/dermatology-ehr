@@ -9,8 +9,27 @@ import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { NextFunction, Request, Response } from "express";
 import { notificationService } from "../services/integrations/notificationService";
+import { logger } from "../lib/logger";
 
 const router = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logPortalMessageError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Patient portal authentication middleware
 interface PatientAuthRequest extends Request {
@@ -158,7 +177,7 @@ router.get("/threads", requirePatientAuth, async (req: PatientAuthRequest, res) 
       },
     });
   } catch (error) {
-    console.error("Error fetching patient threads:", error);
+    logPortalMessageError("Error fetching patient threads", error);
     res.status(500).json({ error: "Failed to fetch message threads" });
   }
 });
@@ -226,7 +245,7 @@ router.get("/threads/:id", requirePatientAuth, async (req: PatientAuthRequest, r
       messages: messagesResult.rows,
     });
   } catch (error) {
-    console.error("Error fetching thread:", error);
+    logPortalMessageError("Error fetching thread", error);
     res.status(500).json({ error: "Failed to fetch thread" });
   }
 });
@@ -293,7 +312,7 @@ router.post("/threads", requirePatientAuth, async (req: PatientAuthRequest, res)
             },
           });
         } catch (notifError) {
-          console.error("Failed to send urgent message notification:", notifError);
+          logPortalMessageError("Failed to send urgent message notification", notifError);
           // Don't fail the message creation
         }
       }
@@ -347,7 +366,7 @@ router.post("/threads", requirePatientAuth, async (req: PatientAuthRequest, res)
       client.release();
     }
   } catch (error) {
-    console.error("Error creating thread:", error);
+    logPortalMessageError("Error creating thread", error);
     res.status(500).json({ error: "Failed to create thread" });
   }
 });
@@ -424,7 +443,7 @@ router.post("/threads/:id/messages", requirePatientAuth, async (req: PatientAuth
       client.release();
     }
   } catch (error) {
-    console.error("Error sending message:", error);
+    logPortalMessageError("Error sending message", error);
     res.status(500).json({ error: "Failed to send message" });
   }
 });
@@ -469,7 +488,7 @@ router.post("/threads/:id/mark-read", requirePatientAuth, async (req: PatientAut
       client.release();
     }
   } catch (error) {
-    console.error("Error marking thread as read:", error);
+    logPortalMessageError("Error marking thread as read", error);
     res.status(500).json({ error: "Failed to mark thread as read" });
   }
 });
@@ -489,7 +508,7 @@ router.get("/unread-count", requirePatientAuth, async (req: PatientAuthRequest, 
 
     res.json({ count: parseInt(result.rows[0].count) });
   } catch (error) {
-    console.error("Error fetching unread count:", error);
+    logPortalMessageError("Error fetching unread count", error);
     res.status(500).json({ error: "Failed to fetch unread count" });
   }
 });
@@ -553,7 +572,7 @@ router.post("/attachments", requirePatientAuth, upload.single("file"), async (re
       fileSize: req.file.size,
     });
   } catch (error) {
-    console.error("Error uploading attachment:", error);
+    logPortalMessageError("Error uploading attachment", error);
     if (req.file) {
       try {
         fs.unlinkSync(req.file.path);
@@ -589,7 +608,7 @@ router.get("/attachments/:id", requirePatientAuth, async (req: PatientAuthReques
 
     res.download(attachment.file_path, attachment.original_filename);
   } catch (error) {
-    console.error("Error downloading attachment:", error);
+    logPortalMessageError("Error downloading attachment", error);
     res.status(500).json({ error: "Failed to download attachment" });
   }
 });

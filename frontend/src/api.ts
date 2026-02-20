@@ -3555,6 +3555,7 @@ export interface SMSTemplate {
   name: string;
   description?: string;
   messageBody: string;
+  body?: string;
   category?: string;
   isSystemTemplate: boolean;
   isActive: boolean;
@@ -3583,6 +3584,34 @@ export interface ScheduledMessage {
   sentAt?: string;
 }
 
+export interface SMSSettings {
+  id: string;
+  tenantId: string;
+  twilioPhoneNumber?: string;
+  appointmentRemindersEnabled: boolean;
+  reminderHoursBefore: number;
+  allowPatientReplies: boolean;
+  reminderTemplate?: string;
+  confirmationTemplate?: string;
+  cancellationTemplate?: string;
+  rescheduleTemplate?: string;
+  isActive: boolean;
+  isTestMode: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SMSAutoResponse {
+  id: string;
+  keyword: string;
+  responseText: string;
+  action: string;
+  isActive: boolean;
+  isSystemKeyword: boolean;
+  priority: number;
+  createdAt: string;
+}
+
 /**
  * Fetch SMS message templates
  */
@@ -3607,6 +3636,107 @@ export async function fetchSMSTemplates(
     credentials: 'include',
   });
   if (!res.ok) throw new Error('Failed to fetch SMS templates');
+  return res.json();
+}
+
+/**
+ * Fetch tenant SMS settings
+ */
+export async function fetchSMSSettings(
+  tenantId: string,
+  accessToken: string
+): Promise<SMSSettings> {
+  const res = await fetch(`${API_BASE}/api/sms/settings`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch SMS settings');
+  return res.json();
+}
+
+/**
+ * Update tenant SMS settings
+ */
+export async function updateSMSSettings(
+  tenantId: string,
+  accessToken: string,
+  data: Partial<{
+    twilioPhoneNumber: string;
+    appointmentRemindersEnabled: boolean;
+    reminderHoursBefore: number;
+    allowPatientReplies: boolean;
+    reminderTemplate: string;
+    confirmationTemplate: string;
+    cancellationTemplate: string;
+    rescheduleTemplate: string;
+    isActive: boolean;
+    isTestMode: boolean;
+  }>
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/sms/settings`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update SMS settings');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch keyword auto-response rules
+ */
+export async function fetchSMSAutoResponses(
+  tenantId: string,
+  accessToken: string
+): Promise<{ autoResponses: SMSAutoResponse[] }> {
+  const res = await fetch(`${API_BASE}/api/sms/auto-responses`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch SMS auto-response rules');
+  return res.json();
+}
+
+/**
+ * Update keyword auto-response rule
+ */
+export async function updateSMSAutoResponse(
+  tenantId: string,
+  accessToken: string,
+  autoResponseId: string,
+  data: Partial<{
+    responseText: string;
+    isActive: boolean;
+  }>
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/sms/auto-responses/${autoResponseId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update auto-response rule');
+  }
   return res.json();
 }
 
@@ -3811,6 +3941,80 @@ export async function cancelScheduledMessage(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to cancel scheduled message');
+  }
+  return res.json();
+}
+
+/**
+ * Update patient SMS communication preference
+ */
+export async function updatePatientSMSPreferences(
+  tenantId: string,
+  accessToken: string,
+  patientId: string,
+  data: Partial<{
+    optedIn: boolean;
+    appointmentReminders: boolean;
+    marketingMessages: boolean;
+  }>
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/sms/patient-preferences/${patientId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update patient SMS preferences');
+  }
+  return res.json();
+}
+
+/**
+ * Trigger reminder workflow processor
+ */
+export async function processSMSWorkflowReminders(
+  tenantId: string,
+  accessToken: string
+): Promise<{ success: boolean; processed?: number; sent?: number; failed?: number }> {
+  const res = await fetch(`${API_BASE}/api/sms/workflow/process-reminders`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to process reminder workflows');
+  }
+  return res.json();
+}
+
+/**
+ * Trigger follow-up workflow processor
+ */
+export async function processSMSWorkflowFollowups(
+  tenantId: string,
+  accessToken: string
+): Promise<{ success: boolean; processed?: number; sent?: number; failed?: number }> {
+  const res = await fetch(`${API_BASE}/api/sms/workflow/process-followups`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to process follow-up workflows');
   }
   return res.json();
 }

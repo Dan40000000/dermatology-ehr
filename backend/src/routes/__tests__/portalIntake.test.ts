@@ -2,6 +2,7 @@ import request from "supertest";
 import express from "express";
 import { portalIntakeRouter } from "../portalIntake";
 import { pool } from "../../db/pool";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/patientPortalAuth", () => ({
   requirePatientAuth: (req: any, _res: any, next: any) => {
@@ -21,15 +22,26 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/intake", portalIntakeRouter);
 
 const queryMock = pool.query as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
+  loggerMock.error.mockReset();
 });
 
 describe("Patient portal intake routes", () => {
@@ -40,6 +52,25 @@ describe("Patient portal intake routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.forms).toHaveLength(1);
+  });
+
+  it("GET /intake/forms logs sanitized error message on query failure", async () => {
+    queryMock.mockRejectedValueOnce(new Error("db boom"));
+
+    const res = await request(app).get("/intake/forms");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to get intake forms");
+    expect(loggerMock.error).toHaveBeenCalledWith("Get intake forms error", { error: "db boom" });
+  });
+
+  it("GET /intake/forms masks non-Error thrown values", async () => {
+    queryMock.mockRejectedValueOnce({ patientName: "Jane Doe", diagnosis: "eczema" });
+
+    const res = await request(app).get("/intake/forms");
+
+    expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith("Get intake forms error", { error: "Unknown error" });
   });
 
   it("GET /intake/forms/:assignmentId returns 404 when missing", async () => {

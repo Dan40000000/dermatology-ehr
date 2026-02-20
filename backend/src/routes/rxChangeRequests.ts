@@ -4,8 +4,27 @@ import { z } from 'zod';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
+import { logger } from '../lib/logger';
 
 export const rxChangeRequestsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logRxChangeRequestsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Validation schemas
 const createRxChangeRequestSchema = z.object({
@@ -88,7 +107,7 @@ rxChangeRequestsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => 
 
     return res.json({ rxChangeRequests: result.rows });
   } catch (error) {
-    console.error('Error fetching Rx change requests:', error);
+    logRxChangeRequestsError('Error fetching Rx change requests:', error);
     return res.status(500).json({ error: 'Failed to fetch Rx change requests' });
   }
 });
@@ -124,7 +143,7 @@ rxChangeRequestsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) 
 
     return res.json({ rxChangeRequest: result.rows[0] });
   } catch (error) {
-    console.error('Error fetching Rx change request:', error);
+    logRxChangeRequestsError('Error fetching Rx change request:', error);
     return res.status(500).json({ error: 'Failed to fetch Rx change request' });
   }
 });
@@ -190,7 +209,7 @@ rxChangeRequestsRouter.post(
 
       return res.status(201).json({ id, message: 'Rx change request created' });
     } catch (error) {
-      console.error('Error creating Rx change request:', error);
+      logRxChangeRequestsError('Error creating Rx change request:', error);
       return res.status(500).json({ error: 'Failed to create Rx change request' });
     }
   }
@@ -261,7 +280,7 @@ rxChangeRequestsRouter.put(
 
       return res.json({ success: true, id, status: data.status });
     } catch (error) {
-      console.error('Error updating Rx change request:', error);
+      logRxChangeRequestsError('Error updating Rx change request:', error);
       return res.status(500).json({ error: 'Failed to update Rx change request' });
     }
   }
@@ -314,7 +333,7 @@ rxChangeRequestsRouter.post(
 
       return res.json({ success: true, message: 'Change request approved' });
     } catch (error) {
-      console.error('Error approving Rx change request:', error);
+      logRxChangeRequestsError('Error approving Rx change request:', error);
       return res.status(500).json({ error: 'Failed to approve Rx change request' });
     }
   }
@@ -349,7 +368,7 @@ rxChangeRequestsRouter.post(
 
       return res.json({ success: true, message: 'Change request denied' });
     } catch (error) {
-      console.error('Error denying Rx change request:', error);
+      logRxChangeRequestsError('Error denying Rx change request:', error);
       return res.status(500).json({ error: 'Failed to deny Rx change request' });
     }
   }
@@ -376,7 +395,7 @@ rxChangeRequestsRouter.delete(
 
       return res.json({ success: true });
     } catch (error) {
-      console.error('Error deleting Rx change request:', error);
+      logRxChangeRequestsError('Error deleting Rx change request:', error);
       return res.status(500).json({ error: 'Failed to delete Rx change request' });
     }
   }

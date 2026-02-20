@@ -13,8 +13,27 @@ import {
   revenueCycleService,
   DenialCategory,
 } from '../services/revenueCycleService';
+import { logger } from '../lib/logger';
 
 export const revenueCycleRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logRevenueCycleError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // ============================================================================
 // Validation Schemas
@@ -132,7 +151,7 @@ revenueCycleRouter.post(
 
       return res.status(201).json(chargeCapture);
     } catch (error: any) {
-      console.error('Error capturing charges:', error);
+      logRevenueCycleError('Error capturing charges:', error);
       return res.status(500).json({ error: error.message || 'Failed to capture charges' });
     }
   }
@@ -154,7 +173,7 @@ revenueCycleRouter.get(
 
       return res.json({ charges });
     } catch (error: any) {
-      console.error('Error getting encounter charges:', error);
+      logRevenueCycleError('Error getting encounter charges:', error);
       return res.status(500).json({ error: error.message || 'Failed to get charges' });
     }
   }
@@ -177,7 +196,7 @@ revenueCycleRouter.post(
 
       return res.json(result);
     } catch (error: any) {
-      console.error('Error validating charges:', error);
+      logRevenueCycleError('Error validating charges:', error);
       return res.status(500).json({ error: error.message || 'Failed to validate charges' });
     }
   }
@@ -211,7 +230,7 @@ revenueCycleRouter.post(
 
       return res.status(201).json(denial);
     } catch (error: any) {
-      console.error('Error recording denial:', error);
+      logRevenueCycleError('Error recording denial:', error);
       return res.status(500).json({ error: error.message || 'Failed to record denial' });
     }
   }
@@ -243,7 +262,7 @@ revenueCycleRouter.get(
 
       return res.json(result);
     } catch (error: any) {
-      console.error('Error getting denials:', error);
+      logRevenueCycleError('Error getting denials:', error);
       return res.status(500).json({ error: error.message || 'Failed to get denials' });
     }
   }
@@ -294,7 +313,7 @@ revenueCycleRouter.post(
 
       return res.status(201).json(appeal);
     } catch (error: any) {
-      console.error('Error submitting appeal:', error);
+      logRevenueCycleError('Error submitting appeal:', error);
       return res.status(500).json({ error: error.message || 'Failed to submit appeal' });
     }
   }
@@ -331,7 +350,7 @@ revenueCycleRouter.post(
 
       return res.status(201).json(plan);
     } catch (error: any) {
-      console.error('Error creating payment plan:', error);
+      logRevenueCycleError('Error creating payment plan:', error);
       return res.status(500).json({ error: error.message || 'Failed to create payment plan' });
     }
   }
@@ -353,7 +372,7 @@ revenueCycleRouter.get(
 
       return res.json({ plans });
     } catch (error: any) {
-      console.error('Error getting payment plans:', error);
+      logRevenueCycleError('Error getting payment plans:', error);
       return res.status(500).json({ error: error.message || 'Failed to get payment plans' });
     }
   }
@@ -375,7 +394,7 @@ revenueCycleRouter.get(
 
       return res.json({ transactions });
     } catch (error: any) {
-      console.error('Error getting payment plan transactions:', error);
+      logRevenueCycleError('Error getting payment plan transactions:', error);
       return res.status(500).json({ error: error.message || 'Failed to get transactions' });
     }
   }
@@ -409,7 +428,7 @@ revenueCycleRouter.post(
 
       return res.json(transaction);
     } catch (error: any) {
-      console.error('Error processing payment plan payment:', error);
+      logRevenueCycleError('Error processing payment plan payment:', error);
       return res.status(500).json({ error: error.message || 'Failed to process payment' });
     }
   }
@@ -445,7 +464,7 @@ revenueCycleRouter.get(
 
       return res.json(result);
     } catch (error: any) {
-      console.error('Error getting underpayments:', error);
+      logRevenueCycleError('Error getting underpayments:', error);
       return res.status(500).json({ error: error.message || 'Failed to get underpayments' });
     }
   }
@@ -487,7 +506,7 @@ revenueCycleRouter.post(
         underpayment,
       });
     } catch (error: any) {
-      console.error('Error checking for underpayment:', error);
+      logRevenueCycleError('Error checking for underpayment:', error);
       return res.status(500).json({ error: error.message || 'Failed to check underpayment' });
     }
   }
@@ -519,7 +538,7 @@ revenueCycleRouter.get(
 
       return res.json({ contracts });
     } catch (error: any) {
-      console.error('Error getting payer contracts:', error);
+      logRevenueCycleError('Error getting payer contracts:', error);
       return res.status(500).json({ error: error.message || 'Failed to get contracts' });
     }
   }
@@ -547,7 +566,7 @@ revenueCycleRouter.get(
 
       return res.json(result);
     } catch (error: any) {
-      console.error('Error verifying contract rate:', error);
+      logRevenueCycleError('Error verifying contract rate:', error);
       return res.status(500).json({ error: error.message || 'Failed to verify rate' });
     }
   }
@@ -573,7 +592,7 @@ revenueCycleRouter.get(
 
       return res.json(dashboard);
     } catch (error: any) {
-      console.error('Error getting revenue dashboard:', error);
+      logRevenueCycleError('Error getting revenue dashboard:', error);
       return res.status(500).json({ error: error.message || 'Failed to get dashboard' });
     }
   }
@@ -602,7 +621,7 @@ revenueCycleRouter.post(
         ...result,
       });
     } catch (error: any) {
-      console.error('Error running denial processing:', error);
+      logRevenueCycleError('Error running denial processing:', error);
       return res.status(500).json({ error: error.message || 'Failed to run denial processing' });
     }
   }
@@ -625,7 +644,7 @@ revenueCycleRouter.get(
 
       return res.json({ plans, count: plans.length });
     } catch (error: any) {
-      console.error('Error getting payment plan reminders:', error);
+      logRevenueCycleError('Error getting payment plan reminders:', error);
       return res.status(500).json({ error: error.message || 'Failed to get reminders' });
     }
   }
@@ -673,7 +692,7 @@ revenueCycleRouter.post(
         });
       }
     } catch (error: any) {
-      console.error('Error escalating collection:', error);
+      logRevenueCycleError('Error escalating collection:', error);
       return res.status(500).json({ error: error.message || 'Failed to escalate collection' });
     }
   }

@@ -1,8 +1,27 @@
 import { Router } from "express";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
+import { logger } from "../lib/logger";
 
 export const financialMetricsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logFinancialMetricsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Get financial dashboard metrics
 financialMetricsRouter.get("/dashboard", requireAuth, async (req: AuthedRequest, res) => {
@@ -158,7 +177,7 @@ financialMetricsRouter.get("/dashboard", requireAuth, async (req: AuthedRequest,
       },
     });
   } catch (error: any) {
-    console.error('Error fetching financial metrics:', error);
+    logFinancialMetricsError('Error fetching financial metrics', error);
     res.status(500).json({ error: 'Failed to fetch financial metrics' });
   }
 });
@@ -417,7 +436,7 @@ financialMetricsRouter.get("/rcm-dashboard", requireAuth, async (req: AuthedRequ
       monthlyTrend: monthlyTrendResult.rows,
     });
   } catch (error: any) {
-    console.error('Error fetching RCM dashboard:', error);
+    logFinancialMetricsError('Error fetching RCM dashboard', error);
     res.status(500).json({ error: 'Failed to fetch RCM dashboard metrics' });
   }
 });
@@ -455,7 +474,7 @@ financialMetricsRouter.get("/revenue-by-payer", requireAuth, async (req: AuthedR
       period: { startDate: start, endDate: end },
     });
   } catch (error: any) {
-    console.error('Error fetching revenue by payer:', error);
+    logFinancialMetricsError('Error fetching revenue by payer', error);
     res.status(500).json({ error: 'Failed to fetch revenue by payer' });
   }
 });
@@ -491,7 +510,7 @@ financialMetricsRouter.get("/revenue-by-procedure", requireAuth, async (req: Aut
       period: { startDate: start, endDate: end },
     });
   } catch (error: any) {
-    console.error('Error fetching revenue by procedure:', error);
+    logFinancialMetricsError('Error fetching revenue by procedure', error);
     res.status(500).json({ error: 'Failed to fetch revenue by procedure' });
   }
 });
@@ -528,7 +547,7 @@ financialMetricsRouter.get("/provider-productivity", requireAuth, async (req: Au
       period: { startDate: start, endDate: end },
     });
   } catch (error: any) {
-    console.error('Error fetching provider productivity:', error);
+    logFinancialMetricsError('Error fetching provider productivity', error);
     res.status(500).json({ error: 'Failed to fetch provider productivity' });
   }
 });
@@ -564,7 +583,7 @@ financialMetricsRouter.get("/em-distribution", requireAuth, async (req: AuthedRe
       period: { startDate: start, endDate: end },
     });
   } catch (error: any) {
-    console.error('Error fetching E&M distribution:', error);
+    logFinancialMetricsError('Error fetching E&M distribution', error);
     res.status(500).json({ error: 'Failed to fetch E&M distribution' });
   }
 });
@@ -613,7 +632,7 @@ financialMetricsRouter.get("/claims-aging", requireAuth, async (req: AuthedReque
       claimsAging: result.rows,
     });
   } catch (error: any) {
-    console.error('Error fetching claims aging:', error);
+    logFinancialMetricsError('Error fetching claims aging', error);
     res.status(500).json({ error: 'Failed to fetch claims aging' });
   }
 });
@@ -650,7 +669,7 @@ financialMetricsRouter.get("/patient-balances", requireAuth, async (req: AuthedR
       patientBalances: result.rows,
     });
   } catch (error: any) {
-    console.error('Error fetching patient balances:', error);
+    logFinancialMetricsError('Error fetching patient balances', error);
     res.status(500).json({ error: 'Failed to fetch patient balances' });
   }
 });

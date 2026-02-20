@@ -5,6 +5,7 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 const markingSchema = z.object({
   patientId: z.string().uuid(),
@@ -48,6 +49,24 @@ const markingUpdateSchema = z.object({
 
 export const bodyDiagramRouter = Router();
 
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logBodyDiagramError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
+
 // Get all body location reference data
 bodyDiagramRouter.get("/locations", requireAuth, async (req: AuthedRequest, res) => {
   try {
@@ -59,7 +78,7 @@ bodyDiagramRouter.get("/locations", requireAuth, async (req: AuthedRequest, res)
 
     res.json({ locations: result.rows });
   } catch (error: any) {
-    console.error("Error fetching body locations:", error);
+    logBodyDiagramError("Error fetching body locations", error);
     res.status(500).json({ error: "Failed to fetch body locations" });
   }
 });
@@ -108,7 +127,7 @@ bodyDiagramRouter.get("/patient/:patientId/markings", requireAuth, async (req: A
     await auditLog(tenantId, req.user!.id, "body_diagram_view", "patient", patientId!);
     res.json({ markings: result.rows });
   } catch (error: any) {
-    console.error("Error fetching patient markings:", error);
+    logBodyDiagramError("Error fetching patient markings", error);
     res.status(500).json({ error: "Failed to fetch patient markings" });
   }
 });
@@ -156,7 +175,7 @@ bodyDiagramRouter.get("/encounter/:encounterId/markings", requireAuth, async (re
 
     res.json({ markings: result.rows });
   } catch (error: any) {
-    console.error("Error fetching encounter markings:", error);
+    logBodyDiagramError("Error fetching encounter markings", error);
     res.status(500).json({ error: "Failed to fetch encounter markings" });
   }
 });
@@ -211,7 +230,7 @@ bodyDiagramRouter.get("/markings/:id", requireAuth, async (req: AuthedRequest, r
 
     res.json({ marking: result.rows[0] });
   } catch (error: any) {
-    console.error("Error fetching marking:", error);
+    logBodyDiagramError("Error fetching marking", error);
     res.status(500).json({ error: "Failed to fetch marking" });
   }
 });
@@ -300,7 +319,7 @@ bodyDiagramRouter.post("/markings", requireAuth, requireRoles(["provider", "ma",
 
     res.status(201).json({ id });
   } catch (error: any) {
-    console.error("Error creating marking:", error);
+    logBodyDiagramError("Error creating marking", error);
     res.status(500).json({ error: "Failed to create marking" });
   }
 });
@@ -439,7 +458,7 @@ bodyDiagramRouter.put("/markings/:id", requireAuth, requireRoles(["provider", "m
 
     res.json({ ok: true });
   } catch (error: any) {
-    console.error("Error updating marking:", error);
+    logBodyDiagramError("Error updating marking", error);
     res.status(500).json({ error: "Failed to update marking" });
   }
 });
@@ -466,7 +485,7 @@ bodyDiagramRouter.delete("/markings/:id", requireAuth, requireRoles(["provider",
 
     res.json({ ok: true });
   } catch (error: any) {
-    console.error("Error deleting marking:", error);
+    logBodyDiagramError("Error deleting marking", error);
     res.status(500).json({ error: "Failed to delete marking" });
   }
 });

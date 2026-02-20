@@ -1,0 +1,106 @@
+{
+  "runId": "0bbb69bf-95c2-4470-a5bb-ef48e098b1e1",
+  "generatedAt": "2026-02-17T05:21:43.599Z",
+  "environment": {
+    "baseUrl": "http://localhost:4000",
+    "tenantHeader": "x-tenant-id",
+    "tenantIdMasked": "tenant...demo"
+  },
+  "actor": {
+    "role": "provider",
+    "userIdMasked": "u-prov...ider"
+  },
+  "entities": {
+    "providerIdMasked": "prov-d...demo",
+    "patientIdMasked": "ff6192...f06d",
+    "encounterIdMasked": "c6b3f9...5bce"
+  },
+  "flow": {
+    "recordingIdMasked": "5ae464...d237",
+    "transcriptIdMasked": "618a54...bb2d",
+    "noteIdMasked": "d0f9df...1ad9",
+    "transcriptStatus": "completed",
+    "noteGenerationStatus": "completed",
+    "noteReviewStatusAfterApproval": "approved",
+    "noteAppliedToEncounter": true,
+    "patientSummaryGenerated": true,
+    "patientSummaryIdMasked": "1f874e...e151"
+  },
+  "quality": {
+    "rubricPassed": true,
+    "checks": [
+      {
+        "id": "chief_complaint_present",
+        "label": "Chief complaint is present",
+        "passed": true,
+        "detail": "Length=46"
+      },
+      {
+        "id": "assessment_present",
+        "label": "Assessment is present",
+        "passed": true,
+        "detail": "Length=343"
+      },
+      {
+        "id": "plan_present",
+        "label": "Plan is present",
+        "passed": true,
+        "detail": "Length=555"
+      },
+      {
+        "id": "summary_symptoms_present",
+        "label": "Formal summary contains symptoms",
+        "passed": true,
+        "detail": "symptoms=7"
+      },
+      {
+        "id": "summary_differential_present",
+        "label": "Formal summary contains probable diagnoses",
+        "passed": true,
+        "detail": "probableDiagnoses=5"
+      },
+      {
+        "id": "summary_differential_fields",
+        "label": "Probable diagnoses include condition + probability",
+        "passed": true,
+        "detail": "validated=5/5"
+      },
+      {
+        "id": "summary_tests_present",
+        "label": "Formal summary contains suggested tests",
+        "passed": true,
+        "detail": "suggestedTests=3"
+      },
+      {
+        "id": "summary_tests_fields",
+        "label": "Suggested tests include name + rationale",
+        "passed": true,
+        "detail": "validated=3/3"
+      },
+      {
+        "id": "patient_summary_present",
+        "label": "Patient-facing summary exists",
+        "passed": true,
+        "detail": "whatWeDiscussedLength=203"
+      }
+    ],
+    "score": {
+      "passed": 9,
+      "total": 9
+    },
+    "noteSignals": {
+      "hasChiefComplaint": true,
+      "hasAssessment": true,
+      "hasPlan": true,
+      "overallConfidence": "0.77",
+      "symptomCount": 7,
+      "probableDiagnosisCount": 5,
+      "suggestedTestCount": 3
+    }
+  },
+  "timingsMs": {
+    "total": 34245,
+    "transcriptionWait": 2010,
+    "noteGenerationWait": 32111
+  }
+}

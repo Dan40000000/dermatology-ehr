@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
+import { logger } from "../lib/logger";
 
 /**
  * AI Image Analysis Service for Dermatology
@@ -22,6 +23,24 @@ interface AIAnalysisResult {
   recommendations: string[];
   confidenceScore: number;
   rawAnalysis: any;
+}
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logAIImageAnalysisError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
 }
 
 export class AIImageAnalysisService {
@@ -79,7 +98,7 @@ export class AIImageAnalysisService {
 
       return analysisId;
     } catch (error) {
-      console.error("AI Image Analysis Error:", error);
+      logAIImageAnalysisError("AI Image Analysis Error", error);
       throw new Error("Failed to analyze image");
     }
   }
@@ -212,7 +231,7 @@ IMPORTANT: This is for clinical decision support only. Always recommend professi
         rawAnalysis: data,
       };
     } catch (error) {
-      console.error("OpenAI Vision API Error:", error);
+      logAIImageAnalysisError("OpenAI Vision API Error", error);
       // Fall back to mock analysis
       return this.getMockAnalysis();
     }
@@ -280,7 +299,7 @@ IMPORTANT: This is for clinical decision support only. Always recommend professi
         const analysisId = await this.analyzeSkinLesion(photo.id, photo.url, tenantId, analyzedBy);
         analysisIds.push(analysisId);
       } catch (error) {
-        console.error(`Failed to analyze photo ${photo.id}:`, error);
+        logAIImageAnalysisError(`Failed to analyze photo ${photo.id}`, error);
       }
     }
 

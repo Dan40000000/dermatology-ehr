@@ -5,6 +5,7 @@ import * as hl7Parser from "../../services/hl7Parser";
 import * as hl7Processor from "../../services/hl7Processor";
 import * as hl7Queue from "../../services/hl7Queue";
 import * as audit from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -21,6 +22,14 @@ jest.mock("../../services/hl7Parser");
 jest.mock("../../services/hl7Processor");
 jest.mock("../../services/hl7Queue");
 jest.mock("../../services/audit");
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
 
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
@@ -41,6 +50,7 @@ const getMessageByIdMock = hl7Queue.getMessageById as jest.Mock;
 const retryFailedMessageMock = hl7Queue.retryFailedMessage as jest.Mock;
 const getQueueStatisticsMock = hl7Queue.getQueueStatistics as jest.Mock;
 const createAuditLogMock = audit.createAuditLog as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const sampleHL7 = "MSH|^~\\&|SENDER|SENDER_FACILITY|DERMAPP|DERM|20240101120000||ADT^A01|MSG001|P|2.5";
 
@@ -55,6 +65,7 @@ const mockParsedHL7 = {
 beforeEach(() => {
   jest.clearAllMocks();
   createAuditLogMock.mockResolvedValue(undefined);
+  loggerMock.error.mockReset();
 });
 
 describe("HL7 Routes", () => {
@@ -422,6 +433,16 @@ describe("HL7 Routes", () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Internal server error");
+      expect(loggerMock.error).toHaveBeenCalledWith("Error listing HL7 messages", { error: "DB error" });
+    });
+
+    it("should mask non-Error values when listing HL7 messages fails", async () => {
+      getQueuedMessagesMock.mockRejectedValue({ patientName: "Jane Doe" });
+
+      const res = await request(app).get("/api/hl7/messages");
+
+      expect(res.status).toBe(500);
+      expect(loggerMock.error).toHaveBeenCalledWith("Error listing HL7 messages", { error: "Unknown error" });
     });
   });
 

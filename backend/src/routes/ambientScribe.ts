@@ -11,6 +11,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { z } from 'zod';
 import { pool } from '../db/pool';
+import { logger } from '../lib/logger';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
 import { auditLog } from '../services/audit';
@@ -88,6 +89,27 @@ const reviewActionSchema = z.object({
   reason: z.string().optional()
 });
 
+const AMBIENT_CLINICAL_ROLES = ['provider', 'ma', 'admin'] as const;
+const AMBIENT_REVIEW_ROLES = ['provider', 'admin'] as const;
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logAmbientError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
+
 // ============================================================================
 // RECORDING ENDPOINTS
 // ============================================================================
@@ -96,7 +118,7 @@ const reviewActionSchema = z.object({
  * POST /api/ambient/recordings/start
  * Start a new recording session
  */
-router.post('/recordings/start', requireAuth, requireRoles(['provider', 'ma', 'admin']), async (req: AuthedRequest, res) => {
+router.post('/recordings/start', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const parsed = startRecordingSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -167,7 +189,7 @@ router.post('/recordings/start', requireAuth, requireRoles(['provider', 'ma', 'a
       startedAt: new Date().toISOString()
     });
   } catch (error: any) {
-    console.error('Start recording error:', error);
+    logAmbientError('Start recording error', error);
     res.status(500).json({ error: 'Failed to start recording' });
   }
 });
@@ -176,7 +198,7 @@ router.post('/recordings/start', requireAuth, requireRoles(['provider', 'ma', 'a
  * POST /api/ambient/recordings/:id/stop
  * Stop an in-progress recording session (without uploading audio yet)
  */
-router.post('/recordings/:id/stop', requireAuth, requireRoles(['provider', 'ma', 'admin']), async (req: AuthedRequest, res) => {
+router.post('/recordings/:id/stop', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const recordingId = req.params.id!;
     const tenantId = req.user!.tenantId;
@@ -236,7 +258,7 @@ router.post('/recordings/:id/stop', requireAuth, requireRoles(['provider', 'ma',
       completedAt: current.completedAt || new Date().toISOString()
     });
   } catch (error: any) {
-    console.error('Stop recording error:', error);
+    logAmbientError('Stop recording error', error);
     res.status(500).json({ error: 'Failed to stop recording' });
   }
 });
@@ -245,7 +267,7 @@ router.post('/recordings/:id/stop', requireAuth, requireRoles(['provider', 'ma',
  * POST /api/ambient/recordings/:id/upload
  * Upload audio file for an existing recording
  */
-router.post('/recordings/:id/upload', requireAuth, upload.single('audio'), async (req: AuthedRequest, res) => {
+router.post('/recordings/:id/upload', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), upload.single('audio'), async (req: AuthedRequest, res) => {
   try {
     const recordingId = req.params.id!;
     const tenantId = req.user!.tenantId;
@@ -301,7 +323,7 @@ router.post('/recordings/:id/upload', requireAuth, upload.single('audio'), async
     try {
       await startTranscription(recordingId, tenantId, req.file!.path, durationSeconds);
     } catch (error) {
-      console.error('Auto-transcription failed:', error);
+      logAmbientError('Auto-transcription failed', error);
       // Don't fail the upload if transcription fails
     }
 
@@ -312,7 +334,7 @@ router.post('/recordings/:id/upload', requireAuth, upload.single('audio'), async
       duration: durationSeconds
     });
   } catch (error: any) {
-    console.error('Upload recording error:', error);
+    logAmbientError('Upload recording error', error);
     res.status(500).json({ error: 'Failed to upload recording' });
   }
 });
@@ -321,7 +343,7 @@ router.post('/recordings/:id/upload', requireAuth, upload.single('audio'), async
  * GET /api/ambient/recordings
  * List recordings for the current tenant
  */
-router.get('/recordings', requireAuth, async (req: AuthedRequest, res) => {
+router.get('/recordings', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const tenantId = req.user!.tenantId;
     const { encounterId, patientId, status, limit = 50 } = req.query;
@@ -372,7 +394,7 @@ router.get('/recordings', requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ recordings: result.rows });
   } catch (error: any) {
-    console.error('List recordings error:', error);
+    logAmbientError('List recordings error', error);
     res.status(500).json({ error: 'Failed to list recordings' });
   }
 });
@@ -381,7 +403,7 @@ router.get('/recordings', requireAuth, async (req: AuthedRequest, res) => {
  * GET /api/ambient/recordings/:id
  * Get recording details
  */
-router.get('/recordings/:id', requireAuth, async (req: AuthedRequest, res) => {
+router.get('/recordings/:id', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const recordingId = req.params.id;
     const tenantId = req.user!.tenantId;
@@ -414,7 +436,7 @@ router.get('/recordings/:id', requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ recording: result.rows[0] });
   } catch (error: any) {
-    console.error('Get recording error:', error);
+    logAmbientError('Get recording error', error);
     res.status(500).json({ error: 'Failed to get recording' });
   }
 });
@@ -427,7 +449,7 @@ router.get('/recordings/:id', requireAuth, async (req: AuthedRequest, res) => {
  * POST /api/ambient/recordings/:id/transcribe
  * Manually trigger transcription for a recording
  */
-router.post('/recordings/:id/transcribe', requireAuth, async (req: AuthedRequest, res) => {
+router.post('/recordings/:id/transcribe', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const recordingId = req.params.id!;
     const tenantId = req.user!.tenantId;
@@ -455,7 +477,7 @@ router.post('/recordings/:id/transcribe', requireAuth, async (req: AuthedRequest
       message: 'Transcription started'
     });
   } catch (error: any) {
-    console.error('Transcribe error:', error);
+    logAmbientError('Transcribe error', error);
     res.status(500).json({ error: 'Failed to start transcription' });
   }
 });
@@ -464,7 +486,7 @@ router.post('/recordings/:id/transcribe', requireAuth, async (req: AuthedRequest
  * GET /api/ambient/transcripts/:id
  * Get transcript details
  */
-router.get('/transcripts/:id', requireAuth, async (req: AuthedRequest, res) => {
+router.get('/transcripts/:id', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const transcriptId = req.params.id;
     const tenantId = req.user!.tenantId;
@@ -496,7 +518,7 @@ router.get('/transcripts/:id', requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ transcript: result.rows[0] });
   } catch (error: any) {
-    console.error('Get transcript error:', error);
+    logAmbientError('Get transcript error', error);
     res.status(500).json({ error: 'Failed to get transcript' });
   }
 });
@@ -505,7 +527,7 @@ router.get('/transcripts/:id', requireAuth, async (req: AuthedRequest, res) => {
  * GET /api/ambient/recordings/:id/transcript
  * Get transcript for a recording
  */
-router.get('/recordings/:id/transcript', requireAuth, async (req: AuthedRequest, res) => {
+router.get('/recordings/:id/transcript', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const recordingId = req.params.id;
     const tenantId = req.user!.tenantId;
@@ -537,7 +559,7 @@ router.get('/recordings/:id/transcript', requireAuth, async (req: AuthedRequest,
 
     res.json({ transcript: result.rows[0] });
   } catch (error: any) {
-    console.error('Get recording transcript error:', error);
+    logAmbientError('Get recording transcript error', error);
     res.status(500).json({ error: 'Failed to get transcript' });
   }
 });
@@ -550,7 +572,7 @@ router.get('/recordings/:id/transcript', requireAuth, async (req: AuthedRequest,
  * POST /api/ambient/transcripts/:id/generate-note
  * Generate clinical note from transcript
  */
-router.post('/transcripts/:id/generate-note', requireAuth, async (req: AuthedRequest, res) => {
+router.post('/transcripts/:id/generate-note', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const transcriptId = req.params.id!;
     const tenantId = req.user!.tenantId;
@@ -579,7 +601,7 @@ router.post('/transcripts/:id/generate-note', requireAuth, async (req: AuthedReq
       message: 'Note generation started'
     });
   } catch (error: any) {
-    console.error('Generate note error:', error);
+    logAmbientError('Generate note error', error);
     res.status(500).json({ error: 'Failed to generate note' });
   }
 });
@@ -588,7 +610,7 @@ router.post('/transcripts/:id/generate-note', requireAuth, async (req: AuthedReq
  * GET /api/ambient/notes/:id
  * Get generated note details
  */
-router.get('/notes/:id', requireAuth, async (req: AuthedRequest, res) => {
+router.get('/notes/:id', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const noteId = req.params.id;
     const tenantId = req.user!.tenantId;
@@ -636,7 +658,7 @@ router.get('/notes/:id', requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ note: result.rows[0] });
   } catch (error: any) {
-    console.error('Get note error:', error);
+    logAmbientError('Get note error', error);
     res.status(500).json({ error: 'Failed to get note' });
   }
 });
@@ -645,7 +667,7 @@ router.get('/notes/:id', requireAuth, async (req: AuthedRequest, res) => {
  * GET /api/ambient/encounters/:encounterId/notes
  * Get all generated notes for an encounter
  */
-router.get('/encounters/:encounterId/notes', requireAuth, async (req: AuthedRequest, res) => {
+router.get('/encounters/:encounterId/notes', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const encounterId = req.params.encounterId;
     const tenantId = req.user!.tenantId;
@@ -687,7 +709,7 @@ router.get('/encounters/:encounterId/notes', requireAuth, async (req: AuthedRequ
 
     res.json({ notes: result.rows });
   } catch (error: any) {
-    console.error('Get encounter notes error:', error);
+    logAmbientError('Get encounter notes error', error);
     res.status(500).json({ error: 'Failed to get encounter notes' });
   }
 });
@@ -696,7 +718,7 @@ router.get('/encounters/:encounterId/notes', requireAuth, async (req: AuthedRequ
  * PATCH /api/ambient/notes/:id
  * Update a generated note (creates audit trail)
  */
-router.patch('/notes/:id', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
+router.patch('/notes/:id', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const noteId = req.params.id!;
     const tenantId = req.user!.tenantId;
@@ -780,7 +802,7 @@ router.patch('/notes/:id', requireAuth, requireRoles(['provider', 'admin']), asy
 
     res.json({ success: true, message: 'Note updated successfully' });
   } catch (error: any) {
-    console.error('Update note error:', error);
+    logAmbientError('Update note error', error);
     res.status(500).json({ error: 'Failed to update note' });
   }
 });
@@ -789,7 +811,7 @@ router.patch('/notes/:id', requireAuth, requireRoles(['provider', 'admin']), asy
  * POST /api/ambient/notes/:id/review
  * Submit review decision (approve/reject)
  */
-router.post('/notes/:id/review', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
+router.post('/notes/:id/review', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const noteId = req.params.id!;
     const tenantId = req.user!.tenantId;
@@ -817,12 +839,15 @@ router.post('/notes/:id/review', requireAuth, requireRoles(['provider', 'admin']
         return res.status(400).json({ error: 'Invalid action' });
     }
 
-    await pool.query(
+    const updateResult = await pool.query(
       `UPDATE ambient_generated_notes
        SET review_status = $1, reviewed_by = $2, reviewed_at = NOW(), updated_at = NOW()
        WHERE id = $3 AND tenant_id = $4`,
       [newStatus, userId, noteId, tenantId]
     );
+    if ((updateResult.rowCount || 0) === 0) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
 
     // Create audit entry
     await pool.query(
@@ -838,10 +863,12 @@ router.post('/notes/:id/review', requireAuth, requireRoles(['provider', 'admin']
     res.json({
       success: true,
       status: newStatus,
-      message: `Note ${action}d successfully`
+      message: action === 'request_regeneration'
+        ? 'Note regeneration requested successfully'
+        : `Note ${action}d successfully`
     });
   } catch (error: any) {
-    console.error('Review note error:', error);
+    logAmbientError('Review note error', error);
     res.status(500).json({ error: 'Failed to review note' });
   }
 });
@@ -850,7 +877,7 @@ router.post('/notes/:id/review', requireAuth, requireRoles(['provider', 'admin']
  * POST /api/ambient/notes/:id/apply-to-encounter
  * Apply approved note to encounter
  */
-router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
+router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const noteId = req.params.id;
     const tenantId = req.user!.tenantId;
@@ -904,7 +931,7 @@ router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles(['provide
       message: 'Note applied to encounter successfully'
     });
   } catch (error: any) {
-    console.error('Apply note error:', error);
+    logAmbientError('Apply note error', error);
     res.status(500).json({ error: 'Failed to apply note to encounter' });
   }
 });
@@ -913,7 +940,7 @@ router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles(['provide
  * GET /api/ambient/notes/:id/edits
  * Get edit history for a note
  */
-router.get('/notes/:id/edits', requireAuth, async (req: AuthedRequest, res) => {
+router.get('/notes/:id/edits', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const noteId = req.params.id;
     const tenantId = req.user!.tenantId;
@@ -940,7 +967,7 @@ router.get('/notes/:id/edits', requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ edits: result.rows });
   } catch (error: any) {
-    console.error('Get edits error:', error);
+    logAmbientError('Get edits error', error);
     res.status(500).json({ error: 'Failed to get edit history' });
   }
 });
@@ -949,7 +976,7 @@ router.get('/notes/:id/edits', requireAuth, async (req: AuthedRequest, res) => {
  * DELETE /api/ambient/recordings/:id
  * Delete a recording and associated data
  */
-router.delete('/recordings/:id', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
+router.delete('/recordings/:id', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const recordingId = req.params.id!;
     const tenantId = req.user!.tenantId;
@@ -975,7 +1002,7 @@ router.delete('/recordings/:id', requireAuth, requireRoles(['provider', 'admin']
       try {
         await fs.unlink(filePath);
       } catch (error) {
-        console.error('Failed to delete audio file:', error);
+        logAmbientError('Failed to delete audio file', error);
         // Don't fail the request if file deletion fails
       }
     }
@@ -984,7 +1011,7 @@ router.delete('/recordings/:id', requireAuth, requireRoles(['provider', 'admin']
 
     res.json({ success: true, message: 'Recording deleted successfully' });
   } catch (error: any) {
-    console.error('Delete recording error:', error);
+    logAmbientError('Delete recording error', error);
     res.status(500).json({ error: 'Failed to delete recording' });
   }
 });
@@ -1023,21 +1050,75 @@ type FormalAppointmentSummary = {
   }>;
 };
 
-function toProbabilityPercent(value: unknown): number {
+type SummaryDiagnosisCandidate = {
+  condition: string;
+  reasoning: string;
+  icd10Code?: string;
+  probabilityWeight: number;
+};
+
+function toTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function toProbabilityWeight(value: unknown): number {
   let parsed = typeof value === 'number' ? value : Number(value);
-  if (Number.isNaN(parsed)) {
+  if (Number.isNaN(parsed) || !Number.isFinite(parsed)) {
     return 0;
   }
   if (parsed > 1) {
     parsed = parsed / 100;
   }
-  const clamped = Math.max(0, Math.min(1, parsed));
-  return Math.round(clamped * 100);
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function normalizeProbabilityPercents(weights: number[]): number[] {
+  if (weights.length === 0) {
+    return [];
+  }
+  if (weights.length === 1) {
+    return [100];
+  }
+
+  const safeWeights = weights.map((weight, index) => {
+    if (Number.isFinite(weight) && weight > 0) {
+      return weight;
+    }
+    return Math.max(0.01, 1 / (index + 2));
+  });
+
+  const totalWeight = safeWeights.reduce((sum, value) => sum + value, 0);
+  if (totalWeight <= 0) {
+    return [100, ...Array(Math.max(0, weights.length - 1)).fill(0)];
+  }
+
+  // Guarantee every diagnosis receives at least 1% while preserving ranked weighting.
+  const basePercentages = Array.from({ length: weights.length }, () => 1);
+  const remainingBudget = Math.max(0, 100 - basePercentages.length);
+  const rawExtras = safeWeights.map((value) => (value / totalWeight) * remainingBudget);
+  const flooredExtras = rawExtras.map((value) => Math.floor(value));
+  let remaining = remainingBudget - flooredExtras.reduce((sum, value) => sum + value, 0);
+
+  const fractionalOrder = rawExtras
+    .map((value, index) => ({ index, fraction: value - flooredExtras[index]! }))
+    .sort((a, b) => b.fraction - a.fraction);
+
+  const normalized = basePercentages.map((base, index) => base + (flooredExtras[index] || 0));
+  let cursor = 0;
+  while (remaining > 0 && fractionalOrder.length > 0) {
+    const target = fractionalOrder[cursor % fractionalOrder.length]!;
+    normalized[target.index] = (normalized[target.index] || 0) + 1;
+    remaining -= 1;
+    cursor += 1;
+  }
+
+  return normalized;
 }
 
 function extractSymptomsForSummary(note: {
   chiefComplaint?: string;
   hpi?: string;
+  assessment?: string;
   patientSummary?: { yourConcerns?: string[] };
 }): string[] {
   const symptoms: string[] = [];
@@ -1055,7 +1136,7 @@ function extractSymptomsForSummary(note: {
     pushUnique(String(concern));
   }
 
-  const sourceText = `${note.chiefComplaint || ''} ${note.hpi || ''}`.toLowerCase();
+  const sourceText = `${note.chiefComplaint || ''} ${note.hpi || ''} ${note.assessment || ''}`.toLowerCase();
   for (const symptom of SYMPTOM_PATTERNS) {
     if (symptom.pattern.test(sourceText)) {
       pushUnique(symptom.label);
@@ -1064,36 +1145,133 @@ function extractSymptomsForSummary(note: {
 
   if (symptoms.length === 0 && note.chiefComplaint) {
     pushUnique(note.chiefComplaint.split('.')[0] || note.chiefComplaint);
+  } else if (symptoms.length === 0 && note.assessment) {
+    pushUnique(note.assessment.split('.')[0] || note.assessment);
   }
 
   return symptoms.slice(0, 8);
 }
 
-function buildFormalAppointmentSummary(result: Awaited<ReturnType<typeof generateClinicalNote>>): FormalAppointmentSummary {
-  const probableDiagnoses = (result.differentialDiagnoses || [])
-    .slice(0, 5)
-    .map((diagnosis: any) => ({
-      condition: diagnosis?.condition || 'Unspecified diagnosis',
-      probabilityPercent: toProbabilityPercent(diagnosis?.confidence),
-      reasoning: diagnosis?.reasoning || 'Based on documented symptom and exam pattern.',
-      icd10Code: diagnosis?.icd10Code || undefined
-    }))
-    .filter((diagnosis) => diagnosis.condition);
+function buildFallbackProbableDiagnosis(
+  result: Awaited<ReturnType<typeof generateClinicalNote>>
+): FormalAppointmentSummary['probableDiagnoses'][number] {
+  const condition =
+    toTrimmedString(result.assessment).split('.')[0] ||
+    toTrimmedString(result.chiefComplaint).split('.')[0] ||
+    'Dermatologic condition under evaluation';
+  const primaryIcd10 = toTrimmedString(result.suggestedIcd10?.[0]?.code);
 
+  return {
+    condition,
+    probabilityPercent: 100,
+    reasoning: 'Derived from encounter findings; clinician review required.',
+    icd10Code: primaryIcd10 || undefined,
+  };
+}
+
+function buildProbableDiagnoses(
+  result: Awaited<ReturnType<typeof generateClinicalNote>>
+): FormalAppointmentSummary['probableDiagnoses'] {
+  const candidates: SummaryDiagnosisCandidate[] = (result.differentialDiagnoses || [])
+    .slice(0, 5)
+    .map((diagnosis: any) => {
+      const condition = toTrimmedString(diagnosis?.condition);
+      if (!condition) {
+        return null;
+      }
+
+      return {
+        condition,
+        reasoning: toTrimmedString(diagnosis?.reasoning) || 'Based on documented symptom and exam pattern.',
+        icd10Code: toTrimmedString(diagnosis?.icd10Code) || undefined,
+        probabilityWeight: toProbabilityWeight(diagnosis?.confidence),
+      } as SummaryDiagnosisCandidate;
+    })
+    .filter((candidate): candidate is SummaryDiagnosisCandidate => Boolean(candidate));
+
+  if (candidates.length === 0) {
+    return [buildFallbackProbableDiagnosis(result)];
+  }
+
+  const sorted = candidates.sort((a, b) => b.probabilityWeight - a.probabilityWeight);
+  const percentages = normalizeProbabilityPercents(sorted.map((candidate) => candidate.probabilityWeight));
+
+  return sorted.map((diagnosis, index) => ({
+    condition: diagnosis.condition,
+    probabilityPercent: percentages[index] || 0,
+    reasoning: diagnosis.reasoning,
+    icd10Code: diagnosis.icd10Code,
+  }));
+}
+
+function buildFallbackSuggestedTests(
+  topDiagnosisCondition: string
+): FormalAppointmentSummary['suggestedTests'] {
+  const normalized = topDiagnosisCondition.toLowerCase();
+  if (/\b(melanoma|carcinoma|neoplasm|skin cancer)\b/.test(normalized)) {
+    return [{
+      testName: 'Skin biopsy',
+      urgency: 'urgent',
+      rationale: 'Histopathology is needed to confirm diagnosis and guide treatment.',
+    }];
+  }
+  if (/\b(infection|cellulitis|impetigo|folliculitis)\b/.test(normalized)) {
+    return [{
+      testName: 'Skin culture and sensitivity',
+      urgency: 'soon',
+      rationale: 'Identifies causative organism and supports targeted antimicrobial treatment.',
+    }];
+  }
+  if (/\b(allergic|contact dermatitis|eczema)\b/.test(normalized)) {
+    return [{
+      testName: 'Patch testing',
+      urgency: 'soon',
+      rationale: 'Helps identify specific contact triggers and prevent recurrence.',
+      cptCode: '95044',
+    }];
+  }
+
+  return [{
+    testName: 'Focused dermatology follow-up evaluation',
+    urgency: 'routine',
+    rationale: 'Reassess response to treatment and refine diagnosis as needed.',
+  }];
+}
+
+function buildSuggestedTests(
+  result: Awaited<ReturnType<typeof generateClinicalNote>>,
+  probableDiagnoses: FormalAppointmentSummary['probableDiagnoses']
+): FormalAppointmentSummary['suggestedTests'] {
   const suggestedTests = (result.recommendedTests || [])
     .slice(0, 5)
     .map((test: any) => ({
-      testName: test?.testName || 'Follow-up clinical evaluation',
+      testName: toTrimmedString(test?.testName) || 'Follow-up clinical evaluation',
       urgency: (test?.urgency === 'urgent' || test?.urgency === 'soon' || test?.urgency === 'routine')
         ? test.urgency
         : 'routine',
-      rationale: test?.rationale || 'Recommended from visit findings.',
-      cptCode: test?.cptCode || undefined
+      rationale: toTrimmedString(test?.rationale) || 'Recommended from visit findings.',
+      cptCode: toTrimmedString(test?.cptCode) || undefined
     }))
     .filter((test) => test.testName);
 
+  if (suggestedTests.length > 0) {
+    return suggestedTests;
+  }
+
+  return buildFallbackSuggestedTests(probableDiagnoses[0]?.condition || '');
+}
+
+function buildFormalAppointmentSummary(result: Awaited<ReturnType<typeof generateClinicalNote>>): FormalAppointmentSummary {
+  const probableDiagnoses = buildProbableDiagnoses(result);
+  const suggestedTests = buildSuggestedTests(result, probableDiagnoses);
+
   return {
-    symptoms: extractSymptomsForSummary(result),
+    symptoms: extractSymptomsForSummary({
+      chiefComplaint: result.chiefComplaint,
+      hpi: result.hpi,
+      assessment: result.assessment,
+      patientSummary: result.patientSummary || undefined,
+    }),
     probableDiagnoses,
     suggestedTests
   };
@@ -1118,24 +1296,24 @@ async function startTranscription(
 ): Promise<string> {
   const transcriptId = crypto.randomUUID();
 
-  // Create transcript record
-  await pool.query(
-    `INSERT INTO ambient_transcripts (
-      id, tenant_id, recording_id, transcription_status, started_at
-    ) VALUES ($1, $2, $3, $4, NOW())`,
-    [transcriptId, tenantId, recordingId, 'processing']
-  );
-
   // Get encounter_id from recording
   const recording = await pool.query(
     'SELECT encounter_id FROM ambient_recordings WHERE id = $1',
     [recordingId]
   );
-  const encounterId = recording.rows[0]?.encounter_id;
+  const encounterId = recording.rows[0]?.encounter_id || null;
+
+  // Create transcript record
+  await pool.query(
+    `INSERT INTO ambient_transcripts (
+      id, tenant_id, recording_id, encounter_id, transcription_status, started_at
+    ) VALUES ($1, $2, $3, $4, $5, NOW())`,
+    [transcriptId, tenantId, recordingId, encounterId, 'processing']
+  );
 
   // Process transcription asynchronously
   processTranscription(transcriptId, tenantId, recordingId, encounterId, filePath, durationSeconds).catch(error => {
-    console.error('Transcription processing error:', error);
+    logAmbientError('Transcription processing error', error);
   });
 
   return transcriptId;
@@ -1203,7 +1381,7 @@ async function processTranscription(
       await generateNote(tenantId, transcriptId, encounterId, maskedText, result.segments);
     }
   } catch (error: any) {
-    console.error('Transcription error:', error);
+    logAmbientError('Transcription error', error);
     await pool.query(
       `UPDATE ambient_transcripts
        SET transcription_status = $1, error_message = $2, updated_at = NOW()
@@ -1241,7 +1419,7 @@ async function generateNote(
 
   // Process note generation asynchronously
   processNoteGeneration(noteId, tenantId, transcriptText, segments).catch(error => {
-    console.error('Note generation error:', error);
+    logAmbientError('Note generation error', error);
   });
 
   return noteId;
@@ -1306,7 +1484,7 @@ async function processNoteGeneration(
       ]
     );
   } catch (error: any) {
-    console.error('Note generation error:', error);
+    logAmbientError('Note generation error', error);
     await pool.query(
       `UPDATE ambient_generated_notes
        SET generation_status = $1, error_message = $2, updated_at = NOW()
@@ -1324,7 +1502,7 @@ async function processNoteGeneration(
  * POST /api/ambient/notes/:noteId/generate-patient-summary
  * Generate and save a patient-friendly summary from an approved note
  */
-router.post('/notes/:noteId/generate-patient-summary', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
+router.post('/notes/:noteId/generate-patient-summary', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const noteId = req.params.noteId;
     const tenantId = req.user!.tenantId;
@@ -1338,13 +1516,14 @@ router.post('/notes/:noteId/generate-patient-summary', requireAuth, requireRoles
         r.provider_id,
         p.first_name || ' ' || p.last_name as patient_name,
         pr.full_name as provider_name,
-        e.encounter_date
+        COALESCE(a.scheduled_start, e.created_at) as encounter_date
       FROM ambient_generated_notes n
       JOIN ambient_transcripts t ON t.id = n.transcript_id
       JOIN ambient_recordings r ON r.id = t.recording_id
       JOIN patients p ON p.id = r.patient_id
       JOIN providers pr ON pr.id = r.provider_id
       LEFT JOIN encounters e ON e.id = n.encounter_id
+      LEFT JOIN appointments a ON a.id = e.appointment_id
       WHERE n.id = $1 AND n.tenant_id = $2`,
       [noteId, tenantId]
     );
@@ -1449,7 +1628,7 @@ router.post('/notes/:noteId/generate-patient-summary', requireAuth, requireRoles
       message: 'Patient summary generated successfully'
     });
   } catch (error: any) {
-    console.error('Generate patient summary error:', error);
+    logAmbientError('Generate patient summary error', error);
     res.status(500).json({ error: 'Failed to generate patient summary' });
   }
 });
@@ -1458,7 +1637,7 @@ router.post('/notes/:noteId/generate-patient-summary', requireAuth, requireRoles
  * GET /api/ambient/patient-summaries/:patientId
  * Get all summaries for a patient (provider view)
  */
-router.get('/patient-summaries/:patientId', requireAuth, async (req: AuthedRequest, res) => {
+router.get('/patient-summaries/:patientId', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const patientId = req.params.patientId;
     const tenantId = req.user!.tenantId;
@@ -1488,7 +1667,7 @@ router.get('/patient-summaries/:patientId', requireAuth, async (req: AuthedReque
         vs.follow_up_date as "followUpDate",
         vs.shared_at as "sharedAt",
         vs.created_at as "createdAt",
-        u.name as "generatedByName"
+        u.full_name as "generatedByName"
       FROM visit_summaries vs
       LEFT JOIN users u ON u.id = vs.generated_by
       WHERE vs.patient_id = $1 AND vs.tenant_id = $2
@@ -1498,7 +1677,7 @@ router.get('/patient-summaries/:patientId', requireAuth, async (req: AuthedReque
 
     res.json({ summaries: result.rows });
   } catch (error: any) {
-    console.error('Get patient summaries error:', error);
+    logAmbientError('Get patient summaries error', error);
     res.status(500).json({ error: 'Failed to get patient summaries' });
   }
 });
@@ -1507,7 +1686,7 @@ router.get('/patient-summaries/:patientId', requireAuth, async (req: AuthedReque
  * POST /api/ambient/patient-summaries/:summaryId/share
  * Share a summary with the patient (sets shared_at timestamp)
  */
-router.post('/patient-summaries/:summaryId/share', requireAuth, requireRoles(['provider', 'admin']), async (req: AuthedRequest, res) => {
+router.post('/patient-summaries/:summaryId/share', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]), async (req: AuthedRequest, res) => {
   try {
     const summaryId = req.params.summaryId;
     const tenantId = req.user!.tenantId;
@@ -1529,7 +1708,7 @@ router.post('/patient-summaries/:summaryId/share', requireAuth, requireRoles(['p
 
     res.json({ success: true, message: 'Summary shared with patient' });
   } catch (error: any) {
-    console.error('Share patient summary error:', error);
+    logAmbientError('Share patient summary error', error);
     res.status(500).json({ error: 'Failed to share patient summary' });
   }
 });

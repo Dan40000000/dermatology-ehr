@@ -3,6 +3,7 @@ import express from "express";
 import crypto from "crypto";
 import { visitSummariesRouter } from "../visitSummaries";
 import { pool } from "../../db/pool";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -21,6 +22,15 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
   randomUUID: jest.fn(() => "uuid-1"),
@@ -32,6 +42,7 @@ app.use("/visit-summaries", visitSummariesRouter);
 
 const queryMock = pool.query as jest.Mock;
 const randomUUIDMock = crypto.randomUUID as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const encounterId = "11111111-1111-4111-8111-111111111111";
 const patientId = "22222222-2222-4222-8222-222222222222";
@@ -40,6 +51,7 @@ const providerId = "33333333-3333-4333-8333-333333333333";
 beforeEach(() => {
   queryMock.mockReset();
   randomUUIDMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
   randomUUIDMock.mockReturnValue("uuid-1");
 });
@@ -52,6 +64,31 @@ describe("Visit summary routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.visitSummaries).toHaveLength(1);
+    expect(String(queryMock.mock.calls[0]?.[0] || "")).toMatch(/\bpr\.full_name\b/);
+  });
+
+  it("GET /visit-summaries logs sanitized Error failures", async () => {
+    queryMock.mockRejectedValueOnce(new Error("visit summary list failed"));
+
+    const res = await request(app).get("/visit-summaries");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to get visit summaries");
+    expect(loggerMock.error).toHaveBeenCalledWith("Get visit summaries error:", {
+      error: "visit summary list failed",
+    });
+  });
+
+  it("GET /visit-summaries masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+    const res = await request(app).get("/visit-summaries");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to get visit summaries");
+    expect(loggerMock.error).toHaveBeenCalledWith("Get visit summaries error:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /visit-summaries/:id returns 404", async () => {
@@ -162,6 +199,8 @@ describe("Visit summary routes", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.id).toBe("vs-1");
+    expect(String(queryMock.mock.calls[0]?.[0] || "")).toMatch(/COALESCE\(a\.scheduled_start,\s*e\.created_at\)\s+AS\s+encounter_date/i);
+    expect(String(queryMock.mock.calls[0]?.[0] || "")).not.toMatch(/\be\.encounter_date\b/i);
   });
 
   it("PUT /visit-summaries/:id rejects empty update", async () => {

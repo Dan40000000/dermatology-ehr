@@ -4,9 +4,28 @@ import path from "path";
 import { voiceTranscriptionService } from "../services/voiceTranscription";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { logger } from "../lib/logger";
 import { auditLog } from "../services/audit";
 
 const router = express.Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logVoiceTranscriptionError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * Voice Transcription Routes
@@ -82,7 +101,7 @@ router.post(
         message: "Audio transcribed successfully",
       });
     } catch (error: any) {
-      console.error("Transcription error:", error);
+      logVoiceTranscriptionError("Transcription error", error);
       res.status(500).json({ error: error.message || "Failed to transcribe audio" });
     }
   }
@@ -102,7 +121,7 @@ router.get("/transcriptions/:id", requireAuth, async (req: AuthedRequest, res) =
 
     res.json({ transcription });
   } catch (error) {
-    console.error("Get transcription error:", error);
+    logVoiceTranscriptionError("Get transcription error", error);
     res.status(500).json({ error: "Failed to retrieve transcription" });
   }
 });
@@ -120,7 +139,7 @@ router.get("/encounters/:encounterId", requireAuth, async (req: AuthedRequest, r
 
     res.json({ transcriptions });
   } catch (error) {
-    console.error("Get encounter transcriptions error:", error);
+    logVoiceTranscriptionError("Get encounter transcriptions error", error);
     res.status(500).json({ error: "Failed to retrieve transcriptions" });
   }
 });
@@ -146,7 +165,7 @@ router.post(
 
       res.json({ sections });
     } catch (error) {
-      console.error("Convert to note error:", error);
+      logVoiceTranscriptionError("Convert to note error", error);
       res.status(500).json({ error: "Failed to convert transcription to note" });
     }
   }
@@ -165,7 +184,7 @@ router.get("/stats", requireAuth, async (req: AuthedRequest, res) => {
       totalDurationMinutes: Math.round((stats.totalDurationSeconds || 0) / 60),
     });
   } catch (error) {
-    console.error("Get stats error:", error);
+    logVoiceTranscriptionError("Get stats error", error);
     res.status(500).json({ error: "Failed to retrieve statistics" });
   }
 });
@@ -190,7 +209,7 @@ router.delete(
       await auditLog(tenantId, userId, "transcription_delete", "transcription", id!);
       res.json({ success: true });
     } catch (error) {
-      console.error("Delete transcription error:", error);
+      logVoiceTranscriptionError("Delete transcription error", error);
       res.status(500).json({ error: "Failed to delete transcription" });
     }
   }

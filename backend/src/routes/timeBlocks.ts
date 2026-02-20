@@ -5,6 +5,7 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 import {
   hasSchedulingConflict,
   parseRecurrencePattern,
@@ -13,6 +14,24 @@ import {
 } from "../services/timeBlockService";
 
 const router = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logTimeBlocksError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Validation schemas
 const recurrencePatternSchema = z.object({
@@ -167,7 +186,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ timeBlocks });
   } catch (error) {
-    console.error("Error fetching time blocks:", error);
+    logTimeBlocksError("Error fetching time blocks:", error);
     res.status(500).json({ error: "Failed to fetch time blocks" });
   }
 });
@@ -213,7 +232,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ timeBlock: result.rows[0] });
   } catch (error) {
-    console.error("Error fetching time block:", error);
+    logTimeBlocksError("Error fetching time block:", error);
     res.status(500).json({ error: "Failed to fetch time block" });
   }
 });
@@ -297,7 +316,7 @@ router.post("/", requireAuth, requireRoles(["admin", "provider", "front_desk"]),
 
     res.status(201).json({ timeBlock: result.rows[0], id });
   } catch (error) {
-    console.error("Error creating time block:", error);
+    logTimeBlocksError("Error creating time block:", error);
     res.status(500).json({ error: "Failed to create time block" });
   }
 });
@@ -452,7 +471,7 @@ router.patch("/:id", requireAuth, requireRoles(["admin", "provider", "front_desk
 
     res.json({ timeBlock: result.rows[0] });
   } catch (error) {
-    console.error("Error updating time block:", error);
+    logTimeBlocksError("Error updating time block:", error);
     res.status(500).json({ error: "Failed to update time block" });
   }
 });
@@ -484,7 +503,7 @@ router.delete("/:id", requireAuth, requireRoles(["admin", "provider", "front_des
 
     res.json({ message: "Time block deleted successfully", id });
   } catch (error) {
-    console.error("Error deleting time block:", error);
+    logTimeBlocksError("Error deleting time block:", error);
     res.status(500).json({ error: "Failed to delete time block" });
   }
 });

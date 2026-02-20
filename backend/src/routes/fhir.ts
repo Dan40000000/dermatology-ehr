@@ -7,6 +7,7 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { pool } from "../db/pool";
+import { logger } from "../lib/logger";
 import { requireFHIRAuth, requireFHIRScope, logFHIRAccess, FHIRAuthenticatedRequest } from "../middleware/fhirAuth";
 import {
   mapPatientToFHIR,
@@ -27,6 +28,24 @@ import {
 } from "../services/fhirMapper";
 
 export const fhirRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logFhirError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // ==================== PATIENT ENDPOINTS ====================
 
@@ -52,7 +71,7 @@ fhirRouter.get("/Patient/:id", requireFHIRAuth, requireFHIRScope("Patient", "rea
     await logFHIRAccess(req, "Patient", id, "read");
     return res.json(mapPatientToFHIR(result.rows[0]));
   } catch (error) {
-    console.error("Error fetching patient:", error);
+    logFhirError("Error fetching patient", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -112,7 +131,7 @@ fhirRouter.get("/Patient", requireFHIRAuth, requireFHIRScope("Patient", "read"),
     await logFHIRAccess(req, "Patient", undefined, "search");
     return res.json(createFHIRBundle(resources, "searchset", total));
   } catch (error) {
-    console.error("Error searching patients:", error);
+    logFhirError("Error searching patients", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -143,7 +162,7 @@ fhirRouter.get("/Practitioner/:id", requireFHIRAuth, requireFHIRScope("Practitio
     await logFHIRAccess(req, "Practitioner", id, "read");
     return res.json(mapPractitionerToFHIR(result.rows[0]));
   } catch (error) {
-    console.error("Error fetching practitioner:", error);
+    logFhirError("Error fetching practitioner", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -187,7 +206,7 @@ fhirRouter.get("/Practitioner", requireFHIRAuth, requireFHIRScope("Practitioner"
     await logFHIRAccess(req, "Practitioner", undefined, "search");
     return res.json(createFHIRBundle(resources, "searchset", total));
   } catch (error) {
-    console.error("Error searching practitioners:", error);
+    logFhirError("Error searching practitioners", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -218,7 +237,7 @@ fhirRouter.get("/Encounter/:id", requireFHIRAuth, requireFHIRScope("Encounter", 
     await logFHIRAccess(req, "Encounter", id, "read");
     return res.json(mapEncounterToFHIR(result.rows[0]));
   } catch (error) {
-    console.error("Error fetching encounter:", error);
+    logFhirError("Error fetching encounter", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -268,7 +287,7 @@ fhirRouter.get("/Encounter", requireFHIRAuth, requireFHIRScope("Encounter", "rea
     await logFHIRAccess(req, "Encounter", undefined, "search");
     return res.json(createFHIRBundle(resources, "searchset", total));
   } catch (error) {
-    console.error("Error searching encounters:", error);
+    logFhirError("Error searching encounters", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -309,7 +328,7 @@ fhirRouter.get("/Observation/:id", requireFHIRAuth, requireFHIRScope("Observatio
     await logFHIRAccess(req, "Observation", id, "read");
     return res.json(observation);
   } catch (error) {
-    console.error("Error fetching observation:", error);
+    logFhirError("Error fetching observation", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -366,7 +385,7 @@ fhirRouter.get("/Observation", requireFHIRAuth, requireFHIRScope("Observation", 
     await logFHIRAccess(req, "Observation", undefined, "search");
     return res.json(createFHIRBundle(allObservations, "searchset", total * 5)); // Approximate total
   } catch (error) {
-    console.error("Error searching observations:", error);
+    logFhirError("Error searching observations", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -394,7 +413,7 @@ fhirRouter.get("/Condition/:id", requireFHIRAuth, requireFHIRScope("Condition", 
     await logFHIRAccess(req, "Condition", id!, "read");
     return res.json(mapDiagnosisToFHIRCondition(dbDiagnosis));
   } catch (error) {
-    console.error("Error fetching condition:", error);
+    logFhirError("Error fetching condition", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -449,7 +468,7 @@ fhirRouter.get("/Condition", requireFHIRAuth, requireFHIRScope("Condition", "rea
     await logFHIRAccess(req, "Condition", undefined, "search");
     return res.json(createFHIRBundle(resources, "searchset", total));
   } catch (error) {
-    console.error("Error searching conditions:", error);
+    logFhirError("Error searching conditions", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -480,7 +499,7 @@ fhirRouter.get(
       await logFHIRAccess(req, "AllergyIntolerance", id!, "read");
       return res.json(mapAllergyToFHIR(allergy));
     } catch (error) {
-      console.error("Error fetching allergy:", error);
+      logFhirError("Error fetching allergy", error);
       return res.status(500).json(
         createOperationOutcome("error", "exception", "Internal server error")
       );
@@ -576,7 +595,7 @@ fhirRouter.get(
       await logFHIRAccess(req, "AllergyIntolerance", undefined, "search");
       return res.json(createFHIRBundle(resources, "searchset", total));
     } catch (error) {
-      console.error("Error searching allergies:", error);
+      logFhirError("Error searching allergies", error);
       return res.status(500).json(
         createOperationOutcome("error", "exception", "Internal server error")
       );
@@ -657,7 +676,7 @@ fhirRouter.post(
       await logFHIRAccess(req, "AllergyIntolerance", id, "write");
       return res.status(201).json(mapAllergyToFHIR(allergy));
     } catch (error) {
-      console.error("Error creating allergy:", error);
+      logFhirError("Error creating allergy", error);
       return res.status(500).json(
         createOperationOutcome("error", "exception", "Internal server error")
       );
@@ -749,7 +768,7 @@ fhirRouter.put(
       await logFHIRAccess(req, "AllergyIntolerance", id, "write");
       return res.json(mapAllergyToFHIR(result.rows[0]));
     } catch (error) {
-      console.error("Error updating allergy:", error);
+      logFhirError("Error updating allergy", error);
       return res.status(500).json(
         createOperationOutcome("error", "exception", "Internal server error")
       );
@@ -783,7 +802,7 @@ fhirRouter.delete(
       await logFHIRAccess(req, "AllergyIntolerance", id, "write");
       return res.status(204).send();
     } catch (error) {
-      console.error("Error deleting allergy:", error);
+      logFhirError("Error deleting allergy", error);
       return res.status(500).json(
         createOperationOutcome("error", "exception", "Internal server error")
       );
@@ -812,7 +831,7 @@ fhirRouter.get("/Procedure/:id", requireFHIRAuth, requireFHIRScope("Procedure", 
     await logFHIRAccess(req, "Procedure", id!, "read");
     return res.json(mapChargeToProcedure(dbCharge));
   } catch (error) {
-    console.error("Error fetching procedure:", error);
+    logFhirError("Error fetching procedure", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -873,7 +892,7 @@ fhirRouter.get("/Procedure", requireFHIRAuth, requireFHIRScope("Procedure", "rea
     await logFHIRAccess(req, "Procedure", undefined, "search");
     return res.json(createFHIRBundle(resources, "searchset", total));
   } catch (error) {
-    console.error("Error searching procedures:", error);
+    logFhirError("Error searching procedures", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -907,7 +926,7 @@ fhirRouter.get("/Appointment/:id", requireFHIRAuth, requireFHIRScope("Appointmen
     await logFHIRAccess(req, "Appointment", id, "read");
     return res.json(mapAppointmentToFHIR(result.rows[0]));
   } catch (error) {
-    console.error("Error fetching appointment:", error);
+    logFhirError("Error fetching appointment", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -968,7 +987,7 @@ fhirRouter.get("/Appointment", requireFHIRAuth, requireFHIRScope("Appointment", 
     await logFHIRAccess(req, "Appointment", undefined, "search");
     return res.json(createFHIRBundle(resources, "searchset", total));
   } catch (error) {
-    console.error("Error searching appointments:", error);
+    logFhirError("Error searching appointments", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -1007,7 +1026,7 @@ fhirRouter.get("/Organization/:id", requireFHIRAuth, requireFHIRScope("Organizat
     await logFHIRAccess(req, "Organization", id, "read");
     return res.json(mapOrganizationToFHIR(result.rows[0]));
   } catch (error) {
-    console.error("Error fetching organization:", error);
+    logFhirError("Error fetching organization", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -1044,7 +1063,7 @@ fhirRouter.get("/Organization", requireFHIRAuth, requireFHIRScope("Organization"
     await logFHIRAccess(req, "Organization", undefined, "search");
     return res.json(createFHIRBundle(resources, "searchset", total));
   } catch (error) {
-    console.error("Error searching organizations:", error);
+    logFhirError("Error searching organizations", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );
@@ -1240,7 +1259,7 @@ fhirRouter.get("/Bundle/summary", requireFHIRAuth, async (req: FHIRAuthenticated
     await logFHIRAccess(req, "Bundle", "summary", "read");
     return res.json(createFHIRBundle(resources, "collection"));
   } catch (error) {
-    console.error("Error fetching bundle summary:", error);
+    logFhirError("Error fetching bundle summary", error);
     return res.status(500).json(
       createOperationOutcome("error", "exception", "Internal server error")
     );

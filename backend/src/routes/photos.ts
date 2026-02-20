@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
+import { logger } from '../lib/logger';
 import { PhotoService } from '../services/photoService';
 
 /**
@@ -47,6 +48,24 @@ const PHOTO_TYPES = [
 
 const LEGACY_PHOTO_TYPES = ['clinical', 'before', 'after', 'dermoscopy', 'baseline'] as const;
 const LEGACY_STORAGE_TYPES = ['local', 's3'] as const;
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logPhotosError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Validation schemas
 const uploadPhotoSchema = z.object({
@@ -260,7 +279,7 @@ photosRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
     const result = await pool.query(query, params);
     res.json({ photos: result.rows });
   } catch (error: any) {
-    console.error('Error fetching photos:', error);
+    logPhotosError('Error fetching photos', error);
     res.status(500).json({ error: 'Failed to fetch photos' });
   }
 });
@@ -312,7 +331,7 @@ photosRouter.post('/', requireAuth, async (req: AuthedRequest, res) => {
 
     res.status(201).json({ id: photoId });
   } catch (error: any) {
-    console.error('Error creating photo:', error);
+    logPhotosError('Error creating photo', error);
     res.status(500).json({ error: 'Failed to create photo' });
   }
 });
@@ -338,7 +357,7 @@ photosRouter.put('/:photoId/annotate', requireAuth, async (req: AuthedRequest, r
 
     res.json({ success: true });
   } catch (error: any) {
-    console.error('Error updating annotations:', error);
+    logPhotosError('Error updating annotations', error);
     res.status(500).json({ error: 'Failed to update annotations' });
   }
 });
@@ -365,7 +384,7 @@ photosRouter.put('/:photoId/body-location', requireAuth, async (req: AuthedReque
 
     res.json({ success: true });
   } catch (error: any) {
-    console.error('Error updating body location:', error);
+    logPhotosError('Error updating body location', error);
     res.status(500).json({ error: 'Failed to update body location' });
   }
 });
@@ -393,7 +412,7 @@ photosRouter.post('/comparison-group', requireAuth, async (req: AuthedRequest, r
 
     res.status(201).json({ id: groupId });
   } catch (error: any) {
-    console.error('Error creating comparison group:', error);
+    logPhotosError('Error creating comparison group', error);
     res.status(500).json({ error: 'Failed to create comparison group' });
   }
 });
@@ -429,7 +448,7 @@ photosRouter.get('/comparison-group/:id', requireAuth, async (req: AuthedRequest
 
     res.json({ ...groupResult.rows[0], photos: photosResult.rows });
   } catch (error: any) {
-    console.error('Error fetching comparison group:', error);
+    logPhotosError('Error fetching comparison group', error);
     res.status(500).json({ error: 'Failed to fetch comparison group' });
   }
 });
@@ -450,7 +469,7 @@ photosRouter.get('/patient/:patientId/timeline', requireAuth, async (req: Authed
 
     res.json({ photos: result.rows });
   } catch (error: any) {
-    console.error('Error fetching photo timeline:', error);
+    logPhotosError('Error fetching photo timeline', error);
     res.status(500).json({ error: 'Failed to fetch photo timeline' });
   }
 });
@@ -587,7 +606,7 @@ photosRouter.post(
         count: uploadedPhotos.length,
       });
     } catch (err) {
-      console.error('Error uploading photos:', err);
+      logPhotosError('Error uploading photos', err);
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid metadata', details: err.issues });
       }
@@ -682,7 +701,7 @@ photosRouter.get(
         offset: parseInt(offset as string),
       });
     } catch (err) {
-      console.error('Error fetching photos:', err);
+      logPhotosError('Error fetching photos', err);
       res.status(500).json({ error: 'Failed to fetch photos' });
     }
   },
@@ -720,7 +739,7 @@ photosRouter.get(
         count: result.rows.length,
       });
     } catch (err) {
-      console.error('Error fetching timeline:', err);
+      logPhotosError('Error fetching timeline', err);
       res.status(500).json({ error: 'Failed to fetch timeline' });
     }
   },
@@ -801,7 +820,7 @@ photosRouter.post(
 
       res.json(result.rows[0]);
     } catch (err) {
-      console.error('Error creating comparison:', err);
+      logPhotosError('Error creating comparison', err);
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid data', details: err.issues });
       }
@@ -843,7 +862,7 @@ photosRouter.get(
 
       res.json({ comparisons: result.rows, count: result.rows.length });
     } catch (err) {
-      console.error('Error fetching comparisons:', err);
+      logPhotosError('Error fetching comparisons', err);
       res.status(500).json({ error: 'Failed to fetch comparisons' });
     }
   },
@@ -871,7 +890,7 @@ photosRouter.get(
 
       res.json(stats);
     } catch (err) {
-      console.error('Error fetching stats:', err);
+      logPhotosError('Error fetching stats', err);
       res.status(500).json({ error: 'Failed to fetch statistics' });
     }
   },
@@ -907,7 +926,7 @@ photosRouter.get(
 
       res.json(result.rows[0]);
     } catch (err) {
-      console.error('Error fetching photo:', err);
+      logPhotosError('Error fetching photo', err);
       res.status(500).json({ error: 'Failed to fetch photo' });
     }
   },
@@ -974,7 +993,7 @@ photosRouter.put(
 
       res.json(result.rows[0]);
     } catch (err) {
-      console.error('Error updating photo:', err);
+      logPhotosError('Error updating photo', err);
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid data', details: err.issues });
       }
@@ -1014,7 +1033,7 @@ photosRouter.delete(
 
       res.json({ success: true, message: 'Photo deleted' });
     } catch (err) {
-      console.error('Error deleting photo:', err);
+      logPhotosError('Error deleting photo', err);
       res.status(500).json({ error: 'Failed to delete photo' });
     }
   },
@@ -1088,7 +1107,7 @@ photosRouter.post(
 
       res.json(result.rows[0]);
     } catch (err) {
-      console.error('Error linking photo to body map:', err);
+      logPhotosError('Error linking photo to body map', err);
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid data', details: err.issues });
       }
@@ -1185,7 +1204,7 @@ photosRouter.get(
         offset: parseInt(offset as string),
       });
     } catch (err) {
-      console.error('Error fetching photos by body region:', err);
+      logPhotosError('Error fetching photos by body region', err);
       res.status(500).json({ error: 'Failed to fetch photos' });
     }
   },
@@ -1252,7 +1271,7 @@ photosRouter.get(
         latest_photo: timeline.length > 0 ? timeline[timeline.length - 1] : null,
       });
     } catch (err) {
-      console.error('Error fetching marker timeline:', err);
+      logPhotosError('Error fetching marker timeline', err);
       res.status(500).json({ error: 'Failed to fetch timeline' });
     }
   },
@@ -1332,7 +1351,7 @@ photosRouter.post(
 
       res.json(result.rows[0]);
     } catch (err) {
-      console.error('Error creating comparison:', err);
+      logPhotosError('Error creating comparison', err);
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: 'Invalid data', details: err.issues });
       }

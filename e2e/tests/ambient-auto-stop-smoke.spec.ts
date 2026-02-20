@@ -92,7 +92,7 @@ test.describe('Ambient Auto-Stop Smoke', () => {
             note?: {
               noteContent?: {
                 formalAppointmentSummary?: {
-                  probableDiagnoses?: Array<{ probabilityPercent?: number }>;
+                  probableDiagnoses?: Array<{ condition?: string; probabilityPercent?: number }>;
                   suggestedTests?: Array<{ testName?: string }>;
                 };
               };
@@ -101,7 +101,7 @@ test.describe('Ambient Auto-Stop Smoke', () => {
             note?: {
               noteContent?: {
                 formalAppointmentSummary?: {
-                  probableDiagnoses?: Array<{ probabilityPercent?: number }>;
+                  probableDiagnoses?: Array<{ condition?: string; probabilityPercent?: number }>;
                   suggestedTests?: Array<{ testName?: string }>;
                 };
               };
@@ -113,6 +113,15 @@ test.describe('Ambient Auto-Stop Smoke', () => {
       const encounterNotesPayload = ((await safeJson<{ notes?: Array<{ id: string }> }>(encounterNotesResponse)) || {}) as {
         notes?: Array<{ id: string }>;
       };
+
+      const probableDiagnoses = notePayload?.note?.noteContent?.formalAppointmentSummary?.probableDiagnoses || [];
+      const suggestedTests = notePayload?.note?.noteContent?.formalAppointmentSummary?.suggestedTests || [];
+      const probabilityTotal = probableDiagnoses.reduce((sum, diagnosis) => {
+        const percent = Number(diagnosis?.probabilityPercent ?? 0);
+        return Number.isFinite(percent) ? sum + percent : sum;
+      }, 0);
+      const allDiagnosisConditionsPresent = probableDiagnoses.every((diagnosis) => (diagnosis?.condition || '').trim().length > 0);
+      const allSuggestedTestsPresent = suggestedTests.every((test) => (test?.testName || '').trim().length > 0);
 
       return {
         startCode: startResponse.status,
@@ -126,10 +135,11 @@ test.describe('Ambient Auto-Stop Smoke', () => {
         generateCode: generateResponse?.status ?? 0,
         noteId,
         hasFormalSummary: Boolean(notePayload?.note?.noteContent?.formalAppointmentSummary),
-        probableDiagnosisPercent:
-          notePayload?.note?.noteContent?.formalAppointmentSummary?.probableDiagnoses?.[0]?.probabilityPercent ?? 0,
-        suggestedTestName:
-          notePayload?.note?.noteContent?.formalAppointmentSummary?.suggestedTests?.[0]?.testName || '',
+        probableDiagnosisCount: probableDiagnoses.length,
+        probableDiagnosisPercentTotal: probabilityTotal,
+        allDiagnosisConditionsPresent,
+        suggestedTestCount: suggestedTests.length,
+        allSuggestedTestsPresent,
         encounterNoteCount: (encounterNotesPayload.notes || []).length,
       };
     });
@@ -145,8 +155,11 @@ test.describe('Ambient Auto-Stop Smoke', () => {
     expect(flow.generateCode).toBe(200);
     expect(flow.noteId).not.toBe('');
     expect(flow.hasFormalSummary).toBe(true);
-    expect(flow.probableDiagnosisPercent).toBeGreaterThan(0);
-    expect(flow.suggestedTestName).not.toBe('');
+    expect(flow.probableDiagnosisCount).toBeGreaterThan(0);
+    expect(flow.probableDiagnosisPercentTotal).toBe(100);
+    expect(flow.allDiagnosisConditionsPresent).toBe(true);
+    expect(flow.suggestedTestCount).toBeGreaterThan(0);
+    expect(flow.allSuggestedTestsPresent).toBe(true);
     expect(flow.encounterNoteCount).toBeGreaterThan(0);
   });
 });

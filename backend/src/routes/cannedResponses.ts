@@ -3,9 +3,28 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 import crypto from "crypto";
 
 const router = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logCannedResponsesError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Validation schemas
 const createCannedResponseSchema = z.object({
@@ -61,7 +80,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ cannedResponses: result.rows });
   } catch (error) {
-    console.error("Error fetching canned responses:", error);
+    logCannedResponsesError("Error fetching canned responses:", error);
     res.status(500).json({ error: "Failed to fetch canned responses" });
   }
 });
@@ -93,7 +112,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error("Error fetching canned response:", error);
+    logCannedResponsesError("Error fetching canned response:", error);
     res.status(500).json({ error: "Failed to fetch canned response" });
   }
 });
@@ -123,7 +142,7 @@ router.post("/", requireAuth, async (req: AuthedRequest, res) => {
 
     res.status(201).json({ id });
   } catch (error) {
-    console.error("Error creating canned response:", error);
+    logCannedResponsesError("Error creating canned response:", error);
     res.status(500).json({ error: "Failed to create canned response" });
   }
 });
@@ -187,7 +206,7 @@ router.put("/:id", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ success: true });
   } catch (error) {
-    console.error("Error updating canned response:", error);
+    logCannedResponsesError("Error updating canned response:", error);
     res.status(500).json({ error: "Failed to update canned response" });
   }
 });
@@ -214,7 +233,7 @@ router.delete("/:id", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ success: true });
   } catch (error) {
-    console.error("Error deleting canned response:", error);
+    logCannedResponsesError("Error deleting canned response:", error);
     res.status(500).json({ error: "Failed to delete canned response" });
   }
 });

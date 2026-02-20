@@ -2,6 +2,7 @@ import request from "supertest";
 import express from "express";
 import { medicationsRouter } from "../medications";
 import { pool } from "../../db/pool";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -16,14 +17,25 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/medications", medicationsRouter);
 
 const queryMock = pool.query as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
+  loggerMock.error.mockReset();
 });
 
 describe("Medications routes", () => {
@@ -45,6 +57,18 @@ describe("Medications routes", () => {
     queryMock.mockRejectedValueOnce(new Error("boom"));
     const res = await request(app).get("/medications");
     expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith("Error searching medications:", {
+      error: "boom",
+    });
+  });
+
+  it("GET /medications masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ medicationName: "Secret Rx" });
+    const res = await request(app).get("/medications");
+    expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith("Error searching medications:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /medications/list/categories returns categories", async () => {

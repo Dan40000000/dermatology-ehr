@@ -4,8 +4,27 @@ import { z } from 'zod';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
+import { logger } from '../lib/logger';
 
 export const refillRequestsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logRefillRequestsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Validation schemas
 const createRefillRequestSchema = z.object({
@@ -78,7 +97,7 @@ refillRequestsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
 
     return res.json({ refillRequests: result.rows });
   } catch (error) {
-    console.error('Error fetching refill requests:', error);
+    logRefillRequestsError('Error fetching refill requests:', error);
     return res.status(500).json({ error: 'Failed to fetch refill requests' });
   }
 });
@@ -115,7 +134,7 @@ refillRequestsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) =>
 
     return res.json({ refillRequest: result.rows[0] });
   } catch (error) {
-    console.error('Error fetching refill request:', error);
+    logRefillRequestsError('Error fetching refill request:', error);
     return res.status(500).json({ error: 'Failed to fetch refill request' });
   }
 });
@@ -165,7 +184,7 @@ refillRequestsRouter.post(
 
       return res.status(201).json({ id, message: 'Refill request created' });
     } catch (error) {
-      console.error('Error creating refill request:', error);
+      logRefillRequestsError('Error creating refill request:', error);
       return res.status(500).json({ error: 'Failed to create refill request' });
     }
   }
@@ -236,7 +255,7 @@ refillRequestsRouter.put(
 
       return res.json({ success: true, id, status: data.status });
     } catch (error) {
-      console.error('Error updating refill request:', error);
+      logRefillRequestsError('Error updating refill request:', error);
       return res.status(500).json({ error: 'Failed to update refill request' });
     }
   }
@@ -307,7 +326,7 @@ refillRequestsRouter.post(
 
       return res.json({ success: true, message: 'Refill approved' });
     } catch (error) {
-      console.error('Error approving refill request:', error);
+      logRefillRequestsError('Error approving refill request:', error);
       return res.status(500).json({ error: 'Failed to approve refill request' });
     }
   }
@@ -343,7 +362,7 @@ refillRequestsRouter.post(
 
       return res.json({ success: true, message: 'Refill denied' });
     } catch (error) {
-      console.error('Error denying refill request:', error);
+      logRefillRequestsError('Error denying refill request:', error);
       return res.status(500).json({ error: 'Failed to deny refill request' });
     }
   }
@@ -370,7 +389,7 @@ refillRequestsRouter.delete(
 
       return res.json({ success: true });
     } catch (error) {
-      console.error('Error deleting refill request:', error);
+      logRefillRequestsError('Error deleting refill request:', error);
       return res.status(500).json({ error: 'Failed to delete refill request' });
     }
   }

@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { auditRouter } from "../audit";
 import { pool } from "../../db/pool";
 import { createAuditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -26,11 +27,21 @@ jest.mock("../../services/audit", () => ({
   createAuditLog: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/audit", auditRouter);
 
 const queryMock = pool.query as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 const authToken = jwt.sign(
   { id: "user-1", tenantId: "tenant-1", role: "admin" },
   process.env.JWT_SECRET || "test-secret-key-for-testing-only",
@@ -45,6 +56,7 @@ const authPost = (path: string) => request(app).post(path).set(authHeaders);
 beforeEach(() => {
   jest.clearAllMocks();
   queryMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -174,6 +186,21 @@ describe("Audit Routes", () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to fetch audit logs");
+      expect(loggerMock.error).toHaveBeenCalledWith("Error fetching audit logs:", {
+        error: "DB error",
+      });
+    });
+
+    it("should mask non-Error failures", async () => {
+      queryMock.mockRejectedValueOnce({ userEmail: "secret@example.com" });
+
+      const res = await authGet("/audit");
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to fetch audit logs");
+      expect(loggerMock.error).toHaveBeenCalledWith("Error fetching audit logs:", {
+        error: "Unknown error",
+      });
     });
   });
 

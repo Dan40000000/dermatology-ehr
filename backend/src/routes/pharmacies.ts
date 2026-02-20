@@ -4,8 +4,27 @@ import { z } from 'zod';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
+import { logger } from '../lib/logger';
 
 export const pharmaciesRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logPharmaciesError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Validation schemas
 const createPharmacySchema = z.object({
@@ -92,7 +111,7 @@ pharmaciesRouter.get('/search', requireAuth, async (req: AuthedRequest, res) => 
 
     return res.json({ pharmacies: result.rows, total: result.rows.length });
   } catch (error) {
-    console.error('Error searching pharmacies:', error);
+    logPharmaciesError('Error searching pharmacies', error);
     return res.status(500).json({ error: 'Failed to search pharmacies' });
   }
 });
@@ -166,7 +185,7 @@ pharmaciesRouter.get('/nearby', requireAuth, async (req: AuthedRequest, res) => 
       searchCriteria: { latitude, longitude, radius, city, state, zip },
     });
   } catch (error) {
-    console.error('Error finding nearby pharmacies:', error);
+    logPharmaciesError('Error finding nearby pharmacies', error);
     return res.status(500).json({ error: 'Failed to find nearby pharmacies' });
   }
 });
@@ -214,7 +233,7 @@ pharmaciesRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
 
     return res.json({ pharmacies: result.rows });
   } catch (error) {
-    console.error('Error fetching pharmacies:', error);
+    logPharmaciesError('Error fetching pharmacies', error);
     return res.status(500).json({ error: 'Failed to fetch pharmacies' });
   }
 });
@@ -228,7 +247,7 @@ pharmaciesRouter.get('/list/preferred', requireAuth, async (_req: AuthedRequest,
 
     return res.json({ pharmacies: result.rows });
   } catch (error) {
-    console.error('Error fetching preferred pharmacies:', error);
+    logPharmaciesError('Error fetching preferred pharmacies', error);
     return res.status(500).json({ error: 'Failed to fetch preferred pharmacies' });
   }
 });
@@ -249,7 +268,7 @@ pharmaciesRouter.get('/ncpdp/:ncpdpId', requireAuth, async (req: AuthedRequest, 
 
     return res.json({ pharmacy: result.rows[0] });
   } catch (error) {
-    console.error('Error fetching pharmacy by NCPDP:', error);
+    logPharmaciesError('Error fetching pharmacy by NCPDP', error);
     return res.status(500).json({ error: 'Failed to fetch pharmacy' });
   }
 });
@@ -270,7 +289,7 @@ pharmaciesRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) => {
 
     return res.json({ pharmacy: result.rows[0] });
   } catch (error) {
-    console.error('Error fetching pharmacy:', error);
+    logPharmaciesError('Error fetching pharmacy', error);
     return res.status(500).json({ error: 'Failed to fetch pharmacy' });
   }
 });
@@ -313,7 +332,7 @@ pharmaciesRouter.post(
 
       return res.status(201).json({ id });
     } catch (error) {
-      console.error('Error creating pharmacy:', error);
+      logPharmaciesError('Error creating pharmacy', error);
       return res.status(500).json({ error: 'Failed to create pharmacy' });
     }
   }
@@ -371,7 +390,7 @@ pharmaciesRouter.put(
 
       return res.json({ success: true, id });
     } catch (error) {
-      console.error('Error updating pharmacy:', error);
+      logPharmaciesError('Error updating pharmacy', error);
       return res.status(500).json({ error: 'Failed to update pharmacy' });
     }
   }
@@ -409,7 +428,7 @@ pharmaciesRouter.delete(
 
       return res.json({ success: true });
     } catch (error) {
-      console.error('Error deleting pharmacy:', error);
+      logPharmaciesError('Error deleting pharmacy', error);
       return res.status(500).json({ error: 'Failed to delete pharmacy' });
     }
   }

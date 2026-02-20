@@ -5,8 +5,27 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 const router = express.Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logLesionsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * Lesion Tracking Routes
@@ -154,7 +173,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res) => {
     const result = await pool.query(query, params);
     res.json({ lesions: result.rows });
   } catch (error) {
-    console.error("Get lesions error:", error);
+    logLesionsError("Get lesions error:", error);
     res.status(500).json({ error: "Failed to retrieve lesions" });
   }
 });
@@ -220,7 +239,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
       photos: photos.rows,
     });
   } catch (error) {
-    console.error("Get lesion details error:", error);
+    logLesionsError("Get lesion details error:", error);
     res.status(500).json({ error: "Failed to retrieve lesion details" });
   }
 });
@@ -280,7 +299,7 @@ router.post(
       await auditLog(tenantId, userId, "lesion_create", "lesion", id!);
       res.status(201).json({ id });
     } catch (error) {
-      console.error("Create lesion error:", error);
+      logLesionsError("Create lesion error:", error);
       res.status(500).json({ error: "Failed to create lesion" });
     }
   }
@@ -344,7 +363,7 @@ router.post(
       await auditLog(tenantId, userId, "measurement_add", "lesion", id!);
       res.status(201).json({ id: measurementId });
     } catch (error) {
-      console.error("Add measurement error:", error);
+      logLesionsError("Add measurement error:", error);
       res.status(500).json({ error: "Failed to add measurement" });
     }
   }
@@ -399,7 +418,7 @@ router.post(
       await auditLog(tenantId, userId, "dermoscopy_add", "lesion", id!);
       res.status(201).json({ id: dermoscopyId });
     } catch (error) {
-      console.error("Add dermoscopy error:", error);
+      logLesionsError("Add dermoscopy error:", error);
       res.status(500).json({ error: "Failed to add dermoscopy examination" });
     }
   }
@@ -447,7 +466,7 @@ router.post(
       await auditLog(tenantId, userId, "lesion_event", "lesion", id!);
       res.status(201).json({ id: eventId });
     } catch (error) {
-      console.error("Add lesion event error:", error);
+      logLesionsError("Add lesion event error:", error);
       res.status(500).json({ error: "Failed to add lesion event" });
     }
   }
@@ -487,7 +506,7 @@ router.get("/:id/progression", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ progression: progressionData });
   } catch (error) {
-    console.error("Get progression error:", error);
+    logLesionsError("Get progression error:", error);
     res.status(500).json({ error: "Failed to retrieve progression data" });
   }
 });
@@ -523,7 +542,7 @@ router.put(
       await auditLog(tenantId, userId, "biopsy_record", "lesion", id!);
       res.json({ success: true });
     } catch (error) {
-      console.error("Record biopsy error:", error);
+      logLesionsError("Record biopsy error:", error);
       res.status(500).json({ error: "Failed to record biopsy" });
     }
   }
@@ -559,7 +578,7 @@ router.put(
       await auditLog(tenantId, userId, "lesion_status_update", "lesion", id!);
       res.json({ success: true });
     } catch (error) {
-      console.error("Update status error:", error);
+      logLesionsError("Update status error:", error);
       res.status(500).json({ error: "Failed to update lesion status" });
     }
   }
@@ -586,7 +605,7 @@ router.get("/:id/biopsies", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ biopsies: biopsies.rows });
   } catch (error) {
-    console.error("Get lesion biopsies error:", error);
+    logLesionsError("Get lesion biopsies error:", error);
     res.status(500).json({ error: "Failed to retrieve biopsies" });
   }
 });
@@ -610,7 +629,7 @@ router.get("/:id/photos", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ photos: photos.rows });
   } catch (error) {
-    console.error("Get lesion photos error:", error);
+    logLesionsError("Get lesion photos error:", error);
     res.status(500).json({ error: "Failed to retrieve photos" });
   }
 });
@@ -639,7 +658,7 @@ router.get("/:id/timeline", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ timeline: timeline.rows });
   } catch (error) {
-    console.error("Get lesion timeline error:", error);
+    logLesionsError("Get lesion timeline error:", error);
     res.status(500).json({ error: "Failed to retrieve timeline" });
   }
 });

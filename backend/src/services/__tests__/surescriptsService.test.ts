@@ -1,9 +1,19 @@
 import * as surescriptsService from "../surescriptsService";
 import { pool } from "../../db/pool";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),
+  },
+}));
+
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
   },
 }));
 
@@ -13,9 +23,11 @@ jest.mock("crypto", () => ({
 }));
 
 const queryMock = pool.query as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
+  loggerMock.error.mockReset();
   jest.useFakeTimers();
 });
 
@@ -98,6 +110,23 @@ describe("surescriptsService", () => {
     const expectation = expect(promise).rejects.toThrow("boom");
     await jest.runAllTimersAsync();
     await expectation;
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching Rx history", {
+      error: "boom",
+    });
+  });
+
+  it("getRxHistory masks non-Error failures", async () => {
+    const randomSpy = jest.spyOn(Math, "random");
+    randomSpy.mockReturnValueOnce(0.2);
+    queryMock.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+    const promise = surescriptsService.getRxHistory("patient-1", "tenant-1");
+    const expectation = expect(promise).rejects.toEqual({ patientName: "Jane Doe" });
+    await jest.runAllTimersAsync();
+    await expectation;
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching Rx history", {
+      error: "Unknown error",
+    });
   });
 
   it("checkFormulary returns expected tier info", async () => {
@@ -175,6 +204,24 @@ describe("surescriptsService", () => {
     const result = await promise;
 
     expect(result?.coverage.isActive).toBe(true);
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching patient benefits", {
+      error: "db",
+    });
+  });
+
+  it("getPatientBenefits masks non-Error values in logs", async () => {
+    const randomSpy = jest.spyOn(Math, "random");
+    randomSpy.mockReturnValueOnce(0.2);
+    queryMock.mockRejectedValueOnce({ subscriberName: "Jane Doe" });
+
+    const promise = surescriptsService.getPatientBenefits("patient-1", "tenant-1");
+    await jest.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result?.coverage.isActive).toBe(true);
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching patient benefits", {
+      error: "Unknown error",
+    });
   });
 
   it("cancelRx logs cancellation and returns message id", async () => {

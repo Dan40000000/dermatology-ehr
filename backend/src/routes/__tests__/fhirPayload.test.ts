@@ -1,10 +1,11 @@
 import request from "supertest";
 import express from "express";
-import { fhirPayloadRouter } from "../fhirPayload";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (_req: any, _res: any, next: any) => next(),
 }));
+
+const { fhirPayloadRouter } = require("../fhirPayload");
 
 const app = express();
 app.use(express.json());

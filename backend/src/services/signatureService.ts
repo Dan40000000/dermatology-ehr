@@ -2,12 +2,31 @@ import crypto from "crypto";
 import sharp from "sharp";
 import { saveFileLocal } from "./storage";
 import { scanBuffer } from "./virusScan";
+import { logger } from "../lib/logger";
 
 export interface SignatureData {
   url: string;
   thumbnailUrl?: string;
   storage: "local" | "s3";
   objectKey: string;
+}
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logSignatureServiceError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
 }
 
 /**
@@ -102,7 +121,7 @@ export async function saveSignature(base64Data: string, patientId: string): Prom
       const savedThumbnail = await saveFileLocal(thumbnailFile, thumbnailBuffer);
       thumbnailUrl = savedThumbnail.url;
     } catch (err) {
-      console.error("Error generating signature thumbnail:", err);
+      logSignatureServiceError("Error generating signature thumbnail:", err);
       // Don't fail if thumbnail generation fails
     }
   }
@@ -179,7 +198,7 @@ export async function saveInsuranceCardPhoto(
     const savedThumbnail = await saveFileLocal(thumbnailFile, thumbnailBuffer);
     thumbnailUrl = savedThumbnail.url;
   } catch (err) {
-    console.error("Error generating insurance card thumbnail:", err);
+    logSignatureServiceError("Error generating insurance card thumbnail:", err);
   }
 
   return {

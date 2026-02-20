@@ -3,6 +3,8 @@ import express from "express";
 import { inventoryRouter } from "../inventory";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { inventoryService } from "../../services/inventoryService";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -26,6 +28,15 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/inventory", inventoryRouter);
@@ -33,6 +44,7 @@ app.use("/inventory", inventoryRouter);
 const queryMock = pool.query as jest.Mock;
 const connectMock = pool.connect as jest.Mock;
 const auditMock = auditLog as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const makeClient = () => ({
   query: jest.fn().mockResolvedValue({ rows: [] }),
@@ -43,10 +55,49 @@ beforeEach(() => {
   queryMock.mockReset();
   connectMock.mockReset();
   auditMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
 describe("Inventory routes", () => {
+  it("POST /inventory/:itemId/lots logs sanitized Error failures", async () => {
+    const upsertLotSpy = jest
+      .spyOn(inventoryService, "upsertLot")
+      .mockRejectedValueOnce(new Error("lot create failed"));
+
+    const res = await request(app).post("/inventory/item-1/lots").send({
+      lotNumber: "LOT-1",
+      quantity: 5,
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("lot create failed");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error creating lot:", {
+      error: "lot create failed",
+    });
+
+    upsertLotSpy.mockRestore();
+  });
+
+  it("POST /inventory/:itemId/lots masks non-Error failures", async () => {
+    const upsertLotSpy = jest
+      .spyOn(inventoryService, "upsertLot")
+      .mockRejectedValueOnce({ tenantId: "tenant-1" });
+
+    const res = await request(app).post("/inventory/item-1/lots").send({
+      lotNumber: "LOT-1",
+      quantity: 5,
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to create lot");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error creating lot:", {
+      error: "Unknown error",
+    });
+
+    upsertLotSpy.mockRestore();
+  });
+
   it("GET /inventory returns list", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: "item-1" }] });
     const res = await request(app).get("/inventory?category=medication&lowStock=true");

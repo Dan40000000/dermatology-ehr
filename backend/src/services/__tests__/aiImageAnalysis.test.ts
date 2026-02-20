@@ -1,10 +1,20 @@
 import { pool } from '../../db/pool';
 import { AIImageAnalysisService } from '../aiImageAnalysis';
 import crypto from 'crypto';
+import { logger } from '../../lib/logger';
 
 jest.mock('../../db/pool', () => ({
   pool: {
     query: jest.fn(),
+  },
+}));
+
+jest.mock('../../lib/logger', () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
   },
 }));
 
@@ -14,6 +24,7 @@ jest.mock('crypto', () => ({
 }));
 
 const queryMock = pool.query as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 // Mock global fetch
 global.fetch = jest.fn();
@@ -28,6 +39,9 @@ describe('AIImageAnalysisService', () => {
   beforeEach(() => {
     service = new AIImageAnalysisService();
     jest.clearAllMocks();
+    queryMock.mockReset();
+    (global.fetch as jest.Mock).mockReset();
+    loggerMock.error.mockReset();
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
   });
@@ -176,6 +190,20 @@ describe('AIImageAnalysisService', () => {
       await expect(
         service.analyzeSkinLesion(photoId, imageUrl, tenantId, analyzedBy)
       ).rejects.toThrow('Failed to analyze image');
+      expect(loggerMock.error).toHaveBeenCalledWith('AI Image Analysis Error', {
+        error: 'Database error',
+      });
+    });
+
+    it('should mask non-Error values on analysis failure', async () => {
+      queryMock.mockRejectedValueOnce({ patientName: 'Jane Doe' });
+
+      await expect(
+        service.analyzeSkinLesion(photoId, imageUrl, tenantId, analyzedBy)
+      ).rejects.toThrow('Failed to analyze image');
+      expect(loggerMock.error).toHaveBeenCalledWith('AI Image Analysis Error', {
+        error: 'Unknown error',
+      });
     });
   });
 
@@ -310,17 +338,37 @@ describe('AIImageAnalysisService', () => {
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+      const result = await service.batchAnalyzePatientPhotos('patient-123', tenantId, analyzedBy);
+
+      expect(result).toHaveLength(1);
+      expect(loggerMock.error).toHaveBeenCalledWith('Failed to analyze photo photo-2', {
+        error: 'Failed to analyze image',
+      });
+    });
+
+    it('should mask non-Error values before batch fallback logging', async () => {
+      const mockPhotos = [
+        { id: 'photo-1', url: 'https://example.com/photo1.jpg' },
+        { id: 'photo-2', url: 'https://example.com/photo2.jpg' },
+      ];
+
+      queryMock
+        .mockResolvedValueOnce({ rows: mockPhotos })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockRejectedValueOnce({ detail: 'boom' })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
 
       const result = await service.batchAnalyzePatientPhotos('patient-123', tenantId, analyzedBy);
 
       expect(result).toHaveLength(1);
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to analyze photo photo-2'),
-        expect.any(Error)
-      );
-
-      consoleErrorSpy.mockRestore();
+      expect(loggerMock.error).toHaveBeenCalledWith('AI Image Analysis Error', {
+        error: 'Unknown error',
+      });
+      expect(loggerMock.error).toHaveBeenCalledWith('Failed to analyze photo photo-2', {
+        error: 'Failed to analyze image',
+      });
     });
 
     it('should return empty array when no photos found', async () => {
@@ -493,6 +541,21 @@ describe('AIImageAnalysisService', () => {
       const analysisId = await service.analyzeSkinLesion(photoId, imageUrl, tenantId, analyzedBy);
 
       expect(analysisId).toBe('analysis-uuid-123');
+      expect(loggerMock.error).toHaveBeenCalledWith('OpenAI Vision API Error', {
+        error: expect.stringContaining('Unexpected token'),
+      });
+    });
+
+    it('should mask non-Error OpenAI failures in logs', async () => {
+      (global.fetch as jest.Mock).mockRejectedValueOnce({ detail: 'network exploded' });
+      queryMock.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
+
+      const analysisId = await service.analyzeSkinLesion(photoId, imageUrl, tenantId, analyzedBy);
+
+      expect(analysisId).toBe('analysis-uuid-123');
+      expect(loggerMock.error).toHaveBeenCalledWith('OpenAI Vision API Error', {
+        error: 'Unknown error',
+      });
     });
   });
 

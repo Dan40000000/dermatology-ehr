@@ -2,6 +2,7 @@ import { pool } from "../db/pool";
 import { parseHL7Message, validateHL7Message } from "./hl7Parser";
 import { processHL7Message } from "./hl7Processor";
 import crypto from "crypto";
+import { logger } from "../lib/logger";
 
 /**
  * HL7 Queue Service
@@ -22,6 +23,24 @@ export interface QueuedMessage {
   processedAt?: Date;
   retryCount: number;
   createdAt: Date;
+}
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logHL7QueueError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
 }
 
 /**
@@ -334,7 +353,7 @@ export function startQueueProcessor(intervalMs: number = 30000): NodeJS.Timeout 
     try {
       await processPendingMessages();
     } catch (error) {
-      console.error("Error processing HL7 queue:", error);
+      logHL7QueueError("Error processing HL7 queue:", error);
     }
   }, intervalMs);
 }

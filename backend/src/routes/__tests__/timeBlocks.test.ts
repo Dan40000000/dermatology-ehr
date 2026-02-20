@@ -3,6 +3,7 @@ import express from "express";
 import timeBlocksRouter from "../timeBlocks";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 import {
   hasSchedulingConflict,
   parseRecurrencePattern,
@@ -30,6 +31,15 @@ jest.mock("../../services/audit", () => ({
   auditLog: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("../../services/timeBlockService", () => ({
   hasSchedulingConflict: jest.fn(),
   parseRecurrencePattern: jest.fn(),
@@ -45,6 +55,7 @@ const auditLogMock = auditLog as jest.Mock;
 const hasConflictMock = hasSchedulingConflict as jest.Mock;
 const parsePatternMock = parseRecurrencePattern as jest.Mock;
 const expandRecurrenceMock = expandRecurrence as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const basePayload = {
   providerId: "11111111-1111-4111-8111-111111111111",
@@ -63,6 +74,7 @@ beforeEach(() => {
   hasConflictMock.mockReset();
   parsePatternMock.mockReset();
   expandRecurrenceMock.mockReset();
+  loggerMock.error.mockReset();
 
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
   hasConflictMock.mockResolvedValue({ hasConflict: false });
@@ -156,13 +168,25 @@ describe("Time blocks routes", () => {
   });
 
   it("GET /time-blocks returns 500 on error", async () => {
-    const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     queryMock.mockRejectedValueOnce(new Error("boom"));
 
     const res = await request(app).get("/time-blocks");
 
     expect(res.status).toBe(500);
-    consoleSpy.mockRestore();
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching time blocks:", {
+      error: "boom",
+    });
+  });
+
+  it("GET /time-blocks masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ providerName: "Dr. Private" });
+
+    const res = await request(app).get("/time-blocks");
+
+    expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching time blocks:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /time-blocks/:id returns 404 when missing", async () => {

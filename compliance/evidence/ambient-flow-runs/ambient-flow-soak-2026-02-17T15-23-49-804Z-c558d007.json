@@ -1,0 +1,418 @@
+{
+  "runId": "c558d007-6a75-45ce-910d-e59e5047726b",
+  "generatedAt": "2026-02-17T15:23:49.803Z",
+  "environment": {
+    "baseUrl": "http://localhost:4000",
+    "tenantHeader": "x-tenant-id",
+    "tenantIdMasked": "tenant...demo",
+    "emailMasked": "provid...tice",
+    "providerIdMasked": "n/a",
+    "patientIdMasked": "n/a",
+    "encounterIdMasked": "n/a"
+  },
+  "config": {
+    "iterations": 20,
+    "delayMs": 1000,
+    "continueOnFailure": true,
+    "enforceRubric": true,
+    "enforcePatientSummary": true,
+    "durationSeconds": 90,
+    "timeoutMs": 180000,
+    "pollIntervalMs": 2000,
+    "skipApply": false,
+    "audioPath": "/Users/danperry/Desktop/Dermatology program/derm-app/backend/compliance/evidence/ambient-flow-runs/ambient-sample.wav"
+  },
+  "totals": {
+    "attempted": 20,
+    "succeeded": 20,
+    "failed": 0,
+    "rubricPassed": 20,
+    "patientSummaryGenerated": 20,
+    "averageTotalMs": 42693,
+    "averageTranscriptionMs": 3415,
+    "averageNoteGenerationMs": 39150,
+    "allChecksPassed": true
+  },
+  "iterations": [
+    {
+      "iteration": 1,
+      "startedAt": "2026-02-17T15:09:16.879Z",
+      "endedAt": "2026-02-17T15:09:59.235Z",
+      "durationMs": 42356,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-09-59-234Z-bf0d3d7a.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 42355,
+        "transcriptionWait": 4035,
+        "noteGenerationWait": 38174
+      }
+    },
+    {
+      "iteration": 2,
+      "startedAt": "2026-02-17T15:10:00.235Z",
+      "endedAt": "2026-02-17T15:10:40.540Z",
+      "durationMs": 40305,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-10-40-539Z-63e87153.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 40303,
+        "transcriptionWait": 2010,
+        "noteGenerationWait": 38158
+      }
+    },
+    {
+      "iteration": 3,
+      "startedAt": "2026-02-17T15:10:41.541Z",
+      "endedAt": "2026-02-17T15:11:09.794Z",
+      "durationMs": 28253,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-11-09-794Z-76df5279.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 28253,
+        "transcriptionWait": 2012,
+        "noteGenerationWait": 26112
+      }
+    },
+    {
+      "iteration": 4,
+      "startedAt": "2026-02-17T15:11:10.796Z",
+      "endedAt": "2026-02-17T15:11:59.122Z",
+      "durationMs": 48326,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-11-59-121Z-5696a6e1.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 48325,
+        "transcriptionWait": 4018,
+        "noteGenerationWait": 44176
+      }
+    },
+    {
+      "iteration": 5,
+      "startedAt": "2026-02-17T15:12:00.124Z",
+      "endedAt": "2026-02-17T15:12:46.411Z",
+      "durationMs": 46287,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-12-46-410Z-112c99e7.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 46286,
+        "transcriptionWait": 4017,
+        "noteGenerationWait": 42138
+      }
+    },
+    {
+      "iteration": 6,
+      "startedAt": "2026-02-17T15:12:47.413Z",
+      "endedAt": "2026-02-17T15:13:31.690Z",
+      "durationMs": 44277,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-13-31-689Z-d3d7a18f.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 44276,
+        "transcriptionWait": 4014,
+        "noteGenerationWait": 40138
+      }
+    },
+    {
+      "iteration": 7,
+      "startedAt": "2026-02-17T15:13:32.692Z",
+      "endedAt": "2026-02-17T15:14:16.980Z",
+      "durationMs": 44288,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-14-16-979Z-26ad654e.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 44287,
+        "transcriptionWait": 4015,
+        "noteGenerationWait": 40144
+      }
+    },
+    {
+      "iteration": 8,
+      "startedAt": "2026-02-17T15:14:17.982Z",
+      "endedAt": "2026-02-17T15:14:58.232Z",
+      "durationMs": 40250,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-14-58-232Z-20adcee0.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 40249,
+        "transcriptionWait": 4011,
+        "noteGenerationWait": 36110
+      }
+    },
+    {
+      "iteration": 9,
+      "startedAt": "2026-02-17T15:14:59.234Z",
+      "endedAt": "2026-02-17T15:15:41.539Z",
+      "durationMs": 42305,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-15-41-538Z-b7fd7967.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 42304,
+        "transcriptionWait": 4017,
+        "noteGenerationWait": 38147
+      }
+    },
+    {
+      "iteration": 10,
+      "startedAt": "2026-02-17T15:15:42.541Z",
+      "endedAt": "2026-02-17T15:16:24.839Z",
+      "durationMs": 42298,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-16-24-838Z-719a6653.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 42297,
+        "transcriptionWait": 2009,
+        "noteGenerationWait": 40156
+      }
+    },
+    {
+      "iteration": 11,
+      "startedAt": "2026-02-17T15:16:25.840Z",
+      "endedAt": "2026-02-17T15:17:08.129Z",
+      "durationMs": 42289,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-17-08-129Z-2e9c157a.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 42288,
+        "transcriptionWait": 4016,
+        "noteGenerationWait": 38148
+      }
+    },
+    {
+      "iteration": 12,
+      "startedAt": "2026-02-17T15:17:09.130Z",
+      "endedAt": "2026-02-17T15:17:53.421Z",
+      "durationMs": 44291,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-17-53-420Z-70abba0b.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 44289,
+        "transcriptionWait": 2008,
+        "noteGenerationWait": 42154
+      }
+    },
+    {
+      "iteration": 13,
+      "startedAt": "2026-02-17T15:17:54.423Z",
+      "endedAt": "2026-02-17T15:18:44.747Z",
+      "durationMs": 50324,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-18-44-746Z-e61ae0f0.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 50323,
+        "transcriptionWait": 2009,
+        "noteGenerationWait": 48188
+      }
+    },
+    {
+      "iteration": 14,
+      "startedAt": "2026-02-17T15:18:45.749Z",
+      "endedAt": "2026-02-17T15:19:32.074Z",
+      "durationMs": 46325,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-19-32-073Z-fce98050.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 46323,
+        "transcriptionWait": 4020,
+        "noteGenerationWait": 42171
+      }
+    },
+    {
+      "iteration": 15,
+      "startedAt": "2026-02-17T15:19:33.078Z",
+      "endedAt": "2026-02-17T15:20:11.369Z",
+      "durationMs": 38291,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-20-11-369Z-2b2792ab.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 38291,
+        "transcriptionWait": 2012,
+        "noteGenerationWait": 36153
+      }
+    },
+    {
+      "iteration": 16,
+      "startedAt": "2026-02-17T15:20:12.372Z",
+      "endedAt": "2026-02-17T15:20:58.673Z",
+      "durationMs": 46301,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-20-58-673Z-7a7b9f24.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 46301,
+        "transcriptionWait": 6022,
+        "noteGenerationWait": 40150
+      }
+    },
+    {
+      "iteration": 17,
+      "startedAt": "2026-02-17T15:20:59.675Z",
+      "endedAt": "2026-02-17T15:21:43.937Z",
+      "durationMs": 44262,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-21-43-937Z-f6a79a89.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 44261,
+        "transcriptionWait": 4016,
+        "noteGenerationWait": 40146
+      }
+    },
+    {
+      "iteration": 18,
+      "startedAt": "2026-02-17T15:21:44.939Z",
+      "endedAt": "2026-02-17T15:22:25.221Z",
+      "durationMs": 40282,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-22-25-220Z-637c6045.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 40280,
+        "transcriptionWait": 4015,
+        "noteGenerationWait": 36135
+      }
+    },
+    {
+      "iteration": 19,
+      "startedAt": "2026-02-17T15:22:26.223Z",
+      "endedAt": "2026-02-17T15:23:10.521Z",
+      "durationMs": 44298,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-23-10-520Z-b688fd56.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 44297,
+        "transcriptionWait": 4013,
+        "noteGenerationWait": 40159
+      }
+    },
+    {
+      "iteration": 20,
+      "startedAt": "2026-02-17T15:23:11.522Z",
+      "endedAt": "2026-02-17T15:23:49.802Z",
+      "durationMs": 38280,
+      "success": true,
+      "evidencePath": "/Users/danperry/Desktop/Dermatology program/derm-app/compliance/evidence/ambient-flow-runs/ambient-flow-2026-02-17T15-23-49-801Z-9625aed9.json",
+      "rubricPassed": true,
+      "patientSummaryGenerated": true,
+      "score": {
+        "passed": 9,
+        "total": 9
+      },
+      "timingsMs": {
+        "total": 38279,
+        "transcriptionWait": 2010,
+        "noteGenerationWait": 36137
+      }
+    }
+  ]
+}

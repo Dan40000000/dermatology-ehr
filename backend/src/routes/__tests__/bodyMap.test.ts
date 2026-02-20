@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { bodyMapRouter } from "../bodyMap";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -26,6 +27,15 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
   randomUUID: jest.fn(() => "uuid-1"),
@@ -38,11 +48,13 @@ app.use("/body-map", bodyMapRouter);
 const queryMock = pool.query as jest.Mock;
 const randomUUIDMock = crypto.randomUUID as jest.Mock;
 const auditLogMock = auditLog as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
   randomUUIDMock.mockReset();
   auditLogMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
   randomUUIDMock.mockReturnValue("uuid-1");
 });
@@ -66,6 +78,30 @@ describe("Body map routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.lesions).toHaveLength(1);
     expect(auditLogMock).toHaveBeenCalled();
+  });
+
+  it("GET /body-map/patients/:id/lesions logs sanitized Error failures", async () => {
+    queryMock.mockRejectedValueOnce(new Error("lesion lookup failed"));
+
+    const res = await request(app).get("/body-map/patients/patient-1/lesions");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch lesions");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching lesions:", {
+      error: "lesion lookup failed",
+    });
+  });
+
+  it("GET /body-map/patients/:id/lesions masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+    const res = await request(app).get("/body-map/patients/patient-1/lesions");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch lesions");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching lesions:", {
+      error: "Unknown error",
+    });
   });
 
   it("POST /body-map/patients/:id/lesions rejects invalid payload", async () => {

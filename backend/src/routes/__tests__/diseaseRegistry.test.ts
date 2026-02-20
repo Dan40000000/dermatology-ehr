@@ -3,6 +3,7 @@ import express from "express";
 import { diseaseRegistryRouter } from "../diseaseRegistry";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -25,16 +26,27 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/disease-registry", diseaseRegistryRouter);
 
 const queryMock = pool.query as jest.Mock;
 const auditMock = auditLog as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
   auditMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -65,6 +77,22 @@ describe("Disease registry routes", () => {
     const res = await request(app).get("/disease-registry/dashboard");
 
     expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to load dashboard");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching registry dashboard:", {
+      error: "boom",
+    });
+  });
+
+  it("GET /disease-registry/dashboard masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ tenantId: "tenant-1" });
+
+    const res = await request(app).get("/disease-registry/dashboard");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to load dashboard");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching registry dashboard:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /disease-registry/melanoma returns list", async () => {

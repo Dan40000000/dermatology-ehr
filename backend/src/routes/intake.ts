@@ -17,6 +17,7 @@ import crypto from 'crypto';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
+import { logger } from '../lib/logger';
 import { auditLog } from '../services/audit';
 import {
   patientIntakeService,
@@ -25,6 +26,24 @@ import {
 } from '../services/patientIntakeService';
 
 export const intakeRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logIntakeError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // ============================================================================
 // VALIDATION SCHEMAS
@@ -136,7 +155,7 @@ intakeRouter.post(
         linkUrl: result.linkUrl,
       });
     } catch (error: any) {
-      console.error('Send pre-registration link error:', error);
+      logIntakeError('Send pre-registration link error', error);
       return res.status(500).json({ error: error.message || 'Failed to send pre-registration link' });
     }
   }
@@ -183,7 +202,7 @@ intakeRouter.get(
         ...status,
       });
     } catch (error: any) {
-      console.error('Get intake status error:', error);
+      logIntakeError('Get intake status error', error);
       return res.status(500).json({ error: 'Failed to get intake status' });
     }
   }
@@ -246,7 +265,7 @@ intakeRouter.post(
         allFormsComplete: completionStatus.allComplete,
       });
     } catch (error: any) {
-      console.error('Submit intake form error:', error);
+      logIntakeError('Submit intake form error', error);
       return res.status(500).json({ error: error.message || 'Failed to submit intake form' });
     }
   }
@@ -283,7 +302,7 @@ intakeRouter.get(
 
       return res.json({ forms });
     } catch (error: any) {
-      console.error('Get intake forms error:', error);
+      logIntakeError('Get intake forms error', error);
       return res.status(500).json({ error: 'Failed to get intake forms' });
     }
   }
@@ -344,7 +363,7 @@ intakeRouter.post(
         ocrProcessed: result.ocrProcessed,
       });
     } catch (error: any) {
-      console.error('Upload document error:', error);
+      logIntakeError('Upload document error', error);
       return res.status(500).json({ error: error.message || 'Failed to upload document' });
     }
   }
@@ -416,7 +435,7 @@ intakeRouter.post(
         allFormsComplete: completionStatus.allComplete,
       });
     } catch (error: any) {
-      console.error('Submit consent error:', error);
+      logIntakeError('Submit consent error', error);
       return res.status(500).json({ error: error.message || 'Failed to submit consent' });
     }
   }
@@ -448,7 +467,7 @@ intakeRouter.get(
 
       return res.json({ consents });
     } catch (error: any) {
-      console.error('Get consents error:', error);
+      logIntakeError('Get consents error', error);
       return res.status(500).json({ error: 'Failed to get consent records' });
     }
   }
@@ -524,7 +543,7 @@ intakeRouter.post(
         coverageDetails: result.coverageDetails,
       });
     } catch (error: any) {
-      console.error('Verify insurance error:', error);
+      logIntakeError('Verify insurance error', error);
       return res.status(500).json({ error: error.message || 'Failed to verify insurance' });
     }
   }
@@ -575,7 +594,7 @@ intakeRouter.get(
 
       return res.json(result.rows[0]);
     } catch (error: any) {
-      console.error('Get insurance verification error:', error);
+      logIntakeError('Get insurance verification error', error);
       return res.status(500).json({ error: 'Failed to get insurance verification' });
     }
   }
@@ -632,7 +651,7 @@ intakeRouter.post(
         portalUrl: result.portalUrl,
       });
     } catch (error: any) {
-      console.error('Activate portal error:', error);
+      logIntakeError('Activate portal error', error);
       return res.status(500).json({ error: error.message || 'Failed to activate patient portal' });
     }
   }
@@ -686,7 +705,7 @@ intakeRouter.get(
         appointmentInfo,
       });
     } catch (error: any) {
-      console.error('Validate token error:', error);
+      logIntakeError('Validate token error', error);
       return res.status(500).json({ error: 'Failed to validate token' });
     }
   }
@@ -717,7 +736,7 @@ intakeRouter.post(
         appointmentId: result.appointmentId,
       });
     } catch (error: any) {
-      console.error('Use token error:', error);
+      logIntakeError('Use token error', error);
       return res.status(500).json({ error: 'Failed to process token' });
     }
   }
@@ -798,7 +817,7 @@ intakeRouter.get(
         offset: parseInt(offset as string),
       });
     } catch (error: any) {
-      console.error('Get pending intake error:', error);
+      logIntakeError('Get pending intake error', error);
       return res.status(500).json({ error: 'Failed to get pending intake patients' });
     }
   }
@@ -850,7 +869,7 @@ intakeRouter.post(
         results,
       });
     } catch (error: any) {
-      console.error('Send bulk reminders error:', error);
+      logIntakeError('Send bulk reminders error', error);
       return res.status(500).json({ error: 'Failed to send bulk reminders' });
     }
   }

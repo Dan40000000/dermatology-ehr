@@ -4,8 +4,27 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 const router = express.Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logCdsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * Clinical Decision Support Routes
@@ -52,7 +71,7 @@ router.post(
         infoAlerts: alerts.filter((a) => a.severity === "info").length,
       });
     } catch (error) {
-      console.error("CDS check error:", error);
+      logCdsError("CDS check error:", error);
       res.status(500).json({ error: "Failed to run CDS checks" });
     }
   }
@@ -74,7 +93,7 @@ router.get("/alerts/:patientId", requireAuth, async (req: AuthedRequest, res) =>
       total: alerts.length,
     });
   } catch (error) {
-    console.error("Get patient alerts error:", error);
+    logCdsError("Get patient alerts error:", error);
     res.status(500).json({ error: "Failed to retrieve alerts" });
   }
 });
@@ -133,7 +152,7 @@ router.get("/alerts", requireAuth, async (req: AuthedRequest, res) => {
       total: result.rows.length,
     });
   } catch (error) {
-    console.error("Get alerts error:", error);
+    logCdsError("Get alerts error:", error);
     res.status(500).json({ error: "Failed to retrieve alerts" });
   }
 });
@@ -154,7 +173,7 @@ router.post(
 
       res.json({ success: true });
     } catch (error) {
-      console.error("Dismiss alert error:", error);
+      logCdsError("Dismiss alert error:", error);
       res.status(500).json({ error: "Failed to dismiss alert" });
     }
   }
@@ -180,7 +199,7 @@ router.get("/stats", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json(stats.rows[0]);
   } catch (error) {
-    console.error("Get CDS stats error:", error);
+    logCdsError("Get CDS stats error:", error);
     res.status(500).json({ error: "Failed to retrieve statistics" });
   }
 });
@@ -232,7 +251,7 @@ router.post(
         successCount: results.filter((r) => r.success).length,
       });
     } catch (error) {
-      console.error("Batch CDS check error:", error);
+      logCdsError("Batch CDS check error:", error);
       res.status(500).json({ error: "Failed to run batch CDS checks" });
     }
   }

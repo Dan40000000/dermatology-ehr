@@ -8,6 +8,7 @@ export type ModuleKey =
   | "waitlist"
   | "patients"
   | "notes"
+  | "ambient_scribe"
   | "orders"
   | "rx"
   | "epa"
@@ -50,6 +51,7 @@ export const moduleAccess: Record<ModuleKey, Role[]> = {
   waitlist: ["admin", "provider", "ma", "front_desk"],
   patients: ["admin", "provider", "ma", "front_desk"],
   notes: ["admin", "provider", "ma"],
+  ambient_scribe: ["admin", "provider", "ma"],
   orders: ["admin", "provider"],
   rx: ["admin", "provider"],
   epa: ["admin", "provider"],

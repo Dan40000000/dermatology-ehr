@@ -1,8 +1,27 @@
 import { Router } from 'express';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { RCMAnalyticsService } from '../services/rcmAnalytics';
+import { logger } from '../lib/logger';
 
 export const rcmRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logRcmError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * GET /api/rcm/dashboard
@@ -62,7 +81,7 @@ rcmRouter.get('/dashboard', requireAuth, async (req: AuthedRequest, res) => {
       alerts,
     });
   } catch (error: any) {
-    console.error('Error fetching RCM dashboard:', error);
+    logRcmError('Error fetching RCM dashboard:', error);
     res.status(500).json({ error: 'Failed to fetch RCM dashboard data' });
   }
 });
@@ -96,7 +115,7 @@ rcmRouter.get('/kpis', requireAuth, async (req: AuthedRequest, res) => {
       benchmarks,
     });
   } catch (error: any) {
-    console.error('Error fetching KPIs:', error);
+    logRcmError('Error fetching KPIs:', error);
     res.status(500).json({ error: 'Failed to fetch KPIs' });
   }
 });
@@ -116,7 +135,7 @@ rcmRouter.get('/aging', requireAuth, async (req: AuthedRequest, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
-    console.error('Error fetching A/R aging:', error);
+    logRcmError('Error fetching A/R aging:', error);
     res.status(500).json({ error: 'Failed to fetch A/R aging data' });
   }
 });
@@ -146,7 +165,7 @@ rcmRouter.get('/collections', requireAuth, async (req: AuthedRequest, res) => {
       period: { startDate, endDate, granularity },
     });
   } catch (error: any) {
-    console.error('Error fetching collections trend:', error);
+    logRcmError('Error fetching collections trend:', error);
     res.status(500).json({ error: 'Failed to fetch collections trend' });
   }
 });
@@ -172,7 +191,7 @@ rcmRouter.get('/denials', requireAuth, async (req: AuthedRequest, res) => {
 
     res.json(analysis);
   } catch (error: any) {
-    console.error('Error fetching denial analysis:', error);
+    logRcmError('Error fetching denial analysis:', error);
     res.status(500).json({ error: 'Failed to fetch denial analysis' });
   }
 });
@@ -201,7 +220,7 @@ rcmRouter.get('/payer-mix', requireAuth, async (req: AuthedRequest, res) => {
       period: { startDate, endDate },
     });
   } catch (error: any) {
-    console.error('Error fetching payer mix:', error);
+    logRcmError('Error fetching payer mix:', error);
     res.status(500).json({ error: 'Failed to fetch payer mix data' });
   }
 });
@@ -230,7 +249,7 @@ rcmRouter.get('/provider-stats', requireAuth, async (req: AuthedRequest, res) =>
       period: { startDate, endDate },
     });
   } catch (error: any) {
-    console.error('Error fetching provider stats:', error);
+    logRcmError('Error fetching provider stats:', error);
     res.status(500).json({ error: 'Failed to fetch provider statistics' });
   }
 });
@@ -263,7 +282,7 @@ rcmRouter.get('/trends', requireAuth, async (req: AuthedRequest, res) => {
       },
     });
   } catch (error: any) {
-    console.error('Error fetching trends:', error);
+    logRcmError('Error fetching trends:', error);
     res.status(500).json({ error: 'Failed to fetch trend data' });
   }
 });
@@ -284,7 +303,7 @@ rcmRouter.get('/action-items', requireAuth, async (req: AuthedRequest, res) => {
       count: actionItems.length,
     });
   } catch (error: any) {
-    console.error('Error fetching action items:', error);
+    logRcmError('Error fetching action items:', error);
     res.status(500).json({ error: 'Failed to fetch action items' });
   }
 });
@@ -313,7 +332,7 @@ rcmRouter.get('/calendar', requireAuth, async (req: AuthedRequest, res) => {
       period: { startDate, endDate },
     });
   } catch (error: any) {
-    console.error('Error fetching calendar events:', error);
+    logRcmError('Error fetching calendar events:', error);
     res.status(500).json({ error: 'Failed to fetch calendar events' });
   }
 });
@@ -344,7 +363,7 @@ rcmRouter.post('/action-items/:id/resolve', requireAuth, async (req: AuthedReque
 
     res.json({ success: true, message: 'Action item resolved' });
   } catch (error: any) {
-    console.error('Error resolving action item:', error);
+    logRcmError('Error resolving action item:', error);
     res.status(500).json({ error: 'Failed to resolve action item' });
   }
 });
@@ -372,7 +391,7 @@ rcmRouter.post('/metrics/calculate', requireAuth, async (req: AuthedRequest, res
       date: metricDate.toISOString().split('T')[0],
     });
   } catch (error: any) {
-    console.error('Error calculating RCM metrics:', error);
+    logRcmError('Error calculating RCM metrics:', error);
     res.status(500).json({ error: 'Failed to calculate RCM metrics' });
   }
 });
@@ -392,7 +411,7 @@ rcmRouter.get('/benchmarks', requireAuth, async (req: AuthedRequest, res) => {
       benchmarks,
     });
   } catch (error: any) {
-    console.error('Error fetching benchmarks:', error);
+    logRcmError('Error fetching benchmarks:', error);
     res.status(500).json({ error: 'Failed to fetch benchmarks' });
   }
 });

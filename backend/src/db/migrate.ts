@@ -7873,6 +7873,82 @@ Consider age-appropriate treatments and include family counseling points.',
     );
     `,
   },
+  {
+    name: "124_visit_summaries_schema",
+    sql: `
+    -- Canonical schema for provider + ambient generated visit summaries.
+    CREATE TABLE IF NOT EXISTS visit_summaries (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+      ambient_note_id TEXT REFERENCES ambient_generated_notes(id) ON DELETE SET NULL,
+      visit_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      provider_name TEXT,
+      summary_text TEXT,
+      symptoms_discussed TEXT,
+      diagnosis_shared TEXT,
+      treatment_plan TEXT,
+      next_steps TEXT,
+      follow_up_date TIMESTAMPTZ,
+      chief_complaint TEXT,
+      diagnoses JSONB,
+      procedures JSONB,
+      medications JSONB,
+      follow_up_instructions TEXT,
+      next_appointment_date TIMESTAMPTZ,
+      generated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      is_released BOOLEAN NOT NULL DEFAULT FALSE,
+      released_at TIMESTAMPTZ,
+      released_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      shared_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Backfill/repair columns for environments where table existed with partial schema.
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS patient_id TEXT REFERENCES patients(id) ON DELETE CASCADE;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS ambient_note_id TEXT REFERENCES ambient_generated_notes(id) ON DELETE SET NULL;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS visit_date TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS provider_name TEXT;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS summary_text TEXT;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS symptoms_discussed TEXT;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS diagnosis_shared TEXT;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS treatment_plan TEXT;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS next_steps TEXT;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS follow_up_date TIMESTAMPTZ;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS chief_complaint TEXT;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS diagnoses JSONB;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS procedures JSONB;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS medications JSONB;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS follow_up_instructions TEXT;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS next_appointment_date TIMESTAMPTZ;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS generated_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS is_released BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS released_at TIMESTAMPTZ;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS released_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ;
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    ALTER TABLE visit_summaries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE INDEX IF NOT EXISTS idx_visit_summaries_tenant_visit_date
+      ON visit_summaries(tenant_id, visit_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_visit_summaries_tenant_patient
+      ON visit_summaries(tenant_id, patient_id, visit_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_visit_summaries_tenant_encounter
+      ON visit_summaries(tenant_id, encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_visit_summaries_tenant_provider
+      ON visit_summaries(tenant_id, provider_id);
+    CREATE INDEX IF NOT EXISTS idx_visit_summaries_tenant_released
+      ON visit_summaries(tenant_id, is_released);
+    CREATE INDEX IF NOT EXISTS idx_visit_summaries_tenant_ambient_note
+      ON visit_summaries(tenant_id, ambient_note_id);
+    `,
+  },
 ];
 
 async function ensureMigrationsTable() {

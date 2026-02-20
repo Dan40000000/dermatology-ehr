@@ -2,6 +2,7 @@ import * as hl7Queue from "../hl7Queue";
 import { pool } from "../../db/pool";
 import { parseHL7Message, validateHL7Message } from "../hl7Parser";
 import { processHL7Message } from "../hl7Processor";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../db/pool", () => ({
   pool: {
@@ -19,6 +20,15 @@ jest.mock("../hl7Processor", () => ({
   processHL7Message: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
   randomUUID: jest.fn(() => "queue-uuid-123"),
@@ -26,10 +36,12 @@ jest.mock("crypto", () => ({
 
 const hasSql = (mockFn: jest.Mock, fragment: string) =>
   mockFn.mock.calls.some(([sql]) => typeof sql === "string" && sql.includes(fragment));
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 describe("hl7Queue", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    loggerMock.error.mockReset();
   });
 
   it("enqueues valid messages", async () => {
@@ -313,7 +325,6 @@ describe("hl7Queue", () => {
   it("logs errors when processing fails", async () => {
     jest.useFakeTimers();
     const intervalSpy = jest.spyOn(global, "setInterval");
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
 
     (pool.connect as jest.Mock).mockRejectedValueOnce(new Error("boom"));
 
@@ -322,11 +333,34 @@ describe("hl7Queue", () => {
 
     await callback();
 
-    expect(errorSpy).toHaveBeenCalled();
+    expect(loggerMock.error).toHaveBeenCalledWith("Error processing HL7 queue:", {
+      error: "boom",
+    });
 
     clearInterval(timer);
     intervalSpy.mockRestore();
-    errorSpy.mockRestore();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it("masks non-Error queue processing failures", async () => {
+    jest.useFakeTimers();
+    const intervalSpy = jest.spyOn(global, "setInterval");
+
+    (pool.connect as jest.Mock).mockRejectedValueOnce({ queue: "offline" });
+
+    const timer = hl7Queue.startQueueProcessor(250);
+    const callback = intervalSpy.mock.calls[0][0] as () => Promise<void>;
+
+    await callback();
+
+    expect(loggerMock.error).toHaveBeenCalledWith("Error processing HL7 queue:", {
+      error: "Unknown error",
+    });
+
+    clearInterval(timer);
+    intervalSpy.mockRestore();
+    jest.clearAllTimers();
     jest.useRealTimers();
   });
 });

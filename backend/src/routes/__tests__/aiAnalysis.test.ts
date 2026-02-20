@@ -3,6 +3,7 @@ import express from "express";
 import aiAnalysisRouter from "../aiAnalysis";
 import { pool } from "../../db/pool";
 import { aiImageAnalysisService } from "../../services/aiImageAnalysis";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -25,16 +26,27 @@ jest.mock("../../services/aiImageAnalysis", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/ai-analysis", aiAnalysisRouter);
 
 const queryMock = pool.query as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
   jest.clearAllMocks();
+  loggerMock.error.mockReset();
 });
 
 describe("AI Analysis Routes", () => {
@@ -159,6 +171,21 @@ describe("AI Analysis Routes", () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to analyze photo");
+      expect(loggerMock.error).toHaveBeenCalledWith("AI Analysis Error", {
+        error: "DB error",
+      });
+    });
+
+    it("should mask non-Error failures in logs", async () => {
+      queryMock.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+      const res = await request(app).post("/ai-analysis/analyze-photo/photo-1");
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to analyze photo");
+      expect(loggerMock.error).toHaveBeenCalledWith("AI Analysis Error", {
+        error: "Unknown error",
+      });
     });
   });
 

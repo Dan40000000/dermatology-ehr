@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 const createThreadSchema = z.object({
   subject: z.string().min(1),
@@ -17,6 +18,24 @@ const sendMessageSchema = z.object({
 });
 
 export const messagingRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logMessagingError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // GET /api/messaging/threads - List threads (inbox/sent/archived)
 messagingRouter.get("/threads", requireAuth, async (req: AuthedRequest, res) => {
@@ -88,7 +107,7 @@ messagingRouter.get("/threads", requireAuth, async (req: AuthedRequest, res) => 
     const result = await pool.query(query, params);
     res.json({ threads: result.rows });
   } catch (err) {
-    console.error('Error fetching threads:', err);
+    logMessagingError("Error fetching threads:", err);
     res.status(500).json({ error: 'Failed to fetch threads' });
   }
 });
@@ -154,7 +173,7 @@ messagingRouter.get("/threads/:id", requireAuth, async (req: AuthedRequest, res)
       messages: messagesResult.rows
     });
   } catch (err) {
-    console.error('Error fetching thread:', err);
+    logMessagingError("Error fetching thread:", err);
     res.status(500).json({ error: 'Failed to fetch thread' });
   }
 });
@@ -216,7 +235,7 @@ messagingRouter.post("/threads", requireAuth, async (req: AuthedRequest, res) =>
     res.status(201).json({ id: threadId });
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('Error creating thread:', err);
+    logMessagingError("Error creating thread:", err);
     res.status(500).json({ error: 'Failed to create thread' });
   } finally {
     client.release();
@@ -270,7 +289,7 @@ messagingRouter.post("/threads/:id/messages", requireAuth, async (req: AuthedReq
     res.status(201).json({ id: messageId });
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('Error sending message:', err);
+    logMessagingError("Error sending message:", err);
     res.status(500).json({ error: 'Failed to send message' });
   } finally {
     client.release();
@@ -292,7 +311,7 @@ messagingRouter.put("/threads/:id/read", requireAuth, async (req: AuthedRequest,
 
     res.json({ success: true });
   } catch (err) {
-    console.error('Error marking thread as read:', err);
+    logMessagingError("Error marking thread as read:", err);
     res.status(500).json({ error: 'Failed to mark thread as read' });
   }
 });
@@ -313,7 +332,7 @@ messagingRouter.put("/threads/:id/archive", requireAuth, async (req: AuthedReque
 
     res.json({ success: true });
   } catch (err) {
-    console.error('Error archiving thread:', err);
+    logMessagingError("Error archiving thread:", err);
     res.status(500).json({ error: 'Failed to archive thread' });
   }
 });
@@ -342,7 +361,7 @@ messagingRouter.get("/unread-count", requireAuth, async (req: AuthedRequest, res
 
     res.json({ count: parseInt(result.rows[0].count, 10) });
   } catch (err) {
-    console.error('Error fetching unread count:', err);
+    logMessagingError("Error fetching unread count:", err);
     res.status(500).json({ error: 'Failed to fetch unread count' });
   }
 });

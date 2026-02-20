@@ -18,8 +18,27 @@ import {
   AlertType,
   AlertSeverity
 } from '../services/allergyAlertService';
+import { logger } from '../lib/logger';
 
 export const allergiesRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logAllergiesError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // ============================================================================
 // Validation Schemas
@@ -106,7 +125,7 @@ allergiesRouter.get(
 
       return res.json({ allergies });
     } catch (error) {
-      console.error('Error fetching patient allergies:', error);
+      logAllergiesError('Error fetching patient allergies:', error);
       return res.status(500).json({ error: 'Failed to fetch patient allergies' });
     }
   }
@@ -140,7 +159,7 @@ allergiesRouter.post(
 
       return res.status(201).json(result);
     } catch (error: unknown) {
-      console.error('Error adding allergy:', error);
+      logAllergiesError('Error adding allergy:', error);
       // Check for unique constraint violation
       if (error instanceof Error && error.message.includes('unique_patient_allergen')) {
         return res.status(409).json({ error: 'This allergy already exists for this patient' });
@@ -186,7 +205,7 @@ allergiesRouter.put(
 
       return res.json(result);
     } catch (error) {
-      console.error('Error updating allergy:', error);
+      logAllergiesError('Error updating allergy:', error);
       return res.status(500).json({ error: 'Failed to update allergy' });
     }
   }
@@ -210,7 +229,7 @@ allergiesRouter.delete(
 
       return res.json(result);
     } catch (error) {
-      console.error('Error deleting allergy:', error);
+      logAllergiesError('Error deleting allergy:', error);
       return res.status(500).json({ error: 'Failed to delete allergy' });
     }
   }
@@ -234,7 +253,7 @@ allergiesRouter.post(
 
       return res.json(result);
     } catch (error) {
-      console.error('Error verifying allergy:', error);
+      logAllergiesError('Error verifying allergy:', error);
       return res.status(500).json({ error: 'Failed to verify allergy' });
     }
   }
@@ -267,7 +286,7 @@ allergiesRouter.post(
 
       return res.json(result);
     } catch (error) {
-      console.error('Error checking drug allergy:', error);
+      logAllergiesError('Error checking drug allergy:', error);
       return res.status(500).json({ error: 'Failed to check drug allergy' });
     }
   }
@@ -289,7 +308,7 @@ allergiesRouter.get(
 
       return res.json({ alerts });
     } catch (error) {
-      console.error('Error fetching allergy alerts:', error);
+      logAllergiesError('Error fetching allergy alerts:', error);
       return res.status(500).json({ error: 'Failed to fetch allergy alerts' });
     }
   }
@@ -314,7 +333,7 @@ allergiesRouter.get(
         alert
       });
     } catch (error) {
-      console.error('Error checking latex allergy:', error);
+      logAllergiesError('Error checking latex allergy:', error);
       return res.status(500).json({ error: 'Failed to check latex allergy' });
     }
   }
@@ -339,7 +358,7 @@ allergiesRouter.get(
         alert
       });
     } catch (error) {
-      console.error('Error checking adhesive allergy:', error);
+      logAllergiesError('Error checking adhesive allergy:', error);
       return res.status(500).json({ error: 'Failed to check adhesive allergy' });
     }
   }
@@ -401,7 +420,7 @@ allergiesRouter.post(
 
       return res.json(result);
     } catch (error) {
-      console.error('Error logging alert action:', error);
+      logAllergiesError('Error logging alert action:', error);
       return res.status(500).json({ error: 'Failed to log alert action' });
     }
   }
@@ -433,7 +452,7 @@ allergiesRouter.get(
 
       return res.json({ history });
     } catch (error) {
-      console.error('Error fetching alert history:', error);
+      logAllergiesError('Error fetching alert history:', error);
       return res.status(500).json({ error: 'Failed to fetch alert history' });
     }
   }
@@ -451,7 +470,7 @@ allergiesRouter.get(
       const commonAllergies = allergyAlertService.getCommonDermatologyAllergies();
       return res.json(commonAllergies);
     } catch (error) {
-      console.error('Error fetching common allergies:', error);
+      logAllergiesError('Error fetching common allergies:', error);
       return res.status(500).json({ error: 'Failed to fetch common allergies' });
     }
   }
@@ -484,7 +503,7 @@ allergiesRouter.post(
         alerts
       });
     } catch (error) {
-      console.error('Error checking cross-reactivity:', error);
+      logAllergiesError('Error checking cross-reactivity:', error);
       return res.status(500).json({ error: 'Failed to check cross-reactivity' });
     }
   }

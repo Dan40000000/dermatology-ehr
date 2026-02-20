@@ -525,6 +525,200 @@ describe('Ambient Scribe Routes - Transcription Endpoints', () => {
       expect(generateClinicalNoteMock).toHaveBeenCalled();
     });
 
+    it('should persist formal summary diagnosis probabilities that sum to 100', async () => {
+      transcribeAudioMock.mockResolvedValueOnce({
+        text: 'Patient reports itchy rash and scaling',
+        segments: [{ start: 0, end: 1, text: 'Test' }],
+        language: 'en',
+        speakers: ['Speaker 1'],
+        speakerCount: 1,
+        confidence: 0.94,
+        wordCount: 6,
+        phiEntities: [],
+      });
+      generateClinicalNoteMock.mockResolvedValueOnce({
+        chiefComplaint: 'Itchy rash',
+        hpi: 'Rash with scaling',
+        ros: 'Negative',
+        physicalExam: 'Erythematous patches',
+        assessment: 'Contact dermatitis',
+        plan: 'Topical steroids',
+        suggestedIcd10: [{ code: 'L23.9', description: 'Allergic contact dermatitis', confidence: 0.9 }],
+        suggestedCpt: [],
+        medications: [],
+        allergies: [],
+        followUpTasks: [],
+        overallConfidence: 0.91,
+        sectionConfidence: {},
+        differentialDiagnoses: [
+          { condition: 'Allergic contact dermatitis', confidence: 0.333, reasoning: 'Trigger pattern', icd10Code: 'L23.9' },
+          { condition: 'Irritant contact dermatitis', confidence: 0.333, reasoning: 'Irritant exposure', icd10Code: 'L24.9' },
+          { condition: 'Atopic dermatitis flare', confidence: 0.334, reasoning: 'Less likely', icd10Code: 'L20.9' },
+        ],
+        recommendedTests: [],
+      });
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{ file_path: '/path/to/file.webm', duration_seconds: 120 }],
+          rowCount: 1,
+        }) // recording lookup
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // insert transcript
+        .mockResolvedValueOnce({ rows: [{ encounter_id: 'enc-1' }], rowCount: 1 }) // encounter lookup
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // update transcript
+        .mockResolvedValueOnce({ rows: [{ auto_generate_notes: true }], rowCount: 1 }) // settings
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // insert note
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // update note
+
+      const res = await request(app).post('/api/ambient/recordings/recording-1/transcribe');
+      expect(res.status).toBe(200);
+
+      await flushPromises();
+      await flushPromises();
+
+      const noteUpdateCall = queryMock.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('UPDATE ambient_generated_notes')
+      );
+      expect(noteUpdateCall).toBeTruthy();
+
+      const noteUpdateParams = noteUpdateCall?.[1] as any[];
+      const noteContent = JSON.parse(noteUpdateParams[15] as string);
+      const probableDiagnoses = noteContent.formalAppointmentSummary?.probableDiagnoses || [];
+      const total = probableDiagnoses.reduce((sum: number, diagnosis: any) => sum + Number(diagnosis.probabilityPercent || 0), 0);
+
+      expect(probableDiagnoses).toHaveLength(3);
+      expect(total).toBe(100);
+      expect(noteContent.formalAppointmentSummary?.suggestedTests?.length).toBeGreaterThan(0);
+    });
+
+    it('should enforce at least 1% probability for each listed diagnosis', async () => {
+      transcribeAudioMock.mockResolvedValueOnce({
+        text: 'Patient reports recurring rash',
+        segments: [{ start: 0, end: 1, text: 'Test' }],
+        language: 'en',
+        speakers: ['Speaker 1'],
+        speakerCount: 1,
+        confidence: 0.94,
+        wordCount: 6,
+        phiEntities: [],
+      });
+      generateClinicalNoteMock.mockResolvedValueOnce({
+        chiefComplaint: 'Recurring rash',
+        hpi: 'Pruritic rash and irritation',
+        ros: 'Negative',
+        physicalExam: 'Erythematous plaques',
+        assessment: 'Dermatitis',
+        plan: 'Topical treatment',
+        suggestedIcd10: [{ code: 'L30.9', description: 'Dermatitis, unspecified', confidence: 0.9 }],
+        suggestedCpt: [],
+        medications: [],
+        allergies: [],
+        followUpTasks: [],
+        overallConfidence: 0.91,
+        sectionConfidence: {},
+        differentialDiagnoses: [
+          { condition: 'Allergic contact dermatitis', confidence: 0.98, reasoning: 'Most likely trigger', icd10Code: 'L23.9' },
+          { condition: 'Irritant contact dermatitis', confidence: 0.01, reasoning: 'Possible irritant exposure', icd10Code: 'L24.9' },
+          { condition: 'Atopic dermatitis flare', confidence: 0.01, reasoning: 'Less likely baseline eczema', icd10Code: 'L20.9' },
+        ],
+        recommendedTests: [],
+      });
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{ file_path: '/path/to/file.webm', duration_seconds: 120 }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [{ encounter_id: 'enc-1' }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [{ auto_generate_notes: true }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+      const res = await request(app).post('/api/ambient/recordings/recording-1/transcribe');
+      expect(res.status).toBe(200);
+
+      await flushPromises();
+      await flushPromises();
+
+      const noteUpdateCall = queryMock.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('UPDATE ambient_generated_notes')
+      );
+      expect(noteUpdateCall).toBeTruthy();
+
+      const noteUpdateParams = noteUpdateCall?.[1] as any[];
+      const noteContent = JSON.parse(noteUpdateParams[15] as string);
+      const probableDiagnoses = noteContent.formalAppointmentSummary?.probableDiagnoses || [];
+
+      expect(probableDiagnoses).toHaveLength(3);
+      expect(probableDiagnoses.every((dx: any) => Number(dx.probabilityPercent) >= 1)).toBe(true);
+      expect(
+        probableDiagnoses.reduce((sum: number, dx: any) => sum + Number(dx.probabilityPercent || 0), 0)
+      ).toBe(100);
+    });
+
+    it('should provide fallback diagnosis and suggested test when AI omits them', async () => {
+      transcribeAudioMock.mockResolvedValueOnce({
+        text: 'Patient reports persistent rash',
+        segments: [{ start: 0, end: 1, text: 'Test' }],
+        language: 'en',
+        speakers: ['Speaker 1'],
+        speakerCount: 1,
+        confidence: 0.92,
+        wordCount: 4,
+        phiEntities: [],
+      });
+      generateClinicalNoteMock.mockResolvedValueOnce({
+        chiefComplaint: 'Persistent rash on forearms',
+        hpi: 'Persistent itchy rash for 2 weeks',
+        ros: 'Negative',
+        physicalExam: 'Erythematous plaques',
+        assessment: 'Possible contact dermatitis',
+        plan: 'Avoid trigger and apply steroid cream',
+        suggestedIcd10: [{ code: 'L30.9', description: 'Dermatitis, unspecified', confidence: 0.8 }],
+        suggestedCpt: [],
+        medications: [],
+        allergies: [],
+        followUpTasks: [],
+        overallConfidence: 0.9,
+        sectionConfidence: {},
+        differentialDiagnoses: [],
+        recommendedTests: [],
+      });
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{ file_path: '/path/to/file.webm', duration_seconds: 120 }],
+          rowCount: 1,
+        }) // recording lookup
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // insert transcript
+        .mockResolvedValueOnce({ rows: [{ encounter_id: 'enc-1' }], rowCount: 1 }) // encounter lookup
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // update transcript
+        .mockResolvedValueOnce({ rows: [{ auto_generate_notes: true }], rowCount: 1 }) // settings
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // insert note
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // update note
+
+      const res = await request(app).post('/api/ambient/recordings/recording-1/transcribe');
+      expect(res.status).toBe(200);
+
+      await flushPromises();
+      await flushPromises();
+
+      const noteUpdateCall = queryMock.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('UPDATE ambient_generated_notes')
+      );
+      expect(noteUpdateCall).toBeTruthy();
+
+      const noteUpdateParams = noteUpdateCall?.[1] as any[];
+      const noteContent = JSON.parse(noteUpdateParams[15] as string);
+      const probableDiagnoses = noteContent.formalAppointmentSummary?.probableDiagnoses || [];
+      const suggestedTests = noteContent.formalAppointmentSummary?.suggestedTests || [];
+
+      expect(probableDiagnoses.length).toBeGreaterThan(0);
+      expect(probableDiagnoses[0].probabilityPercent).toBe(100);
+      expect(probableDiagnoses[0].condition).toMatch(/dermat/i);
+      expect(suggestedTests.length).toBeGreaterThan(0);
+      expect(suggestedTests[0].testName).toBeTruthy();
+    });
+
     it('should mark transcription failed when AI errors', async () => {
       transcribeAudioMock.mockRejectedValueOnce(new Error('AI failure'));
       queryMock
@@ -775,7 +969,7 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
 
     it('should successfully approve note', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // update note
+        .mockResolvedValueOnce({ rows: [{ id: 'note-1' }], rowCount: 1 }) // update note
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // audit entry
       const res = await request(app)
         .post('/api/ambient/notes/note-1/review')
@@ -788,7 +982,7 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
 
     it('should successfully reject note', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [{ id: 'note-1' }], rowCount: 1 })
         .mockResolvedValueOnce({ rows: [], rowCount: 0 });
       const res = await request(app)
         .post('/api/ambient/notes/note-1/review')
@@ -799,13 +993,23 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
 
     it('should request note regeneration', async () => {
       queryMock
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [{ id: 'note-1' }], rowCount: 1 })
         .mockResolvedValueOnce({ rows: [], rowCount: 0 });
       const res = await request(app)
         .post('/api/ambient/notes/note-1/review')
         .send({ action: 'request_regeneration', reason: 'Needs more detail' });
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('regenerating');
+      expect(res.body.message).toMatch(/regeneration requested/i);
+    });
+
+    it('returns 404 when review target note is missing', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      const res = await request(app)
+        .post('/api/ambient/notes/note-1/review')
+        .send({ action: 'approve' });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('Note not found');
     });
 
     it('should handle database errors', async () => {
@@ -946,6 +1150,8 @@ describe('Ambient Scribe Routes - Patient Summary Endpoints', () => {
     expect(res.status).toBe(201);
     expect(res.body.summaryId).toBeTruthy();
     expect(auditMock).toHaveBeenCalled();
+    expect(String(queryMock.mock.calls[0]?.[0] || '')).toMatch(/COALESCE\(a\.scheduled_start,\s*e\.created_at\)\s+as\s+encounter_date/i);
+    expect(String(queryMock.mock.calls[0]?.[0] || '')).not.toMatch(/\be\.encounter_date\b/i);
   });
 
   it('GET /api/ambient/patient-summaries/:patientId returns 404 when patient missing', async () => {
@@ -962,6 +1168,7 @@ describe('Ambient Scribe Routes - Patient Summary Endpoints', () => {
     const res = await request(app).get('/api/ambient/patient-summaries/patient-1');
     expect(res.status).toBe(200);
     expect(res.body.summaries).toHaveLength(1);
+    expect(String(queryMock.mock.calls[1]?.[0] || '')).toMatch(/\bu\.full_name\b/);
   });
 
   it('POST /api/ambient/patient-summaries/:summaryId/share returns 404', async () => {

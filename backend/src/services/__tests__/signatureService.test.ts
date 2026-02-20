@@ -4,6 +4,7 @@ import {
   saveSignature,
   saveInsuranceCardPhoto,
 } from '../signatureService';
+import { logger } from '../../lib/logger';
 import { saveFileLocal } from '../storage';
 import { scanBuffer } from '../virusScan';
 
@@ -13,6 +14,15 @@ jest.mock('../storage', () => ({
 
 jest.mock('../virusScan', () => ({
   scanBuffer: jest.fn(),
+}));
+
+jest.mock('../../lib/logger', () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
 }));
 
 jest.mock('sharp', () =>
@@ -27,6 +37,7 @@ jest.mock('sharp', () =>
 const saveFileLocalMock = saveFileLocal as jest.Mock;
 const scanBufferMock = scanBuffer as jest.Mock;
 const sharpMock = sharp as unknown as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const makeDataUrl = (mime = 'image/png', content = 'a'.repeat(200)) =>
   `data:${mime};base64,${Buffer.from(content).toString('base64')}`;
@@ -36,6 +47,7 @@ describe('signatureService', () => {
     saveFileLocalMock.mockReset();
     scanBufferMock.mockReset();
     sharpMock.mockClear();
+    loggerMock.error.mockReset();
   });
 
   it('validates signature data inputs', () => {
@@ -85,7 +97,6 @@ describe('signatureService', () => {
   });
 
   it('continues when thumbnail generation fails', async () => {
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     scanBufferMock.mockResolvedValueOnce(true);
     saveFileLocalMock.mockResolvedValueOnce({ url: 'original', storage: 'local', objectKey: 'orig' });
     sharpMock.mockImplementationOnce(() => ({
@@ -100,7 +111,9 @@ describe('signatureService', () => {
       storage: 'local',
       objectKey: 'orig',
     });
-    errorSpy.mockRestore();
+    expect(loggerMock.error).toHaveBeenCalledWith('Error generating signature thumbnail:', {
+      error: 'fail',
+    });
   });
 
   it('validates insurance card format', async () => {
@@ -131,6 +144,23 @@ describe('signatureService', () => {
       thumbnailUrl: 'thumb',
       storage: 'local',
       objectKey: 'photo',
+    });
+  });
+
+  it('masks non-Error insurance thumbnail failures', async () => {
+    scanBufferMock.mockResolvedValueOnce(true);
+    saveFileLocalMock.mockResolvedValueOnce({ url: 'photo', storage: 'local', objectKey: 'photo' });
+    sharpMock.mockImplementationOnce(() => ({
+      resize: jest.fn().mockReturnThis(),
+      jpeg: jest.fn().mockReturnThis(),
+      toBuffer: jest.fn().mockRejectedValueOnce({ reason: 'bad image' }),
+    }));
+
+    const result = await saveInsuranceCardPhoto(makeDataUrl('image/jpeg'), 'patient-1', 'back');
+
+    expect(result.thumbnailUrl).toBeUndefined();
+    expect(loggerMock.error).toHaveBeenCalledWith('Error generating insurance card thumbnail:', {
+      error: 'Unknown error',
     });
   });
 });

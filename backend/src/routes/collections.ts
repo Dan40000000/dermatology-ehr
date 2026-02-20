@@ -8,8 +8,27 @@ import * as costEstimator from "../services/costEstimator";
 import * as copayCollectionService from "../services/copayCollectionService";
 import { pool } from "../db/pool";
 import crypto from "crypto";
+import { logger } from "../lib/logger";
 
 export const collectionsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logCollectionsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // ============================================
 // PATIENT BALANCE
@@ -53,7 +72,7 @@ collectionsRouter.get(
         talkingPoints,
       });
     } catch (error) {
-      console.error("Error fetching patient balance:", error);
+      logCollectionsError("Error fetching patient balance:", error);
       res.status(500).json({ error: "Failed to fetch patient balance" });
     }
   }
@@ -134,7 +153,7 @@ collectionsRouter.post(
         receiptNumber: result.receiptNumber,
       });
     } catch (error) {
-      console.error("Error processing payment:", error);
+      logCollectionsError("Error processing payment:", error);
       res.status(500).json({ error: "Failed to process payment" });
     }
   }
@@ -181,7 +200,7 @@ collectionsRouter.post(
 
       res.json({ estimate });
     } catch (error) {
-      console.error("Error creating cost estimate:", error);
+      logCollectionsError("Error creating cost estimate:", error);
       res.status(500).json({ error: "Failed to create cost estimate" });
     }
   }
@@ -207,7 +226,7 @@ collectionsRouter.get(
 
       res.json({ estimate });
     } catch (error) {
-      console.error("Error fetching estimate:", error);
+      logCollectionsError("Error fetching estimate:", error);
       res.status(500).json({ error: "Failed to fetch estimate" });
     }
   }
@@ -236,7 +255,7 @@ collectionsRouter.post(
 
       res.json(estimate);
     } catch (error) {
-      console.error("Error creating quick estimate:", error);
+      logCollectionsError("Error creating quick estimate:", error);
       res.status(500).json({ error: "Failed to create quick estimate" });
     }
   }
@@ -352,7 +371,7 @@ collectionsRouter.post(
         client.release();
       }
     } catch (error) {
-      console.error("Error creating payment plan:", error);
+      logCollectionsError("Error creating payment plan:", error);
       res.status(500).json({ error: "Failed to create payment plan" });
     }
   }
@@ -403,7 +422,7 @@ collectionsRouter.get("/payment-plans", requireAuth, async (req: AuthedRequest, 
     const result = await pool.query(query, params);
     res.json({ paymentPlans: result.rows });
   } catch (error) {
-    console.error("Error fetching payment plans:", error);
+    logCollectionsError("Error fetching payment plans:", error);
     res.status(500).json({ error: "Failed to fetch payment plans" });
   }
 });
@@ -421,7 +440,7 @@ collectionsRouter.get("/aging", requireAuth, async (req: AuthedRequest, res) => 
 
     res.json(agingReport);
   } catch (error) {
-    console.error("Error fetching aging report:", error);
+    logCollectionsError("Error fetching aging report:", error);
     res.status(500).json({ error: "Failed to fetch aging report" });
   }
 });
@@ -478,7 +497,7 @@ collectionsRouter.get("/stats", requireAuth, async (req: AuthedRequest, res) => 
       },
     });
   } catch (error) {
-    console.error("Error fetching collection stats:", error);
+    logCollectionsError("Error fetching collection stats:", error);
     res.status(500).json({ error: "Failed to fetch collection stats" });
   }
 });
@@ -500,7 +519,7 @@ collectionsRouter.post(
       await collectionsService.updateCollectionStats(tenantId, date);
       res.json({ success: true });
     } catch (error) {
-      console.error("Error updating collection stats:", error);
+      logCollectionsError("Error updating collection stats:", error);
       res.status(500).json({ error: "Failed to update collection stats" });
     }
   }
@@ -590,7 +609,7 @@ collectionsRouter.post(
         statementNumber,
       });
     } catch (error) {
-      console.error("Error generating statement:", error);
+      logCollectionsError("Error generating statement:", error);
       res.status(500).json({ error: "Failed to generate statement" });
     }
   }
@@ -623,7 +642,7 @@ collectionsRouter.get(
 
       res.json({ statements: result.rows });
     } catch (error) {
-      console.error("Error fetching statements:", error);
+      logCollectionsError("Error fetching statements:", error);
       res.status(500).json({ error: "Failed to fetch statements" });
     }
   }
@@ -720,7 +739,7 @@ collectionsRouter.get(
         totalDue: copay.totalDue,
       });
     } catch (error: unknown) {
-      console.error("Error getting expected copay:", error);
+      logCollectionsError("Error getting expected copay:", error);
       return res.status(500).json({ error: "Failed to get expected copay" });
     }
   }
@@ -797,7 +816,7 @@ collectionsRouter.post(
         receiptNumber: result.receiptNumber,
       });
     } catch (error: unknown) {
-      console.error("Error recording copay payment:", error);
+      logCollectionsError("Error recording copay payment:", error);
       const message = error instanceof Error ? error.message : "Failed to record payment";
       return res.status(500).json({ error: message });
     }
@@ -832,7 +851,7 @@ collectionsRouter.get(
         })),
       });
     } catch (error: unknown) {
-      console.error("Error getting cards on file:", error);
+      logCollectionsError("Error getting cards on file:", error);
       return res.status(500).json({ error: "Failed to get cards on file" });
     }
   }
@@ -894,7 +913,7 @@ collectionsRouter.post(
         displayName: `${card.cardType.toUpperCase()} ****${card.lastFour}`,
       });
     } catch (error: unknown) {
-      console.error("Error saving card on file:", error);
+      logCollectionsError("Error saving card on file:", error);
       const message = error instanceof Error ? error.message : "Failed to save card on file";
       return res.status(500).json({ error: message });
     }
@@ -958,7 +977,7 @@ collectionsRouter.post(
         amount: data.amountCents / 100,
       });
     } catch (error: unknown) {
-      console.error("Error charging card:", error);
+      logCollectionsError("Error charging card:", error);
       const message = error instanceof Error ? error.message : "Failed to charge card";
       return res.status(500).json({ error: message });
     }
@@ -1022,7 +1041,7 @@ collectionsRouter.get(
         },
       });
     } catch (error: unknown) {
-      console.error("Error getting collection summary:", error);
+      logCollectionsError("Error getting collection summary:", error);
       return res.status(500).json({ error: "Failed to get collection summary" });
     }
   }
@@ -1066,7 +1085,7 @@ collectionsRouter.post(
         status: prompt.status,
       });
     } catch (error: unknown) {
-      console.error("Error creating collection prompt:", error);
+      logCollectionsError("Error creating collection prompt:", error);
       const message = error instanceof Error ? error.message : "Failed to create collection prompt";
       return res.status(500).json({ error: message });
     }
@@ -1100,7 +1119,7 @@ collectionsRouter.get(
         })),
       });
     } catch (error: unknown) {
-      console.error("Error getting prompts:", error);
+      logCollectionsError("Error getting prompts:", error);
       return res.status(500).json({ error: "Failed to get prompts" });
     }
   }
@@ -1144,7 +1163,7 @@ collectionsRouter.post(
 
       return res.json({ success: true });
     } catch (error: unknown) {
-      console.error("Error skipping prompt:", error);
+      logCollectionsError("Error skipping prompt:", error);
       const message = error instanceof Error ? error.message : "Failed to skip prompt";
       return res.status(500).json({ error: message });
     }
@@ -1183,7 +1202,7 @@ collectionsRouter.post(
 
       return res.json({ success: true });
     } catch (error: unknown) {
-      console.error("Error waiving prompt:", error);
+      logCollectionsError("Error waiving prompt:", error);
       const message = error instanceof Error ? error.message : "Failed to waive prompt";
       return res.status(500).json({ error: message });
     }
@@ -1225,7 +1244,7 @@ collectionsRouter.post(
 
       return res.json(result);
     } catch (error: unknown) {
-      console.error("Error sending notification:", error);
+      logCollectionsError("Error sending notification:", error);
       const message = error instanceof Error ? error.message : "Failed to send notification";
       return res.status(500).json({ error: message });
     }
@@ -1248,7 +1267,7 @@ collectionsRouter.get(
 
       return res.json(receipt);
     } catch (error: unknown) {
-      console.error("Error generating receipt:", error);
+      logCollectionsError("Error generating receipt:", error);
       const message = error instanceof Error ? error.message : "Failed to generate receipt";
       return res.status(500).json({ error: message });
     }
@@ -1284,7 +1303,7 @@ collectionsRouter.get(
         })),
       });
     } catch (error: unknown) {
-      console.error("Error getting payment plans:", error);
+      logCollectionsError("Error getting payment plans:", error);
       return res.status(500).json({ error: "Failed to get payment plans" });
     }
   }

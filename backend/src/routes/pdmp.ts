@@ -10,8 +10,27 @@
 import { Router } from 'express';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
+import { logger } from '../lib/logger';
 
 export const pdmpRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logPdmpError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Mock controlled substance schedules mapping
 const CONTROLLED_SUBSTANCES: Record<string, string> = {
@@ -137,7 +156,7 @@ pdmpRouter.post('/check', requireAuth, async (req: AuthedRequest, res) => {
       pdmpState: 'CA', // Mock state
     });
   } catch (error) {
-    console.error('Error checking PDMP:', error);
+    logPdmpError('Error checking PDMP:', error);
     return res.status(500).json({ error: 'Failed to check PDMP' });
   }
 });
@@ -170,7 +189,7 @@ pdmpRouter.get('/patients/:patientId/last-check', requireAuth, async (req: Authe
 
     return res.json({ lastCheck: result.rows[0] });
   } catch (error) {
-    console.error('Error fetching last PDMP check:', error);
+    logPdmpError('Error fetching last PDMP check:', error);
     return res.status(500).json({ error: 'Failed to fetch last PDMP check' });
   }
 });
@@ -202,7 +221,7 @@ pdmpRouter.get('/patients/:patientId/history', requireAuth, async (req: AuthedRe
       count: result.rows.length,
     });
   } catch (error) {
-    console.error('Error fetching PDMP history:', error);
+    logPdmpError('Error fetching PDMP history:', error);
     return res.status(500).json({ error: 'Failed to fetch PDMP history' });
   }
 });

@@ -4,6 +4,7 @@ describe('module access', () => {
   it('allows roles configured for a module', () => {
     expect(canAccessModule('admin', 'home')).toBe(true);
     expect(canAccessModule('provider', 'notes')).toBe(true);
+    expect(canAccessModule('ma', 'ambient_scribe')).toBe(true);
     expect(canAccessModule('front_desk', 'tasks')).toBe(true);
   });
 

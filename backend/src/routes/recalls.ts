@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { randomUUID } from 'crypto';
+import { logger } from '../lib/logger';
 import {
   generateRecalls,
   generateAllRecalls,
@@ -15,6 +16,24 @@ import {
 } from '../services/recallService';
 
 const router = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logRecallsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // All routes require authentication
 router.use(requireAuth);
@@ -36,7 +55,7 @@ router.get('/campaigns', async (req: AuthedRequest, res) => {
 
     res.json({ campaigns: result.rows });
   } catch (error: any) {
-    console.error('Error fetching campaigns:', error);
+    logRecallsError('Error fetching campaigns', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -66,7 +85,7 @@ router.post('/campaigns', async (req: AuthedRequest, res) => {
 
     res.status(201).json(result.rows[0]);
   } catch (error: any) {
-    console.error('Error creating campaign:', error);
+    logRecallsError('Error creating campaign', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -100,7 +119,7 @@ router.put('/campaigns/:id', async (req: AuthedRequest, res) => {
 
     res.json(result.rows[0]);
   } catch (error: any) {
-    console.error('Error updating campaign:', error);
+    logRecallsError('Error updating campaign', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -125,7 +144,7 @@ router.delete('/campaigns/:id', async (req: AuthedRequest, res) => {
 
     res.json({ message: 'Campaign deleted successfully' });
   } catch (error: any) {
-    console.error('Error deleting campaign:', error);
+    logRecallsError('Error deleting campaign', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -146,7 +165,7 @@ router.post('/campaigns/:id/generate', async (req: AuthedRequest, res) => {
       ...result,
     });
   } catch (error: any) {
-    console.error('Error generating recalls:', error);
+    logRecallsError('Error generating recalls', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -166,7 +185,7 @@ router.post('/generate-all', async (req: AuthedRequest, res) => {
       ...result,
     });
   } catch (error: any) {
-    console.error('Error generating all recalls:', error);
+    logRecallsError('Error generating all recalls', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -234,7 +253,7 @@ router.get('/due', async (req: AuthedRequest, res) => {
 
     res.json({ recalls: result.rows });
   } catch (error: any) {
-    console.error('Error fetching due recalls:', error);
+    logRecallsError('Error fetching due recalls', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -264,7 +283,7 @@ router.post('/patient', async (req: AuthedRequest, res) => {
 
     res.status(201).json(result.rows[0]);
   } catch (error: any) {
-    console.error('Error creating patient recall:', error);
+    logRecallsError('Error creating patient recall', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -305,7 +324,7 @@ router.put('/:id/status', async (req: AuthedRequest, res) => {
 
     res.json(result.rows[0]);
   } catch (error: any) {
-    console.error('Error updating recall status:', error);
+    logRecallsError('Error updating recall status', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -372,7 +391,7 @@ router.post('/:id/contact', async (req: AuthedRequest, res) => {
 
     res.json({ message: 'Contact recorded successfully' });
   } catch (error: any) {
-    console.error('Error recording contact:', error);
+    logRecallsError('Error recording contact', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -435,7 +454,7 @@ router.get('/history', async (req: AuthedRequest, res) => {
 
     res.json({ history: result.rows });
   } catch (error: any) {
-    console.error('Error fetching reminder history:', error);
+    logRecallsError('Error fetching reminder history', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -516,7 +535,7 @@ router.get('/stats', async (req: AuthedRequest, res) => {
       byCampaign: byCampaignResult.rows,
     });
   } catch (error: any) {
-    console.error('Error fetching stats:', error);
+    logRecallsError('Error fetching stats', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -534,7 +553,7 @@ router.get('/patient/:patientId/preferences', async (req: AuthedRequest, res) =>
 
     res.json({ preferences: prefs });
   } catch (error: any) {
-    console.error('Error fetching patient preferences:', error);
+    logRecallsError('Error fetching patient preferences', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -553,7 +572,7 @@ router.put('/patient/:patientId/preferences', async (req: AuthedRequest, res) =>
 
     res.json(updated);
   } catch (error: any) {
-    console.error('Error updating patient preferences:', error);
+    logRecallsError('Error updating patient preferences', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -645,7 +664,7 @@ router.post('/bulk-notify', async (req: AuthedRequest, res) => {
 
         results.successful++;
       } catch (err: any) {
-        console.error(`Error notifying recall ${recallId}:`, err);
+        logRecallsError(`Error notifying recall ${recallId}`, err);
         results.failed++;
         results.errors.push({ recallId, error: err.message || 'Unknown error' });
       }
@@ -653,7 +672,7 @@ router.post('/bulk-notify', async (req: AuthedRequest, res) => {
 
     res.json(results);
   } catch (error: any) {
-    console.error('Error in bulk notify:', error);
+    logRecallsError('Error in bulk notify', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -689,7 +708,7 @@ router.get('/:id/notification-history', async (req: AuthedRequest, res) => {
 
     res.json({ history: result.rows });
   } catch (error: any) {
-    console.error('Error fetching notification history:', error);
+    logRecallsError('Error fetching notification history', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -764,7 +783,7 @@ router.get('/export', async (req: AuthedRequest, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="recalls-${new Date().toISOString().split('T')[0]}.csv"`);
     res.send(csv);
   } catch (error: any) {
-    console.error('Error exporting recalls:', error);
+    logRecallsError('Error exporting recalls', error);
     res.status(500).json({ error: error.message });
   }
 });

@@ -22,8 +22,25 @@ import {
   fetchSMSAuditLog,
   exportSMSAuditLog,
   fetchSMSAuditSummary,
+  fetchSMSSettings,
+  updateSMSSettings,
+  fetchSMSAutoResponses,
+  updateSMSAutoResponse,
+  updatePatientSMSPreferences,
+  processSMSWorkflowReminders,
+  processSMSWorkflowFollowups,
 } from '../api';
-import type { SMSTemplate, ScheduledMessage, Patient, SMSConversation, SMSMessage, SMSConsent, SMSAuditLog } from '../api';
+import type {
+  SMSTemplate,
+  ScheduledMessage,
+  Patient,
+  SMSConversation,
+  SMSMessage,
+  SMSConsent,
+  SMSAuditLog,
+  SMSSettings,
+  SMSAutoResponse,
+} from '../api';
 import '../styles/text-messages.css';
 
 interface PatientWithSMS extends Patient {
@@ -92,7 +109,25 @@ const formatTime = (dateStr: string) => {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
-type TabType = 'conversations' | 'templates' | 'bulk' | 'scheduled' | 'audit' | 'settings';
+type TabType = 'conversations' | 'templates' | 'bulk' | 'scheduled' | 'rules' | 'audit' | 'settings';
+
+type SMSAuditSummary = {
+  messagesSent: number;
+  messagesReceived: number;
+  consentsObtained: number;
+  consentsRevoked: number;
+  optOuts: number;
+  uniquePatients: number;
+};
+
+type SMSAutoResponseDraft = {
+  responseText: string;
+  isActive: boolean;
+  isSystemKeyword: boolean;
+};
+
+const getTemplateMessageBody = (template: Partial<SMSTemplate> & { body?: string }) =>
+  template.messageBody || template.body || '';
 
 export default function TextMessagesPage() {
   const { session } = useAuth();
@@ -131,8 +166,21 @@ export default function TextMessagesPage() {
 
   // Audit Log
   const [auditLogs, setAuditLogs] = useState<SMSAuditLog[]>([]);
-  const [auditSummary, setAuditSummary] = useState<any>(null);
+  const [auditSummary, setAuditSummary] = useState<SMSAuditSummary | null>(null);
   const [auditFilters, setAuditFilters] = useState<{ eventType?: string; startDate?: string; endDate?: string }>({});
+
+  // Rules and settings
+  const [autoResponses, setAutoResponses] = useState<SMSAutoResponse[]>([]);
+  const [autoResponseDrafts, setAutoResponseDrafts] = useState<Record<string, SMSAutoResponseDraft>>({});
+  const [savingAutoResponseId, setSavingAutoResponseId] = useState<string | null>(null);
+  const [rulesLoading, setRulesLoading] = useState(false);
+  const [runningReminderRules, setRunningReminderRules] = useState(false);
+  const [runningFollowupRules, setRunningFollowupRules] = useState(false);
+
+  const [smsSettings, setSmsSettings] = useState<SMSSettings | null>(null);
+  const [settingsDraft, setSettingsDraft] = useState<Partial<SMSSettings>>({});
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
 
   // Stats
   const totalUnread = patients.reduce((acc, p) => acc + (p.unreadCount || 0), 0);
@@ -239,6 +287,55 @@ export default function TextMessagesPage() {
     }
   }, [session, auditFilters, showError]);
 
+  const loadSMSSettings = useCallback(async () => {
+    if (!session) return;
+    setSettingsLoading(true);
+    try {
+      const settings = await fetchSMSSettings(session.tenantId, session.accessToken);
+      setSmsSettings(settings);
+      setSettingsDraft({
+        twilioPhoneNumber: settings.twilioPhoneNumber || '',
+        appointmentRemindersEnabled: settings.appointmentRemindersEnabled,
+        reminderHoursBefore: settings.reminderHoursBefore,
+        allowPatientReplies: settings.allowPatientReplies,
+        reminderTemplate: settings.reminderTemplate || '',
+        confirmationTemplate: settings.confirmationTemplate || '',
+        cancellationTemplate: settings.cancellationTemplate || '',
+        rescheduleTemplate: settings.rescheduleTemplate || '',
+        isActive: settings.isActive,
+        isTestMode: settings.isTestMode,
+      });
+    } catch (err: any) {
+      showError(err.message || 'Failed to load SMS settings');
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, [session, showError]);
+
+  const loadAutoResponseRules = useCallback(async () => {
+    if (!session) return;
+    setRulesLoading(true);
+    try {
+      const response = await fetchSMSAutoResponses(session.tenantId, session.accessToken);
+      const rules = response.autoResponses || [];
+      setAutoResponses(rules);
+      setAutoResponseDrafts(
+        rules.reduce<Record<string, SMSAutoResponseDraft>>((acc, rule) => {
+          acc[rule.id] = {
+            responseText: rule.responseText,
+            isActive: rule.isActive,
+            isSystemKeyword: rule.isSystemKeyword,
+          };
+          return acc;
+        }, {})
+      );
+    } catch (err: any) {
+      showError(err.message || 'Failed to load SMS rules');
+    } finally {
+      setRulesLoading(false);
+    }
+  }, [session, showError]);
+
   useEffect(() => {
     const loadInitialData = async () => {
       setLoading(true);
@@ -252,10 +349,14 @@ export default function TextMessagesPage() {
   useEffect(() => {
     if (activeTab === 'scheduled') {
       loadScheduledMessages();
+    } else if (activeTab === 'rules') {
+      loadAutoResponseRules();
     } else if (activeTab === 'audit') {
       loadAuditLogs();
+    } else if (activeTab === 'settings') {
+      loadSMSSettings();
     }
-  }, [activeTab, loadScheduledMessages, loadAuditLogs]);
+  }, [activeTab, loadScheduledMessages, loadAutoResponseRules, loadAuditLogs, loadSMSSettings]);
 
   const loadConversation = async (patientId: string) => {
     if (!session) return;
@@ -404,11 +505,50 @@ export default function TextMessagesPage() {
     }
   };
 
-  const handleOptInToggle = (patientId: string, optIn: boolean) => {
-    setPatients(prev => prev.map(p =>
-      p.id === patientId ? { ...p, smsOptIn: optIn, smsOptInDate: optIn ? new Date().toISOString() : undefined } : p
-    ));
-    showSuccess(optIn ? 'Patient opted in to SMS' : 'Patient opted out of SMS');
+  const handleOptInToggle = async (patientId: string, optIn: boolean) => {
+    if (!session) return;
+
+    try {
+      if (optIn) {
+        await recordSMSConsent(session.tenantId, session.accessToken, patientId, {
+          consentMethod: 'verbal',
+          obtainedByName: session.user?.fullName || 'Staff Member',
+          notes: 'Consent recorded from Text Messages settings.',
+        });
+      } else {
+        try {
+          await revokeSMSConsent(
+            session.tenantId,
+            session.accessToken,
+            patientId,
+            'Revoked from Text Messages settings'
+          );
+        } catch (err: any) {
+          // Preference update still applies when no prior consent record exists.
+          if (!String(err?.message || '').toLowerCase().includes('no consent record found')) {
+            throw err;
+          }
+        }
+      }
+
+      await updatePatientSMSPreferences(session.tenantId, session.accessToken, patientId, {
+        optedIn: optIn,
+      });
+
+      setPatients(prev => prev.map(p =>
+        p.id === patientId ? { ...p, smsOptIn: optIn, smsOptInDate: optIn ? new Date().toISOString() : undefined } : p
+      ));
+      setPatientConsent(prev => ({
+        ...prev,
+        [patientId]: {
+          hasConsent: optIn,
+          daysUntilExpiration: optIn ? null : prev[patientId]?.daysUntilExpiration,
+        },
+      }));
+      showSuccess(optIn ? 'Patient opted in to SMS' : 'Patient opted out of SMS');
+    } catch (err: any) {
+      showError(err.message || 'Failed to update SMS preference');
+    }
   };
 
   const handleConsentSave = async (data: { consentMethod: 'verbal' | 'written' | 'electronic'; obtainedByName: string; expirationDate?: string; notes?: string }) => {
@@ -443,9 +583,86 @@ export default function TextMessagesPage() {
     }
   };
 
+  const handleSaveSettings = async () => {
+    if (!session || !smsSettings) return;
+    setSavingSettings(true);
+    try {
+      const payload: Partial<SMSSettings> = {
+        appointmentRemindersEnabled: settingsDraft.appointmentRemindersEnabled,
+        reminderHoursBefore: settingsDraft.reminderHoursBefore,
+        allowPatientReplies: settingsDraft.allowPatientReplies,
+        reminderTemplate: settingsDraft.reminderTemplate,
+        confirmationTemplate: settingsDraft.confirmationTemplate,
+        cancellationTemplate: settingsDraft.cancellationTemplate,
+        rescheduleTemplate: settingsDraft.rescheduleTemplate,
+        isActive: settingsDraft.isActive,
+        isTestMode: settingsDraft.isTestMode,
+      };
+
+      await updateSMSSettings(session.tenantId, session.accessToken, payload);
+      showSuccess('SMS settings saved');
+      await loadSMSSettings();
+    } catch (err: any) {
+      showError(err.message || 'Failed to save SMS settings');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const handleSaveAutoResponseRule = async (ruleId: string) => {
+    if (!session) return;
+    const draft = autoResponseDrafts[ruleId];
+    if (!draft) return;
+
+    setSavingAutoResponseId(ruleId);
+    try {
+      const payload = draft.isSystemKeyword
+        ? { isActive: draft.isActive }
+        : { responseText: draft.responseText, isActive: draft.isActive };
+
+      await updateSMSAutoResponse(session.tenantId, session.accessToken, ruleId, payload);
+      showSuccess('Rule updated');
+      await loadAutoResponseRules();
+    } catch (err: any) {
+      showError(err.message || 'Failed to update rule');
+    } finally {
+      setSavingAutoResponseId(null);
+    }
+  };
+
+  const handleRunReminderRules = async () => {
+    if (!session) return;
+    setRunningReminderRules(true);
+    try {
+      const result = await processSMSWorkflowReminders(session.tenantId, session.accessToken);
+      showSuccess(
+        `Reminder rules processed${typeof result?.sent === 'number' ? ` (${result.sent} sent)` : ''}`
+      );
+    } catch (err: any) {
+      showError(err.message || 'Failed to run reminder rules');
+    } finally {
+      setRunningReminderRules(false);
+    }
+  };
+
+  const handleRunFollowupRules = async () => {
+    if (!session) return;
+    setRunningFollowupRules(true);
+    try {
+      const result = await processSMSWorkflowFollowups(session.tenantId, session.accessToken);
+      showSuccess(
+        `Follow-up rules processed${typeof result?.sent === 'number' ? ` (${result.sent} sent)` : ''}`
+      );
+    } catch (err: any) {
+      showError(err.message || 'Failed to run follow-up rules');
+    } finally {
+      setRunningFollowupRules(false);
+    }
+  };
+
   const insertTemplate = (template: SMSTemplate) => {
     const patient = patients.find(p => p.id === selectedPatientId);
-    let body = template.messageBody || template.body;
+    let body = getTemplateMessageBody(template);
     if (patient) {
       body = body.replace(/{patientName}/g, patient.firstName);
       body = body.replace(/{date}/g, new Date().toLocaleDateString());
@@ -511,6 +728,7 @@ export default function TextMessagesPage() {
             { id: 'templates', label: 'Templates' },
             { id: 'bulk', label: 'Bulk Send' },
             { id: 'scheduled', label: 'Scheduled' },
+            { id: 'rules', label: 'Rules' },
             { id: 'audit', label: 'Audit Log' },
             { id: 'settings', label: 'Settings' },
           ].map(tab => (
@@ -734,7 +952,7 @@ export default function TextMessagesPage() {
                               onClick={() => insertTemplate(tpl)}
                             >
                               <div className="sms-template-dropdown-name">{tpl.name}</div>
-                              <div className="sms-template-dropdown-preview">{(tpl.messageBody || tpl.body).substring(0, 50)}...</div>
+                              <div className="sms-template-dropdown-preview">{getTemplateMessageBody(tpl).substring(0, 50)}...</div>
                             </div>
                           ))
                         )}
@@ -804,7 +1022,7 @@ export default function TextMessagesPage() {
                           {categoryTemplates.map(template => (
                             <tr key={template.id}>
                               <td className="strong">{template.name}</td>
-                              <td className="sms-preview-cell">{template.messageBody || template.body}</td>
+                              <td className="sms-preview-cell">{getTemplateMessageBody(template)}</td>
                               <td>
                                 <div className="sms-actions">
                                   <button
@@ -903,7 +1121,7 @@ export default function TextMessagesPage() {
                     onChange={e => {
                       setBulkTemplateId(e.target.value);
                       const tpl = templates.find(t => t.id === e.target.value);
-                      if (tpl) setBulkMessageText(tpl.messageBody || tpl.body);
+                      if (tpl) setBulkMessageText(getTemplateMessageBody(tpl));
                     }}
                     className="sms-select"
                   >
@@ -1003,6 +1221,122 @@ export default function TextMessagesPage() {
                           )}
                         </td>
                       </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </Panel>
+            )}
+          </div>
+        )}
+
+        {/* Rules Tab */}
+        {activeTab === 'rules' && (
+          <div className="sms-rules-tab">
+            <div className="sms-templates-header">
+              <h2>Messaging Rules</h2>
+              <button className="btn-secondary" onClick={loadAutoResponseRules}>Refresh Rules</button>
+            </div>
+
+            <Panel title="Automation Controls">
+              <p className="muted" style={{ marginBottom: '16px' }}>
+                Run workflow rule processors on demand. These controls are useful during rollout and troubleshooting.
+              </p>
+              <div className="sms-rules-actions">
+                <button
+                  className="btn-primary"
+                  onClick={handleRunReminderRules}
+                  disabled={runningReminderRules}
+                >
+                  {runningReminderRules ? 'Running Reminder Rules...' : 'Process Reminder Rules'}
+                </button>
+                <button
+                  className="btn-secondary"
+                  onClick={handleRunFollowupRules}
+                  disabled={runningFollowupRules}
+                >
+                  {runningFollowupRules ? 'Running Follow-up Rules...' : 'Process Follow-up Rules'}
+                </button>
+              </div>
+            </Panel>
+
+            {rulesLoading ? (
+              <Panel title="Keyword Auto-Responses">
+                <p className="muted">Loading rules...</p>
+              </Panel>
+            ) : autoResponses.length === 0 ? (
+              <div className="sms-empty-state">
+                <h3>No rules configured</h3>
+                <p>Keyword auto-response rules will appear here once configured.</p>
+              </div>
+            ) : (
+              <Panel title={`Keyword Auto-Responses (${autoResponses.length})`}>
+                <table className="sms-table">
+                  <thead>
+                    <tr>
+                      <th>Keyword</th>
+                      <th>Action</th>
+                      <th>Response</th>
+                      <th>Enabled</th>
+                      <th>Save</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {autoResponses.map(rule => {
+                      const draft = autoResponseDrafts[rule.id] || {
+                        responseText: rule.responseText,
+                        isActive: rule.isActive,
+                        isSystemKeyword: rule.isSystemKeyword,
+                      };
+                      return (
+                        <tr key={rule.id}>
+                          <td className="strong">
+                            {rule.keyword}
+                            {rule.isSystemKeyword && (
+                              <span className="sms-system-rule-badge">System</span>
+                            )}
+                          </td>
+                          <td>{rule.action}</td>
+                          <td>
+                            <textarea
+                              className="sms-textarea sms-rule-textarea"
+                              value={draft.responseText}
+                              disabled={draft.isSystemKeyword}
+                              onChange={e => setAutoResponseDrafts(prev => ({
+                                ...prev,
+                                [rule.id]: {
+                                  ...draft,
+                                  responseText: e.target.value,
+                                },
+                              }))}
+                            />
+                          </td>
+                          <td>
+                            <label className="sms-inline-checkbox">
+                              <input
+                                type="checkbox"
+                                checked={draft.isActive}
+                                onChange={e => setAutoResponseDrafts(prev => ({
+                                  ...prev,
+                                  [rule.id]: {
+                                    ...draft,
+                                    isActive: e.target.checked,
+                                  },
+                                }))}
+                              />
+                              Active
+                            </label>
+                          </td>
+                          <td>
+                            <button
+                              className="btn-sm btn-primary"
+                              onClick={() => handleSaveAutoResponseRule(rule.id)}
+                              disabled={savingAutoResponseId === rule.id}
+                            >
+                              {savingAutoResponseId === rule.id ? 'Saving...' : 'Save'}
+                            </button>
+                          </td>
+                        </tr>
                       );
                     })}
                   </tbody>
@@ -1186,27 +1520,139 @@ export default function TextMessagesPage() {
             </Panel>
 
             <Panel title="Message Settings">
-              <div className="sms-settings-form">
-                <div className="sms-form-group">
-                  <label>Practice Phone Number</label>
-                  <input type="text" className="sms-input" value="(555) 123-4567" readOnly />
-                  <span className="muted tiny">Contact support to change your SMS number</span>
+              {settingsLoading ? (
+                <p className="muted">Loading settings...</p>
+              ) : (
+                <div className="sms-settings-form">
+                  <div className="sms-form-group">
+                    <label htmlFor="sms-settings-phone-number">Practice SMS Number</label>
+                    <input
+                      id="sms-settings-phone-number"
+                      type="text"
+                      className="sms-input"
+                      value={settingsDraft.twilioPhoneNumber || ''}
+                      readOnly
+                    />
+                    <span className="muted tiny">Configured in SMS settings. Contact support to change number assignment.</span>
+                  </div>
+
+                  <div className="sms-form-row">
+                    <div className="sms-form-group">
+                      <label htmlFor="sms-settings-reminder-hours">Reminder Lead Time (Hours)</label>
+                      <input
+                        id="sms-settings-reminder-hours"
+                        type="number"
+                        min={1}
+                        max={168}
+                        className="sms-input"
+                        value={settingsDraft.reminderHoursBefore || 24}
+                        onChange={e => setSettingsDraft(prev => ({
+                          ...prev,
+                          reminderHoursBefore: Number(e.target.value) || 24,
+                        }))}
+                      />
+                    </div>
+                    <div className="sms-form-group">
+                      <label htmlFor="sms-settings-channel-mode">Channel Mode</label>
+                      <select
+                        id="sms-settings-channel-mode"
+                        className="sms-select"
+                        value={settingsDraft.isTestMode ? 'test' : 'production'}
+                        onChange={e => setSettingsDraft(prev => ({
+                          ...prev,
+                          isTestMode: e.target.value === 'test',
+                        }))}
+                      >
+                        <option value="test">Test Mode</option>
+                        <option value="production">Production Mode</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="sms-form-group">
+                    <label className="sms-inline-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(settingsDraft.isActive)}
+                        onChange={e => setSettingsDraft(prev => ({ ...prev, isActive: e.target.checked }))}
+                      />
+                      SMS channel active
+                    </label>
+                    <label className="sms-inline-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(settingsDraft.appointmentRemindersEnabled)}
+                        onChange={e => setSettingsDraft(prev => ({
+                          ...prev,
+                          appointmentRemindersEnabled: e.target.checked,
+                        }))}
+                      />
+                      Appointment reminder rules enabled
+                    </label>
+                    <label className="sms-inline-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(settingsDraft.allowPatientReplies)}
+                        onChange={e => setSettingsDraft(prev => ({
+                          ...prev,
+                          allowPatientReplies: e.target.checked,
+                        }))}
+                      />
+                      Allow inbound patient replies
+                    </label>
+                  </div>
+
+                  <div className="sms-form-group">
+                    <label htmlFor="sms-settings-reminder-template">Reminder Template</label>
+                    <textarea
+                      id="sms-settings-reminder-template"
+                      className="sms-textarea"
+                      rows={2}
+                      value={settingsDraft.reminderTemplate || ''}
+                      onChange={e => setSettingsDraft(prev => ({ ...prev, reminderTemplate: e.target.value }))}
+                    />
+                  </div>
+
+                  <div className="sms-form-group">
+                    <label htmlFor="sms-settings-confirmation-template">Confirmation Template</label>
+                    <textarea
+                      id="sms-settings-confirmation-template"
+                      className="sms-textarea"
+                      rows={2}
+                      value={settingsDraft.confirmationTemplate || ''}
+                      onChange={e => setSettingsDraft(prev => ({ ...prev, confirmationTemplate: e.target.value }))}
+                    />
+                  </div>
+
+                  <div className="sms-form-group">
+                    <label htmlFor="sms-settings-cancellation-template">Cancellation Template</label>
+                    <textarea
+                      id="sms-settings-cancellation-template"
+                      className="sms-textarea"
+                      rows={2}
+                      value={settingsDraft.cancellationTemplate || ''}
+                      onChange={e => setSettingsDraft(prev => ({ ...prev, cancellationTemplate: e.target.value }))}
+                    />
+                  </div>
+
+                  <div className="sms-form-group">
+                    <label htmlFor="sms-settings-reschedule-template">Reschedule Template</label>
+                    <textarea
+                      id="sms-settings-reschedule-template"
+                      className="sms-textarea"
+                      rows={2}
+                      value={settingsDraft.rescheduleTemplate || ''}
+                      onChange={e => setSettingsDraft(prev => ({ ...prev, rescheduleTemplate: e.target.value }))}
+                    />
+                  </div>
+
+                  <div className="sms-settings-actions">
+                    <button className="btn-primary" onClick={handleSaveSettings} disabled={savingSettings}>
+                      {savingSettings ? 'Saving Settings...' : 'Save Messaging Settings'}
+                    </button>
+                  </div>
                 </div>
-                <div className="sms-form-group">
-                  <label>Default Message Signature</label>
-                  <input type="text" className="sms-input" defaultValue="- Mountain Pine Dermatology" />
-                </div>
-                <div className="sms-form-group">
-                  <label>
-                    <input type="checkbox" defaultChecked /> Automatically append signature to all messages
-                  </label>
-                </div>
-                <div className="sms-form-group">
-                  <label>
-                    <input type="checkbox" defaultChecked /> Send delivery receipts
-                  </label>
-                </div>
-              </div>
+              )}
             </Panel>
           </div>
         )}
@@ -1284,7 +1730,7 @@ function TemplateForm({
   onCancel: () => void;
 }) {
   const [name, setName] = useState(template?.name || '');
-  const [body, setBody] = useState(template?.body || '');
+  const [body, setBody] = useState(getTemplateMessageBody(template || {}));
   const [category, setCategory] = useState(template?.category || '');
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1389,7 +1835,7 @@ function ScheduleForm({
             const tpl = templates.find(t => t.id === e.target.value);
             if (tpl) {
               const patient = patients.find(p => p.id === patientId);
-              let body = tpl.messageBody || tpl.body;
+              let body = getTemplateMessageBody(tpl);
               if (patient) {
                 body = body.replace(/{patientName}/g, patient.firstName);
               }

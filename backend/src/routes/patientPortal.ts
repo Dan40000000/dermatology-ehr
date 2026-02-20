@@ -8,6 +8,7 @@ import { env } from "../config/env";
 import { rateLimit } from "../middleware/rateLimit";
 import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientPortalAuth";
 import { validatePasswordPolicy } from "../middleware/security";
+import { logger } from "../lib/logger";
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -63,6 +64,24 @@ const updateProfileSchema = z.object({
 });
 
 export const patientPortalRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logPatientPortalError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Schema for identity verification (Step 1 of registration)
 const verifyIdentitySchema = z.object({
@@ -170,7 +189,7 @@ patientPortalRouter.post(
         patientId: patient.id, // Used internally for registration
       });
     } catch (error) {
-      console.error("Identity verification error:", error);
+      logPatientPortalError("Identity verification error", error);
       return res.status(500).json({ error: "Verification failed. Please try again." });
     }
   }
@@ -285,7 +304,7 @@ patientPortalRouter.post(
         verificationToken: env.nodeEnv === 'development' ? verificationToken : undefined
       });
     } catch (error) {
-      console.error("Registration error:", error);
+      logPatientPortalError("Registration error", error);
       return res.status(500).json({ error: "Registration failed" });
     }
   }
@@ -472,7 +491,7 @@ patientPortalRouter.post(
         }
       });
     } catch (error) {
-      console.error("Login error:", error);
+      logPatientPortalError("Login error", error);
       return res.status(500).json({ error: "Login failed" });
     }
   }
@@ -509,7 +528,7 @@ patientPortalRouter.post("/logout", requirePatientAuth, async (req: PatientPorta
 
     return res.json({ message: "Logged out successfully" });
   } catch (error) {
-    console.error("Logout error:", error);
+    logPatientPortalError("Logout error", error);
     return res.status(500).json({ error: "Logout failed" });
   }
 });
@@ -553,7 +572,7 @@ patientPortalRouter.post(
 
       return res.json({ message: "Email verified successfully" });
     } catch (error) {
-      console.error("Email verification error:", error);
+      logPatientPortalError("Email verification error", error);
       return res.status(500).json({ error: "Email verification failed" });
     }
   }
@@ -603,7 +622,7 @@ patientPortalRouter.post(
         resetToken: env.nodeEnv === 'development' && result.rows.length > 0 ? resetToken : undefined
       });
     } catch (error) {
-      console.error("Forgot password error:", error);
+      logPatientPortalError("Forgot password error", error);
       return res.status(500).json({ error: "Password reset request failed" });
     }
   }
@@ -671,7 +690,7 @@ patientPortalRouter.post(
 
       return res.json({ message: "Password reset successfully" });
     } catch (error) {
-      console.error("Password reset error:", error);
+      logPatientPortalError("Password reset error", error);
       return res.status(500).json({ error: "Password reset failed" });
     }
   }
@@ -702,7 +721,7 @@ patientPortalRouter.get("/me", requirePatientAuth, async (req: PatientPortalRequ
 
     return res.json({ patient: result.rows[0] });
   } catch (error) {
-    console.error("Get patient error:", error);
+    logPatientPortalError("Get patient error", error);
     return res.status(500).json({ error: "Failed to get patient information" });
   }
 });
@@ -772,7 +791,7 @@ patientPortalRouter.put("/me", requirePatientAuth, async (req: PatientPortalRequ
 
     return res.json({ message: 'Profile updated successfully' });
   } catch (error) {
-    console.error('Update profile error:', error);
+    logPatientPortalError("Update profile error", error);
     return res.status(500).json({ error: 'Failed to update profile' });
   }
 });
@@ -797,7 +816,7 @@ patientPortalRouter.get("/activity", requirePatientAuth, async (req: PatientPort
 
     return res.json({ activity: result.rows });
   } catch (error) {
-    console.error("Get activity error:", error);
+    logPatientPortalError("Get activity error", error);
     return res.status(500).json({ error: "Failed to get activity log" });
   }
 });

@@ -3,6 +3,7 @@ import express from 'express';
 import aiNoteDraftingRouter from '../aiNoteDrafting';
 import { aiNoteDraftingService } from '../../services/aiNoteDrafting';
 import { pool } from '../../db/pool';
+import { logger } from '../../lib/logger';
 
 jest.mock('../../middleware/auth', () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -29,6 +30,15 @@ jest.mock('../../db/pool', () => ({
   },
 }));
 
+jest.mock('../../lib/logger', () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use('/ai-notes', aiNoteDraftingRouter);
@@ -37,12 +47,14 @@ const queryMock = pool.query as jest.Mock;
 const generateDraftMock = aiNoteDraftingService.generateNoteDraft as jest.Mock;
 const getSuggestionsMock = aiNoteDraftingService.getSmartSuggestions as jest.Mock;
 const recordFeedbackMock = aiNoteDraftingService.recordSuggestionFeedback as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
   generateDraftMock.mockReset();
   getSuggestionsMock.mockReset();
   recordFeedbackMock.mockReset();
+  loggerMock.error.mockReset();
 
   queryMock.mockResolvedValue({ rows: [] });
 });
@@ -117,6 +129,23 @@ describe('AI note drafting routes', () => {
     });
 
     expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith('Draft generation error:', {
+      error: 'boom',
+    });
+  });
+
+  it('POST /ai-notes/draft masks non-Error failures', async () => {
+    generateDraftMock.mockRejectedValueOnce({ patientName: 'Jane Doe' });
+
+    const res = await request(app).post('/ai-notes/draft').send({
+      patientId: 'patient-1',
+      briefNotes: 'Notes for AI',
+    });
+
+    expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith('Draft generation error:', {
+      error: 'Unknown error',
+    });
   });
 
   it('POST /ai-notes/suggestions returns smart suggestions', async () => {

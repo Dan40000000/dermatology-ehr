@@ -6,6 +6,7 @@ import { auditLog } from "../../services/audit";
 import { recordEncounterLearning } from "../../services/learningService";
 import { encounterService } from "../../services/encounterService";
 import { billingService } from "../../services/billingService";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -48,6 +49,15 @@ jest.mock("../../websocket/emitter", () => ({
   emitEncounterSigned: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),
@@ -63,6 +73,7 @@ const auditMock = auditLog as jest.Mock;
 const learningMock = recordEncounterLearning as jest.Mock;
 const encounterServiceMock = encounterService as jest.Mocked<typeof encounterService>;
 const billingServiceMock = billingService as jest.Mocked<typeof billingService>;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
@@ -70,6 +81,7 @@ beforeEach(() => {
   learningMock.mockReset();
   Object.values(encounterServiceMock).forEach((fn) => fn.mockReset());
   Object.values(billingServiceMock).forEach((fn) => fn.mockReset());
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -235,6 +247,17 @@ describe("Encounters routes", () => {
     const res = await request(app).post("/encounters/enc-1/generate-charges");
 
     expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith("Error generating charges", { error: "boom" });
+  });
+
+  it("POST /encounters/:id/generate-charges masks non-Error failures", async () => {
+    encounterServiceMock.generateChargesFromEncounter.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+    const res = await request(app).post("/encounters/enc-1/generate-charges");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to generate charges");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error generating charges", { error: "Unknown error" });
   });
 
   it("POST /encounters/:id/diagnoses rejects invalid payload", async () => {

@@ -8,6 +8,7 @@ import {
   checkDrugAllergyInteractions,
   comprehensiveSafetyCheck,
 } from "../../services/drugInteractionService";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -34,6 +35,15 @@ jest.mock("../../services/drugInteractionService", () => ({
   comprehensiveSafetyCheck: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/erx", erxRouter);
@@ -45,6 +55,7 @@ const benefitsMock = getPatientBenefits as jest.Mock;
 const drugInteractionMock = checkDrugDrugInteractions as jest.Mock;
 const allergyInteractionMock = checkDrugAllergyInteractions as jest.Mock;
 const safetyMock = comprehensiveSafetyCheck as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
@@ -54,6 +65,7 @@ beforeEach(() => {
   drugInteractionMock.mockReset();
   allergyInteractionMock.mockReset();
   safetyMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -68,6 +80,30 @@ describe("eRx routes", () => {
     const res = await request(app).get("/erx/drugs/search?q=iso&category=Acne&limit=10");
     expect(res.status).toBe(200);
     expect(res.body.drugs).toHaveLength(1);
+  });
+
+  it("GET /erx/drugs/search logs sanitized Error failures", async () => {
+    queryMock.mockRejectedValueOnce(new Error("search failed"));
+
+    const res = await request(app).get("/erx/drugs/search?q=iso");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to search drugs");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error searching drugs:", {
+      error: "search failed",
+    });
+  });
+
+  it("GET /erx/drugs/search masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+    const res = await request(app).get("/erx/drugs/search?q=iso");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to search drugs");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error searching drugs:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /erx/drugs/:id returns 404", async () => {

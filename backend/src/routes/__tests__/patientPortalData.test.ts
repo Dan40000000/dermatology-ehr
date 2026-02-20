@@ -29,8 +29,10 @@ jest.mock("crypto", () => ({
 }));
 
 jest.mock("fs", () => ({
+  ...jest.requireActual("fs"),
   existsSync: jest.fn(),
   createReadStream: jest.fn(),
+  mkdirSync: jest.fn(),
 }));
 
 const app = express();

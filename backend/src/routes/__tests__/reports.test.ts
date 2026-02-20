@@ -3,6 +3,7 @@ import express from "express";
 import { reportsRouter } from "../reports";
 import { pool } from "../../db/pool";
 import * as reportService from "../../services/reportService";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -23,15 +24,26 @@ jest.mock("../../db/pool", () => ({
 
 jest.mock("../../services/reportService");
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/reports", reportsRouter);
 
 const queryMock = pool.query as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
   jest.clearAllMocks();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -97,6 +109,21 @@ describe("Reports routes - Appointments", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toContain("Failed to generate report");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error generating appointment report:", {
+      error: "Report error",
+    });
+  });
+
+  it("POST /reports/appointments masks non-Error failures", async () => {
+    jest.spyOn(reportService, "generateAppointmentReport").mockRejectedValue({ patientName: "Jane Doe" });
+
+    const res = await request(app).post("/reports/appointments").send({});
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("Failed to generate report");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error generating appointment report:", {
+      error: "Unknown error",
+    });
   });
 
   it("POST /reports/appointments rejects invalid filters", async () => {

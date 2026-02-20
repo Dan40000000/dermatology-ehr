@@ -5,8 +5,27 @@ import { pool } from "../db/pool";
 import { KioskRequest, requireKioskAuth } from "../middleware/kioskAuth";
 import { saveSignature, saveInsuranceCardPhoto, validateSignatureData } from "../services/signatureService";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 export const kioskRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logKioskError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Heartbeat endpoint - kiosk device sends periodic heartbeat
 kioskRouter.post("/heartbeat", requireKioskAuth, async (req: KioskRequest, res) => {
@@ -23,7 +42,7 @@ kioskRouter.post("/heartbeat", requireKioskAuth, async (req: KioskRequest, res) 
 
     return res.json({ success: true, timestamp: new Date().toISOString() });
   } catch (err) {
-    console.error("Heartbeat error:", err);
+    logKioskError("Heartbeat error", err);
     return res.status(500).json({ error: "Heartbeat failed" });
   }
 });
@@ -89,7 +108,7 @@ kioskRouter.post("/verify-patient", requireKioskAuth, async (req: KioskRequest, 
     // Return matching patients (may need to select if multiple matches)
     return res.json({ patients: result.rows });
   } catch (err) {
-    console.error("Patient verification error:", err);
+    logKioskError("Patient verification error", err);
     return res.status(500).json({ error: "Verification failed" });
   }
 });
@@ -124,7 +143,7 @@ kioskRouter.get("/today-appointments", requireKioskAuth, async (req: KioskReques
 
     return res.json({ appointments: result.rows });
   } catch (err) {
-    console.error("Error fetching today's appointments:", err);
+    logKioskError("Error fetching today's appointments", err);
     return res.status(500).json({ error: "Failed to fetch appointments" });
   }
 });
@@ -186,7 +205,7 @@ kioskRouter.post("/checkin/start", requireKioskAuth, async (req: KioskRequest, r
 
     return res.status(201).json({ sessionId, patientId, appointmentId });
   } catch (err) {
-    console.error("Error starting check-in:", err);
+    logKioskError("Error starting check-in", err);
     return res.status(500).json({ error: "Failed to start check-in" });
   }
 });
@@ -215,7 +234,7 @@ kioskRouter.get("/checkin/:sessionId", requireKioskAuth, async (req: KioskReques
 
     return res.json({ session: result.rows[0] });
   } catch (err) {
-    console.error("Error fetching session:", err);
+    logKioskError("Error fetching session", err);
     return res.status(500).json({ error: "Failed to fetch session" });
   }
 });
@@ -291,7 +310,7 @@ kioskRouter.put("/checkin/:sessionId/demographics", requireKioskAuth, async (req
 
     return res.json({ success: true });
   } catch (err) {
-    console.error("Error updating demographics:", err);
+    logKioskError("Error updating demographics", err);
     return res.status(500).json({ error: "Failed to update demographics" });
   }
 });
@@ -360,7 +379,7 @@ kioskRouter.put("/checkin/:sessionId/insurance", requireKioskAuth, async (req: K
 
     return res.json({ success: true });
   } catch (err) {
-    console.error("Error updating insurance:", err);
+    logKioskError("Error updating insurance", err);
     return res.status(500).json({ error: "Failed to update insurance" });
   }
 });
@@ -408,7 +427,7 @@ kioskRouter.post("/checkin/:sessionId/insurance-photo", requireKioskAuth, async 
 
     return res.json({ success: true, photoUrl: savedPhoto.url, thumbnailUrl: savedPhoto.thumbnailUrl });
   } catch (err) {
-    console.error("Error uploading insurance photo:", err);
+    logKioskError("Error uploading insurance photo", err);
     return res.status(500).json({ error: err instanceof Error ? err.message : "Failed to upload photo" });
   }
 });
@@ -492,7 +511,7 @@ kioskRouter.post("/checkin/:sessionId/signature", requireKioskAuth, async (req: 
       thumbnailUrl: savedSignature.thumbnailUrl,
     });
   } catch (err) {
-    console.error("Error saving signature:", err);
+    logKioskError("Error saving signature", err);
     return res.status(500).json({ error: err instanceof Error ? err.message : "Failed to save signature" });
   }
 });
@@ -529,7 +548,7 @@ kioskRouter.post("/checkin/:sessionId/complete", requireKioskAuth, async (req: K
 
     return res.json({ success: true, patientId, appointmentId });
   } catch (err) {
-    console.error("Error completing check-in:", err);
+    logKioskError("Error completing check-in", err);
     return res.status(500).json({ error: "Failed to complete check-in" });
   }
 });
@@ -555,7 +574,7 @@ kioskRouter.post("/checkin/:sessionId/cancel", requireKioskAuth, async (req: Kio
 
     return res.json({ success: true });
   } catch (err) {
-    console.error("Error cancelling check-in:", err);
+    logKioskError("Error cancelling check-in", err);
     return res.status(500).json({ error: "Failed to cancel check-in" });
   }
 });

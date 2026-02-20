@@ -8,6 +8,7 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
 import { auditLog } from "./audit";
+import { logger } from "../lib/logger";
 
 // ============================================================================
 // TYPES
@@ -134,6 +135,24 @@ export interface SuperbillData {
     state?: string;
     zip?: string;
   };
+}
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logClearinghouseServiceError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
 }
 
 export interface RemittanceAdvice {
@@ -495,7 +514,7 @@ export async function submitClaim(
       controlNumbers = x12Result.controlNumbers;
     } catch (err) {
       // Log but continue - claim can still be submitted without X12
-      console.error("Failed to generate X12:", err);
+      logClearinghouseServiceError("Failed to generate X12:", err);
     }
   }
 

@@ -6,6 +6,7 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
 import { userHasRole } from "../lib/roles";
+import { logger } from "../lib/logger";
 
 const noteFilterSchema = z.object({
   status: z.enum(["draft", "preliminary", "final", "signed"]).optional(),
@@ -29,6 +30,24 @@ const addendumSchema = z.object({
 });
 
 export const notesRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logNotesError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // GET /api/notes - List notes with filters
 notesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
@@ -157,7 +176,7 @@ notesRouter.post(
         message: `${noteIds.length} notes finalized successfully`
       });
     } catch (error: any) {
-      console.error("Bulk finalize error:", error);
+      logNotesError("Bulk finalize error:", error);
       res.status(500).json({ error: "Failed to finalize notes" });
     }
   }
@@ -225,7 +244,7 @@ notesRouter.post(
         message: `${noteIds.length} notes assigned to provider successfully`
       });
     } catch (error: any) {
-      console.error("Bulk assign error:", error);
+      logNotesError("Bulk assign error:", error);
       res.status(500).json({ error: "Failed to assign notes" });
     }
   }
@@ -281,7 +300,7 @@ notesRouter.patch(
         signedBy: req.user!.id
       });
     } catch (error: any) {
-      console.error("Sign note error:", error);
+      logNotesError("Sign note error:", error);
       res.status(500).json({ error: "Failed to sign note" });
     }
   }
@@ -355,7 +374,7 @@ notesRouter.patch(
         addedAt: timestamp
       });
     } catch (error: any) {
-      console.error("Add addendum error:", error);
+      logNotesError("Add addendum error:", error);
 
       // If table doesn't exist, create it
       if (error.code === '42P01') {
@@ -404,7 +423,7 @@ notesRouter.patch(
             addedAt: timestamp
           });
         } catch (retryError: any) {
-          console.error("Retry addendum error:", retryError);
+          logNotesError("Retry addendum error:", retryError);
           return res.status(500).json({ error: "Failed to add addendum after retry" });
         }
       }
@@ -440,7 +459,7 @@ notesRouter.get("/:id/addendums", requireAuth, async (req: AuthedRequest, res) =
     if (error.code === '42P01') {
       return res.json({ addendums: [] });
     }
-    console.error("Get addendums error:", error);
+    logNotesError("Get addendums error:", error);
     res.status(500).json({ error: "Failed to fetch addendums" });
   }
 });

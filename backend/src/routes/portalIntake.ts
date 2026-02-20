@@ -3,8 +3,27 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientPortalAuth";
 import crypto from "crypto";
+import { logger } from "../lib/logger";
 
 export const portalIntakeRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logPortalIntakeError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // ============================================================================
 // INTAKE FORM TEMPLATES
@@ -48,7 +67,7 @@ portalIntakeRouter.get(
 
       return res.json({ forms: result.rows });
     } catch (error) {
-      console.error("Get intake forms error:", error);
+      logPortalIntakeError("Get intake forms error", error);
       return res.status(500).json({ error: "Failed to get intake forms" });
     }
   }
@@ -94,7 +113,7 @@ portalIntakeRouter.get(
 
       return res.json(result.rows[0]);
     } catch (error) {
-      console.error("Get intake form error:", error);
+      logPortalIntakeError("Get intake form error", error);
       return res.status(500).json({ error: "Failed to get intake form" });
     }
   }
@@ -164,7 +183,7 @@ portalIntakeRouter.post(
 
       return res.status(201).json({ responseId: result.rows[0].id });
     } catch (error) {
-      console.error("Start form error:", error);
+      logPortalIntakeError("Start form error", error);
       return res.status(500).json({ error: "Failed to start form" });
     }
   }
@@ -257,7 +276,7 @@ portalIntakeRouter.put(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
-      console.error("Save response error:", error);
+      logPortalIntakeError("Save response error", error);
       return res.status(500).json({ error: "Failed to save response" });
     }
   }
@@ -294,7 +313,7 @@ portalIntakeRouter.get(
 
       return res.json({ history: result.rows });
     } catch (error) {
-      console.error("Get intake history error:", error);
+      logPortalIntakeError("Get intake history error", error);
       return res.status(500).json({ error: "Failed to get intake history" });
     }
   }
@@ -333,7 +352,7 @@ portalIntakeRouter.get(
 
       return res.json({ consents: result.rows });
     } catch (error) {
-      console.error("Get consents error:", error);
+      logPortalIntakeError("Get consents error", error);
       return res.status(500).json({ error: "Failed to get consent forms" });
     }
   }
@@ -376,7 +395,7 @@ portalIntakeRouter.get(
 
       return res.json({ requiredConsents: result.rows });
     } catch (error) {
-      console.error("Get required consents error:", error);
+      logPortalIntakeError("Get required consents error", error);
       return res.status(500).json({ error: "Failed to get required consents" });
     }
   }
@@ -466,7 +485,7 @@ portalIntakeRouter.post(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
-      console.error("Sign consent error:", error);
+      logPortalIntakeError("Sign consent error", error);
       return res.status(500).json({ error: "Failed to sign consent" });
     }
   }
@@ -502,7 +521,7 @@ portalIntakeRouter.get(
 
       return res.json({ signedConsents: result.rows });
     } catch (error) {
-      console.error("Get signed consents error:", error);
+      logPortalIntakeError("Get signed consents error", error);
       return res.status(500).json({ error: "Failed to get signed consents" });
     }
   }
@@ -591,7 +610,7 @@ portalIntakeRouter.post(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
-      console.error("Start check-in error:", error);
+      logPortalIntakeError("Start check-in error", error);
       return res.status(500).json({ error: "Failed to start check-in" });
     }
   }
@@ -636,7 +655,7 @@ portalIntakeRouter.get(
 
       return res.json(result.rows[0]);
     } catch (error) {
-      console.error("Get check-in session error:", error);
+      logPortalIntakeError("Get check-in session error", error);
       return res.status(500).json({ error: "Failed to get check-in session" });
     }
   }
@@ -735,7 +754,7 @@ portalIntakeRouter.put(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
-      console.error("Update check-in error:", error);
+      logPortalIntakeError("Update check-in error", error);
       return res.status(500).json({ error: "Failed to update check-in" });
     }
   }
@@ -777,7 +796,7 @@ portalIntakeRouter.post(
 
       return res.json({ success: true });
     } catch (error) {
-      console.error("Upload insurance card error:", error);
+      logPortalIntakeError("Upload insurance card error", error);
       return res.status(500).json({ error: "Failed to upload insurance card" });
     }
   }

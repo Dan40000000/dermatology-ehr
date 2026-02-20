@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { pipeline } from 'stream/promises';
 import { createWriteStream } from 'fs';
+import { logger } from '../lib/logger';
 
 /**
  * Photo Service - HIPAA-compliant image processing and storage
@@ -23,6 +24,24 @@ const COMPARISON_DIR = process.env.PHOTO_COMPARISON_DIR || './uploads/comparison
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 const THUMBNAIL_SIZE = 300; // 300px
 const MAX_IMAGE_DIMENSION = 4096; // Max width or height
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logPhotoServiceError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 interface ImageMetadata {
   width: number;
@@ -310,14 +329,14 @@ export class PhotoService {
     try {
       await fs.unlink(filePath);
     } catch (err) {
-      console.error('Error deleting photo:', err);
+      logPhotoServiceError('Error deleting photo:', err);
     }
 
     if (thumbnailPath) {
       try {
         await fs.unlink(thumbnailPath);
       } catch (err) {
-        console.error('Error deleting thumbnail:', err);
+        logPhotoServiceError('Error deleting thumbnail:', err);
       }
     }
   }
@@ -402,4 +421,6 @@ export class PhotoService {
 }
 
 // Initialize on module load
-PhotoService.init().catch(console.error);
+PhotoService.init().catch((error) => {
+  logPhotoServiceError('Photo service init error:', error);
+});

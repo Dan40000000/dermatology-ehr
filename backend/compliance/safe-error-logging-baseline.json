@@ -1,0 +1,5 @@
+{
+  "generatedAt": "2026-02-17T03:09:48.884Z",
+  "pattern": "console\\.error\\([^\\n]*\\b(err|error)\\b",
+  "fingerprints": []
+}

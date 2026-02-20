@@ -4,6 +4,7 @@ import { patientPortalRouter } from "../patientPortal";
 import { pool } from "../../db/pool";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../config/env", () => ({
   env: {
@@ -34,6 +35,15 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("bcryptjs", () => ({
   hash: jest.fn(),
   compare: jest.fn(),
@@ -51,6 +61,7 @@ const queryMock = pool.query as jest.Mock;
 const hashMock = bcrypt.hash as jest.Mock;
 const compareMock = bcrypt.compare as jest.Mock;
 const jwtSignMock = jwt.sign as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const tenantHeader = "x-tenant-id";
 
@@ -60,6 +71,7 @@ beforeEach(() => {
   hashMock.mockReset();
   compareMock.mockReset();
   jwtSignMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
   hashMock.mockResolvedValue("hashed-password");
   compareMock.mockResolvedValue(true);
@@ -83,6 +95,25 @@ describe("Patient portal routes", () => {
     const verificationQuery = queryMock.mock.calls[0]?.[0] as string;
     expect(verificationQuery).toContain("ssn_last4 = $4");
     expect(verificationQuery).not.toContain("RIGHT(ssn, 4)");
+  });
+
+  it("POST /patient-portal/verify-identity masks non-Error failures in logs", async () => {
+    queryMock.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+    const res = await request(app)
+      .post("/patient-portal/verify-identity")
+      .set(tenantHeader, "tenant-1")
+      .send({
+        lastName: "Ent",
+        dob: "1990-01-01",
+        ssnLast4: "1234",
+      });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Verification failed. Please try again.");
+    expect(loggerMock.error).toHaveBeenCalledWith("Identity verification error", {
+      error: "Unknown error",
+    });
   });
 
   it("POST /patient-portal/register rejects missing tenant header", async () => {
@@ -325,6 +356,21 @@ describe("Patient portal routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.sessionToken).toBe("jwt-token");
+  });
+
+  it("POST /patient-portal/login logs Error instances safely", async () => {
+    queryMock.mockRejectedValueOnce(new Error("db down"));
+
+    const res = await request(app)
+      .post("/patient-portal/login")
+      .set(tenantHeader, "tenant-1")
+      .send({ email: "patient@example.com", password: "C0mpl3x!Health" });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Login failed");
+    expect(loggerMock.error).toHaveBeenCalledWith("Login error", {
+      error: "db down",
+    });
   });
 
   it("POST /patient-portal/logout clears session", async () => {

@@ -5,8 +5,27 @@ import { aiNoteDraftingService } from "../services/aiNoteDrafting";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { logger } from "../lib/logger";
 
 const router = express.Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logAiNoteDraftingError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * AI Note Drafting Routes
@@ -87,7 +106,7 @@ router.post(
         message: "Note draft generated successfully",
       });
     } catch (error) {
-      console.error("Draft generation error:", error);
+      logAiNoteDraftingError("Draft generation error:", error);
       res.status(500).json({ error: "Failed to generate note draft" });
     }
   }
@@ -113,7 +132,7 @@ router.post("/suggestions", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ suggestions });
   } catch (error) {
-    console.error("Get suggestions error:", error);
+    logAiNoteDraftingError("Get suggestions error:", error);
     res.status(500).json({ error: "Failed to get suggestions" });
   }
 });
@@ -142,7 +161,7 @@ router.post(
 
       res.json({ success: true });
     } catch (error) {
-      console.error("Record feedback error:", error);
+      logAiNoteDraftingError("Record feedback error:", error);
       res.status(500).json({ error: "Failed to record feedback" });
     }
   }
@@ -175,7 +194,7 @@ router.get(
 
       res.json({ suggestions: result.rows });
     } catch (error) {
-      console.error("Get encounter suggestions error:", error);
+      logAiNoteDraftingError("Get encounter suggestions error:", error);
       res.status(500).json({ error: "Failed to retrieve suggestions" });
     }
   }
@@ -209,7 +228,7 @@ router.get("/stats", requireAuth, async (req: AuthedRequest, res) => {
       acceptanceRate: acceptanceRate.toFixed(1),
     });
   } catch (error) {
-    console.error("Get stats error:", error);
+    logAiNoteDraftingError("Get stats error:", error);
     res.status(500).json({ error: "Failed to retrieve statistics" });
   }
 });

@@ -1,8 +1,27 @@
 import { Router } from 'express';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
+import { logger } from '../lib/logger';
 
 export const medicationsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logMedicationsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * @swagger
@@ -108,7 +127,7 @@ medicationsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
 
     return res.json({ medications: result.rows });
   } catch (error) {
-    console.error('Error searching medications:', error);
+    logMedicationsError('Error searching medications:', error);
     return res.status(500).json({ error: 'Failed to search medications' });
   }
 });
@@ -151,7 +170,7 @@ medicationsRouter.get('/list/categories', requireAuth, async (_req: AuthedReques
 
     return res.json({ categories: result.rows.map(r => r.category) });
   } catch (error) {
-    console.error('Error fetching categories:', error);
+    logMedicationsError('Error fetching categories:', error);
     return res.status(500).json({ error: 'Failed to fetch categories' });
   }
 });
@@ -213,7 +232,7 @@ medicationsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) => {
 
     return res.json({ medication: result.rows[0] });
   } catch (error) {
-    console.error('Error fetching medication:', error);
+    logMedicationsError('Error fetching medication:', error);
     return res.status(500).json({ error: 'Failed to fetch medication' });
   }
 });

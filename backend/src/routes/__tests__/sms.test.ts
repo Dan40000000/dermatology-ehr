@@ -6,7 +6,9 @@ import { auditLog } from '../../services/audit';
 import { createTwilioService } from '../../services/twilioService';
 import { processIncomingSMS, updateSMSStatus } from '../../services/smsProcessor';
 import { sendImmediateReminder } from '../../services/smsReminderScheduler';
+import { processScheduledReminders, processFollowUpReminders } from '../../services/smsWorkflowService';
 import { formatPhoneE164 } from '../../utils/phone';
+import { userHasRole } from '../../lib/roles';
 
 jest.mock('../../middleware/auth', () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -38,6 +40,15 @@ jest.mock('../../services/smsReminderScheduler', () => ({
   sendImmediateReminder: jest.fn(),
 }));
 
+jest.mock('../../services/smsWorkflowService', () => ({
+  processScheduledReminders: jest.fn(),
+  processFollowUpReminders: jest.fn(),
+}));
+
+jest.mock('../../lib/roles', () => ({
+  userHasRole: jest.fn(),
+}));
+
 jest.mock('../../utils/phone', () => ({
   formatPhoneE164: jest.fn(),
   validateAndFormatPhone: jest.fn(),
@@ -63,7 +74,10 @@ const createTwilioServiceMock = createTwilioService as jest.Mock;
 const processIncomingMock = processIncomingSMS as jest.Mock;
 const updateStatusMock = updateSMSStatus as jest.Mock;
 const sendReminderMock = sendImmediateReminder as jest.Mock;
+const processScheduledRemindersMock = processScheduledReminders as jest.Mock;
+const processFollowUpRemindersMock = processFollowUpReminders as jest.Mock;
 const formatPhoneMock = formatPhoneE164 as jest.Mock;
+const userHasRoleMock = userHasRole as jest.Mock;
 
 const twilioServiceMock = {
   sendSMS: jest.fn(),
@@ -78,7 +92,10 @@ beforeEach(() => {
   processIncomingMock.mockReset();
   updateStatusMock.mockReset();
   sendReminderMock.mockReset();
+  processScheduledRemindersMock.mockReset();
+  processFollowUpRemindersMock.mockReset();
   formatPhoneMock.mockReset();
+  userHasRoleMock.mockReset();
   twilioServiceMock.sendSMS.mockReset();
   twilioServiceMock.testConnection.mockReset();
   twilioServiceMock.validateWebhookSignature.mockReset();
@@ -91,6 +108,9 @@ beforeEach(() => {
   twilioServiceMock.validateWebhookSignature.mockReturnValue(true);
   processIncomingMock.mockResolvedValue({ messageId: 'msg-1', autoResponseSent: false });
   sendReminderMock.mockResolvedValue({ success: true });
+  processScheduledRemindersMock.mockResolvedValue({ processed: 0, sent: 0, failed: 0 });
+  processFollowUpRemindersMock.mockResolvedValue({ processed: 0, sent: 0, failed: 0 });
+  userHasRoleMock.mockReturnValue(true);
 });
 
 describe('SMS routes', () => {
@@ -432,6 +452,68 @@ describe('SMS routes', () => {
     expect(res.body.success).toBe(true);
   });
 
+  it('POST /sms/workflow/process-reminders returns 403 for non-admin', async () => {
+    userHasRoleMock.mockReturnValueOnce(false);
+
+    const res = await request(app).post('/sms/workflow/process-reminders');
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/Admin access required/i);
+  });
+
+  it('POST /sms/workflow/process-reminders processes reminders for admin', async () => {
+    processScheduledRemindersMock.mockResolvedValueOnce({ processed: 3, sent: 2, failed: 1 });
+
+    const res = await request(app).post('/sms/workflow/process-reminders');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      success: true,
+      processed: 3,
+      sent: 2,
+      failed: 1,
+    });
+  });
+
+  it('POST /sms/workflow/process-reminders returns 500 on workflow failure', async () => {
+    processScheduledRemindersMock.mockRejectedValueOnce(new Error('workflow failed'));
+
+    const res = await request(app).post('/sms/workflow/process-reminders');
+
+    expect(res.status).toBe(500);
+  });
+
+  it('POST /sms/workflow/process-followups returns 403 for non-admin', async () => {
+    userHasRoleMock.mockReturnValueOnce(false);
+
+    const res = await request(app).post('/sms/workflow/process-followups');
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/Admin access required/i);
+  });
+
+  it('POST /sms/workflow/process-followups processes follow-ups for admin', async () => {
+    processFollowUpRemindersMock.mockResolvedValueOnce({ processed: 4, sent: 3, failed: 1 });
+
+    const res = await request(app).post('/sms/workflow/process-followups');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      success: true,
+      processed: 4,
+      sent: 3,
+      failed: 1,
+    });
+  });
+
+  it('POST /sms/workflow/process-followups returns 500 on workflow failure', async () => {
+    processFollowUpRemindersMock.mockRejectedValueOnce(new Error('workflow failed'));
+
+    const res = await request(app).post('/sms/workflow/process-followups');
+
+    expect(res.status).toBe(500);
+  });
+
   it('GET /sms/templates returns templates', async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: 't1' }] });
 
@@ -620,10 +702,17 @@ describe('SMS routes', () => {
     expect(res.status).toBe(400);
   });
 
+  it('POST /sms/webhook/status returns 400 when missing MessageStatus', async () => {
+    const res = await request(app).post('/sms/webhook/status').send({ MessageSid: 'sid' });
+
+    expect(res.status).toBe(400);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   it('POST /sms/webhook/status returns 404 for unknown message', async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
 
-    const res = await request(app).post('/sms/webhook/status').send({ MessageSid: 'sid' });
+    const res = await request(app).post('/sms/webhook/status').send({ MessageSid: 'sid', MessageStatus: 'queued' });
 
     expect(res.status).toBe(404);
   });
@@ -642,9 +731,51 @@ describe('SMS routes', () => {
     expect(res.status).toBe(403);
   });
 
+  it('POST /sms/webhook/status ignores duplicate status callback replay', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ tenant_id: 'tenant-1', current_status: 'delivered', twilio_account_sid: 'sid', twilio_auth_token: 'token' }],
+    });
+
+    const res = await request(app)
+      .post('/sms/webhook/status')
+      .set('Host', 'example.com')
+      .send({ MessageSid: 'sid', MessageStatus: 'delivered' });
+
+    expect(res.status).toBe(200);
+    expect(updateStatusMock).not.toHaveBeenCalled();
+  });
+
+  it('POST /sms/webhook/status ignores out-of-order stale callbacks', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ tenant_id: 'tenant-1', current_status: 'sent', twilio_account_sid: 'sid', twilio_auth_token: 'token' }],
+    });
+
+    const res = await request(app)
+      .post('/sms/webhook/status')
+      .set('Host', 'example.com')
+      .send({ MessageSid: 'sid', MessageStatus: 'queued' });
+
+    expect(res.status).toBe(200);
+    expect(updateStatusMock).not.toHaveBeenCalled();
+  });
+
+  it('POST /sms/webhook/status ignores callbacks after terminal status is set', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ tenant_id: 'tenant-1', current_status: 'failed', twilio_account_sid: 'sid', twilio_auth_token: 'token' }],
+    });
+
+    const res = await request(app)
+      .post('/sms/webhook/status')
+      .set('Host', 'example.com')
+      .send({ MessageSid: 'sid', MessageStatus: 'delivered' });
+
+    expect(res.status).toBe(200);
+    expect(updateStatusMock).not.toHaveBeenCalled();
+  });
+
   it('POST /sms/webhook/status updates status', async () => {
     queryMock.mockResolvedValueOnce({
-      rows: [{ tenant_id: 'tenant-1', twilio_account_sid: 'sid', twilio_auth_token: 'token' }],
+      rows: [{ tenant_id: 'tenant-1', current_status: 'sent', twilio_account_sid: 'sid', twilio_auth_token: 'token' }],
     });
 
     const res = await request(app)

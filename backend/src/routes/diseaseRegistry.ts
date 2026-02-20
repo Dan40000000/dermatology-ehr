@@ -5,8 +5,27 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireModuleAccess } from "../middleware/moduleAccess";
 import { auditLog } from "../services/audit";
 import { randomUUID } from "crypto";
+import { logger } from "../lib/logger";
 
 export const diseaseRegistryRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logDiseaseRegistryError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 diseaseRegistryRouter.use(requireAuth, requireModuleAccess("registry"));
 
@@ -81,7 +100,7 @@ diseaseRegistryRouter.get("/dashboard", async (req: AuthedRequest, res) => {
       qualityMetrics: qualityMetrics.rows[0] || {},
     });
   } catch (err) {
-    console.error("Error fetching registry dashboard:", err);
+    logDiseaseRegistryError("Error fetching registry dashboard:", err);
     res.status(500).json({ error: "Failed to load dashboard" });
   }
 });
@@ -107,7 +126,7 @@ diseaseRegistryRouter.get("/melanoma", async (req: AuthedRequest, res) => {
 
     res.json({ data: result.rows });
   } catch (err) {
-    console.error("Error fetching melanoma registry:", err);
+    logDiseaseRegistryError("Error fetching melanoma registry:", err);
     res.status(500).json({ error: "Failed to load melanoma registry" });
   }
 });
@@ -231,7 +250,7 @@ diseaseRegistryRouter.post("/melanoma", async (req: AuthedRequest, res) => {
       res.status(201).json({ id, created: true });
     }
   } catch (err) {
-    console.error("Error saving melanoma registry entry:", err);
+    logDiseaseRegistryError("Error saving melanoma registry entry:", err);
     res.status(500).json({ error: "Failed to save melanoma registry entry" });
   }
 });
@@ -256,7 +275,7 @@ diseaseRegistryRouter.get("/psoriasis", async (req: AuthedRequest, res) => {
 
     res.json({ data: result.rows });
   } catch (err) {
-    console.error("Error fetching psoriasis registry:", err);
+    logDiseaseRegistryError("Error fetching psoriasis registry:", err);
     res.status(500).json({ error: "Failed to load psoriasis registry" });
   }
 });
@@ -385,7 +404,7 @@ diseaseRegistryRouter.post("/psoriasis", async (req: AuthedRequest, res) => {
       res.status(201).json({ id, created: true });
     }
   } catch (err) {
-    console.error("Error saving psoriasis registry entry:", err);
+    logDiseaseRegistryError("Error saving psoriasis registry entry:", err);
     res.status(500).json({ error: "Failed to save psoriasis registry entry" });
   }
 });
@@ -419,7 +438,7 @@ diseaseRegistryRouter.get("/acne", async (req: AuthedRequest, res) => {
     const result = await pool.query(query, params);
     res.json({ data: result.rows });
   } catch (err) {
-    console.error("Error fetching acne registry:", err);
+    logDiseaseRegistryError("Error fetching acne registry:", err);
     res.status(500).json({ error: "Failed to load acne registry" });
   }
 });
@@ -444,7 +463,7 @@ diseaseRegistryRouter.get("/chronic-therapy", async (req: AuthedRequest, res) =>
 
     res.json({ data: result.rows });
   } catch (err) {
-    console.error("Error fetching chronic therapy registry:", err);
+    logDiseaseRegistryError("Error fetching chronic therapy registry:", err);
     res.status(500).json({ error: "Failed to load chronic therapy registry" });
   }
 });
@@ -499,7 +518,7 @@ diseaseRegistryRouter.post("/chronic-therapy", async (req: AuthedRequest, res) =
     await auditLog(tenantId, userId, "chronic_therapy_registry_create", "chronic_therapy_registry", id);
     res.status(201).json({ id, created: true });
   } catch (err) {
-    console.error("Error saving chronic therapy registry entry:", err);
+    logDiseaseRegistryError("Error saving chronic therapy registry entry:", err);
     res.status(500).json({ error: "Failed to save chronic therapy registry entry" });
   }
 });
@@ -520,7 +539,7 @@ diseaseRegistryRouter.get("/pasi-history/:patientId", async (req: AuthedRequest,
 
     res.json({ data: result.rows });
   } catch (err) {
-    console.error("Error fetching PASI history:", err);
+    logDiseaseRegistryError("Error fetching PASI history:", err);
     res.status(500).json({ error: "Failed to load PASI history" });
   }
 });
@@ -596,7 +615,7 @@ diseaseRegistryRouter.get("/alerts", async (req: AuthedRequest, res) => {
       ],
     });
   } catch (err) {
-    console.error("Error fetching registry alerts:", err);
+    logDiseaseRegistryError("Error fetching registry alerts:", err);
     res.status(500).json({ error: "Failed to load registry alerts" });
   }
 });

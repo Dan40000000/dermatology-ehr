@@ -17,6 +17,12 @@ describe("registerRoutes", () => {
     expect(hasPath("/api/cosmetic-treatments")).toBe(true);
     expect(calls.some((call) => call[0] === "/api/upload" && call.length === 3)).toBe(true);
     expect(calls.some((call) => call[0] === "/api/patient-portal" && call.length === 3)).toBe(true);
+    expect(calls.some((call) => call[0] === "/api/charges" && call.length === 4)).toBe(true);
+    expect(calls.some((call) => call[0] === "/api/claims" && call.length === 4)).toBe(true);
+    expect(calls.some((call) => call[0] === "/api/clearinghouse" && call.length === 4)).toBe(true);
+    expect(calls.some((call) => call[0] === "/api/billing" && call.length === 4)).toBe(true);
+    expect(calls.some((call) => call[0] === "/api/rcm" && call.length === 4)).toBe(true);
+    expect(calls.some((call) => call[0] === "/api/claims-submission" && call.length === 4)).toBe(true);
     expect((app.use as jest.Mock).mock.calls.length).toBeGreaterThan(100);
   });
 });

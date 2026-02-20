@@ -33,6 +33,15 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock('../../api', () => apiMocks);
 
+const providerUserWithRoles = {
+  id: 'user-1',
+  email: 'test@example.com',
+  fullName: 'Test User',
+  role: 'provider',
+  secondaryRoles: [] as string[],
+  roles: ['provider'] as string[],
+};
+
 describe('AuthContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -89,8 +98,19 @@ describe('AuthContext', () => {
       ),
     });
 
-    expect(result.current.session).toEqual(storedSession);
-    expect(result.current.user).toEqual(storedSession.user);
+    expect(result.current.session).toEqual({
+      ...storedSession,
+      user: {
+        ...storedSession.user,
+        secondaryRoles: [],
+        roles: ['provider'],
+      },
+    });
+    expect(result.current.user).toEqual({
+      ...storedSession.user,
+      secondaryRoles: [],
+      roles: ['provider'],
+    });
     expect(result.current.isAuthenticated).toBe(true);
   });
 
@@ -126,20 +146,10 @@ describe('AuthContext', () => {
       tenantId: 'tenant-1',
       accessToken: 'access-token-123',
       refreshToken: 'refresh-token-123',
-      user: {
-        id: 'user-1',
-        email: 'test@example.com',
-        fullName: 'Test User',
-        role: 'provider',
-      },
+      user: providerUserWithRoles,
     });
 
-    expect(result.current.user).toEqual({
-      id: 'user-1',
-      email: 'test@example.com',
-      fullName: 'Test User',
-      role: 'provider',
-    });
+    expect(result.current.user).toEqual(providerUserWithRoles);
 
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.isLoading).toBe(false);
@@ -162,12 +172,7 @@ describe('AuthContext', () => {
       tenantId: 'tenant-1',
       accessToken: 'access-token-123',
       refreshToken: 'refresh-token-123',
-      user: {
-        id: 'user-1',
-        email: 'test@example.com',
-        fullName: 'Test User',
-        role: 'provider',
-      },
+      user: providerUserWithRoles,
     });
   });
 

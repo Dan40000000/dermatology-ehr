@@ -5,6 +5,7 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 const inventoryItemSchema = z.object({
   name: z.string().min(1).max(255),
@@ -41,6 +42,24 @@ const adjustmentSchema = z.object({
 });
 
 export const inventoryRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logInventoryError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Get all inventory items
 inventoryRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
@@ -761,7 +780,7 @@ inventoryRouter.get("/dashboard", requireAuth, async (req: AuthedRequest, res) =
     const dashboard = await inventoryService.getInventoryDashboard(tenantId);
     res.json(dashboard);
   } catch (error: any) {
-    console.error("Error fetching inventory dashboard:", error);
+    logInventoryError("Error fetching inventory dashboard:", error);
     res.status(500).json({ error: "Failed to fetch inventory dashboard" });
   }
 });
@@ -786,7 +805,7 @@ inventoryRouter.get("/alerts", requireAuth, async (req: AuthedRequest, res) => {
       expired: expiration.expired,
     });
   } catch (error: any) {
-    console.error("Error fetching inventory alerts:", error);
+    logInventoryError("Error fetching inventory alerts:", error);
     res.status(500).json({ error: "Failed to fetch inventory alerts" });
   }
 });
@@ -801,7 +820,7 @@ inventoryRouter.get("/reorder-suggestions", requireAuth, async (req: AuthedReque
     const suggestions = await inventoryService.getReorderSuggestions(tenantId);
     res.json({ suggestions });
   } catch (error: any) {
-    console.error("Error fetching reorder suggestions:", error);
+    logInventoryError("Error fetching reorder suggestions:", error);
     res.status(500).json({ error: "Failed to fetch reorder suggestions" });
   }
 });
@@ -816,7 +835,7 @@ inventoryRouter.get("/value-by-category", requireAuth, async (req: AuthedRequest
     const valueByCategory = await inventoryService.getInventoryValueByCategory(tenantId);
     res.json({ categories: valueByCategory });
   } catch (error: any) {
-    console.error("Error fetching inventory value by category:", error);
+    logInventoryError("Error fetching inventory value by category:", error);
     res.status(500).json({ error: "Failed to fetch inventory value by category" });
   }
 });
@@ -835,7 +854,7 @@ inventoryRouter.get("/lots/:itemId", requireAuth, async (req: AuthedRequest, res
     const lots = await inventoryService.getItemLots(tenantId, itemId!);
     res.json({ lots });
   } catch (error: any) {
-    console.error("Error fetching item lots:", error);
+    logInventoryError("Error fetching item lots:", error);
     res.status(500).json({ error: "Failed to fetch item lots" });
   }
 });
@@ -869,7 +888,7 @@ inventoryRouter.post("/:itemId/lots", requireAuth, requireRoles(["admin", "provi
     await auditLog(tenantId, req.user!.id, "inventory_lot_create", "inventory_lot", lot.id);
     res.status(201).json({ lot });
   } catch (error: any) {
-    console.error("Error creating lot:", error);
+    logInventoryError("Error creating lot:", error);
     res.status(500).json({ error: error.message || "Failed to create lot" });
   }
 });
@@ -911,7 +930,7 @@ inventoryRouter.post("/deduct", requireAuth, requireRoles(["admin", "provider", 
     await auditLog(tenantId, req.user!.id, "inventory_procedure_deduct", "inventory", parsed.data.procedureType);
     res.json(result);
   } catch (error: any) {
-    console.error("Error deducting procedure supplies:", error);
+    logInventoryError("Error deducting procedure supplies:", error);
     if (error.message?.includes("Insufficient")) {
       return res.status(400).json({ error: error.message });
     }
@@ -1184,7 +1203,7 @@ inventoryRouter.post("/purchase-orders", requireAuth, requireRoles(["admin", "pr
     await auditLog(tenantId, req.user!.id, "purchase_order_create", "purchase_order", po.id);
     res.status(201).json({ purchaseOrder: po });
   } catch (error: any) {
-    console.error("Error creating purchase order:", error);
+    logInventoryError("Error creating purchase order:", error);
     res.status(500).json({ error: error.message || "Failed to create purchase order" });
   }
 });
@@ -1206,7 +1225,7 @@ inventoryRouter.get("/purchase-orders/:id", requireAuth, async (req: AuthedReque
 
     res.json({ purchaseOrder: po });
   } catch (error: any) {
-    console.error("Error fetching purchase order:", error);
+    logInventoryError("Error fetching purchase order:", error);
     res.status(500).json({ error: "Failed to fetch purchase order" });
   }
 });
@@ -1225,7 +1244,7 @@ inventoryRouter.post("/purchase-orders/:id/submit", requireAuth, requireRoles(["
     await auditLog(tenantId, req.user!.id, "purchase_order_submit", "purchase_order", id!);
     res.json({ success: true, message: "Purchase order submitted" });
   } catch (error: any) {
-    console.error("Error submitting purchase order:", error);
+    logInventoryError("Error submitting purchase order:", error);
     res.status(500).json({ error: error.message || "Failed to submit purchase order" });
   }
 });
@@ -1256,7 +1275,7 @@ inventoryRouter.post("/purchase-orders/:id/receive", requireAuth, requireRoles([
     await auditLog(tenantId, req.user!.id, "purchase_order_receive", "purchase_order", id!);
     res.json({ success: true, message: "Items received and inventory updated" });
   } catch (error: any) {
-    console.error("Error receiving purchase order:", error);
+    logInventoryError("Error receiving purchase order:", error);
     res.status(500).json({ error: error.message || "Failed to receive order" });
   }
 });
@@ -1329,7 +1348,7 @@ inventoryRouter.post("/samples", requireAuth, requireRoles(["admin", "provider",
     await auditLog(tenantId, req.user!.id, "sample_receipt", "medication_sample", sample.id);
     res.status(201).json({ sample });
   } catch (error: any) {
-    console.error("Error logging sample receipt:", error);
+    logInventoryError("Error logging sample receipt:", error);
     res.status(500).json({ error: error.message || "Failed to log sample receipt" });
   }
 });
@@ -1372,7 +1391,7 @@ inventoryRouter.post("/samples/dispense", requireAuth, requireRoles(["admin", "p
     await auditLog(tenantId, req.user!.id, "sample_dispense", "sample_dispensing_log", dispenseLog.id);
     res.status(201).json({ dispenseLog });
   } catch (error: any) {
-    console.error("Error dispensing sample:", error);
+    logInventoryError("Error dispensing sample:", error);
     if (error.message?.includes("Insufficient")) {
       return res.status(400).json({ error: error.message });
     }
@@ -1650,7 +1669,7 @@ inventoryRouter.post("/equipment/maintenance", requireAuth, requireRoles(["admin
     await auditLog(tenantId, req.user!.id, "equipment_maintenance", "equipment_maintenance_log", maintenanceLog.id);
     res.status(201).json({ maintenanceLog });
   } catch (error: any) {
-    console.error("Error logging equipment maintenance:", error);
+    logInventoryError("Error logging equipment maintenance:", error);
     res.status(500).json({ error: error.message || "Failed to log maintenance" });
   }
 });
@@ -1667,7 +1686,7 @@ inventoryRouter.get("/equipment/maintenance-due", requireAuth, async (req: Authe
     const equipment = await inventoryService.getEquipmentDueMaintenance(tenantId, daysThreshold);
     res.json({ equipment });
   } catch (error: any) {
-    console.error("Error fetching equipment due maintenance:", error);
+    logInventoryError("Error fetching equipment due maintenance:", error);
     res.status(500).json({ error: "Failed to fetch equipment due maintenance" });
   }
 });
@@ -1687,7 +1706,7 @@ inventoryRouter.post("/process-expired", requireAuth, requireRoles(["admin"]), a
     await auditLog(tenantId, req.user!.id, "inventory_process_expired", "inventory", `${processedCount} lots`);
     res.json({ success: true, processedCount, message: `Processed ${processedCount} expired lots` });
   } catch (error: any) {
-    console.error("Error processing expired items:", error);
+    logInventoryError("Error processing expired items:", error);
     res.status(500).json({ error: "Failed to process expired items" });
   }
 });

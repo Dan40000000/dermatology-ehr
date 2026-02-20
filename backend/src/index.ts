@@ -7,8 +7,9 @@ import { env } from "./config/env";
 import config from "./config";
 import { logger } from "./lib/logger";
 import { swaggerSpec } from "./config/swagger";
-import { securityHeaders } from "./middleware/security";
+import { additionalSecurityHeaders, securityHeaders } from "./middleware/security";
 import { sanitizeInputs } from "./middleware/sanitization";
+import { requestIdMiddleware } from "./middleware/requestId";
 import { initializeWebSocket } from "./websocket";
 import { registerRoutes } from "./routes/registerRoutes";
 import path from "path";
@@ -23,6 +24,8 @@ app.set('trust proxy', 1);
 
 // Security middleware (apply early in the chain)
 app.use(securityHeaders);
+app.use(additionalSecurityHeaders);
+app.use(requestIdMiddleware);
 app.use(cookieParser());
 app.use(sanitizeInputs);
 
@@ -65,7 +68,7 @@ app.use(cors({
     if (!origin) return callback(null, true);
     return callback(null, isOriginAllowed(origin));
   },
-  credentials: true,
+  credentials: config.cors.credentials,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', env.tenantHeader],
 }));
@@ -83,7 +86,9 @@ if (!fs.existsSync(uploadDir)) {
 
 // Request logging middleware
 app.use((req, _res, next) => {
+  const requestId = (req as any).requestId as string | undefined;
   logger.info('Incoming request', {
+    requestId,
     method: req.method,
     path: req.path,
     ip: req.ip,
@@ -92,17 +97,22 @@ app.use((req, _res, next) => {
   next();
 });
 
-// Swagger API Documentation
-app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
-  customSiteTitle: "Dermatology EHR API Documentation",
-  customCss: '.swagger-ui .topbar { display: none }',
-}));
+const exposeApiDocs = !config.isProduction || config.debug.apiDocs;
+if (exposeApiDocs) {
+  // Swagger API Documentation
+  app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+    customSiteTitle: "Dermatology EHR API Documentation",
+    customCss: '.swagger-ui .topbar { display: none }',
+  }));
 
-// Serve OpenAPI JSON spec
-app.get("/api/openapi.json", (_req, res) => {
-  res.setHeader("Content-Type", "application/json");
-  res.send(swaggerSpec);
-});
+  // Serve OpenAPI JSON spec
+  app.get("/api/openapi.json", (_req, res) => {
+    res.setHeader("Content-Type", "application/json");
+    res.send(swaggerSpec);
+  });
+} else {
+  logger.info('API docs disabled for production hardening');
+}
 
 registerRoutes(app);
 

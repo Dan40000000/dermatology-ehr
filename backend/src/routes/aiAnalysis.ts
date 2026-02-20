@@ -4,8 +4,27 @@ import { z } from "zod";
 import { aiImageAnalysisService } from "../services/aiImageAnalysis";
 import { pool } from "../db/pool";
 import { requireAuth } from "../middleware/auth";
+import { logger } from "../lib/logger";
 
 const router = express.Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logAIAnalysisError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * AI Analysis Routes
@@ -141,7 +160,7 @@ router.post("/analyze-photo/:photoId", async (req, res) => {
       analysis,
     });
   } catch (error) {
-    console.error("AI Analysis Error:", error);
+    logAIAnalysisError("AI Analysis Error", error);
     res.status(500).json({ error: "Failed to analyze photo" });
   }
 });
@@ -205,7 +224,7 @@ router.get("/photo/:photoId", async (req, res) => {
 
     res.json(analysis);
   } catch (error) {
-    console.error("Get Analysis Error:", error);
+    logAIAnalysisError("Get Analysis Error", error);
     res.status(500).json({ error: "Failed to retrieve analysis" });
   }
 });
@@ -295,7 +314,7 @@ router.post("/batch-analyze/:patientId", async (req, res) => {
       analysisIds,
     });
   } catch (error) {
-    console.error("Batch Analysis Error:", error);
+    logAIAnalysisError("Batch Analysis Error", error);
     res.status(500).json({ error: "Failed to batch analyze photos" });
   }
 });
@@ -404,7 +423,7 @@ router.get("/cds-alerts", async (req, res) => {
       total: result.rows.length,
     });
   } catch (error) {
-    console.error("Get CDS Alerts Error:", error);
+    logAIAnalysisError("Get CDS Alerts Error", error);
     res.status(500).json({ error: "Failed to retrieve alerts" });
   }
 });
@@ -478,7 +497,7 @@ router.post("/cds-alerts/:alertId/dismiss", async (req, res) => {
 
     res.json({ message: "Alert dismissed" });
   } catch (error) {
-    console.error("Dismiss Alert Error:", error);
+    logAIAnalysisError("Dismiss Alert Error", error);
     res.status(500).json({ error: "Failed to dismiss alert" });
   }
 });
@@ -566,7 +585,7 @@ router.get("/stats", async (req, res) => {
       alerts: alertStats.rows[0],
     });
   } catch (error) {
-    console.error("Get Stats Error:", error);
+    logAIAnalysisError("Get Stats Error", error);
     res.status(500).json({ error: "Failed to retrieve statistics" });
   }
 });

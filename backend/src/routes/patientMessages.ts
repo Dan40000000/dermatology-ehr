@@ -7,8 +7,27 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import { logger } from "../lib/logger";
 
 const router = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logPatientMessagesError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Configure multer for file uploads
 const upload = multer({
@@ -187,7 +206,7 @@ router.get("/threads", requireAuth, async (req: AuthedRequest, res) => {
       },
     });
   } catch (error) {
-    console.error("Error fetching message threads:", error);
+    logPatientMessagesError("Error fetching message threads", error);
     res.status(500).json({ error: "Failed to fetch message threads" });
   }
 });
@@ -258,7 +277,7 @@ router.get("/threads/:id", requireAuth, async (req: AuthedRequest, res) => {
       messages: messagesResult.rows,
     });
   } catch (error) {
-    console.error("Error fetching thread:", error);
+    logPatientMessagesError("Error fetching thread", error);
     res.status(500).json({ error: "Failed to fetch thread" });
   }
 });
@@ -322,7 +341,7 @@ router.post("/threads", requireAuth, async (req: AuthedRequest, res) => {
       client.release();
     }
   } catch (error) {
-    console.error("Error creating thread:", error);
+    logPatientMessagesError("Error creating thread", error);
     res.status(500).json({ error: "Failed to create thread" });
   }
 });
@@ -380,7 +399,7 @@ router.put("/threads/:id", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ success: true });
   } catch (error) {
-    console.error("Error updating thread:", error);
+    logPatientMessagesError("Error updating thread", error);
     res.status(500).json({ error: "Failed to update thread" });
   }
 });
@@ -448,7 +467,7 @@ router.post("/threads/:id/messages", requireAuth, async (req: AuthedRequest, res
       client.release();
     }
   } catch (error) {
-    console.error("Error sending message:", error);
+    logPatientMessagesError("Error sending message", error);
     res.status(500).json({ error: "Failed to send message" });
   }
 });
@@ -475,7 +494,7 @@ router.post("/threads/:id/close", requireAuth, async (req: AuthedRequest, res) =
 
     res.json({ success: true });
   } catch (error) {
-    console.error("Error closing thread:", error);
+    logPatientMessagesError("Error closing thread", error);
     res.status(500).json({ error: "Failed to close thread" });
   }
 });
@@ -502,7 +521,7 @@ router.post("/threads/:id/reopen", requireAuth, async (req: AuthedRequest, res) 
 
     res.json({ success: true });
   } catch (error) {
-    console.error("Error reopening thread:", error);
+    logPatientMessagesError("Error reopening thread", error);
     res.status(500).json({ error: "Failed to reopen thread" });
   }
 });
@@ -530,7 +549,7 @@ router.post("/threads/:id/mark-read", requireAuth, async (req: AuthedRequest, re
 
     res.json({ success: true });
   } catch (error) {
-    console.error("Error marking thread as read:", error);
+    logPatientMessagesError("Error marking thread as read", error);
     res.status(500).json({ error: "Failed to mark thread as read" });
   }
 });
@@ -549,7 +568,7 @@ router.get("/unread-count", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ count: parseInt(result.rows[0].count) });
   } catch (error) {
-    console.error("Error fetching unread count:", error);
+    logPatientMessagesError("Error fetching unread count", error);
     res.status(500).json({ error: "Failed to fetch unread count" });
   }
 });
@@ -616,7 +635,7 @@ router.post("/attachments", requireAuth, upload.single("file"), async (req: Auth
       fileSize: req.file.size,
     });
   } catch (error) {
-    console.error("Error uploading attachment:", error);
+    logPatientMessagesError("Error uploading attachment", error);
     if (req.file) {
       try {
         fs.unlinkSync(req.file.path);
@@ -654,7 +673,7 @@ router.get("/attachments/:id", requireAuth, async (req: AuthedRequest, res) => {
 
     res.download(attachment.file_path, attachment.original_filename);
   } catch (error) {
-    console.error("Error downloading attachment:", error);
+    logPatientMessagesError("Error downloading attachment", error);
     res.status(500).json({ error: "Failed to download attachment" });
   }
 });

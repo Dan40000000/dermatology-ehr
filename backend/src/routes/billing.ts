@@ -5,8 +5,27 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
 import { billingService } from "../services/billingService";
+import { logger } from "../lib/logger";
 
 export const billingRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logBillingError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * GET /api/billing/claims
@@ -52,7 +71,7 @@ billingRouter.get("/claims", requireAuth, async (req: AuthedRequest, res) => {
     const result = await pool.query(query, params);
     return res.json({ claims: result.rows, count: result.rows.length });
   } catch (error) {
-    console.error("Error fetching claims:", error);
+    logBillingError("Error fetching claims", error);
     return res.status(500).json({ error: "Failed to fetch claims" });
   }
 });
@@ -75,7 +94,7 @@ billingRouter.get("/claims/:id", requireAuth, async (req: AuthedRequest, res) =>
     await auditLog(tenantId, req.user!.id, "claim_viewed", "claim", claimId);
     return res.json(claim);
   } catch (error) {
-    console.error("Error fetching claim details:", error);
+    logBillingError("Error fetching claim details", error);
     return res.status(500).json({ error: "Failed to fetch claim details" });
   }
 });
@@ -97,7 +116,7 @@ billingRouter.post("/claims/:id/submit", requireAuth, requireRoles(["admin", "bi
       message: "Claim submitted successfully"
     });
   } catch (error: any) {
-    console.error("Error submitting claim:", error);
+    logBillingError("Error submitting claim", error);
     return res.status(500).json({ error: error.message || "Failed to submit claim" });
   }
 });
@@ -127,7 +146,7 @@ billingRouter.post("/claims/:id/status", requireAuth, requireRoles(["admin", "bi
       message: "Claim status updated successfully"
     });
   } catch (error: any) {
-    console.error("Error updating claim status:", error);
+    logBillingError("Error updating claim status", error);
     return res.status(500).json({ error: error.message || "Failed to update claim status" });
   }
 });
@@ -181,7 +200,7 @@ billingRouter.get("/charges", requireAuth, async (req: AuthedRequest, res) => {
       totalCents
     });
   } catch (error) {
-    console.error("Error fetching charges:", error);
+    logBillingError("Error fetching charges", error);
     return res.status(500).json({ error: "Failed to fetch charges" });
   }
 });
@@ -244,7 +263,7 @@ billingRouter.get("/dashboard", requireAuth, requireRoles(["admin", "billing"]),
       monthlyRevenue: monthlyRevenue.rows
     });
   } catch (error) {
-    console.error("Error fetching billing dashboard:", error);
+    logBillingError("Error fetching billing dashboard", error);
     return res.status(500).json({ error: "Failed to fetch billing dashboard" });
   }
 });

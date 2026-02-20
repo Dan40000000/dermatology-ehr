@@ -1,0 +1,6 @@
+vendor,service,handles_phi,baa_required,baa_status,last_reviewed,owner,artifact_link,notes
+AWS (Infrastructure),Compute/Storage/DB/KMS,yes,yes,REVIEW_NEEDED,2026-02-16,Platform Team,,Confirm signed BAA in AWS Artifact and export acceptance proof.
+Twilio,SMS Messaging,yes,yes,REVIEW_NEEDED,2026-02-16,Integrations Team,,Use HIPAA-eligible product tier and execute BAA.
+OpenAI,AI scribe/note generation,yes,yes,REVIEW_NEEDED,2026-02-16,AI Platform Team,,Confirm enterprise agreement + BAA terms before production PHI processing.
+Sentry,Error monitoring,potentially,yes,REVIEW_NEEDED,2026-02-16,Platform Team,,Ensure PHI redaction policy and BAA/contractual controls.
+Email Provider,Transactional email,yes,yes,REVIEW_NEEDED,2026-02-16,Platform Team,,Verify provider contract and PHI-safe configuration.

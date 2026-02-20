@@ -3,6 +3,7 @@ import express from "express";
 import crypto from "crypto";
 import { refillRequestsRouter } from "../refillRequests";
 import { pool } from "../../db/pool";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -21,6 +22,15 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
   randomUUID: jest.fn(() => "uuid-1"),
@@ -32,6 +42,7 @@ app.use("/refill-requests", refillRequestsRouter);
 
 const queryMock = pool.query as jest.Mock;
 const randomUUIDMock = crypto.randomUUID as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const patientId = "11111111-1111-4111-8111-111111111111";
 const rxId = "22222222-2222-4222-8222-222222222222";
@@ -39,6 +50,7 @@ const rxId = "22222222-2222-4222-8222-222222222222";
 beforeEach(() => {
   queryMock.mockReset();
   randomUUIDMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
   randomUUIDMock.mockReturnValue("uuid-1");
 });
@@ -51,6 +63,30 @@ describe("Refill request routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.refillRequests).toHaveLength(1);
+  });
+
+  it("GET /refill-requests logs sanitized Error failures", async () => {
+    queryMock.mockRejectedValueOnce(new Error("refill list failed"));
+
+    const res = await request(app).get("/refill-requests");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch refill requests");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching refill requests:", {
+      error: "refill list failed",
+    });
+  });
+
+  it("GET /refill-requests masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ medication: "Secret Rx Name" });
+
+    const res = await request(app).get("/refill-requests");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch refill requests");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching refill requests:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /refill-requests/:id returns 404", async () => {

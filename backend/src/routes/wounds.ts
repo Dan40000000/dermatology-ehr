@@ -5,8 +5,27 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 const router = express.Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logWoundsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * Wound Tracking Routes
@@ -138,7 +157,7 @@ router.get("/", requireAuth, async (req: AuthedRequest, res) => {
     const result = await pool.query(query, params);
     res.json({ wounds: result.rows });
   } catch (error) {
-    console.error("Get wounds error:", error);
+    logWoundsError("Get wounds error:", error);
     res.status(500).json({ error: "Failed to retrieve wounds" });
   }
 });
@@ -203,7 +222,7 @@ router.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
       photos: photos.rows,
     });
   } catch (error) {
-    console.error("Get wound details error:", error);
+    logWoundsError("Get wound details error:", error);
     res.status(500).json({ error: "Failed to retrieve wound details" });
   }
 });
@@ -285,7 +304,7 @@ router.post(
       await auditLog(tenantId, userId, "wound_create", "wound", id);
       res.status(201).json({ id });
     } catch (error) {
-      console.error("Create wound error:", error);
+      logWoundsError("Create wound error:", error);
       res.status(500).json({ error: "Failed to create wound" });
     }
   }
@@ -347,7 +366,7 @@ router.put(
 
       res.json({ success: true });
     } catch (error) {
-      console.error("Update wound error:", error);
+      logWoundsError("Update wound error:", error);
       res.status(500).json({ error: "Failed to update wound" });
     }
   }
@@ -449,7 +468,7 @@ router.post(
       await auditLog(tenantId, userId, "wound_assessment", "wound", id);
       res.status(201).json({ id: assessmentId });
     } catch (error) {
-      console.error("Create assessment error:", error);
+      logWoundsError("Create assessment error:", error);
       res.status(500).json({ error: "Failed to create assessment" });
     }
   }
@@ -474,7 +493,7 @@ router.get("/:id/assessments", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ assessments: assessments.rows });
   } catch (error) {
-    console.error("Get assessments error:", error);
+    logWoundsError("Get assessments error:", error);
     res.status(500).json({ error: "Failed to retrieve assessments" });
   }
 });
@@ -502,7 +521,7 @@ router.get("/:id/healing-metrics", requireAuth, async (req: AuthedRequest, res) 
 
     res.json({ metrics: metrics.rows[0] });
   } catch (error) {
-    console.error("Get healing metrics error:", error);
+    logWoundsError("Get healing metrics error:", error);
     res.status(500).json({ error: "Failed to retrieve healing metrics" });
   }
 });
@@ -520,7 +539,7 @@ router.get("/patient/:patientId/active", requireAuth, async (req: AuthedRequest,
 
     res.json({ wounds: wounds.rows });
   } catch (error) {
-    console.error("Get active wounds error:", error);
+    logWoundsError("Get active wounds error:", error);
     res.status(500).json({ error: "Failed to retrieve active wounds" });
   }
 });
@@ -562,7 +581,7 @@ router.put(
       await auditLog(tenantId, userId, "wound_status_update", "wound", id);
       res.json({ success: true });
     } catch (error) {
-      console.error("Update wound status error:", error);
+      logWoundsError("Update wound status error:", error);
       res.status(500).json({ error: "Failed to update wound status" });
     }
   }
@@ -593,7 +612,7 @@ router.delete(
       await auditLog(tenantId, userId, "wound_delete", "wound", id);
       res.json({ success: true });
     } catch (error) {
-      console.error("Delete wound error:", error);
+      logWoundsError("Delete wound error:", error);
       res.status(500).json({ error: "Failed to delete wound" });
     }
   }

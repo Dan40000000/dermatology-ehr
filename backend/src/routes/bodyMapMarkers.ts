@@ -5,8 +5,27 @@ import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
 import { auditLog } from '../services/audit';
+import { logger } from '../lib/logger';
 
 const router = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logBodyMapMarkersError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * Body Map Markers Routes
@@ -163,7 +182,7 @@ router.get('/', requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ markers: result.rows });
   } catch (error: any) {
-    console.error('Error fetching body map markers:', error);
+    logBodyMapMarkersError('Error fetching body map markers', error);
     res.status(500).json({ error: 'Failed to fetch body map markers' });
   }
 });
@@ -243,7 +262,7 @@ router.post(
 
       res.status(201).json({ id: markerId });
     } catch (error: any) {
-      console.error('Error creating body map marker:', error);
+      logBodyMapMarkersError('Error creating body map marker', error);
       res.status(500).json({ error: 'Failed to create body map marker' });
     }
   }
@@ -303,7 +322,7 @@ router.get('/procedure-sites', requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ procedure_sites: result.rows });
   } catch (error: any) {
-    console.error('Error fetching procedure sites:', error);
+    logBodyMapMarkersError('Error fetching procedure sites', error);
     res.status(500).json({ error: 'Failed to fetch procedure sites' });
   }
 });
@@ -335,7 +354,7 @@ router.get('/procedure-sites/:id', requireAuth, async (req: AuthedRequest, res) 
 
     res.json(result.rows[0]);
   } catch (error: any) {
-    console.error('Error fetching procedure site:', error);
+    logBodyMapMarkersError('Error fetching procedure site', error);
     res.status(500).json({ error: 'Failed to fetch procedure site' });
   }
 });
@@ -438,7 +457,7 @@ router.post(
 
       res.status(201).json({ id: siteId });
     } catch (error: any) {
-      console.error('Error creating procedure site:', error);
+      logBodyMapMarkersError('Error creating procedure site', error);
       res.status(500).json({ error: 'Failed to create procedure site' });
     }
   }
@@ -577,7 +596,7 @@ router.put(
 
       res.json({ ok: true });
     } catch (error: any) {
-      console.error('Error updating procedure site:', error);
+      logBodyMapMarkersError('Error updating procedure site', error);
       res.status(500).json({ error: 'Failed to update procedure site' });
     }
   }
@@ -612,7 +631,7 @@ router.delete(
 
       res.json({ ok: true });
     } catch (error: any) {
-      console.error('Error deleting procedure site:', error);
+      logBodyMapMarkersError('Error deleting procedure site', error);
       res.status(500).json({ error: 'Failed to delete procedure site' });
     }
   }
@@ -638,7 +657,7 @@ router.get('/:id', requireAuth, async (req: AuthedRequest, res) => {
 
     res.json(result.rows[0]);
   } catch (error: any) {
-    console.error('Error fetching body map marker:', error);
+    logBodyMapMarkersError('Error fetching body map marker', error);
     res.status(500).json({ error: 'Failed to fetch body map marker' });
   }
 });
@@ -748,7 +767,7 @@ router.put(
 
       res.json({ ok: true });
     } catch (error: any) {
-      console.error('Error updating body map marker:', error);
+      logBodyMapMarkersError('Error updating body map marker', error);
       res.status(500).json({ error: 'Failed to update body map marker' });
     }
   }
@@ -783,7 +802,7 @@ router.delete(
 
       res.json({ ok: true });
     } catch (error: any) {
-      console.error('Error deleting body map marker:', error);
+      logBodyMapMarkersError('Error deleting body map marker', error);
       res.status(500).json({ error: 'Failed to delete body map marker' });
     }
   }

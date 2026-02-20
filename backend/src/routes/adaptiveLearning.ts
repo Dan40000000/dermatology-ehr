@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { logger } from "../lib/logger";
 import {
   recordDiagnosisUsage,
   recordProcedureUsage,
@@ -11,6 +12,24 @@ import {
 } from "../services/learningService";
 
 export const adaptiveLearningRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logAdaptiveLearningError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Schema for manual learning requests
 const learnDiagnosisSchema = z.object({
@@ -128,7 +147,7 @@ adaptiveLearningRouter.get("/diagnoses/suggested", requireAuth, async (req: Auth
 
     res.json({ suggestions });
   } catch (error) {
-    console.error("Error fetching suggested diagnoses:", error);
+    logAdaptiveLearningError("Error fetching suggested diagnoses", error);
     res.status(500).json({ error: "Failed to fetch suggestions" });
   }
 });
@@ -236,7 +255,7 @@ adaptiveLearningRouter.get("/procedures/suggested", requireAuth, async (req: Aut
 
     res.json({ suggestions });
   } catch (error) {
-    console.error("Error fetching suggested procedures:", error);
+    logAdaptiveLearningError("Error fetching suggested procedures", error);
     res.status(500).json({ error: "Failed to fetch suggestions" });
   }
 });
@@ -353,7 +372,7 @@ adaptiveLearningRouter.get("/procedures/for-diagnosis/:icd10Code", requireAuth, 
 
     res.json({ suggestions });
   } catch (error) {
-    console.error("Error fetching paired procedures:", error);
+    logAdaptiveLearningError("Error fetching paired procedures", error);
     res.status(500).json({ error: "Failed to fetch suggestions" });
   }
 });
@@ -436,7 +455,7 @@ adaptiveLearningRouter.post(
       await recordDiagnosisUsage(tenantId, providerId, icd10Code);
       res.json({ success: true });
     } catch (error) {
-      console.error("Error recording diagnosis usage:", error);
+      logAdaptiveLearningError("Error recording diagnosis usage", error);
       res.status(500).json({ error: "Failed to record usage" });
     }
   },
@@ -520,7 +539,7 @@ adaptiveLearningRouter.post(
       await recordProcedureUsage(tenantId, providerId, cptCode);
       res.json({ success: true });
     } catch (error) {
-      console.error("Error recording procedure usage:", error);
+      logAdaptiveLearningError("Error recording procedure usage", error);
       res.status(500).json({ error: "Failed to record usage" });
     }
   },
@@ -607,7 +626,7 @@ adaptiveLearningRouter.post(
       await recordDiagnosisProcedurePair(tenantId, providerId, icd10Code, cptCode);
       res.json({ success: true });
     } catch (error) {
-      console.error("Error recording diagnosis-procedure pair:", error);
+      logAdaptiveLearningError("Error recording diagnosis-procedure pair", error);
       res.status(500).json({ error: "Failed to record pair" });
     }
   },
@@ -732,7 +751,7 @@ adaptiveLearningRouter.get("/stats/:providerId", requireAuth, async (req: Authed
       stats: statsResult.rows[0],
     });
   } catch (error) {
-    console.error("Error fetching provider stats:", error);
+    logAdaptiveLearningError("Error fetching provider stats", error);
     res.status(500).json({ error: "Failed to fetch statistics" });
   }
 });

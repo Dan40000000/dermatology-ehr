@@ -3,6 +3,7 @@ import express from "express";
 import metricsRouter from "../metrics";
 import { metricsService } from "../../services/metricsService";
 import { pool } from "../../db/pool";
+import { logger } from "../../lib/logger";
 
 let authUser: any = { id: "user-1", tenantId: "tenant-1", role: "provider" };
 
@@ -31,12 +32,22 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/metrics", metricsRouter);
 
 const metricsMock = metricsService as jest.Mocked<typeof metricsService>;
 const queryMock = pool.query as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   authUser = { id: "user-1", tenantId: "tenant-1", role: "provider" };
@@ -47,6 +58,7 @@ beforeEach(() => {
   metricsMock.getProviderMetrics.mockReset();
   metricsMock.getTrends.mockReset();
   metricsMock.getFeatureUsage.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
 });
@@ -110,6 +122,30 @@ describe("Metrics routes", () => {
     const res = await request(app).get("/metrics/summary?period=7d").set("x-tenant-id", "tenant-1");
     expect(res.status).toBe(200);
     expect(res.body.total_encounters).toBe(3);
+  });
+
+  it("GET /metrics/summary logs sanitized Error failures", async () => {
+    metricsMock.getSummary.mockRejectedValueOnce(new Error("summary failed"));
+
+    const res = await request(app).get("/metrics/summary").set("x-tenant-id", "tenant-1");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch summary");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching summary:", {
+      error: "summary failed",
+    });
+  });
+
+  it("GET /metrics/summary masks non-Error failures", async () => {
+    metricsMock.getSummary.mockRejectedValueOnce({ tenantId: "tenant-1" });
+
+    const res = await request(app).get("/metrics/summary").set("x-tenant-id", "tenant-1");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch summary");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching summary:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /metrics/providers returns providers", async () => {

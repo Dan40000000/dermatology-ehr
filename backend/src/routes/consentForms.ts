@@ -5,8 +5,27 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 export const consentFormsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logConsentFormsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Get all consent forms
 consentFormsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
@@ -34,7 +53,7 @@ consentFormsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
 
     return res.json({ forms: result.rows });
   } catch (err) {
-    console.error("Error fetching consent forms:", err);
+    logConsentFormsError("Error fetching consent forms:", err);
     return res.status(500).json({ error: "Failed to fetch consent forms" });
   }
 });
@@ -56,7 +75,7 @@ consentFormsRouter.get("/active", requireAuth, async (req: AuthedRequest, res) =
 
     return res.json({ forms: result.rows });
   } catch (err) {
-    console.error("Error fetching active consent forms:", err);
+    logConsentFormsError("Error fetching active consent forms:", err);
     return res.status(500).json({ error: "Failed to fetch active consent forms" });
   }
 });
@@ -84,7 +103,7 @@ consentFormsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
 
     return res.json({ form: result.rows[0] });
   } catch (err) {
-    console.error("Error fetching consent form:", err);
+    logConsentFormsError("Error fetching consent form:", err);
     return res.status(500).json({ error: "Failed to fetch consent form" });
   }
 });
@@ -127,7 +146,7 @@ consentFormsRouter.post(
 
       return res.status(201).json({ id });
     } catch (err) {
-      console.error("Error creating consent form:", err);
+      logConsentFormsError("Error creating consent form:", err);
       return res.status(500).json({ error: "Failed to create consent form" });
     }
   }
@@ -193,7 +212,7 @@ consentFormsRouter.put(
 
       return res.json({ success: true, id: result.rows[0].id });
     } catch (err) {
-      console.error("Error updating consent form:", err);
+      logConsentFormsError("Error updating consent form:", err);
       return res.status(500).json({ error: "Failed to update consent form" });
     }
   }
@@ -225,7 +244,7 @@ consentFormsRouter.delete(
 
       return res.json({ success: true });
     } catch (err) {
-      console.error("Error deactivating consent form:", err);
+      logConsentFormsError("Error deactivating consent form:", err);
       return res.status(500).json({ error: "Failed to deactivate consent form" });
     }
   }
@@ -252,7 +271,7 @@ consentFormsRouter.get("/patient/:patientId", requireAuth, async (req: AuthedReq
 
     return res.json({ consents: result.rows });
   } catch (err) {
-    console.error("Error fetching patient consents:", err);
+    logConsentFormsError("Error fetching patient consents:", err);
     return res.status(500).json({ error: "Failed to fetch patient consents" });
   }
 });
@@ -290,7 +309,7 @@ consentFormsRouter.get("/consents/all", requireAuth, requireRoles(["admin", "pro
       offset: parseInt(offset as string),
     });
   } catch (err) {
-    console.error("Error fetching all consents:", err);
+    logConsentFormsError("Error fetching all consents:", err);
     return res.status(500).json({ error: "Failed to fetch consents" });
   }
 });

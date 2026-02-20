@@ -1,4 +1,4 @@
-import { jobSchedulerService, JobHandler } from './jobSchedulerService';
+import { CronParser, jobSchedulerService, JobHandler } from './jobSchedulerService';
 import { logger } from '../lib/logger';
 import { pool } from '../db/pool';
 
@@ -709,7 +709,6 @@ class JobRunner {
       );
 
       for (const job of result.rows) {
-        const { CronParser } = await import('./jobSchedulerService.js');
         const nextRunAt = CronParser.getNextRunTime(job.cron_expression);
 
         await pool.query(

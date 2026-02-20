@@ -1,8 +1,6 @@
 import request from "supertest";
 import express from "express";
-import { notesRouter } from "../notes";
-import { pool } from "../../db/pool";
-import { auditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 let currentUser = {
   id: "provider-1",
@@ -32,12 +30,26 @@ jest.mock("../../services/audit", () => ({
   auditLog: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
+const { notesRouter } = require("../notes");
+const { pool } = require("../../db/pool");
+const { auditLog } = require("../../services/audit");
+
 const app = express();
 app.use(express.json());
 app.use("/notes", notesRouter);
 
 const queryMock = pool.query as jest.Mock;
 const auditLogMock = auditLog as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const noteIds = ["note-1", "note-2"];
 const missingTableError = Object.assign(new Error("missing table"), { code: "42P01" });
@@ -51,6 +63,7 @@ beforeEach(() => {
   };
   queryMock.mockReset();
   auditLogMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -122,13 +135,25 @@ describe("Notes routes", () => {
   });
 
   it("POST /notes/bulk/finalize returns 500 on error", async () => {
-    const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     queryMock.mockRejectedValueOnce(new Error("boom"));
 
     const res = await request(app).post("/notes/bulk/finalize").send({ noteIds });
 
     expect(res.status).toBe(500);
-    consoleSpy.mockRestore();
+    expect(loggerMock.error).toHaveBeenCalledWith("Bulk finalize error:", {
+      error: "boom",
+    });
+  });
+
+  it("POST /notes/bulk/finalize masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ noteText: "PHI note content" });
+
+    const res = await request(app).post("/notes/bulk/finalize").send({ noteIds });
+
+    expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith("Bulk finalize error:", {
+      error: "Unknown error",
+    });
   });
 
   it("POST /notes/bulk/finalize finalizes notes", async () => {

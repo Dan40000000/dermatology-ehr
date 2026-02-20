@@ -3,6 +3,7 @@ import { pool } from "../db/pool";
 import FormData from "form-data";
 import fs from "fs";
 import path from "path";
+import { logger } from "../lib/logger";
 
 /**
  * Voice Transcription Service
@@ -28,6 +29,24 @@ interface TranscriptionResult {
   confidence: number;
   duration: number;
   segments?: any[];
+}
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logVoiceTranscriptionError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
 }
 
 export class VoiceTranscriptionService {
@@ -78,7 +97,7 @@ export class VoiceTranscriptionService {
         ...transcription,
       };
     } catch (error) {
-      console.error("Transcription error:", error);
+      logVoiceTranscriptionError("Transcription error:", error);
 
       // Update status to failed if we created a record
       // In real implementation, you'd track the ID
@@ -138,7 +157,7 @@ export class VoiceTranscriptionService {
         segments,
       };
     } catch (error) {
-      console.error("OpenAI transcription error:", error);
+      logVoiceTranscriptionError("OpenAI transcription error:", error);
       throw error;
     }
   }
@@ -375,7 +394,7 @@ Pathology pending. Follow up in one week for results and further management.`;
           }
         }
       } catch (error) {
-        console.error("Failed to delete audio file:", error);
+        logVoiceTranscriptionError("Failed to delete audio file:", error);
       }
     }
 

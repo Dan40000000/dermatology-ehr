@@ -4,8 +4,27 @@ import { aiLesionAnalysisService } from "../services/aiLesionAnalysisService";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { logger } from "../lib/logger";
 
 const router = express.Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logAILesionAnalysisRouteError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * AI Lesion Analysis Routes
@@ -135,7 +154,7 @@ router.post("/analyze", requireRoles(["provider", "admin"]), async (req: AuthedR
       disclaimer: "AI assistance only - this is not a diagnosis. Clinical correlation and professional evaluation required.",
     });
   } catch (error) {
-    console.error("AI Lesion Analysis Error:", error);
+    logAILesionAnalysisRouteError("AI Lesion Analysis Error", error);
     const message = error instanceof Error ? error.message : "Failed to analyze image";
     res.status(500).json({ error: message });
   }
@@ -185,7 +204,7 @@ router.get("/:analysisId", requireRoles(["provider", "admin"]), async (req: Auth
       disclaimer: "AI assistance only - this is not a diagnosis. Clinical correlation and professional evaluation required.",
     });
   } catch (error) {
-    console.error("Get Analysis Error:", error);
+    logAILesionAnalysisRouteError("Get Analysis Error", error);
     const message = error instanceof Error ? error.message : "Failed to retrieve analysis";
     if (message === "Analysis not found") {
       return res.status(404).json({ error: message });
@@ -239,7 +258,7 @@ router.get("/image/:imageId", requireRoles(["provider", "admin"]), async (req: A
         : null,
     });
   } catch (error) {
-    console.error("Get Image Analysis Error:", error);
+    logAILesionAnalysisRouteError("Get Image Analysis Error", error);
     res.status(500).json({ error: "Failed to retrieve analysis" });
   }
 });
@@ -306,7 +325,7 @@ router.post("/compare", requireRoles(["provider", "admin"]), async (req: AuthedR
       disclaimer: "AI-powered change detection is for clinical decision support only. Professional evaluation required.",
     });
   } catch (error) {
-    console.error("Compare Images Error:", error);
+    logAILesionAnalysisRouteError("Compare Images Error", error);
     const message = error instanceof Error ? error.message : "Failed to compare images";
     res.status(500).json({ error: message });
   }
@@ -393,7 +412,7 @@ router.post("/:analysisId/feedback", requireRoles(["provider", "admin"]), async 
       message: "Feedback recorded successfully. Thank you for helping improve AI accuracy.",
     });
   } catch (error) {
-    console.error("Record Feedback Error:", error);
+    logAILesionAnalysisRouteError("Record Feedback Error", error);
     const message = error instanceof Error ? error.message : "Failed to record feedback";
     if (message === "Analysis not found") {
       return res.status(404).json({ error: message });
@@ -457,7 +476,7 @@ router.get("/patient/:patientId/high-risk", requireRoles(["provider", "admin"]),
       disclaimer: "AI assistance only - this is not a diagnosis. Clinical correlation and professional evaluation required.",
     });
   } catch (error) {
-    console.error("Get High-Risk Lesions Error:", error);
+    logAILesionAnalysisRouteError("Get High-Risk Lesions Error", error);
     res.status(500).json({ error: "Failed to retrieve high-risk lesions" });
   }
 });
@@ -523,7 +542,7 @@ router.get("/patient/:patientId/history", requireRoles(["provider", "admin"]), a
       analyses,
     });
   } catch (error) {
-    console.error("Get Patient History Error:", error);
+    logAILesionAnalysisRouteError("Get Patient History Error", error);
     res.status(500).json({ error: "Failed to retrieve analysis history" });
   }
 });
@@ -558,7 +577,7 @@ router.get("/metrics", requireRoles(["admin"]), async (req: AuthedRequest, res) 
       metrics,
     });
   } catch (error) {
-    console.error("Get Metrics Error:", error);
+    logAILesionAnalysisRouteError("Get Metrics Error", error);
     res.status(500).json({ error: "Failed to retrieve metrics" });
   }
 });
@@ -645,7 +664,7 @@ router.get("/stats", requireRoles(["provider", "admin"]), async (req: AuthedRequ
       },
     });
   } catch (error) {
-    console.error("Get Stats Error:", error);
+    logAILesionAnalysisRouteError("Get Stats Error", error);
     res.status(500).json({ error: "Failed to retrieve statistics" });
   }
 });

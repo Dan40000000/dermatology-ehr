@@ -10,8 +10,27 @@ import {
   getQueueStatistics,
 } from "../services/hl7Queue";
 import { createAuditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 export const hl7Router = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logHl7Error(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * POST /api/hl7/inbound
@@ -121,7 +140,7 @@ hl7Router.post("/inbound", requireAuth, async (req: AuthedRequest, res: Response
       ack: ackMessage,
     });
   } catch (error) {
-    console.error("Error receiving HL7 message:", error);
+    logHl7Error("Error receiving HL7 message", error);
     res.status(500).json({
       error: "Internal server error processing HL7 message",
       details: error instanceof Error ? error.message : String(error),
@@ -196,7 +215,7 @@ hl7Router.post("/inbound/sync", requireAuth, async (req: AuthedRequest, res: Res
       });
     }
   } catch (error) {
-    console.error("Error processing HL7 message synchronously:", error);
+    logHl7Error("Error processing HL7 message synchronously", error);
     res.status(500).json({
       error: "Internal server error",
       details: error instanceof Error ? error.message : String(error),
@@ -234,7 +253,7 @@ hl7Router.get("/messages", requireAuth, async (req: AuthedRequest, res: Response
       offset,
     });
   } catch (error) {
-    console.error("Error listing HL7 messages:", error);
+    logHl7Error("Error listing HL7 messages", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -259,7 +278,7 @@ hl7Router.get("/messages/:id", requireAuth, async (req: AuthedRequest, res: Resp
 
     res.json(message);
   } catch (error) {
-    console.error("Error getting HL7 message:", error);
+    logHl7Error("Error getting HL7 message", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -294,7 +313,7 @@ hl7Router.post("/messages/:id/reprocess", requireAuth, async (req: AuthedRequest
       message: "Message queued for reprocessing",
     });
   } catch (error) {
-    console.error("Error reprocessing HL7 message:", error);
+    logHl7Error("Error reprocessing HL7 message", error);
     res.status(500).json({
       error: "Internal server error",
       details: error instanceof Error ? error.message : String(error),
@@ -316,7 +335,7 @@ hl7Router.get("/statistics", requireAuth, async (req: AuthedRequest, res: Respon
     const stats = await getQueueStatistics(tenantId);
     res.json(stats);
   } catch (error) {
-    console.error("Error getting HL7 statistics:", error);
+    logHl7Error("Error getting HL7 statistics", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -374,7 +393,7 @@ const legacyHL7Handler = async (req: Request, res: Response) => {
       ack: ackMessage,
     });
   } catch (error) {
-    console.error("Error processing legacy HL7 message:", error);
+    logHl7Error("Error processing legacy HL7 message", error);
     res.status(500).json({
       error: "Internal server error",
       details: error instanceof Error ? error.message : String(error),

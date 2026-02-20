@@ -9,6 +9,7 @@ import {
   fetchAllergyWithContext,
 } from '../../services/fhirMapper';
 import { logFHIRAccess } from '../../middleware/fhirAuth';
+import { logger } from '../../lib/logger';
 
 jest.mock('../../middleware/fhirAuth', () => ({
   requireFHIRAuth: (req: any, _res: any, next: any) => {
@@ -22,6 +23,15 @@ jest.mock('../../middleware/fhirAuth', () => ({
 jest.mock('../../db/pool', () => ({
   pool: {
     query: jest.fn(),
+  },
+}));
+
+jest.mock('../../lib/logger', () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
   },
 }));
 
@@ -61,6 +71,7 @@ const fetchDiagnosisMock = fetchDiagnosisWithContext as jest.Mock;
 const fetchChargeMock = fetchChargeWithContext as jest.Mock;
 const fetchVitalMock = fetchVitalWithContext as jest.Mock;
 const fetchAllergyMock = fetchAllergyWithContext as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
@@ -69,6 +80,7 @@ beforeEach(() => {
   fetchChargeMock.mockReset();
   fetchVitalMock.mockReset();
   fetchAllergyMock.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
 });
 
@@ -488,6 +500,16 @@ describe('FHIR routes', () => {
     const res = await request(app).get('/fhir/Patient/p1');
 
     expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith('Error fetching patient', { error: 'db down' });
+  });
+
+  it('GET /fhir/Patient/:id masks non-Error failures', async () => {
+    queryMock.mockRejectedValueOnce({ patientName: 'Jane Doe' });
+
+    const res = await request(app).get('/fhir/Patient/p1');
+
+    expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith('Error fetching patient', { error: 'Unknown error' });
   });
 
   it('GET /fhir/Patient returns 500 on search error', async () => {

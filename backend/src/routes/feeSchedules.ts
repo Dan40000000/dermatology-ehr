@@ -3,8 +3,27 @@ import crypto from 'crypto';
 import { pool } from '../db/pool';
 import { requireAuth, AuthedRequest } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
+import { logger } from '../lib/logger';
 
 const router = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logFeeSchedulesError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Get all fee schedules
 router.get('/', requireAuth, async (req: AuthedRequest, res: Response) => {
@@ -18,7 +37,7 @@ router.get('/', requireAuth, async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching fee schedules:', error);
+    logFeeSchedulesError('Error fetching fee schedules', error);
     res.status(500).json({ error: 'Failed to fetch fee schedules' });
   }
 });
@@ -50,7 +69,7 @@ router.get('/:id', requireAuth, async (req: AuthedRequest, res: Response) => {
 
     res.json(schedule);
   } catch (error) {
-    console.error('Error fetching fee schedule:', error);
+    logFeeSchedulesError('Error fetching fee schedule', error);
     res.status(500).json({ error: 'Failed to fetch fee schedule' });
   }
 });
@@ -112,7 +131,7 @@ router.post('/', requireAuth, requireRoles(['admin', 'billing']), async (req: Au
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error creating fee schedule:', error);
+    logFeeSchedulesError('Error creating fee schedule', error);
     res.status(500).json({ error: 'Failed to create fee schedule' });
   } finally {
     client.release();
@@ -185,7 +204,7 @@ router.put('/:id', requireAuth, requireRoles(['admin', 'billing']), async (req: 
     res.json(result.rows[0]);
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error updating fee schedule:', error);
+    logFeeSchedulesError('Error updating fee schedule', error);
     res.status(500).json({ error: 'Failed to update fee schedule' });
   } finally {
     client.release();
@@ -234,7 +253,7 @@ router.delete('/:id', requireAuth, requireRoles(['admin']), async (req: AuthedRe
     res.status(204).send();
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error deleting fee schedule:', error);
+    logFeeSchedulesError('Error deleting fee schedule', error);
     res.status(500).json({ error: 'Failed to delete fee schedule' });
   } finally {
     client.release();
@@ -264,7 +283,7 @@ router.get('/:id/items', requireAuth, async (req: AuthedRequest, res: Response) 
 
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching fee schedule items:', error);
+    logFeeSchedulesError('Error fetching fee schedule items', error);
     res.status(500).json({ error: 'Failed to fetch fee schedule items' });
   }
 });
@@ -302,7 +321,7 @@ router.put('/:id/items/:cptCode', requireAuth, requireRoles(['admin', 'billing']
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating fee schedule item:', error);
+    logFeeSchedulesError('Error updating fee schedule item', error);
     res.status(500).json({ error: 'Failed to update fee schedule item' });
   }
 });
@@ -330,7 +349,7 @@ router.delete('/:id/items/:cptCode', requireAuth, requireRoles(['admin', 'billin
 
     res.status(204).send();
   } catch (error) {
-    console.error('Error deleting fee schedule item:', error);
+    logFeeSchedulesError('Error deleting fee schedule item', error);
     res.status(500).json({ error: 'Failed to delete fee schedule item' });
   }
 });
@@ -396,7 +415,7 @@ router.post('/:id/items/import', requireAuth, requireRoles(['admin', 'billing'])
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error importing fee schedule items:', error);
+    logFeeSchedulesError('Error importing fee schedule items', error);
     res.status(500).json({ error: 'Failed to import fee schedule items' });
   } finally {
     client.release();
@@ -440,7 +459,7 @@ router.get('/:id/export', requireAuth, async (req: AuthedRequest, res: Response)
     res.setHeader('Content-Disposition', `attachment; filename="${scheduleName.replace(/[^a-zA-Z0-9]/g, '_')}_fees.csv"`);
     res.send(csv);
   } catch (error) {
-    console.error('Error exporting fee schedule:', error);
+    logFeeSchedulesError('Error exporting fee schedule', error);
     res.status(500).json({ error: 'Failed to export fee schedule' });
   }
 });
@@ -469,7 +488,7 @@ router.get('/default/schedule', requireAuth, async (req: AuthedRequest, res: Res
       items: itemsResult.rows
     });
   } catch (error) {
-    console.error('Error fetching default fee schedule:', error);
+    logFeeSchedulesError('Error fetching default fee schedule', error);
     res.status(500).json({ error: 'Failed to fetch default fee schedule' });
   }
 });
@@ -493,7 +512,7 @@ router.get('/default/fee/:cptCode', requireAuth, async (req: AuthedRequest, res:
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error fetching fee:', error);
+    logFeeSchedulesError('Error fetching fee', error);
     res.status(500).json({ error: 'Failed to fetch fee' });
   }
 });
@@ -526,7 +545,7 @@ router.get('/contracts/list', requireAuth, async (req: AuthedRequest, res: Respo
     const result = await pool.query(query, params);
     res.json({ contracts: result.rows });
   } catch (error) {
-    console.error('Error fetching payer contracts:', error);
+    logFeeSchedulesError('Error fetching payer contracts', error);
     res.status(500).json({ error: 'Failed to fetch payer contracts' });
   }
 });
@@ -551,7 +570,7 @@ router.get('/contracts/:id', requireAuth, async (req: AuthedRequest, res: Respon
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error fetching payer contract:', error);
+    logFeeSchedulesError('Error fetching payer contract', error);
     res.status(500).json({ error: 'Failed to fetch payer contract' });
   }
 });
@@ -597,7 +616,7 @@ router.post('/contracts', requireAuth, requireRoles(['admin', 'billing']), async
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error creating payer contract:', error);
+    logFeeSchedulesError('Error creating payer contract', error);
     res.status(500).json({ error: 'Failed to create payer contract' });
   }
 });
@@ -695,7 +714,7 @@ router.put('/contracts/:id', requireAuth, requireRoles(['admin', 'billing']), as
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating payer contract:', error);
+    logFeeSchedulesError('Error updating payer contract', error);
     res.status(500).json({ error: 'Failed to update payer contract' });
   }
 });
@@ -717,7 +736,7 @@ router.delete('/contracts/:id', requireAuth, requireRoles(['admin']), async (req
 
     res.status(204).send();
   } catch (error) {
-    console.error('Error deleting payer contract:', error);
+    logFeeSchedulesError('Error deleting payer contract', error);
     res.status(500).json({ error: 'Failed to delete payer contract' });
   }
 });
@@ -745,7 +764,7 @@ router.get('/packages/list', requireAuth, async (req: AuthedRequest, res: Respon
     const result = await pool.query(query, params);
     res.json({ packages: result.rows });
   } catch (error) {
-    console.error('Error fetching service packages:', error);
+    logFeeSchedulesError('Error fetching service packages', error);
     res.status(500).json({ error: 'Failed to fetch service packages' });
   }
 });
@@ -775,7 +794,7 @@ router.get('/packages/:id', requireAuth, async (req: AuthedRequest, res: Respons
       items: itemsResult.rows,
     });
   } catch (error) {
-    console.error('Error fetching service package:', error);
+    logFeeSchedulesError('Error fetching service package', error);
     res.status(500).json({ error: 'Failed to fetch service package' });
   }
 });
@@ -853,7 +872,7 @@ router.post('/packages', requireAuth, requireRoles(['admin', 'billing']), async 
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error creating service package:', error);
+    logFeeSchedulesError('Error creating service package', error);
     res.status(500).json({ error: 'Failed to create service package' });
   } finally {
     client.release();
@@ -933,7 +952,7 @@ router.put('/packages/:id', requireAuth, requireRoles(['admin', 'billing']), asy
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating service package:', error);
+    logFeeSchedulesError('Error updating service package', error);
     res.status(500).json({ error: 'Failed to update service package' });
   }
 });
@@ -970,7 +989,7 @@ router.post('/packages/:id/items', requireAuth, requireRoles(['admin', 'billing'
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
-    console.error('Error adding package item:', error);
+    logFeeSchedulesError('Error adding package item', error);
     res.status(500).json({ error: 'Failed to add package item' });
   }
 });
@@ -998,7 +1017,7 @@ router.delete('/packages/:packageId/items/:itemId', requireAuth, requireRoles(['
 
     res.status(204).send();
   } catch (error) {
-    console.error('Error removing package item:', error);
+    logFeeSchedulesError('Error removing package item', error);
     res.status(500).json({ error: 'Failed to remove package item' });
   }
 });
@@ -1034,7 +1053,7 @@ router.delete('/packages/:id', requireAuth, requireRoles(['admin']), async (req:
     res.status(204).send();
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error deleting service package:', error);
+    logFeeSchedulesError('Error deleting service package', error);
     res.status(500).json({ error: 'Failed to delete service package' });
   } finally {
     client.release();
@@ -1058,7 +1077,7 @@ router.get('/cosmetic/procedures', requireAuth, async (req: AuthedRequest, res: 
 
     res.json({ procedures: result.rows });
   } catch (error) {
-    console.error('Error fetching cosmetic procedures:', error);
+    logFeeSchedulesError('Error fetching cosmetic procedures', error);
     res.status(500).json({ error: 'Failed to fetch cosmetic procedures' });
   }
 });
@@ -1072,7 +1091,7 @@ router.get('/cosmetic/categories', requireAuth, async (req: AuthedRequest, res: 
 
     res.json({ categories: result.rows });
   } catch (error) {
-    console.error('Error fetching cosmetic categories:', error);
+    logFeeSchedulesError('Error fetching cosmetic categories', error);
     res.status(500).json({ error: 'Failed to fetch cosmetic categories' });
   }
 });
@@ -1107,7 +1126,7 @@ router.get('/cosmetic/pricing', requireAuth, async (req: AuthedRequest, res: Res
 
     res.json({ procedures: result.rows });
   } catch (error) {
-    console.error('Error fetching cosmetic pricing:', error);
+    logFeeSchedulesError('Error fetching cosmetic pricing', error);
     res.status(500).json({ error: 'Failed to fetch cosmetic pricing' });
   }
 });
@@ -1186,7 +1205,7 @@ router.put('/cosmetic/procedures/:cptCode', requireAuth, requireRoles(['admin', 
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating cosmetic procedure:', error);
+    logFeeSchedulesError('Error updating cosmetic procedure', error);
     res.status(500).json({ error: 'Failed to update cosmetic procedure' });
   }
 });

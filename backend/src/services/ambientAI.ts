@@ -13,6 +13,7 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import FormData from 'form-data';
 import { logger } from '../lib/logger';
+import { redactValue } from '../utils/phiRedaction';
 import { AgentConfiguration } from './agentConfigService';
 
 // ============================================================================
@@ -82,6 +83,18 @@ function isRetryableError(error: unknown, statusCode?: number): boolean {
   return false;
 }
 
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return redactValue(error.message);
+  }
+
+  if (typeof error === 'string') {
+    return redactValue(error);
+  }
+
+  return 'Unknown error';
+}
+
 /**
  * Sleep utility for retry delays
  */
@@ -119,7 +132,7 @@ async function withRetry<T>(
 
       if (!shouldRetry) {
         logger.error(`${operationName} failed after ${attempt + 1} attempts`, {
-          error: lastError.message,
+          error: toSafeErrorMessage(lastError),
           attempt: attempt + 1,
           maxRetries: config.maxRetries,
         });
@@ -132,7 +145,7 @@ async function withRetry<T>(
       const delay = Math.min(baseDelay + jitter, config.maxDelayMs);
 
       logger.warn(`${operationName} failed, retrying in ${Math.round(delay)}ms`, {
-        error: lastError.message,
+        error: toSafeErrorMessage(lastError),
         attempt: attempt + 1,
         maxRetries: config.maxRetries,
         statusCode,
@@ -317,7 +330,7 @@ export async function transcribeAudio(
       return await transcribeWithOpenAI(audioFilePath, durationSeconds, openAIKey, model);
     } catch (error) {
       logger.warn('OpenAI transcription failed, falling back to mock', {
-        error: (error as Error).message,
+        error: toSafeErrorMessage(error),
         model: getOpenAITranscribeModel(),
       });
       // Fall through to mock implementation
@@ -593,7 +606,7 @@ export async function transcribeLiveAudioChunk(
     };
   } catch (error: any) {
     logger.warn('OpenAI live transcription failed, falling back to mock', {
-      error: error?.message,
+      error: toSafeErrorMessage(error),
       model,
       isRetryable: error instanceof AmbientAIError ? error.isRetryable : 'unknown'
     });
@@ -1059,6 +1072,114 @@ function resolveAnthropicModel(agentConfig?: AgentConfiguration | null): string 
   return getAnthropicNoteModel();
 }
 
+type ConversationRole = 'doctor' | 'patient' | 'unknown';
+
+function resolveConversationRole(speaker: string): ConversationRole {
+  const normalized = speaker.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (!normalized) {
+    return 'unknown';
+  }
+
+  if (/^(speaker_?0|doctor|provider|physician|clinician|dr\.?)(_|$)/.test(normalized)) {
+    return 'doctor';
+  }
+
+  if (/^(speaker_?1|patient|pt|client)(_|$)/.test(normalized)) {
+    return 'patient';
+  }
+
+  return 'unknown';
+}
+
+function splitStatementsByRole(
+  segments: TranscriptionSegment[]
+): { doctorStatements: string[]; patientStatements: string[] } {
+  const doctorStatements: string[] = [];
+  const patientStatements: string[] = [];
+
+  for (const segment of segments) {
+    const text = toSafeString(segment.text);
+    if (!text) continue;
+
+    const role = resolveConversationRole(segment.speaker);
+    if (role === 'doctor') {
+      doctorStatements.push(text);
+    } else if (role === 'patient') {
+      patientStatements.push(text);
+    }
+  }
+
+  // Last-resort fallback for unknown speaker labels: alternate turns.
+  if (doctorStatements.length === 0 && patientStatements.length === 0) {
+    segments.forEach((segment, index) => {
+      const text = toSafeString(segment.text);
+      if (!text) return;
+      if (index % 2 === 0) {
+        doctorStatements.push(text);
+      } else {
+        patientStatements.push(text);
+      }
+    });
+  }
+
+  return { doctorStatements, patientStatements };
+}
+
+interface SanitizedOutboundPayload {
+  transcriptText: string;
+  segments: TranscriptionSegment[];
+  maskedEntityCount: number;
+  maskedTypes: string[];
+}
+
+function sanitizeTextForOutboundModel(text: string): { text: string; entities: PHIEntity[] } {
+  const normalized = toSafeString(text);
+  if (!normalized) {
+    return { text: '', entities: [] };
+  }
+
+  const entities = detectPHI(normalized);
+  if (entities.length === 0) {
+    return { text: normalized, entities };
+  }
+
+  return { text: maskPHI(normalized, entities), entities };
+}
+
+function sanitizeOutboundPayload(
+  transcriptText: string,
+  segments: TranscriptionSegment[]
+): SanitizedOutboundPayload {
+  const maskedTypes = new Set<string>();
+  let maskedEntityCount = 0;
+
+  const sanitizedTranscript = sanitizeTextForOutboundModel(transcriptText);
+  maskedEntityCount += sanitizedTranscript.entities.length;
+  for (const entity of sanitizedTranscript.entities) {
+    maskedTypes.add(entity.type);
+  }
+
+  const sanitizedSegments = segments.map((segment) => {
+    const sanitizedSegment = sanitizeTextForOutboundModel(segment.text);
+    maskedEntityCount += sanitizedSegment.entities.length;
+    for (const entity of sanitizedSegment.entities) {
+      maskedTypes.add(entity.type);
+    }
+
+    return {
+      ...segment,
+      text: sanitizedSegment.text,
+    };
+  });
+
+  return {
+    transcriptText: sanitizedTranscript.text,
+    segments: sanitizedSegments,
+    maskedEntityCount,
+    maskedTypes: Array.from(maskedTypes).sort(),
+  };
+}
+
 /**
  * Generate clinical note using Claude or OpenAI (or mock if not configured)
  * Now supports custom agent configurations for different visit types
@@ -1072,13 +1193,22 @@ export async function generateClinicalNote(
   // Use real AI if available
   const anthropicKey = getAnthropicKey();
   const openAIKey = getOpenAIKey();
+  const sanitizedPayload = sanitizeOutboundPayload(transcriptText, segments);
+
   if (anthropicKey || openAIKey) {
     try {
+      if (sanitizedPayload.maskedEntityCount > 0) {
+        logger.info('Applied PHI masking to outbound ambient AI payload', {
+          maskedEntityCount: sanitizedPayload.maskedEntityCount,
+          maskedTypes: sanitizedPayload.maskedTypes,
+        });
+      }
+
       // Prefer Claude for medical documentation (Anthropic API)
       if (anthropicKey) {
         return await generateNoteWithClaude(
-          transcriptText,
-          segments,
+          sanitizedPayload.transcriptText,
+          sanitizedPayload.segments,
           agentConfig,
           patientContext,
           anthropicKey
@@ -1087,15 +1217,17 @@ export async function generateClinicalNote(
       // Fall back to OpenAI if key available
       if (openAIKey) {
         return await generateNoteWithGPT4(
-          transcriptText,
-          segments,
+          sanitizedPayload.transcriptText,
+          sanitizedPayload.segments,
           agentConfig,
           patientContext,
           openAIKey
         );
       }
     } catch (error) {
-      console.error('AI note generation failed, falling back to mock:', error);
+      logger.warn('AI note generation failed, falling back to mock', {
+        error: toSafeErrorMessage(error),
+      });
       // Fall through to mock implementation
     }
   }
@@ -1265,8 +1397,7 @@ async function generateNoteWithGPT4(
  * Build prompt for AI note generation
  */
 function buildClinicalNotePrompt(transcriptText: string, segments: TranscriptionSegment[]): string {
-  const patientStatements = segments.filter(s => s.speaker === 'speaker_1').map(s => s.text).join(' ');
-  const doctorStatements = segments.filter(s => s.speaker === 'speaker_0').map(s => s.text).join(' ');
+  const { patientStatements, doctorStatements } = splitStatementsByRole(segments);
 
   return `You are an expert dermatology medical scribe. Generate a comprehensive SOAP clinical note from the following patient-provider conversation transcript.
 
@@ -1274,10 +1405,10 @@ CONVERSATION TRANSCRIPT:
 ${transcriptText}
 
 PATIENT STATEMENTS:
-${patientStatements}
+${patientStatements.join(' ')}
 
 PROVIDER STATEMENTS:
-${doctorStatements}
+${doctorStatements.join(' ')}
 
 Please generate a structured clinical note in the following JSON format:
 
@@ -1368,8 +1499,7 @@ function buildConfigurablePrompt(
   agentConfig: AgentConfiguration,
   patientContext?: PatientContext
 ): string {
-  const patientStatements = segments.filter(s => s.speaker === 'speaker_1').map(s => s.text).join(' ');
-  const doctorStatements = segments.filter(s => s.speaker === 'speaker_0').map(s => s.text).join(' ');
+  const { patientStatements, doctorStatements } = splitStatementsByRole(segments);
 
   // Get configured sections
   const sections = agentConfig.noteSections || ['chiefComplaint', 'hpi', 'ros', 'physicalExam', 'assessment', 'plan'];
@@ -1848,7 +1978,9 @@ function parseAIGeneratedNote(
 
     return note;
   } catch (error) {
-    console.error('Failed to parse AI note, using fallback:', error);
+    logger.warn('Failed to parse AI note, using fallback', {
+      error: toSafeErrorMessage(error),
+    });
     // If parsing fails, fall back to mock
     return mockGenerateClinicalNoteSync(segments);
   }
@@ -1908,9 +2040,8 @@ async function mockGenerateClinicalNote(
  */
 function mockGenerateClinicalNoteSync(segments: TranscriptionSegment[]): ClinicalNote & ExtractedData {
   // Extract patient statements vs doctor observations
-  const patientStatements = segments.filter(s => s.speaker === 'speaker_1').map(s => s.text);
-  const doctorStatements = segments.filter(s => s.speaker === 'speaker_0').map(s => s.text);
-  const transcriptText = segments.map(s => s.text).join(' ');
+  const { patientStatements, doctorStatements } = splitStatementsByRole(segments);
+  const transcriptText = segments.map(s => toSafeString(s.text)).filter(Boolean).join(' ');
 
   // Generate structured note sections
   const note: ClinicalNote = {

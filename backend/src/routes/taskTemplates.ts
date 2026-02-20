@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { auditLog, createAuditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 const taskTemplateSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -15,6 +16,24 @@ const taskTemplateSchema = z.object({
 });
 
 export const taskTemplatesRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logTaskTemplatesError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // GET /api/task-templates - List all task templates
 taskTemplatesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
@@ -45,7 +64,7 @@ taskTemplatesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
 
     res.json({ templates: result.rows });
   } catch (err: any) {
-    console.error("Error fetching task templates:", err);
+    logTaskTemplatesError("Error fetching task templates:", err);
     res.status(500).json({ error: "Failed to fetch task templates" });
   }
 });
@@ -93,7 +112,7 @@ taskTemplatesRouter.post("/", requireAuth, async (req: AuthedRequest, res) => {
     await auditLog(tenantId, userId, "task_template_create", "task_template", id);
     res.status(201).json({ id });
   } catch (err: any) {
-    console.error("Error creating task template:", err);
+    logTaskTemplatesError("Error creating task template:", err);
     res.status(500).json({ error: "Failed to create task template" });
   }
 });
@@ -182,7 +201,7 @@ taskTemplatesRouter.put("/:id", requireAuth, async (req: AuthedRequest, res) => 
     await auditLog(tenantId, userId, "task_template_update", "task_template", id!);
     res.json({ success: true });
   } catch (err: any) {
-    console.error("Error updating task template:", err);
+    logTaskTemplatesError("Error updating task template:", err);
     res.status(500).json({ error: "Failed to update task template" });
   }
 });
@@ -206,7 +225,7 @@ taskTemplatesRouter.delete("/:id", requireAuth, async (req: AuthedRequest, res) 
     await auditLog(tenantId, userId, "task_template_delete", "task_template", id!);
     res.json({ success: true });
   } catch (err: any) {
-    console.error("Error deleting task template:", err);
+    logTaskTemplatesError("Error deleting task template:", err);
     res.status(500).json({ error: "Failed to delete task template" });
   }
 });
@@ -270,7 +289,7 @@ taskTemplatesRouter.post("/:id/create-task", requireAuth, async (req: AuthedRequ
 
     res.status(201).json({ id: taskId });
   } catch (err: any) {
-    console.error("Error creating task from template:", err);
+    logTaskTemplatesError("Error creating task from template:", err);
     res.status(500).json({ error: "Failed to create task from template" });
   }
 });

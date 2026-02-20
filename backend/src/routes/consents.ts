@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { logger } from "../lib/logger";
 import {
   getRequiredConsents,
   createConsentSession,
@@ -23,6 +24,24 @@ import { auditLog } from "../services/audit";
 import crypto from "crypto";
 
 export const consentsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logConsentsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * @swagger
@@ -79,7 +98,7 @@ consentsRouter.get("/templates", requireAuth, async (req: AuthedRequest, res) =>
 
     return res.json({ templates: result.rows });
   } catch (err) {
-    console.error("Error fetching consent templates:", err);
+    logConsentsError("Error fetching consent templates", err);
     return res.status(500).json({ error: "Failed to fetch consent templates" });
   }
 });
@@ -119,7 +138,7 @@ consentsRouter.get("/templates/:id", requireAuth, async (req: AuthedRequest, res
 
     return res.json(result);
   } catch (err) {
-    console.error("Error fetching template:", err);
+    logConsentsError("Error fetching template", err);
     return res.status(500).json({ error: "Failed to fetch template" });
   }
 });
@@ -164,7 +183,7 @@ consentsRouter.get("/required/:encounterId", requireAuth, async (req: AuthedRequ
 
     return res.json(result);
   } catch (err) {
-    console.error("Error fetching required consents:", err);
+    logConsentsError("Error fetching required consents", err);
     return res.status(500).json({ error: "Failed to fetch required consents" });
   }
 });
@@ -225,7 +244,7 @@ consentsRouter.post("/session", requireAuth, async (req: AuthedRequest, res) => 
 
     return res.status(201).json({ session });
   } catch (err) {
-    console.error("Error creating consent session:", err);
+    logConsentsError("Error creating consent session", err);
     return res.status(500).json({ error: (err as Error).message || "Failed to create session" });
   }
 });
@@ -276,7 +295,7 @@ consentsRouter.get("/session/:token", requireAuth, async (req: AuthedRequest, re
       fields: templateData?.fields,
     });
   } catch (err) {
-    console.error("Error fetching session:", err);
+    logConsentsError("Error fetching session", err);
     return res.status(500).json({ error: "Failed to fetch session" });
   }
 });
@@ -311,7 +330,7 @@ consentsRouter.put("/session/:sessionId/fields", requireAuth, async (req: Authed
     await updateSessionFieldValues(tenantId, sessionId, parsed.data.fieldValues);
     return res.json({ success: true });
   } catch (err) {
-    console.error("Error updating session fields:", err);
+    logConsentsError("Error updating session fields", err);
     return res.status(500).json({ error: "Failed to update session fields" });
   }
 });
@@ -408,13 +427,13 @@ consentsRouter.post("/sign", requireAuth, async (req: AuthedRequest, res) => {
     try {
       await generateSignedPDF(tenantId, consent.id);
     } catch (pdfErr) {
-      console.error("Error generating PDF:", pdfErr);
+      logConsentsError("Error generating PDF", pdfErr);
       // Continue even if PDF generation fails
     }
 
     return res.json({ consent, message: "Consent signed successfully" });
   } catch (err) {
-    console.error("Error signing consent:", err);
+    logConsentsError("Error signing consent", err);
     return res.status(500).json({ error: (err as Error).message || "Failed to sign consent" });
   }
 });
@@ -472,7 +491,7 @@ consentsRouter.get("/patient/:patientId", requireAuth, async (req: AuthedRequest
 
     return res.json(result);
   } catch (err) {
-    console.error("Error fetching patient consents:", err);
+    logConsentsError("Error fetching patient consents", err);
     return res.status(500).json({ error: "Failed to fetch patient consents" });
   }
 });
@@ -515,7 +534,7 @@ consentsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
 
     return res.json({ consent });
   } catch (err) {
-    console.error("Error fetching consent:", err);
+    logConsentsError("Error fetching consent", err);
     return res.status(500).json({ error: "Failed to fetch consent" });
   }
 });
@@ -615,7 +634,7 @@ consentsRouter.get("/:id/pdf", requireAuth, async (req: AuthedRequest, res) => {
     res.setHeader("Content-Disposition", `inline; filename="consent-${consentId}.html"`);
     return res.send(html);
   } catch (err) {
-    console.error("Error generating PDF:", err);
+    logConsentsError("Error generating PDF", err);
     return res.status(500).json({ error: "Failed to generate PDF" });
   }
 });
@@ -650,7 +669,7 @@ consentsRouter.get("/:id/validate", requireAuth, async (req: AuthedRequest, res)
     const result = await validateSignature(tenantId, consentId);
     return res.json(result);
   } catch (err) {
-    console.error("Error validating signature:", err);
+    logConsentsError("Error validating signature", err);
     return res.status(500).json({ error: (err as Error).message || "Failed to validate signature" });
   }
 });
@@ -709,7 +728,7 @@ consentsRouter.post(
       await revokeConsent(tenantId, consentId, req.user!.id, parsed.data.reason);
       return res.json({ success: true, message: "Consent revoked successfully" });
     } catch (err) {
-      console.error("Error revoking consent:", err);
+      logConsentsError("Error revoking consent", err);
       return res.status(500).json({ error: (err as Error).message || "Failed to revoke consent" });
     }
   }
@@ -749,7 +768,7 @@ consentsRouter.get(
       const auditHistory = await getConsentAuditHistory(tenantId, consentId);
       return res.json({ auditHistory });
     } catch (err) {
-      console.error("Error fetching audit history:", err);
+      logConsentsError("Error fetching audit history", err);
       return res.status(500).json({ error: "Failed to fetch audit history" });
     }
   }
@@ -816,7 +835,7 @@ consentsRouter.post(
 
       return res.status(201).json({ id });
     } catch (err) {
-      console.error("Error creating template:", err);
+      logConsentsError("Error creating template", err);
       return res.status(500).json({ error: "Failed to create template" });
     }
   }

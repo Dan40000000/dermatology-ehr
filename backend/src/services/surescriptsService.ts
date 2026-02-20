@@ -8,6 +8,7 @@
 
 import crypto from 'crypto';
 import { pool } from '../db/pool';
+import { logger } from '../lib/logger';
 
 export interface NCPDPScriptMessage {
   messageId: string;
@@ -102,6 +103,24 @@ export interface PatientBenefitsResponse {
   };
 }
 
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logSurescriptsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
+
 /**
  * Mock: Send new prescription to pharmacy via NCPDP SCRIPT
  * Simulates 95% success rate
@@ -154,7 +173,7 @@ export async function sendNewRx(
       [prescriptionId, pharmacyNcpdp, messageId, 'accepted', 'new_rx']
     );
   } catch (error) {
-    console.error('Error logging Surescripts transaction:', error);
+    logSurescriptsError('Error logging Surescripts transaction', error);
   }
 
   return {
@@ -230,7 +249,7 @@ export async function getRxHistory(patientId: string, tenantId: string): Promise
       medications,
     };
   } catch (error) {
-    console.error('Error fetching Rx history:', error);
+    logSurescriptsError('Error fetching Rx history', error);
     throw error;
   }
 }
@@ -315,7 +334,7 @@ export async function getPatientBenefits(
       },
     };
   } catch (error) {
-    console.error('Error fetching patient benefits:', error);
+    logSurescriptsError('Error fetching patient benefits', error);
     return generateMockBenefits(patientId);
   }
 }
@@ -456,7 +475,7 @@ export async function cancelRx(
       messageId,
     };
   } catch (error) {
-    console.error('Error canceling Rx:', error);
+    logSurescriptsError('Error canceling Rx', error);
     throw error;
   }
 }

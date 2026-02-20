@@ -20,7 +20,7 @@ test.describe('Critical Smoke', () => {
     await expect(authenticatedPage).toHaveURL(/\/patients\/patient-smoke-1/i);
 
     await authenticatedPage.goto('/patients/patient-smoke-1/encounter/new');
-    await expect(authenticatedPage).toHaveURL(/\/patients\/patient-smoke-1\/encounter\/(new|encounter-smoke-1)/i);
+    await expect(authenticatedPage).toHaveURL(/\/patients\/patient-smoke-1\/encounter\/(new|encounter-smoke-[a-z0-9-]+)/i);
   });
 
   test('financial and claims hubs render', async ({ authenticatedPage }) => {

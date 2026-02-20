@@ -4,6 +4,7 @@ import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { auditLog } from '../services/audit';
 import crypto from 'crypto';
+import { logger } from '../lib/logger';
 
 const sendMessageSchema = z.object({
   toAddress: z.string().email(),
@@ -30,6 +31,24 @@ const createContactSchema = z.object({
 });
 
 export const directMessagingRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logDirectMessagingError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // GET /api/direct/messages - List Direct messages (inbox/sent)
 directMessagingRouter.get('/messages', requireAuth, async (req: AuthedRequest, res) => {
@@ -76,7 +95,7 @@ directMessagingRouter.get('/messages', requireAuth, async (req: AuthedRequest, r
 
     res.json({ messages: result.rows });
   } catch (err) {
-    console.error('Error fetching Direct messages:', err);
+    logDirectMessagingError('Error fetching Direct messages:', err);
     res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
@@ -139,7 +158,7 @@ directMessagingRouter.post('/send', requireAuth, async (req: AuthedRequest, res)
       errorMessage,
     });
   } catch (err) {
-    console.error('Error sending Direct message:', err);
+    logDirectMessagingError('Error sending Direct message:', err);
     res.status(500).json({ error: 'Failed to send message' });
   }
 });
@@ -196,7 +215,7 @@ directMessagingRouter.get('/contacts', requireAuth, async (req: AuthedRequest, r
 
     res.json({ contacts: result.rows });
   } catch (err) {
-    console.error('Error fetching Direct contacts:', err);
+    logDirectMessagingError('Error fetching Direct contacts:', err);
     res.status(500).json({ error: 'Failed to fetch contacts' });
   }
 });
@@ -269,7 +288,7 @@ directMessagingRouter.post('/contacts', requireAuth, async (req: AuthedRequest, 
 
     res.status(201).json({ contact: result.rows[0] });
   } catch (err) {
-    console.error('Error creating Direct contact:', err);
+    logDirectMessagingError('Error creating Direct contact:', err);
     res.status(500).json({ error: 'Failed to create contact' });
   }
 });
@@ -305,7 +324,7 @@ directMessagingRouter.patch('/messages/:id', requireAuth, async (req: AuthedRequ
 
     res.json({ success: true });
   } catch (err) {
-    console.error('Error updating Direct message:', err);
+    logDirectMessagingError('Error updating Direct message:', err);
     res.status(500).json({ error: 'Failed to update message' });
   }
 });
@@ -329,7 +348,7 @@ directMessagingRouter.get('/messages/:id/attachments', requireAuth, async (req: 
 
     res.json({ attachments });
   } catch (err) {
-    console.error('Error fetching message attachments:', err);
+    logDirectMessagingError('Error fetching message attachments:', err);
     res.status(500).json({ error: 'Failed to fetch attachments' });
   }
 });
@@ -353,7 +372,7 @@ directMessagingRouter.get('/stats', requireAuth, async (req: AuthedRequest, res)
 
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('Error fetching Direct messaging stats:', err);
+    logDirectMessagingError('Error fetching Direct messaging stats:', err);
     res.status(500).json({ error: 'Failed to fetch stats' });
   }
 });

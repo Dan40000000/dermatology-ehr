@@ -7,6 +7,7 @@ import { userStore } from "../services/userStore";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rateLimit";
 import { authLimiter } from "../middleware/rateLimiter";
+import { logger } from "../lib/logger";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -18,6 +19,24 @@ const refreshSchema = z.object({
 });
 
 export const authRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logAuthError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * @swagger
@@ -95,7 +114,7 @@ authRouter.post("/login", authLimiter, async (req, res) => {
     const tokens = await issueTokens(user);
     return res.json({ user: userStore.mask(user), tokens, tenantId });
   } catch (err) {
-    console.error("Login error:", err);
+    logAuthError("Login error:", err);
     return res.status(500).json({ error: "Login failed" });
   }
 });

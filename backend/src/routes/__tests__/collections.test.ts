@@ -5,6 +5,7 @@ import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
 import * as collectionsService from "../../services/collectionsService";
 import * as costEstimator from "../../services/costEstimator";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -44,6 +45,15 @@ jest.mock("../../services/costEstimator", () => ({
   quickEstimate: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/collections", collectionsRouter);
@@ -52,6 +62,7 @@ const queryMock = pool.query as jest.Mock;
 const connectMock = pool.connect as jest.Mock;
 const collectionsMock = collectionsService as jest.Mocked<typeof collectionsService>;
 const costEstimatorMock = costEstimator as jest.Mocked<typeof costEstimator>;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const makeClient = () => ({
   query: jest.fn().mockResolvedValue({ rows: [] }),
@@ -72,10 +83,35 @@ beforeEach(() => {
   costEstimatorMock.createCostEstimate.mockReset();
   costEstimatorMock.getEstimateByAppointment.mockReset();
   costEstimatorMock.quickEstimate.mockReset();
+  loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
 describe("Collections routes", () => {
+  it("GET /collections/patient/:id/balance logs sanitized Error failures", async () => {
+    collectionsMock.getPatientBalance.mockRejectedValueOnce(new Error("balance query failed"));
+
+    const res = await request(app).get("/collections/patient/p1/balance");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch patient balance");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching patient balance:", {
+      error: "balance query failed",
+    });
+  });
+
+  it("GET /collections/patient/:id/balance masks non-Error failures", async () => {
+    collectionsMock.getPatientBalance.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+    const res = await request(app).get("/collections/patient/p1/balance");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to fetch patient balance");
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching patient balance:", {
+      error: "Unknown error",
+    });
+  });
+
   it("GET /collections/patient/:id/balance returns defaults when no balance", async () => {
     collectionsMock.getPatientBalance.mockResolvedValueOnce(null);
     const res = await request(app).get("/collections/patient/p1/balance");

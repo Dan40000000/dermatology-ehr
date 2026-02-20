@@ -2,6 +2,7 @@ import request from "supertest";
 import express from "express";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
@@ -19,6 +20,15 @@ jest.mock("../../services/audit", () => ({
   auditLog: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),
@@ -33,10 +43,12 @@ app.use("/canned-responses", cannedResponsesRouter);
 
 const queryMock = pool.query as jest.Mock;
 const auditMock = auditLog as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
   auditMock.mockReset();
+  loggerMock.error.mockReset();
 });
 
 describe("Canned responses routes", () => {
@@ -51,6 +63,18 @@ describe("Canned responses routes", () => {
     queryMock.mockRejectedValueOnce(new Error("boom"));
     const res = await request(app).get("/canned-responses");
     expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching canned responses:", {
+      error: "boom",
+    });
+  });
+
+  it("GET /canned-responses masks non-Error failures", async () => {
+    queryMock.mockRejectedValueOnce({ title: "Sensitive canned response" });
+    const res = await request(app).get("/canned-responses");
+    expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith("Error fetching canned responses:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /canned-responses/:id returns 404 when missing", async () => {

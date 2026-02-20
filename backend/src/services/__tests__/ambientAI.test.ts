@@ -7,6 +7,7 @@ jest.mock('../../lib/logger', () => ({
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
+    debug: jest.fn(),
   },
 }));
 
@@ -188,6 +189,29 @@ describe('AmbientAI Service', () => {
         confidence: 0.93,
       },
     ];
+    const doctorPatientSegments: ambientAI.TranscriptionSegment[] = [
+      {
+        speaker: 'doctor',
+        text: 'What brings you in today?',
+        start: 0,
+        end: 3,
+        confidence: 0.95,
+      },
+      {
+        speaker: 'patient',
+        text: 'I have an itchy rash on both forearms for two weeks.',
+        start: 3,
+        end: 8,
+        confidence: 0.94,
+      },
+      {
+        speaker: 'doctor',
+        text: 'Exam shows erythematous papules; start triamcinolone cream twice daily.',
+        start: 8,
+        end: 14,
+        confidence: 0.93,
+      },
+    ];
 
     it('should use mock note generation when no API key', async () => {
       const result = await ambientAI.generateClinicalNote(transcriptText, segments);
@@ -211,6 +235,14 @@ describe('AmbientAI Service', () => {
       expect(logger.info).toHaveBeenCalledWith(
         'Using mock note generation (no API key configured)'
       );
+    });
+
+    it('should support doctor/patient speaker labels in mock generation', async () => {
+      const result = await ambientAI.generateClinicalNote(transcriptText, doctorPatientSegments);
+
+      expect(result.chiefComplaint.toLowerCase()).toContain('rash');
+      expect(result.patientSummary.yourConcerns.length).toBeGreaterThan(0);
+      expect(result.medications.some((med) => med.name.toLowerCase().includes('triamcinolone'))).toBe(true);
     });
 
     it('should use Claude when Anthropic API key available', async () => {
@@ -340,6 +372,168 @@ describe('AmbientAI Service', () => {
       );
     });
 
+    it('should mask SSN/phone/email before Claude outbound payload while keeping clinical context', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+      const phiTranscript =
+        'Patient SSN 123-45-6789, phone 415-555-1234, email jane.doe@example.com, with itchy rash on forearms.';
+      const phiSegments: ambientAI.TranscriptionSegment[] = [
+        {
+          speaker: 'doctor',
+          text: 'Please confirm your details and skin symptoms.',
+          start: 0,
+          end: 3,
+          confidence: 0.95,
+        },
+        {
+          speaker: 'patient',
+          text: 'My SSN is 123-45-6789, phone 415-555-1234, email jane.doe@example.com, and I have an itchy rash.',
+          start: 3,
+          end: 9,
+          confidence: 0.94,
+        },
+      ];
+
+      const mockClaudeResponse = {
+        ok: true,
+        json: async () => ({
+          content: [
+            {
+              text: JSON.stringify({
+                chiefComplaint: 'Itchy rash',
+                hpi: 'Rash on forearms',
+                ros: 'Skin positive for rash',
+                physicalExam: 'Erythematous papules',
+                assessment: 'Contact dermatitis',
+                plan: 'Triamcinolone 0.1% cream',
+                sectionConfidence: {
+                  chiefComplaint: 0.92,
+                  hpi: 0.9,
+                  ros: 0.85,
+                  physicalExam: 0.9,
+                  assessment: 0.88,
+                  plan: 0.9,
+                },
+                suggestedIcd10: [],
+                suggestedCpt: [],
+                medications: [],
+                allergies: [],
+                followUpTasks: [],
+                differentialDiagnoses: [],
+                recommendedTests: [],
+                patientSummary: {
+                  whatWeDiscussed: 'Rash review',
+                  yourConcerns: ['itchy rash'],
+                  treatmentPlan: 'Topical steroid',
+                  followUp: '2 weeks',
+                },
+              }),
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockClaudeResponse);
+
+      await ambientAI.generateClinicalNote(phiTranscript, phiSegments);
+
+      const requestBody = JSON.parse(
+        ((global.fetch as jest.Mock).mock.calls[0]?.[1] as { body?: string }).body || '{}'
+      );
+      const prompt = String(requestBody?.messages?.[0]?.content || '');
+
+      expect(prompt).not.toContain('123-45-6789');
+      expect(prompt).not.toContain('415-555-1234');
+      expect(prompt).not.toContain('jane.doe@example.com');
+      expect(prompt).toContain('***-**-****');
+      expect(prompt).toContain('***-***-****');
+      expect(prompt).toContain('[EMAIL REDACTED]');
+      expect(prompt.toLowerCase()).toContain('itchy rash');
+    });
+
+    it('should mask SSN/phone/email before OpenAI outbound payload while keeping clinical context', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.OPENAI_NOTE_MODEL = 'gpt-4o';
+
+      const phiTranscript =
+        'Patient SSN 123-45-6789, phone 415-555-1234, email jane.doe@example.com, reports itchy rash and scaling.';
+      const phiSegments: ambientAI.TranscriptionSegment[] = [
+        {
+          speaker: 'doctor',
+          text: 'Describe your symptoms and any exposures.',
+          start: 0,
+          end: 2,
+          confidence: 0.95,
+        },
+        {
+          speaker: 'patient',
+          text: 'I have itchy rash and scaling; SSN 123-45-6789; phone 415-555-1234; email jane.doe@example.com.',
+          start: 2,
+          end: 8,
+          confidence: 0.93,
+        },
+      ];
+
+      const mockOpenAIResponse = {
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  chiefComplaint: 'Itchy rash',
+                  hpi: 'Rash with scaling',
+                  ros: 'Skin positive for rash and scaling',
+                  physicalExam: 'Scaly erythematous patches',
+                  assessment: 'Dermatitis',
+                  plan: 'Topical steroid and moisturizer',
+                  sectionConfidence: {
+                    chiefComplaint: 0.9,
+                    hpi: 0.88,
+                    ros: 0.84,
+                    physicalExam: 0.89,
+                    assessment: 0.86,
+                    plan: 0.89,
+                  },
+                  suggestedIcd10: [],
+                  suggestedCpt: [],
+                  medications: [],
+                  allergies: [],
+                  followUpTasks: [],
+                  differentialDiagnoses: [],
+                  recommendedTests: [],
+                  patientSummary: {
+                    whatWeDiscussed: 'Rash and scaling',
+                    yourConcerns: ['itchy rash'],
+                    treatmentPlan: 'Apply treatment',
+                    followUp: '2 weeks',
+                  },
+                }),
+              },
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockOpenAIResponse);
+
+      await ambientAI.generateClinicalNote(phiTranscript, phiSegments);
+
+      const requestBody = JSON.parse(
+        ((global.fetch as jest.Mock).mock.calls[0]?.[1] as { body?: string }).body || '{}'
+      );
+      const prompt = String(requestBody?.messages?.[1]?.content || '');
+
+      expect(prompt).not.toContain('123-45-6789');
+      expect(prompt).not.toContain('415-555-1234');
+      expect(prompt).not.toContain('jane.doe@example.com');
+      expect(prompt).toContain('***-**-****');
+      expect(prompt).toContain('***-***-****');
+      expect(prompt).toContain('[EMAIL REDACTED]');
+      expect(prompt.toLowerCase()).toContain('itchy rash');
+      expect(prompt.toLowerCase()).toContain('scaling');
+    });
+
     it('should use agent configuration when provided', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
 
@@ -412,13 +606,49 @@ describe('AmbientAI Service', () => {
       process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
 
       (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('API Error'));
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
 
       const result = await ambientAI.generateClinicalNote(transcriptText, segments);
 
       expect(result).toHaveProperty('chiefComplaint');
-      expect(consoleErrorSpy).toHaveBeenCalled();
-      consoleErrorSpy.mockRestore();
+      expect(logger.warn).toHaveBeenCalledWith(
+        'AI note generation failed, falling back to mock',
+        expect.objectContaining({ error: 'API Error' })
+      );
+    });
+
+    it('redacts PHI in API error logs before fallback', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+      (global.fetch as jest.Mock).mockRejectedValueOnce(
+        new Error('Provider failure for SSN 123-45-6789 and email jane.doe@example.com')
+      );
+
+      await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        'AI note generation failed, falling back to mock',
+        expect.objectContaining({
+          error: expect.not.stringContaining('123-45-6789'),
+        })
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        'AI note generation failed, falling back to mock',
+        expect.objectContaining({
+          error: expect.not.stringContaining('jane.doe@example.com'),
+        })
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        'AI note generation failed, falling back to mock',
+        expect.objectContaining({
+          error: expect.stringContaining('[SSN-REDACTED]'),
+        })
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        'AI note generation failed, falling back to mock',
+        expect.objectContaining({
+          error: expect.stringContaining('[EMAIL-REDACTED]'),
+        })
+      );
     });
 
     it('should parse AI response with markdown code blocks', async () => {
@@ -514,12 +744,36 @@ describe('AmbientAI Service', () => {
       };
 
       (global.fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
 
       const result = await ambientAI.generateClinicalNote(transcriptText, segments);
 
       expect(result).toHaveProperty('chiefComplaint');
-      consoleErrorSpy.mockRestore();
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Failed to parse AI note, using fallback',
+        expect.any(Object)
+      );
+    });
+
+    it('should fallback from malformed AI JSON with doctor/patient speaker labels', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+      const mockResponse = {
+        ok: true,
+        json: async () => ({
+          content: [{ text: '{ malformed' }],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await ambientAI.generateClinicalNote(transcriptText, doctorPatientSegments);
+
+      expect(result.chiefComplaint.toLowerCase()).toContain('rash');
+      expect(result.medications.some((med) => med.name.toLowerCase().includes('triamcinolone'))).toBe(true);
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Failed to parse AI note, using fallback',
+        expect.any(Object)
+      );
     });
 
     it('should calculate overall confidence from section scores', async () => {

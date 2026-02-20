@@ -3,6 +3,7 @@ import express from "express";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
 import { clinicalDecisionSupportService } from "../../services/clinicalDecisionSupport";
+import { logger } from "../../lib/logger";
 
 let authUser: any = { id: "user-1", tenantId: "tenant-1", role: "provider" };
 
@@ -35,6 +36,15 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const cdsRouter = require("../cds").default;
 
 const app = express();
@@ -44,6 +54,7 @@ app.use("/cds", cdsRouter);
 const queryMock = pool.query as jest.Mock;
 const auditMock = auditLog as jest.Mock;
 const cdsMock = clinicalDecisionSupportService as jest.Mocked<typeof clinicalDecisionSupportService>;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   authUser = { id: "user-1", tenantId: "tenant-1", role: "provider" };
@@ -52,6 +63,7 @@ beforeEach(() => {
   cdsMock.runCDSChecks.mockReset();
   cdsMock.getPatientAlerts.mockReset();
   cdsMock.dismissAlert.mockReset();
+  loggerMock.error.mockReset();
 });
 
 describe("CDS routes", () => {
@@ -83,6 +95,19 @@ describe("CDS routes", () => {
     cdsMock.runCDSChecks.mockRejectedValueOnce(new Error("boom"));
     const res = await request(app).post("/cds/check/p1").send({});
     expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith("CDS check error:", {
+      error: "boom",
+    });
+  });
+
+  it("POST /cds/check/:patientId masks non-Error failures", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "p1" }] });
+    cdsMock.runCDSChecks.mockRejectedValueOnce({ patientId: "p1" });
+    const res = await request(app).post("/cds/check/p1").send({});
+    expect(res.status).toBe(500);
+    expect(loggerMock.error).toHaveBeenCalledWith("CDS check error:", {
+      error: "Unknown error",
+    });
   });
 
   it("GET /cds/alerts/:patientId returns alerts", async () => {

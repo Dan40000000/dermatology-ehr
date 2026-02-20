@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { messagingRouter } from "../messaging";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -23,6 +24,15 @@ jest.mock("../../services/audit", () => ({
   auditLog: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 jest.mock("crypto", () => {
   const actual = jest.requireActual("crypto");
   return {
@@ -38,6 +48,7 @@ app.use("/api/messaging", messagingRouter);
 const queryMock = pool.query as jest.Mock;
 const connectMock = pool.connect as jest.Mock;
 const auditLogMock = auditLog as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 let mockClient: any;
 
@@ -45,6 +56,7 @@ beforeEach(() => {
   queryMock.mockReset();
   connectMock.mockReset();
   auditLogMock.mockReset();
+  loggerMock.error.mockReset();
 
   mockClient = {
     query: jest.fn(),
@@ -127,6 +139,21 @@ describe("Messaging routes", () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to fetch threads");
+      expect(loggerMock.error).toHaveBeenCalledWith("Error fetching threads:", {
+        error: "Database error",
+      });
+    });
+
+    it("should mask non-Error failures", async () => {
+      queryMock.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+      const res = await request(app).get("/api/messaging/threads");
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to fetch threads");
+      expect(loggerMock.error).toHaveBeenCalledWith("Error fetching threads:", {
+        error: "Unknown error",
+      });
     });
   });
 

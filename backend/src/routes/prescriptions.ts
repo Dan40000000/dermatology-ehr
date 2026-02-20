@@ -6,8 +6,27 @@ import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
 import { validatePrescription, checkDrugInteractions, checkAllergies } from '../services/prescriptionValidator';
 import { sendNewRx, checkFormulary, getPatientBenefits } from '../services/surescriptsService';
+import { logger } from '../lib/logger';
 
 export const prescriptionsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logPrescriptionsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Validation schemas
 const createPrescriptionSchema = z.object({
@@ -146,7 +165,7 @@ prescriptionsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
 
     return res.json({ prescriptions: result.rows });
   } catch (error) {
-    console.error('Error fetching prescriptions:', error);
+    logPrescriptionsError('Error fetching prescriptions:', error);
     return res.status(500).json({ error: 'Failed to fetch prescriptions' });
   }
 });
@@ -191,7 +210,7 @@ prescriptionsRouter.get('/refill-requests', requireAuth, async (req: AuthedReque
 
     return res.json({ refillRequests: result.rows });
   } catch (error) {
-    console.error('Error fetching refill requests:', error);
+    logPrescriptionsError('Error fetching refill requests:', error);
     return res.status(500).json({ error: 'Failed to fetch refill requests' });
   }
 });
@@ -222,7 +241,7 @@ prescriptionsRouter.get('/:id', requireAuth, async (req: AuthedRequest, res) => 
 
     return res.json({ prescription: result.rows[0] });
   } catch (error) {
-    console.error('Error fetching prescription:', error);
+    logPrescriptionsError('Error fetching prescription:', error);
     return res.status(500).json({ error: 'Failed to fetch prescription' });
   }
 });
@@ -312,7 +331,7 @@ prescriptionsRouter.get('/patient/:patientId', requireAuth, async (req: AuthedRe
 
     return res.json({ prescriptions });
   } catch (error) {
-    console.error('Error fetching patient prescriptions:', error);
+    logPrescriptionsError('Error fetching patient prescriptions:', error);
     return res.status(500).json({ error: 'Failed to fetch patient prescriptions' });
   }
 });
@@ -349,7 +368,7 @@ prescriptionsRouter.get('/encounter/:encounterId', requireAuth, async (req: Auth
 
     return res.json({ prescriptions: result.rows });
   } catch (error) {
-    console.error('Error fetching encounter prescriptions:', error);
+    logPrescriptionsError('Error fetching encounter prescriptions:', error);
     return res.status(500).json({ error: 'Failed to fetch encounter prescriptions' });
   }
 });
@@ -408,7 +427,7 @@ prescriptionsRouter.get('/:id/refill-history', requireAuth, async (req: AuthedRe
       },
     });
   } catch (error) {
-    console.error('Error fetching refill history:', error);
+    logPrescriptionsError('Error fetching refill history:', error);
     return res.status(500).json({ error: 'Failed to fetch refill history' });
   }
 });
@@ -547,7 +566,7 @@ prescriptionsRouter.post(
         validationWarnings: validation.warnings.length > 0 ? validation.warnings : undefined,
       });
     } catch (error) {
-      console.error('Error creating prescription:', error);
+      logPrescriptionsError('Error creating prescription:', error);
       return res.status(500).json({ error: 'Failed to create prescription' });
     }
   }
@@ -638,7 +657,7 @@ prescriptionsRouter.put(
 
       return res.json({ success: true, id });
     } catch (error) {
-      console.error('Error updating prescription:', error);
+      logPrescriptionsError('Error updating prescription:', error);
       return res.status(500).json({ error: 'Failed to update prescription' });
     }
   }
@@ -677,7 +696,7 @@ prescriptionsRouter.delete(
 
       return res.json({ success: true });
     } catch (error) {
-      console.error('Error cancelling prescription:', error);
+      logPrescriptionsError('Error cancelling prescription:', error);
       return res.status(500).json({ error: 'Failed to cancel prescription' });
     }
   }
@@ -813,7 +832,7 @@ prescriptionsRouter.post(
         message: 'Prescription sent successfully',
       });
     } catch (error) {
-      console.error('Error sending eRx:', error);
+      logPrescriptionsError('Error sending eRx:', error);
       return res.status(500).json({ error: 'Failed to send electronic prescription' });
     }
   }
@@ -835,7 +854,7 @@ prescriptionsRouter.post(
 
       return res.json(formularyResult);
     } catch (error) {
-      console.error('Error checking formulary:', error);
+      logPrescriptionsError('Error checking formulary:', error);
       return res.status(500).json({ error: 'Failed to check formulary' });
     }
   }
@@ -868,7 +887,7 @@ prescriptionsRouter.get(
 
       return res.json(benefits);
     } catch (error) {
-      console.error('Error fetching patient benefits:', error);
+      logPrescriptionsError('Error fetching patient benefits:', error);
       return res.status(500).json({ error: 'Failed to fetch patient benefits' });
     }
   }
@@ -913,7 +932,7 @@ prescriptionsRouter.post(
         }
       });
     } catch (error) {
-      console.error('Error sending prescription:', error);
+      logPrescriptionsError('Error sending prescription:', error);
       return res.status(500).json({ error: 'Failed to send prescription' });
     }
   }
@@ -965,7 +984,7 @@ prescriptionsRouter.post(
 
       return res.json({ success: true, message: 'Refill denied' });
     } catch (error) {
-      console.error('Error denying refill:', error);
+      logPrescriptionsError('Error denying refill:', error);
       return res.status(500).json({ error: 'Failed to deny refill' });
     }
   }
@@ -1017,7 +1036,7 @@ prescriptionsRouter.post(
 
       return res.json({ success: true, message: 'Change request submitted' });
     } catch (error) {
-      console.error('Error requesting change:', error);
+      logPrescriptionsError('Error requesting change:', error);
       return res.status(500).json({ error: 'Failed to request change' });
     }
   }
@@ -1064,7 +1083,7 @@ prescriptionsRouter.post(
 
       return res.json({ success: true, message: 'Audit confirmation recorded' });
     } catch (error) {
-      console.error('Error confirming audit:', error);
+      logPrescriptionsError('Error confirming audit:', error);
       return res.status(500).json({ error: 'Failed to confirm audit' });
     }
   }
@@ -1193,7 +1212,7 @@ prescriptionsRouter.post(
         results,
       });
     } catch (error) {
-      console.error('Error sending bulk eRx:', error);
+      logPrescriptionsError('Error sending bulk eRx:', error);
       return res.status(500).json({ error: 'Failed to send bulk prescriptions' });
     }
   }
@@ -1255,7 +1274,7 @@ prescriptionsRouter.post(
         message: 'Prescriptions marked for printing',
       });
     } catch (error) {
-      console.error('Error printing bulk prescriptions:', error);
+      logPrescriptionsError('Error printing bulk prescriptions:', error);
       return res.status(500).json({ error: 'Failed to print prescriptions' });
     }
   }
@@ -1371,7 +1390,7 @@ prescriptionsRouter.post(
         results,
       });
     } catch (error) {
-      console.error('Error creating bulk refills:', error);
+      logPrescriptionsError('Error creating bulk refills:', error);
       return res.status(500).json({ error: 'Failed to create bulk refills' });
     }
   }

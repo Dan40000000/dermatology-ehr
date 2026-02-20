@@ -3,9 +3,28 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { createAuditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 // Comprehensive audit log routes for HIPAA compliance
 export const auditRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logAuditRoutesError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * @swagger
@@ -367,7 +386,7 @@ auditRouter.get("/", requireAuth, requireRoles(["admin", "compliance_officer"]),
       offset: parseInt(offset as string, 10),
     });
   } catch (error: any) {
-    console.error("Error fetching audit logs:", error);
+    logAuditRoutesError("Error fetching audit logs:", error);
     res.status(500).json({ error: "Failed to fetch audit logs" });
   }
 });
@@ -417,7 +436,7 @@ auditRouter.get("/user/:userId", requireAuth, requireRoles(["admin", "compliance
 
     res.json({ logs: result.rows });
   } catch (error: any) {
-    console.error("Error fetching user activity:", error);
+    logAuditRoutesError("Error fetching user activity:", error);
     res.status(500).json({ error: "Failed to fetch user activity" });
   }
 });
@@ -452,7 +471,7 @@ auditRouter.get("/resource/:type/:id", requireAuth, requireRoles(["admin", "comp
 
     res.json({ logs: result.rows });
   } catch (error: any) {
-    console.error("Error fetching resource access log:", error);
+    logAuditRoutesError("Error fetching resource access log:", error);
     res.status(500).json({ error: "Failed to fetch resource access log" });
   }
 });
@@ -523,7 +542,7 @@ auditRouter.get("/summary", requireAuth, requireRoles(["admin", "compliance_offi
       resourceBreakdown: resourcesResult.rows,
     });
   } catch (error: any) {
-    console.error("Error fetching audit summary:", error);
+    logAuditRoutesError("Error fetching audit summary:", error);
     res.status(500).json({ error: "Failed to fetch audit summary" });
   }
 });
@@ -637,7 +656,7 @@ auditRouter.post("/export", requireAuth, requireRoles(["admin"]), async (req: Au
     res.setHeader("Content-Disposition", `attachment; filename="Audit_Log_${date}.csv"`);
     res.send(csv);
   } catch (error: any) {
-    console.error("Error exporting audit logs:", error);
+    logAuditRoutesError("Error exporting audit logs:", error);
     res.status(500).json({ error: "Failed to export audit logs" });
   }
 });

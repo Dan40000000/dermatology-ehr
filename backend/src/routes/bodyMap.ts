@@ -5,6 +5,7 @@ import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
 import { auditLog } from '../services/audit';
+import { logger } from '../lib/logger';
 
 const lesionSchema = z.object({
   patient_id: z.string().uuid(),
@@ -50,6 +51,24 @@ const observationSchema = z.object({
 });
 
 export const bodyMapRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Unknown error';
+}
+
+function logBodyMapError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * GET /api/patients/:id/lesions
@@ -102,7 +121,7 @@ bodyMapRouter.get('/patients/:id/lesions', requireAuth, async (req: AuthedReques
 
     res.json({ lesions: result.rows });
   } catch (error: any) {
-    console.error('Error fetching lesions:', error);
+    logBodyMapError('Error fetching lesions:', error);
     res.status(500).json({ error: 'Failed to fetch lesions' });
   }
 });
@@ -172,7 +191,7 @@ bodyMapRouter.post(
 
       res.status(201).json({ id: lesionId });
     } catch (error: any) {
-      console.error('Error creating lesion:', error);
+      logBodyMapError('Error creating lesion:', error);
       res.status(500).json({ error: 'Failed to create lesion' });
     }
   }
@@ -295,7 +314,7 @@ bodyMapRouter.put(
 
       res.json({ ok: true });
     } catch (error: any) {
-      console.error('Error updating lesion:', error);
+      logBodyMapError('Error updating lesion:', error);
       res.status(500).json({ error: 'Failed to update lesion' });
     }
   }
@@ -330,7 +349,7 @@ bodyMapRouter.delete(
 
       res.json({ ok: true });
     } catch (error: any) {
-      console.error('Error deleting lesion:', error);
+      logBodyMapError('Error deleting lesion:', error);
       res.status(500).json({ error: 'Failed to delete lesion' });
     }
   }
@@ -378,7 +397,7 @@ bodyMapRouter.get(
 
       res.json({ observations: result.rows });
     } catch (error: any) {
-      console.error('Error fetching lesion history:', error);
+      logBodyMapError('Error fetching lesion history:', error);
       res.status(500).json({ error: 'Failed to fetch lesion history' });
     }
   }
@@ -436,7 +455,7 @@ bodyMapRouter.post(
 
       res.status(201).json({ id: observationId });
     } catch (error: any) {
-      console.error('Error creating observation:', error);
+      logBodyMapError('Error creating observation:', error);
       res.status(500).json({ error: 'Failed to create observation' });
     }
   }

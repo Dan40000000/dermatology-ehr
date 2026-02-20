@@ -4,8 +4,27 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { superbillService, SuperbillStatus } from "../services/superbillService";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 export const superbillsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logSuperbillsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // Schema for adding/updating line items
 const lineItemSchema = z.object({
@@ -83,7 +102,7 @@ superbillsRouter.post(
       return res.status(201).json(superbill);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to generate superbill";
-      console.error("Error generating superbill:", error);
+      logSuperbillsError("Error generating superbill:", error);
       return res.status(400).json({ error: message });
     }
   }
@@ -127,7 +146,7 @@ superbillsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
     await auditLog(tenantId, req.user!.id, "superbill_viewed", "superbill", String(id));
     return res.json(details);
   } catch (error) {
-    console.error("Error fetching superbill:", error);
+    logSuperbillsError("Error fetching superbill:", error);
     return res.status(500).json({ error: "Failed to fetch superbill" });
   }
 });
@@ -173,7 +192,7 @@ superbillsRouter.get(
       const details = await superbillService.getSuperbillDetails(tenantId, superbill.id);
       return res.json(details);
     } catch (error) {
-      console.error("Error fetching superbill by encounter:", error);
+      logSuperbillsError("Error fetching superbill by encounter:", error);
       return res.status(500).json({ error: "Failed to fetch superbill" });
     }
   }
@@ -253,7 +272,7 @@ superbillsRouter.post(
       return res.status(201).json(lineItem);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to add line item";
-      console.error("Error adding line item:", error);
+      logSuperbillsError("Error adding line item:", error);
       return res.status(400).json({ error: message });
     }
   }
@@ -326,7 +345,7 @@ superbillsRouter.put(
       return res.json(lineItem);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to update line item";
-      console.error("Error updating line item:", error);
+      logSuperbillsError("Error updating line item:", error);
       return res.status(400).json({ error: message });
     }
   }
@@ -373,7 +392,7 @@ superbillsRouter.delete(
       return res.status(204).send();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to delete line item";
-      console.error("Error deleting line item:", error);
+      logSuperbillsError("Error deleting line item:", error);
       return res.status(400).json({ error: message });
     }
   }
@@ -408,7 +427,7 @@ superbillsRouter.get("/:id/totals", requireAuth, async (req: AuthedRequest, res)
     const totals = await superbillService.calculateTotals(tenantId, String(id));
     return res.json(totals);
   } catch (error) {
-    console.error("Error calculating totals:", error);
+    logSuperbillsError("Error calculating totals:", error);
     return res.status(500).json({ error: "Failed to calculate totals" });
   }
 });
@@ -450,7 +469,7 @@ superbillsRouter.post(
       return res.json(superbill);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to finalize superbill";
-      console.error("Error finalizing superbill:", error);
+      logSuperbillsError("Error finalizing superbill:", error);
       return res.status(400).json({ error: message });
     }
   }
@@ -500,7 +519,7 @@ superbillsRouter.post(
       return res.json(superbill);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to void superbill";
-      console.error("Error voiding superbill:", error);
+      logSuperbillsError("Error voiding superbill:", error);
       return res.status(400).json({ error: message });
     }
   }
@@ -559,7 +578,7 @@ superbillsRouter.get(
 
       return res.json(result);
     } catch (error) {
-      console.error("Error fetching patient superbills:", error);
+      logSuperbillsError("Error fetching patient superbills:", error);
       return res.status(500).json({ error: "Failed to fetch superbills" });
     }
   }
@@ -619,7 +638,7 @@ superbillsRouter.get("/codes/common", requireAuth, async (req: AuthedRequest, re
 
     return res.json({ codes });
   } catch (error) {
-    console.error("Error fetching common codes:", error);
+    logSuperbillsError("Error fetching common codes:", error);
     return res.status(500).json({ error: "Failed to fetch codes" });
   }
 });
@@ -673,7 +692,7 @@ superbillsRouter.get("/codes/search", requireAuth, async (req: AuthedRequest, re
     const codes = await superbillService.searchCodes(tenantId, codeType, searchTerm, limit);
     return res.json({ codes });
   } catch (error) {
-    console.error("Error searching codes:", error);
+    logSuperbillsError("Error searching codes:", error);
     return res.status(500).json({ error: "Failed to search codes" });
   }
 });
@@ -711,7 +730,7 @@ superbillsRouter.post(
       return res.json({ isFavorite });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to toggle favorite";
-      console.error("Error toggling favorite:", error);
+      logSuperbillsError("Error toggling favorite:", error);
       return res.status(400).json({ error: message });
     }
   }
@@ -751,7 +770,7 @@ superbillsRouter.get("/fee/:cptCode", requireAuth, async (req: AuthedRequest, re
     const fee = await superbillService.getFeeForCpt(tenantId, String(cptCode), payerId);
     return res.json({ cptCode: String(cptCode), fee, payerId: payerId || null });
   } catch (error) {
-    console.error("Error fetching fee:", error);
+    logSuperbillsError("Error fetching fee:", error);
     return res.status(500).json({ error: "Failed to fetch fee" });
   }
 });

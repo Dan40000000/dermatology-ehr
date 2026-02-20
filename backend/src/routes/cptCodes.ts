@@ -2,8 +2,27 @@ import { Router } from "express";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { logger } from "../lib/logger";
 
 export const cptCodesRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logCptCodesError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // GET /api/cpt-codes - List/search CPT codes
 cptCodesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
@@ -42,7 +61,7 @@ cptCodesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
     const result = await pool.query(query, params);
     return res.json({ cptCodes: result.rows });
   } catch (err) {
-    console.error("Error fetching CPT codes:", err);
+    logCptCodesError("Error fetching CPT codes", err);
     return res.status(500).json({ error: "Failed to fetch CPT codes" });
   }
 });
@@ -68,7 +87,7 @@ cptCodesRouter.get("/:code", requireAuth, async (req: AuthedRequest, res) => {
 
     return res.json({ cptCode: result.rows[0] });
   } catch (err) {
-    console.error("Error fetching CPT code:", err);
+    logCptCodesError("Error fetching CPT code", err);
     return res.status(500).json({ error: "Failed to fetch CPT code" });
   }
 });

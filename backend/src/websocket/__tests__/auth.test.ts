@@ -81,7 +81,11 @@ describe("authenticateSocket", () => {
 
     authenticateSocket(socket as any, next);
 
-    expect(socket.user).toEqual(decoded);
+    expect(socket.user).toEqual({
+      ...decoded,
+      secondaryRoles: [],
+      roles: ['admin'],
+    });
     expect(socket.tenantId).toBe("tenant-1");
     expect(next).toHaveBeenCalledWith();
   });

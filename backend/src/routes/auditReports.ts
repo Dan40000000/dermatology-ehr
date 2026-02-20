@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { logger } from "../lib/logger";
 import { createAuditLog } from "../services/audit";
 import {
   generateAccessReport,
@@ -24,6 +25,24 @@ import {
 } from "../services/auditReportService";
 
 export const auditReportsRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logAuditReportsError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // ============================================================================
 // Access Log Queries
@@ -123,7 +142,7 @@ auditReportsRouter.get(
       const result = await generateAccessReport(tenantId, dateRange, filters);
       res.json(result);
     } catch (error) {
-      console.error("Error fetching access logs:", error);
+      logAuditReportsError("Error fetching access logs", error);
       res.status(500).json({ error: "Failed to fetch access logs" });
     }
   }
@@ -209,7 +228,7 @@ auditReportsRouter.get(
       const result = await generateChangeReport(tenantId, dateRange, entityType as string | undefined, filters);
       res.json(result);
     } catch (error) {
-      console.error("Error fetching change logs:", error);
+      logAuditReportsError("Error fetching change logs", error);
       res.status(500).json({ error: "Failed to fetch change logs" });
     }
   }
@@ -296,7 +315,7 @@ auditReportsRouter.get(
 
       res.json(result);
     } catch (error) {
-      console.error("Error fetching patient access history:", error);
+      logAuditReportsError("Error fetching patient access history", error);
       res.status(500).json({ error: "Failed to fetch patient access history" });
     }
   }
@@ -367,7 +386,7 @@ auditReportsRouter.get(
       const result = await getUserActivitySummary(tenantId, userId as string, dateRange);
       res.json(result);
     } catch (error) {
-      console.error("Error fetching user activity:", error);
+      logAuditReportsError("Error fetching user activity", error);
       res.status(500).json({ error: "Failed to fetch user activity" });
     }
   }
@@ -410,7 +429,7 @@ auditReportsRouter.get(
       const result = await detectSuspiciousActivity(tenantId, userId as string);
       res.json(result);
     } catch (error) {
-      console.error("Error detecting suspicious activity:", error);
+      logAuditReportsError("Error detecting suspicious activity", error);
       res.status(500).json({ error: "Failed to detect suspicious activity" });
     }
   }
@@ -462,7 +481,7 @@ auditReportsRouter.get(
 
       res.json({ templates });
     } catch (error) {
-      console.error("Error fetching report templates:", error);
+      logAuditReportsError("Error fetching report templates", error);
       res.status(500).json({ error: "Failed to fetch report templates" });
     }
   }
@@ -544,7 +563,7 @@ auditReportsRouter.post(
 
       res.status(201).json({ template });
     } catch (error) {
-      console.error("Error creating report template:", error);
+      logAuditReportsError("Error creating report template", error);
       res.status(500).json({ error: "Failed to create report template" });
     }
   }
@@ -589,7 +608,7 @@ auditReportsRouter.get(
 
       res.json({ template });
     } catch (error) {
-      console.error("Error fetching report template:", error);
+      logAuditReportsError("Error fetching report template", error);
       res.status(500).json({ error: "Failed to fetch report template" });
     }
   }
@@ -647,7 +666,7 @@ auditReportsRouter.post(
       await scheduleReport(tenantId, templateId as string, cronExpression);
       res.json({ message: "Schedule updated successfully" });
     } catch (error) {
-      console.error("Error scheduling report:", error);
+      logAuditReportsError("Error scheduling report", error);
       res.status(500).json({ error: "Failed to schedule report" });
     }
   }
@@ -714,7 +733,7 @@ auditReportsRouter.post(
 
       res.json({ run });
     } catch (error) {
-      console.error("Error generating report:", error);
+      logAuditReportsError("Error generating report", error);
       res.status(500).json({ error: "Failed to generate report" });
     }
   }
@@ -767,7 +786,7 @@ auditReportsRouter.get(
 
       res.json(result);
     } catch (error) {
-      console.error("Error fetching report runs:", error);
+      logAuditReportsError("Error fetching report runs", error);
       res.status(500).json({ error: "Failed to fetch report runs" });
     }
   }
@@ -812,7 +831,7 @@ auditReportsRouter.get(
 
       res.json({ run });
     } catch (error) {
-      console.error("Error fetching report run:", error);
+      logAuditReportsError("Error fetching report run", error);
       res.status(500).json({ error: "Failed to fetch report run" });
     }
   }
@@ -933,7 +952,7 @@ auditReportsRouter.get(
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.send(csv);
     } catch (error) {
-      console.error("Error downloading report:", error);
+      logAuditReportsError("Error downloading report", error);
       res.status(500).json({ error: "Failed to download report" });
     }
   }
@@ -1005,7 +1024,7 @@ auditReportsRouter.get(
 
       res.json(result);
     } catch (error) {
-      console.error("Error fetching suspicious activities:", error);
+      logAuditReportsError("Error fetching suspicious activities", error);
       res.status(500).json({ error: "Failed to fetch suspicious activities" });
     }
   }
@@ -1102,7 +1121,7 @@ auditReportsRouter.post(
 
       res.status(201).json({ activity });
     } catch (error) {
-      console.error("Error logging suspicious activity:", error);
+      logAuditReportsError("Error logging suspicious activity", error);
       res.status(500).json({ error: "Failed to log suspicious activity" });
     }
   }
@@ -1179,7 +1198,7 @@ auditReportsRouter.post(
 
       res.json({ activity });
     } catch (error) {
-      console.error("Error reviewing suspicious activity:", error);
+      logAuditReportsError("Error reviewing suspicious activity", error);
       res.status(500).json({ error: "Failed to review suspicious activity" });
     }
   }

@@ -42,6 +42,24 @@ function shouldAutoStopAmbientRecording(status: string): boolean {
   return ENCOUNTER_CLOSURE_STATUSES.has(String(status || "").toLowerCase());
 }
 
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logEncountersError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
+
 async function autoStopAmbientRecordings(tenantId: string, encounterId: string): Promise<string[]> {
   const stopped = await pool.query(
     `UPDATE ambient_recordings
@@ -338,7 +356,7 @@ encountersRouter.post("/:id/status", requireAuth, requireRoles(["provider", "adm
       await recordEncounterLearning(encId);
     } catch (error) {
       // Log error but don't fail the request
-      console.error("Error recording encounter learning:", error);
+      logEncountersError("Error recording encounter learning", error);
     }
   }
 
@@ -680,7 +698,7 @@ encountersRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedReques
       count: result.rows.length
     });
   } catch (error) {
-    console.error("Error fetching encounter prescriptions:", error);
+    logEncountersError("Error fetching encounter prescriptions", error);
     return res.status(500).json({ error: "Failed to fetch encounter prescriptions" });
   }
 });
@@ -704,7 +722,7 @@ encountersRouter.post("/:id/generate-charges", requireAuth, requireRoles(["provi
       message: `Generated ${charges.length} charges from encounter`
     });
   } catch (error: any) {
-    console.error("Error generating charges:", error);
+    logEncountersError("Error generating charges", error);
     return res.status(500).json({ error: error.message || "Failed to generate charges" });
   }
 });
@@ -739,7 +757,7 @@ encountersRouter.post("/:id/diagnoses", requireAuth, requireRoles(["provider", "
 
     return res.status(201).json({ id: diagnosisId, message: "Diagnosis added successfully" });
   } catch (error: any) {
-    console.error("Error adding diagnosis:", error);
+    logEncountersError("Error adding diagnosis", error);
     return res.status(500).json({ error: error.message || "Failed to add diagnosis" });
   }
 });
@@ -776,7 +794,7 @@ encountersRouter.post("/:id/procedures", requireAuth, requireRoles(["provider", 
 
     return res.status(201).json({ id: chargeId, message: "Procedure added successfully" });
   } catch (error: any) {
-    console.error("Error adding procedure:", error);
+    logEncountersError("Error adding procedure", error);
     return res.status(500).json({ error: error.message || "Failed to add procedure" });
   }
 });
@@ -814,7 +832,7 @@ encountersRouter.post("/:id/complete", requireAuth, requireRoles(["provider", "a
       message: "Encounter completed and charges generated"
     });
   } catch (error: any) {
-    console.error("Error completing encounter:", error);
+    logEncountersError("Error completing encounter", error);
     return res.status(500).json({ error: error.message || "Failed to complete encounter" });
   }
 });
@@ -839,7 +857,7 @@ encountersRouter.post("/:id/create-claim", requireAuth, requireRoles(["provider"
       message: "Claim created successfully"
     });
   } catch (error: any) {
-    console.error("Error creating claim:", error);
+    logEncountersError("Error creating claim", error);
     return res.status(500).json({ error: error.message || "Failed to create claim" });
   }
 });
@@ -874,7 +892,7 @@ encountersRouter.get("/:id/charges", requireAuth, async (req: AuthedRequest, res
       totalCents
     });
   } catch (error) {
-    console.error("Error fetching encounter charges:", error);
+    logEncountersError("Error fetching encounter charges", error);
     return res.status(500).json({ error: "Failed to fetch encounter charges" });
   }
 });

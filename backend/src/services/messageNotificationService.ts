@@ -325,7 +325,7 @@ async function sendEmail(to: string, subject: string, body: string) {
     await sgMail.send(msg);
     console.log(`Email sent to ${to}`);
   } catch (error) {
-    console.error('SendGrid error:', error);
+    logger.error('SendGrid error:', { error: (error as Error).message });
     throw error;
   }
 }
@@ -363,7 +363,7 @@ async function sendEmail(to: string, subject: string, body: string) {
     await ses.sendEmail(params).promise();
     console.log(`Email sent to ${to}`);
   } catch (error) {
-    console.error('AWS SES error:', error);
+    logger.error('AWS SES error:', { error: (error as Error).message });
     throw error;
   }
 }

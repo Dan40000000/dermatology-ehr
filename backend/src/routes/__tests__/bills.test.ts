@@ -3,6 +3,7 @@ import express from "express";
 import { billsRouter } from "../bills";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -26,18 +27,29 @@ jest.mock("../../services/audit", () => ({
   auditLog: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/bills", billsRouter);
 
 const queryMock = pool.query as jest.Mock;
 const connectMock = pool.connect as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
   connectMock.mockReset();
   jest.clearAllMocks();
+  loggerMock.error.mockReset();
 });
 
 describe("Bills Routes", () => {
@@ -245,6 +257,28 @@ describe("Bills Routes", () => {
       expect(res.body.error).toBe("Failed to create bill");
       expect(mockClient.query).toHaveBeenCalledWith("ROLLBACK");
       expect(mockClient.release).toHaveBeenCalled();
+      expect(loggerMock.error).toHaveBeenCalledWith("Create bill error:", {
+        error: "DB error",
+      });
+    });
+
+    it("should mask non-Error rollback values on create", async () => {
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // count query
+        .mockRejectedValueOnce({ billId: "bill-1" }); // insert bill fails
+
+      const res = await request(app).post("/bills").send({
+        patientId: "patient-1",
+        billDate: "2024-01-15",
+        totalChargesCents: 100000,
+        patientResponsibilityCents: 20000,
+      });
+
+      expect(res.status).toBe(500);
+      expect(loggerMock.error).toHaveBeenCalledWith("Create bill error:", {
+        error: "Unknown error",
+      });
     });
   });
 
@@ -360,6 +394,34 @@ describe("Bills Routes", () => {
       expect(res.body.error).toBe("Failed to update bill");
       expect(mockClient.query).toHaveBeenCalledWith("ROLLBACK");
       expect(mockClient.release).toHaveBeenCalled();
+      expect(loggerMock.error).toHaveBeenCalledWith("Update bill error:", {
+        error: "DB error",
+      });
+    });
+
+    it("should mask non-Error rollback values on update", async () => {
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              patient_responsibility_cents: 20000,
+              paid_amount_cents: 0,
+              adjustment_amount_cents: 0,
+            },
+          ],
+          rowCount: 1,
+        })
+        .mockRejectedValueOnce({ status: "invalid" }); // update fails
+
+      const res = await request(app).put("/bills/bill-1").send({
+        status: "paid",
+      });
+
+      expect(res.status).toBe(500);
+      expect(loggerMock.error).toHaveBeenCalledWith("Update bill error:", {
+        error: "Unknown error",
+      });
     });
   });
 

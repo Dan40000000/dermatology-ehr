@@ -13,12 +13,31 @@ import {
   getProviderInfo,
   getAvailableDatesInMonth,
 } from "../services/availabilityService";
+import { logger } from "../lib/logger";
 
 // ============================================================================
 // PATIENT PORTAL ROUTES (Public-facing for patients)
 // ============================================================================
 
 export const patientSchedulingRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logPatientSchedulingError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 /**
  * GET /api/patient-portal/scheduling/settings
@@ -46,7 +65,7 @@ patientSchedulingRouter.get(
         requireReason: customMessageResult.rows[0]?.requireReason,
       });
     } catch (error) {
-      console.error("Get booking settings error:", error);
+      logPatientSchedulingError("Get booking settings error", error);
       return res.status(500).json({ error: "Failed to get booking settings" });
     }
   }
@@ -76,7 +95,7 @@ patientSchedulingRouter.get(
 
       return res.json({ providers: result.rows });
     } catch (error) {
-      console.error("Get providers error:", error);
+      logPatientSchedulingError("Get providers error", error);
       return res.status(500).json({ error: "Failed to get providers" });
     }
   }
@@ -103,7 +122,7 @@ patientSchedulingRouter.get(
 
       return res.json({ appointmentTypes: result.rows });
     } catch (error) {
-      console.error("Get appointment types error:", error);
+      logPatientSchedulingError("Get appointment types error", error);
       return res.status(500).json({ error: "Failed to get appointment types" });
     }
   }
@@ -142,7 +161,7 @@ patientSchedulingRouter.get(
 
       return res.json({ dates });
     } catch (error) {
-      console.error("Get available dates error:", error);
+      logPatientSchedulingError("Get available dates error", error);
       return res.status(500).json({ error: "Failed to get available dates" });
     }
   }
@@ -190,7 +209,7 @@ patientSchedulingRouter.get(
 
       return res.json({ slots: slotsWithProvider });
     } catch (error) {
-      console.error("Get availability error:", error);
+      logPatientSchedulingError("Get availability error", error);
       return res.status(500).json({ error: "Failed to get availability" });
     }
   }
@@ -349,7 +368,7 @@ patientSchedulingRouter.post(
       });
     } catch (error) {
       await client.query("ROLLBACK");
-      console.error("Book appointment error:", error);
+      logPatientSchedulingError("Book appointment error", error);
       return res.status(500).json({ error: "Failed to book appointment" });
     } finally {
       client.release();
@@ -510,7 +529,7 @@ patientSchedulingRouter.put(
       return res.json({ message: "Appointment rescheduled successfully" });
     } catch (error) {
       await client.query("ROLLBACK");
-      console.error("Reschedule appointment error:", error);
+      logPatientSchedulingError("Reschedule appointment error", error);
       return res.status(500).json({ error: "Failed to reschedule appointment" });
     } finally {
       client.release();
@@ -644,7 +663,7 @@ patientSchedulingRouter.delete(
       return res.json({ message: "Appointment cancelled successfully" });
     } catch (error) {
       await client.query("ROLLBACK");
-      console.error("Cancel appointment error:", error);
+      logPatientSchedulingError("Cancel appointment error", error);
       return res.status(500).json({ error: "Failed to cancel appointment" });
     } finally {
       client.release();
@@ -687,7 +706,7 @@ providerSchedulingRouter.get(
 
       return res.json({ templates: result.rows });
     } catch (error) {
-      console.error("Get availability templates error:", error);
+      logPatientSchedulingError("Get availability templates error", error);
       return res.status(500).json({ error: "Failed to get availability templates" });
     }
   }
@@ -740,7 +759,7 @@ providerSchedulingRouter.post(
 
       return res.status(201).json({ id, message: "Availability template created" });
     } catch (error) {
-      console.error("Create availability template error:", error);
+      logPatientSchedulingError("Create availability template error", error);
       return res.status(500).json({ error: "Failed to create availability template" });
     }
   }
@@ -800,7 +819,7 @@ providerSchedulingRouter.put(
 
       return res.json({ message: "Availability template updated" });
     } catch (error) {
-      console.error("Update availability template error:", error);
+      logPatientSchedulingError("Update availability template error", error);
       return res.status(500).json({ error: "Failed to update availability template" });
     }
   }
@@ -824,7 +843,7 @@ providerSchedulingRouter.delete(
 
       return res.json({ message: "Availability template deleted" });
     } catch (error) {
-      console.error("Delete availability template error:", error);
+      logPatientSchedulingError("Delete availability template error", error);
       return res.status(500).json({ error: "Failed to delete availability template" });
     }
   }
@@ -858,7 +877,7 @@ providerSchedulingRouter.get(
 
       return res.json({ timeOff: result.rows });
     } catch (error) {
-      console.error("Get time-off error:", error);
+      logPatientSchedulingError("Get time-off error", error);
       return res.status(500).json({ error: "Failed to get time-off" });
     }
   }
@@ -911,7 +930,7 @@ providerSchedulingRouter.post(
 
       return res.status(201).json({ id, message: "Time-off created" });
     } catch (error) {
-      console.error("Create time-off error:", error);
+      logPatientSchedulingError("Create time-off error", error);
       return res.status(500).json({ error: "Failed to create time-off" });
     }
   }
@@ -935,7 +954,7 @@ providerSchedulingRouter.delete(
 
       return res.json({ message: "Time-off deleted" });
     } catch (error) {
-      console.error("Delete time-off error:", error);
+      logPatientSchedulingError("Delete time-off error", error);
       return res.status(500).json({ error: "Failed to delete time-off" });
     }
   }
@@ -962,7 +981,7 @@ providerSchedulingRouter.get(
 
       return res.json({ settings: result.rows[0] });
     } catch (error) {
-      console.error("Get settings error:", error);
+      logPatientSchedulingError("Get settings error", error);
       return res.status(500).json({ error: "Failed to get settings" });
     }
   }
@@ -1027,7 +1046,7 @@ providerSchedulingRouter.put(
 
       return res.json({ message: "Settings updated" });
     } catch (error) {
-      console.error("Update settings error:", error);
+      logPatientSchedulingError("Update settings error", error);
       return res.status(500).json({ error: "Failed to update settings" });
     }
   }

@@ -3,8 +3,27 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientPortalAuth";
 import crypto from "crypto";
+import { logger } from "../lib/logger";
 
 export const portalBillingRouter = Router();
+
+function toSafeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown error";
+}
+
+function logPortalBillingError(message: string, error: unknown): void {
+  logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
 
 // ============================================================================
 // MOCK STRIPE INTEGRATION (similar to Twilio/Surescripts pattern)
@@ -123,7 +142,7 @@ portalBillingRouter.get(
 
       return res.json(balanceResult.rows[0]);
     } catch (error) {
-      console.error("Get balance error:", error);
+      logPortalBillingError("Get balance error", error);
       return res.status(500).json({ error: "Failed to get balance" });
     }
   }
@@ -161,7 +180,7 @@ portalBillingRouter.get(
 
       return res.json({ charges: result.rows });
     } catch (error) {
-      console.error("Get charges error:", error);
+      logPortalBillingError("Get charges error", error);
       return res.status(500).json({ error: "Failed to get charges" });
     }
   }
@@ -203,7 +222,7 @@ portalBillingRouter.get(
 
       return res.json({ statements: result.rows });
     } catch (error) {
-      console.error("Get statements error:", error);
+      logPortalBillingError("Get statements error", error);
       return res.status(500).json({ error: "Failed to get statements" });
     }
   }
@@ -261,7 +280,7 @@ portalBillingRouter.get(
         lineItems: lineItemsResult.rows,
       });
     } catch (error) {
-      console.error("Get statement error:", error);
+      logPortalBillingError("Get statement error", error);
       return res.status(500).json({ error: "Failed to get statement" });
     }
   }
@@ -303,7 +322,7 @@ portalBillingRouter.get(
 
       return res.json({ paymentMethods: result.rows });
     } catch (error) {
-      console.error("Get payment methods error:", error);
+      logPortalBillingError("Get payment methods error", error);
       return res.status(500).json({ error: "Failed to get payment methods" });
     }
   }
@@ -411,7 +430,7 @@ portalBillingRouter.post(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
-      console.error("Add payment method error:", error);
+      logPortalBillingError("Add payment method error", error);
       return res.status(500).json({ error: "Failed to add payment method" });
     }
   }
@@ -444,7 +463,7 @@ portalBillingRouter.delete(
 
       return res.json({ success: true });
     } catch (error) {
-      console.error("Delete payment method error:", error);
+      logPortalBillingError("Delete payment method error", error);
       return res.status(500).json({ error: "Failed to delete payment method" });
     }
   }
@@ -643,7 +662,7 @@ portalBillingRouter.post(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
-      console.error("Payment processing error:", error);
+      logPortalBillingError("Payment processing error", error);
       return res.status(500).json({ error: "Payment processing failed" });
     }
   }
@@ -682,7 +701,7 @@ portalBillingRouter.get(
 
       return res.json({ payments: result.rows });
     } catch (error) {
-      console.error("Get payment history error:", error);
+      logPortalBillingError("Get payment history error", error);
       return res.status(500).json({ error: "Failed to get payment history" });
     }
   }
@@ -725,7 +744,7 @@ portalBillingRouter.get(
 
       return res.json({ paymentPlans: result.rows });
     } catch (error) {
-      console.error("Get payment plans error:", error);
+      logPortalBillingError("Get payment plans error", error);
       return res.status(500).json({ error: "Failed to get payment plans" });
     }
   }
@@ -772,7 +791,7 @@ portalBillingRouter.get(
 
       return res.json({ installments: result.rows });
     } catch (error) {
-      console.error("Get installments error:", error);
+      logPortalBillingError("Get installments error", error);
       return res.status(500).json({ error: "Failed to get installments" });
     }
   }
@@ -823,7 +842,7 @@ portalBillingRouter.get(
 
       return res.json({ enrolled: true, ...result.rows[0] });
     } catch (error) {
-      console.error("Get autopay error:", error);
+      logPortalBillingError("Get autopay error", error);
       return res.status(500).json({ error: "Failed to get autopay enrollment" });
     }
   }
@@ -899,7 +918,7 @@ portalBillingRouter.post(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid input", details: error.issues });
       }
-      console.error("Enroll autopay error:", error);
+      logPortalBillingError("Enroll autopay error", error);
       return res.status(500).json({ error: "Failed to enroll in auto-pay" });
     }
   }
@@ -932,7 +951,7 @@ portalBillingRouter.delete(
 
       return res.json({ success: true });
     } catch (error) {
-      console.error("Cancel autopay error:", error);
+      logPortalBillingError("Cancel autopay error", error);
       return res.status(500).json({ error: "Failed to cancel auto-pay" });
     }
   }

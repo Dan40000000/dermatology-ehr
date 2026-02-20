@@ -5,6 +5,7 @@ import fs from "fs";
 import voiceTranscriptionRouter from "../voiceTranscription";
 import { voiceTranscriptionService } from "../../services/voiceTranscription";
 import { auditLog } from "../../services/audit";
+import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -32,12 +33,22 @@ jest.mock("../../services/audit", () => ({
   auditLog: jest.fn(),
 }));
 
+jest.mock("../../lib/logger", () => ({
+  logger: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/voice", voiceTranscriptionRouter);
 
 const serviceMock = voiceTranscriptionService as jest.Mocked<typeof voiceTranscriptionService>;
 const auditMock = auditLog as jest.Mock;
+const loggerMock = logger as jest.Mocked<typeof logger>;
 
 const uploadsDir = path.join(process.cwd(), "uploads", "audio");
 const fixturePath = path.join(__dirname, "fixtures", "test-audio.wav");
@@ -56,6 +67,7 @@ afterEach(() => {
   serviceMock.getTranscriptionStats.mockReset();
   serviceMock.deleteTranscription.mockReset();
   auditMock.mockReset();
+  loggerMock.error.mockReset();
 
   if (fs.existsSync(uploadsDir)) {
     for (const file of fs.readdirSync(uploadsDir)) {
@@ -67,6 +79,30 @@ afterEach(() => {
 });
 
 describe("Voice transcription routes", () => {
+  it("POST /voice/transcribe logs sanitized Error failures", async () => {
+    serviceMock.transcribeAudio.mockRejectedValueOnce(new Error("transcribe failed"));
+
+    const res = await request(app).post("/voice/transcribe").attach("audio", fixturePath);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("transcribe failed");
+    expect(loggerMock.error).toHaveBeenCalledWith("Transcription error", {
+      error: "transcribe failed",
+    });
+  });
+
+  it("POST /voice/transcribe masks non-Error failures in logs", async () => {
+    serviceMock.transcribeAudio.mockRejectedValueOnce({ patientName: "Jane Doe" });
+
+    const res = await request(app).post("/voice/transcribe").attach("audio", fixturePath);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to transcribe audio");
+    expect(loggerMock.error).toHaveBeenCalledWith("Transcription error", {
+      error: "Unknown error",
+    });
+  });
+
   it("POST /voice/transcribe rejects missing file", async () => {
     const res = await request(app).post("/voice/transcribe");
 

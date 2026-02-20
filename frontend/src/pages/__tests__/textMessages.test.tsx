@@ -30,6 +30,13 @@ const apiMocks = vi.hoisted(() => ({
   fetchSMSAuditLog: vi.fn(),
   exportSMSAuditLog: vi.fn(),
   fetchSMSAuditSummary: vi.fn(),
+  fetchSMSSettings: vi.fn(),
+  updateSMSSettings: vi.fn(),
+  fetchSMSAutoResponses: vi.fn(),
+  updateSMSAutoResponse: vi.fn(),
+  updatePatientSMSPreferences: vi.fn(),
+  processSMSWorkflowReminders: vi.fn(),
+  processSMSWorkflowFollowups: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -155,6 +162,61 @@ describe('TextMessagesPage', () => {
     apiMocks.getSMSConsent.mockResolvedValue({ hasConsent: true, daysUntilExpiration: 30 });
     apiMocks.recordSMSConsent.mockResolvedValue({ ok: true });
     apiMocks.revokeSMSConsent.mockResolvedValue({ ok: true });
+    apiMocks.fetchSMSAuditLog.mockResolvedValue({
+      auditLogs: [],
+      pagination: { total: 0, limit: 100, offset: 0, hasMore: false },
+    });
+    apiMocks.fetchSMSAuditSummary.mockResolvedValue({
+      messagesSent: 0,
+      messagesReceived: 0,
+      consentsObtained: 0,
+      consentsRevoked: 0,
+      optOuts: 0,
+      uniquePatients: 0,
+    });
+    apiMocks.fetchSMSSettings.mockResolvedValue({
+      id: 'settings-1',
+      tenantId: 'tenant-1',
+      twilioPhoneNumber: '+15551112222',
+      appointmentRemindersEnabled: true,
+      reminderHoursBefore: 24,
+      allowPatientReplies: true,
+      reminderTemplate: 'Reminder body',
+      confirmationTemplate: 'Confirmation body',
+      cancellationTemplate: 'Cancellation body',
+      rescheduleTemplate: 'Reschedule body',
+      isActive: true,
+      isTestMode: false,
+    });
+    apiMocks.updateSMSSettings.mockResolvedValue({ success: true });
+    apiMocks.fetchSMSAutoResponses.mockResolvedValue({
+      autoResponses: [
+        {
+          id: 'rule-stop',
+          keyword: 'STOP',
+          responseText: 'You are unsubscribed.',
+          action: 'opt_out',
+          isActive: true,
+          isSystemKeyword: true,
+          priority: 100,
+          createdAt: '2024-04-01T00:00:00.000Z',
+        },
+        {
+          id: 'rule-help',
+          keyword: 'HELP',
+          responseText: 'Reply STOP to unsubscribe.',
+          action: 'help',
+          isActive: true,
+          isSystemKeyword: false,
+          priority: 50,
+          createdAt: '2024-04-01T00:00:00.000Z',
+        },
+      ],
+    });
+    apiMocks.updateSMSAutoResponse.mockResolvedValue({ success: true });
+    apiMocks.updatePatientSMSPreferences.mockResolvedValue({ success: true });
+    apiMocks.processSMSWorkflowReminders.mockResolvedValue({ success: true, sent: 2 });
+    apiMocks.processSMSWorkflowFollowups.mockResolvedValue({ success: true, sent: 1 });
     toastMocks.showSuccess.mockClear();
     toastMocks.showError.mockClear();
     Element.prototype.scrollIntoView = vi.fn();
@@ -297,7 +359,12 @@ describe('TextMessagesPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     fireEvent.click(screen.getByRole('button', { name: 'Opt Out' }));
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Patient opted out of SMS');
+    await waitFor(() =>
+      expect(toastMocks.showSuccess).toHaveBeenCalledWith('Patient opted out of SMS'),
+    );
+    expect(apiMocks.updatePatientSMSPreferences).toHaveBeenCalledWith('tenant-1', 'token-1', 'patient-1', {
+      optedIn: false,
+    });
   });
 
   it('shows empty states, search filtering, and time/phone formatting', async () => {
@@ -549,7 +616,74 @@ describe('TextMessagesPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     fireEvent.click(screen.getByRole('button', { name: 'Opt In' }));
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Patient opted in to SMS');
+    await waitFor(() =>
+      expect(toastMocks.showSuccess).toHaveBeenCalledWith('Patient opted in to SMS'),
+    );
+    expect(apiMocks.updatePatientSMSPreferences).toHaveBeenCalledWith('tenant-1', 'token-1', 'patient-2', {
+      optedIn: true,
+    });
+  });
+
+  it('loads rules, updates auto-response rules, and runs workflow processors', async () => {
+    render(<TextMessagesPage />);
+
+    await screen.findByRole('heading', { name: 'Text Messages' });
+    fireEvent.click(screen.getByRole('button', { name: 'Rules' }));
+
+    await waitFor(() =>
+      expect(apiMocks.fetchSMSAutoResponses).toHaveBeenCalledWith('tenant-1', 'token-1'),
+    );
+    expect(screen.getByText('Keyword Auto-Responses (2)')).toBeInTheDocument();
+    expect(screen.getByText('STOP')).toBeInTheDocument();
+    expect(screen.getByText('HELP')).toBeInTheDocument();
+
+    const helpRow = screen.getByText('HELP').closest('tr') as HTMLElement;
+    const helpTextarea = helpRow.querySelector('textarea') as HTMLTextAreaElement;
+    fireEvent.change(helpTextarea, { target: { value: 'Updated HELP response' } });
+    fireEvent.click(within(helpRow).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(apiMocks.updateSMSAutoResponse).toHaveBeenCalledWith('tenant-1', 'token-1', 'rule-help', {
+        responseText: 'Updated HELP response',
+        isActive: true,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Process Reminder Rules' }));
+    await waitFor(() =>
+      expect(apiMocks.processSMSWorkflowReminders).toHaveBeenCalledWith('tenant-1', 'token-1'),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Process Follow-up Rules' }));
+    await waitFor(() =>
+      expect(apiMocks.processSMSWorkflowFollowups).toHaveBeenCalledWith('tenant-1', 'token-1'),
+    );
+  });
+
+  it('loads and saves SMS channel settings', async () => {
+    render(<TextMessagesPage />);
+
+    await screen.findByRole('heading', { name: 'Text Messages' });
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+
+    await waitFor(() =>
+      expect(apiMocks.fetchSMSSettings).toHaveBeenCalledWith('tenant-1', 'token-1'),
+    );
+
+    const reminderHours = screen.getByLabelText('Reminder Lead Time (Hours)') as HTMLInputElement;
+    fireEvent.change(reminderHours, { target: { value: '48' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Messaging Settings' }));
+    await waitFor(() =>
+      expect(apiMocks.updateSMSSettings).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        expect.objectContaining({
+          reminderHoursBefore: 48,
+        }),
+      ),
+    );
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('SMS settings saved');
   });
 
   it('surfaces conversation load errors', async () => {

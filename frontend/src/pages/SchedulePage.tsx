@@ -170,31 +170,26 @@ export function SchedulePage() {
     }
   }, [viewMode, providerFilter, providers]);
 
-  // Save filter state and sync view mode to URL
+  // Save filter state
   useEffect(() => {
     localStorage.setItem('sched:provider', providerFilter);
     localStorage.setItem('sched:type', typeFilter);
     localStorage.setItem('sched:dayOffset', String(dayOffset));
     localStorage.setItem('sched:viewMode', viewMode);
+  }, [providerFilter, typeFilter, dayOffset, viewMode]);
 
-    // Update URL to reflect current view mode (for bookmarking) without clobbering other params.
-    const currentView =
-      viewParam === 'day' || viewParam === 'week' || viewParam === 'month'
-        ? viewParam
-        : null;
-    const targetView = viewMode === 'day' ? null : viewMode;
-    if (currentView === targetView) return;
-
+  const updateViewMode = useCallback((nextView: 'day' | 'week' | 'month') => {
+    setViewMode(nextView);
     setSearchParams((prev) => {
       const nextParams = new URLSearchParams(prev);
-      if (viewMode === 'day') {
+      if (nextView === 'day') {
         nextParams.delete('view');
       } else {
-        nextParams.set('view', viewMode);
+        nextParams.set('view', nextView);
       }
       return nextParams;
     }, { replace: true });
-  }, [providerFilter, typeFilter, dayOffset, viewMode, viewParam, setSearchParams]);
+  }, [setSearchParams]);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -878,21 +873,21 @@ export function SchedulePage() {
               <button
                 type="button"
                 className={`view-mode-btn ${viewMode === 'day' ? 'active' : ''}`}
-                onClick={() => setViewMode('day')}
+                onClick={() => updateViewMode('day')}
               >
                 Day
               </button>
               <button
                 type="button"
                 className={`view-mode-btn ${viewMode === 'week' ? 'active' : ''}`}
-                onClick={() => setViewMode('week')}
+                onClick={() => updateViewMode('week')}
               >
                 Week
               </button>
               <button
                 type="button"
                 className={`view-mode-btn ${viewMode === 'month' ? 'active' : ''}`}
-                onClick={() => setViewMode('month')}
+                onClick={() => updateViewMode('month')}
               >
                 Month
               </button>

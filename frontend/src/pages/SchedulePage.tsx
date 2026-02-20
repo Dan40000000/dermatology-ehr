@@ -123,14 +123,12 @@ export function SchedulePage() {
     startTime?: string;
   } | undefined>(undefined);
 
-  // Sync view mode from URL query parameter changes
+  // Sync view mode from URL query parameter changes when a valid view is present.
+  // Do not force day when `view` is absent; that can race with localStorage-derived view.
   useEffect(() => {
-    if (viewParam === 'day' || viewParam === 'week' || viewParam === 'month') {
-      setViewMode((prev) => (prev === viewParam ? prev : viewParam));
-    } else if (!viewParam) {
-      // If no view parameter, default to 'day' (matches /schedule without params)
-      setViewMode((prev) => (prev === 'day' ? prev : 'day'));
-    }
+    const isValidViewParam = viewParam === 'day' || viewParam === 'week' || viewParam === 'month';
+    if (!isValidViewParam) return;
+    setViewMode((prev) => (prev === viewParam ? prev : viewParam));
   }, [viewParam]);
 
   useEffect(() => {
@@ -179,15 +177,23 @@ export function SchedulePage() {
     localStorage.setItem('sched:dayOffset', String(dayOffset));
     localStorage.setItem('sched:viewMode', viewMode);
 
-    // Update URL to reflect current view mode (for bookmarking)
-    const currentView = viewParam;
-    if (viewMode === 'day' && currentView !== null && currentView !== 'day') {
-      // Remove view param for default 'day' view to match /schedule
-      setSearchParams({});
-    } else if (viewMode !== 'day' && currentView !== viewMode) {
-      // Set view param for week/month views
-      setSearchParams({ view: viewMode });
-    }
+    // Update URL to reflect current view mode (for bookmarking) without clobbering other params.
+    const currentView =
+      viewParam === 'day' || viewParam === 'week' || viewParam === 'month'
+        ? viewParam
+        : null;
+    const targetView = viewMode === 'day' ? null : viewMode;
+    if (currentView === targetView) return;
+
+    setSearchParams((prev) => {
+      const nextParams = new URLSearchParams(prev);
+      if (viewMode === 'day') {
+        nextParams.delete('view');
+      } else {
+        nextParams.set('view', viewMode);
+      }
+      return nextParams;
+    }, { replace: true });
   }, [providerFilter, typeFilter, dayOffset, viewMode, viewParam, setSearchParams]);
 
   const loadData = useCallback(async () => {

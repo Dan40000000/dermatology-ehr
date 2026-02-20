@@ -29,6 +29,13 @@ export interface TimeBlockFormData {
   recurrenceEndDate?: string;
 }
 
+interface RecurrencePatternObject {
+  pattern: 'daily' | 'weekly' | 'biweekly' | 'monthly';
+  days?: number[];
+  dayOfMonth?: number;
+  until?: string;
+}
+
 interface TimeBlock {
   id: string;
   providerId: string;
@@ -38,7 +45,7 @@ interface TimeBlock {
   startTime: string;
   endTime: string;
   isRecurring?: boolean;
-  recurrencePattern?: 'daily' | 'weekly' | 'biweekly' | 'monthly';
+  recurrencePattern?: 'daily' | 'weekly' | 'biweekly' | 'monthly' | RecurrencePatternObject;
   recurrenceEndDate?: string;
 }
 
@@ -75,6 +82,15 @@ export function TimeBlockModal({
         // Edit mode
         const startDate = new Date(timeBlock.startTime);
         const endDate = new Date(timeBlock.endTime);
+        const recurrencePattern =
+          typeof timeBlock.recurrencePattern === 'string'
+            ? timeBlock.recurrencePattern
+            : timeBlock.recurrencePattern?.pattern;
+        const recurrenceEndDate =
+          timeBlock.recurrenceEndDate ||
+          (typeof timeBlock.recurrencePattern === 'object'
+            ? timeBlock.recurrencePattern.until || ''
+            : '');
 
         setFormData({
           providerId: timeBlock.providerId,
@@ -91,8 +107,8 @@ export function TimeBlockModal({
             .toString()
             .padStart(2, '0')}`,
           isRecurring: timeBlock.isRecurring || false,
-          recurrencePattern: timeBlock.recurrencePattern || 'weekly',
-          recurrenceEndDate: timeBlock.recurrenceEndDate || '',
+          recurrencePattern: recurrencePattern || 'weekly',
+          recurrenceEndDate,
         });
       } else if (initialData) {
         // Create mode with initial data

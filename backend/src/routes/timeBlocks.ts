@@ -41,9 +41,15 @@ const recurrencePatternSchema = z.object({
   until: z.string().optional(), // ISO date string
 });
 
+const idSchema = z.string().trim().min(1).max(255);
+const optionalNullableIdSchema = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? null : value),
+  idSchema.nullable().optional()
+);
+
 const createTimeBlockSchema = z.object({
-  providerId: z.string().uuid(),
-  locationId: z.string().uuid().optional().nullable(),
+  providerId: idSchema,
+  locationId: optionalNullableIdSchema,
   title: z.string().min(1).max(255),
   blockType: z.enum(["blocked", "lunch", "meeting", "admin", "continuing_education", "out_of_office"]),
   description: z.string().optional().nullable(),
@@ -59,7 +65,7 @@ const updateTimeBlockSchema = z.object({
   description: z.string().optional().nullable(),
   startTime: z.string().refine((v) => !Number.isNaN(Date.parse(v)), { message: "Invalid start time" }).optional(),
   endTime: z.string().refine((v) => !Number.isNaN(Date.parse(v)), { message: "Invalid end time" }).optional(),
-  locationId: z.string().uuid().optional().nullable(),
+  locationId: optionalNullableIdSchema,
   isRecurring: z.boolean().optional(),
   recurrencePattern: recurrencePatternSchema.optional().nullable(),
   recurrenceEndDate: z.string().optional().nullable(),

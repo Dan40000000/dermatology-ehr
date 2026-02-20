@@ -2442,6 +2442,15 @@ export async function simulateIncomingFax(
 // Time Blocks API
 // ========================================
 
+export type TimeBlockRecurrenceKind = 'daily' | 'weekly' | 'biweekly' | 'monthly';
+
+export interface TimeBlockRecurrencePattern {
+  pattern: TimeBlockRecurrenceKind;
+  days?: number[];
+  dayOfMonth?: number;
+  until?: string;
+}
+
 export interface TimeBlock {
   id: string;
   tenantId: string;
@@ -2453,7 +2462,7 @@ export interface TimeBlock {
   startTime: string;
   endTime: string;
   isRecurring: boolean;
-  recurrencePattern?: 'daily' | 'weekly' | 'biweekly' | 'monthly';
+  recurrencePattern?: TimeBlockRecurrenceKind | TimeBlockRecurrencePattern;
   recurrenceEndDate?: string;
   status: 'active' | 'cancelled';
   createdAt: string;
@@ -2487,7 +2496,10 @@ export async function fetchTimeBlocks(
     },
   });
   if (!res.ok) throw new Error("Failed to load time blocks");
-  return res.json();
+  const payload = await res.json();
+  if (Array.isArray(payload)) return payload;
+  if (payload && Array.isArray(payload.timeBlocks)) return payload.timeBlocks;
+  return [];
 }
 
 export async function createTimeBlock(
@@ -2502,7 +2514,7 @@ export async function createTimeBlock(
     startTime: string;
     endTime: string;
     isRecurring?: boolean;
-    recurrencePattern?: TimeBlock['recurrencePattern'];
+    recurrencePattern?: TimeBlockRecurrenceKind | TimeBlockRecurrencePattern;
     recurrenceEndDate?: string;
   }
 ): Promise<TimeBlock> {
@@ -2516,11 +2528,11 @@ export async function createTimeBlock(
     },
     body: JSON.stringify(data),
   });
+  const payload = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Failed to create time block");
+    throw new Error(payload.error || "Failed to create time block");
   }
-  return res.json();
+  return payload?.timeBlock || payload;
 }
 
 export async function updateTimeBlock(
@@ -2534,7 +2546,7 @@ export async function updateTimeBlock(
     startTime: string;
     endTime: string;
     isRecurring: boolean;
-    recurrencePattern: TimeBlock['recurrencePattern'];
+    recurrencePattern: TimeBlockRecurrenceKind | TimeBlockRecurrencePattern;
     recurrenceEndDate: string;
     locationId: string;
   }>
@@ -2549,11 +2561,11 @@ export async function updateTimeBlock(
     },
     body: JSON.stringify(data),
   });
+  const payload = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Failed to update time block");
+    throw new Error(payload.error || "Failed to update time block");
   }
-  return res.json();
+  return payload?.timeBlock || payload;
 }
 
 export async function deleteTimeBlock(

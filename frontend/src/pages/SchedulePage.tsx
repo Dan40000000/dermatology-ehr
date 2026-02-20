@@ -554,6 +554,16 @@ export function SchedulePage() {
 
     const startDateTime = new Date(`${formData.date}T${formData.startTime}:00`);
     const endDateTime = new Date(`${formData.date}T${formData.endTime}:00`);
+    const recurrencePattern = formData.isRecurring && formData.recurrencePattern
+      ? {
+          pattern: formData.recurrencePattern,
+          days: formData.recurrencePattern === 'weekly' || formData.recurrencePattern === 'biweekly'
+            ? [startDateTime.getDay()]
+            : undefined,
+          dayOfMonth: formData.recurrencePattern === 'monthly' ? startDateTime.getDate() : undefined,
+          until: formData.recurrenceEndDate || undefined,
+        }
+      : undefined;
 
     const timeBlockPayload = {
       providerId: formData.providerId,
@@ -563,10 +573,7 @@ export function SchedulePage() {
       startTime: startDateTime.toISOString(),
       endTime: endDateTime.toISOString(),
       isRecurring: formData.isRecurring,
-      recurrencePattern: formData.isRecurring ? formData.recurrencePattern : undefined,
-      recurrenceEndDate: formData.isRecurring && formData.recurrenceEndDate
-        ? formData.recurrenceEndDate
-        : undefined,
+      recurrencePattern,
     };
 
     if (selectedTimeBlock) {

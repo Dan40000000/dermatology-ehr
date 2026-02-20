@@ -276,6 +276,32 @@ describe("Time blocks routes", () => {
     );
   });
 
+  it("POST /time-blocks accepts non-UUID provider and location ids", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "tb-legacy" }] });
+
+    const res = await request(app).post("/time-blocks").send({
+      ...basePayload,
+      providerId: "prov-demo",
+      locationId: "loc-demo",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBeTruthy();
+  });
+
+  it("POST /time-blocks accepts blank location id as null", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "tb-legacy-blank-location" }] });
+
+    const res = await request(app).post("/time-blocks").send({
+      ...basePayload,
+      providerId: "prov-demo",
+      locationId: "",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBeTruthy();
+  });
+
   it("POST /time-blocks returns 500 on error", async () => {
     const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     queryMock.mockRejectedValueOnce(new Error("boom"));

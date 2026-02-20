@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -29,6 +29,51 @@ import {
 } from '../api';
 import type { Appointment, Provider, Location, AppointmentType, Availability, Patient, ConflictInfo } from '../types';
 
+type ScheduleViewMode = 'day' | 'week' | 'month';
+
+function startOfDay(date: Date): Date {
+  const result = new Date(date);
+  result.setHours(0, 0, 0, 0);
+  return result;
+}
+
+function endOfDay(date: Date): Date {
+  const result = new Date(date);
+  result.setHours(23, 59, 59, 999);
+  return result;
+}
+
+function getViewRange(currentDate: Date, viewMode: ScheduleViewMode): { start: Date; end: Date } {
+  if (viewMode === 'day') {
+    return {
+      start: startOfDay(currentDate),
+      end: endOfDay(currentDate),
+    };
+  }
+
+  if (viewMode === 'week') {
+    const monday = startOfDay(currentDate);
+    const dayOfWeek = monday.getDay();
+    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    monday.setDate(monday.getDate() + diffToMonday);
+    const friday = endOfDay(monday);
+    friday.setDate(monday.getDate() + 4);
+    return {
+      start: monday,
+      end: friday,
+    };
+  }
+
+  const monthStart = startOfDay(new Date(currentDate.getFullYear(), currentDate.getMonth(), 1));
+  monthStart.setDate(monthStart.getDate() - 7);
+  const monthEnd = endOfDay(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0));
+  monthEnd.setDate(monthEnd.getDate() + 14);
+  return {
+    start: monthStart,
+    end: monthEnd,
+  };
+}
+
 export function SchedulePage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -57,7 +102,7 @@ export function SchedulePage() {
   });
 
   // Initialize view mode from URL query parameter, fallback to localStorage, then 'day'
-  const [viewMode, setViewMode] = useState<'day' | 'week' | 'month'>(() => {
+  const [viewMode, setViewMode] = useState<ScheduleViewMode>(() => {
     const urlView = searchParams.get('view');
     if (urlView === 'day' || urlView === 'week' || urlView === 'month') {
       return urlView;
@@ -178,7 +223,7 @@ export function SchedulePage() {
     localStorage.setItem('sched:viewMode', viewMode);
   }, [providerFilter, typeFilter, dayOffset, viewMode]);
 
-  const updateViewMode = useCallback((nextView: 'day' | 'week' | 'month') => {
+  const updateViewMode = useCallback((nextView: ScheduleViewMode) => {
     setViewMode(nextView);
     setSearchParams((prev) => {
       const nextParams = new URLSearchParams(prev);
@@ -190,6 +235,46 @@ export function SchedulePage() {
       return nextParams;
     }, { replace: true });
   }, [setSearchParams]);
+
+  const currentDate = useMemo(() => {
+    const date = new Date();
+    date.setDate(date.getDate() + dayOffset);
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }, [dayOffset]);
+
+  const activeViewRange = useMemo(() => getViewRange(currentDate, viewMode), [currentDate, viewMode]);
+
+  const filteredAppointments = useMemo(() => {
+    const startMs = activeViewRange.start.getTime();
+    const endMs = activeViewRange.end.getTime();
+
+    return appointments
+      .filter((appointment) => {
+        const providerOk = providerFilter === 'all' || appointment.providerId === providerFilter;
+        const typeOk = typeFilter === 'all' || appointment.appointmentTypeId === typeFilter;
+        const locationOk = locationFilter === 'all' || appointment.locationId === locationFilter;
+        if (!providerOk || !typeOk || !locationOk) return false;
+
+        const appointmentStart = new Date(appointment.scheduledStart).getTime();
+        if (Number.isNaN(appointmentStart)) return false;
+        return appointmentStart >= startMs && appointmentStart <= endMs;
+      })
+      .sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime());
+  }, [appointments, providerFilter, typeFilter, locationFilter, activeViewRange]);
+
+  const calendarAppointments = useMemo(
+    () => filteredAppointments.filter((appointment) => appointment.status !== 'cancelled'),
+    [filteredAppointments]
+  );
+
+  useEffect(() => {
+    if (!selectedAppt) return;
+    const selectedStillVisible = filteredAppointments.some((appointment) => appointment.id === selectedAppt.id);
+    if (!selectedStillVisible) {
+      setSelectedAppt(null);
+    }
+  }, [filteredAppointments, selectedAppt]);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -255,13 +340,13 @@ export function SchedulePage() {
 
   // Conflict detection
   useEffect(() => {
-    if (!Array.isArray(appointments) || appointments.length === 0) {
+    if (!Array.isArray(filteredAppointments) || filteredAppointments.length === 0) {
       setOverlaps([]);
       return;
     }
 
     // Filter out cancelled appointments
-    const activeAppointments = appointments.filter(
+    const activeAppointments = filteredAppointments.filter(
       (appt) => appt && appt.status !== 'cancelled'
     );
 
@@ -315,7 +400,7 @@ export function SchedulePage() {
       count: c.count,
       patients: Array.from(c.patients),
     })));
-  }, [appointments]);
+  }, [filteredAppointments]);
 
   const handleStatusChange = async (id: string, status: string) => {
     if (!session) return;
@@ -524,8 +609,6 @@ export function SchedulePage() {
     setShowTimeBlockModal(true);
   };
 
-  const currentDate = new Date();
-  currentDate.setDate(currentDate.getDate() + dayOffset);
   const dateLabel = currentDate.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -723,7 +806,7 @@ export function SchedulePage() {
         </button>
         <div style={{ marginLeft: 'auto' }}>
           <ExportButtons
-            data={appointments}
+            data={filteredAppointments}
             filename="Appointments"
             columns={[
               { key: 'scheduledStart', label: 'Date', format: (date) => formatExportDate(date, 'short') },
@@ -736,7 +819,7 @@ export function SchedulePage() {
             ] as ExportColumn[]}
             variant="dropdown"
             pdfOptions={{ title: 'Appointments Schedule', orientation: 'landscape' }}
-            onExport={(type) => showSuccess(`Exported ${appointments.length} appointments as ${type.toUpperCase()}`)}
+            onExport={(type) => showSuccess(`Exported ${filteredAppointments.length} appointments as ${type.toUpperCase()}`)}
           />
         </div>
       </div>
@@ -938,14 +1021,7 @@ export function SchedulePage() {
             <Calendar
               currentDate={currentDate}
               viewMode={viewMode}
-              appointments={appointments.filter((a) => {
-                // Filter out cancelled appointments - they should not appear on the schedule
-                if (a.status === 'cancelled') return false;
-                const providerOk = providerFilter === 'all' || a.providerId === providerFilter;
-                const typeOk = typeFilter === 'all' || a.appointmentTypeId === typeFilter;
-                const locationOk = locationFilter === 'all' || a.locationId === locationFilter;
-                return providerOk && typeOk && locationOk;
-              })}
+              appointments={calendarAppointments}
               providers={providers.filter((p) => providerFilter === 'all' || p.id === providerFilter)}
               availability={availability}
               timeBlocks={timeBlocks.filter((tb) => providerFilter === 'all' || tb.providerId === providerFilter)}
@@ -1252,14 +1328,14 @@ export function SchedulePage() {
                 Loading...
               </td>
             </tr>
-          ) : appointments.length === 0 ? (
+          ) : filteredAppointments.length === 0 ? (
             <tr>
               <td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>
                 No appointments scheduled
               </td>
             </tr>
           ) : (
-            appointments.map((a) => (
+            filteredAppointments.map((a) => (
               <tr
                 key={a.id}
                 style={{

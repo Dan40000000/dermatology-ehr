@@ -20,7 +20,12 @@ interface WebSocketContextValue {
 
 const WebSocketContext = createContext<WebSocketContextValue | null>(null);
 
-const SOCKET_URL = API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+const SOCKET_URL =
+  import.meta.env.VITE_WS_URL ||
+  API_BASE_URL ||
+  (import.meta.env.DEV
+    ? 'http://localhost:4000'
+    : (typeof window !== 'undefined' ? window.location.origin : ''));
 const RECONNECTION_DELAY = 5000;
 const MAX_RECONNECTION_ATTEMPTS = 10;
 const STORAGE_KEY = 'derm_session';
@@ -57,7 +62,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         token: activeAuth.accessToken,
         tenantId: activeAuth.tenantId,
       },
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       reconnection: true,
       reconnectionDelay: RECONNECTION_DELAY,
       reconnectionAttempts: MAX_RECONNECTION_ATTEMPTS,

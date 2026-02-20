@@ -36,6 +36,7 @@ export function SchedulePage() {
   const { showSuccess, showError } = useToast();
   const patientIdParam = searchParams.get('patientId');
   const appointmentIdParam = searchParams.get('appointmentId');
+  const viewParam = searchParams.get('view');
   const handledQueryRef = useRef<{ patientId: string | null; appointmentId: string | null }>({
     patientId: null,
     appointmentId: null,
@@ -124,14 +125,13 @@ export function SchedulePage() {
 
   // Sync view mode from URL query parameter changes
   useEffect(() => {
-    const urlView = searchParams.get('view');
-    if (urlView === 'day' || urlView === 'week' || urlView === 'month') {
-      setViewMode(urlView);
-    } else if (!urlView) {
+    if (viewParam === 'day' || viewParam === 'week' || viewParam === 'month') {
+      setViewMode((prev) => (prev === viewParam ? prev : viewParam));
+    } else if (!viewParam) {
       // If no view parameter, default to 'day' (matches /schedule without params)
-      setViewMode('day');
+      setViewMode((prev) => (prev === 'day' ? prev : 'day'));
     }
-  }, [searchParams]);
+  }, [viewParam]);
 
   useEffect(() => {
     if (!appointmentIdParam || handledQueryRef.current.appointmentId === appointmentIdParam) return;
@@ -170,7 +170,7 @@ export function SchedulePage() {
     if (viewMode === 'month' && providerFilter === 'all' && providers.length > 0) {
       setProviderFilter(providers[0].id);
     }
-  }, [viewMode, providers]);
+  }, [viewMode, providerFilter, providers]);
 
   // Save filter state and sync view mode to URL
   useEffect(() => {
@@ -180,7 +180,7 @@ export function SchedulePage() {
     localStorage.setItem('sched:viewMode', viewMode);
 
     // Update URL to reflect current view mode (for bookmarking)
-    const currentView = searchParams.get('view');
+    const currentView = viewParam;
     if (viewMode === 'day' && currentView !== null && currentView !== 'day') {
       // Remove view param for default 'day' view to match /schedule
       setSearchParams({});
@@ -188,7 +188,7 @@ export function SchedulePage() {
       // Set view param for week/month views
       setSearchParams({ view: viewMode });
     }
-  }, [providerFilter, typeFilter, dayOffset, viewMode, searchParams, setSearchParams]);
+  }, [providerFilter, typeFilter, dayOffset, viewMode, viewParam, setSearchParams]);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -759,6 +759,7 @@ export function SchedulePage() {
             </label>
             <select
               className="ema-filter-select"
+              name="providerFilter"
               value={providerFilter}
               onChange={(e) => setProviderFilter(e.target.value)}
               aria-label="Provider"
@@ -774,6 +775,7 @@ export function SchedulePage() {
             <label className="ema-filter-label">Appointment Type</label>
             <select
               className="ema-filter-select"
+              name="appointmentTypeFilter"
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
               aria-label="Appointment Type"
@@ -789,6 +791,7 @@ export function SchedulePage() {
             <label className="ema-filter-label">Location</label>
             <select
               className="ema-filter-select"
+              name="locationFilter"
               value={locationFilter}
               onChange={(e) => setLocationFilter(e.target.value)}
               aria-label="Location"
@@ -986,6 +989,7 @@ export function SchedulePage() {
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Locations</label>
               <select
+                name="finderLocations"
                 value={finderData.locations}
                 onChange={(e) => setFinderData({ ...finderData, locations: e.target.value })}
                 style={{
@@ -1007,6 +1011,7 @@ export function SchedulePage() {
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Providers</label>
               <select
+                name="finderProviders"
                 value={finderData.providers}
                 onChange={(e) => setFinderData({ ...finderData, providers: e.target.value })}
                 style={{
@@ -1030,6 +1035,7 @@ export function SchedulePage() {
                 Appointment Type <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <select
+                name="finderAppointmentType"
                 value={finderData.appointmentType}
                 onChange={(e) => setFinderData({ ...finderData, appointmentType: e.target.value })}
                 style={{
@@ -1053,6 +1059,7 @@ export function SchedulePage() {
                 Duration <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <select
+                name="finderDuration"
                 value={finderData.duration}
                 onChange={(e) => setFinderData({ ...finderData, duration: e.target.value })}
                 style={{
@@ -1077,6 +1084,7 @@ export function SchedulePage() {
                 Time Preference <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <select
+                name="finderTimePreference"
                 value={finderData.timePreference}
                 onChange={(e) => setFinderData({ ...finderData, timePreference: e.target.value })}
                 style={{
@@ -1098,6 +1106,7 @@ export function SchedulePage() {
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Weekday Preference</label>
               <select
+                name="finderWeekdayPreference"
                 value={finderData.weekdayPreference}
                 onChange={(e) => setFinderData({ ...finderData, weekdayPreference: e.target.value })}
                 style={{
@@ -1120,6 +1129,7 @@ export function SchedulePage() {
                 Scheduling Preference <span style={{ color: '#ef4444' }}>*</span>
               </label>
               <select
+                name="finderSchedulingPreference"
                 value={finderData.schedulingPreference}
                 onChange={(e) => setFinderData({ ...finderData, schedulingPreference: e.target.value })}
                 style={{
@@ -1355,6 +1365,7 @@ export function SchedulePage() {
                       </button>
                     </div>
                     <select
+                      name={`appointmentStatus-${a.id}`}
                       style={{
                         padding: '0.25rem 0.5rem',
                         fontSize: '0.75rem',
@@ -1443,6 +1454,7 @@ export function SchedulePage() {
                   Appointment Type <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <select
+                  name="firstAppointmentType"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1462,6 +1474,7 @@ export function SchedulePage() {
               <div style={{ marginBottom: '1rem' }}>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Locations</label>
                 <select
+                  name="firstLocations"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1481,6 +1494,7 @@ export function SchedulePage() {
               <div style={{ marginBottom: '1rem' }}>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Providers</label>
                 <select
+                  name="firstProviders"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1502,6 +1516,7 @@ export function SchedulePage() {
                   Duration <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <select
+                  name="firstDuration"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1524,6 +1539,7 @@ export function SchedulePage() {
                   Time Preference <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <select
+                  name="firstTimePreference"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1543,6 +1559,7 @@ export function SchedulePage() {
               <div style={{ marginBottom: '1rem' }}>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Weekday Preference</label>
                 <select
+                  name="firstWeekdayPreference"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1563,6 +1580,7 @@ export function SchedulePage() {
                   Scheduling Preference <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <select
+                  name="firstSchedulingPreference"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1633,7 +1651,7 @@ export function SchedulePage() {
               </div>
 
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                <input type="checkbox" />
+                <input type="checkbox" name="secondAfterFirstAppointment" />
                 <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>
                   After 1st Appointment <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>ℹ️</span>
                 </span>
@@ -1644,6 +1662,7 @@ export function SchedulePage() {
                   Appointment Type <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <select
+                  name="secondAppointmentType"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1663,6 +1682,7 @@ export function SchedulePage() {
               <div style={{ marginBottom: '1rem' }}>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Locations</label>
                 <select
+                  name="secondLocations"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1682,6 +1702,7 @@ export function SchedulePage() {
               <div style={{ marginBottom: '1rem' }}>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Providers</label>
                 <select
+                  name="secondProviders"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1703,6 +1724,7 @@ export function SchedulePage() {
                   Duration <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <select
+                  name="secondDuration"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1725,6 +1747,7 @@ export function SchedulePage() {
                   Time Preference <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <select
+                  name="secondTimePreference"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1744,6 +1767,7 @@ export function SchedulePage() {
               <div style={{ marginBottom: '1rem' }}>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Weekday Preference</label>
                 <select
+                  name="secondWeekdayPreference"
                   style={{
                     width: '100%',
                     padding: '0.5rem',
@@ -1764,6 +1788,7 @@ export function SchedulePage() {
                   Scheduling Preference <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <select
+                  name="secondSchedulingPreference"
                   style={{
                     width: '100%',
                     padding: '0.5rem',

@@ -29,6 +29,13 @@ interface CalendarProps {
   onTimeBlockClick?: (timeBlockId: string) => void;
 }
 
+function toDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function Calendar({
   currentDate,
   viewMode,
@@ -89,6 +96,71 @@ export function Calendar({
     }
   }, [currentDate, viewMode]);
 
+  const availabilityByProviderDay = useMemo(() => {
+    const index = new Map<string, Availability[]>();
+    if (!Array.isArray(availability)) {
+      return index;
+    }
+    for (const entry of availability) {
+      const key = `${entry.providerId}|${entry.dayOfWeek}`;
+      const existing = index.get(key);
+      if (existing) {
+        existing.push(entry);
+      } else {
+        index.set(key, [entry]);
+      }
+    }
+    return index;
+  }, [availability]);
+
+  const appointmentsByProviderDay = useMemo(() => {
+    const index = new Map<string, Appointment[]>();
+    if (!Array.isArray(appointments)) {
+      return index;
+    }
+    for (const appt of appointments) {
+      if (!appt || appt.status === 'cancelled' || !appt.providerId) {
+        continue;
+      }
+      const apptStart = new Date(appt.scheduledStart);
+      if (Number.isNaN(apptStart.getTime())) {
+        continue;
+      }
+      const key = `${appt.providerId}|${toDateKey(apptStart)}`;
+      const existing = index.get(key);
+      if (existing) {
+        existing.push(appt);
+      } else {
+        index.set(key, [appt]);
+      }
+    }
+    return index;
+  }, [appointments]);
+
+  const timeBlocksByProviderDay = useMemo(() => {
+    const index = new Map<string, TimeBlock[]>();
+    if (!Array.isArray(timeBlocks)) {
+      return index;
+    }
+    for (const block of timeBlocks) {
+      if (!block || block.status !== 'active' || !block.providerId) {
+        continue;
+      }
+      const blockStart = new Date(block.startTime);
+      if (Number.isNaN(blockStart.getTime())) {
+        continue;
+      }
+      const key = `${block.providerId}|${toDateKey(blockStart)}`;
+      const existing = index.get(key);
+      if (existing) {
+        existing.push(block);
+      } else {
+        index.set(key, [block]);
+      }
+    }
+    return index;
+  }, [timeBlocks]);
+
   // Helper: Check if provider is available at this time
   const isProviderAvailable = (providerId: string, date: Date, hour: number, minute: number) => {
     const dayOfWeek = date.getDay();
@@ -98,8 +170,7 @@ export function Calendar({
     const defaultStartMinutes = BUSINESS_START_HOUR * 60; // 8am = 480 minutes
     const defaultEndMinutes = BUSINESS_END_HOUR * 60; // 5pm = 1020 minutes
 
-    // Check if availability data exists
-    if (!Array.isArray(availability) || availability.length === 0) {
+    if (availabilityByProviderDay.size === 0) {
       // No availability configured - default to business hours for weekdays (Mon-Fri)
       if (dayOfWeek >= 1 && dayOfWeek <= 5) {
         return timeInMinutes >= defaultStartMinutes && timeInMinutes < defaultEndMinutes;
@@ -107,45 +178,37 @@ export function Calendar({
       return false; // Weekends unavailable by default
     }
 
-    const providerAvail = availability.find(
-      (a) => a.providerId === providerId && a.dayOfWeek === dayOfWeek
-    );
+    const providerAvailabilities = availabilityByProviderDay.get(`${providerId}|${dayOfWeek}`) || [];
 
     // If no specific availability for this provider/day, use default business hours on weekdays
-    if (!providerAvail) {
+    if (providerAvailabilities.length === 0) {
       if (dayOfWeek >= 1 && dayOfWeek <= 5) {
         return timeInMinutes >= defaultStartMinutes && timeInMinutes < defaultEndMinutes;
       }
       return false;
     }
 
-    const [startHour, startMinute] = (providerAvail.startTime || '08:00').split(':').map(Number);
-    const [endHour, endMinute] = (providerAvail.endTime || '17:00').split(':').map(Number);
-    const startInMinutes = startHour * 60 + startMinute;
-    const endInMinutes = endHour * 60 + endMinute;
-
-    return timeInMinutes >= startInMinutes && timeInMinutes < endInMinutes;
+    return providerAvailabilities.some((providerAvail) => {
+      const [startHour, startMinute] = (providerAvail.startTime || '08:00').split(':').map(Number);
+      const [endHour, endMinute] = (providerAvail.endTime || '17:00').split(':').map(Number);
+      const startInMinutes = startHour * 60 + startMinute;
+      const endInMinutes = endHour * 60 + endMinute;
+      return timeInMinutes >= startInMinutes && timeInMinutes < endInMinutes;
+    });
   };
 
   // Helper: Get appointments for a specific slot (excludes cancelled appointments)
   const getAppointmentsForSlot = (providerId: string, date: Date, hour: number, minute: number) => {
-    if (!Array.isArray(appointments)) {
+    const dayAppointments = appointmentsByProviderDay.get(`${providerId}|${toDateKey(date)}`);
+    if (!dayAppointments || dayAppointments.length === 0) {
       return [];
     }
-    return appointments.filter((appt) => {
-      // Filter out cancelled appointments - they should not appear on schedule
-      if (appt.status === 'cancelled') return false;
-      if (appt.providerId !== providerId) return false;
+    return dayAppointments.filter((appt) => {
+      if (!appt?.scheduledStart || !appt?.scheduledEnd) return false;
 
       const apptStart = new Date(appt.scheduledStart);
       const apptEnd = new Date(appt.scheduledEnd);
-
-      // Check if same day
-      if (
-        apptStart.getDate() !== date.getDate() ||
-        apptStart.getMonth() !== date.getMonth() ||
-        apptStart.getFullYear() !== date.getFullYear()
-      ) {
+      if (Number.isNaN(apptStart.getTime()) || Number.isNaN(apptEnd.getTime())) {
         return false;
       }
 
@@ -163,21 +226,16 @@ export function Calendar({
 
   // Helper: Get time blocks for a specific slot
   const getTimeBlocksForSlot = (providerId: string, date: Date, hour: number, minute: number) => {
-    if (!Array.isArray(timeBlocks)) {
+    const dayBlocks = timeBlocksByProviderDay.get(`${providerId}|${toDateKey(date)}`);
+    if (!dayBlocks || dayBlocks.length === 0) {
       return [];
     }
-    return timeBlocks.filter((block) => {
-      if (block.providerId !== providerId || block.status !== 'active') return false;
+    return dayBlocks.filter((block) => {
+      if (!block?.startTime || !block?.endTime) return false;
 
       const blockStart = new Date(block.startTime);
       const blockEnd = new Date(block.endTime);
-
-      // Check if same day
-      if (
-        blockStart.getDate() !== date.getDate() ||
-        blockStart.getMonth() !== date.getMonth() ||
-        blockStart.getFullYear() !== date.getFullYear()
-      ) {
+      if (Number.isNaN(blockStart.getTime()) || Number.isNaN(blockEnd.getTime())) {
         return false;
       }
 

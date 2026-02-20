@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const DEV_BACKEND_TARGET = process.env.VITE_DEV_PROXY_TARGET || 'http://localhost:4000'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -41,6 +43,19 @@ export default defineConfig({
     strictPort: false,
     host: true,
     open: false,
+    proxy: {
+      '/api': {
+        target: DEV_BACKEND_TARGET,
+        changeOrigin: true,
+        secure: false,
+      },
+      '/socket.io': {
+        target: DEV_BACKEND_TARGET,
+        changeOrigin: true,
+        secure: false,
+        ws: true,
+      },
+    },
   },
   // Optimize dependencies
   optimizeDeps: {

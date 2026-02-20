@@ -695,4 +695,36 @@ describe('SchedulePage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Face Sheets/ }));
     expect(navigateMock).toHaveBeenCalledWith('/face-sheets');
   });
+
+  it('requests a past date window when navigating to previous days', async () => {
+    localStorage.setItem('sched:dayOffset', '-2');
+
+    render(<SchedulePage />);
+
+    await screen.findByTestId('calendar');
+    await waitFor(() => expect(apiMocks.fetchAppointments).toHaveBeenCalled());
+
+    const lastCall = apiMocks.fetchAppointments.mock.calls.at(-1);
+    expect(lastCall).toBeTruthy();
+
+    const options = lastCall?.[2] as { startDate?: string; endDate?: string } | undefined;
+    expect(options?.startDate).toBeTruthy();
+    expect(options?.endDate).toBeTruthy();
+
+    const selectedDate = new Date();
+    selectedDate.setDate(selectedDate.getDate() - 2);
+    selectedDate.setHours(0, 0, 0, 0);
+
+    const expectedStartDate = new Date(selectedDate);
+    expectedStartDate.setDate(expectedStartDate.getDate() - 60);
+
+    const expectedEndDate = new Date(selectedDate);
+    expectedEndDate.setDate(expectedEndDate.getDate() + 60);
+
+    const toIsoDate = (date: Date) => date.toISOString().split('T')[0];
+    expect(options).toMatchObject({
+      startDate: toIsoDate(expectedStartDate),
+      endDate: toIsoDate(expectedEndDate),
+    });
+  });
 });

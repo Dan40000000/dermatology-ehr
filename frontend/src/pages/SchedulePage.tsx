@@ -281,8 +281,6 @@ export function SchedulePage() {
     setLoading(true);
     try {
       // Calculate date range based on view mode
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
       const selectedDate = new Date();
       selectedDate.setDate(selectedDate.getDate() + dayOffset);
       selectedDate.setHours(0, 0, 0, 0);
@@ -300,8 +298,9 @@ export function SchedulePage() {
         endDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
         endDate.setDate(endDate.getDate() + 14);
       } else {
-        // For day/week view, start from today and end 60 days from selected date
-        startDate = today;
+        // For day/week view, query around selected date so past navigation still loads records
+        startDate = new Date(selectedDate);
+        startDate.setDate(startDate.getDate() - 60);
         endDate = new Date(selectedDate);
         endDate.setDate(endDate.getDate() + 60);
       }

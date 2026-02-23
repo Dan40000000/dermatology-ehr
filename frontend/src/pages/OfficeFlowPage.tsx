@@ -14,6 +14,8 @@ import {
   fetchProviders,
   fetchPatientEncounters,
   createEncounter,
+  fetchChargesByEncounter,
+  updateCharge,
 } from '../api';
 import type { Appointment, Patient, Provider } from '../types';
 import { setActiveEncounter } from '../utils/activeEncounter';
@@ -54,6 +56,7 @@ interface PatientFlow {
   locationId?: string;
   locationName?: string;
   waitTime?: number;
+  paymentDueCents?: number;
 }
 
 const getMinutesBetween = (startIso?: string, endIso?: string): number | null => {
@@ -67,6 +70,8 @@ const getMinutesBetween = (startIso?: string, endIso?: string): number | null =>
 };
 
 const isLaserAppointmentType = (appointmentType?: string): boolean => /laser/i.test(appointmentType || '');
+
+const formatCurrency = (amountCents: number) => `$${(amountCents / 100).toFixed(2)}`;
 
 const INITIAL_ROOMS: Room[] = [
   { id: 'room-1', name: 'Exam 1', type: 'exam', status: 'available' },
@@ -139,7 +144,7 @@ export function OfficeFlowPage() {
       });
       setRoomAssignments(assignmentMap);
 
-      const activeStatuses: PatientFlowStatus[] = ['checked_in', 'in_room', 'with_provider', 'completed'];
+      const activeStatuses: PatientFlowStatus[] = ['checked_in', 'in_room', 'with_provider', 'checkout', 'completed'];
       const flows: PatientFlow[] = (scheduleRes.appointments || [])
         .filter((appt: any) => activeStatuses.includes(appt.status))
         .map((appt: any) => {
@@ -168,6 +173,7 @@ export function OfficeFlowPage() {
             locationId: appt.locationId,
             locationName: appt.locationName,
             waitTime,
+            paymentDueCents: Number(appt.paymentDueCents || 0),
           };
         });
 
@@ -201,10 +207,10 @@ export function OfficeFlowPage() {
       checked_in: 'checked_in',
       in_room: 'in_room',
       with_provider: 'with_provider',
+      checkout: 'checkout',
       completed: 'completed',
       waiting: 'checked_in',
       'in-exam': 'in_room',
-      checkout: 'completed',
     };
     const mappedStatus = statusMap[normalized];
     if (mappedStatus) {
@@ -254,6 +260,7 @@ export function OfficeFlowPage() {
     checked_in: 'checked in',
     in_room: 'in room',
     with_provider: 'with provider',
+    checkout: 'checkout (payment due)',
     completed: 'completed',
     cancelled: 'cancelled',
     no_show: 'no show',
@@ -261,7 +268,7 @@ export function OfficeFlowPage() {
 
   const getStatusLabel = (status: PatientFlowStatus) => statusLabels[status] || status;
 
-  const ensureEncounterForFlow = useCallback(async (flow: PatientFlow) => {
+  const getEncounterIdForFlow = useCallback(async (flow: PatientFlow) => {
     if (!session) {
       throw new Error('Session missing');
     }
@@ -272,8 +279,17 @@ export function OfficeFlowPage() {
       flow.patientId
     );
     const existing = (encountersRes.encounters || []).find((encounter: any) => encounter.appointmentId === flow.appointmentId);
-    if (existing?.id) {
-      return existing.id as string;
+    return existing?.id ? (existing.id as string) : null;
+  }, [session]);
+
+  const ensureEncounterForFlow = useCallback(async (flow: PatientFlow) => {
+    if (!session) {
+      throw new Error('Session missing');
+    }
+
+    const existingEncounterId = await getEncounterIdForFlow(flow);
+    if (existingEncounterId) {
+      return existingEncounterId;
     }
 
     const created = await createEncounter(session.tenantId, session.accessToken, {
@@ -282,7 +298,7 @@ export function OfficeFlowPage() {
       appointmentId: flow.appointmentId,
     });
     return created.id as string;
-  }, [session]);
+  }, [session, getEncounterIdForFlow]);
 
   const handleRoomPatient = async (flow: PatientFlow, roomId: string) => {
     if (!session) return;
@@ -318,12 +334,23 @@ export function OfficeFlowPage() {
     if (!session) return;
 
     try {
+      let resolvedStatus: PatientFlowStatus = newStatus;
+      let paymentDueCents = Number(flow.paymentDueCents || 0);
+
       if (newStatus === 'completed') {
-        try {
-          await updatePatientFlowStatus(session.tenantId, session.accessToken, flow.appointmentId, 'completed');
-        } catch {
-          await checkOutFrontDeskAppointment(session.tenantId, session.accessToken, flow.appointmentId);
+        const checkoutResult = await checkOutFrontDeskAppointment(
+          session.tenantId,
+          session.accessToken,
+          flow.appointmentId
+        );
+        if (checkoutResult?.requiresPayment) {
+          resolvedStatus = 'checkout';
+          paymentDueCents = Number(checkoutResult.paymentDueCents || paymentDueCents);
+        } else {
+          resolvedStatus = 'completed';
+          paymentDueCents = 0;
         }
+
         setRoomAssignments((prev) => {
           if (!prev[flow.appointmentId]) return prev;
           const next = { ...prev };
@@ -343,11 +370,15 @@ export function OfficeFlowPage() {
       setPatientFlows((prev) =>
         prev.map((f) => {
           if (f.id === flow.id) {
-            const updates: Partial<PatientFlow> = { status: newStatus };
-            if (newStatus === 'with_provider') {
+            const updates: Partial<PatientFlow> = { status: resolvedStatus };
+            if (resolvedStatus === 'with_provider') {
               updates.providerStartTime = new Date().toISOString();
-            } else if (newStatus === 'completed') {
+            } else if (resolvedStatus === 'completed') {
               updates.checkoutTime = new Date().toISOString();
+              updates.paymentDueCents = 0;
+            } else if (resolvedStatus === 'checkout') {
+              updates.paymentDueCents = paymentDueCents;
+              updates.checkoutTime = undefined;
             }
             return { ...f, ...updates };
           }
@@ -355,7 +386,7 @@ export function OfficeFlowPage() {
         })
       );
 
-      showSuccess(`Status updated to ${getStatusLabel(newStatus)}`);
+      showSuccess(`Status updated to ${getStatusLabel(resolvedStatus)}`);
     } catch (err: any) {
       showError(err.message || 'Failed to update status');
     }
@@ -459,12 +490,57 @@ export function OfficeFlowPage() {
     }
   };
 
+  const handleCollectPayment = async (flow: PatientFlow) => {
+    if (!session) return;
+
+    try {
+      const encounterId = await getEncounterIdForFlow(flow);
+
+      if (encounterId) {
+        const chargesRes = await fetchChargesByEncounter(session.tenantId, session.accessToken, encounterId);
+        const selfPayCharges = (chargesRes.charges || []).filter((charge: any) => charge.status === 'self_pay');
+
+        if (selfPayCharges.length > 0) {
+          await Promise.all(
+            selfPayCharges.map((charge: any) =>
+              updateCharge(session.tenantId, session.accessToken, charge.id, { status: 'paid' })
+            )
+          );
+        }
+      }
+
+      const checkoutResult = await checkOutFrontDeskAppointment(session.tenantId, session.accessToken, flow.appointmentId);
+      if (checkoutResult?.requiresPayment) {
+        showError('Payment is still due before checkout can be completed.');
+        return;
+      }
+
+      setPatientFlows((prev) =>
+        prev.map((item) =>
+          item.id === flow.id
+            ? {
+                ...item,
+                status: 'completed',
+                paymentDueCents: 0,
+                checkoutTime: new Date().toISOString(),
+              }
+            : item
+        )
+      );
+
+      showSuccess(`${flow.patientName} payment collected and visit completed`);
+    } catch (err: any) {
+      showError(err.message || 'Failed to collect payment');
+    }
+  };
+
   const getStatusIcon = (status: PatientFlowStatus) => {
     switch (status) {
       case 'scheduled': return '';
       case 'checked_in': return '';
       case 'in_room': return '';
       case 'with_provider': return '';
+      case 'checkout': return '';
       case 'completed': return '';
       case 'cancelled': return '';
       case 'no_show': return '';
@@ -492,6 +568,7 @@ export function OfficeFlowPage() {
 
   const waitingPatients = filteredFlows.filter((f) => f.status === 'checked_in');
   const roomedPatients = filteredFlows.filter((f) => f.status === 'in_room' || f.status === 'with_provider');
+  const checkoutPatients = filteredFlows.filter((f) => f.status === 'checkout');
   const completedPatients = filteredFlows.filter((f) => f.status === 'completed');
   const availableRooms = rooms.filter((r) => r.status === 'available');
   const facilityOptions = Array.from(
@@ -755,6 +832,7 @@ export function OfficeFlowPage() {
                 <option value="checked_in">Checked In</option>
                 <option value="in_room">In Room</option>
                 <option value="with_provider">With Provider</option>
+                <option value="checkout">Checkout (Payment Due)</option>
                 <option value="completed">Completed</option>
               </select>
             </div>
@@ -815,6 +893,10 @@ export function OfficeFlowPage() {
         <div className="flow-stat" style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)', color: '#ffffff', padding: '1.25rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
           <span className="stat-value" style={{ display: 'block', fontSize: '2rem', fontWeight: 700, marginBottom: '0.25rem' }}>{roomedPatients.length}</span>
           <span className="stat-label" style={{ fontSize: '0.875rem', fontWeight: 500 }}>In Rooms</span>
+        </div>
+        <div className="flow-stat" style={{ background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)', color: '#ffffff', padding: '1.25rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
+          <span className="stat-value" style={{ display: 'block', fontSize: '2rem', fontWeight: 700, marginBottom: '0.25rem' }}>{checkoutPatients.length}</span>
+          <span className="stat-label" style={{ fontSize: '0.875rem', fontWeight: 500 }}>Checkout Due</span>
         </div>
         <div className="flow-stat" style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: '#ffffff', padding: '1.25rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
           <span className="stat-value" style={{ display: 'block', fontSize: '2rem', fontWeight: 700, marginBottom: '0.25rem' }}>{completedPatients.length}</span>
@@ -990,6 +1072,50 @@ export function OfficeFlowPage() {
                 <div className="empty-column" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '3rem 1rem', color: '#9ca3af' }}>
                   <div style={{ fontSize: '4rem', marginBottom: '1rem', opacity: 0.3 }}>🚪</div>
                   <span className="empty-text" style={{ fontSize: '0.875rem', fontWeight: 500 }}>No patients in rooms</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Checkout / Payment */}
+          <div className="flow-column">
+            <div className="column-header checkout">
+              <span className="column-title">Checkout / Payment</span>
+              <span className="column-count">{checkoutPatients.length}</span>
+            </div>
+            <div className="column-content">
+              {checkoutPatients.map((flow) => (
+                <div key={flow.id} className="flow-card">
+                  <div className="flow-card-header">
+                    <span className="patient-name">{flow.patientName}</span>
+                    <span className="room-badge">{formatCurrency(Number(flow.paymentDueCents || 0))}</span>
+                  </div>
+                  <div className="flow-card-info">
+                    <div className="info-row muted tiny">{flow.appointmentType}</div>
+                    <div className="info-row muted tiny">{flow.providerName}</div>
+                  </div>
+                  <div className="flow-card-actions">
+                    <button
+                      type="button"
+                      className="btn-sm btn-primary"
+                      onClick={() => handleCollectPayment(flow)}
+                    >
+                      Collect Payment
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-sm btn-secondary"
+                      onClick={() => navigate(`/patients/${flow.patientId}`)}
+                    >
+                      View Chart
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {checkoutPatients.length === 0 && (
+                <div className="empty-column" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '3rem 1rem', color: '#9ca3af' }}>
+                  <div style={{ fontSize: '4rem', marginBottom: '1rem', opacity: 0.3 }}>💳</div>
+                  <span className="empty-text" style={{ fontSize: '0.875rem', fontWeight: 500 }}>No payment due</span>
                 </div>
               )}
             </div>

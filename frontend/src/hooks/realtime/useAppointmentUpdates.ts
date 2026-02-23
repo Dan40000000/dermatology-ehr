@@ -17,7 +17,7 @@ export interface Appointment {
   locationName?: string;
   scheduledStart: string;
   scheduledEnd: string;
-  status: 'scheduled' | 'checked_in' | 'in_room' | 'with_provider' | 'completed' | 'cancelled' | 'no_show';
+  status: 'scheduled' | 'checked_in' | 'in_room' | 'with_provider' | 'checkout' | 'completed' | 'cancelled' | 'no_show';
   appointmentTypeId: string;
   appointmentTypeName?: string;
 }

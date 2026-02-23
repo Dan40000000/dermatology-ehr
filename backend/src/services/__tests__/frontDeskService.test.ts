@@ -73,6 +73,7 @@ describe("frontDeskService", () => {
           insurance_plan_name: "Plan A",
           copay_amount: "25",
           outstanding_balance: "12.5",
+          payment_due_cents: "0",
           created_at: "2025-01-01T10:00:00Z",
         },
       ],
@@ -240,15 +241,42 @@ describe("frontDeskService", () => {
     expect(client.query).toHaveBeenCalledWith("ROLLBACK");
   });
 
-  it("checkOutPatient updates appointment status", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [] });
+  it("checkOutPatient routes unpaid self-pay visits to checkout", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ payment_due_cents: "12500" }] })
+      .mockResolvedValueOnce({ rows: [] });
 
-    await frontDeskService.checkOutPatient("tenant-1", "appt-1");
+    const result = await frontDeskService.checkOutPatient("tenant-1", "appt-1");
 
-    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining("UPDATE appointments"), [
-      "tenant-1",
-      "appt-1",
-    ]);
+    expect(result).toEqual({
+      status: "checkout",
+      requiresPayment: true,
+      paymentDueCents: 12500,
+    });
+    expect(queryMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("SET status = 'checkout'"),
+      ["tenant-1", "appt-1"]
+    );
+  });
+
+  it("checkOutPatient completes appointment when no self-pay balance exists", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ payment_due_cents: "0" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await frontDeskService.checkOutPatient("tenant-1", "appt-1");
+
+    expect(result).toEqual({
+      status: "completed",
+      requiresPayment: false,
+      paymentDueCents: 0,
+    });
+    expect(queryMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("SET status = 'completed'"),
+      ["tenant-1", "appt-1"]
+    );
   });
 
   it("updateAppointmentStatus sets arrived_at for checked_in", async () => {
@@ -276,6 +304,15 @@ describe("frontDeskService", () => {
 
     const query = queryMock.mock.calls[0][0];
     expect(query).toContain("completed_at");
+  });
+
+  it("updateAppointmentStatus clears completed_at for checkout", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    await frontDeskService.updateAppointmentStatus("tenant-1", "appt-1", "checkout");
+
+    const query = queryMock.mock.calls[0][0];
+    expect(query).toContain("completed_at = NULL");
   });
 
   it("getUpcomingPatients returns mapped results", async () => {

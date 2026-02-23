@@ -7,7 +7,7 @@ import { auditLog } from '../services/audit';
 import { logger } from '../lib/logger';
 
 const updateStatusSchema = z.object({
-  status: z.enum(['scheduled', 'checked_in', 'in_room', 'with_provider', 'completed', 'cancelled', 'no_show']),
+  status: z.enum(['scheduled', 'checked_in', 'in_room', 'with_provider', 'checkout', 'completed', 'cancelled', 'no_show']),
 });
 
 export const frontDeskRouter = Router();
@@ -245,7 +245,7 @@ frontDeskRouter.post(
       const tenantId = req.tenantId!;
       const userId = req.user!.id;
 
-      await frontDeskService.checkOutPatient(tenantId, appointmentId!);
+      const result = await frontDeskService.checkOutPatient(tenantId, appointmentId!);
 
       try {
         await auditLog(tenantId, userId, 'check_out', 'appointment', appointmentId!);
@@ -253,7 +253,19 @@ frontDeskRouter.post(
         logger.error('Check-out audit log failed:', auditError);
       }
 
-      res.json({ success: true, message: 'Patient checked out successfully' });
+      if (result.requiresPayment) {
+        return res.json({
+          success: true,
+          message: 'Visit moved to checkout. Payment is due at front desk.',
+          ...result,
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Patient checked out successfully',
+        ...result,
+      });
     } catch (error) {
       logger.error('Error checking out patient:', error);
       res.status(500).json({ error: 'Failed to check out patient' });
@@ -286,7 +298,7 @@ frontDeskRouter.post(
  *             properties:
  *               status:
  *                 type: string
- *                 enum: [scheduled, checked_in, in_room, with_provider, completed, cancelled, no_show]
+ *                 enum: [scheduled, checked_in, in_room, with_provider, checkout, completed, cancelled, no_show]
  *     responses:
  *       200:
  *         description: Status updated successfully

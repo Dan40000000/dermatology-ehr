@@ -116,13 +116,34 @@ describe("Front desk routes", () => {
   });
 
   it("POST /front-desk/check-out returns success", async () => {
-    serviceMock.checkOutPatient.mockResolvedValueOnce(undefined as any);
+    serviceMock.checkOutPatient.mockResolvedValueOnce({
+      status: "completed",
+      requiresPayment: false,
+      paymentDueCents: 0,
+    } as any);
 
     const res = await request(app).post("/front-desk/check-out/apt-1");
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+    expect(res.body.status).toBe("completed");
     expect(auditLog).toHaveBeenCalled();
+  });
+
+  it("POST /front-desk/check-out returns checkout state when payment is due", async () => {
+    serviceMock.checkOutPatient.mockResolvedValueOnce({
+      status: "checkout",
+      requiresPayment: true,
+      paymentDueCents: 7500,
+    } as any);
+
+    const res = await request(app).post("/front-desk/check-out/apt-1");
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.status).toBe("checkout");
+    expect(res.body.requiresPayment).toBe(true);
+    expect(res.body.paymentDueCents).toBe(7500);
   });
 
   it("PUT /front-desk/status rejects invalid payload", async () => {

@@ -409,7 +409,18 @@ export function EncounterPage() {
     setEndingAppointment(true);
     try {
       try {
-        await checkOutFrontDeskAppointment(session.tenantId, session.accessToken, encounter.appointmentId);
+        const checkoutResult = await checkOutFrontDeskAppointment(
+          session.tenantId,
+          session.accessToken,
+          encounter.appointmentId
+        );
+        if (checkoutResult?.requiresPayment) {
+          const paymentDue = Number(checkoutResult.paymentDueCents || 0) / 100;
+          showSuccess(`Visit sent to checkout. Payment due: $${paymentDue.toFixed(2)}`);
+          clearActiveEncounter();
+          navigate('/office-flow?status=checkout');
+          return;
+        }
       } catch {
         // Fallback for non-front-desk roles
         await updateAppointmentStatus(session.tenantId, session.accessToken, encounter.appointmentId, 'completed');

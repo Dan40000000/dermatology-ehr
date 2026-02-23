@@ -38,6 +38,10 @@ function isLaserAppointmentType(appointmentTypeName?: string): boolean {
   return /laser/i.test(appointmentTypeName || '');
 }
 
+function isTerminalAppointmentStatus(status: Appointment['status']): boolean {
+  return status === 'completed' || status === 'cancelled' || status === 'checkout';
+}
+
 function startOfDay(date: Date): Date {
   const result = new Date(date);
   result.setHours(0, 0, 0, 0);
@@ -511,7 +515,7 @@ export function SchedulePage() {
     try {
       setRowAction({ id: appt.id, action: 'encounter' });
       const encounterId = await ensureEncounterForAppointment(appt);
-      if (appt.status !== 'completed' && appt.status !== 'cancelled' && appt.status !== 'with_provider') {
+      if (!isTerminalAppointmentStatus(appt.status) && appt.status !== 'with_provider') {
         try {
           await updateAppointmentStatus(session.tenantId, session.accessToken, appt.id, 'with_provider');
         } catch {
@@ -1185,13 +1189,13 @@ export function SchedulePage() {
                         type="button"
                         data-testid="calendar-action-start-encounter"
                         className="ema-action-btn"
-                        disabled={selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled' || rowAction?.id === selectedAppt.id}
+                        disabled={isTerminalAppointmentStatus(selectedAppt.status) || rowAction?.id === selectedAppt.id}
                         onClick={() => handleStartEncounterFromSchedule(selectedAppt)}
                         style={{
-                          background: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                          background: isTerminalAppointmentStatus(selectedAppt.status)
                             ? '#f3f4f6'
                             : '#ecfdf5',
-                          color: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                          color: isTerminalAppointmentStatus(selectedAppt.status)
                             ? '#9ca3af'
                             : '#065f46',
                           opacity: rowAction?.id === selectedAppt.id ? 0.7 : 1,
@@ -1207,13 +1211,13 @@ export function SchedulePage() {
                         type="button"
                         data-testid="calendar-action-reschedule"
                         className="ema-action-btn"
-                        disabled={selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled'}
+                        disabled={isTerminalAppointmentStatus(selectedAppt.status)}
                         onClick={() => openRescheduleModal(selectedAppt)}
                         style={{
-                          background: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                          background: isTerminalAppointmentStatus(selectedAppt.status)
                             ? '#f3f4f6'
                             : '#e0f2fe',
-                          color: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                          color: isTerminalAppointmentStatus(selectedAppt.status)
                             ? '#9ca3af'
                             : '#075985',
                         }}
@@ -1224,13 +1228,13 @@ export function SchedulePage() {
                         type="button"
                         data-testid="calendar-action-cancel"
                         className="ema-action-btn"
-                        disabled={selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled'}
+                        disabled={isTerminalAppointmentStatus(selectedAppt.status)}
                         onClick={() => handleCancelAppt(selectedAppt)}
                         style={{
-                          background: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                          background: isTerminalAppointmentStatus(selectedAppt.status)
                             ? '#f3f4f6'
                             : '#fef2f2',
-                          color: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                          color: isTerminalAppointmentStatus(selectedAppt.status)
                             ? '#9ca3af'
                             : '#991b1b',
                         }}
@@ -1593,7 +1597,7 @@ export function SchedulePage() {
             </tr>
           ) : (
             filteredAppointments.map((a) => {
-              const isCompletedOrCancelled = a.status === 'completed' || a.status === 'cancelled';
+              const isCompletedOrCancelled = isTerminalAppointmentStatus(a.status);
               const canCheckIn = a.status === 'scheduled';
               const isEncounterActionPending = rowAction?.id === a.id && rowAction?.action === 'encounter';
               const isEncounterDisabled = isCompletedOrCancelled || isEncounterActionPending;
@@ -1648,7 +1652,7 @@ export function SchedulePage() {
                   <td>{a.appointmentTypeName}</td>
                   <td>{a.locationName}</td>
                   <td>
-                    <span className={`ema-status ${a.status === 'completed' ? 'established' : a.status === 'cancelled' ? 'inactive' : 'pending'}`}>
+                    <span className={`ema-status ${a.status === 'completed' ? 'established' : a.status === 'cancelled' ? 'inactive' : a.status === 'checkout' ? 'warning' : 'pending'}`}>
                       {a.status}
                     </span>
                   </td>
@@ -1768,6 +1772,7 @@ export function SchedulePage() {
                         <option value="checked_in">Checked In</option>
                         <option value="in_room">In Room</option>
                         <option value="with_provider">With Provider</option>
+                        <option value="checkout">Checkout</option>
                         <option value="completed">Completed</option>
                         <option value="cancelled">Cancelled</option>
                       </select>

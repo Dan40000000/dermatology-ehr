@@ -84,7 +84,7 @@ chargesRouter.post("/", requireAuth, requireRoles(["admin", "billing", "provider
 });
 
 // Update charge
-chargesRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "provider", "ma"]), async (req: AuthedRequest, res) => {
+chargesRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "provider", "ma", "front_desk"]), async (req: AuthedRequest, res) => {
   const parsed = updateChargeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 

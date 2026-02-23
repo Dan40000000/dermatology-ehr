@@ -28,6 +28,7 @@ export interface AppointmentWithDetails {
   copayAmount?: number;
   // Balance info
   outstandingBalance?: number;
+  paymentDueCents?: number;
   balanceAge?: number;
   // Wait time
   waitTimeMinutes?: number;
@@ -55,6 +56,12 @@ export interface WaitingRoomPatient {
   arrivedAt: string;
   waitTimeMinutes: number;
   isDelayed: boolean;
+}
+
+export interface CheckOutResult {
+  status: 'checkout' | 'completed';
+  requiresPayment: boolean;
+  paymentDueCents: number;
 }
 
 export class FrontDeskService {
@@ -131,7 +138,18 @@ export class FrontDeskService {
              WHERE b.patient_id = p.id
                AND b.status NOT IN ('paid', 'void')
             ), 0
-          ) as outstanding_balance
+          ) as outstanding_balance,
+          COALESCE(
+            (
+              SELECT SUM(c.amount_cents)
+              FROM encounters e
+              INNER JOIN charges c ON c.encounter_id = e.id AND c.tenant_id = e.tenant_id
+              WHERE e.tenant_id = a.tenant_id
+                AND e.appointment_id = a.id
+                AND c.status = 'self_pay'
+            ),
+            0
+          ) as payment_due_cents
         FROM appointments a
         INNER JOIN patients p ON a.patient_id = p.id
         INNER JOIN providers prov ON a.provider_id = prov.id
@@ -186,6 +204,7 @@ export class FrontDeskService {
           insurancePlanName: row.insurance_plan_name,
           copayAmount: row.copay_amount ? parseFloat(row.copay_amount) : undefined,
           outstandingBalance: row.outstanding_balance ? parseFloat(row.outstanding_balance) : 0,
+          paymentDueCents: row.payment_due_cents ? Number(row.payment_due_cents) : 0,
           createdAt: row.created_at,
         };
 
@@ -398,8 +417,40 @@ export class FrontDeskService {
   /**
    * Check out a patient
    */
-  async checkOutPatient(tenantId: string, appointmentId: string): Promise<void> {
+  async checkOutPatient(tenantId: string, appointmentId: string): Promise<CheckOutResult> {
     try {
+      const paymentDueResult = await pool.query(
+        `
+        SELECT COALESCE(SUM(c.amount_cents), 0) as payment_due_cents
+        FROM encounters e
+        INNER JOIN charges c ON c.encounter_id = e.id AND c.tenant_id = e.tenant_id
+        WHERE e.tenant_id = $1
+          AND e.appointment_id = $2
+          AND c.status = 'self_pay'
+        `,
+        [tenantId, appointmentId]
+      );
+
+      const paymentDueCents = Number(paymentDueResult.rows[0]?.payment_due_cents || 0);
+      if (paymentDueCents > 0) {
+        await pool.query(
+          `
+          UPDATE appointments
+          SET status = 'checkout',
+              completed_at = NULL
+          WHERE tenant_id = $1
+            AND id = $2
+          `,
+          [tenantId, appointmentId]
+        );
+
+        return {
+          status: 'checkout',
+          requiresPayment: true,
+          paymentDueCents,
+        };
+      }
+
       await pool.query(
         `
         UPDATE appointments
@@ -410,6 +461,12 @@ export class FrontDeskService {
         `,
         [tenantId, appointmentId]
       );
+
+      return {
+        status: 'completed',
+        requiresPayment: false,
+        paymentDueCents: 0,
+      };
     } catch (error) {
       logger.error('Error checking out patient:', error);
       throw error;
@@ -434,6 +491,8 @@ export class FrontDeskService {
         updates.push('roomed_at = COALESCE(roomed_at, NOW())');
       } else if (status === 'completed') {
         updates.push('completed_at = COALESCE(completed_at, NOW())');
+      } else if (status === 'checkout') {
+        updates.push('completed_at = NULL');
       }
 
       const query = `

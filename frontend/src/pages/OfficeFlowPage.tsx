@@ -151,8 +151,12 @@ export function OfficeFlowPage() {
           const patientName = appt.patientLastName && appt.patientFirstName
             ? `${appt.patientLastName}, ${appt.patientFirstName}`
             : (appt.patientName || 'Patient');
+          const paymentDueCents = Number(appt.paymentDueCents || 0);
+          const effectiveStatus: PatientFlowStatus = appt.status === 'completed' && paymentDueCents > 0
+            ? 'checkout'
+            : appt.status;
           const liveWaitMinutes = getMinutesBetween(appt.arrivedAt, new Date().toISOString());
-          const waitTime = appt.status === 'checked_in'
+          const waitTime = effectiveStatus === 'checked_in'
             ? Math.floor(appt.waitTimeMinutes ?? liveWaitMinutes ?? 0)
             : undefined;
 
@@ -167,13 +171,13 @@ export function OfficeFlowPage() {
             roomedTime: appt.roomedAt,
             providerStartTime: appt.roomedAt,
             checkoutTime: appt.completedAt,
-            status: appt.status,
+            status: effectiveStatus,
             providerId: appt.providerId,
             providerName: appt.providerName || 'Provider',
             locationId: appt.locationId,
             locationName: appt.locationName,
             waitTime,
-            paymentDueCents: Number(appt.paymentDueCents || 0),
+            paymentDueCents,
           };
         });
 

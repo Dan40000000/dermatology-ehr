@@ -430,7 +430,6 @@ describe('EncounterPage', () => {
       expect(apiMocks.createOrder).toHaveBeenCalledWith('tenant-1', 'token-1', {
         encounterId: 'enc-1',
         patientId: 'patient-1',
-        providerId: 'user-1',
         type: 'lab',
         details: 'CBC and CMP',
       }),

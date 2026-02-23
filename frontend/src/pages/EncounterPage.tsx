@@ -470,13 +470,25 @@ export function EncounterPage() {
     if (!session || !encounterId || isNew) return;
 
     try {
-      await createOrder(session.tenantId, session.accessToken, {
+      const orderPayload: {
+        encounterId: string;
+        patientId: string;
+        type: string;
+        details: string;
+        providerId?: string;
+      } = {
         encounterId,
         patientId: patientId!,
-        providerId: session.user.id,
         type: orderForm.type,
         details: orderForm.details,
-      });
+      };
+
+      const encounterProviderId = (encounter.providerId as string | undefined)?.trim();
+      if (encounterProviderId) {
+        orderPayload.providerId = encounterProviderId;
+      }
+
+      await createOrder(session.tenantId, session.accessToken, orderPayload);
       showSuccess('Order added');
       setShowOrderModal(false);
       setOrderForm({ type: 'lab', details: '' });

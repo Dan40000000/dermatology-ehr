@@ -123,13 +123,21 @@ ordersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]), a
   let providerName: string | null = null;
 
   if (providerId) {
-    // Get provider name for denormalization
+    // If a caller passes an invalid provider ID, fall back to default provider
+    // instead of attempting an insert that violates provider FK constraints.
     const providerResult = await pool.query(
-      `select full_name from providers where id = $1 and tenant_id = $2`,
+      `select id, full_name from providers where id = $1 and tenant_id = $2`,
       [providerId, tenantId]
     );
-    providerName = providerResult.rows[0]?.full_name || null;
-  } else {
+    if (providerResult.rows[0]) {
+      providerId = providerResult.rows[0].id;
+      providerName = providerResult.rows[0].full_name;
+    } else {
+      providerId = undefined;
+    }
+  }
+
+  if (!providerId) {
     // Default to first available provider (prefer Dr. David Skin for derm orders)
     const defaultProviderResult = await pool.query(
       `select id, full_name from providers where tenant_id = $1 order by

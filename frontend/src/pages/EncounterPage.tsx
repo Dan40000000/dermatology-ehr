@@ -1,19 +1,22 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
-import { PatientBanner, BodyMap, TemplateSelector } from '../components/clinical';
+import { PatientBanner, TemplateSelector } from '../components/clinical';
+import { PatientBodyDiagram, type BodyMarker } from '../components/body-diagram';
 import { DiagnosisSearchModal, ProcedureSearchModal } from '../components/billing';
+import { InventoryUsageList, InventoryUsageModal } from '../components/inventory';
 import { EncounterPrescriptions } from '../components/prescriptions';
 import { ScribePanel } from '../components/ScribePanel';
-import type { Lesion } from '../components/clinical';
 import {
   fetchPatients,
   fetchEncounters,
   createEncounter,
   updateEncounter,
   updateEncounterStatus,
+  updateAppointmentStatus,
+  checkOutFrontDeskAppointment,
   fetchVitals,
   createVitals,
   fetchOrders,
@@ -25,7 +28,6 @@ import {
   fetchChargesByEncounter,
   createCharge,
   deleteCharge,
-  getSuperbillUrl,
   generateAiNoteDraft,
   fetchNoteTemplates,
   fetchProviders,
@@ -35,6 +37,7 @@ import type { Patient, Encounter, Vitals, Order, EncounterDiagnosis, Charge, ICD
 import type { NoteTemplate, AINoteDraft, AmbientGeneratedNote } from '../api';
 import { useAutosave } from '../hooks/useAutosave';
 import { ScribeSummaryCard } from '../components/ScribeSummaryCard';
+import { clearActiveEncounter, setActiveEncounter } from '../utils/activeEncounter';
 import {
   buildConcerns,
   buildDiagnoses,
@@ -54,46 +57,26 @@ interface VitalsFormData {
   tempC: string;
 }
 
-interface LesionFormData {
-  regionId: string;
-  x: number;
-  y: number;
-  type: 'primary' | 'secondary' | 'healed';
-  description: string;
-  diagnosis: string;
-  size: string;
-  color: string;
-  morphology: string;
+const EMPTY_VITALS_FORM: VitalsFormData = {
+  heightCm: '',
+  weightKg: '',
+  bpSystolic: '',
+  bpDiastolic: '',
+  pulse: '',
+  tempC: '',
+};
+
+interface EncounterStartNavigationState {
+  startedEncounterFrom?: 'schedule' | 'office_flow';
+  undoAppointmentStatus?: string;
+  appointmentTypeName?: string;
+  returnPath?: string;
 }
-
-const DERM_MORPHOLOGIES = [
-  'Macule', 'Papule', 'Patch', 'Plaque', 'Nodule', 'Tumor',
-  'Vesicle', 'Bulla', 'Pustule', 'Cyst', 'Wheal', 'Scale',
-  'Crust', 'Erosion', 'Ulcer', 'Fissure', 'Atrophy', 'Scar'
-];
-
-const COMMON_DERM_DX = [
-  'Actinic keratosis',
-  'Basal cell carcinoma',
-  'Squamous cell carcinoma',
-  'Melanoma',
-  'Seborrheic keratosis',
-  'Dermatitis',
-  'Psoriasis',
-  'Eczema',
-  'Acne',
-  'Rosacea',
-  'Tinea',
-  'Wart',
-  'Molluscum',
-  'Nevus',
-  'Lipoma',
-  'Cyst',
-];
 
 export function EncounterPage() {
   const { patientId, encounterId } = useParams<{ patientId: string; encounterId?: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
 
@@ -101,6 +84,8 @@ export function EncounterPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [endingAppointment, setEndingAppointment] = useState(false);
+  const [cancellingStartedVisit, setCancellingStartedVisit] = useState(false);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [encounter, setEncounter] = useState<Partial<Encounter>>({
     status: 'draft',
@@ -121,17 +106,15 @@ export function EncounterPage() {
   const isLocked = encounter.status === 'signed' || encounter.status === 'locked';
 
   const [activeSection, setActiveSection] = useState<EncounterSection>('note');
-  const [bodyMapView, setBodyMapView] = useState<'anterior' | 'posterior'>('anterior');
-  const [lesions, setLesions] = useState<Lesion[]>([]);
-  const [selectedLesion, setSelectedLesion] = useState<Lesion | null>(null);
+  const [bodyDiagramMarkers, setBodyDiagramMarkers] = useState<BodyMarker[]>([]);
 
   // Modals
   const [showVitalsModal, setShowVitalsModal] = useState(false);
-  const [showLesionModal, setShowLesionModal] = useState(false);
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [showSignModal, setShowSignModal] = useState(false);
   const [showDiagnosisModal, setShowDiagnosisModal] = useState(false);
   const [showProcedureModal, setShowProcedureModal] = useState(false);
+  const [showInventoryUsageModal, setShowInventoryUsageModal] = useState(false);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [showAiDraftModal, setShowAiDraftModal] = useState(false);
   const [aiDraftInput, setAiDraftInput] = useState({ chiefComplaint: '', briefNotes: '' });
@@ -146,28 +129,10 @@ export function EncounterPage() {
   // Providers for encounter creation
   const [providers, setProviders] = useState<{ id: string; fullName: string }[]>([]);
   const autoCreateEncounterRef = useRef(false);
+  const encounterStartState = (location.state || {}) as EncounterStartNavigationState;
 
   // Form data
-  const [vitalsForm, setVitalsForm] = useState<VitalsFormData>({
-    heightCm: '',
-    weightKg: '',
-    bpSystolic: '',
-    bpDiastolic: '',
-    pulse: '',
-    tempC: '',
-  });
-
-  const [lesionForm, setLesionForm] = useState<LesionFormData>({
-    regionId: '',
-    x: 0,
-    y: 0,
-    type: 'primary',
-    description: '',
-    diagnosis: '',
-    size: '',
-    color: '',
-    morphology: '',
-  });
+  const [vitalsForm, setVitalsForm] = useState<VitalsFormData>(EMPTY_VITALS_FORM);
 
   const [orderForm, setOrderForm] = useState({
     type: 'lab',
@@ -213,15 +178,29 @@ export function EncounterPage() {
 
           // Load vitals, orders, diagnoses, and charges for existing encounter
           const [vitalsRes, ordersRes, diagnosesRes, chargesRes] = await Promise.all([
-            fetchVitals(session.tenantId, session.accessToken),
+            fetchVitals(session.tenantId, session.accessToken, patientId),
             fetchOrders(session.tenantId, session.accessToken),
             fetchDiagnosesByEncounter(session.tenantId, session.accessToken, encounterId),
             fetchChargesByEncounter(session.tenantId, session.accessToken, encounterId),
           ]);
 
-          if (vitalsRes.vitals?.[0]) {
-            setVitals(vitalsRes.vitals[0]);
-          }
+          const encounterVitals = (vitalsRes.vitals || []).find(
+            (vital: Vitals & { encounterId?: string | null }) => vital.encounterId === encounterId,
+          ) || null;
+          setVitals(encounterVitals);
+          setVitalsForm(
+            encounterVitals
+              ? {
+                  heightCm: encounterVitals.heightCm?.toString() || '',
+                  weightKg: encounterVitals.weightKg?.toString() || '',
+                  bpSystolic: encounterVitals.bpSystolic?.toString() || '',
+                  bpDiastolic: encounterVitals.bpDiastolic?.toString() || '',
+                  pulse: encounterVitals.pulse?.toString() || '',
+                  tempC: encounterVitals.tempC?.toString() || '',
+                }
+              : EMPTY_VITALS_FORM,
+          );
+
           setOrders(
             (ordersRes.orders || []).filter((o: Order) => o.encounterId === encounterId)
           );
@@ -296,6 +275,41 @@ export function EncounterPage() {
         autoCreateEncounterRef.current = false;
       });
   }, [session, patientId, isNew, providers, navigate, showError]);
+
+  useEffect(() => {
+    if (isNew || !patientId || !encounterId) return;
+    if (encounter.status === 'signed' || encounter.status === 'locked') {
+      clearActiveEncounter();
+      return;
+    }
+
+    const patientName = patient ? `${patient.firstName} ${patient.lastName}`.trim() : undefined;
+    const cachedAppointmentTypeName = encounter.appointmentId
+      ? sessionStorage.getItem(`encounter:appointmentType:${encounter.appointmentId}`) || undefined
+      : undefined;
+
+    setActiveEncounter({
+      encounterId,
+      patientId,
+      patientName,
+      appointmentTypeName: encounterStartState.appointmentTypeName || cachedAppointmentTypeName,
+      startedAt: new Date().toISOString(),
+      startedEncounterFrom: encounterStartState.startedEncounterFrom,
+      undoAppointmentStatus: encounterStartState.undoAppointmentStatus,
+      returnPath: encounterStartState.returnPath,
+    });
+  }, [
+    isNew,
+    patientId,
+    encounterId,
+    patient,
+    encounter.appointmentId,
+    encounter.status,
+    encounterStartState.appointmentTypeName,
+    encounterStartState.startedEncounterFrom,
+    encounterStartState.undoAppointmentStatus,
+    encounterStartState.returnPath,
+  ]);
 
   // Save encounter function for autosave
   const performSave = useCallback(async () => {
@@ -378,6 +392,7 @@ export function EncounterPage() {
 
       showSuccess('Encounter signed and locked');
       setShowSignModal(false);
+      clearActiveEncounter();
       navigate(`/patients/${patientId}`);
     } catch (err: any) {
       showError(err.message || 'Failed to sign encounter');
@@ -386,12 +401,54 @@ export function EncounterPage() {
     }
   };
 
+  const handleEndAppointment = async () => {
+    if (!session || isNew || !encounter.appointmentId) return;
+
+    setEndingAppointment(true);
+    try {
+      try {
+        await checkOutFrontDeskAppointment(session.tenantId, session.accessToken, encounter.appointmentId);
+      } catch {
+        // Fallback for non-front-desk roles
+        await updateAppointmentStatus(session.tenantId, session.accessToken, encounter.appointmentId, 'completed');
+      }
+      showSuccess('Appointment ended');
+      clearActiveEncounter();
+      navigate('/office-flow');
+    } catch (err: any) {
+      showError(err.message || 'Failed to end appointment');
+    } finally {
+      setEndingAppointment(false);
+    }
+  };
+
+  const handleCancelStartedVisit = async () => {
+    if (!session || isNew || !encounter.appointmentId) return;
+    if (!encounterStartState.startedEncounterFrom) return;
+
+    setCancellingStartedVisit(true);
+    try {
+      const restoreStatus = encounterStartState.undoAppointmentStatus || 'in_room';
+      await updateAppointmentStatus(session.tenantId, session.accessToken, encounter.appointmentId, restoreStatus);
+      showSuccess('Encounter start cancelled');
+      clearActiveEncounter();
+      const returnPath = encounterStartState.returnPath
+        || (encounterStartState.startedEncounterFrom === 'schedule' ? '/schedule' : '/office-flow');
+      navigate(returnPath, { replace: true });
+    } catch (err: any) {
+      showError(err.message || 'Failed to cancel started visit');
+    } finally {
+      setCancellingStartedVisit(false);
+    }
+  };
+
   // Save vitals
   const handleSaveVitals = async () => {
-    if (!session || !encounterId || isNew) return;
+    if (!session || !patientId || !encounterId || isNew) return;
 
     try {
       await createVitals(session.tenantId, session.accessToken, {
+        patientId,
         encounterId,
         heightCm: vitalsForm.heightCm ? parseFloat(vitalsForm.heightCm) : undefined,
         weightKg: vitalsForm.weightKg ? parseFloat(vitalsForm.weightKg) : undefined,
@@ -406,45 +463,6 @@ export function EncounterPage() {
     } catch (err: any) {
       showError(err.message || 'Failed to save vitals');
     }
-  };
-
-  // Add lesion from body map click
-  const handleAddLesion = (regionId: string, x: number, y: number) => {
-    setLesionForm({
-      regionId,
-      x,
-      y,
-      type: 'primary',
-      description: '',
-      diagnosis: '',
-      size: '',
-      color: '',
-      morphology: '',
-    });
-    setShowLesionModal(true);
-  };
-
-  // Save lesion
-  const handleSaveLesion = () => {
-    const newLesion: Lesion = {
-      id: `lesion-${Date.now()}`,
-      regionId: lesionForm.regionId,
-      x: lesionForm.x,
-      y: lesionForm.y,
-      type: lesionForm.type,
-      description: `${lesionForm.morphology} - ${lesionForm.description}`,
-      diagnosis: lesionForm.diagnosis,
-      dateAdded: new Date().toISOString(),
-    };
-    setLesions([...lesions, newLesion]);
-    setShowLesionModal(false);
-
-    // Auto-populate exam notes with lesion info
-    const lesionNote = `\n\n[${lesionForm.regionId.replace(/-/g, ' ')}]: ${lesionForm.morphology}, ${lesionForm.size}, ${lesionForm.color}. ${lesionForm.description}`;
-    setEncounter((prev) => ({
-      ...prev,
-      exam: (prev.exam || '') + lesionNote,
-    }));
   };
 
   // Add order
@@ -764,6 +782,16 @@ export function EncounterPage() {
     { id: 'prescriptions', label: 'Prescriptions', icon: '💊' },
     { id: 'billing', label: 'Billing', icon: '' },
   ];
+  const handleBodyDiagramMarkersChange = (markers: BodyMarker[]) => {
+    setBodyDiagramMarkers(markers);
+  };
+  const bodyDiagramLesionCount = bodyDiagramMarkers.filter((marker) => marker.type === 'lesion').length;
+  const inventoryProviderId = (encounter.providerId as string | undefined) || session?.user.id || '';
+  const cachedAppointmentTypeName = !isNew && encounter.appointmentId
+    ? sessionStorage.getItem(`encounter:appointmentType:${encounter.appointmentId}`) || ''
+    : '';
+  const appointmentTypeName = encounterStartState.appointmentTypeName || cachedAppointmentTypeName;
+  const isLaserVisit = /laser/i.test(appointmentTypeName);
 
   return (
     <div className="encounter-page">
@@ -780,6 +808,19 @@ export function EncounterPage() {
           <span className="icon">←</span>
           Back to Chart
         </button>
+
+        {!isNew && encounter.appointmentId && encounterStartState.startedEncounterFrom && (
+          <button
+            type="button"
+            className="ema-action-btn"
+            onClick={handleCancelStartedVisit}
+            disabled={cancellingStartedVisit}
+            style={{ background: '#f59e0b', color: '#ffffff' }}
+          >
+            <span className="icon">↩</span>
+            {cancellingStartedVisit ? 'Cancelling...' : 'Cancel Started Visit'}
+          </button>
+        )}
 
         {/* Autosave Status Indicator */}
         {!isNew && !isLocked && (
@@ -838,6 +879,20 @@ export function EncounterPage() {
             Sign & Lock
           </button>
         )}
+        {!isNew && encounter.appointmentId && (
+          <button
+            type="button"
+            className="ema-action-btn"
+            onClick={handleEndAppointment}
+            disabled={endingAppointment}
+            style={{ background: '#0284c7', color: '#ffffff' }}
+          >
+            <span className="icon"></span>
+            {endingAppointment
+              ? (isLaserVisit ? 'Completing...' : 'Ending...')
+              : (isLaserVisit ? 'Complete Laser Visit' : 'End Appointment')}
+          </button>
+        )}
         <button
           type="button"
           className="ema-action-btn"
@@ -866,22 +921,6 @@ export function EncounterPage() {
           <span className="icon">+</span>
           Add Order
         </button>
-        {!isNew && (
-          <button
-            type="button"
-            className="ema-action-btn"
-            onClick={() => {
-              if (session && encounterId) {
-                const url = getSuperbillUrl(session.tenantId, session.accessToken, encounterId);
-                window.open(url, '_blank');
-              }
-            }}
-            style={{ background: '#6B46C1', color: '#ffffff' }}
-          >
-            <span className="icon"></span>
-            Generate Superbill
-          </button>
-        )}
         <button type="button" className="ema-action-btn" onClick={loadData}>
           <span className="icon"></span>
           Refresh
@@ -891,6 +930,18 @@ export function EncounterPage() {
       {/* Section Header with Status Badge */}
       <div className="ema-section-header" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
         <span>{isNew ? 'New Encounter' : 'Encounter'}</span>
+        {appointmentTypeName && (
+          <span style={{
+            padding: '0.25rem 0.75rem',
+            borderRadius: '999px',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            background: isLaserVisit ? '#fee2e2' : '#ede9fe',
+            color: isLaserVisit ? '#991b1b' : '#5b21b6'
+          }}>
+            {appointmentTypeName}
+          </span>
+        )}
         {!isNew && encounter.status && (
           <span style={{
             padding: '0.25rem 0.75rem',
@@ -916,6 +967,36 @@ export function EncounterPage() {
           </span>
         )}
       </div>
+
+      {!isNew && encounter.appointmentId && isLaserVisit && (
+        <div style={{
+          marginTop: '0.75rem',
+          background: '#fef3c7',
+          border: '1px solid #f59e0b',
+          borderRadius: '8px',
+          padding: '0.875rem 1rem',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '1rem'
+        }}>
+          <div>
+            <div style={{ fontWeight: 600, color: '#92400e', marginBottom: '0.2rem' }}>Laser Procedure Workflow</div>
+            <div style={{ fontSize: '0.8rem', color: '#78350f' }}>
+              Document treatment details and used supplies, then complete the laser visit.
+            </div>
+          </div>
+          <button
+            type="button"
+            className="ema-action-btn"
+            onClick={handleEndAppointment}
+            disabled={endingAppointment}
+            style={{ background: '#b45309', color: '#ffffff', whiteSpace: 'nowrap' }}
+          >
+            {endingAppointment ? 'Completing...' : 'Complete Laser Visit'}
+          </button>
+        </div>
+      )}
 
       {/* Locked Banner */}
       {isLocked && (
@@ -1142,11 +1223,11 @@ export function EncounterPage() {
 
         {activeSection === 'exam' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-            {/* Body Map */}
+            {/* Shared Body Diagram */}
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                 <div className="ema-section-header">
-                  Body Map - Click to Add Lesion
+                  Patient Body Diagram (Shared with Profile)
                 </div>
                 <button
                   type="button"
@@ -1169,101 +1250,22 @@ export function EncounterPage() {
                   Full Body Diagram
                 </button>
               </div>
+              <p style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.8rem', color: '#4b5563' }}>
+                Markers added here update the same body diagram shown on the patient profile.
+              </p>
               <div style={{
                 background: '#f9fafb',
                 border: '1px solid #e5e7eb',
                 borderRadius: '8px',
                 padding: '1rem'
               }}>
-                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                  <button
-                    type="button"
-                    onClick={() => setBodyMapView('anterior')}
-                    style={{
-                      padding: '0.5rem 1rem',
-                      background: bodyMapView === 'anterior' ? '#0369a1' : '#f3f4f6',
-                      color: bodyMapView === 'anterior' ? '#ffffff' : '#374151',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Anterior
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBodyMapView('posterior')}
-                    style={{
-                      padding: '0.5rem 1rem',
-                      background: bodyMapView === 'posterior' ? '#0369a1' : '#f3f4f6',
-                      color: bodyMapView === 'posterior' ? '#ffffff' : '#374151',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Posterior
-                  </button>
-                </div>
-                <BodyMap
-                  view={bodyMapView}
-                  lesions={lesions}
+                <PatientBodyDiagram
+                  patientId={patientId || ''}
+                  encounterId={!isNew ? (encounter.id || encounterId) : undefined}
                   editable={!isNew && !isLocked}
-                  onAddLesion={handleAddLesion}
-                  onLesionClick={(lesion) => setSelectedLesion(lesion)}
+                  onMarkersChange={handleBodyDiagramMarkersChange}
                 />
               </div>
-
-              {/* Lesion List */}
-              <div className="ema-section-header" style={{ marginTop: '1.5rem', marginBottom: '0.75rem' }}>
-                Documented Lesions ({lesions.length})
-              </div>
-              {lesions.length === 0 ? (
-                <div style={{
-                  background: '#f9fafb',
-                  border: '1px dashed #d1d5db',
-                  borderRadius: '8px',
-                  padding: '2rem',
-                  textAlign: 'center',
-                  color: '#6b7280'
-                }}>
-                  Click on the body map to document lesions
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {lesions.map((lesion, idx) => (
-                    <div
-                      key={lesion.id}
-                      onClick={() => setSelectedLesion(lesion)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.75rem',
-                        padding: '0.75rem',
-                        background: selectedLesion?.id === lesion.id ? '#e0f2fe' : '#f9fafb',
-                        border: `1px solid ${selectedLesion?.id === lesion.id ? '#0369a1' : '#e5e7eb'}`,
-                        borderRadius: '8px',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <div style={{
-                        width: '12px',
-                        height: '12px',
-                        borderRadius: '50%',
-                        background: lesion.type === 'primary' ? '#dc2626' : lesion.type === 'secondary' ? '#f59e0b' : '#10b981'
-                      }} />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 500, fontSize: '0.875rem' }}>
-                          #{idx + 1} - {lesion.regionId.replace(/-/g, ' ')}
-                        </div>
-                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                          {lesion.diagnosis || lesion.description || 'No description'}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
 
             {/* Exam Notes */}
@@ -1320,7 +1322,7 @@ export function EncounterPage() {
               <textarea
                 value={encounter.exam || ''}
                 onChange={(e) => setEncounter((prev) => ({ ...prev, exam: e.target.value }))}
-                placeholder="General: Well-appearing, no acute distress.&#10;Skin: [Lesion descriptions auto-populate here when documented on body map]"
+                placeholder="General: Well-appearing, no acute distress.&#10;Skin: See body diagram findings."
                 rows={20}
                 style={{
                   width: '100%',
@@ -1506,7 +1508,7 @@ export function EncounterPage() {
                   Suggested Procedures (Based on Documentation)
                 </h4>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                  {lesions.length > 0 && !charges.find(c => c.cptCode === '11100') && (
+                  {bodyDiagramLesionCount > 0 && !charges.find(c => c.cptCode === '11100') && (
                     <button
                       type="button"
                       onClick={() => setShowProcedureModal(true)}
@@ -1599,7 +1601,7 @@ export function EncounterPage() {
                     </button>
                   )}
                 </div>
-                {lesions.length === 0 && !encounter.exam && (
+                {bodyDiagramLesionCount === 0 && !encounter.exam && (
                   <p style={{ fontSize: '0.75rem', color: '#075985', margin: 0 }}>
                     Complete documentation to see procedure suggestions
                   </p>
@@ -1757,24 +1759,44 @@ export function EncounterPage() {
             <div className="ema-form-section" style={{ marginBottom: '2rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                 <div className="ema-section-header">Procedures & Charges (CPT)</div>
-                <button
-                  type="button"
-                  onClick={() => setShowProcedureModal(true)}
-                  disabled={isNew || isLocked}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: '#0369a1',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '4px',
-                    fontWeight: 500,
-                    cursor: isNew || isLocked ? 'not-allowed' : 'pointer',
-                    opacity: isNew || isLocked ? 0.6 : 1,
-                    fontSize: '0.875rem'
-                  }}
-                >
-                  + Add Procedure
-                </button>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowProcedureModal(true)}
+                    disabled={isNew || isLocked}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      background: '#0369a1',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '4px',
+                      fontWeight: 500,
+                      cursor: isNew || isLocked ? 'not-allowed' : 'pointer',
+                      opacity: isNew || isLocked ? 0.6 : 1,
+                      fontSize: '0.875rem'
+                    }}
+                  >
+                    + Add Procedure
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowInventoryUsageModal(true)}
+                    disabled={isNew || isLocked || !inventoryProviderId}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      background: '#7c3aed',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '4px',
+                      fontWeight: 500,
+                      cursor: isNew || isLocked || !inventoryProviderId ? 'not-allowed' : 'pointer',
+                      opacity: isNew || isLocked || !inventoryProviderId ? 0.6 : 1,
+                      fontSize: '0.875rem'
+                    }}
+                  >
+                    + Record Inventory
+                  </button>
+                </div>
               </div>
 
               {charges.length === 0 ? (
@@ -1854,6 +1876,15 @@ export function EncounterPage() {
                 </table>
               )}
             </div>
+
+            {!isNew && encounterId && (
+              <div className="ema-form-section" style={{ marginBottom: '2rem' }}>
+                <InventoryUsageList
+                  encounterId={encounterId}
+                  onOpenUsageModal={() => setShowInventoryUsageModal(true)}
+                />
+              </div>
+            )}
 
             {/* Charge Summary */}
             {charges.length > 0 && (
@@ -1971,95 +2002,6 @@ export function EncounterPage() {
         </div>
       </Modal>
 
-      {/* Lesion Modal */}
-      <Modal isOpen={showLesionModal} title="Document Lesion" onClose={() => setShowLesionModal(false)} size="lg">
-        <div className="modal-form">
-          <div className="form-field">
-            <label>Location</label>
-            <input
-              type="text"
-              value={lesionForm.regionId.replace(/-/g, ' ')}
-              disabled
-              style={{ background: '#f3f4f6' }}
-            />
-          </div>
-          <div className="form-row">
-            <div className="form-field">
-              <label>Lesion Type</label>
-              <select
-                value={lesionForm.type}
-                onChange={(e) => setLesionForm((prev) => ({ ...prev, type: e.target.value as 'primary' | 'secondary' | 'healed' }))}
-              >
-                <option value="primary">Primary (Active)</option>
-                <option value="secondary">Secondary</option>
-                <option value="healed">Healed/Resolved</option>
-              </select>
-            </div>
-            <div className="form-field">
-              <label>Morphology</label>
-              <select
-                value={lesionForm.morphology}
-                onChange={(e) => setLesionForm((prev) => ({ ...prev, morphology: e.target.value }))}
-              >
-                <option value="">Select...</option>
-                {DERM_MORPHOLOGIES.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="form-row">
-            <div className="form-field">
-              <label>Size</label>
-              <input
-                type="text"
-                value={lesionForm.size}
-                onChange={(e) => setLesionForm((prev) => ({ ...prev, size: e.target.value }))}
-                placeholder="e.g., 5mm x 3mm"
-              />
-            </div>
-            <div className="form-field">
-              <label>Color</label>
-              <input
-                type="text"
-                value={lesionForm.color}
-                onChange={(e) => setLesionForm((prev) => ({ ...prev, color: e.target.value }))}
-                placeholder="e.g., pink, brown, erythematous"
-              />
-            </div>
-          </div>
-          <div className="form-field">
-            <label>Diagnosis/Impression</label>
-            <select
-              value={lesionForm.diagnosis}
-              onChange={(e) => setLesionForm((prev) => ({ ...prev, diagnosis: e.target.value }))}
-            >
-              <option value="">Select or type below...</option>
-              {COMMON_DERM_DX.map((dx) => (
-                <option key={dx} value={dx}>{dx}</option>
-              ))}
-            </select>
-          </div>
-          <div className="form-field">
-            <label>Additional Description</label>
-            <textarea
-              value={lesionForm.description}
-              onChange={(e) => setLesionForm((prev) => ({ ...prev, description: e.target.value }))}
-              placeholder="Additional clinical details..."
-              rows={3}
-            />
-          </div>
-        </div>
-        <div className="modal-footer">
-          <button type="button" className="btn-secondary" onClick={() => setShowLesionModal(false)}>
-            Cancel
-          </button>
-          <button type="button" className="btn-primary" onClick={handleSaveLesion}>
-            Add Lesion
-          </button>
-        </div>
-      </Modal>
-
       {/* Order Modal */}
       <Modal isOpen={showOrderModal} title="Add Order" onClose={() => setShowOrderModal(false)}>
         <div className="modal-form">
@@ -2110,6 +2052,23 @@ export function EncounterPage() {
         onSelect={handleAddProcedure}
         diagnoses={diagnoses}
       />
+
+      {!isNew && patientId && (
+        <InventoryUsageModal
+          isOpen={showInventoryUsageModal}
+          onClose={() => setShowInventoryUsageModal(false)}
+          encounterId={encounterId}
+          appointmentId={encounter.appointmentId || undefined}
+          patientId={patientId}
+          providerId={inventoryProviderId}
+          onSuccess={() => {
+            loadData();
+            if ((window as any).__refreshInventoryUsage) {
+              (window as any).__refreshInventoryUsage();
+            }
+          }}
+        />
+      )}
 
       {/* Sign & Lock Modal */}
       <Modal isOpen={showSignModal} title="Sign & Lock Encounter" onClose={() => setShowSignModal(false)}>
@@ -2173,7 +2132,7 @@ export function EncounterPage() {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid #e5e7eb' }}>
                 <span style={{ color: '#6b7280' }}>Lesions Documented:</span>
-                <span style={{ fontWeight: 500 }}>{lesions.length}</span>
+                <span style={{ fontWeight: 500 }}>{bodyDiagramLesionCount}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid #e5e7eb' }}>
                 <span style={{ color: '#6b7280' }}>Orders Placed:</span>

@@ -10,10 +10,11 @@ import {
   uploadPhotoFile,
   updatePhotoAnnotations,
   createComparisonGroup,
-  fetchComparisonGroup,
+  getPresignedAccess,
+  signUploadKey,
   API_BASE_URL,
 } from '../api';
-import type { Photo, Patient, PhotoType, PhotoComparisonGroup } from '../types';
+import type { Photo, Patient, PhotoType } from '../types';
 import { PhotoAnnotator } from '../components/clinical/PhotoAnnotator';
 import { PhotoComparison } from '../components/clinical/PhotoComparison';
 import { PhotoTimeline } from '../components/clinical/PhotoTimeline';
@@ -29,10 +30,48 @@ const BODY_REGIONS = [
   'Lower Leg (L)', 'Lower Leg (R)', 'Foot (L)', 'Foot (R)', 'Other',
 ];
 
+const createInitialUploadForm = () => ({
+  patientId: '',
+  category: 'clinical' as PhotoCategory,
+  photoType: 'clinical' as PhotoType,
+  bodyRegion: '',
+  description: '',
+  file: null as File | null,
+  previewUrl: '',
+});
+
+const getLocalUploadKey = (photo: Photo) => {
+  if (photo.objectKey) {
+    return photo.objectKey;
+  }
+  if (!photo.url) {
+    return null;
+  }
+
+  try {
+    const path = photo.url.startsWith('http')
+      ? new URL(photo.url).pathname
+      : photo.url;
+    const match = path.match(/\/(?:api\/)?uploads\/([^/?#]+)/i);
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  } catch {
+    // Fall through to basic parsing below.
+  }
+
+  const fallback = photo.url.split('/').pop();
+  if (!fallback) {
+    return null;
+  }
+  return decodeURIComponent(fallback.split('?')[0]?.split('#')[0] || fallback);
+};
+
 export function PhotosPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
@@ -47,21 +86,13 @@ export function PhotosPage() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
   const [showAnnotateModal, setShowAnnotateModal] = useState(false);
-  const [showComparisonModal, setShowComparisonModal] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [comparisonGroup, setComparisonGroup] = useState<PhotoComparisonGroup | null>(null);
   const [selectedForComparison, setSelectedForComparison] = useState<Photo[]>([]);
+  const [isUploadDragOver, setIsUploadDragOver] = useState(false);
+  const [resolvedPhotoUrls, setResolvedPhotoUrls] = useState<Record<string, string>>({});
 
-  const [uploadForm, setUploadForm] = useState({
-    patientId: '',
-    category: 'clinical' as PhotoCategory,
-    photoType: 'clinical' as PhotoType,
-    bodyRegion: '',
-    description: '',
-    file: null as File | null,
-    previewUrl: '',
-  });
+  const [uploadForm, setUploadForm] = useState(createInitialUploadForm);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -86,6 +117,73 @@ export function PhotosPage() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    if (!session || photos.length === 0) {
+      setResolvedPhotoUrls({});
+      return;
+    }
+
+    let cancelled = false;
+
+    const resolvePhotoUrls = async () => {
+      const urlEntries = await Promise.all(
+        photos.map(async (photo) => {
+          try {
+            // Local uploads are served through signed /api/uploads URLs.
+            const localUploadKey = getLocalUploadKey(photo);
+            if (photo.storage === 'local' || (!photo.storage && localUploadKey)) {
+              const key = localUploadKey;
+              if (key) {
+                const signed = await signUploadKey(session.tenantId, session.accessToken, key);
+                const signedUrl = signed.url.startsWith('http')
+                  ? signed.url
+                  : `${API_BASE_URL}${signed.url}`;
+                return [photo.id, signedUrl] as const;
+              }
+            }
+
+            // For S3, prefer a fresh presigned URL when objectKey is available.
+            if (photo.storage === 's3' && photo.objectKey) {
+              if (photo.url && /^https?:\/\//.test(photo.url)) {
+                return [photo.id, photo.url] as const;
+              }
+              try {
+                const signed = await getPresignedAccess(
+                  session.tenantId,
+                  session.accessToken,
+                  photo.objectKey
+                );
+                return [photo.id, signed.url] as const;
+              } catch {
+                // Fallback to persisted URL if presign lookup fails.
+              }
+            }
+
+            if (photo.url?.startsWith('/')) {
+              return [photo.id, `${API_BASE_URL}${photo.url}`] as const;
+            }
+
+            return [photo.id, photo.url] as const;
+          } catch {
+            return [photo.id, photo.url] as const;
+          }
+        })
+      );
+
+      if (!cancelled) {
+        setResolvedPhotoUrls(
+          Object.fromEntries(urlEntries.filter((entry): entry is [string, string] => Boolean(entry[1])))
+        );
+      }
+    };
+
+    resolvePhotoUrls();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [photos, session]);
+
   // Handle URL query parameters on page load and changes
   useEffect(() => {
     const action = searchParams.get('action');
@@ -104,15 +202,80 @@ export function PhotosPage() {
     }
   }, [searchParams]);
 
+  useEffect(
+    () => () => {
+      if (uploadForm.previewUrl) {
+        URL.revokeObjectURL(uploadForm.previewUrl);
+      }
+    },
+    [uploadForm.previewUrl]
+  );
+
+  const clearUploadActionParam = () => {
+    const newParams = new URLSearchParams(searchParams);
+    newParams.delete('action');
+    setSearchParams(newParams);
+  };
+
+  const clearSelectedUploadFile = () => {
+    setUploadForm((prev) => {
+      if (prev.previewUrl) {
+        URL.revokeObjectURL(prev.previewUrl);
+      }
+      return { ...prev, file: null, previewUrl: '' };
+    });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+    }
+    setIsUploadDragOver(false);
+  };
+
+  const resetUploadForm = () => {
+    setUploadForm((prev) => {
+      if (prev.previewUrl) {
+        URL.revokeObjectURL(prev.previewUrl);
+      }
+      return createInitialUploadForm();
+    });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+    }
+    setIsUploadDragOver(false);
+  };
+
+  const applySelectedPhotoFile = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      showError('Please select an image file');
+      return;
+    }
+    const previewUrl = URL.createObjectURL(file);
+    setUploadForm((prev) => {
+      if (prev.previewUrl) {
+        URL.revokeObjectURL(prev.previewUrl);
+      }
+      return { ...prev, file, previewUrl };
+    });
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (!file.type.startsWith('image/')) {
-        showError('Please select an image file');
-        return;
-      }
-      const previewUrl = URL.createObjectURL(file);
-      setUploadForm((prev) => ({ ...prev, file, previewUrl }));
+      applySelectedPhotoFile(file);
+    }
+  };
+
+  const handleUploadDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsUploadDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      applySelectedPhotoFile(file);
     }
   };
 
@@ -149,19 +312,9 @@ export function PhotosPage() {
 
       showSuccess('Photo uploaded successfully');
       setShowUploadModal(false);
-      setUploadForm({
-        patientId: '',
-        category: 'clinical',
-        photoType: 'clinical',
-        bodyRegion: '',
-        description: '',
-        file: null,
-        previewUrl: '',
-      });
+      resetUploadForm();
       // Remove action parameter from URL after successful upload
-      const newParams = new URLSearchParams(searchParams);
-      newParams.delete('action');
-      setSearchParams(newParams);
+      clearUploadActionParam();
       loadData();
     } catch (err: any) {
       showError(err.message || 'Failed to upload photo');
@@ -194,7 +347,7 @@ export function PhotosPage() {
     const groupName = `Comparison ${new Date().toLocaleDateString()}`;
 
     try {
-      const result = await createComparisonGroup(session.tenantId, session.accessToken, {
+      await createComparisonGroup(session.tenantId, session.accessToken, {
         patientId: firstPhoto.patientId,
         name: groupName,
         description: `Comparison of ${selectedForComparison.length} photos`,
@@ -225,8 +378,12 @@ export function PhotosPage() {
   };
 
   const getPhotoUrl = (photo: Photo) => {
-    if (photo.storage === 's3' && photo.objectKey) {
-      return `${API_BASE_URL}/api/photos/view/${photo.objectKey}`;
+    const resolvedUrl = resolvedPhotoUrls[photo.id];
+    if (resolvedUrl) {
+      return resolvedUrl;
+    }
+    if (photo.url?.startsWith('/')) {
+      return `${API_BASE_URL}${photo.url}`;
     }
     return photo.url;
   };
@@ -271,6 +428,21 @@ export function PhotosPage() {
     }
   };
 
+  const openUploadModal = () => {
+    setShowUploadModal(true);
+    const next = new URLSearchParams(searchParams);
+    next.set('action', 'upload');
+    setSearchParams(next);
+  };
+
+  const totalPhotos = photos.length;
+  const recentPhotosCount = photos.filter((photo) => {
+    const threshold = new Date();
+    threshold.setDate(threshold.getDate() - 30);
+    return new Date(photo.createdAt) >= threshold;
+  }).length;
+  const annotatedPhotosCount = photos.filter((photo) => photo.annotations?.shapes?.length).length;
+
   if (loading) {
     return (
       <div className="photos-page">
@@ -289,122 +461,167 @@ export function PhotosPage() {
 
   return (
     <div className="photos-page">
-      <div className="page-header">
-        <h1>Clinical Photos</h1>
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={() => {
-            setShowUploadModal(true);
-            setSearchParams({ action: 'upload' });
-          }}
-        >
-          + Upload Photo
-        </button>
+      <div className="photos-hero">
+        <div>
+          <h1>Clinical Photos</h1>
+          <p className="muted">Track skin findings, compare progression, and annotate images from one workspace.</p>
+        </div>
+        <div className="photos-hero-actions">
+          {selectedForComparison.length >= 2 && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleCreateComparison}
+            >
+              Save Comparison Group
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={openUploadModal}
+          >
+            + Upload Photo
+          </button>
+        </div>
+      </div>
+
+      <div className="photos-kpi-row">
+        <div className="photos-kpi-card">
+          <div className="photos-kpi-label">Total Photos</div>
+          <div className="photos-kpi-value">{totalPhotos}</div>
+        </div>
+        <div className="photos-kpi-card">
+          <div className="photos-kpi-label">Recent (30 days)</div>
+          <div className="photos-kpi-value">{recentPhotosCount}</div>
+        </div>
+        <div className="photos-kpi-card">
+          <div className="photos-kpi-label">Annotated</div>
+          <div className="photos-kpi-value">{annotatedPhotosCount}</div>
+        </div>
+        <div className="photos-kpi-card">
+          <div className="photos-kpi-label">Selected for Compare</div>
+          <div className="photos-kpi-value">{selectedForComparison.length}</div>
+        </div>
       </div>
 
       {/* Filters */}
-      <div className="photos-filters">
-        <div className="search-box">
-          <input
-            type="text"
-            placeholder="Search photos..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+      <div className="photos-toolbar">
+        <div className="photos-toolbar-main">
+          <div className="photos-search">
+            <label htmlFor="photos-search" className="sr-only">Search photos</label>
+            <span className="photos-search-icon" aria-hidden="true">🔍</span>
+            <input
+              id="photos-search"
+              type="text"
+              placeholder="Search patient, body region, or description..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+
+          <div className="photos-field">
+            <label htmlFor="photos-patient-filter">Patient</label>
+            <select
+              id="photos-patient-filter"
+              value={selectedPatient}
+              onChange={(e) => setSelectedPatient(e.target.value)}
+            >
+              <option value="all">All Patients</option>
+              {patients.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.lastName}, {p.firstName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="photos-field">
+            <label htmlFor="photos-time-filter">Time</label>
+            <select
+              id="photos-time-filter"
+              value={photoFilter}
+              onChange={(e) => {
+                const newFilter = e.target.value as PhotoFilter;
+                setPhotoFilter(newFilter);
+                // Update URL to reflect the filter change
+                if (newFilter === 'recent') {
+                  setSearchParams({ filter: 'recent' });
+                } else {
+                  setSearchParams({});
+                }
+              }}
+            >
+              <option value="all">All Photos</option>
+              <option value="recent">Recent (30 days)</option>
+            </select>
+          </div>
         </div>
 
-        <div className="filter-group">
-          <label>Patient:</label>
-          <select
-            value={selectedPatient}
-            onChange={(e) => setSelectedPatient(e.target.value)}
-          >
-            <option value="all">All Patients</option>
-            {patients.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.lastName}, {p.firstName}
-              </option>
-            ))}
-          </select>
+        <div className="photos-toolbar-bottom">
+          <div className="filter-tabs photos-category-tabs">
+            {(['all', 'clinical', 'dermoscopy', 'before-after', 'other'] as PhotoCategory[]).map(
+              (cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  className={`filter-tab ${categoryFilter === cat ? 'active' : ''}`}
+                  onClick={() => setCategoryFilter(cat)}
+                >
+                  {cat === 'all' ? 'All' : getCategoryLabel(cat)}
+                </button>
+              )
+            )}
+          </div>
+
+          <div className="view-toggle photos-view-toggle">
+            <button
+              type="button"
+              className={viewMode === 'grid' ? 'active' : ''}
+              onClick={() => setViewMode('grid')}
+              title="Grid view"
+            >
+              Grid
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'list' ? 'active' : ''}
+              onClick={() => setViewMode('list')}
+              title="List view"
+            >
+              List
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'timeline' ? 'active' : ''}
+              onClick={() => setViewMode('timeline')}
+              title="Timeline view"
+            >
+              Timeline
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'comparison' ? 'active' : ''}
+              onClick={() => setViewMode('comparison')}
+              title="Comparison view"
+              disabled={selectedForComparison.length < 2}
+            >
+              Compare ({selectedForComparison.length})
+            </button>
+          </div>
         </div>
 
-        <div className="filter-group">
-          <label>Time:</label>
-          <select
-            value={photoFilter}
-            onChange={(e) => {
-              const newFilter = e.target.value as PhotoFilter;
-              setPhotoFilter(newFilter);
-              // Update URL to reflect the filter change
-              if (newFilter === 'recent') {
-                setSearchParams({ filter: 'recent' });
-              } else {
-                setSearchParams({});
-              }
-            }}
-          >
-            <option value="all">All Photos</option>
-            <option value="recent">Recent (30 days)</option>
-          </select>
-        </div>
-
-        <div className="filter-tabs">
-          {(['all', 'clinical', 'dermoscopy', 'before-after', 'other'] as PhotoCategory[]).map(
-            (cat) => (
-              <button
-                key={cat}
-                type="button"
-                className={`filter-tab ${categoryFilter === cat ? 'active' : ''}`}
-                onClick={() => setCategoryFilter(cat)}
-              >
-                {cat === 'all' ? 'All' : getCategoryLabel(cat)}
-              </button>
-            )
-          )}
-        </div>
-
-        <div className="view-toggle">
-          <button
-            type="button"
-            className={viewMode === 'grid' ? 'active' : ''}
-            onClick={() => setViewMode('grid')}
-            title="Grid view"
-          >
-            Grid
-          </button>
-          <button
-            type="button"
-            className={viewMode === 'list' ? 'active' : ''}
-            onClick={() => setViewMode('list')}
-            title="List view"
-          >
-            List
-          </button>
-          <button
-            type="button"
-            className={viewMode === 'timeline' ? 'active' : ''}
-            onClick={() => setViewMode('timeline')}
-            title="Timeline view"
-          >
-            Timeline
-          </button>
-          <button
-            type="button"
-            className={viewMode === 'comparison' ? 'active' : ''}
-            onClick={() => setViewMode('comparison')}
-            title="Comparison view"
-            disabled={selectedForComparison.length < 2}
-          >
-            Compare ({selectedForComparison.length})
-          </button>
-        </div>
+        {selectedForComparison.length > 0 && (
+          <div className="photos-selection-chip">
+            {selectedForComparison.length} selected for comparison
+          </div>
+        )}
       </div>
 
       {/* Photos Display */}
       {filteredPhotos.length === 0 ? (
         <Panel title="">
-          <div className="empty-state">
+          <div className="empty-state photos-empty-state">
             <div className="empty-icon"></div>
             <h3>No photos found</h3>
             <p className="muted">
@@ -415,10 +632,7 @@ export function PhotosPage() {
             <button
               type="button"
               className="btn-primary"
-              onClick={() => {
-                setShowUploadModal(true);
-                setSearchParams({ action: 'upload' });
-              }}
+              onClick={openUploadModal}
             >
               Upload Photo
             </button>
@@ -461,7 +675,7 @@ export function PhotosPage() {
                   </span>
                   {photo.annotations && photo.annotations.shapes.length > 0 && (
                     <span className="photo-annotated-badge" title="Has annotations">
-                      ✎
+                      Annotated
                     </span>
                   )}
                 </div>
@@ -470,15 +684,16 @@ export function PhotosPage() {
                     <div className="photo-patient strong">
                       {getPatientName(photo.patientId)}
                     </div>
-                    <input
-                      type="checkbox"
-                      checked={!!isSelected}
-                      onChange={(e) => {
+                    <button
+                      type="button"
+                      className={`photo-compare-btn ${isSelected ? 'active' : ''}`}
+                      onClick={(e) => {
                         e.stopPropagation();
                         togglePhotoSelection(photo);
                       }}
-                      title="Select for comparison"
-                    />
+                    >
+                      {isSelected ? 'Selected' : 'Compare'}
+                    </button>
                   </div>
                   {(photo.bodyRegion || photo.bodyLocation) && (
                     <div className="photo-region muted tiny">
@@ -488,6 +703,9 @@ export function PhotosPage() {
                   <div className="photo-date muted tiny">
                     {new Date(photo.createdAt).toLocaleDateString()}
                   </div>
+                  {photo.description && (
+                    <div className="photo-desc muted tiny">{photo.description}</div>
+                  )}
                 </div>
               </div>
             );
@@ -528,6 +746,15 @@ export function PhotosPage() {
                   Uploaded: {new Date(photo.createdAt).toLocaleString()}
                 </div>
               </div>
+              <div className="photo-list-actions" onClick={(e) => e.stopPropagation()}>
+                <button
+                  type="button"
+                  className={`photo-compare-btn ${selectedForComparison.some((p) => p.id === photo.id) ? 'active' : ''}`}
+                  onClick={() => togglePhotoSelection(photo)}
+                >
+                  {selectedForComparison.some((p) => p.id === photo.id) ? 'Selected' : 'Compare'}
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -539,19 +766,9 @@ export function PhotosPage() {
         title="Upload Clinical Photo"
         onClose={() => {
           setShowUploadModal(false);
-          setUploadForm({
-            patientId: '',
-            category: 'clinical',
-            photoType: 'clinical',
-            bodyRegion: '',
-            description: '',
-            file: null,
-            previewUrl: '',
-          });
+          resetUploadForm();
           // Remove action parameter from URL when closing
-          const newParams = new URLSearchParams(searchParams);
-          newParams.delete('action');
-          setSearchParams(newParams);
+          clearUploadActionParam();
         }}
         size="lg"
       >
@@ -632,6 +849,14 @@ export function PhotosPage() {
               onChange={handleFileSelect}
               style={{ display: 'none' }}
             />
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleFileSelect}
+              style={{ display: 'none' }}
+            />
             {uploadForm.previewUrl ? (
               <div className="upload-preview">
                 <img src={uploadForm.previewUrl} alt="Preview" />
@@ -639,8 +864,7 @@ export function PhotosPage() {
                   type="button"
                   className="btn-sm btn-secondary"
                   onClick={() => {
-                    setUploadForm((prev) => ({ ...prev, file: null, previewUrl: '' }));
-                    if (fileInputRef.current) fileInputRef.current.value = '';
+                    clearSelectedUploadFile();
                   }}
                 >
                   Remove
@@ -648,12 +872,41 @@ export function PhotosPage() {
               </div>
             ) : (
               <div
-                className="upload-dropzone"
+                className={`upload-dropzone ${isUploadDragOver ? 'drag-active' : ''}`}
                 onClick={() => fileInputRef.current?.click()}
+                onDragEnter={() => setIsUploadDragOver(true)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsUploadDragOver(true);
+                }}
+                onDragLeave={() => setIsUploadDragOver(false)}
+                onDrop={handleUploadDrop}
               >
                 <div className="upload-icon"></div>
-                <p>Click to select an image</p>
+                <p>Drag and drop an image here</p>
                 <p className="muted tiny">JPG, PNG, or HEIC supported</p>
+                <div className="upload-dropzone-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      fileInputRef.current?.click();
+                    }}
+                  >
+                    Browse Files
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      cameraInputRef.current?.click();
+                    }}
+                  >
+                    Take Photo
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -663,7 +916,11 @@ export function PhotosPage() {
           <button
             type="button"
             className="btn-secondary"
-            onClick={() => setShowUploadModal(false)}
+            onClick={() => {
+              setShowUploadModal(false);
+              resetUploadForm();
+              clearUploadActionParam();
+            }}
           >
             Cancel
           </button>

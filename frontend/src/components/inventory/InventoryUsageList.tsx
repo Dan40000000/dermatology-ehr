@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import { fetchAllInventoryUsage, type InventoryUsage } from '../../api';
@@ -9,6 +9,26 @@ interface InventoryUsageListProps {
   onOpenUsageModal?: () => void;
 }
 
+const formatCurrency = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+const formatTimestamp = (isoDate: string) =>
+  new Date(isoDate).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+function getCategoryBadgeClass(category?: string) {
+  const classes: Record<string, string> = {
+    medication: 'bg-blue-100 text-blue-800',
+    supply: 'bg-green-100 text-green-800',
+    cosmetic: 'bg-pink-100 text-pink-800',
+    equipment: 'bg-purple-100 text-purple-800',
+  };
+  return classes[category || ''] || 'bg-gray-100 text-gray-800';
+}
+
 export function InventoryUsageList({ encounterId, appointmentId, onOpenUsageModal }: InventoryUsageListProps) {
   const { session } = useAuth();
   const { showError } = useToast();
@@ -16,13 +36,7 @@ export function InventoryUsageList({ encounterId, appointmentId, onOpenUsageModa
   const [loading, setLoading] = useState(false);
   const [usageRecords, setUsageRecords] = useState<InventoryUsage[]>([]);
 
-  useEffect(() => {
-    if (session && (encounterId || appointmentId)) {
-      loadUsageRecords();
-    }
-  }, [session, encounterId, appointmentId]);
-
-  const loadUsageRecords = async () => {
+  const loadUsageRecords = useCallback(async () => {
     if (!session) return;
     try {
       setLoading(true);
@@ -40,56 +54,60 @@ export function InventoryUsageList({ encounterId, appointmentId, onOpenUsageModa
     } finally {
       setLoading(false);
     }
-  };
+  }, [session, encounterId, appointmentId, showError]);
 
-  const getCategoryBadgeClass = (category?: string) => {
-    const classes: Record<string, string> = {
-      medication: 'bg-blue-100 text-blue-800',
-      supply: 'bg-green-100 text-green-800',
-      cosmetic: 'bg-pink-100 text-pink-800',
-      equipment: 'bg-purple-100 text-purple-800',
-    };
-    return classes[category || ''] || 'bg-gray-100 text-gray-800';
-  };
+  useEffect(() => {
+    if (session && (encounterId || appointmentId)) {
+      void loadUsageRecords();
+    }
+  }, [session, encounterId, appointmentId, loadUsageRecords]);
 
-  const totalCost = usageRecords.reduce(
+  useEffect(() => {
+    if (!onOpenUsageModal) return;
+    (window as any).__refreshInventoryUsage = loadUsageRecords;
+  }, [onOpenUsageModal, loadUsageRecords]);
+
+  const totalCostCents = usageRecords.reduce(
     (sum, record) => sum + record.quantityUsed * record.unitCostCents,
     0
   );
-
-  // Expose refresh function to parent
-  useEffect(() => {
-    if (onOpenUsageModal) {
-      // Store refresh function for parent to call
-      (window as any).__refreshInventoryUsage = loadUsageRecords;
-    }
-  }, []);
+  const totalPatientChargeCents = usageRecords.reduce(
+    (sum, record) => sum + (record.givenAsSample ? 0 : (record.sellPriceCents || 0) * record.quantityUsed),
+    0
+  );
+  const sampleCount = usageRecords.filter((record) => record.givenAsSample).length;
+  const billableCount = usageRecords.length - sampleCount;
 
   return (
-    <div className="space-y-3">
-      <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold text-gray-900">Inventory Used</h3>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900">Inventory Used</h3>
+          <p className="text-sm text-gray-500">Track supplies, dispensed samples, and patient billables.</p>
+        </div>
         {onOpenUsageModal && (
           <button
             type="button"
             onClick={onOpenUsageModal}
-            className="px-3 py-1.5 text-sm text-purple-700 bg-purple-100 rounded-lg hover:bg-purple-200 transition-colors"
+            className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-medium text-white hover:bg-purple-700"
           >
-            + Use Items
+            + Add Used Items
           </button>
         )}
       </div>
 
       {loading ? (
-        <div className="py-8 text-center text-gray-500">Loading...</div>
+        <div className="rounded-lg border border-gray-200 bg-white py-8 text-center text-sm text-gray-500">
+          Loading inventory usage...
+        </div>
       ) : usageRecords.length === 0 ? (
-        <div className="py-8 text-center">
-          <p className="text-gray-500 mb-3">No inventory items used yet</p>
+        <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 py-10 text-center">
+          <p className="mb-3 text-gray-600">No inventory items have been recorded for this visit.</p>
           {onOpenUsageModal && (
             <button
               type="button"
               onClick={onOpenUsageModal}
-              className="px-4 py-2 text-purple-700 bg-purple-100 rounded-lg hover:bg-purple-200 transition-colors"
+              className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700"
             >
               Record Inventory Usage
             </button>
@@ -97,57 +115,86 @@ export function InventoryUsageList({ encounterId, appointmentId, onOpenUsageModa
         </div>
       ) : (
         <>
-          <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-200">
-            {usageRecords.map((record) => (
-              <div key={record.id} className="p-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-medium text-gray-900">{record.itemName}</h4>
-                      {record.itemCategory && (
-                        <span
-                          className={`inline-block px-2 py-0.5 text-xs font-medium rounded-full ${getCategoryBadgeClass(
-                            record.itemCategory
-                          )}`}
-                        >
-                          {record.itemCategory}
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 space-y-1">
-                      <p className="text-sm text-gray-600">
-                        Quantity: <span className="font-medium">{record.quantityUsed}</span>
-                      </p>
-                      {record.notes && (
-                        <p className="text-sm text-gray-600">
-                          Notes: <span className="italic">{record.notes}</span>
-                        </p>
-                      )}
-                      <p className="text-xs text-gray-500">
-                        {new Date(record.usedAt).toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-gray-900">
-                      ${((record.quantityUsed * record.unitCostCents) / 100).toFixed(2)}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      @ ${(record.unitCostCents / 100).toFixed(2)} ea
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ))}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="rounded-lg border border-gray-200 bg-white p-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-gray-500">Entries</div>
+              <div className="mt-1 text-xl font-semibold text-gray-900">{usageRecords.length}</div>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-white p-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-gray-500">Billable</div>
+              <div className="mt-1 text-xl font-semibold text-emerald-700">{billableCount}</div>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-white p-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-gray-500">Samples</div>
+              <div className="mt-1 text-xl font-semibold text-amber-700">{sampleCount}</div>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-white p-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-gray-500">Patient Charge</div>
+              <div className="mt-1 text-xl font-semibold text-indigo-700">{formatCurrency(totalPatientChargeCents)}</div>
+            </div>
           </div>
 
-          {/* Total Cost Summary */}
-          <div className="flex justify-end p-4 bg-gray-50 rounded-lg border border-gray-200">
-            <div className="text-right">
-              <p className="text-sm text-gray-600">Total Inventory Cost</p>
-              <p className="text-xl font-bold text-gray-900">
-                ${(totalCost / 100).toFixed(2)}
-              </p>
+          <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Item</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-600">Qty</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Type</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-600">Unit Price</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-600">Line Total</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-600">Used</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {usageRecords.map((record) => {
+                  const unitPrice = record.givenAsSample ? 0 : (record.sellPriceCents || 0);
+                  const lineTotal = unitPrice * record.quantityUsed;
+                  return (
+                    <tr key={record.id} className="align-top">
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-gray-900">{record.itemName}</div>
+                        <div className="mt-1 flex items-center gap-2">
+                          {record.itemCategory && (
+                            <span
+                              className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${getCategoryBadgeClass(
+                                record.itemCategory
+                              )}`}
+                            >
+                              {record.itemCategory}
+                            </span>
+                          )}
+                          {record.notes && <span className="text-xs text-gray-500">{record.notes}</span>}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-medium text-gray-900">{record.quantityUsed}</td>
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        {record.givenAsSample ? (
+                          <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">Sample</span>
+                        ) : (
+                          <span className="rounded-md bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">Billable</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm text-gray-700">
+                        {record.givenAsSample ? '-' : formatCurrency(unitPrice)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900">
+                        {record.givenAsSample ? 'Sample' : formatCurrency(lineTotal)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm text-gray-600">{formatTimestamp(record.usedAt)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex justify-end rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+            <div className="space-y-1 text-right">
+              <div className="text-sm text-gray-600">Inventory cost: {formatCurrency(totalCostCents)}</div>
+              <div className="text-lg font-semibold text-gray-900">
+                Total patient billables: {formatCurrency(totalPatientChargeCents)}
+              </div>
             </div>
           </div>
         </>

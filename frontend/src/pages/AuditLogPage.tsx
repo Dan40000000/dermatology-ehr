@@ -38,6 +38,21 @@ interface User {
 
 const TENANT_HEADER_NAME = "x-tenant-id";
 
+function toDateTimeLocalInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function startOfTodayInput(): string {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return toDateTimeLocalInput(date);
+}
+
 export function AuditLogPage() {
   const { session } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
@@ -60,7 +75,7 @@ export function AuditLogPage() {
     action: "",
     resourceType: "",
     resourceId: "",
-    startDate: "",
+    startDate: startOfTodayInput(),
     endDate: "",
     ipAddress: "",
     severity: "",
@@ -113,7 +128,16 @@ export function AuditLogPage() {
       });
 
       if (!response.ok) {
-        throw new Error("Failed to fetch audit logs");
+        let errorMessage = `Failed to fetch audit logs (${response.status})`;
+        try {
+          const payload = await response.json();
+          if (payload?.error && typeof payload.error === "string") {
+            errorMessage = payload.error;
+          }
+        } catch {
+          // Ignore parse failures and use status-based message.
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
@@ -206,13 +230,31 @@ export function AuditLogPage() {
       action: "",
       resourceType: "",
       resourceId: "",
-      startDate: "",
+      startDate: startOfTodayInput(),
       endDate: "",
       ipAddress: "",
       severity: "",
       status: "",
       search: "",
     });
+    setPage(0);
+  };
+
+  const setTodayFilter = () => {
+    setFilters((prev) => ({
+      ...prev,
+      startDate: startOfTodayInput(),
+      endDate: "",
+    }));
+    setPage(0);
+  };
+
+  const setAllTimeFilter = () => {
+    setFilters((prev) => ({
+      ...prev,
+      startDate: "",
+      endDate: "",
+    }));
     setPage(0);
   };
 
@@ -364,6 +406,32 @@ export function AuditLogPage() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
           <h2 style={{ fontSize: "1.125rem", fontWeight: 600, color: "#1f2937" }}>Filters</h2>
           <div style={{ display: "flex", gap: "0.5rem" }}>
+            <button
+              onClick={setTodayFilter}
+              style={{
+                padding: "0.5rem 1rem",
+                background: "white",
+                border: "1px solid #d1d5db",
+                borderRadius: "6px",
+                fontSize: "0.875rem",
+                cursor: "pointer",
+              }}
+            >
+              Today
+            </button>
+            <button
+              onClick={setAllTimeFilter}
+              style={{
+                padding: "0.5rem 1rem",
+                background: "white",
+                border: "1px solid #d1d5db",
+                borderRadius: "6px",
+                fontSize: "0.875rem",
+                cursor: "pointer",
+              }}
+            >
+              All Time
+            </button>
             <button
               onClick={clearFilters}
               style={{
@@ -619,7 +687,7 @@ export function AuditLogPage() {
               ) : logs.length === 0 ? (
                 <tr>
                   <td colSpan={7} style={{ padding: "2rem", textAlign: "center", color: "#6b7280" }}>
-                    No audit logs found
+                    No audit logs found for the selected filters
                   </td>
                 </tr>
               ) : (

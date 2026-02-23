@@ -1,5 +1,7 @@
 import crypto from "crypto";
 import { pool } from "../db/pool";
+import { logger } from "../lib/logger";
+import { getAuditSchemaInfo } from "./auditSchema";
 import { redactPHI } from "../utils/phiRedaction";
 
 export interface AuditLogParams {
@@ -56,27 +58,90 @@ export async function createAuditLog(params: AuditLogParams) {
   const enrichedMetadata = requestId
     ? { ...redactedMetadata, requestId }
     : redactedMetadata;
+  const basePayload = {
+    id: crypto.randomUUID(),
+    tenantId,
+    userId: normalizedUserId,
+    action,
+    resourceType,
+    resourceId: resourceId || null,
+    ipAddress: ipAddress || null,
+    userAgent: userAgent || null,
+    changes: redactedChanges ? JSON.stringify(redactedChanges) : null,
+    metadata: enrichedMetadata ? JSON.stringify(enrichedMetadata) : null,
+    severity,
+    status,
+  };
 
-  await pool.query(
-    `INSERT INTO audit_log(
-      id, tenant_id, user_id, action, resource_type, resource_id,
-      ip_address, user_agent, changes, metadata, severity, status
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-    [
-      crypto.randomUUID(),
-      tenantId,
-      normalizedUserId,
-      action,
-      resourceType,
-      resourceId || null,
-      ipAddress || null,
-      userAgent || null,
-      redactedChanges ? JSON.stringify(redactedChanges) : null,
-      enrichedMetadata ? JSON.stringify(enrichedMetadata) : null,
-      severity,
-      status,
-    ],
-  );
+  const insertWithSchema = async (forceRefreshSchema = false) => {
+    const schemaInfo = await getAuditSchemaInfo(forceRefreshSchema);
+    const { columnMap } = schemaInfo;
+
+    const resourceTypeColumn = columnMap.resourceType;
+    if (!resourceTypeColumn) {
+      throw new Error("Unable to resolve audit_log resource type column");
+    }
+
+    const columns: string[] = ["id", "tenant_id", "action", resourceTypeColumn];
+    const values: any[] = [basePayload.id, basePayload.tenantId, basePayload.action, basePayload.resourceType];
+
+    if (columnMap.userId) {
+      columns.push(columnMap.userId);
+      values.push(basePayload.userId);
+    }
+
+    if (columnMap.resourceId) {
+      columns.push(columnMap.resourceId);
+      values.push(basePayload.resourceId);
+    }
+
+    if (columnMap.ipAddress) {
+      columns.push(columnMap.ipAddress);
+      values.push(basePayload.ipAddress);
+    }
+
+    if (columnMap.userAgent) {
+      columns.push(columnMap.userAgent);
+      values.push(basePayload.userAgent);
+    }
+
+    if (columnMap.changes) {
+      columns.push(columnMap.changes);
+      values.push(basePayload.changes);
+    }
+
+    if (columnMap.metadata) {
+      columns.push(columnMap.metadata);
+      values.push(basePayload.metadata);
+    }
+
+    if (columnMap.severity) {
+      columns.push(columnMap.severity);
+      values.push(basePayload.severity);
+    }
+
+    if (columnMap.status) {
+      columns.push(columnMap.status);
+      values.push(basePayload.status);
+    }
+
+    const placeholders = values.map((_, index) => `$${index + 1}`).join(", ");
+    await pool.query(`INSERT INTO audit_log(${columns.join(", ")}) VALUES (${placeholders})`, values);
+  };
+
+  try {
+    await insertWithSchema(false);
+  } catch (error) {
+    const errorCode = (error as { code?: string })?.code;
+    if (errorCode === "42703" || errorCode === "42P01") {
+      logger.warn("Audit insert schema mismatch, retrying with refreshed schema", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await insertWithSchema(true);
+      return;
+    }
+    throw error;
+  }
 }
 
 /**

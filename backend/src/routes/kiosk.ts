@@ -148,6 +148,33 @@ kioskRouter.get("/today-appointments", requireKioskAuth, async (req: KioskReques
   }
 });
 
+// Get active consent forms for kiosk flow
+kioskRouter.get("/consent-forms/active", requireKioskAuth, async (req: KioskRequest, res) => {
+  const tenantId = req.kiosk!.tenantId;
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         id,
+         form_name as "formName",
+         form_type as "formType",
+         form_content as "formContent",
+         requires_signature as "requiresSignature",
+         version
+       FROM consent_forms
+       WHERE tenant_id = $1
+         AND is_active = true
+       ORDER BY form_type, form_name`,
+      [tenantId],
+    );
+
+    return res.json({ forms: result.rows });
+  } catch (err) {
+    logKioskError("Error fetching kiosk consent forms", err);
+    return res.status(500).json({ error: "Failed to fetch consent forms" });
+  }
+});
+
 // Start check-in session
 const startCheckinSchema = z.object({
   patientId: z.string().uuid(),

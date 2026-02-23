@@ -5,6 +5,73 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { auditLog } from "../services/audit";
 
+const taskStatusInputSchema = z.enum([
+  "todo",
+  "in_progress",
+  "completed",
+  "cancelled",
+  "open",
+  "in-progress",
+  "done",
+  "closed",
+  "resolved",
+  "canceled",
+]);
+
+type CanonicalTaskStatus = "todo" | "in_progress" | "completed" | "cancelled";
+
+const STATUS_FILTER_VALUES: Record<CanonicalTaskStatus, string[]> = {
+  todo: ["todo", "open"],
+  in_progress: ["in_progress", "in-progress"],
+  completed: ["completed", "done", "closed", "resolved"],
+  cancelled: ["cancelled", "canceled"],
+};
+
+const normalizeTaskStatus = (status?: string | null): CanonicalTaskStatus => {
+  const normalized = String(status || "").toLowerCase();
+  switch (normalized) {
+    case "todo":
+    case "open":
+      return "todo";
+    case "in_progress":
+    case "in-progress":
+      return "in_progress";
+    case "completed":
+    case "done":
+    case "closed":
+    case "resolved":
+      return "completed";
+    case "cancelled":
+    case "canceled":
+      return "cancelled";
+    default:
+      return "todo";
+  }
+};
+
+const normalizeTaskPriority = (priority?: string | null): "low" | "normal" | "high" | "urgent" => {
+  const normalized = String(priority || "").toLowerCase();
+  switch (normalized) {
+    case "low":
+    case "normal":
+    case "high":
+    case "urgent":
+      return normalized;
+    case "medium":
+      return "normal";
+    default:
+      return "normal";
+  }
+};
+
+const priorityFilterValues = (priority: string): string[] => {
+  const normalized = normalizeTaskPriority(priority);
+  if (normalized === "normal") {
+    return ["normal", "medium"];
+  }
+  return [normalized];
+};
+
 const taskSchema = z.object({
   patientId: z.string().optional(),
   encounterId: z.string().optional(),
@@ -12,13 +79,13 @@ const taskSchema = z.object({
   description: z.string().optional(),
   category: z.string().optional(),
   priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
-  status: z.enum(["todo", "in_progress", "completed", "cancelled"]).optional(),
+  status: taskStatusInputSchema.optional(),
   dueDate: z.string().optional(),
   assignedTo: z.string().optional(),
 });
 
 const updateStatusSchema = z.object({
-  status: z.enum(["todo", "in_progress", "completed", "cancelled"]),
+  status: taskStatusInputSchema,
 });
 
 const commentSchema = z.object({
@@ -49,8 +116,9 @@ tasksRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   let paramIndex = 2;
 
   if (status) {
-    whereClauses.push(`t.status = $${paramIndex}`);
-    params.push(status);
+    const canonicalStatus = normalizeTaskStatus(status);
+    whereClauses.push(`LOWER(COALESCE(t.status, '')) = ANY($${paramIndex})`);
+    params.push(STATUS_FILTER_VALUES[canonicalStatus]);
     paramIndex++;
   }
 
@@ -87,8 +155,8 @@ tasksRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   }
 
   if (priority) {
-    whereClauses.push(`t.priority = $${paramIndex}`);
-    params.push(priority);
+    whereClauses.push(`LOWER(COALESCE(t.priority, '')) = ANY($${paramIndex})`);
+    params.push(priorityFilterValues(priority));
     paramIndex++;
   }
 
@@ -156,7 +224,12 @@ tasksRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   `;
 
   const result = await pool.query(query, params);
-  res.json({ tasks: result.rows });
+  const normalizedRows = result.rows.map((row) => ({
+    ...row,
+    status: normalizeTaskStatus(row.status),
+    priority: normalizeTaskPriority(row.priority),
+  }));
+  res.json({ tasks: normalizedRows });
 });
 
 // POST /api/tasks - Create task
@@ -182,7 +255,7 @@ tasksRouter.post("/", requireAuth, async (req: AuthedRequest, res) => {
       payload.description || null,
       payload.category || null,
       payload.priority || "normal",
-      payload.status || "todo",
+      normalizeTaskStatus(payload.status),
       payload.dueDate || null,
       payload.dueDate || null, // Keep dueAt for backward compatibility
       payload.assignedTo || null,
@@ -225,16 +298,17 @@ tasksRouter.put("/:id", requireAuth, async (req: AuthedRequest, res) => {
   }
   if (payload.priority !== undefined) {
     updates.push(`priority = $${paramIndex}`);
-    params.push(payload.priority);
+    params.push(normalizeTaskPriority(payload.priority));
     paramIndex++;
   }
   if (payload.status !== undefined) {
+    const normalizedStatus = normalizeTaskStatus(payload.status);
     updates.push(`status = $${paramIndex}`);
-    params.push(payload.status);
+    params.push(normalizedStatus);
     paramIndex++;
 
     // Track completion
-    if (payload.status === "completed") {
+    if (normalizedStatus === "completed") {
       updates.push(`completed_at = now()`);
       updates.push(`completed_by = $${paramIndex}`);
       params.push(req.user!.id);
@@ -287,7 +361,7 @@ tasksRouter.put("/:id/status", requireAuth, async (req: AuthedRequest, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
   const tenantId = req.user!.tenantId;
-  const { status } = parsed.data;
+  const status = normalizeTaskStatus(parsed.data.status);
 
   const completedFields =
     status === "completed"

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../contexts/AuthContext';
@@ -6,6 +6,11 @@ import { HelpModal } from '../HelpModal';
 import { LanguageSwitcher } from '../LanguageSwitcher';
 import { Modal } from '../ui';
 import type { Patient } from '../../types';
+import {
+  getActiveEncounter,
+  clearActiveEncounter,
+  subscribeToActiveEncounterChanges,
+} from '../../utils/activeEncounter';
 
 interface TopBarProps {
   patients?: Patient[];
@@ -23,6 +28,14 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [feedbackText, setFeedbackText] = useState('');
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
+  const [activeEncounter, setActiveEncounterState] = useState(() => getActiveEncounter());
+
+  useEffect(() => {
+    const sync = () => setActiveEncounterState(getActiveEncounter());
+    const unsubscribe = subscribeToActiveEncounterChanges(sync);
+    sync();
+    return unsubscribe;
+  }, []);
 
   const handlePatientSelect = (patientId: string) => {
     if (patientId) {
@@ -46,6 +59,26 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
     } finally {
       setSubmittingFeedback(false);
     }
+  };
+
+  const handleGoToLiveEncounter = () => {
+    if (!activeEncounter) return;
+    navigate(
+      `/patients/${activeEncounter.patientId}/encounter/${activeEncounter.encounterId}`,
+      {
+        state: {
+          startedEncounterFrom: activeEncounter.startedEncounterFrom,
+          undoAppointmentStatus: activeEncounter.undoAppointmentStatus,
+          appointmentTypeName: activeEncounter.appointmentTypeName,
+          returnPath: activeEncounter.returnPath,
+        },
+      }
+    );
+  };
+
+  const handleClearLiveEncounter = () => {
+    clearActiveEncounter();
+    setActiveEncounterState(null);
   };
 
   return (
@@ -90,6 +123,28 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
         </div>
 
         <div className="ema-header-right">
+          {activeEncounter && (
+            <div className="ema-live-encounter-banner" role="status" aria-live="polite">
+              <button
+                type="button"
+                className="ema-live-encounter-btn"
+                onClick={handleGoToLiveEncounter}
+                aria-label="Return to live encounter"
+                title={activeEncounter.patientName ? `Live Encounter: ${activeEncounter.patientName}` : 'Live Encounter'}
+              >
+                Live Encounter
+              </button>
+              <button
+                type="button"
+                className="ema-live-encounter-clear"
+                onClick={handleClearLiveEncounter}
+                aria-label="Clear live encounter shortcut"
+                title="Clear shortcut"
+              >
+                ×
+              </button>
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <LanguageSwitcher />
             {user && (

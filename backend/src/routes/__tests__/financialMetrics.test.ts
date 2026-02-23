@@ -40,7 +40,8 @@ describe("Financial metrics routes", () => {
       .mockResolvedValueOnce({ rows: [{ total: "300" }] })
       .mockResolvedValueOnce({ rows: [{ total: "400" }] })
       .mockResolvedValueOnce({ rows: [{ count: "1" }] })
-      .mockResolvedValueOnce({ rows: [{ total: "1000" }] });
+      .mockResolvedValueOnce({ rows: [{ total: "1000" }] })
+      .mockResolvedValueOnce({ rows: [{ total: "50" }] });
 
     const res = await request(app).get("/financial-metrics/dashboard");
 
@@ -50,6 +51,7 @@ describe("Financial metrics routes", () => {
       inProgressBillsCount: 3,
       outstandingAmountCents: 1000,
       paymentsThisMonthCents: 700,
+      lateFeesThisMonthCents: 50,
       overdueCount: 1,
       collectionRate: 70,
     });

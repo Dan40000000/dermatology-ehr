@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 import { patientPortalFetch } from '../../contexts/PatientPortalAuthContext';
-import { useToast } from '../../contexts/ToastContext';
 
 interface Appointment {
   id: string;
@@ -18,11 +17,10 @@ interface Appointment {
 }
 
 export function PortalAppointmentsPage() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [checkinSessionId, setCheckinSessionId] = useState<string | null>(null);
-  const { showSuccess, showError } = useToast();
 
   useEffect(() => {
     loadAppointments();
@@ -80,34 +78,8 @@ export function PortalAppointmentsPage() {
     return labels[status] || status;
   };
 
-  const startCheckIn = async (appointmentId: string) => {
-    try {
-      const resp = await patientPortalFetch('/api/patient-portal-data/checkin/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appointmentId }),
-      });
-      setCheckinSessionId(resp.sessionId);
-      showSuccess('Pre-check-in started. Please confirm your details.');
-    } catch (error: any) {
-      console.error('Failed to start check-in', error);
-      showError(error?.message || 'Could not start check-in');
-    }
-  };
-
-  const completeCheckIn = async () => {
-    if (!checkinSessionId) return;
-    try {
-      await patientPortalFetch(`/api/patient-portal-data/checkin/${checkinSessionId}/complete`, {
-        method: 'PUT',
-      });
-      showSuccess('Check-in completed. We’ll see you soon!');
-      setCheckinSessionId(null);
-      loadAppointments();
-    } catch (error: any) {
-      console.error('Failed to complete check-in', error);
-      showError(error?.message || 'Could not complete check-in');
-    }
+  const startCheckIn = (appointmentId: string) => {
+    navigate(`/portal/check-in?appointmentId=${appointmentId}`);
   };
 
   return (
@@ -231,19 +203,10 @@ export function PortalAppointmentsPage() {
                       <button
                         className="action-btn primary"
                         onClick={() => startCheckIn(apt.id)}
-                        disabled={!!checkinSessionId}
                         title="Start pre-check-in before arrival"
                       >
                         Start Pre-Check-In
                       </button>
-                      {checkinSessionId && (
-                        <button
-                          className="action-btn confirm"
-                          onClick={completeCheckIn}
-                        >
-                          Complete Check-In
-                        </button>
-                      )}
                     </div>
                   )}
                 </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
@@ -33,13 +34,16 @@ const RECALL_TYPES = [
 
 const STATUS_OPTIONS = ['pending', 'contacted', 'scheduled', 'completed', 'dismissed'];
 const CONTACT_METHODS = ['email', 'sms', 'phone', 'mail', 'portal'];
+const TAB_OPTIONS = ['campaigns', 'due', 'history', 'stats'] as const;
+type ReminderTab = (typeof TAB_OPTIONS)[number];
 
 export function RemindersPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'campaigns' | 'due' | 'history' | 'stats'>('campaigns');
+  const [activeTab, setActiveTab] = useState<ReminderTab>('campaigns');
 
   // Campaigns
   const [campaigns, setCampaigns] = useState<RecallCampaign[]>([]);
@@ -149,6 +153,27 @@ export function RemindersPage() {
   }, [loadData]);
 
   useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    const statusParam = searchParams.get('status');
+    const filterParam = searchParams.get('filter');
+
+    if (tabParam && TAB_OPTIONS.includes(tabParam as ReminderTab) && tabParam !== activeTab) {
+      setActiveTab(tabParam as ReminderTab);
+    }
+
+    if (statusParam && STATUS_OPTIONS.includes(statusParam) && statusParam !== recallFilters.status) {
+      setRecallFilters((prev) => ({ ...prev, status: statusParam }));
+    }
+
+    if (filterParam === 'completed' && recallFilters.status !== 'completed') {
+      setRecallFilters((prev) => ({ ...prev, status: 'completed' }));
+      if (activeTab !== 'due') {
+        setActiveTab('due');
+      }
+    }
+  }, [activeTab, recallFilters.status, searchParams]);
+
+  useEffect(() => {
     if (activeTab === 'due') {
       loadDueRecalls();
     } else if (activeTab === 'history') {
@@ -157,6 +182,13 @@ export function RemindersPage() {
       loadStats();
     }
   }, [activeTab, loadDueRecalls, loadHistory, loadStats]);
+
+  const handleTabChange = (tab: ReminderTab) => {
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams);
+    params.set('tab', tab);
+    setSearchParams(params, { replace: true });
+  };
 
   // Campaign Actions
   const handleCreateCampaign = async () => {
@@ -404,28 +436,28 @@ export function RemindersPage() {
         <button
           type="button"
           className={`tab ${activeTab === 'campaigns' ? 'active' : ''}`}
-          onClick={() => setActiveTab('campaigns')}
+          onClick={() => handleTabChange('campaigns')}
         >
           Campaigns ({campaigns.length})
         </button>
         <button
           type="button"
           className={`tab ${activeTab === 'due' ? 'active' : ''}`}
-          onClick={() => setActiveTab('due')}
+          onClick={() => handleTabChange('due')}
         >
           Due for Recall ({dueRecalls.length})
         </button>
         <button
           type="button"
           className={`tab ${activeTab === 'history' ? 'active' : ''}`}
-          onClick={() => setActiveTab('history')}
+          onClick={() => handleTabChange('history')}
         >
           Contact History
         </button>
         <button
           type="button"
           className={`tab ${activeTab === 'stats' ? 'active' : ''}`}
-          onClick={() => setActiveTab('stats')}
+          onClick={() => handleTabChange('stats')}
         >
           Statistics
         </button>

@@ -4,6 +4,7 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { logger } from "../lib/logger";
 
 export const financialMetricsRouter = Router();
+const LATE_FEE_NOTE_PREFIX = "[LATE_FEE]";
 
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -154,6 +155,16 @@ financialMetricsRouter.get("/dashboard", requireAuth, async (req: AuthedRequest,
     );
 
     const chargesThisMonth = parseInt(chargesThisMonthResult.rows[0].total);
+    const lateFeesThisMonthResult = await pool.query(
+      `select coalesce(sum(total_charges_cents), 0) as total
+       from bills
+       where tenant_id = $1
+         and bill_date >= $2
+         and bill_date <= $3
+         and notes like $4`,
+      [tenantId, firstDayOfMonth.toISOString().split('T')[0], lastDayOfMonth.toISOString().split('T')[0], `%${LATE_FEE_NOTE_PREFIX}%`],
+    );
+    const lateFeesThisMonth = parseInt(lateFeesThisMonthResult.rows[0].total);
     const collectionRate = chargesThisMonth > 0 ? Math.round((paymentsThisMonth / chargesThisMonth) * 100) : 0;
 
     res.json({
@@ -162,6 +173,7 @@ financialMetricsRouter.get("/dashboard", requireAuth, async (req: AuthedRequest,
         inProgressBillsCount: parseInt(inProgressBillsResult.rows[0].count),
         outstandingAmountCents: parseInt(outstandingResult.rows[0].total),
         paymentsThisMonthCents: paymentsThisMonth,
+        lateFeesThisMonthCents: lateFeesThisMonth,
         overdueCount: parseInt(overdueResult.rows[0].count),
         collectionRate,
         arAging: {

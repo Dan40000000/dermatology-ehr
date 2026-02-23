@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { BrowserRouter } from 'react-router-dom';
 import { TopBar } from '../TopBar';
 import { AuthContext } from '../../../contexts/AuthContext';
+import { ACTIVE_ENCOUNTER_STORAGE_KEY } from '../../../utils/activeEncounter';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -42,6 +43,7 @@ describe('TopBar Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(window, 'alert').mockImplementation(() => {});
+    localStorage.clear();
   });
 
   it('renders brand name', () => {
@@ -185,5 +187,34 @@ describe('TopBar Component', () => {
 
     const submitButton = screen.getByRole('button', { name: /Submit Feedback/i });
     expect(submitButton).toBeDisabled();
+  });
+
+  it('shows and navigates via the live encounter shortcut', async () => {
+    localStorage.setItem(
+      ACTIVE_ENCOUNTER_STORAGE_KEY,
+      JSON.stringify({
+        encounterId: 'enc-123',
+        patientId: 'patient-123',
+        patientName: 'Jane Smith',
+        appointmentTypeName: 'Consult',
+        startedAt: '2026-02-23T09:00:00.000Z',
+        startedEncounterFrom: 'office_flow',
+        undoAppointmentStatus: 'in_room',
+        returnPath: '/office-flow',
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderWithContext();
+
+    await user.click(screen.getByRole('button', { name: /Return to live encounter/i }));
+    expect(mockNavigate).toHaveBeenCalledWith('/patients/patient-123/encounter/enc-123', {
+      state: {
+        startedEncounterFrom: 'office_flow',
+        undoAppointmentStatus: 'in_room',
+        appointmentTypeName: 'Consult',
+        returnPath: '/office-flow',
+      },
+    });
   });
 });

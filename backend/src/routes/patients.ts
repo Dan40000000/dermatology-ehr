@@ -2,6 +2,7 @@ import { Router } from "express";
 import crypto from "crypto";
 import { z } from "zod";
 import { pool } from "../db/pool";
+import { getTableColumns } from "../db/schema";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { parsePagination, paginatedResponse } from "../middleware/pagination";
@@ -846,6 +847,9 @@ patientsRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest,
   const { status, includeInactive } = req.query;
 
   try {
+    const prescriptionColumns = await getTableColumns("prescriptions");
+    const hasStatusColumn = prescriptionColumns.has("status");
+
     // Verify patient exists
     const patientCheck = await pool.query(
       'SELECT id FROM patients WHERE id = $1 AND tenant_id = $2',
@@ -856,17 +860,13 @@ patientsRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest,
     }
 
     let query = `
-      SELECT p.id, p.patient_id as "patientId", p.provider_id as "providerId",
+      SELECT p.*,
+             p.patient_id as "patientId",
+             p.provider_id as "providerId",
              p.encounter_id as "encounterId",
-             p.medication_name as "medicationName", p.generic_name as "genericName",
-             p.strength, p.dosage_form as "dosageForm", p.sig, p.quantity, p.quantity_unit as "quantityUnit",
-             p.refills, p.refills_remaining as "refillsRemaining", p.days_supply as "daysSupply",
-             p.status, p.is_controlled as "isControlled", p.dea_schedule as "deaSchedule",
-             p.pharmacy_id as "pharmacyId", p.pharmacy_name as "pharmacyName",
-             p.indication, p.notes,
-             p.written_date as "writtenDate", p.sent_at as "sentAt",
-             p.last_filled_date as "lastFilledDate",
-             p.created_at as "createdAt", p.updated_at as "updatedAt",
+             p.medication_name as "medicationName",
+             p.created_at as "createdAt",
+             p.updated_at as "updatedAt",
              prov.full_name as "providerName",
              ph.name as "pharmacyFullName", ph.phone as "pharmacyPhone",
              e.created_at as "encounterDate"
@@ -881,11 +881,11 @@ patientsRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest,
     let paramIndex = 3;
 
     // Filter by status if provided
-    if (status) {
+    if (status && hasStatusColumn) {
       query += ` AND p.status = $${paramIndex}`;
       params.push(status);
       paramIndex++;
-    } else if (includeInactive !== 'true') {
+    } else if (includeInactive !== 'true' && hasStatusColumn) {
       // By default, exclude cancelled and discontinued prescriptions
       query += ` AND p.status NOT IN ('cancelled', 'discontinued')`;
     }
@@ -893,27 +893,46 @@ patientsRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest,
     query += ' ORDER BY p.created_at DESC';
 
     const result = await pool.query(query, params);
+    const prescriptions = result.rows.map((row: Record<string, any>) => ({
+      ...row,
+      patientId: row.patientId ?? row.patient_id ?? id,
+      providerId: row.providerId ?? row.provider_id ?? null,
+      encounterId: row.encounterId ?? row.encounter_id ?? null,
+      medicationName: row.medicationName ?? row.medication_name ?? '',
+      genericName: row.genericName ?? row.generic_name ?? null,
+      dosageForm: row.dosageForm ?? row.dosage_form ?? null,
+      quantityUnit: row.quantityUnit ?? row.quantity_unit ?? null,
+      refillsRemaining: row.refillsRemaining ?? row.refills_remaining ?? row.refills ?? null,
+      daysSupply: row.daysSupply ?? row.days_supply ?? null,
+      isControlled: row.isControlled ?? row.is_controlled ?? false,
+      deaSchedule: row.deaSchedule ?? row.dea_schedule ?? null,
+      pharmacyId: row.pharmacyId ?? row.pharmacy_id ?? null,
+      pharmacyName: row.pharmacyName ?? row.pharmacy_name ?? row.pharmacyFullName ?? null,
+      writtenDate: row.writtenDate ?? row.written_date ?? null,
+      sentAt: row.sentAt ?? row.sent_at ?? null,
+      lastFilledDate: row.lastFilledDate ?? row.last_filled_date ?? null,
+      createdAt: row.createdAt ?? row.created_at ?? null,
+      updatedAt: row.updatedAt ?? row.updated_at ?? null,
+      status: row.status ?? null,
+    }));
 
-    // Group prescriptions by active vs inactive
-    const prescriptions = result.rows;
-    const active = prescriptions.filter(p =>
-      p.status !== 'cancelled' &&
-      p.status !== 'discontinued' &&
-      (p.refillsRemaining === null || p.refillsRemaining > 0)
-    );
-    const inactive = prescriptions.filter(p =>
-      p.status === 'cancelled' ||
-      p.status === 'discontinued' ||
-      (p.refillsRemaining !== null && p.refillsRemaining <= 0)
-    );
+    const active = prescriptions.filter((prescription) => {
+      const normalizedStatus = String(prescription.status || '').toLowerCase();
+      const inactiveStatus = normalizedStatus === 'cancelled' || normalizedStatus === 'discontinued';
+      const hasNumericRefills = typeof prescription.refillsRemaining === 'number';
+      const exhaustedRefills = hasNumericRefills && prescription.refillsRemaining <= 0;
+
+      return !inactiveStatus && !exhaustedRefills;
+    });
+    const inactive = prescriptions.filter((prescription) => !active.includes(prescription));
 
     return res.json({
-      prescriptions: result.rows,
+      prescriptions,
       summary: {
         total: prescriptions.length,
         active: active.length,
         inactive: inactive.length,
-        controlled: prescriptions.filter(p => p.isControlled).length,
+        controlled: prescriptions.filter((prescription) => Boolean(prescription.isControlled)).length,
       }
     });
   } catch (error) {
@@ -1006,25 +1025,38 @@ patientsRouter.get("/:id/balance", requireAuth, async (req: AuthedRequest, res) 
   const tenantId = req.user!.tenantId;
 
   try {
-    // Get total charges
+    // Get total charges from encounter charges + inventory bill line items
     const chargesResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total_charges
-       FROM charges
-       WHERE patient_id = $1 AND tenant_id = $2`,
+      `SELECT
+         COALESCE((SELECT SUM(amount_cents) / 100.0
+           FROM charges
+           WHERE patient_id = $1 AND tenant_id = $2), 0)
+         +
+         COALESCE((SELECT SUM(li.total_cents) / 100.0
+           FROM bill_line_items li
+           JOIN bills b ON b.id = li.bill_id AND b.tenant_id = li.tenant_id
+           WHERE b.patient_id = $1
+             AND b.tenant_id = $2
+             AND li.cpt_code = 'INV-ITEM'), 0)
+         AS total_charges`,
       [id, tenantId]
     );
 
     // Get total payments
     const paymentsResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total_payments
+      `SELECT COALESCE(SUM(amount_cents) / 100.0, 0) as total_payments
        FROM patient_payments
-       WHERE patient_id = $1 AND tenant_id = $2 AND status != 'failed'`,
+       WHERE patient_id = $1
+         AND tenant_id = $2
+         AND status NOT IN ('failed', 'voided')`,
       [id, tenantId]
     );
 
     // Get recent payments
     const recentPaymentsResult = await pool.query(
-      `SELECT id, amount, payment_method as "paymentMethod",
+      `SELECT id,
+              amount_cents / 100.0 as amount,
+              payment_method as "paymentMethod",
               payment_date as "paymentDate", status, notes,
               created_at as "createdAt"
        FROM patient_payments

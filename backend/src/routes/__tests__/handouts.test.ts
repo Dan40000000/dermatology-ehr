@@ -29,10 +29,28 @@ beforeEach(() => {
 
 describe("Handouts routes", () => {
   it("GET /handouts returns list", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "h1" }] });
+    queryMock.mockImplementation(async (sql: string) => {
+      if (typeof sql === "string" && sql.startsWith("SELECT * FROM patient_handouts WHERE tenant_id = $1")) {
+        return { rows: [{ id: "h1", instruction_type: "aftercare" }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
     const res = await request(app).get("/handouts?category=Skin&condition=Acne&search=care");
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
+  });
+
+  it("GET /handouts supports instructionType filter", async () => {
+    queryMock.mockImplementation(async (sql: string) => {
+      if (typeof sql === "string" && sql.startsWith("SELECT * FROM patient_handouts WHERE tenant_id = $1")) {
+        return { rows: [{ id: "h2", instruction_type: "lab_results" }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    const res = await request(app).get("/handouts?instructionType=lab_results");
+    expect(res.status).toBe(200);
+    expect(res.body[0].instruction_type).toBe("lab_results");
   });
 
   it("GET /handouts/:id returns 404", async () => {

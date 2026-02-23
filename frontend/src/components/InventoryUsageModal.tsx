@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Modal } from './ui';
 import { api } from '../api';
 import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/AuthContext';
 
 interface ProcedureTemplate {
   id: string;
@@ -47,6 +48,7 @@ export function InventoryUsageModal({
   appointmentId,
 }: InventoryUsageModalProps) {
   const { showSuccess, showError } = useToast();
+  const { session } = useAuth();
 
   const [templates, setTemplates] = useState<ProcedureTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
@@ -61,12 +63,12 @@ export function InventoryUsageModal({
 
   // Load templates, patients, and providers on mount
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && session) {
       fetchTemplates();
       fetchPatients();
       fetchProviders();
     }
-  }, [isOpen]);
+  }, [isOpen, session]);
 
   // Load template items when template is selected
   useEffect(() => {
@@ -78,9 +80,10 @@ export function InventoryUsageModal({
   }, [selectedTemplate]);
 
   const fetchTemplates = async () => {
+    if (!session) return;
     try {
       setLoadingTemplates(true);
-      const response = await api.get('/inventory/procedure-templates');
+      const response = await api.get(session.tenantId, session.accessToken, '/api/inventory/procedure-templates');
       setTemplates(response.templates || []);
     } catch (error) {
       console.error('Failed to fetch procedure templates:', error);
@@ -90,8 +93,13 @@ export function InventoryUsageModal({
   };
 
   const fetchTemplateItems = async (procedureName: string) => {
+    if (!session) return;
     try {
-      const response = await api.get(`/inventory/procedure-templates/${encodeURIComponent(procedureName)}/items`);
+      const response = await api.get(
+        session.tenantId,
+        session.accessToken,
+        `/api/inventory/procedure-templates/${encodeURIComponent(procedureName)}/items`
+      );
       setTemplateItems(response.items || []);
     } catch (error) {
       console.error('Failed to fetch template items:', error);
@@ -100,18 +108,20 @@ export function InventoryUsageModal({
   };
 
   const fetchPatients = async () => {
+    if (!session) return;
     try {
-      const response = await api.get('/patients?limit=100');
-      setPatients(response.data || []);
+      const response = await api.get(session.tenantId, session.accessToken, '/api/patients?limit=100');
+      setPatients(response.data || response.patients || []);
     } catch (error) {
       console.error('Failed to fetch patients:', error);
     }
   };
 
   const fetchProviders = async () => {
+    if (!session) return;
     try {
-      const response = await api.get('/users?role=provider');
-      setProviders(response.users || []);
+      const response = await api.get(session.tenantId, session.accessToken, '/api/providers');
+      setProviders(response.providers || []);
     } catch (error) {
       console.error('Failed to fetch providers:', error);
     }
@@ -119,6 +129,10 @@ export function InventoryUsageModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!session) {
+      showError('Session expired. Please log in again.');
+      return;
+    }
 
     if (!selectedTemplate) {
       showError('Please select a procedure');
@@ -137,7 +151,7 @@ export function InventoryUsageModal({
 
     try {
       setLoading(true);
-      await api.post('/inventory/procedure-usage', {
+      await api.post(session.tenantId, session.accessToken, '/api/inventory/procedure-usage', {
         procedureName: selectedTemplate,
         patientId,
         providerId,
@@ -150,7 +164,7 @@ export function InventoryUsageModal({
       onClose();
       resetForm();
     } catch (error: any) {
-      showError(error.response?.data?.error || 'Failed to record inventory usage');
+      showError(error.message || 'Failed to record inventory usage');
     } finally {
       setLoading(false);
     }

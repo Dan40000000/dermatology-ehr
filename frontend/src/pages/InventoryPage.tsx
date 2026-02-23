@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/AuthContext';
 import { Panel, Modal } from '../components/ui';
-import { api } from '../api';
+import { fetchInventoryItems, adjustInventory } from '../api';
 import { InventoryUsageModal } from '../components/InventoryUsageModal';
 
 // 90 days in milliseconds - computed once at module load
@@ -47,6 +48,7 @@ const MOCK_CABINETS: Cabinet[] = [
 
 export function InventoryPage() {
   const { showSuccess, showError } = useToast();
+  const { session } = useAuth();
 
   // View mode state
   const [viewMode, setViewMode] = useState<ViewMode>('inventory');
@@ -72,27 +74,27 @@ export function InventoryPage() {
 
   // Load inventory from API
   useEffect(() => {
+    if (!session) {
+      setInventory([]);
+      setLoading(false);
+      return;
+    }
     fetchInventory();
-  }, [categoryFilter, showLowStock]);
+  }, [session, categoryFilter, showLowStock]);
 
   const fetchInventory = async () => {
+    if (!session) return;
     try {
       setLoading(true);
-      const params = new URLSearchParams();
-      if (categoryFilter !== 'all') {
-        params.append('category', categoryFilter);
-      }
-      if (showLowStock) {
-        params.append('lowStock', 'true');
-      }
-
-      const response = await api.get(`/inventory?${params.toString()}`);
-      // Convert unitCostCents to dollars for display
-      const items = response.items.map((item: any) => ({
-        ...item,
-        unitCost: item.unitCostCents / 100,
-      }));
-      setInventory(items);
+      const response = await fetchInventoryItems(
+        session.tenantId,
+        session.accessToken,
+        {
+          category: categoryFilter !== 'all' ? categoryFilter : undefined,
+          lowStock: showLowStock || undefined,
+        },
+      );
+      setInventory(response.items || []);
     } catch (error) {
       showError('Failed to load inventory');
       console.error('Failed to fetch inventory:', error);
@@ -179,6 +181,10 @@ export function InventoryPage() {
 
   const handleAdjustStock = async () => {
     if (!selectedItem) return;
+    if (!session) {
+      showError('Session expired. Please log in again.');
+      return;
+    }
 
     const newQuantity = selectedItem.quantity + adjustQuantity;
     if (newQuantity < 0) {
@@ -187,7 +193,7 @@ export function InventoryPage() {
     }
 
     try {
-      await api.post('/inventory/adjust', {
+      await adjustInventory(session.tenantId, session.accessToken, {
         itemId: selectedItem.id,
         adjustmentQuantity: adjustQuantity,
         reason: adjustReason,

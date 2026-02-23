@@ -1,18 +1,23 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AnatomicalBodyDiagram } from './AnatomicalBodyDiagram';
 import type { BodyMarker, BodyView } from './AnatomicalBodyDiagram';
 import { BodyMarkerModal } from './BodyMarkerModal';
+import api from '../../api';
 import toast from 'react-hot-toast';
 
 interface PatientBodyDiagramProps {
   patientId: string;
+  encounterId?: string;
   editable?: boolean;
+  onMarkersChange?: (markers: BodyMarker[]) => void;
   className?: string;
 }
 
 export function PatientBodyDiagram({
   patientId,
+  encounterId,
   editable = true,
+  onMarkersChange,
   className = '',
 }: PatientBodyDiagramProps) {
   const [markers, setMarkers] = useState<BodyMarker[]>([]);
@@ -26,29 +31,23 @@ export function PatientBodyDiagram({
     view: BodyView;
   } | null>(null);
   const [markerHistory, setMarkerHistory] = useState<BodyMarker[][]>([]);
+  const latestRequestRef = useRef(0);
 
   // Fetch markers from API
   const fetchMarkers = useCallback(async () => {
     if (!patientId) return;
+    const requestId = ++latestRequestRef.current;
 
     try {
       setIsLoading(true);
       setError(null);
 
-      const response = await fetch(`/api/body-diagram/patient/${patientId}/markings`, {
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          // No markers yet - not an error
-          setMarkers([]);
-          return;
-        }
-        throw new Error('Failed to fetch body markers');
+      const response = await api.get(`/api/body-diagram/patient/${patientId}/markings`);
+      if (requestId !== latestRequestRef.current) {
+        return;
       }
 
-      const responseData = await response.json();
+      const responseData = response.data;
       const data = responseData?.markings || responseData || [];
 
       // Transform API response to BodyMarker format
@@ -66,11 +65,28 @@ export function PatientBodyDiagram({
 
       setMarkers(transformedMarkers);
     } catch (err: any) {
-      console.error('Failed to fetch body markers:', err);
+      if (requestId !== latestRequestRef.current) {
+        return;
+      }
+
+      if (err?.response?.status === 404) {
+        setMarkers([]);
+        setError(null);
+        return;
+      }
+
+      if (err?.response?.status === 401 || err?.response?.status === 403) {
+        setError('Body diagram unavailable for this user');
+        setMarkers([]);
+        return;
+      }
+
       setError('Failed to load body markers');
       setMarkers([]);
     } finally {
-      setIsLoading(false);
+      if (requestId === latestRequestRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [patientId]);
 
@@ -93,7 +109,14 @@ export function PatientBodyDiagram({
 
   useEffect(() => {
     fetchMarkers();
+    return () => {
+      latestRequestRef.current += 1;
+    };
   }, [fetchMarkers]);
+
+  useEffect(() => {
+    onMarkersChange?.(markers);
+  }, [markers, onMarkersChange]);
 
   // Handle adding a new marker
   const handleAddMarker = useCallback(
@@ -138,6 +161,7 @@ export function PatientBodyDiagram({
       // Prepare backend-compatible payload
       const backendPayload = {
         patientId: patientId,
+        encounterId: encounterId,
         locationCode: 'custom',
         locationX: markerData.x,
         locationY: markerData.y,
@@ -150,14 +174,7 @@ export function PatientBodyDiagram({
       try {
         if (selectedMarker) {
           // Update existing marker
-          const response = await fetch(`/api/body-diagram/markings/${selectedMarker.id}`, {
-            method: 'PUT',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(backendPayload),
-          });
-
-          if (!response.ok) throw new Error('Failed to update marker');
+          await api.put(`/api/body-diagram/markings/${selectedMarker.id}`, backendPayload);
 
           setMarkers((prev) =>
             prev.map((m) =>
@@ -169,16 +186,9 @@ export function PatientBodyDiagram({
           toast.success('Marker updated');
         } else {
           // Create new marker
-          const response = await fetch(`/api/body-diagram/patient/${patientId}/markings`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(backendPayload),
-          });
+          const response = await api.post(`/api/body-diagram/markings`, backendPayload);
 
-          if (!response.ok) throw new Error('Failed to create marker');
-
-          const responseData = await response.json();
+          const responseData = response.data;
           const newMarker: BodyMarker = {
             id: responseData?.id || responseData?.marking?.id || `temp-${Date.now()}`,
             ...markerData,
@@ -204,7 +214,7 @@ export function PatientBodyDiagram({
       setSelectedMarker(null);
       setPendingPosition(null);
     },
-    [patientId, selectedMarker, markers]
+    [patientId, encounterId, selectedMarker, markers]
   );
 
   // Delete marker
@@ -215,12 +225,7 @@ export function PatientBodyDiagram({
     setMarkerHistory((prev) => [...prev, markers]);
 
     try {
-      const response = await fetch(`/api/body-diagram/markings/${selectedMarker.id}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      });
-
-      if (!response.ok) throw new Error('Failed to delete marker');
+      await api.delete(`/api/body-diagram/markings/${selectedMarker.id}`);
 
       setMarkers((prev) => prev.filter((m) => m.id !== selectedMarker.id));
       toast.success('Marker deleted');

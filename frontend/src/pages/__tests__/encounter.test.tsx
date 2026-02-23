@@ -21,6 +21,7 @@ const routerMocks = vi.hoisted(() => ({
     patientId?: string;
     encounterId?: string;
   },
+  location: { state: null as any },
 }));
 
 const autosaveMocks = vi.hoisted(() => ({
@@ -36,6 +37,8 @@ const apiMocks = vi.hoisted(() => ({
   createEncounter: vi.fn(),
   updateEncounter: vi.fn(),
   updateEncounterStatus: vi.fn(),
+  updateAppointmentStatus: vi.fn(),
+  checkOutFrontDeskAppointment: vi.fn(),
   fetchVitals: vi.fn(),
   createVitals: vi.fn(),
   fetchOrders: vi.fn(),
@@ -47,7 +50,6 @@ const apiMocks = vi.hoisted(() => ({
   fetchChargesByEncounter: vi.fn(),
   createCharge: vi.fn(),
   deleteCharge: vi.fn(),
-  getSuperbillUrl: vi.fn(),
   generateAiNoteDraft: vi.fn(),
   fetchNoteTemplates: vi.fn(),
   fetchProviders: vi.fn(),
@@ -65,6 +67,7 @@ vi.mock('../../contexts/ToastContext', () => ({
 vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateMock,
   useParams: () => routerMocks.params,
+  useLocation: () => routerMocks.location,
 }));
 
 vi.mock('../../hooks/useAutosave', () => ({
@@ -107,25 +110,6 @@ vi.mock('../../components/clinical', () => ({
   PatientBanner: ({ patient }: { patient: { firstName: string; lastName: string } }) => (
     <div data-testid="patient-banner">{patient.firstName} {patient.lastName}</div>
   ),
-  BodyMap: ({
-    view,
-    onAddLesion,
-    onLesionClick,
-  }: {
-    view: string;
-    onAddLesion: (regionId: string, x: number, y: number) => void;
-    onLesionClick: (lesion: { id: string }) => void;
-  }) => (
-    <div data-testid="body-map">
-      <span>{view}</span>
-      <button type="button" onClick={() => onAddLesion('left-arm', 10, 20)}>
-        Add Lesion
-      </button>
-      <button type="button" onClick={() => onLesionClick({ id: 'lesion-1' })}>
-        Select Lesion
-      </button>
-    </div>
-  ),
   TemplateSelector: ({
     isOpen,
     onClose,
@@ -164,6 +148,26 @@ vi.mock('../../components/clinical', () => ({
       </div>
     );
   },
+}));
+
+vi.mock('../../components/body-diagram', () => ({
+  PatientBodyDiagram: ({
+    patientId,
+    onMarkersChange,
+  }: {
+    patientId: string;
+    onMarkersChange?: (markers: Array<{ id: string; type: string }>) => void;
+  }) => (
+    <div data-testid="patient-body-diagram">
+      <span>{patientId}</span>
+      <button
+        type="button"
+        onClick={() => onMarkersChange?.([{ id: 'marker-1', type: 'lesion' }])}
+      >
+        Sync Lesion Markers
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock('../../components/billing', () => ({
@@ -232,6 +236,32 @@ vi.mock('../../components/ScribePanel', () => ({
   ScribePanel: () => <div data-testid="scribe-panel" />,
 }));
 
+vi.mock('../../components/inventory', () => ({
+  InventoryUsageList: ({ onOpenUsageModal }: { onOpenUsageModal: () => void }) => (
+    <div data-testid="inventory-usage-list">
+      <button type="button" onClick={onOpenUsageModal}>
+        Open Inventory Usage
+      </button>
+    </div>
+  ),
+  InventoryUsageModal: ({
+    isOpen,
+    onClose,
+  }: {
+    isOpen: boolean;
+    onClose: () => void;
+  }) => {
+    if (!isOpen) return null;
+    return (
+      <div data-testid="inventory-usage-modal">
+        <button type="button" onClick={onClose}>
+          Close Inventory
+        </button>
+      </div>
+    );
+  },
+}));
+
 import { EncounterPage } from '../EncounterPage';
 
 const baseSession = {
@@ -249,6 +279,7 @@ const buildFixtures = () => ({
   },
   encounter: {
     id: 'enc-1',
+    appointmentId: 'appt-1',
     patientId: 'patient-1',
     status: 'draft',
     createdAt: '2024-03-01T10:00:00.000Z',
@@ -303,12 +334,11 @@ describe('EncounterPage', () => {
   beforeEach(() => {
     authMocks.session = baseSession;
     routerMocks.params = { patientId: 'patient-1', encounterId: 'enc-1' };
+    routerMocks.location = { state: null };
     toastMocks.showSuccess.mockClear();
     toastMocks.showError.mockClear();
     autosaveMocks.saveNow.mockClear();
     navigateMock.mockClear();
-    apiMocks.getSuperbillUrl.mockReturnValue('http://example.com/superbill');
-
     const fixtures = buildFixtures();
     apiMocks.fetchPatients.mockResolvedValue({ patients: [fixtures.patient] });
     apiMocks.fetchEncounters.mockResolvedValue({ encounters: [fixtures.encounter] });
@@ -326,6 +356,8 @@ describe('EncounterPage', () => {
     apiMocks.deleteCharge.mockResolvedValue({ ok: true });
     apiMocks.updateEncounter.mockResolvedValue({ ok: true });
     apiMocks.updateEncounterStatus.mockResolvedValue({ ok: true });
+    apiMocks.updateAppointmentStatus.mockResolvedValue({ ok: true });
+    apiMocks.checkOutFrontDeskAppointment.mockResolvedValue({ ok: true });
     apiMocks.fetchNoteTemplates.mockResolvedValue({ templates: [] });
     apiMocks.fetchEncounterAmbientNotes.mockResolvedValue({ notes: [] });
     apiMocks.generateAiNoteDraft.mockResolvedValue({
@@ -376,6 +408,7 @@ describe('EncounterPage', () => {
 
     await waitFor(() =>
       expect(apiMocks.createVitals).toHaveBeenCalledWith('tenant-1', 'token-1', {
+        patientId: 'patient-1',
         encounterId: 'enc-1',
         heightCm: 180,
         weightKg: 75.5,
@@ -461,9 +494,6 @@ describe('EncounterPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(autosaveMocks.saveNow).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Generate Superbill' }));
-    expect(window.open).toHaveBeenCalledWith('http://example.com/superbill', '_blank');
-
     fireEvent.click(screen.getByRole('button', { name: 'Sign & Lock' }));
     const signModal = await screen.findByTestId('modal-sign-lock-encounter');
     fireEvent.click(within(signModal).getByRole('button', { name: 'Sign & Lock Encounter' }));
@@ -538,7 +568,83 @@ describe('EncounterPage', () => {
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('AI draft applied');
   });
 
-  it('creates a new encounter and documents a lesion', async () => {
+  it('ends the linked appointment and routes back to office flow', async () => {
+    render(<EncounterPage />);
+
+    await screen.findByTestId('patient-banner');
+    fireEvent.click(screen.getByRole('button', { name: 'End Appointment' }));
+
+    await waitFor(() =>
+      expect(apiMocks.checkOutFrontDeskAppointment).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1'),
+    );
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Appointment ended');
+    expect(navigateMock).toHaveBeenCalledWith('/office-flow');
+  });
+
+  it('falls back to appointment status update when checkout endpoint fails', async () => {
+    apiMocks.checkOutFrontDeskAppointment.mockRejectedValueOnce(new Error('not allowed'));
+
+    render(<EncounterPage />);
+
+    await screen.findByTestId('patient-banner');
+    fireEvent.click(screen.getByRole('button', { name: 'End Appointment' }));
+
+    await waitFor(() =>
+      expect(apiMocks.updateAppointmentStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', 'completed'),
+    );
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Appointment ended');
+    expect(navigateMock).toHaveBeenCalledWith('/office-flow');
+  });
+
+  it('loads vitals only for the active encounter', async () => {
+    apiMocks.fetchVitals.mockResolvedValueOnce({
+      vitals: [
+        {
+          id: 'vitals-other',
+          encounterId: 'enc-other',
+          bpSystolic: 101,
+          bpDiastolic: 66,
+          pulse: 60,
+        },
+        {
+          id: 'vitals-current',
+          encounterId: 'enc-1',
+          bpSystolic: 132,
+          bpDiastolic: 84,
+          pulse: 74,
+        },
+      ],
+    });
+
+    render(<EncounterPage />);
+
+    await screen.findByTestId('patient-banner');
+    expect(screen.getByText(/132\/84/)).toBeInTheDocument();
+    expect(screen.queryByText(/101\/66/)).not.toBeInTheDocument();
+  });
+
+  it('cancels a mistakenly started visit and restores prior appointment status', async () => {
+    routerMocks.location = {
+      state: {
+        startedEncounterFrom: 'office_flow',
+        undoAppointmentStatus: 'in_room',
+        returnPath: '/office-flow',
+      },
+    };
+
+    render(<EncounterPage />);
+
+    await screen.findByTestId('patient-banner');
+    fireEvent.click(screen.getByRole('button', { name: /Cancel Started Visit/i }));
+
+    await waitFor(() =>
+      expect(apiMocks.updateAppointmentStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', 'in_room'),
+    );
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Encounter start cancelled');
+    expect(navigateMock).toHaveBeenCalledWith('/office-flow', { replace: true });
+  });
+
+  it('creates a new encounter and saves exam content', async () => {
     routerMocks.params = { patientId: 'patient-1', encounterId: 'new' };
     apiMocks.fetchEncounters.mockResolvedValue({ encounters: [] });
     apiMocks.createEncounter.mockResolvedValue({ encounter: { id: 'enc-99' } });
@@ -551,23 +657,12 @@ describe('EncounterPage', () => {
       { target: { value: 'Itchy rash' } },
     );
     fireEvent.click(screen.getByRole('button', { name: 'Skin Exam' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Add Lesion' }));
-
-    const lesionModal = await screen.findByTestId('modal-document-lesion');
-    fireEvent.change(within(lesionModal).getByPlaceholderText('e.g., 5mm x 3mm'), {
-      target: { value: '4mm x 2mm' },
-    });
-    fireEvent.change(within(lesionModal).getByPlaceholderText('e.g., pink, brown, erythematous'), {
-      target: { value: 'brown' },
-    });
-    fireEvent.change(within(lesionModal).getByPlaceholderText('Additional clinical details...'), {
-      target: { value: 'Raised edge' },
-    });
-    fireEvent.click(within(lesionModal).getByRole('button', { name: 'Add Lesion' }));
-
+    expect(screen.getByTestId('patient-body-diagram')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Sync Lesion Markers' }));
     const examNotes = screen.getByPlaceholderText(/General: Well-appearing/i);
-    expect((examNotes as HTMLTextAreaElement).value).toContain('left arm');
-    expect((examNotes as HTMLTextAreaElement).value).toContain('Raised edge');
+    fireEvent.change(examNotes, {
+      target: { value: 'Skin: left forearm lesion with raised edge.' },
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
@@ -578,7 +673,7 @@ describe('EncounterPage', () => {
           patientId: 'patient-1',
           providerId: 'user-1',
           chiefComplaint: 'Itchy rash',
-          exam: expect.stringContaining('left arm'),
+          exam: expect.stringContaining('left forearm lesion'),
         }),
       ),
     );

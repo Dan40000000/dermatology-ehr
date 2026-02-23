@@ -181,7 +181,7 @@ frontDeskRouter.get(
 frontDeskRouter.post(
   '/check-in/:appointmentId',
   requireAuth,
-  requireRoles(['admin', 'front_desk', 'ma']),
+  requireRoles(['admin', 'front_desk', 'ma', 'provider']),
   async (req: AuthedRequest, res) => {
     try {
       const { appointmentId } = req.params;
@@ -190,15 +190,25 @@ frontDeskRouter.post(
 
       const result = await frontDeskService.checkInPatient(tenantId, appointmentId!);
 
-      // Audit log
-      await auditLog(tenantId, userId, 'check_in', 'appointment', appointmentId!);
+      try {
+        await auditLog(tenantId, userId, 'check_in', 'appointment', appointmentId!);
+      } catch (auditError) {
+        logger.error('Check-in audit log failed:', auditError);
+      }
 
-      res.json({
+      const payload: { success: boolean; message: string; encounterId?: string } = {
         success: true,
         message: 'Patient checked in successfully',
-        encounterId: result.encounterId
-      });
+      };
+      if (result.encounterId) {
+        payload.encounterId = result.encounterId;
+      }
+
+      res.json(payload);
     } catch (error) {
+      if (error instanceof Error && error.message === 'Appointment not found') {
+        return res.status(404).json({ error: 'Appointment not found' });
+      }
       logger.error('Error checking in patient:', error);
       res.status(500).json({ error: 'Failed to check in patient' });
     }
@@ -228,7 +238,7 @@ frontDeskRouter.post(
 frontDeskRouter.post(
   '/check-out/:appointmentId',
   requireAuth,
-  requireRoles(['admin', 'front_desk', 'ma']),
+  requireRoles(['admin', 'front_desk', 'ma', 'provider']),
   async (req: AuthedRequest, res) => {
     try {
       const { appointmentId } = req.params;
@@ -237,8 +247,11 @@ frontDeskRouter.post(
 
       await frontDeskService.checkOutPatient(tenantId, appointmentId!);
 
-      // Audit log
-      await auditLog(tenantId, userId, 'check_out', 'appointment', appointmentId!);
+      try {
+        await auditLog(tenantId, userId, 'check_out', 'appointment', appointmentId!);
+      } catch (auditError) {
+        logger.error('Check-out audit log failed:', auditError);
+      }
 
       res.json({ success: true, message: 'Patient checked out successfully' });
     } catch (error) {
@@ -297,8 +310,11 @@ frontDeskRouter.put(
 
       await frontDeskService.updateAppointmentStatus(tenantId, appointmentId!, status);
 
-      // Audit log
-      await auditLog(tenantId, userId, 'update_status', 'appointment', appointmentId!);
+      try {
+        await auditLog(tenantId, userId, 'update_status', 'appointment', appointmentId!);
+      } catch (auditError) {
+        logger.error('Status update audit log failed:', auditError);
+      }
 
       res.json({ success: true, message: 'Status updated successfully' });
     } catch (error) {

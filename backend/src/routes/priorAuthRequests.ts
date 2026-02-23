@@ -18,6 +18,7 @@ import { pool } from "../db/pool";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { getPriorAuthAdapter } from "../services/priorAuthAdapter";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 const router = Router();
 router.use(requireAuth);
@@ -46,6 +47,180 @@ const updatePARequestSchema = z.object({
     uploadedAt: z.string(),
   })).optional(),
 });
+
+type PriorAuthRequestStatus = "pending" | "submitted" | "approved" | "denied" | "needs_info" | "error";
+type TaskStatus = "todo" | "in_progress" | "completed" | "cancelled";
+type TaskPriority = "low" | "normal" | "high" | "urgent";
+
+const PRIOR_AUTH_TASK_MARKER_PREFIX = "[PA_REQUEST:";
+const PRIOR_AUTH_TASK_CATEGORY = "prior-auth";
+
+const buildPriorAuthTaskMarker = (paRequestId: string): string => `${PRIOR_AUTH_TASK_MARKER_PREFIX}${paRequestId}]`;
+
+const mapPriorAuthStatusToTaskStatus = (status: PriorAuthRequestStatus): TaskStatus => {
+  switch (status) {
+    case "pending":
+    case "needs_info":
+    case "error":
+      return "todo";
+    case "submitted":
+      return "in_progress";
+    case "approved":
+      return "completed";
+    case "denied":
+      return "cancelled";
+    default:
+      return "todo";
+  }
+};
+
+const mapPriorAuthStatusToTaskPriority = (status: PriorAuthRequestStatus): TaskPriority => {
+  switch (status) {
+    case "pending":
+    case "needs_info":
+    case "error":
+      return "high";
+    case "submitted":
+      return "normal";
+    case "approved":
+    case "denied":
+      return "normal";
+    default:
+      return "normal";
+  }
+};
+
+const buildPriorAuthTaskTitle = (medicationName?: string | null): string =>
+  `Prior Auth: ${medicationName || "Medication"}`;
+
+const buildPriorAuthTaskDescription = (params: {
+  paRequestId: string;
+  medicationName?: string | null;
+  payer: string;
+  status: PriorAuthRequestStatus;
+  statusReason?: string | null;
+}) => {
+  const marker = buildPriorAuthTaskMarker(params.paRequestId);
+  const lines = [
+    `Prior auth workflow for ${params.medicationName || "medication"} (${params.payer}).`,
+    `PA Status: ${params.status}`,
+    params.statusReason ? `Status Reason: ${params.statusReason}` : null,
+    marker,
+  ].filter(Boolean);
+  return lines.join("\n");
+};
+
+async function syncPriorAuthRequestTask(params: {
+  tenantId: string;
+  userId: string;
+  paRequestId: string;
+  patientId: string;
+  medicationName?: string | null;
+  payer: string;
+  status: PriorAuthRequestStatus;
+  statusReason?: string | null;
+}) {
+  const marker = buildPriorAuthTaskMarker(params.paRequestId);
+  const taskStatus = mapPriorAuthStatusToTaskStatus(params.status);
+  const taskPriority = mapPriorAuthStatusToTaskPriority(params.status);
+  const title = buildPriorAuthTaskTitle(params.medicationName);
+  const description = buildPriorAuthTaskDescription({
+    paRequestId: params.paRequestId,
+    medicationName: params.medicationName,
+    payer: params.payer,
+    status: params.status,
+    statusReason: params.statusReason,
+  });
+  const isTerminal = taskStatus === "completed" || taskStatus === "cancelled";
+
+  const existingTaskResult = await pool.query(
+    `SELECT id
+     FROM tasks
+     WHERE tenant_id = $1
+       AND description ILIKE $2
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [params.tenantId, `%${marker}%`]
+  );
+
+  if (existingTaskResult.rows.length > 0) {
+    const existingTaskId = existingTaskResult.rows[0].id as string;
+
+    if (isTerminal) {
+      await pool.query(
+        `UPDATE tasks
+         SET patient_id = $1,
+             title = $2,
+             description = $3,
+             category = $4,
+             priority = $5,
+             status = $6,
+             completed_at = now(),
+             completed_by = $7
+         WHERE id = $8 AND tenant_id = $9`,
+        [
+          params.patientId,
+          title,
+          description,
+          PRIOR_AUTH_TASK_CATEGORY,
+          taskPriority,
+          taskStatus,
+          params.userId,
+          existingTaskId,
+          params.tenantId,
+        ]
+      );
+    } else {
+      await pool.query(
+        `UPDATE tasks
+         SET patient_id = $1,
+             title = $2,
+             description = $3,
+             category = $4,
+             priority = $5,
+             status = $6,
+             completed_at = null,
+             completed_by = null
+         WHERE id = $7 AND tenant_id = $8`,
+        [
+          params.patientId,
+          title,
+          description,
+          PRIOR_AUTH_TASK_CATEGORY,
+          taskPriority,
+          taskStatus,
+          existingTaskId,
+          params.tenantId,
+        ]
+      );
+    }
+
+    return;
+  }
+
+  const taskId = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO tasks(
+      id, tenant_id, patient_id, title, description,
+      category, priority, status, assigned_to, created_by,
+      completed_at, completed_by
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [
+      taskId,
+      params.tenantId,
+      params.patientId,
+      title,
+      description,
+      PRIOR_AUTH_TASK_CATEGORY,
+      taskPriority,
+      taskStatus,
+      null,
+      params.userId,
+      isTerminal ? new Date().toISOString() : null,
+      isTerminal ? params.userId : null,
+    ]
+  );
+}
 
 // POST /api/prior-auth-requests - Create new PA request
 router.post("/", async (req: AuthedRequest, res, next) => {
@@ -117,6 +292,24 @@ router.post("/", async (req: AuthedRequest, res, next) => {
         now,
       ]
     );
+
+    try {
+      await syncPriorAuthRequestTask({
+        tenantId,
+        userId,
+        paRequestId: paId,
+        patientId: validated.patientId,
+        medicationName: validated.medicationName || prescriptionData?.medication_name || null,
+        payer: validated.payer,
+        status: "pending",
+        statusReason: "PA request created, awaiting submission",
+      });
+    } catch (syncError: any) {
+      logger.error("Failed to sync task for prior auth request creation", {
+        error: syncError.message,
+        paRequestId: paId,
+      });
+    }
 
     await auditLog(tenantId, userId, "prior_auth_create", "prior_auth_requests", paId);
 
@@ -281,6 +474,24 @@ router.post("/:id/submit", async (req: AuthedRequest, res, next) => {
       ]
     );
 
+    try {
+      await syncPriorAuthRequestTask({
+        tenantId,
+        userId,
+        paRequestId: paRequest.id,
+        patientId: paRequest.patient_id,
+        medicationName: paRequest.medication_name,
+        payer: paRequest.payer,
+        status: submitResponse.status as PriorAuthRequestStatus,
+        statusReason: submitResponse.statusReason,
+      });
+    } catch (syncError: any) {
+      logger.error("Failed to sync task for prior auth request submit", {
+        error: syncError.message,
+        paRequestId: paRequest.id,
+      });
+    }
+
     await auditLog(tenantId, userId, "prior_auth_submit", "prior_auth_requests", id);
 
     res.json({
@@ -342,6 +553,24 @@ router.get("/:id/status", async (req: AuthedRequest, res, next) => {
           tenantId,
         ]
       );
+
+      try {
+        await syncPriorAuthRequestTask({
+          tenantId,
+          userId: req.user!.id,
+          paRequestId: paRequest.id,
+          patientId: paRequest.patient_id,
+          medicationName: paRequest.medication_name,
+          payer: paRequest.payer,
+          status: statusResponse.status as PriorAuthRequestStatus,
+          statusReason: statusResponse.statusReason,
+        });
+      } catch (syncError: any) {
+        logger.error("Failed to sync task for prior auth status check", {
+          error: syncError.message,
+          paRequestId: paRequest.id,
+        });
+      }
     }
 
     res.json({
@@ -436,6 +665,24 @@ router.patch("/:id", async (req: AuthedRequest, res, next) => {
     `;
 
     const result = await pool.query(query, values);
+
+    try {
+      await syncPriorAuthRequestTask({
+        tenantId,
+        userId,
+        paRequestId: id,
+        patientId: current.patient_id,
+        medicationName: current.medication_name,
+        payer: current.payer,
+        status: ((validated.status || current.status) as PriorAuthRequestStatus),
+        statusReason: validated.statusReason || current.status_reason,
+      });
+    } catch (syncError: any) {
+      logger.error("Failed to sync task for prior auth request update", {
+        error: syncError.message,
+        paRequestId: id,
+      });
+    }
 
     await auditLog(tenantId, userId, "prior_auth_update", "prior_auth_requests", id);
 

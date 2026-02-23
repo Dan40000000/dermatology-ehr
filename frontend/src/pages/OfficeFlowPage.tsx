@@ -7,18 +7,27 @@ import {
   fetchFrontDeskSchedule,
   updateFrontDeskStatus,
   checkOutFrontDeskAppointment,
+  fetchExamRooms,
+  fetchPatientFlowActive,
+  updatePatientFlowStatus,
   fetchPatients,
   fetchProviders,
+  fetchPatientEncounters,
+  createEncounter,
 } from '../api';
 import type { Appointment, Patient, Provider } from '../types';
+import { setActiveEncounter } from '../utils/activeEncounter';
+
+const AUTO_REFRESH_INTERVAL_MS = 15000;
 
 type RoomStatus = 'available' | 'occupied' | 'cleaning' | 'blocked';
+type RoomType = 'exam' | 'procedure' | 'cosmetic' | 'waiting' | 'consult' | 'triage';
 type PatientFlowStatus = Appointment['status'];
 
 interface Room {
   id: string;
   name: string;
-  type: 'exam' | 'procedure' | 'cosmetic' | 'waiting';
+  type: RoomType;
   status: RoomStatus;
   currentPatient?: {
     patientId: string;
@@ -47,6 +56,18 @@ interface PatientFlow {
   waitTime?: number;
 }
 
+const getMinutesBetween = (startIso?: string, endIso?: string): number | null => {
+  if (!startIso || !endIso) return null;
+  const startMs = Date.parse(startIso);
+  const endMs = Date.parse(endIso);
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return null;
+  const diffMinutes = (endMs - startMs) / (1000 * 60);
+  if (!Number.isFinite(diffMinutes) || diffMinutes < 0) return null;
+  return diffMinutes;
+};
+
+const isLaserAppointmentType = (appointmentType?: string): boolean => /laser/i.test(appointmentType || '');
+
 const INITIAL_ROOMS: Room[] = [
   { id: 'room-1', name: 'Exam 1', type: 'exam', status: 'available' },
   { id: 'room-2', name: 'Exam 2', type: 'exam', status: 'available' },
@@ -67,10 +88,12 @@ export function OfficeFlowPage() {
   const [loading, setLoading] = useState(true);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [roomTemplates, setRoomTemplates] = useState<Room[]>(INITIAL_ROOMS);
   const [rooms, setRooms] = useState<Room[]>(INITIAL_ROOMS);
   const [patientFlows, setPatientFlows] = useState<PatientFlow[]>([]);
   const [roomAssignments, setRoomAssignments] = useState<Record<string, string>>({});
   const [, setSelectedRoom] = useState<Room | null>(null);
+  const [startingVisitId, setStartingVisitId] = useState<string | null>(null);
 
   // Filter states
   const [showFiltersPanel, setShowFiltersPanel] = useState(false);
@@ -85,15 +108,36 @@ export function OfficeFlowPage() {
 
     setLoading(true);
     try {
-      const [scheduleRes, patientsRes, providersRes] = await Promise.all([
+      const [scheduleRes, patientsRes, providersRes, roomsRes, activeFlowsRes] = await Promise.all([
         fetchFrontDeskSchedule(session.tenantId, session.accessToken),
         fetchPatients(session.tenantId, session.accessToken),
         fetchProviders(session.tenantId, session.accessToken),
+        fetchExamRooms(session.tenantId, session.accessToken).catch(() => ({ rooms: [] })),
+        fetchPatientFlowActive(session.tenantId, session.accessToken).catch(() => ({ flows: [] })),
       ]);
 
       const patientsList = patientsRes.patients || patientsRes.data || [];
       setPatients(patientsList);
       setProviders(providersRes.providers || []);
+
+      const backendRooms = Array.isArray(roomsRes.rooms)
+        ? roomsRes.rooms.map((room: any) => ({
+          id: room.id,
+          name: room.roomName ? `${room.roomNumber} - ${room.roomName}` : room.roomNumber,
+          type: room.roomType as RoomType,
+          status: 'available' as const,
+        }))
+        : [];
+      setRoomTemplates(backendRooms.length > 0 ? backendRooms : INITIAL_ROOMS);
+
+      const assignmentMap: Record<string, string> = {};
+      const activeFlows = Array.isArray(activeFlowsRes.flows) ? activeFlowsRes.flows : [];
+      activeFlows.forEach((flow: any) => {
+        if (flow.appointmentId && flow.roomId) {
+          assignmentMap[flow.appointmentId] = flow.roomId;
+        }
+      });
+      setRoomAssignments(assignmentMap);
 
       const activeStatuses: PatientFlowStatus[] = ['checked_in', 'in_room', 'with_provider', 'completed'];
       const flows: PatientFlow[] = (scheduleRes.appointments || [])
@@ -102,10 +146,10 @@ export function OfficeFlowPage() {
           const patientName = appt.patientLastName && appt.patientFirstName
             ? `${appt.patientLastName}, ${appt.patientFirstName}`
             : (appt.patientName || 'Patient');
-          const waitTime = appt.waitTimeMinutes ??
-            (appt.arrivedAt
-              ? Math.floor((Date.now() - new Date(appt.arrivedAt).getTime()) / (1000 * 60))
-              : undefined);
+          const liveWaitMinutes = getMinutesBetween(appt.arrivedAt, new Date().toISOString());
+          const waitTime = appt.status === 'checked_in'
+            ? Math.floor(appt.waitTimeMinutes ?? liveWaitMinutes ?? 0)
+            : undefined;
 
           return {
             id: appt.id,
@@ -140,6 +184,17 @@ export function OfficeFlowPage() {
   }, [loadData]);
 
   useEffect(() => {
+    if (!session) return;
+    const intervalId = window.setInterval(() => {
+      loadData();
+    }, AUTO_REFRESH_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [session, loadData]);
+
+  useEffect(() => {
     if (!statusParam) return;
     const normalized = statusParam.toLowerCase();
     const statusMap: Record<string, PatientFlowStatus> = {
@@ -158,7 +213,7 @@ export function OfficeFlowPage() {
   }, [statusParam]);
 
   useEffect(() => {
-    const updatedRooms = INITIAL_ROOMS.map((room) => {
+    const updatedRooms = roomTemplates.map((room) => {
       const occupant = patientFlows.find((flow) => {
         const assignedRoomId = roomAssignments[flow.appointmentId];
         return assignedRoomId === room.id && (flow.status === 'in_room' || flow.status === 'with_provider');
@@ -185,7 +240,7 @@ export function OfficeFlowPage() {
     });
 
     setRooms(updatedRooms);
-  }, [patientFlows, roomAssignments]);
+  }, [patientFlows, roomAssignments, roomTemplates]);
 
   const getPatientName = (patientId: string) => {
     const flow = patientFlows.find((p) => p.patientId === patientId);
@@ -206,11 +261,39 @@ export function OfficeFlowPage() {
 
   const getStatusLabel = (status: PatientFlowStatus) => statusLabels[status] || status;
 
+  const ensureEncounterForFlow = useCallback(async (flow: PatientFlow) => {
+    if (!session) {
+      throw new Error('Session missing');
+    }
+
+    const encountersRes = await fetchPatientEncounters(
+      session.tenantId,
+      session.accessToken,
+      flow.patientId
+    );
+    const existing = (encountersRes.encounters || []).find((encounter: any) => encounter.appointmentId === flow.appointmentId);
+    if (existing?.id) {
+      return existing.id as string;
+    }
+
+    const created = await createEncounter(session.tenantId, session.accessToken, {
+      patientId: flow.patientId,
+      providerId: flow.providerId,
+      appointmentId: flow.appointmentId,
+    });
+    return created.id as string;
+  }, [session]);
+
   const handleRoomPatient = async (flow: PatientFlow, roomId: string) => {
     if (!session) return;
 
     try {
-      await updateFrontDeskStatus(session.tenantId, session.accessToken, flow.appointmentId, 'in_room');
+      try {
+        await updatePatientFlowStatus(session.tenantId, session.accessToken, flow.appointmentId, 'rooming', roomId);
+      } catch {
+        // Fallback for tenants not fully configured for patient-flow yet
+        await updateFrontDeskStatus(session.tenantId, session.accessToken, flow.appointmentId, 'in_room');
+      }
       setRoomAssignments((prev) => ({ ...prev, [flow.appointmentId]: roomId }));
       setPatientFlows((prev) =>
         prev.map((f) =>
@@ -224,7 +307,7 @@ export function OfficeFlowPage() {
         )
       );
 
-      const roomName = INITIAL_ROOMS.find((room) => room.id === roomId)?.name || 'room';
+      const roomName = rooms.find((room) => room.id === roomId)?.name || 'room';
       showSuccess(`${flow.patientName} roomed in ${roomName}`);
     } catch (err: any) {
       showError(err.message || 'Failed to room patient');
@@ -236,13 +319,23 @@ export function OfficeFlowPage() {
 
     try {
       if (newStatus === 'completed') {
-        await checkOutFrontDeskAppointment(session.tenantId, session.accessToken, flow.appointmentId);
+        try {
+          await updatePatientFlowStatus(session.tenantId, session.accessToken, flow.appointmentId, 'completed');
+        } catch {
+          await checkOutFrontDeskAppointment(session.tenantId, session.accessToken, flow.appointmentId);
+        }
         setRoomAssignments((prev) => {
           if (!prev[flow.appointmentId]) return prev;
           const next = { ...prev };
           delete next[flow.appointmentId];
           return next;
         });
+      } else if (newStatus === 'with_provider') {
+        try {
+          await updatePatientFlowStatus(session.tenantId, session.accessToken, flow.appointmentId, 'with_provider');
+        } catch {
+          await updateFrontDeskStatus(session.tenantId, session.accessToken, flow.appointmentId, newStatus);
+        }
       } else {
         await updateFrontDeskStatus(session.tenantId, session.accessToken, flow.appointmentId, newStatus);
       }
@@ -268,6 +361,104 @@ export function OfficeFlowPage() {
     }
   };
 
+  const handleStartVisit = async (flow: PatientFlow) => {
+    if (!session) return;
+    try {
+      setStartingVisitId(flow.appointmentId);
+
+      if (flow.status !== 'with_provider' && flow.status !== 'completed') {
+        try {
+          await updatePatientFlowStatus(session.tenantId, session.accessToken, flow.appointmentId, 'with_provider');
+        } catch {
+          await updateFrontDeskStatus(session.tenantId, session.accessToken, flow.appointmentId, 'with_provider');
+        }
+      }
+
+      setPatientFlows((prev) =>
+        prev.map((item) =>
+          item.id === flow.id
+            ? {
+                ...item,
+                status: 'with_provider',
+                providerStartTime: item.providerStartTime || new Date().toISOString(),
+              }
+            : item
+        )
+      );
+
+      const encounterId = await ensureEncounterForFlow(flow);
+      try {
+        sessionStorage.setItem(
+          `encounter:appointmentType:${flow.appointmentId}`,
+          flow.appointmentType || ''
+        );
+      } catch {
+        // Ignore storage failures in private/locked contexts.
+      }
+      showSuccess('Visit started');
+      setActiveEncounter({
+        encounterId,
+        patientId: flow.patientId,
+        patientName: flow.patientName,
+        appointmentTypeName: flow.appointmentType,
+        startedAt: new Date().toISOString(),
+        startedEncounterFrom: 'office_flow',
+        undoAppointmentStatus: flow.status,
+        returnPath: '/office-flow',
+      });
+      navigate(`/patients/${flow.patientId}/encounter/${encounterId}`, {
+        state: {
+          startedEncounterFrom: 'office_flow',
+          undoAppointmentStatus: flow.status,
+          appointmentTypeName: flow.appointmentType,
+          returnPath: '/office-flow',
+        },
+      });
+    } catch (err: any) {
+      showError(err.message || 'Failed to start visit');
+    } finally {
+      setStartingVisitId(null);
+    }
+  };
+
+  const handleMoveToWaiting = async (flow: PatientFlow) => {
+    if (!session) return;
+
+    try {
+      try {
+        await updatePatientFlowStatus(session.tenantId, session.accessToken, flow.appointmentId, 'checked_in');
+      } catch {
+        await updateFrontDeskStatus(session.tenantId, session.accessToken, flow.appointmentId, 'checked_in');
+      }
+
+      setRoomAssignments((prev) => {
+        if (!prev[flow.appointmentId]) return prev;
+        const next = { ...prev };
+        delete next[flow.appointmentId];
+        return next;
+      });
+
+      const refreshedWait = getMinutesBetween(flow.arrivalTime, new Date().toISOString());
+      setPatientFlows((prev) =>
+        prev.map((item) =>
+          item.id === flow.id
+            ? {
+                ...item,
+                status: 'checked_in',
+                roomedTime: undefined,
+                providerStartTime: undefined,
+                waitTime: typeof refreshedWait === 'number' ? Math.floor(refreshedWait) : item.waitTime,
+              }
+            : item
+        )
+      );
+
+      showSuccess(`${flow.patientName} moved back to waiting room`);
+    } catch (err: any) {
+      showError(err.message || 'Failed to move patient back to waiting room');
+    }
+  };
+
   const getStatusIcon = (status: PatientFlowStatus) => {
     switch (status) {
       case 'scheduled': return '';
@@ -286,6 +477,8 @@ export function OfficeFlowPage() {
       case 'procedure': return '';
       case 'cosmetic': return '';
       case 'waiting': return '';
+      case 'consult': return '';
+      case 'triage': return '';
     }
   };
 
@@ -305,8 +498,35 @@ export function OfficeFlowPage() {
     new Set(patientFlows.map((flow) => flow.locationName).filter((name): name is string => Boolean(name)))
   ).sort();
 
-  const avgWaitTime = waitingPatients.length > 0
-    ? Math.round(waitingPatients.reduce((sum, p) => sum + (p.waitTime || 0), 0) / waitingPatients.length)
+  const avgWaitSamples = filteredFlows
+    .map((flow) => {
+      if (!flow.arrivalTime) return null;
+      if (flow.status === 'checked_in') {
+        if (typeof flow.waitTime === 'number') {
+          return flow.waitTime;
+        }
+        return getMinutesBetween(flow.arrivalTime, new Date().toISOString());
+      }
+      if (flow.roomedTime) {
+        return getMinutesBetween(flow.arrivalTime, flow.roomedTime);
+      }
+      return null;
+    })
+    .filter((minutes): minutes is number => typeof minutes === 'number');
+
+  const avgWaitTime = avgWaitSamples.length > 0
+    ? Math.round(avgWaitSamples.reduce((sum, minutes) => sum + minutes, 0) / avgWaitSamples.length)
+    : 0;
+
+  const avgAppointmentSamples = completedPatients
+    .map((flow) => {
+      const visitStart = flow.providerStartTime || flow.roomedTime || flow.scheduledTime;
+      return getMinutesBetween(visitStart, flow.checkoutTime);
+    })
+    .filter((minutes): minutes is number => typeof minutes === 'number');
+
+  const avgAppointmentTime = avgAppointmentSamples.length > 0
+    ? Math.round(avgAppointmentSamples.reduce((sum, minutes) => sum + minutes, 0) / avgAppointmentSamples.length)
     : 0;
 
   if (loading) {
@@ -587,7 +807,7 @@ export function OfficeFlowPage() {
       )}
 
       {/* Stats Bar */}
-      <div className="flow-stats" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', padding: '1.5rem', background: '#f9fafb' }}>
+      <div className="flow-stats" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem', padding: '1.5rem', background: '#f9fafb' }}>
         <div className="flow-stat" style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#ffffff', padding: '1.25rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
           <span className="stat-value" style={{ display: 'block', fontSize: '2rem', fontWeight: 700, marginBottom: '0.25rem' }}>{waitingPatients.length}</span>
           <span className="stat-label" style={{ fontSize: '0.875rem', fontWeight: 500 }}>Waiting</span>
@@ -604,9 +824,13 @@ export function OfficeFlowPage() {
           <span className="stat-value" style={{ display: 'block', fontSize: '2rem', fontWeight: 700, marginBottom: '0.25rem' }}>{availableRooms.length}</span>
           <span className="stat-label" style={{ fontSize: '0.875rem', fontWeight: 500 }}>Rooms Free</span>
         </div>
-        <div className="flow-stat" style={{ background: avgWaitTime > 15 ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' : 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)', color: '#ffffff', padding: '1.25rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
+        <div data-testid="avg-wait-stat" className="flow-stat" style={{ background: avgWaitTime > 15 ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' : 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)', color: '#ffffff', padding: '1.25rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
           <span className="stat-value" style={{ display: 'block', fontSize: '2rem', fontWeight: 700, marginBottom: '0.25rem' }}>{avgWaitTime}</span>
           <span className="stat-label" style={{ fontSize: '0.875rem', fontWeight: 500 }}>Avg Wait (min)</span>
+        </div>
+        <div data-testid="avg-appt-time-stat" className="flow-stat" style={{ background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)', color: '#ffffff', padding: '1.25rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
+          <span className="stat-value" style={{ display: 'block', fontSize: '2rem', fontWeight: 700, marginBottom: '0.25rem' }}>{avgAppointmentTime}</span>
+          <span className="stat-label" style={{ fontSize: '0.875rem', fontWeight: 500 }}>Avg Appt Time (min)</span>
         </div>
       </div>
 
@@ -657,7 +881,7 @@ export function OfficeFlowPage() {
                 <div key={flow.id} className="flow-card">
                   <div className="flow-card-header">
                     <span className="patient-name">{flow.patientName}</span>
-                    {flow.waitTime && (
+                    {typeof flow.waitTime === 'number' && (
                       <span className={`wait-badge ${flow.waitTime > 15 ? 'long' : ''}`}>
                         {flow.waitTime}m
                       </span>
@@ -726,13 +950,28 @@ export function OfficeFlowPage() {
                     </div>
                     <div className="flow-card-actions">
                       {flow.status === 'in_room' && (
-                        <button
-                          type="button"
-                          className="btn-sm btn-primary"
-                          onClick={() => handleStatusChange(flow, 'with_provider')}
-                        >
-                          Start Visit
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className="btn-sm btn-primary"
+                            onClick={() => handleStartVisit(flow)}
+                            disabled={startingVisitId === flow.appointmentId}
+                          >
+                            {startingVisitId === flow.appointmentId
+                              ? 'Starting...'
+                              : isLaserAppointmentType(flow.appointmentType)
+                                ? 'Start Laser Visit'
+                                : 'Start Visit'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-sm btn-secondary"
+                            onClick={() => handleMoveToWaiting(flow)}
+                            disabled={startingVisitId === flow.appointmentId}
+                          >
+                            Move to Waiting
+                          </button>
+                        </>
                       )}
                       {flow.status === 'with_provider' && (
                         <button

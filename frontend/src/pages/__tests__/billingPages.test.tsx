@@ -416,6 +416,45 @@ describe('PriorAuthPage', () => {
       }),
     );
   });
+
+  it('handles wrapped prior auth payloads and appealed status safely', async () => {
+    apiMocks.fetchPriorAuths.mockResolvedValueOnce({
+      data: [
+        {
+          id: 'pa-appeal-1',
+          auth_number: 'PA-APPEAL-1',
+          patient_id: 'patient-9',
+          first_name: 'Chris',
+          last_name: 'Case',
+          medication_name: 'Skyrizi',
+          diagnosis_code: 'L40.0',
+          insurance_name: 'Blue Shield',
+          status: 'appealed',
+          urgency: 'routine',
+          created_at: '2024-01-10',
+          submitted_at: null,
+          approved_at: null,
+          denied_at: null,
+          insurance_auth_number: null,
+          denial_reason: null,
+          provider_name: 'Dr Appeal',
+          notes: null,
+          clinical_justification: 'Appeal in progress after denial.',
+          provider_npi: '1112223334',
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <PriorAuthPage />
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Electronic Prior Authorization');
+    expect(screen.getByText('PA-APPEAL-1')).toBeInTheDocument();
+    expect(screen.getAllByText('Appealed').length).toBeGreaterThan(0);
+  });
 });
 
 describe('QuotesPage', () => {

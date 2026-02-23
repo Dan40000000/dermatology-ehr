@@ -17,6 +17,8 @@ import {
   fetchAvailability,
   fetchPatients,
   updateAppointmentStatus,
+  checkInFrontDeskAppointment,
+  updatePatientFlowStatus,
   createAppointment,
   createEncounter,
   fetchPatientEncounters,
@@ -28,8 +30,13 @@ import {
   type TimeBlock,
 } from '../api';
 import type { Appointment, Provider, Location, AppointmentType, Availability, Patient, ConflictInfo } from '../types';
+import { setActiveEncounter } from '../utils/activeEncounter';
 
 type ScheduleViewMode = 'day' | 'week' | 'month';
+
+function isLaserAppointmentType(appointmentTypeName?: string): boolean {
+  return /laser/i.test(appointmentTypeName || '');
+}
 
 function startOfDay(date: Date): Date {
   const result = new Date(date);
@@ -115,7 +122,7 @@ export function SchedulePage() {
   });
   const [providerFilter, setProviderFilter] = useState(() => localStorage.getItem('sched:provider') || 'all');
   const [typeFilter, setTypeFilter] = useState(() => localStorage.getItem('sched:type') || 'all');
-  const [locationFilter, setLocationFilter] = useState('all');
+  const [locationFilter, setLocationFilter] = useState(() => localStorage.getItem('sched:location') || 'all');
 
   const [overlaps, setOverlaps] = useState<ConflictInfo[]>([]);
   const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([]);
@@ -127,7 +134,7 @@ export function SchedulePage() {
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [selectedTimeBlock, setSelectedTimeBlock] = useState<TimeBlock | null>(null);
   const [creating, setCreating] = useState(false);
-  const [rowAction, setRowAction] = useState<{ id: string; action: 'encounter' | 'scribe' } | null>(null);
+  const [rowAction, setRowAction] = useState<{ id: string; action: 'encounter' } | null>(null);
 
   // New appointment form
   const [newAppt, setNewAppt] = useState({
@@ -145,6 +152,7 @@ export function SchedulePage() {
   const [showAppointmentFinder, setShowAppointmentFinder] = useState(false);
   const [showExpandedFinder, setShowExpandedFinder] = useState(false);
   const [finderData, setFinderData] = useState({
+    patientId: '',
     locations: '',
     providers: '',
     appointmentType: '',
@@ -190,10 +198,13 @@ export function SchedulePage() {
       showError('Appointment not found');
     }
 
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.delete('appointmentId');
-    setSearchParams(nextParams);
-  }, [appointmentIdParam, appointments, searchParams, setSearchParams, showError]);
+    setSearchParams((prev) => {
+      if (!prev.has('appointmentId')) return prev;
+      const nextParams = new URLSearchParams(prev);
+      nextParams.delete('appointmentId');
+      return nextParams;
+    }, { replace: true });
+  }, [appointmentIdParam, appointments, setSearchParams, showError]);
 
   useEffect(() => {
     if (!patientIdParam || appointmentIdParam) return;
@@ -203,25 +214,22 @@ export function SchedulePage() {
     setNewAppt((prev) => ({ ...prev, patientId: patientIdParam }));
     setShowNewApptModal(true);
 
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.delete('patientId');
-    setSearchParams(nextParams);
-  }, [patientIdParam, appointmentIdParam, searchParams, setSearchParams]);
-
-  // Auto-select first provider when switching to month view if "all" is selected
-  useEffect(() => {
-    if (viewMode === 'month' && providerFilter === 'all' && providers.length > 0) {
-      setProviderFilter(providers[0].id);
-    }
-  }, [viewMode, providerFilter, providers]);
+    setSearchParams((prev) => {
+      if (!prev.has('patientId')) return prev;
+      const nextParams = new URLSearchParams(prev);
+      nextParams.delete('patientId');
+      return nextParams;
+    }, { replace: true });
+  }, [patientIdParam, appointmentIdParam, setSearchParams]);
 
   // Save filter state
   useEffect(() => {
     localStorage.setItem('sched:provider', providerFilter);
     localStorage.setItem('sched:type', typeFilter);
+    localStorage.setItem('sched:location', locationFilter);
     localStorage.setItem('sched:dayOffset', String(dayOffset));
     localStorage.setItem('sched:viewMode', viewMode);
-  }, [providerFilter, typeFilter, dayOffset, viewMode]);
+  }, [providerFilter, typeFilter, locationFilter, dayOffset, viewMode]);
 
   const updateViewMode = useCallback((nextView: ScheduleViewMode) => {
     setViewMode(nextView);
@@ -267,6 +275,62 @@ export function SchedulePage() {
     () => filteredAppointments.filter((appointment) => appointment.status !== 'cancelled'),
     [filteredAppointments]
   );
+
+  const locationScopedProviderIds = useMemo(() => {
+    if (locationFilter === 'all') return null;
+    const startMs = activeViewRange.start.getTime();
+    const endMs = activeViewRange.end.getTime();
+    const ids = new Set<string>();
+
+    appointments.forEach((appointment) => {
+      if (appointment.locationId !== locationFilter || !appointment.providerId) return;
+      const appointmentStart = new Date(appointment.scheduledStart).getTime();
+      if (Number.isNaN(appointmentStart)) return;
+      if (appointmentStart < startMs || appointmentStart > endMs) return;
+      ids.add(appointment.providerId);
+    });
+
+    return ids;
+  }, [appointments, locationFilter, activeViewRange]);
+
+  const calendarProviders = useMemo(() => {
+    if (providerFilter !== 'all') {
+      return providers.filter((provider) => provider.id === providerFilter);
+    }
+    if (!locationScopedProviderIds) {
+      return providers;
+    }
+    return providers.filter((provider) => locationScopedProviderIds.has(provider.id));
+  }, [providers, providerFilter, locationScopedProviderIds]);
+
+  const calendarProviderIdSet = useMemo(
+    () => new Set(calendarProviders.map((provider) => provider.id)),
+    [calendarProviders]
+  );
+
+  const calendarTimeBlocks = useMemo(() => {
+    const startMs = activeViewRange.start.getTime();
+    const endMs = activeViewRange.end.getTime();
+
+    return timeBlocks.filter((block) => {
+      const providerMatches =
+        providerFilter === 'all'
+          ? calendarProviderIdSet.has(block.providerId)
+          : block.providerId === providerFilter;
+      if (!providerMatches) return false;
+
+      const blockStart = new Date(block.startTime).getTime();
+      if (Number.isNaN(blockStart)) return false;
+      return blockStart >= startMs && blockStart <= endMs;
+    });
+  }, [timeBlocks, providerFilter, calendarProviderIdSet, activeViewRange]);
+
+  // Auto-select first visible provider when switching to month view if "all" is selected
+  useEffect(() => {
+    if (viewMode === 'month' && providerFilter === 'all' && calendarProviders.length > 0) {
+      setProviderFilter(calendarProviders[0].id);
+    }
+  }, [viewMode, providerFilter, calendarProviders]);
 
   useEffect(() => {
     if (!selectedAppt) return;
@@ -404,7 +468,16 @@ export function SchedulePage() {
   const handleStatusChange = async (id: string, status: string) => {
     if (!session) return;
     try {
-      await updateAppointmentStatus(session.tenantId, session.accessToken, id, status);
+      if (status === 'checked_in') {
+        await checkInFrontDeskAppointment(session.tenantId, session.accessToken, id);
+        try {
+          await updatePatientFlowStatus(session.tenantId, session.accessToken, id, 'checked_in');
+        } catch {
+          // Do not fail check-in if flow sync is unavailable
+        }
+      } else {
+        await updateAppointmentStatus(session.tenantId, session.accessToken, id, status);
+      }
       showSuccess('Status updated');
       loadData();
     } catch (err: any) {
@@ -433,23 +506,46 @@ export function SchedulePage() {
     return created.id as string;
   }, [session]);
 
-  const handleStartEncounterFromSchedule = async (appt: Appointment, mode: 'encounter' | 'scribe') => {
+  const handleStartEncounterFromSchedule = async (appt: Appointment) => {
     if (!session) return;
     try {
-      setRowAction({ id: appt.id, action: mode });
+      setRowAction({ id: appt.id, action: 'encounter' });
       const encounterId = await ensureEncounterForAppointment(appt);
-      if (appt.status !== 'completed' && appt.status !== 'cancelled' && appt.status !== 'in_progress') {
+      if (appt.status !== 'completed' && appt.status !== 'cancelled' && appt.status !== 'with_provider') {
         try {
-          await updateAppointmentStatus(session.tenantId, session.accessToken, appt.id, 'in_progress');
+          await updateAppointmentStatus(session.tenantId, session.accessToken, appt.id, 'with_provider');
         } catch {
           // Don't block the workflow if status update fails
         }
       }
-      if (mode === 'scribe') {
-        navigate(`/patients/${appt.patientId}?scribe=1&auto=1&encounterId=${encounterId}&providerId=${appt.providerId}`);
-      } else {
-        navigate(`/patients/${appt.patientId}/encounter/${encounterId}`);
+      const scheduleQuery = searchParams.toString();
+      const returnPath = scheduleQuery ? `/schedule?${scheduleQuery}` : '/schedule';
+      try {
+        sessionStorage.setItem(
+          `encounter:appointmentType:${appt.id}`,
+          appt.appointmentTypeName || ''
+        );
+      } catch {
+        // Ignore storage failures in private/locked contexts.
       }
+      setActiveEncounter({
+        encounterId,
+        patientId: appt.patientId,
+        patientName: appt.patientName,
+        appointmentTypeName: appt.appointmentTypeName,
+        startedAt: new Date().toISOString(),
+        startedEncounterFrom: 'schedule',
+        undoAppointmentStatus: appt.status,
+        returnPath,
+      });
+      navigate(`/patients/${appt.patientId}/encounter/${encounterId}`, {
+        state: {
+          startedEncounterFrom: 'schedule',
+          undoAppointmentStatus: appt.status,
+          appointmentTypeName: appt.appointmentTypeName,
+          returnPath,
+        },
+      });
     } catch (err: any) {
       showError(err.message || 'Failed to start encounter');
     } finally {
@@ -518,7 +614,19 @@ export function SchedulePage() {
   };
 
   const handleCheckIn = async (appt: Appointment) => {
-    await handleStatusChange(appt.id, 'checked_in');
+    if (!session) return;
+    try {
+      await checkInFrontDeskAppointment(session.tenantId, session.accessToken, appt.id);
+      try {
+        await updatePatientFlowStatus(session.tenantId, session.accessToken, appt.id, 'checked_in');
+      } catch {
+        // Do not fail check-in if flow sync is unavailable
+      }
+      showSuccess('Status updated');
+      loadData();
+    } catch (err: any) {
+      showError(err.message);
+    }
   };
 
   const handleCancelAppt = async (appt: Appointment) => {
@@ -621,6 +729,7 @@ export function SchedulePage() {
     month: 'long',
     day: 'numeric'
   });
+  const selectedIsLaserVisit = isLaserAppointmentType(selectedAppt?.appointmentTypeName);
 
   return (
     <div className="schedule-page" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -706,7 +815,7 @@ export function SchedulePage() {
           type="button"
           className="ema-action-btn"
           disabled={!selectedAppt || rowAction?.id === selectedAppt?.id}
-          onClick={() => selectedAppt && handleStartEncounterFromSchedule(selectedAppt, 'encounter')}
+          onClick={() => selectedAppt && handleStartEncounterFromSchedule(selectedAppt)}
           style={{
             background: selectedAppt ? 'linear-gradient(to bottom, #10b981 0%, #059669 100%)' : '#e5e7eb',
             color: selectedAppt ? '#ffffff' : '#9ca3af',
@@ -720,27 +829,11 @@ export function SchedulePage() {
           }}
         >
           <span style={{ marginRight: '0.5rem' }}>🩺</span>
-          {rowAction?.id === selectedAppt?.id && rowAction?.action === 'encounter' ? 'Starting…' : 'Start Encounter'}
-        </button>
-        <button
-          type="button"
-          className="ema-action-btn"
-          disabled={!selectedAppt || rowAction?.id === selectedAppt?.id}
-          onClick={() => selectedAppt && handleStartEncounterFromSchedule(selectedAppt, 'scribe')}
-          style={{
-            background: selectedAppt ? 'linear-gradient(to bottom, #f59e0b 0%, #d97706 100%)' : '#e5e7eb',
-            color: selectedAppt ? '#ffffff' : '#9ca3af',
-            border: 'none',
-            padding: '0.5rem 1rem',
-            borderRadius: '6px',
-            cursor: selectedAppt ? 'pointer' : 'not-allowed',
-            fontWeight: 500,
-            boxShadow: selectedAppt ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
-            opacity: rowAction?.id === selectedAppt?.id ? 0.7 : 1
-          }}
-        >
-          <span style={{ marginRight: '0.5rem' }}>🎙️</span>
-          {rowAction?.id === selectedAppt?.id && rowAction?.action === 'scribe' ? 'Starting…' : 'Start Scribe'}
+          {rowAction?.id === selectedAppt?.id && rowAction?.action === 'encounter'
+            ? 'Starting…'
+            : selectedIsLaserVisit
+              ? 'Start Laser Visit'
+              : 'Start Encounter'}
         </button>
         <button
           type="button"
@@ -1015,6 +1108,22 @@ export function SchedulePage() {
         </div>
       )}
 
+      {!loading && providerFilter === 'all' && locationFilter !== 'all' && calendarProviders.length === 0 && (
+        <div
+          style={{
+            margin: '0.75rem 1rem',
+            padding: '0.75rem 1rem',
+            borderRadius: '6px',
+            border: '1px solid #bfdbfe',
+            background: '#eff6ff',
+            color: '#1e3a8a',
+            fontSize: '0.875rem',
+          }}
+        >
+          No providers have appointments for this location in the selected date range.
+        </div>
+      )}
+
       {/* Main Content with Sidebar */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Calendar Grid */}
@@ -1024,18 +1133,115 @@ export function SchedulePage() {
               <Skeleton variant="card" height={600} />
             </div>
           ) : (
-            <Calendar
-              currentDate={currentDate}
-              viewMode={viewMode}
-              appointments={calendarAppointments}
-              providers={providers.filter((p) => providerFilter === 'all' || p.id === providerFilter)}
-              availability={availability}
-              timeBlocks={timeBlocks.filter((tb) => providerFilter === 'all' || tb.providerId === providerFilter)}
-              selectedAppointment={selectedAppt}
-              onAppointmentClick={setSelectedAppt}
-              onSlotClick={handleSlotClick}
-              onTimeBlockClick={handleTimeBlockClick}
-            />
+            <>
+              <Calendar
+                currentDate={currentDate}
+                viewMode={viewMode}
+                appointments={calendarAppointments}
+                providers={calendarProviders}
+                availability={availability}
+                timeBlocks={calendarTimeBlocks}
+                selectedAppointment={selectedAppt}
+                onAppointmentClick={setSelectedAppt}
+                onSlotClick={handleSlotClick}
+                onTimeBlockClick={handleTimeBlockClick}
+              />
+              {selectedAppt && (
+                <div
+                  data-testid="calendar-selected-actions"
+                  style={{
+                    position: 'sticky',
+                    bottom: 0,
+                    zIndex: 20,
+                    background: '#ffffff',
+                    borderTop: '1px solid #d1d5db',
+                    boxShadow: '0 -4px 10px rgba(0,0,0,0.08)',
+                    padding: '0.75rem 1rem',
+                    marginTop: '0.5rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <div style={{ color: '#1f2937', fontSize: '0.875rem' }}>
+                      <strong>Selected:</strong> {selectedAppt.patientName} · {new Date(selectedAppt.scheduledStart).toLocaleTimeString('en-US', {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })} · {selectedAppt.providerName}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        data-testid="calendar-action-check-in"
+                        className="ema-action-btn"
+                        disabled={selectedAppt.status !== 'scheduled'}
+                        onClick={() => handleCheckIn(selectedAppt)}
+                        style={{
+                          background: selectedAppt.status === 'scheduled' ? '#ede9fe' : '#f3f4f6',
+                          color: selectedAppt.status === 'scheduled' ? '#5b21b6' : '#9ca3af',
+                        }}
+                      >
+                        Check In
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="calendar-action-start-encounter"
+                        className="ema-action-btn"
+                        disabled={selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled' || rowAction?.id === selectedAppt.id}
+                        onClick={() => handleStartEncounterFromSchedule(selectedAppt)}
+                        style={{
+                          background: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                            ? '#f3f4f6'
+                            : '#ecfdf5',
+                          color: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                            ? '#9ca3af'
+                            : '#065f46',
+                          opacity: rowAction?.id === selectedAppt.id ? 0.7 : 1,
+                        }}
+                      >
+                        {rowAction?.id === selectedAppt.id && rowAction?.action === 'encounter'
+                          ? 'Starting...'
+                          : isLaserAppointmentType(selectedAppt.appointmentTypeName)
+                            ? 'Start Laser Visit'
+                            : 'Start Encounter'}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="calendar-action-reschedule"
+                        className="ema-action-btn"
+                        disabled={selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled'}
+                        onClick={() => openRescheduleModal(selectedAppt)}
+                        style={{
+                          background: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                            ? '#f3f4f6'
+                            : '#e0f2fe',
+                          color: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                            ? '#9ca3af'
+                            : '#075985',
+                        }}
+                      >
+                        Reschedule
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="calendar-action-cancel"
+                        className="ema-action-btn"
+                        disabled={selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled'}
+                        onClick={() => handleCancelAppt(selectedAppt)}
+                        style={{
+                          background: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                            ? '#f3f4f6'
+                            : '#fef2f2',
+                          color: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                            ? '#9ca3af'
+                            : '#991b1b',
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -1067,6 +1273,35 @@ export function SchedulePage() {
               >
                 Quick Filters
               </button>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                Patient <span style={{ color: '#ef4444' }}>*</span>
+              </label>
+              <select
+                name="finderPatient"
+                value={finderData.patientId}
+                onChange={(e) => setFinderData({ ...finderData, patientId: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #bae6fd',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  background: '#ffffff',
+                }}
+              >
+                <option value="">Select patient...</option>
+                {patients
+                  .slice()
+                  .sort((a, b) => `${a.lastName ?? ''}, ${a.firstName ?? ''}`.localeCompare(`${b.lastName ?? ''}, ${b.firstName ?? ''}`))
+                  .map((patient) => (
+                    <option key={patient.id} value={patient.id}>
+                      {patient.lastName}, {patient.firstName}
+                    </option>
+                  ))}
+              </select>
             </div>
 
             <div style={{ marginBottom: '1rem' }}>
@@ -1259,6 +1494,7 @@ export function SchedulePage() {
               <button
                 onClick={() => {
                   setFinderData({
+                    patientId: '',
                     locations: '',
                     providers: '',
                     appointmentType: '',
@@ -1289,7 +1525,22 @@ export function SchedulePage() {
                     showError('Please select an appointment type');
                     return;
                   }
-                  showSuccess('Searching for available appointments...');
+                  if (!finderData.patientId) {
+                    showError('Please select a patient');
+                    return;
+                  }
+
+                  setNewAppt((prev) => ({
+                    ...prev,
+                    patientId: finderData.patientId,
+                    providerId: finderData.providers || prev.providerId,
+                    appointmentTypeId: finderData.appointmentType,
+                    locationId: finderData.locations || prev.locationId,
+                    duration: Number(finderData.duration) || prev.duration,
+                    date: prev.date || new Date().toISOString().split('T')[0],
+                  }));
+                  setShowNewApptModal(true);
+                  showSuccess('Loaded patient into New Appointment. Pick an available time.');
                 }}
                 style={{
                   flex: 1,
@@ -1341,135 +1592,190 @@ export function SchedulePage() {
               </td>
             </tr>
           ) : (
-            filteredAppointments.map((a) => (
-              <tr
-                key={a.id}
-                style={{
-                  background: selectedAppt?.id === a.id ? '#e0f2fe' : undefined,
-                  cursor: 'pointer'
-                }}
-                onClick={() => setSelectedAppt(a)}
-              >
-                <td>
-                  <input
-                    type="radio"
-                    name="selectedAppt"
-                    checked={selectedAppt?.id === a.id}
-                    onChange={() => setSelectedAppt(a)}
-                    aria-label={`Select appointment for ${a.patientName}`}
-                  />
-                </td>
-                <td>
-                  {new Date(a.scheduledStart).toLocaleString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
-                </td>
-                <td>
-                  <a
-                    href="#"
-                    className="ema-patient-link"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      navigate(`/patients/${a.patientId}`);
-                    }}
-                  >
-                    {a.patientName}
-                  </a>
-                </td>
-                <td>{a.providerName}</td>
-                <td>{a.appointmentTypeName}</td>
-                <td>{a.locationName}</td>
-                <td>
-                  <span className={`ema-status ${a.status === 'completed' ? 'established' : a.status === 'cancelled' ? 'inactive' : 'pending'}`}>
-                    {a.status}
-                  </span>
-                </td>
-                <td onClick={(e) => e.stopPropagation()}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/patients/${a.patientId}`)}
-                        title="Open patient chart"
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: '6px',
-                          border: '1px solid #cbd5f5',
-                          background: '#eef2ff',
-                          color: '#1e3a8a',
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Chart
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleStartEncounterFromSchedule(a, 'encounter')}
-                        disabled={rowAction?.id === a.id}
-                        title="Start or resume encounter"
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: '6px',
-                          border: '1px solid #d1fae5',
-                          background: '#ecfdf5',
-                          color: '#065f46',
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          cursor: rowAction?.id === a.id ? 'not-allowed' : 'pointer',
-                          opacity: rowAction?.id === a.id ? 0.6 : 1
-                        }}
-                      >
-                        {rowAction?.id === a.id && rowAction?.action === 'encounter' ? 'Starting…' : 'Encounter'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleStartEncounterFromSchedule(a, 'scribe')}
-                        disabled={rowAction?.id === a.id}
-                        title="Start AI scribe"
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: '6px',
-                          border: '1px solid #fde68a',
-                          background: '#fffbeb',
-                          color: '#92400e',
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          cursor: rowAction?.id === a.id ? 'not-allowed' : 'pointer',
-                          opacity: rowAction?.id === a.id ? 0.6 : 1
-                        }}
-                      >
-                        {rowAction?.id === a.id && rowAction?.action === 'scribe' ? 'Starting…' : 'Scribe'}
-                      </button>
-                    </div>
-                    <select
-                      name={`appointmentStatus-${a.id}`}
-                      style={{
-                        padding: '0.25rem 0.5rem',
-                        fontSize: '0.75rem',
-                        borderRadius: '4px',
-                        border: '1px solid #d1d5db'
+            filteredAppointments.map((a) => {
+              const isCompletedOrCancelled = a.status === 'completed' || a.status === 'cancelled';
+              const canCheckIn = a.status === 'scheduled';
+              const isEncounterActionPending = rowAction?.id === a.id && rowAction?.action === 'encounter';
+              const isEncounterDisabled = isCompletedOrCancelled || isEncounterActionPending;
+              return (
+                <tr
+                  key={a.id}
+                  style={{
+                    background: selectedAppt?.id === a.id ? '#e0f2fe' : undefined,
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => setSelectedAppt(a)}
+                >
+                  <td>
+                    <input
+                      type="radio"
+                      name="selectedAppt"
+                      checked={selectedAppt?.id === a.id}
+                      onChange={() => setSelectedAppt(a)}
+                      aria-label={`Select appointment for ${a.patientName}`}
+                    />
+                  </td>
+                  <td>
+                    {new Date(a.scheduledStart).toLocaleString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="ema-patient-link"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/patients/${a.patientId}`);
                       }}
-                      onChange={(e) => handleStatusChange(a.id, e.target.value)}
-                      defaultValue=""
-                      aria-label={`Change status for ${a.patientName}`}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        padding: 0,
+                        color: '#2563eb',
+                        textDecoration: 'underline',
+                        cursor: 'pointer',
+                        font: 'inherit',
+                      }}
                     >
-                      <option value="">Change Status</option>
-                      <option value="scheduled">Scheduled</option>
-                      <option value="checked_in">Checked In</option>
-                      <option value="in_progress">In Progress</option>
-                      <option value="completed">Completed</option>
-                      <option value="cancelled">Cancelled</option>
-                    </select>
-                  </div>
-                </td>
-              </tr>
-            ))
+                      {a.patientName}
+                    </button>
+                  </td>
+                  <td>{a.providerName}</td>
+                  <td>{a.appointmentTypeName}</td>
+                  <td>{a.locationName}</td>
+                  <td>
+                    <span className={`ema-status ${a.status === 'completed' ? 'established' : a.status === 'cancelled' ? 'inactive' : 'pending'}`}>
+                      {a.status}
+                    </span>
+                  </td>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/patients/${a.patientId}`)}
+                          title="Open patient chart"
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: '1px solid #cbd5f5',
+                            background: '#eef2ff',
+                            color: '#1e3a8a',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Chart
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCheckIn(a)}
+                          disabled={!canCheckIn}
+                          aria-label={`Check in ${a.patientName}`}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: canCheckIn ? '1px solid #ddd6fe' : '1px solid #e5e7eb',
+                            background: canCheckIn ? '#ede9fe' : '#f3f4f6',
+                            color: canCheckIn ? '#5b21b6' : '#9ca3af',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            cursor: canCheckIn ? 'pointer' : 'not-allowed'
+                          }}
+                        >
+                          Check In
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openRescheduleModal(a)}
+                          disabled={isCompletedOrCancelled}
+                          aria-label={`Reschedule ${a.patientName}`}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: isCompletedOrCancelled ? '1px solid #e5e7eb' : '1px solid #bae6fd',
+                            background: isCompletedOrCancelled ? '#f3f4f6' : '#e0f2fe',
+                            color: isCompletedOrCancelled ? '#9ca3af' : '#075985',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            cursor: isCompletedOrCancelled ? 'not-allowed' : 'pointer'
+                          }}
+                        >
+                          Reschedule
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCancelAppt(a)}
+                          disabled={isCompletedOrCancelled}
+                          aria-label={`Cancel appointment for ${a.patientName}`}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: isCompletedOrCancelled ? '1px solid #e5e7eb' : '1px solid #fecaca',
+                            background: isCompletedOrCancelled ? '#f3f4f6' : '#fef2f2',
+                            color: isCompletedOrCancelled ? '#9ca3af' : '#991b1b',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            cursor: isCompletedOrCancelled ? 'not-allowed' : 'pointer'
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleStartEncounterFromSchedule(a)}
+                          disabled={isEncounterDisabled}
+                          title="Start or resume encounter"
+                          aria-label={`Start encounter for ${a.patientName}`}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: '1px solid #d1fae5',
+                            background: '#ecfdf5',
+                            color: '#065f46',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            cursor: isEncounterDisabled ? 'not-allowed' : 'pointer',
+                            opacity: isEncounterDisabled ? 0.6 : 1
+                          }}
+                        >
+                          {isEncounterActionPending
+                            ? 'Starting…'
+                            : isLaserAppointmentType(a.appointmentTypeName)
+                              ? 'Start Laser Visit'
+                              : 'Start Encounter'}
+                        </button>
+                      </div>
+                      <select
+                        name={`appointmentStatus-${a.id}`}
+                        style={{
+                          padding: '0.25rem 0.5rem',
+                          fontSize: '0.75rem',
+                          borderRadius: '4px',
+                          border: '1px solid #d1d5db'
+                        }}
+                        onChange={(e) => handleStatusChange(a.id, e.target.value)}
+                        defaultValue=""
+                        aria-label={`Change status for ${a.patientName}`}
+                      >
+                        <option value="">Change Status</option>
+                        <option value="scheduled">Scheduled</option>
+                        <option value="checked_in">Checked In</option>
+                        <option value="in_room">In Room</option>
+                        <option value="with_provider">With Provider</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                      </select>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })
           )}
         </tbody>
       </table>
@@ -1483,6 +1789,9 @@ export function SchedulePage() {
         providers={providers}
         locations={locations}
         appointmentTypes={appointmentTypes}
+        availability={availability}
+        appointments={appointments}
+        timeBlocks={timeBlocks}
         initialData={{
           patientId: newAppt.patientId,
           providerId: newAppt.providerId,

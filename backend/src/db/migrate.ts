@@ -7949,6 +7949,181 @@ Consider age-appropriate treatments and include family counseling points.',
       ON visit_summaries(tenant_id, ambient_note_id);
     `,
   },
+  {
+    name: "125_appointment_lifecycle_timestamps",
+    sql: `
+    -- Front desk and office flow lifecycle fields for appointment progression.
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS arrived_at TIMESTAMPTZ;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS roomed_at TIMESTAMPTZ;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
+    CREATE INDEX IF NOT EXISTS idx_appointments_tenant_arrived_at
+      ON appointments(tenant_id, arrived_at);
+    CREATE INDEX IF NOT EXISTS idx_appointments_tenant_roomed_at
+      ON appointments(tenant_id, roomed_at);
+    CREATE INDEX IF NOT EXISTS idx_appointments_tenant_completed_at
+      ON appointments(tenant_id, completed_at);
+    `,
+  },
+  {
+    name: "126_handout_template_metadata",
+    sql: `
+    ALTER TABLE patient_handouts
+      ADD COLUMN IF NOT EXISTS instruction_type TEXT NOT NULL DEFAULT 'general';
+
+    ALTER TABLE patient_handouts
+      ADD COLUMN IF NOT EXISTS template_key TEXT;
+
+    ALTER TABLE patient_handouts
+      ADD COLUMN IF NOT EXISTS print_disclaimer TEXT;
+
+    ALTER TABLE patient_handouts
+      ADD COLUMN IF NOT EXISTS is_system_template BOOLEAN NOT NULL DEFAULT FALSE;
+
+    CREATE INDEX IF NOT EXISTS idx_handouts_instruction_type
+      ON patient_handouts(tenant_id, instruction_type);
+
+    CREATE INDEX IF NOT EXISTS idx_handouts_template_key
+      ON patient_handouts(tenant_id, template_key);
+    `,
+  },
+  {
+    name: "127_inventory_usage_pricing_and_derm_topicals",
+    sql: `
+    ALTER TABLE IF EXISTS inventory_usage
+      ADD COLUMN IF NOT EXISTS sell_price_cents INTEGER;
+
+    ALTER TABLE IF EXISTS inventory_usage
+      ADD COLUMN IF NOT EXISTS given_as_sample BOOLEAN NOT NULL DEFAULT FALSE;
+
+    DO $$
+    BEGIN
+      IF to_regclass('public.inventory_usage') IS NOT NULL THEN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'inventory_usage_sell_price_nonnegative'
+            AND conrelid = 'inventory_usage'::regclass
+        ) THEN
+          ALTER TABLE inventory_usage
+            ADD CONSTRAINT inventory_usage_sell_price_nonnegative
+            CHECK (sell_price_cents IS NULL OR sell_price_cents >= 0);
+        END IF;
+
+        CREATE INDEX IF NOT EXISTS idx_inventory_usage_tenant_sample
+          ON inventory_usage(tenant_id, given_as_sample);
+
+        CREATE INDEX IF NOT EXISTS idx_inventory_usage_tenant_encounter_used_at
+          ON inventory_usage(tenant_id, encounter_id, used_at DESC);
+      END IF;
+    END $$;
+
+    DO $$
+    DECLARE
+      v_tenant_id TEXT;
+      v_created_by TEXT;
+      seed_row RECORD;
+    BEGIN
+      IF to_regclass('public.inventory_items') IS NULL THEN
+        RETURN;
+      END IF;
+
+      FOR v_tenant_id IN SELECT id FROM tenants LOOP
+        SELECT id
+        INTO v_created_by
+        FROM users
+        WHERE tenant_id = v_tenant_id
+        ORDER BY CASE WHEN role = 'admin' THEN 0 ELSE 1 END, created_at
+        LIMIT 1;
+
+        IF v_created_by IS NULL THEN
+          CONTINUE;
+        END IF;
+
+        FOR seed_row IN
+          SELECT *
+          FROM (
+            VALUES
+              ('DERM-SMP-CLOB-005', 'Clobetasol 0.05% Cream (Sample)', 'medication', 'High-potency topical corticosteroid sample', 140, 40, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-TRIAM-01', 'Triamcinolone 0.1% Ointment (Sample)', 'medication', 'Mid-potency corticosteroid ointment sample', 160, 50, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-HC-025', 'Hydrocortisone 2.5% Cream (Sample)', 'medication', 'Low-potency corticosteroid for sensitive areas', 120, 35, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-DESON-005', 'Desonide 0.05% Cream (Sample)', 'medication', 'Low-potency steroid sample for face/folds', 120, 35, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-TACRO-01', 'Tacrolimus 0.1% Ointment (Sample)', 'medication', 'Topical calcineurin inhibitor sample', 110, 30, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-PIMEC-1', 'Pimecrolimus 1% Cream (Sample)', 'medication', 'Topical calcineurin inhibitor cream sample', 110, 30, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-TRET-025', 'Tretinoin 0.025% Cream (Sample)', 'medication', 'Topical retinoid acne/photodamage sample', 140, 40, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-TRET-05', 'Tretinoin 0.05% Cream (Sample)', 'medication', 'Topical retinoid higher-strength sample', 120, 35, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-ADAP-03', 'Adapalene 0.3% Gel (Sample)', 'medication', 'Topical retinoid gel sample', 120, 35, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-BPO-5W', 'Benzoyl Peroxide 5% Wash (Sample)', 'medication', 'Acne antibacterial wash sample', 150, 45, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-CLIND-1L', 'Clindamycin 1% Lotion (Sample)', 'medication', 'Topical antibiotic lotion sample', 130, 40, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-KETO-2C', 'Ketoconazole 2% Cream (Sample)', 'medication', 'Topical antifungal cream sample', 130, 40, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-CICLO-077', 'Ciclopirox 0.77% Gel (Sample)', 'medication', 'Topical antifungal gel sample', 110, 30, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-CERAVE-CRM', 'CeraVe Moisturizing Cream (Sample)', 'supply', 'Barrier-repair moisturizer sample', 220, 60, 65, 'L''Oreal Dermatological', 'Sample Closet'),
+              ('DERM-SMP-VANI-LOTION', 'Vanicream Moisturizing Lotion (Sample)', 'supply', 'Fragrance-free emollient lotion sample', 200, 55, 60, 'Pharmaceutical Specialties', 'Sample Closet'),
+              ('DERM-SMP-ELTA-UV46', 'EltaMD UV Clear SPF 46 (Sample)', 'supply', 'Dermatology sunscreen sample', 180, 50, 80, 'EltaMD', 'Sample Closet'),
+              ('DERM-SMP-MIN-SPF50', 'Mineral Sunscreen SPF 50 (Sample)', 'supply', 'Broad-spectrum mineral sunscreen sample', 180, 50, 85, 'Derm Rep Program', 'Sample Closet')
+          ) AS seeded(
+            sku,
+            name,
+            category,
+            description,
+            quantity,
+            reorder_level,
+            unit_cost_cents,
+            supplier,
+            location
+          )
+        LOOP
+          UPDATE inventory_items
+          SET
+            name = seed_row.name,
+            category = seed_row.category,
+            sku = COALESCE(NULLIF(inventory_items.sku, ''), seed_row.sku),
+            description = seed_row.description,
+            quantity = GREATEST(inventory_items.quantity, seed_row.quantity),
+            reorder_level = GREATEST(inventory_items.reorder_level, seed_row.reorder_level),
+            unit_cost_cents = seed_row.unit_cost_cents,
+            supplier = COALESCE(NULLIF(inventory_items.supplier, ''), seed_row.supplier),
+            location = COALESCE(NULLIF(inventory_items.location, ''), seed_row.location),
+            updated_at = NOW()
+          WHERE inventory_items.tenant_id = v_tenant_id
+            AND (
+              inventory_items.sku = seed_row.sku OR
+              (LOWER(inventory_items.name) = LOWER(seed_row.name) AND inventory_items.category = seed_row.category)
+            );
+
+          IF NOT FOUND THEN
+            INSERT INTO inventory_items (
+              tenant_id,
+              name,
+              category,
+              sku,
+              description,
+              quantity,
+              reorder_level,
+              unit_cost_cents,
+              supplier,
+              location,
+              created_by
+            )
+            VALUES (
+              v_tenant_id,
+              seed_row.name,
+              seed_row.category,
+              seed_row.sku,
+              seed_row.description,
+              seed_row.quantity,
+              seed_row.reorder_level,
+              seed_row.unit_cost_cents,
+              seed_row.supplier,
+              seed_row.location,
+              v_created_by
+            );
+          END IF;
+        END LOOP;
+      END LOOP;
+    END $$;
+    `,
+  },
 ];
 
 async function ensureMigrationsTable() {

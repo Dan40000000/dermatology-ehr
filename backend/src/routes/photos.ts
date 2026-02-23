@@ -3,6 +3,7 @@ import multer from 'multer';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { pool } from '../db/pool';
+import { getTableColumns } from '../db/schema';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
 import { logger } from '../lib/logger';
@@ -229,25 +230,54 @@ photosRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
   try {
     const tenantId = req.user!.tenantId;
     const { patientId, photoType, bodyLocation } = req.query;
+    const photoColumns = await getTableColumns('photos');
+    const hasPhotoType = photoColumns.has('photo_type');
+    const hasBodyLocation = photoColumns.has('body_location');
+    const hasBodyRegion = photoColumns.has('body_region');
+
+    const selectCol = (
+      columnName: string,
+      alias: string,
+      nullType = 'text',
+      includeRaw = false,
+    ) => {
+      if (photoColumns.has(columnName)) {
+        const expression = `p.${columnName} as "${alias}"`;
+        if (includeRaw && alias !== columnName) {
+          return `${expression}, p.${columnName}`;
+        }
+        return expression;
+      }
+
+      const fallback = `null::${nullType} as "${alias}"`;
+      if (includeRaw && alias !== columnName) {
+        return `${fallback}, null::${nullType} as ${columnName}`;
+      }
+      return fallback;
+    };
 
     let query = `
       SELECT
         p.id,
         p.patient_id as "patientId",
+        p.patient_id,
         p.tenant_id as "tenantId",
+        p.tenant_id,
         p.encounter_id as "encounterId",
-        p.lesion_id as "lesionId",
-        p.filename,
-        p.mime_type as "mimeType",
-        p.file_size as "fileSize",
-        p.body_region as "bodyRegion",
-        p.body_location as "bodyLocation",
-        p.photo_type as "photoType",
+        p.encounter_id,
+        ${selectCol('lesion_id', 'lesionId', 'text', true)},
+        ${selectCol('filename', 'filename')},
+        ${selectCol('mime_type', 'mimeType', 'text', true)},
+        ${selectCol('file_size', 'fileSize', 'int', true)},
+        ${selectCol('body_region', 'bodyRegion', 'text', true)},
+        ${selectCol('body_location', 'bodyLocation', 'text', true)},
+        ${selectCol('photo_type', 'photoType', 'text', true)},
         p.url,
-        p.description,
-        p.category,
-        p.annotations,
+        ${selectCol('description', 'description')},
+        ${selectCol('category', 'category')},
+        ${selectCol('annotations', 'annotations', 'jsonb')},
         p.created_at as "createdAt",
+        p.created_at,
         pt.first_name || ' ' || pt.last_name as "patientName"
       FROM photos p
       LEFT JOIN patients pt ON p.patient_id = pt.id
@@ -263,15 +293,27 @@ photosRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
     }
 
     if (photoType) {
-      query += ` and photo_type = $${paramIndex}`;
-      params.push(photoType);
-      paramIndex++;
+      if (hasPhotoType) {
+        query += ` and photo_type = $${paramIndex}`;
+        params.push(photoType);
+        paramIndex++;
+      }
     }
 
     if (bodyLocation) {
-      query += ` and (body_location = $${paramIndex} OR body_region = $${paramIndex})`;
-      params.push(bodyLocation);
-      paramIndex++;
+      if (hasBodyLocation && hasBodyRegion) {
+        query += ` and (body_location = $${paramIndex} OR body_region = $${paramIndex})`;
+        params.push(bodyLocation);
+        paramIndex++;
+      } else if (hasBodyLocation) {
+        query += ` and body_location = $${paramIndex}`;
+        params.push(bodyLocation);
+        paramIndex++;
+      } else if (hasBodyRegion) {
+        query += ` and body_region = $${paramIndex}`;
+        params.push(bodyLocation);
+        paramIndex++;
+      }
     }
 
     query += ` order by created_at desc limit 100`;

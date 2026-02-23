@@ -98,4 +98,31 @@ describe('storage service', () => {
       objectKey: 'object-key',
     });
   });
+
+  it('falls back to local storage in non-production when s3 upload fails', async () => {
+    env.storageProvider = 's3';
+    env.s3Bucket = 'bucket';
+    scanBufferMock.mockResolvedValueOnce(true);
+    putObjectMock.mockRejectedValueOnce(new Error('S3 unavailable'));
+    existsSyncMock.mockReturnValue(true);
+    writeFileMock.mockResolvedValue(undefined);
+
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(5678);
+    const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.42);
+
+    const file = {
+      buffer: Buffer.from('data'),
+      originalname: 'fallback.txt',
+      mimetype: 'text/plain',
+    } as Express.Multer.File;
+
+    const result = await saveFile(file);
+
+    expect(result.storage).toBe('local');
+    expect(result.url).toContain('/uploads/');
+    expect(writeFileMock).toHaveBeenCalled();
+
+    nowSpy.mockRestore();
+    randomSpy.mockRestore();
+  });
 });

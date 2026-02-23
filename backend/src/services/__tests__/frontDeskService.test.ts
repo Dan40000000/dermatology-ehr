@@ -95,10 +95,39 @@ describe("frontDeskService", () => {
     jest.useRealTimers();
   });
 
+  it("getTodaySchedule uses schema-tolerant insurance and balance access", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    await frontDeskService.getTodaySchedule("tenant-1");
+
+    const scheduleQuery = queryMock.mock.calls[0][0] as string;
+
+    expect(scheduleQuery).toContain("to_jsonb(p)");
+    expect(scheduleQuery).toContain("to_jsonb(b)");
+    expect(scheduleQuery).not.toMatch(/\bp\.insurance_details\b/);
+    expect(scheduleQuery).not.toMatch(/\bb\.amount_cents\b/);
+  });
+
+  it("getTodaySchedule uses local-date helper for the day filter", async () => {
+    const localDateSpy = jest
+      .spyOn(frontDeskService as any, "toLocalIsoDate")
+      .mockReturnValueOnce("2026-02-21");
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    await frontDeskService.getTodaySchedule("tenant-1");
+
+    expect(localDateSpy).toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledWith(expect.any(String), ["tenant-1", "2026-02-21"]);
+    localDateSpy.mockRestore();
+  });
+
   it("getDailyStats calculates open slots and average wait", async () => {
     const providerSpy = jest
       .spyOn(frontDeskService as any, "getProviderCount")
       .mockResolvedValueOnce(2);
+    const localDateSpy = jest
+      .spyOn(frontDeskService as any, "toLocalIsoDate")
+      .mockReturnValueOnce("2026-02-21");
 
     queryMock
       .mockResolvedValueOnce({
@@ -118,6 +147,11 @@ describe("frontDeskService", () => {
 
     expect(result.openSlotsRemaining).toBe(67);
     expect(result.averageWaitTime).toBe(12);
+    expect(localDateSpy).toHaveBeenCalled();
+    expect(queryMock).toHaveBeenNthCalledWith(1, expect.any(String), ["tenant-1", "2026-02-21"]);
+    expect(queryMock).toHaveBeenNthCalledWith(2, expect.any(String), ["tenant-1", "2026-02-21"]);
+    expect(queryMock).toHaveBeenNthCalledWith(3, expect.any(String), ["tenant-1", "2026-02-21"]);
+    localDateSpy.mockRestore();
     providerSpy.mockRestore();
   });
 
@@ -166,6 +200,30 @@ describe("frontDeskService", () => {
       "prov-1"
     );
     expect(client.release).toHaveBeenCalled();
+  });
+
+  it("checkInPatient still succeeds when encounter creation fails", async () => {
+    const client = makeClient();
+    connectMock.mockResolvedValueOnce(client);
+    client.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ patient_id: "patient-1", provider_id: "prov-1" }],
+      })
+      .mockResolvedValueOnce({}) // UPDATE
+      .mockResolvedValueOnce({}); // COMMIT
+    createEncounterMock.mockRejectedValueOnce(new Error("encounter failed"));
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // fallback lookup
+
+    const result = await frontDeskService.checkInPatient("tenant-1", "appt-1");
+
+    expect(result.encounterId).toBe("");
+    expect(client.release).toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("SELECT id FROM encounters"),
+      ["tenant-1", "appt-1"]
+    );
   });
 
   it("checkInPatient throws when appointment missing", async () => {

@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { Navigate, type RouteObject } from 'react-router-dom';
+import { Navigate, Outlet, type RouteObject } from 'react-router-dom';
 import { AppLayout } from '../components/layout';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 
@@ -20,7 +20,18 @@ import {
   PortalProfilePage,
   PortalBillingPage,
   PortalBookAppointmentPage,
+  PortalIntakePage,
+  PortalCheckInPage,
 } from '../pages/patient-portal';
+import {
+  KioskWelcomePage,
+  KioskPatientVerificationPage,
+  KioskAppointmentSelectionPage,
+  KioskDemographicsReviewPage,
+  KioskInsuranceReviewPage,
+  KioskConsentFormsPage,
+  KioskCompletionPage,
+} from '../pages/kiosk';
 
 // Lazy load all other pages for better performance
 const SchedulePage = lazy(() => import('../pages/SchedulePage').then(m => ({ default: m.SchedulePage })));
@@ -70,16 +81,12 @@ const FaxPage = lazy(() => import('../pages/FaxPage').then(m => ({ default: m.Fa
 const DirectMessagingPage = lazy(() => import('../pages/DirectMessagingPage').then(m => ({ default: m.DirectMessagingPage })));
 const NotesPage = lazy(() => import('../pages/NotesPage').then(m => ({ default: m.NotesPage })));
 const ClearinghousePage = lazy(() => import('../pages/ClearinghousePage').then(m => ({ default: m.ClearinghousePage })));
-const QualityPage = lazy(() => import('../pages/QualityPage').then(m => ({ default: m.default })));
 const AdminPage = lazy(() => import('../pages/AdminPage').then(m => ({ default: m.AdminPage })));
 const AIAgentConfigsPage = lazy(() => import('../pages/AIAgentConfigsPage').then(m => ({ default: m.AIAgentConfigsPage })));
 const RegistryPage = lazy(() => import('../pages/RegistryPage').then(m => ({ default: m.RegistryPage })));
 const ReferralsPage = lazy(() => import('../pages/ReferralsPage').then(m => ({ default: m.ReferralsPage })));
 const ProtocolsPage = lazy(() => import('../pages/ProtocolsPage').then(m => ({ default: m.ProtocolsPage })));
 const PreferencesPage = lazy(() => import('../pages/PreferencesPage').then(m => ({ default: m.PreferencesPage })));
-const HelpPage = lazy(() => import('../pages/HelpPage').then(m => ({ default: m.HelpPage })));
-const RecallsPage = lazy(() => import('../pages/RecallsPage').then(m => ({ default: m.RecallsPage })));
-const FormsPage = lazy(() => import('../pages/FormsPage').then(m => ({ default: m.FormsPage })));
 const FrontDeskDashboard = lazy(() => import('../pages/FrontDeskDashboard').then(m => ({ default: m.default })));
 
 // Loading fallback component
@@ -110,9 +117,7 @@ export const routes: RouteObject[] = [
     path: '/portal',
     element: (
       <PatientPortalAuthProvider>
-        <Suspense fallback={<PageLoader />}>
-          <div />
-        </Suspense>
+        <Outlet />
       </PatientPortalAuthProvider>
     ),
     children: [
@@ -120,14 +125,25 @@ export const routes: RouteObject[] = [
       { path: 'register', element: <PortalRegisterPage /> },
       { path: 'dashboard', element: <PortalDashboardPage /> },
       { path: 'appointments', element: <PortalAppointmentsPage /> },
+      { path: 'check-in', element: <PortalCheckInPage /> },
+      { path: 'intake', element: <PortalIntakePage /> },
       { path: 'book-appointment', element: <PortalBookAppointmentPage /> },
       { path: 'visits', element: <PortalVisitSummariesPage /> },
       { path: 'documents', element: <PortalDocumentsPage /> },
       { path: 'health-record', element: <PortalHealthRecordPage /> },
+      { path: 'billing', element: <PortalBillingPage /> },
       { path: 'profile', element: <PortalProfilePage /> },
       { index: true, element: <Navigate to="/portal/login" replace /> },
     ],
   },
+  // In-office iPad kiosk routes
+  { path: '/kiosk', element: <KioskWelcomePage /> },
+  { path: '/kiosk/verify', element: <KioskPatientVerificationPage /> },
+  { path: '/kiosk/appointment', element: <KioskAppointmentSelectionPage /> },
+  { path: '/kiosk/demographics', element: <KioskDemographicsReviewPage /> },
+  { path: '/kiosk/insurance', element: <KioskInsuranceReviewPage /> },
+  { path: '/kiosk/consent', element: <KioskConsentFormsPage /> },
+  { path: '/kiosk/complete', element: <KioskCompletionPage /> },
   {
     path: '/',
     element: <AppLayout />,
@@ -169,7 +185,7 @@ export const routes: RouteObject[] = [
       { path: 'fax', element: lazyWithSuspense(FaxPage) },
       { path: 'tasks', element: lazyWithSuspense(TasksPage) },
       { path: 'reminders', element: lazyWithSuspense(RemindersPage) },
-      { path: 'recalls', element: lazyWithSuspense(RecallsPage) },
+      { path: 'recalls', element: <Navigate to="/reminders?tab=due" replace /> },
 
       // Documents
       { path: 'documents', element: lazyWithSuspense(DocumentsPage) },
@@ -186,14 +202,14 @@ export const routes: RouteObject[] = [
       { path: 'quotes', element: lazyWithSuspense(QuotesPage) },
       { path: 'analytics', element: lazyWithSuspense(AnalyticsPage) },
       { path: 'reports', element: lazyWithSuspense(ReportsPage) },
-      { path: 'quality', element: lazyWithSuspense(QualityPage) },
+      { path: 'quality/*', element: <Navigate to="/analytics?tab=operational" replace /> },
       { path: 'registry', element: lazyWithSuspense(RegistryPage) },
       { path: 'referrals', element: lazyWithSuspense(ReferralsPage) },
-      { path: 'forms', element: lazyWithSuspense(FormsPage) },
+      { path: 'forms', element: <Navigate to="/documents?section=forms" replace /> },
       { path: 'protocols', element: lazyWithSuspense(ProtocolsPage) },
       { path: 'templates', element: lazyWithSuspense(NoteTemplatesPage) },
       { path: 'preferences', element: lazyWithSuspense(PreferencesPage) },
-      { path: 'help', element: lazyWithSuspense(HelpPage) },
+      { path: 'help', element: <Navigate to="/home" replace /> },
 
       // Admin
       { path: 'admin', element: lazyWithSuspense(AdminPage) },

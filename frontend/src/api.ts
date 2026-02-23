@@ -163,6 +163,25 @@ export async function fetchFrontDeskSchedule(
   return res.json();
 }
 
+export async function checkInFrontDeskAppointment(
+  tenantId: string,
+  accessToken: string,
+  appointmentId: string
+) {
+  const res = await fetch(`${API_BASE}/api/front-desk/check-in/${appointmentId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to check in patient' }));
+    throw new Error(error.error || 'Failed to check in patient');
+  }
+  return res.json();
+}
+
 export async function updateFrontDeskStatus(
   tenantId: string,
   accessToken: string,
@@ -200,6 +219,87 @@ export async function checkOutFrontDeskAppointment(
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: 'Failed to check out patient' }));
     throw new Error(error.error || 'Failed to check out patient');
+  }
+  return res.json();
+}
+
+export type PatientFlowStatus =
+  | 'checked_in'
+  | 'rooming'
+  | 'vitals_complete'
+  | 'ready_for_provider'
+  | 'with_provider'
+  | 'checkout'
+  | 'completed';
+
+export async function fetchPatientFlowActive(
+  tenantId: string,
+  accessToken: string,
+  locationId?: string
+) {
+  const params = new URLSearchParams();
+  if (locationId) params.append('locationId', locationId);
+  const queryString = params.toString();
+  const url = queryString ? `${API_BASE}/api/patient-flow/active?${queryString}` : `${API_BASE}/api/patient-flow/active`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to load active patient flow' }));
+    throw new Error(error.error || 'Failed to load active patient flow');
+  }
+  return res.json();
+}
+
+export async function fetchExamRooms(
+  tenantId: string,
+  accessToken: string,
+  locationId?: string
+) {
+  const params = new URLSearchParams();
+  if (locationId) params.append('locationId', locationId);
+  const queryString = params.toString();
+  const url = queryString ? `${API_BASE}/api/rooms?${queryString}` : `${API_BASE}/api/rooms`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to load rooms' }));
+    throw new Error(error.error || 'Failed to load rooms');
+  }
+  return res.json();
+}
+
+export async function updatePatientFlowStatus(
+  tenantId: string,
+  accessToken: string,
+  appointmentId: string,
+  status: PatientFlowStatus,
+  roomId?: string
+) {
+  const payload: { status: PatientFlowStatus; roomId?: string } = { status };
+  if (roomId) payload.roomId = roomId;
+
+  const res = await fetch(`${API_BASE}/api/patient-flow/${appointmentId}/status`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to update patient flow status' }));
+    throw new Error(error.error || 'Failed to update patient flow status');
   }
   return res.json();
 }
@@ -537,7 +637,10 @@ export const uploadDocumentFile = async (tenantId: string, accessToken: string, 
     headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
     body: form,
   });
-  if (!res.ok) throw new Error("Upload failed");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Upload failed");
+  }
   return res.json();
 };
 
@@ -549,7 +652,10 @@ export const uploadPhotoFile = async (tenantId: string, accessToken: string, fil
     headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
     body: form,
   });
-  if (!res.ok) throw new Error("Upload failed");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Upload failed");
+  }
   return res.json();
 };
 
@@ -832,6 +938,23 @@ export async function getPresignedAccess(tenantId: string, accessToken: string, 
   return res.json() as Promise<{ url: string }>;
 }
 
+export async function signUploadKey(tenantId: string, accessToken: string, key: string) {
+  const res = await fetch(`${API_BASE}/api/uploads/sign`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify({ key }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to sign upload URL");
+  }
+  return res.json() as Promise<{ url: string; token: string }>;
+}
+
 const authedGet = async (tenantId: string, accessToken: string, path: string) => {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "GET",
@@ -892,6 +1015,16 @@ export const createAppointment = (tenantId: string, accessToken: string, data: a
 
 export const updateAppointmentStatus = (tenantId: string, accessToken: string, id: string, status: string) =>
   authedPost(tenantId, accessToken, `/api/appointments/${id}/status`, { status });
+
+export const waiveAppointmentLateFee = (
+  tenantId: string,
+  accessToken: string,
+  billId: string,
+  reason?: string,
+) =>
+  authedPost(tenantId, accessToken, `/api/appointments/late-fees/${billId}/waive`, {
+    reason,
+  });
 
 export const createEncounter = (tenantId: string, accessToken: string, data: any) =>
   authedPost(tenantId, accessToken, "/api/encounters", data);
@@ -6228,6 +6361,8 @@ export interface InventoryUsage {
   providerName?: string;
   quantityUsed: number;
   unitCostCents: number;
+  sellPriceCents?: number | null;
+  givenAsSample?: boolean;
   notes?: string;
   usedAt: string;
 }
@@ -6428,6 +6563,8 @@ export async function recordInventoryUsage(
     patientId: string;
     providerId: string;
     quantityUsed: number;
+    sellPriceCents?: number;
+    givenAsSample?: boolean;
     notes?: string;
   }
 ): Promise<{ id: string; usedAt: string; message: string }> {

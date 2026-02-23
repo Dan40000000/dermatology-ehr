@@ -104,6 +104,17 @@ describe("Front desk routes", () => {
     expect(auditLog).toHaveBeenCalled();
   });
 
+  it("POST /front-desk/check-in still succeeds when audit logging fails", async () => {
+    serviceMock.checkInPatient.mockResolvedValueOnce({ encounterId: "enc-1" } as any);
+    (auditLog as jest.Mock).mockRejectedValueOnce(new Error("audit down"));
+
+    const res = await request(app).post("/front-desk/check-in/apt-1");
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.encounterId).toBe("enc-1");
+  });
+
   it("POST /front-desk/check-out returns success", async () => {
     serviceMock.checkOutPatient.mockResolvedValueOnce(undefined as any);
 

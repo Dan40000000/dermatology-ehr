@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
@@ -52,11 +52,24 @@ function toDocCategory(value?: string): Exclude<DocCategory, 'all'> {
   return 'other';
 }
 
+type DocumentPreviewKind = 'none' | 'image' | 'pdf';
+
+const createInitialUploadForm = () => ({
+  patientId: '',
+  category: 'other' as DocCategory,
+  title: '',
+  description: '',
+  file: null as File | null,
+  previewUrl: '',
+});
+
 export function DocumentsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -69,14 +82,9 @@ export function DocumentsPage() {
 
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [isUploadDragOver, setIsUploadDragOver] = useState(false);
 
-  const [uploadForm, setUploadForm] = useState({
-    patientId: '',
-    category: 'other' as DocCategory,
-    title: '',
-    description: '',
-    file: null as File | null,
-  });
+  const [uploadForm, setUploadForm] = useState(createInitialUploadForm);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -105,6 +113,8 @@ export function DocumentsPage() {
   useEffect(() => {
     const action = searchParams.get('action');
     const filter = searchParams.get('filter');
+    const section = searchParams.get('section');
+    const category = searchParams.get('category');
 
     // Handle action=upload
     if (action === 'upload') {
@@ -117,17 +127,119 @@ export function DocumentsPage() {
     } else {
       setRecentFilter(false);
     }
+
+    // Forms workspace merged into Documents
+    if (section === 'forms') {
+      setCategoryFilter('consent');
+      setRecentFilter(false);
+    } else if (
+      category &&
+      ['all', 'lab-result', 'imaging', 'referral', 'consent', 'other'].includes(category)
+    ) {
+      setCategoryFilter(category as DocCategory);
+    }
   }, [searchParams]);
+
+  useEffect(
+    () => () => {
+      if (uploadForm.previewUrl) {
+        URL.revokeObjectURL(uploadForm.previewUrl);
+      }
+    },
+    [uploadForm.previewUrl]
+  );
+
+  const clearUploadActionParam = () => {
+    if (searchParams.get('action') !== 'upload') {
+      return;
+    }
+    const params = new URLSearchParams(searchParams);
+    params.delete('action');
+    setSearchParams(params);
+  };
+
+  const resetUploadForm = () => {
+    setUploadForm((prev) => {
+      if (prev.previewUrl) {
+        URL.revokeObjectURL(prev.previewUrl);
+      }
+      return createInitialUploadForm();
+    });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+    }
+    setIsUploadDragOver(false);
+  };
+
+  const clearSelectedFile = () => {
+    setUploadForm((prev) => {
+      if (prev.previewUrl) {
+        URL.revokeObjectURL(prev.previewUrl);
+      }
+      return { ...prev, file: null, previewUrl: '' };
+    });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+    }
+    setIsUploadDragOver(false);
+  };
+
+  const applySelectedFile = (file: File) => {
+    const canPreview = file.type.startsWith('image/') || file.type === 'application/pdf';
+    const previewUrl = canPreview ? URL.createObjectURL(file) : '';
+    setUploadForm((prev) => {
+      if (prev.previewUrl) {
+        URL.revokeObjectURL(prev.previewUrl);
+      }
+      return {
+        ...prev,
+        file,
+        previewUrl,
+        title: prev.title || file.name.replace(/\.[^/.]+$/, ''),
+      };
+    });
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setUploadForm((prev) => ({
-        ...prev,
-        file,
-        title: prev.title || file.name.replace(/\.[^/.]+$/, ''),
-      }));
+      applySelectedFile(file);
     }
+  };
+
+  const handleUploadDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsUploadDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      applySelectedFile(file);
+    }
+  };
+
+  const getPreviewKind = (file: File | null): DocumentPreviewKind => {
+    if (!file) {
+      return 'none';
+    }
+    if (file.type.startsWith('image/')) {
+      return 'image';
+    }
+    if (file.type === 'application/pdf') {
+      return 'pdf';
+    }
+    return 'none';
+  };
+
+  const openUploadModal = () => {
+    setShowUploadModal(true);
+    const params = new URLSearchParams(searchParams);
+    params.set('action', 'upload');
+    setSearchParams(params);
   };
 
   const handleUpload = async () => {
@@ -161,19 +273,9 @@ export function DocumentsPage() {
 
       showSuccess('Document uploaded successfully');
       setShowUploadModal(false);
-      setUploadForm({
-        patientId: '',
-        category: 'other',
-        title: '',
-        description: '',
-        file: null,
-      });
+      resetUploadForm();
       // Clear the action parameter from URL
-      if (searchParams.get('action') === 'upload') {
-        const params = new URLSearchParams(searchParams);
-        params.delete('action');
-        setSearchParams(params);
-      }
+      clearUploadActionParam();
       loadData();
     } catch (err: any) {
       showError(err.message || 'Failed to upload document');
@@ -243,6 +345,21 @@ export function DocumentsPage() {
     return '';
   };
 
+  const openTemplateLibrary = (instructionType?: string) => {
+    const query = instructionType ? `?instructionType=${encodeURIComponent(instructionType)}` : '';
+    navigate(`/handouts${query}`);
+  };
+
+  const openFormsWorkspace = () => {
+    setCategoryFilter('consent');
+    setRecentFilter(false);
+    const params = new URLSearchParams(searchParams);
+    params.set('section', 'forms');
+    params.set('category', 'consent');
+    params.delete('filter');
+    setSearchParams(params);
+  };
+
   if (loading) {
     return (
       <div className="documents-page">
@@ -285,12 +402,7 @@ export function DocumentsPage() {
         }}>Document Management</h1>
         <button
           type="button"
-          onClick={() => {
-            setShowUploadModal(true);
-            const params = new URLSearchParams(searchParams);
-            params.set('action', 'upload');
-            setSearchParams(params);
-          }}
+          onClick={openUploadModal}
           style={{
             padding: '0.75rem 1.5rem',
             background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
@@ -323,6 +435,89 @@ export function DocumentsPage() {
         gap: '1.5rem',
         marginBottom: '1.5rem',
       }}>
+        {/* Clinical Print Templates */}
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.95)',
+          borderRadius: '12px',
+          padding: '1.5rem',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+          backdropFilter: 'blur(10px)',
+          gridColumn: 'span 2',
+        }}>
+          <h3 style={{
+            margin: '0 0 1rem 0',
+            fontSize: '1.25rem',
+            fontWeight: 700,
+            color: '#0d9488',
+          }}>Clinical Print Templates</h3>
+          <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
+            Open office-editable pre-made templates for patient printouts: lab results, prescription instructions,
+            aftercare, rash care, and cleansing routines.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+            <button onClick={() => openTemplateLibrary('lab_results')} style={{
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}>Lab Result Templates</button>
+            <button onClick={() => openTemplateLibrary('prescription_instructions')} style={{
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}>Prescription Templates</button>
+            <button onClick={() => openTemplateLibrary('aftercare')} style={{
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}>Aftercare Templates</button>
+            <button onClick={() => openTemplateLibrary('rash_care')} style={{
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}>Rash Care Templates</button>
+            <button onClick={() => openTemplateLibrary('cleansing')} style={{
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}>Cleansing Templates</button>
+            <button onClick={() => openTemplateLibrary()} style={{
+              padding: '0.75rem',
+              background: '#ffffff',
+              color: '#0d9488',
+              border: '2px solid #14b8a6',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}>Open Full Template Library</button>
+          </div>
+        </div>
+
         {/* Patient Attachments */}
         <div style={{
           background: 'rgba(255, 255, 255, 0.95)',
@@ -341,12 +536,7 @@ export function DocumentsPage() {
             Upload attachments (images, scans, etc) and associate them with patients or add to the fax queue.
           </p>
           <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <button onClick={() => {
-              setShowUploadModal(true);
-              const params = new URLSearchParams(searchParams);
-              params.set('action', 'upload');
-              setSearchParams(params);
-            }} style={{
+            <button onClick={openUploadModal} style={{
               flex: 1,
               padding: '0.75rem',
               background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
@@ -447,7 +637,7 @@ export function DocumentsPage() {
           }}>Manage Faxes</button>
         </div>
 
-        {/* Consents Section */}
+        {/* Forms & Consents Section */}
         <div style={{
           background: 'rgba(255, 255, 255, 0.95)',
           borderRadius: '12px',
@@ -460,53 +650,28 @@ export function DocumentsPage() {
             fontSize: '1.25rem',
             fontWeight: 700,
             color: '#0d9488',
-          }}>Consents and Procedure Forms</h3>
+          }}>Forms & Consents</h3>
           <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
-            Manage consent forms and procedure consents.
+            Intake, consent, and procedure form documents are managed here.
           </p>
-          <button style={{
-            width: '100%',
-            padding: '0.75rem',
-            background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '8px',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-            cursor: 'pointer',
-            transition: 'all 0.3s ease',
-          }}>Manage Consents</button>
-        </div>
-
-        {/* Clinical Quality Measures */}
-        <div style={{
-          background: 'rgba(255, 255, 255, 0.95)',
-          borderRadius: '12px',
-          padding: '1.5rem',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-          backdropFilter: 'blur(10px)',
-          gridColumn: 'span 2',
-        }}>
-          <h3 style={{
-            margin: '0 0 1rem 0',
-            fontSize: '1.25rem',
-            fontWeight: 700,
-            color: '#0d9488',
-          }}>Clinical Quality Measures</h3>
-          <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
-            Manage CQM Category 1 Files.
-          </p>
-          <button style={{
-            padding: '0.75rem 1.5rem',
-            background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '8px',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-            cursor: 'pointer',
-            transition: 'all 0.3s ease',
-          }}>Import CQM Category 1 Files</button>
+          <button
+            type="button"
+            onClick={openFormsWorkspace}
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+            }}
+          >
+            Open Forms Workspace
+          </button>
         </div>
       </div>
 
@@ -629,12 +794,7 @@ export function DocumentsPage() {
             <button
               type="button"
               className="btn-primary"
-              onClick={() => {
-                setShowUploadModal(true);
-                const params = new URLSearchParams(searchParams);
-                params.set('action', 'upload');
-                setSearchParams(params);
-              }}
+              onClick={openUploadModal}
             >
               Upload Document
             </button>
@@ -719,19 +879,9 @@ export function DocumentsPage() {
         title="Upload Document"
         onClose={() => {
           setShowUploadModal(false);
-          setUploadForm({
-            patientId: '',
-            category: 'other',
-            title: '',
-            description: '',
-            file: null,
-          });
+          resetUploadForm();
           // Clear the action parameter from URL when closing modal
-          if (searchParams.get('action') === 'upload') {
-            const params = new URLSearchParams(searchParams);
-            params.delete('action');
-            setSearchParams(params);
-          }
+          clearUploadActionParam();
         }}
         size="lg"
       >
@@ -803,6 +953,15 @@ export function DocumentsPage() {
             <input
               ref={fileInputRef}
               type="file"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,image/*"
+              onChange={handleFileSelect}
+              style={{ display: 'none' }}
+            />
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
               onChange={handleFileSelect}
               style={{ display: 'none' }}
             />
@@ -820,22 +979,57 @@ export function DocumentsPage() {
                 <button
                   type="button"
                   className="btn-sm btn-secondary"
-                  onClick={() => {
-                    setUploadForm((prev) => ({ ...prev, file: null }));
-                    if (fileInputRef.current) fileInputRef.current.value = '';
-                  }}
+                  onClick={clearSelectedFile}
                 >
                   Remove
                 </button>
               </div>
             ) : (
               <div
-                className="upload-dropzone"
+                className={`upload-dropzone ${isUploadDragOver ? 'drag-active' : ''}`}
                 onClick={() => fileInputRef.current?.click()}
+                onDragEnter={() => setIsUploadDragOver(true)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsUploadDragOver(true);
+                }}
+                onDragLeave={() => setIsUploadDragOver(false)}
+                onDrop={handleUploadDrop}
               >
                 <div className="upload-icon"></div>
-                <p>Click to select a file</p>
+                <p>Drag and drop a document here</p>
                 <p className="muted tiny">PDF, Word, Excel, images supported</p>
+                <div className="upload-dropzone-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      fileInputRef.current?.click();
+                    }}
+                  >
+                    Browse Files
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      cameraInputRef.current?.click();
+                    }}
+                  >
+                    Take Photo
+                  </button>
+                </div>
+              </div>
+            )}
+            {uploadForm.file && uploadForm.previewUrl && getPreviewKind(uploadForm.file) !== 'none' && (
+              <div className="document-upload-preview">
+                {getPreviewKind(uploadForm.file) === 'image' ? (
+                  <img src={uploadForm.previewUrl} alt="Document preview" />
+                ) : (
+                  <iframe src={uploadForm.previewUrl} title="Document preview" />
+                )}
               </div>
             )}
           </div>
@@ -845,7 +1039,11 @@ export function DocumentsPage() {
           <button
             type="button"
             className="btn-secondary"
-            onClick={() => setShowUploadModal(false)}
+            onClick={() => {
+              setShowUploadModal(false);
+              resetUploadForm();
+              clearUploadActionParam();
+            }}
           >
             Cancel
           </button>

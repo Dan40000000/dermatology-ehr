@@ -55,6 +55,7 @@ export function OrdersPage() {
 
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [newOrderPatientSearch, setNewOrderPatientSearch] = useState('');
   const [newOrder, setNewOrder] = useState({
     patientId: '',
     type: 'lab' as OrderType,
@@ -131,6 +132,7 @@ export function OrdersPage() {
       });
       showSuccess('Order created');
       setShowNewOrderModal(false);
+      setNewOrderPatientSearch('');
       setNewOrder({
         patientId: '',
         type: 'lab',
@@ -158,6 +160,60 @@ export function OrdersPage() {
     if (patient.insurance.planName) return patient.insurance.planName;
     return 'On file';
   };
+
+  const formatPatientDob = (patient: Patient) => {
+    const dob = patient.dob || patient.dateOfBirth;
+    if (!dob) return 'N/A';
+
+    const parsedDob = new Date(dob);
+    return Number.isNaN(parsedDob.getTime()) ? dob : parsedDob.toLocaleDateString();
+  };
+
+  const formatPatientOptionLabel = (patient: Patient) =>
+    `${patient.lastName}, ${patient.firstName} - DOB: ${formatPatientDob(patient)}`;
+
+  const sortedPatients = useMemo(() => {
+    return [...patients].sort((a, b) => {
+      const byLastName = a.lastName.localeCompare(b.lastName, undefined, { sensitivity: 'base' });
+      if (byLastName !== 0) return byLastName;
+
+      const byFirstName = a.firstName.localeCompare(b.firstName, undefined, { sensitivity: 'base' });
+      if (byFirstName !== 0) return byFirstName;
+
+      return a.id.localeCompare(b.id);
+    });
+  }, [patients]);
+
+  const filteredPatientsForNewOrder = useMemo(() => {
+    const query = newOrderPatientSearch.trim().toLowerCase();
+    if (!query) return sortedPatients;
+
+    return sortedPatients.filter((patient) => {
+      const fullName = `${patient.firstName} ${patient.lastName}`.toLowerCase();
+      const lastNameFirst = `${patient.lastName}, ${patient.firstName}`.toLowerCase();
+      const dobRaw = (patient.dob || patient.dateOfBirth || '').toLowerCase();
+      const dobFormatted = formatPatientDob(patient).toLowerCase();
+      const mrn = (patient.mrn || '').toLowerCase();
+
+      return (
+        fullName.includes(query) ||
+        lastNameFirst.includes(query) ||
+        dobRaw.includes(query) ||
+        dobFormatted.includes(query) ||
+        mrn.includes(query)
+      );
+    });
+  }, [newOrderPatientSearch, sortedPatients]);
+
+  const patientsForNewOrderSelect = useMemo(() => {
+    if (!newOrder.patientId) return filteredPatientsForNewOrder;
+    if (filteredPatientsForNewOrder.some((patient) => patient.id === newOrder.patientId)) {
+      return filteredPatientsForNewOrder;
+    }
+
+    const selectedPatient = sortedPatients.find((patient) => patient.id === newOrder.patientId);
+    return selectedPatient ? [selectedPatient, ...filteredPatientsForNewOrder] : filteredPatientsForNewOrder;
+  }, [filteredPatientsForNewOrder, newOrder.patientId, sortedPatients]);
 
   const filteredOrders = orders.filter((order) => {
     if (filter !== 'all' && order.status !== filter) return false;
@@ -218,7 +274,10 @@ export function OrdersPage() {
         boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
         backdropFilter: 'blur(10px)',
       }}>
-        <button type="button" onClick={() => setShowNewOrderModal(true)} style={{
+        <button type="button" onClick={() => {
+          setShowNewOrderModal(true);
+          setNewOrderPatientSearch('');
+        }} style={{
           padding: '0.75rem 1.25rem',
           background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
           color: '#ffffff',
@@ -684,21 +743,43 @@ export function OrdersPage() {
       )}
 
       {/* New Order Modal */}
-      <Modal isOpen={showNewOrderModal} title="Create New Order" onClose={() => setShowNewOrderModal(false)} size="lg">
+      <Modal isOpen={showNewOrderModal} title="Create New Order" onClose={() => {
+        setShowNewOrderModal(false);
+        setNewOrderPatientSearch('');
+      }} size="lg">
         <div className="modal-form">
           <div className="form-field">
-            <label>Patient *</label>
+            <label htmlFor="order-patient-search">Find Patient</label>
+            <input
+              id="order-patient-search"
+              name="order-patient-search"
+              type="text"
+              value={newOrderPatientSearch}
+              onChange={(e) => setNewOrderPatientSearch(e.target.value)}
+              placeholder="Search by name, DOB, or MRN..."
+            />
+            <label htmlFor="order-patient">Patient *</label>
             <select
+              id="order-patient"
+              name="order-patient"
               value={newOrder.patientId}
               onChange={(e) => setNewOrder((prev) => ({ ...prev, patientId: e.target.value }))}
             >
               <option value="">Select patient...</option>
-              {patients.map((p) => (
+              {patientsForNewOrderSelect.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.lastName}, {p.firstName}
+                  {formatPatientOptionLabel(p)}
                 </option>
               ))}
+              {patientsForNewOrderSelect.length === 0 && (
+                <option disabled value="">
+                  No patients found
+                </option>
+              )}
             </select>
+            <small style={{ color: '#6b7280', marginTop: '0.25rem', display: 'block' }}>
+              {patientsForNewOrderSelect.length} patient{patientsForNewOrderSelect.length === 1 ? '' : 's'} shown
+            </small>
           </div>
 
           <div className="form-row">
@@ -756,7 +837,10 @@ export function OrdersPage() {
         </div>
 
         <div className="modal-footer">
-          <button type="button" className="btn-secondary" onClick={() => setShowNewOrderModal(false)}>
+          <button type="button" className="btn-secondary" onClick={() => {
+            setShowNewOrderModal(false);
+            setNewOrderPatientSearch('');
+          }}>
             Cancel
           </button>
           <button type="button" className="btn-primary" onClick={handleCreateOrder} disabled={creating}>

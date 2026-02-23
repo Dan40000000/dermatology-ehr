@@ -34,24 +34,27 @@ describe('MainNav role-based visibility', () => {
       </MemoryRouter>
     );
 
-  it('shows Admin and Quality for admin', () => {
+  it('shows Admin and hides removed Quality nav for admin', () => {
     mockRole = 'admin';
     renderNav();
     expect(screen.getByText('Admin')).toBeInTheDocument();
-    expect(screen.getByText('Quality')).toBeInTheDocument();
+    expect(screen.queryByText('Quality')).not.toBeInTheDocument();
+    expect(screen.getByText('Reminders & Recalls')).toBeInTheDocument();
   });
 
-  it('shows Quality and hides Admin for provider', () => {
+  it('hides Admin and removed Quality nav for provider', () => {
     mockRole = 'provider';
     renderNav();
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
-    expect(screen.getByText('Quality')).toBeInTheDocument();
+    expect(screen.queryByText('Quality')).not.toBeInTheDocument();
+    expect(screen.getByText('Reminders & Recalls')).toBeInTheDocument();
   });
 
-  it('hides Admin and Quality for front desk', () => {
+  it('hides Admin and removed Quality nav for front desk', () => {
     mockRole = 'front_desk';
     renderNav();
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
     expect(screen.queryByText('Quality')).not.toBeInTheDocument();
+    expect(screen.getByText('Reminders & Recalls')).toBeInTheDocument();
   });
 });

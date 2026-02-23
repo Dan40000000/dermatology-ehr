@@ -45,7 +45,7 @@ export function KioskConsentFormsPage() {
 
   const fetchConsentForms = async () => {
     try {
-      const response = await fetch('/api/consent-forms/active', {
+      const response = await fetch('/api/kiosk/consent-forms/active', {
         headers: {
           'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
           'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',

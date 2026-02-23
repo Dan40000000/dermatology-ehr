@@ -1,0 +1,80 @@
+name: PR Guardrails
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  regression_policy:
+    name: Regression Policy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce PR guardrails
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          PR_BODY_FILE="$RUNNER_TEMP/pr_body.md"
+          printf '%s\n' "${PR_BODY:-}" > "$PR_BODY_FILE"
+
+          echo "Comparing changes from $BASE_SHA to $HEAD_SHA"
+          CHANGED_FILES="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          echo "$CHANGED_FILES"
+
+          code_changed=false
+          test_changed=false
+
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+
+            if echo "$file" | grep -Eq '^(frontend/src/.*\.(ts|tsx|js|jsx)|backend/src/.*\.(ts|tsx|js|jsx)|e2e/tests/.*\.(ts|tsx|js|jsx))$'; then
+              code_changed=true
+            fi
+
+            if echo "$file" | grep -Eq '^(frontend/src/.*/__tests__/.*\.(test|spec)\.(ts|tsx|js|jsx)|backend/src/.*/__tests__/.*\.(test|spec)\.(ts|tsx|js|jsx)|e2e/tests/.*\.(test|spec)\.(ts|tsx|js|jsx))$'; then
+              test_changed=true
+            fi
+          done <<EOF
+          $CHANGED_FILES
+          EOF
+
+          no_behavior=false
+          if grep -Eiq '^- \[[xX]\] .*No behavior change' "$PR_BODY_FILE"; then
+            no_behavior=true
+          fi
+
+          if [ "$code_changed" = true ] && [ "$test_changed" = false ] && [ "$no_behavior" = false ]; then
+            echo "::error::App code changed but no test files were updated. Add regression tests or explicitly check 'No behavior change (test update not required)' in the PR template."
+            exit 1
+          fi
+
+          if ! grep -Eiq '^- \[[xX]\] .*Targeted tests run locally' "$PR_BODY_FILE"; then
+            echo "::error::Required checkbox missing: 'Targeted tests run locally (listed below)'."
+            exit 1
+          fi
+
+          if ! grep -Eiq '^- \[[xX]\] .*Critical workflows verified' "$PR_BODY_FILE"; then
+            echo "::error::Required checkbox missing: 'Critical workflows verified'."
+            exit 1
+          fi
+
+          if ! grep -Eiq '^- \[[xX]\] .*AI_PROJECT_GUIDE\.md updated' "$PR_BODY_FILE" && ! grep -Eiq '^- \[[xX]\] .*No behavior change' "$PR_BODY_FILE"; then
+            echo "::error::Required checkbox missing: 'AI_PROJECT_GUIDE.md updated with a follow-up entry' (or mark no behavior change)."
+            exit 1
+          fi
+
+          if [ "$no_behavior" = false ] && ! grep -Eiq '^- \[[xX]\] .*Regression tests added/updated' "$PR_BODY_FILE"; then
+            echo "::error::Required checkbox missing: 'Regression tests added/updated for behavior changes'."
+            exit 1
+          fi
+
+          echo "PR guardrails passed."

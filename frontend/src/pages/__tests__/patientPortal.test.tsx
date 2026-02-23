@@ -179,12 +179,6 @@ describe('Patient portal pages', () => {
           ],
         });
       }
-      if (endpoint === '/api/patient-portal-data/checkin/start') {
-        return Promise.resolve({ sessionId: 'session-1' });
-      }
-      if (endpoint === '/api/patient-portal-data/checkin/session-1/complete') {
-        return Promise.resolve({});
-      }
       return Promise.resolve({});
     });
 
@@ -193,23 +187,7 @@ describe('Patient portal pages', () => {
     expect(await screen.findByText('Consultation')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Start Pre-Check-In/i }));
-    await screen.findByRole('button', { name: /Complete Check-In/i });
-
-    expect(patientPortalFetchMock).toHaveBeenCalledWith(
-      '/api/patient-portal-data/checkin/start',
-      expect.objectContaining({ method: 'POST' })
-    );
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith(expect.stringContaining('Pre-check-in started'));
-
-    fireEvent.click(screen.getByRole('button', { name: /Complete Check-In/i }));
-
-    await waitFor(() =>
-      expect(patientPortalFetchMock).toHaveBeenCalledWith(
-        '/api/patient-portal-data/checkin/session-1/complete',
-        expect.objectContaining({ method: 'PUT' })
-      )
-    );
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith(expect.stringContaining('Check-in completed'));
+    expect(navigateMock).toHaveBeenCalledWith('/portal/check-in?appointmentId=apt-1');
 
     fireEvent.click(screen.getByRole('button', { name: /Past History/i }));
     await waitFor(() =>

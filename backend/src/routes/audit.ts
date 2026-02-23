@@ -3,6 +3,7 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { createAuditLog } from "../services/audit";
+import { getAuditSchemaInfo } from "../services/auditSchema";
 import { logger } from "../lib/logger";
 
 // Comprehensive audit log routes for HIPAA compliance
@@ -129,9 +130,14 @@ auditRouter.get("/appointments", requireAuth, requireRoles(["admin"]), async (re
  */
 auditRouter.get("/log", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
+  const { columnMap } = await getAuditSchemaInfo();
   const result = await pool.query(
-    `select id, user_id as "userId", action, resource_type as "resourceType",
-            resource_id as "resourceId", created_at as "createdAt"
+    `select id,
+            ${columnMap.userId ? columnMap.userId : "NULL"} as "userId",
+            action,
+            ${columnMap.resourceType ? columnMap.resourceType : "NULL"} as "resourceType",
+            ${columnMap.resourceId ? columnMap.resourceId : "NULL"} as "resourceId",
+            created_at as "createdAt"
      from audit_log where tenant_id = $1 order by created_at desc limit 200`,
     [tenantId],
   );
@@ -269,82 +275,98 @@ auditRouter.get("/", requireAuth, requireRoles(["admin", "compliance_officer"]),
       offset = "0",
       search,
     } = req.query;
+    const { columnMap } = await getAuditSchemaInfo();
 
-    // Build dynamic query
-    const conditions: string[] = ["tenant_id = $1"];
+    // Build dynamic query against either enhanced or legacy audit schema
+    const conditions: string[] = ["al.tenant_id = $1"];
     const params: any[] = [tenantId];
     let paramCount = 1;
 
-    if (userId) {
+    if (userId && columnMap.userId) {
       paramCount++;
-      conditions.push(`user_id = $${paramCount}`);
+      conditions.push(`al.${columnMap.userId} = $${paramCount}`);
       params.push(userId);
     }
 
     if (action) {
       paramCount++;
-      conditions.push(`action = $${paramCount}`);
+      conditions.push(`al.action = $${paramCount}`);
       params.push(action);
     }
 
-    if (resourceType) {
+    if (resourceType && columnMap.resourceType) {
       paramCount++;
-      conditions.push(`resource_type = $${paramCount}`);
+      conditions.push(`al.${columnMap.resourceType} = $${paramCount}`);
       params.push(resourceType);
     }
 
-    if (resourceId) {
+    if (resourceId && columnMap.resourceId) {
       paramCount++;
-      conditions.push(`resource_id = $${paramCount}`);
+      conditions.push(`al.${columnMap.resourceId} = $${paramCount}`);
       params.push(resourceId);
     }
 
     if (startDate) {
       paramCount++;
-      conditions.push(`created_at >= $${paramCount}`);
+      conditions.push(`al.created_at >= $${paramCount}`);
       params.push(startDate);
     }
 
     if (endDate) {
       paramCount++;
-      conditions.push(`created_at <= $${paramCount}`);
+      conditions.push(`al.created_at <= $${paramCount}`);
       params.push(endDate);
     }
 
-    if (ipAddress) {
+    if (ipAddress && columnMap.ipAddress) {
       paramCount++;
-      conditions.push(`ip_address = $${paramCount}`);
+      conditions.push(`al.${columnMap.ipAddress}::text = $${paramCount}`);
       params.push(ipAddress);
     }
 
-    if (severity) {
+    if (severity && columnMap.severity) {
       paramCount++;
-      conditions.push(`severity = $${paramCount}`);
+      conditions.push(`al.${columnMap.severity} = $${paramCount}`);
       params.push(severity);
     }
 
-    if (status) {
+    if (status && columnMap.status) {
       paramCount++;
-      conditions.push(`status = $${paramCount}`);
+      conditions.push(`al.${columnMap.status} = $${paramCount}`);
       params.push(status);
     }
 
     if (search) {
       paramCount++;
-      conditions.push(`(
-        action ILIKE $${paramCount} OR
-        resource_type ILIKE $${paramCount} OR
-        resource_id ILIKE $${paramCount} OR
-        ip_address ILIKE $${paramCount}
-      )`);
+      const searchClauses: string[] = [`al.action ILIKE $${paramCount}`];
+      if (columnMap.resourceType) {
+        searchClauses.push(`al.${columnMap.resourceType} ILIKE $${paramCount}`);
+      }
+      if (columnMap.resourceId) {
+        searchClauses.push(`al.${columnMap.resourceId} ILIKE $${paramCount}`);
+      }
+      if (columnMap.ipAddress) {
+        searchClauses.push(`al.${columnMap.ipAddress}::text ILIKE $${paramCount}`);
+      }
+      conditions.push(`(${searchClauses.join(" OR ")})`);
       params.push(`%${search}%`);
     }
 
     const whereClause = conditions.join(" AND ");
+    const userIdExpr = columnMap.userId ? `al.${columnMap.userId}` : "NULL";
+    const resourceTypeExpr = columnMap.resourceType ? `al.${columnMap.resourceType}` : "NULL";
+    const resourceIdExpr = columnMap.resourceId ? `al.${columnMap.resourceId}` : "NULL";
+    const ipAddressExpr = columnMap.ipAddress ? `al.${columnMap.ipAddress}::text` : "NULL";
+    const userAgentExpr = columnMap.userAgent ? `al.${columnMap.userAgent}` : "NULL";
+    const changesExpr = columnMap.changes ? `al.${columnMap.changes}` : "NULL::jsonb";
+    const metadataExpr = columnMap.metadata ? `al.${columnMap.metadata}` : "NULL::jsonb";
+    const severityExpr = columnMap.severity ? `al.${columnMap.severity}` : "'info'";
+    const statusExpr = columnMap.status ? `al.${columnMap.status}` : "'success'";
+    const usersJoin = columnMap.userId ? `al.${columnMap.userId} = u.id` : "FALSE";
 
     // Get total count
     const countResult = await pool.query(
-      `SELECT COUNT(*) as total FROM audit_log WHERE ${whereClause}`,
+      `SELECT COUNT(*) as total FROM audit_log al WHERE ${whereClause}`,
       params,
     );
 
@@ -358,21 +380,21 @@ auditRouter.get("/", requireAuth, requireRoles(["admin", "compliance_officer"]),
       `SELECT
         al.id,
         al.tenant_id as "tenantId",
-        al.user_id as "userId",
+        ${userIdExpr} as "userId",
         u.full_name as "userName",
         u.email as "userEmail",
         al.action,
-        al.resource_type as "resourceType",
-        al.resource_id as "resourceId",
-        al.ip_address as "ipAddress",
-        al.user_agent as "userAgent",
-        al.changes,
-        al.metadata,
-        al.severity,
-        al.status,
+        ${resourceTypeExpr} as "resourceType",
+        ${resourceIdExpr} as "resourceId",
+        ${ipAddressExpr} as "ipAddress",
+        ${userAgentExpr} as "userAgent",
+        ${changesExpr} as "changes",
+        ${metadataExpr} as "metadata",
+        ${severityExpr} as "severity",
+        ${statusExpr} as "status",
         al.created_at as "createdAt"
       FROM audit_log al
-      LEFT JOIN users u ON al.user_id = u.id
+      LEFT JOIN users u ON ${usersJoin}
       WHERE ${whereClause}
       ORDER BY al.created_at DESC
       LIMIT $${limitParam} OFFSET $${offsetParam}`,
@@ -397,20 +419,25 @@ auditRouter.get("/user/:userId", requireAuth, requireRoles(["admin", "compliance
     const tenantId = req.user!.tenantId;
     const { userId } = req.params;
     const { startDate, endDate, limit = "100" } = req.query;
+    const { columnMap } = await getAuditSchemaInfo();
 
-    const conditions: string[] = ["tenant_id = $1", "user_id = $2"];
+    if (!columnMap.userId) {
+      return res.json({ logs: [] });
+    }
+
+    const conditions: string[] = ["al.tenant_id = $1", `al.${columnMap.userId} = $2`];
     const params: any[] = [tenantId, userId];
     let paramCount = 2;
 
     if (startDate) {
       paramCount++;
-      conditions.push(`created_at >= $${paramCount}`);
+      conditions.push(`al.created_at >= $${paramCount}`);
       params.push(startDate);
     }
 
     if (endDate) {
       paramCount++;
-      conditions.push(`created_at <= $${paramCount}`);
+      conditions.push(`al.created_at <= $${paramCount}`);
       params.push(endDate);
     }
 
@@ -421,11 +448,11 @@ auditRouter.get("/user/:userId", requireAuth, requireRoles(["admin", "compliance
       `SELECT
         al.id,
         al.action,
-        al.resource_type as "resourceType",
-        al.resource_id as "resourceId",
-        al.ip_address as "ipAddress",
-        al.severity,
-        al.status,
+        ${columnMap.resourceType ? `al.${columnMap.resourceType}` : "NULL"} as "resourceType",
+        ${columnMap.resourceId ? `al.${columnMap.resourceId}` : "NULL"} as "resourceId",
+        ${columnMap.ipAddress ? `al.${columnMap.ipAddress}::text` : "NULL"} as "ipAddress",
+        ${columnMap.severity ? `al.${columnMap.severity}` : "'info'"} as "severity",
+        ${columnMap.status ? `al.${columnMap.status}` : "'success'"} as "status",
         al.created_at as "createdAt"
       FROM audit_log al
       WHERE ${conditions.join(" AND ")}
@@ -447,23 +474,28 @@ auditRouter.get("/resource/:type/:id", requireAuth, requireRoles(["admin", "comp
     const tenantId = req.user!.tenantId;
     const { type, id } = req.params;
     const { limit = "100" } = req.query;
+    const { columnMap } = await getAuditSchemaInfo();
+
+    if (!columnMap.resourceType || !columnMap.resourceId) {
+      return res.json({ logs: [] });
+    }
 
     const result = await pool.query(
       `SELECT
         al.id,
-        al.user_id as "userId",
+        ${columnMap.userId ? `al.${columnMap.userId}` : "NULL"} as "userId",
         u.full_name as "userName",
         u.email as "userEmail",
         al.action,
-        al.ip_address as "ipAddress",
-        al.severity,
-        al.status,
+        ${columnMap.ipAddress ? `al.${columnMap.ipAddress}::text` : "NULL"} as "ipAddress",
+        ${columnMap.severity ? `al.${columnMap.severity}` : "'info'"} as "severity",
+        ${columnMap.status ? `al.${columnMap.status}` : "'success'"} as "status",
         al.created_at as "createdAt"
       FROM audit_log al
-      LEFT JOIN users u ON al.user_id = u.id
+      LEFT JOIN users u ON ${columnMap.userId ? `al.${columnMap.userId} = u.id` : "FALSE"}
       WHERE al.tenant_id = $1
-        AND al.resource_type = $2
-        AND al.resource_id = $3
+        AND al.${columnMap.resourceType} = $2
+        AND al.${columnMap.resourceId} = $3
       ORDER BY al.created_at DESC
       LIMIT $4`,
       [tenantId, type, id, parseInt(limit as string, 10)],
@@ -482,6 +514,7 @@ auditRouter.get("/summary", requireAuth, requireRoles(["admin", "compliance_offi
     const tenantId = req.user!.tenantId;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const { columnMap } = await getAuditSchemaInfo();
 
     // Total events today
     const totalResult = await pool.query(
@@ -491,11 +524,13 @@ auditRouter.get("/summary", requireAuth, requireRoles(["admin", "compliance_offi
     );
 
     // Unique users today
-    const usersResult = await pool.query(
-      `SELECT COUNT(DISTINCT user_id) as count FROM audit_log
-       WHERE tenant_id = $1 AND created_at >= $2 AND user_id IS NOT NULL`,
-      [tenantId, today],
-    );
+    const usersResult = columnMap.userId
+      ? await pool.query(
+          `SELECT COUNT(DISTINCT ${columnMap.userId}) as count FROM audit_log
+           WHERE tenant_id = $1 AND created_at >= $2 AND ${columnMap.userId} IS NOT NULL`,
+          [tenantId, today],
+        )
+      : { rows: [{ count: "0" }] };
 
     // Failed logins today
     const failedLoginsResult = await pool.query(
@@ -524,14 +559,16 @@ auditRouter.get("/summary", requireAuth, requireRoles(["admin", "compliance_offi
     );
 
     // Resource type breakdown
-    const resourcesResult = await pool.query(
-      `SELECT resource_type as "resourceType", COUNT(*) as count FROM audit_log
-       WHERE tenant_id = $1 AND created_at >= $2
-       GROUP BY resource_type
-       ORDER BY count DESC
-       LIMIT 10`,
-      [tenantId, today],
-    );
+    const resourcesResult = columnMap.resourceType
+      ? await pool.query(
+          `SELECT ${columnMap.resourceType} as "resourceType", COUNT(*) as count FROM audit_log
+           WHERE tenant_id = $1 AND created_at >= $2
+           GROUP BY ${columnMap.resourceType}
+           ORDER BY count DESC
+           LIMIT 10`,
+          [tenantId, today],
+        )
+      : { rows: [] as Array<{ resourceType: string; count: string }> };
 
     res.json({
       totalEvents: parseInt(totalResult.rows[0].count, 10),
@@ -554,39 +591,40 @@ auditRouter.post("/export", requireAuth, requireRoles(["admin"]), async (req: Au
     const userId = req.user!.id;
     const ipAddress = req.ip || req.headers["x-forwarded-for"] as string || "unknown";
     const { filters } = req.body;
+    const { columnMap } = await getAuditSchemaInfo();
 
     // Build query based on filters
-    const conditions: string[] = ["tenant_id = $1"];
+    const conditions: string[] = ["al.tenant_id = $1"];
     const params: any[] = [tenantId];
     let paramCount = 1;
 
-    if (filters?.userId) {
+    if (filters?.userId && columnMap.userId) {
       paramCount++;
-      conditions.push(`user_id = $${paramCount}`);
+      conditions.push(`al.${columnMap.userId} = $${paramCount}`);
       params.push(filters.userId);
     }
 
     if (filters?.action) {
       paramCount++;
-      conditions.push(`action = $${paramCount}`);
+      conditions.push(`al.action = $${paramCount}`);
       params.push(filters.action);
     }
 
-    if (filters?.resourceType) {
+    if (filters?.resourceType && columnMap.resourceType) {
       paramCount++;
-      conditions.push(`resource_type = $${paramCount}`);
+      conditions.push(`al.${columnMap.resourceType} = $${paramCount}`);
       params.push(filters.resourceType);
     }
 
     if (filters?.startDate) {
       paramCount++;
-      conditions.push(`created_at >= $${paramCount}`);
+      conditions.push(`al.created_at >= $${paramCount}`);
       params.push(filters.startDate);
     }
 
     if (filters?.endDate) {
       paramCount++;
-      conditions.push(`created_at <= $${paramCount}`);
+      conditions.push(`al.created_at <= $${paramCount}`);
       params.push(filters.endDate);
     }
 
@@ -595,18 +633,18 @@ auditRouter.post("/export", requireAuth, requireRoles(["admin"]), async (req: Au
     const result = await pool.query(
       `SELECT
         al.id,
-        al.user_id as "User ID",
+        ${columnMap.userId ? `al.${columnMap.userId}` : "NULL"} as "User ID",
         u.full_name as "User Name",
         u.email as "User Email",
         al.action as "Action",
-        al.resource_type as "Resource Type",
-        al.resource_id as "Resource ID",
-        al.ip_address as "IP Address",
-        al.severity as "Severity",
-        al.status as "Status",
+        ${columnMap.resourceType ? `al.${columnMap.resourceType}` : "NULL"} as "Resource Type",
+        ${columnMap.resourceId ? `al.${columnMap.resourceId}` : "NULL"} as "Resource ID",
+        ${columnMap.ipAddress ? `al.${columnMap.ipAddress}::text` : "NULL"} as "IP Address",
+        ${columnMap.severity ? `al.${columnMap.severity}` : "'info'"} as "Severity",
+        ${columnMap.status ? `al.${columnMap.status}` : "'success'"} as "Status",
         al.created_at as "Timestamp"
       FROM audit_log al
-      LEFT JOIN users u ON al.user_id = u.id
+      LEFT JOIN users u ON ${columnMap.userId ? `al.${columnMap.userId} = u.id` : "FALSE"}
       WHERE ${whereClause}
       ORDER BY al.created_at DESC
       LIMIT 10000`,

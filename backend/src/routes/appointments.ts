@@ -32,8 +32,181 @@ const rescheduleSchema = z.object({
   providerId: z.string().min(1).optional(), // Optional: allow changing provider
 });
 
-async function hasConflict(tenantId: string, providerId: string, start: string, end: string, ignoreId?: string) {
-  const result = await pool.query(
+const waiveLateFeeSchema = z.object({
+  reason: z.string().trim().min(3).max(500).optional(),
+});
+
+const APPOINTMENT_WINDOW_START_MINUTES = 7 * 60;
+const APPOINTMENT_WINDOW_END_MINUTES = 18 * 60;
+const APPOINTMENT_WINDOW_TIME_ZONE =
+  process.env.APPOINTMENT_WINDOW_TIME_ZONE ||
+  Intl.DateTimeFormat().resolvedOptions().timeZone ||
+  "UTC";
+const appointmentWindowFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: APPOINTMENT_WINDOW_TIME_ZONE,
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+const LATE_FEE_AMOUNT_CENTS = 5000;
+const LATE_FEE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const LATE_FEE_CPT_CODE = "LATEFEE";
+const LATE_FEE_NOTE_PREFIX = "[LATE_FEE]";
+
+type LateFeeTrigger = "cancel" | "reschedule";
+type QueryExecutor = {
+  query: (text: string, params?: any[]) => Promise<any>;
+};
+
+function getMinutesInAppointmentWindowTimeZone(value: string): number | null {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const parts = appointmentWindowFormatter.formatToParts(date);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? Number.NaN);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? Number.NaN);
+  if (Number.isNaN(hour) || Number.isNaN(minute)) {
+    return null;
+  }
+
+  return hour * 60 + minute;
+}
+
+function isWithinAppointmentWindow(scheduledStart: string, scheduledEnd: string): boolean {
+  const startMinutes = getMinutesInAppointmentWindowTimeZone(scheduledStart);
+  const endMinutes = getMinutesInAppointmentWindowTimeZone(scheduledEnd);
+  if (startMinutes === null || endMinutes === null) {
+    return false;
+  }
+
+  return (
+    startMinutes >= APPOINTMENT_WINDOW_START_MINUTES &&
+    endMinutes <= APPOINTMENT_WINDOW_END_MINUTES &&
+    endMinutes > startMinutes
+  );
+}
+
+function getDateOnly(value: string | Date): string {
+  const date = value instanceof Date ? value : new Date(value);
+  const [day] = date.toISOString().split("T");
+  return day ?? date.toISOString();
+}
+
+function isWithinLateFeeWindow(scheduledStart: string | Date, reference = new Date()): boolean {
+  const scheduledDate = scheduledStart instanceof Date ? scheduledStart : new Date(scheduledStart);
+  const diffMs = scheduledDate.getTime() - reference.getTime();
+  return diffMs > 0 && diffMs <= LATE_FEE_WINDOW_MS;
+}
+
+function buildLateFeeDescription(trigger: LateFeeTrigger): string {
+  return trigger === "cancel"
+    ? "Late cancellation fee (appointment cancelled within 24 hours)"
+    : "Late reschedule fee (appointment rescheduled within 24 hours)";
+}
+
+function buildLateFeeSignature(appointmentId: string, trigger: LateFeeTrigger, referenceScheduledStart: string | Date): string {
+  const referenceIso = new Date(referenceScheduledStart).toISOString();
+  return `${LATE_FEE_NOTE_PREFIX}|appointmentId=${appointmentId}|trigger=${trigger}|referenceStart=${referenceIso}`;
+}
+
+async function createLateFeeBillIfNeeded(
+  queryable: QueryExecutor,
+  params: {
+    tenantId: string;
+    appointmentId: string;
+    patientId: string;
+    referenceScheduledStart: string | Date;
+    trigger: LateFeeTrigger;
+    assessedBy: string;
+  },
+): Promise<string | null> {
+  if (!isWithinLateFeeWindow(params.referenceScheduledStart)) {
+    return null;
+  }
+
+  const signature = buildLateFeeSignature(params.appointmentId, params.trigger, params.referenceScheduledStart);
+  const description = buildLateFeeDescription(params.trigger);
+  const notes = `${signature}\n${description}`;
+  const serviceDate = getDateOnly(params.referenceScheduledStart);
+
+  const existingResult = await queryable.query(
+    `select id from bills where tenant_id = $1 and notes like $2 limit 1`,
+    [params.tenantId, `${signature}%`],
+  );
+  if (existingResult.rowCount) {
+    return existingResult.rows[0].id as string;
+  }
+
+  const billId = crypto.randomUUID();
+  const lineItemId = crypto.randomUUID();
+  const billDate = getDateOnly(new Date());
+  const dueDate = getDateOnly(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
+  const billNumber = `LATE-${billDate.replace(/-/g, "")}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+
+  await queryable.query(
+    `insert into bills(
+      id, tenant_id, patient_id, encounter_id, bill_number, bill_date, due_date,
+      total_charges_cents, insurance_responsibility_cents, patient_responsibility_cents,
+      paid_amount_cents, adjustment_amount_cents, balance_cents, status,
+      service_date_start, service_date_end, notes, created_by
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+    [
+      billId,
+      params.tenantId,
+      params.patientId,
+      null,
+      billNumber,
+      billDate,
+      dueDate,
+      LATE_FEE_AMOUNT_CENTS,
+      0,
+      LATE_FEE_AMOUNT_CENTS,
+      0,
+      0,
+      LATE_FEE_AMOUNT_CENTS,
+      "new",
+      serviceDate,
+      serviceDate,
+      notes,
+      params.assessedBy,
+    ],
+  );
+
+  await queryable.query(
+    `insert into bill_line_items(
+      id, tenant_id, bill_id, charge_id, service_date, cpt_code,
+      description, quantity, unit_price_cents, total_cents, icd_codes
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    [
+      lineItemId,
+      params.tenantId,
+      billId,
+      null,
+      serviceDate,
+      LATE_FEE_CPT_CODE,
+      description,
+      1,
+      LATE_FEE_AMOUNT_CENTS,
+      LATE_FEE_AMOUNT_CENTS,
+      [],
+    ],
+  );
+
+  return billId;
+}
+
+async function hasConflict(
+  tenantId: string,
+  providerId: string,
+  start: string,
+  end: string,
+  ignoreId?: string,
+  queryable: QueryExecutor = pool,
+) {
+  const result = await queryable.query(
     `select 1 from appointments
      where tenant_id = $1
        and provider_id = $2
@@ -229,6 +402,11 @@ appointmentsRouter.post("/", requireAuth, requireRoles(["admin", "front_desk", "
   const tenantId = req.user!.tenantId;
   const id = crypto.randomUUID();
   const payload = parsed.data;
+  if (!isWithinAppointmentWindow(payload.scheduledStart, payload.scheduledEnd)) {
+    return res.status(400).json({
+      error: `Appointments must be scheduled between 07:00 and 18:00 (${APPOINTMENT_WINDOW_TIME_ZONE})`,
+    });
+  }
 
   const conflict = await hasConflict(tenantId, payload.providerId, payload.scheduledStart, payload.scheduledEnd, id);
   if (conflict) return res.status(409).json({ error: "Time conflict for provider" });
@@ -392,22 +570,70 @@ appointmentsRouter.post("/:id/reschedule", requireAuth, requireRoles(["admin", "
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.format() });
   }
+  if (!isWithinAppointmentWindow(parsed.data.scheduledStart, parsed.data.scheduledEnd)) {
+    return res.status(400).json({
+      error: `Appointments must be scheduled between 07:00 and 18:00 (${APPOINTMENT_WINDOW_TIME_ZONE})`,
+    });
+  }
   const tenantId = req.user!.tenantId;
   const apptId = String(req.params.id);
-  const apptRes = await pool.query(`select provider_id from appointments where id = $1 and tenant_id = $2`, [apptId, tenantId]);
-  if (!apptRes.rowCount) return res.status(404).json({ error: "Not found" });
+  const client = await pool.connect();
+  let lateFeeBillId: string | null = null;
+  try {
+    await client.query("begin");
+    const apptRes = await client.query(
+      `select provider_id, patient_id, scheduled_start
+       from appointments
+       where id = $1 and tenant_id = $2
+       for update`,
+      [apptId, tenantId],
+    );
+    if (!apptRes.rowCount) {
+      await client.query("rollback");
+      return res.status(404).json({ error: "Not found" });
+    }
 
-  // Use new provider if provided, otherwise keep the original
-  const newProviderId = parsed.data.providerId || apptRes.rows[0].provider_id as string;
+    // Use new provider if provided, otherwise keep the original
+    const newProviderId = parsed.data.providerId || (apptRes.rows[0].provider_id as string);
+    const conflict = await hasConflict(
+      tenantId,
+      newProviderId,
+      parsed.data.scheduledStart,
+      parsed.data.scheduledEnd,
+      apptId,
+      client,
+    );
+    if (conflict) {
+      await client.query("rollback");
+      return res.status(409).json({ error: "Time conflict for provider" });
+    }
 
-  const conflict = await hasConflict(tenantId, newProviderId, parsed.data.scheduledStart, parsed.data.scheduledEnd, apptId);
-  if (conflict) return res.status(409).json({ error: "Time conflict for provider" });
+    lateFeeBillId = await createLateFeeBillIfNeeded(client, {
+      tenantId,
+      appointmentId: apptId,
+      patientId: apptRes.rows[0].patient_id as string,
+      referenceScheduledStart: apptRes.rows[0].scheduled_start as string,
+      trigger: "reschedule",
+      assessedBy: req.user!.id,
+    });
 
-  // Update with new time and optionally new provider
-  await pool.query(
-    `update appointments set scheduled_start = $1, scheduled_end = $2, provider_id = $3 where id = $4 and tenant_id = $5`,
-    [parsed.data.scheduledStart, parsed.data.scheduledEnd, newProviderId, apptId, tenantId],
-  );
+    // Update with new time and optionally new provider
+    await client.query(
+      `update appointments set scheduled_start = $1, scheduled_end = $2, provider_id = $3 where id = $4 and tenant_id = $5`,
+      [parsed.data.scheduledStart, parsed.data.scheduledEnd, newProviderId, apptId, tenantId],
+    );
+    await client.query("commit");
+  } catch (error: any) {
+    await client.query("rollback");
+    logger.error("Failed to reschedule appointment", {
+      error: error.message,
+      appointmentId: apptId,
+    });
+    return res.status(500).json({ error: "Failed to reschedule appointment" });
+  } finally {
+    client.release();
+  }
+
   await auditLog(tenantId, req.user!.id, "appointment_reschedule", "appointment", apptId);
 
   // Emit WebSocket event for reschedule
@@ -451,7 +677,7 @@ appointmentsRouter.post("/:id/reschedule", requireAuth, requireRoles(["admin", "
     });
   }
 
-  res.json({ ok: true });
+  res.json({ ok: true, lateFeeBillId });
 });
 
 /**
@@ -509,15 +735,61 @@ appointmentsRouter.post("/:id/status", requireAuth, requireRoles(["admin", "fron
   }
   const tenantId = req.user!.tenantId;
   const apptId = String(req.params.id);
-  await pool.query(
-    `update appointments set status = $1 where id = $2 and tenant_id = $3`,
-    [parsed.data.status, apptId, tenantId],
-  );
-  await pool.query(
-    `insert into appointment_status_history(id, tenant_id, appointment_id, status, changed_by)
-     values ($1,$2,$3,$4,$5)`,
-    [crypto.randomUUID(), tenantId, apptId, parsed.data.status, req.user!.id],
-  );
+  const client = await pool.connect();
+  let lateFeeBillId: string | null = null;
+
+  try {
+    await client.query("begin");
+    const currentAppointmentResult = await client.query(
+      `select patient_id, scheduled_start, status
+       from appointments
+       where id = $1 and tenant_id = $2
+       for update`,
+      [apptId, tenantId],
+    );
+
+    if (!currentAppointmentResult.rowCount) {
+      await client.query("rollback");
+      return res.status(404).json({ error: "Not found" });
+    }
+
+    const currentAppointment = currentAppointmentResult.rows[0];
+    if (
+      parsed.data.status === "cancelled" &&
+      currentAppointment.status !== "cancelled"
+    ) {
+      lateFeeBillId = await createLateFeeBillIfNeeded(client, {
+        tenantId,
+        appointmentId: apptId,
+        patientId: currentAppointment.patient_id as string,
+        referenceScheduledStart: currentAppointment.scheduled_start as string,
+        trigger: "cancel",
+        assessedBy: req.user!.id,
+      });
+    }
+
+    await client.query(
+      `update appointments set status = $1 where id = $2 and tenant_id = $3`,
+      [parsed.data.status, apptId, tenantId],
+    );
+    await client.query(
+      `insert into appointment_status_history(id, tenant_id, appointment_id, status, changed_by)
+       values ($1,$2,$3,$4,$5)`,
+      [crypto.randomUUID(), tenantId, apptId, parsed.data.status, req.user!.id],
+    );
+    await client.query("commit");
+  } catch (error: any) {
+    await client.query("rollback");
+    logger.error("Failed to update appointment status", {
+      error: error.message,
+      appointmentId: apptId,
+      status: parsed.data.status,
+    });
+    return res.status(500).json({ error: "Failed to update appointment status" });
+  } finally {
+    client.release();
+  }
+
   await auditLog(tenantId, req.user!.id, "appointment_status_change", "appointment", apptId);
 
   // Trigger waitlist auto-fill when appointment is cancelled
@@ -719,5 +991,70 @@ appointmentsRouter.post("/:id/status", requireAuth, requireRoles(["admin", "fron
     });
   }
 
-  res.json({ ok: true });
+  res.json({ ok: true, lateFeeBillId });
 });
+
+appointmentsRouter.post(
+  "/late-fees/:billId/waive",
+  requireAuth,
+  requireRoles(["admin", "billing"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = waiveLateFeeSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const billId = String(req.params.billId);
+    const reason = parsed.data.reason || "Waived by authorized staff";
+
+    const billResult = await pool.query(
+      `select patient_responsibility_cents, paid_amount_cents, adjustment_amount_cents, notes
+       from bills
+       where id = $1 and tenant_id = $2`,
+      [billId, tenantId],
+    );
+    if (!billResult.rowCount) {
+      return res.status(404).json({ error: "Late fee bill not found" });
+    }
+
+    const bill = billResult.rows[0];
+    const notes = String(bill.notes || "");
+    if (!notes.includes(LATE_FEE_NOTE_PREFIX)) {
+      return res.status(400).json({ error: "Bill is not a late fee" });
+    }
+
+    const patientResponsibility = Number(bill.patient_responsibility_cents || 0);
+    const paidAmount = Number(bill.paid_amount_cents || 0);
+    const currentAdjustment = Number(bill.adjustment_amount_cents || 0);
+    const remainingBalance = Math.max(0, patientResponsibility - paidAmount - currentAdjustment);
+
+    if (remainingBalance <= 0) {
+      return res.json({ ok: true, alreadyWaived: true, billId });
+    }
+
+    const nextAdjustment = currentAdjustment + remainingBalance;
+    const nextBalance = Math.max(0, patientResponsibility - paidAmount - nextAdjustment);
+    const nextStatus = nextBalance === 0 ? (paidAmount > 0 ? "paid" : "written_off") : "partial";
+    const waiverAudit = `[LATE_FEE_WAIVED]|by=${req.user!.id}|at=${new Date().toISOString()}|reason=${reason}`;
+    const nextNotes = notes.includes("[LATE_FEE_WAIVED]") ? notes : `${notes}\n${waiverAudit}`;
+
+    await pool.query(
+      `update bills
+       set adjustment_amount_cents = $1,
+           balance_cents = $2,
+           status = $3,
+           notes = $4,
+           updated_at = now()
+       where id = $5 and tenant_id = $6`,
+      [nextAdjustment, nextBalance, nextStatus, nextNotes, billId, tenantId],
+    );
+
+    await auditLog(tenantId, req.user!.id, "late_fee_waive", "bill", billId);
+    return res.json({
+      ok: true,
+      billId,
+      waivedAmountCents: remainingBalance,
+    });
+  },
+);

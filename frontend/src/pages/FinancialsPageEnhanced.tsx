@@ -80,6 +80,7 @@ export function FinancialsPageEnhanced() {
           inProgressBillsCount: 8,
           outstandingAmountCents: 4250000, // $42,500
           paymentsThisMonthCents: 8750000, // $87,500
+          lateFeesThisMonthCents: 0,
         });
       }
 
@@ -481,6 +482,19 @@ export function FinancialsPageEnhanced() {
                 </div>
                 <div style={{ fontSize: '2rem', fontWeight: '800', color: '#059669' }}>
                   {formatCurrency(metrics.paymentsThisMonthCents || 0)}
+                </div>
+              </div>
+              <div className="metric-card" style={{
+                padding: '1.5rem',
+                borderRadius: '8px',
+                background: '#fff7ed',
+                border: '2px solid #fdba74',
+              }}>
+                <div style={{ fontSize: '0.875rem', color: '#9a3412', marginBottom: '0.5rem', fontWeight: '600' }}>
+                  Late Fees This Month
+                </div>
+                <div style={{ fontSize: '2rem', fontWeight: '800', color: '#ea580c' }}>
+                  {formatCurrency(metrics.lateFeesThisMonthCents || 0)}
                 </div>
               </div>
             </div>

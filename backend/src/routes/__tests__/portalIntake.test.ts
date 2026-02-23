@@ -162,7 +162,12 @@ describe("Patient portal intake routes", () => {
   });
 
   it("GET /intake/consents returns consents", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "consent-1" }] });
+    queryMock.mockImplementation((sql: string) => {
+      if (sql.includes("FROM portal_consent_forms") && sql.includes("ORDER BY is_required DESC")) {
+        return Promise.resolve({ rows: [{ id: "consent-1" }] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
 
     const res = await request(app).get("/intake/consents");
 
@@ -171,7 +176,12 @@ describe("Patient portal intake routes", () => {
   });
 
   it("GET /intake/consents/required returns required consents", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "consent-1" }] });
+    queryMock.mockImplementation((sql: string) => {
+      if (sql.includes("FROM portal_consent_forms cf") && sql.includes("is_required = true")) {
+        return Promise.resolve({ rows: [{ id: "consent-1" }] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
 
     const res = await request(app).get("/intake/consents/required");
 
@@ -212,7 +222,28 @@ describe("Patient portal intake routes", () => {
   });
 
   it("GET /intake/consents/signed returns signed consents", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "signed-1" }] });
+    queryMock.mockImplementation((sql: string) => {
+      if (sql.includes("FROM portal_consent_signatures")) {
+        return Promise.resolve({
+          rows: [
+            {
+              id: "signed-1",
+              consentTitle: "HIPAA",
+              consentType: "hipaa",
+              signerName: "Pat",
+              signerRelationship: "self",
+              version: "1.0",
+              signedAt: new Date().toISOString(),
+              isValid: true,
+            },
+          ],
+        });
+      }
+      if (sql.includes("information_schema.columns")) {
+        return Promise.resolve({ rows: [] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
 
     const res = await request(app).get("/intake/consents/signed");
 
@@ -272,11 +303,23 @@ describe("Patient portal intake routes", () => {
   });
 
   it("PUT /intake/checkin/:sessionId completes session", async () => {
-    queryMock
-      .mockResolvedValueOnce({
-        rows: [{ id: "session-1", status: "completed", completedAt: new Date().toISOString() }],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    queryMock.mockImplementation((sql: string) => {
+      if (sql.includes("FROM portal_checkin_sessions") && sql.includes("appointment_id as")) {
+        return Promise.resolve({ rows: [{ id: "session-1", appointmentId: "appt-1" }] });
+      }
+      if (sql.includes("FROM portal_consent_forms cf") && sql.includes("is_required = true")) {
+        return Promise.resolve({ rows: [] });
+      }
+      if (sql.includes("FROM portal_intake_form_assignments")) {
+        return Promise.resolve({ rows: [] });
+      }
+      if (sql.includes("UPDATE portal_checkin_sessions")) {
+        return Promise.resolve({
+          rows: [{ id: "session-1", status: "completed", completedAt: new Date().toISOString() }],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
 
     const res = await request(app)
       .put("/intake/checkin/session-1")

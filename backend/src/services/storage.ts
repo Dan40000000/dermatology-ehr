@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { env } from "../config/env";
+import config from "../config";
 import { scanBuffer } from "./virusScan";
 import { putObject } from "./s3";
 
@@ -11,6 +12,7 @@ export interface StoredFile {
 }
 
 let warnedLocalFallback = false;
+let warnedS3UploadFallback = false;
 
 async function ensureBuffer(file: Express.Multer.File): Promise<Buffer> {
   if (file.buffer && file.buffer.length) return file.buffer;
@@ -38,8 +40,21 @@ export async function saveFile(file: Express.Multer.File): Promise<StoredFile> {
     throw new Error("File failed virus scan");
   }
   if (env.storageProvider === "s3" && env.s3Bucket) {
-    const { key, signedUrl } = await putObject(buffer, file.mimetype || "application/octet-stream", file.originalname);
-    return { url: signedUrl, storage: "s3", objectKey: key };
+    try {
+      const { key, signedUrl } = await putObject(buffer, file.mimetype || "application/octet-stream", file.originalname);
+      return { url: signedUrl, storage: "s3", objectKey: key };
+    } catch (error: any) {
+      const allowLocalFallback = config.isDevelopment || config.isTest;
+      if (!allowLocalFallback) {
+        throw error;
+      }
+      if (!warnedS3UploadFallback) {
+        warnedS3UploadFallback = true;
+        // eslint-disable-next-line no-console
+        console.warn(`⚠️  S3 upload failed (${error?.message || "unknown error"}); falling back to local storage in non-production mode.`);
+      }
+      return saveFileLocal(file, buffer);
+    }
   }
   if (env.storageProvider === "s3" && !warnedLocalFallback) {
     warnedLocalFallback = true;

@@ -3,15 +3,31 @@ import { z } from 'zod';
 import { requireAuth, AuthedRequest } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { randomUUID } from 'crypto';
+import { DEFAULT_HANDOUT_TEMPLATES, InstructionType } from '../data/defaultHandoutTemplates';
 
 const router = Router();
 router.use(requireAuth);
+
+const INSTRUCTION_TYPES: InstructionType[] = [
+  'general',
+  'aftercare',
+  'lab_results',
+  'prescription_instructions',
+  'rash_care',
+  'cleansing',
+];
+
+const instructionTypeSchema = z.enum(INSTRUCTION_TYPES as [InstructionType, ...InstructionType[]]);
 
 const createHandoutSchema = z.object({
   title: z.string().min(1),
   category: z.string().min(1),
   condition: z.string().min(1),
   content: z.string().min(1),
+  instructionType: instructionTypeSchema.default('general'),
+  templateKey: z.string().trim().min(1).max(120).optional(),
+  printDisclaimer: z.string().max(2000).optional(),
+  isSystemTemplate: z.boolean().optional().default(false),
   isActive: z.boolean().default(true),
 });
 
@@ -20,14 +36,78 @@ const updateHandoutSchema = z.object({
   category: z.string().min(1).optional(),
   condition: z.string().min(1).optional(),
   content: z.string().min(1).optional(),
+  instructionType: instructionTypeSchema.optional(),
+  templateKey: z.string().trim().min(1).max(120).optional(),
+  printDisclaimer: z.string().max(2000).nullable().optional(),
+  isSystemTemplate: z.boolean().optional(),
   isActive: z.boolean().optional(),
+});
+
+function toTemplateKey(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+async function ensureDefaultHandoutTemplates(tenantId: string, createdBy?: string | null): Promise<void> {
+  for (const template of DEFAULT_HANDOUT_TEMPLATES) {
+    await pool.query(
+      `INSERT INTO patient_handouts (
+         id, tenant_id, title, category, condition, content, instruction_type,
+         template_key, print_disclaimer, is_system_template, is_active, created_by
+       )
+       SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, true, true, $10
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM patient_handouts
+         WHERE tenant_id = $2
+           AND template_key = $8
+       )`,
+      [
+        randomUUID(),
+        tenantId,
+        template.title,
+        template.category,
+        template.condition,
+        template.content,
+        template.instructionType,
+        template.templateKey,
+        template.printDisclaimer,
+        createdBy || null,
+      ],
+    );
+  }
+}
+
+router.get('/meta/instruction-types', (_req, res) => {
+  return res.json({
+    instructionTypes: INSTRUCTION_TYPES.map((value) => ({
+      value,
+      label:
+        value === 'prescription_instructions'
+          ? 'Prescription Instructions'
+          : value === 'lab_results'
+            ? 'Lab Results'
+            : value === 'rash_care'
+              ? 'Rash Care'
+              : value === 'aftercare'
+                ? 'Aftercare'
+                : value === 'cleansing'
+                  ? 'Cleansing'
+                  : 'General',
+    })),
+  });
 });
 
 // Get all handouts
 router.get('/', async (req: AuthedRequest, res, next) => {
   try {
     const tenantId = req.user!.tenantId;
-    const { category, condition, search } = req.query;
+    const { category, condition, search, instructionType, isActive } = req.query;
+
+    await ensureDefaultHandoutTemplates(tenantId, req.user?.id);
 
     let query = 'SELECT * FROM patient_handouts WHERE tenant_id = $1';
     const values: any[] = [tenantId];
@@ -51,7 +131,19 @@ router.get('/', async (req: AuthedRequest, res, next) => {
       values.push(`%${search}%`);
     }
 
-    query += ' ORDER BY category, title ASC';
+    if (instructionType && typeof instructionType === 'string') {
+      paramCount++;
+      query += ` AND instruction_type = $${paramCount}`;
+      values.push(instructionType);
+    }
+
+    if (typeof isActive === 'string') {
+      paramCount++;
+      query += ` AND is_active = $${paramCount}`;
+      values.push(isActive === 'true');
+    }
+
+    query += ' ORDER BY instruction_type ASC, category ASC, title ASC';
 
     const result = await pool.query(query, values);
     res.json(result.rows);
@@ -91,8 +183,9 @@ router.post('/', async (req: AuthedRequest, res, next) => {
     const id = randomUUID();
     const result = await pool.query(
       `INSERT INTO patient_handouts (
-        id, tenant_id, title, category, condition, content, is_active, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        id, tenant_id, title, category, condition, content, instruction_type,
+        template_key, print_disclaimer, is_system_template, is_active, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING *`,
       [
         id,
@@ -101,6 +194,11 @@ router.post('/', async (req: AuthedRequest, res, next) => {
         validated.category,
         validated.condition,
         validated.content,
+        validated.instructionType,
+        validated.templateKey || `${toTemplateKey(validated.title)}-${id.slice(0, 8)}`,
+        validated.printDisclaimer ||
+          'For educational use only. Follow your provider instructions and call with concerns.',
+        validated.isSystemTemplate ?? false,
         validated.isActive,
         userId,
       ]
@@ -148,6 +246,30 @@ router.patch('/:id', async (req: AuthedRequest, res, next) => {
       paramCount++;
       updates.push(`content = $${paramCount}`);
       values.push(validated.content);
+    }
+
+    if (validated.instructionType !== undefined) {
+      paramCount++;
+      updates.push(`instruction_type = $${paramCount}`);
+      values.push(validated.instructionType);
+    }
+
+    if (validated.templateKey !== undefined) {
+      paramCount++;
+      updates.push(`template_key = $${paramCount}`);
+      values.push(validated.templateKey);
+    }
+
+    if (validated.printDisclaimer !== undefined) {
+      paramCount++;
+      updates.push(`print_disclaimer = $${paramCount}`);
+      values.push(validated.printDisclaimer);
+    }
+
+    if (validated.isSystemTemplate !== undefined) {
+      paramCount++;
+      updates.push(`is_system_template = $${paramCount}`);
+      values.push(validated.isSystemTemplate);
     }
 
     if (validated.isActive !== undefined) {

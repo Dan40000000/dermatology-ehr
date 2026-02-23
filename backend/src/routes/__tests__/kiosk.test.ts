@@ -229,6 +229,40 @@ describe("Kiosk Routes", () => {
     });
   });
 
+  describe("GET /api/kiosk/consent-forms/active", () => {
+    it("should return active consent forms for kiosk tenant", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          {
+            id: "consent-1",
+            formName: "Treatment Consent",
+            formType: "treatment",
+            requiresSignature: true,
+            version: "1.0",
+          },
+        ],
+      });
+
+      const res = await request(app).get("/api/kiosk/consent-forms/active");
+
+      expect(res.status).toBe(200);
+      expect(res.body.forms).toHaveLength(1);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("FROM consent_forms"),
+        ["tenant-1"],
+      );
+    });
+
+    it("should return 500 when consent form query fails", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).get("/api/kiosk/consent-forms/active");
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to fetch consent forms");
+    });
+  });
+
   describe("POST /api/kiosk/checkin/start", () => {
     it("should start checkin session", async () => {
       queryMock

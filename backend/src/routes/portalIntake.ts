@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db/pool";
+import { getTableColumns } from "../db/schema";
 import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientPortalAuth";
 import crypto from "crypto";
 import { logger } from "../lib/logger";
@@ -23,6 +24,191 @@ function logPortalIntakeError(message: string, error: unknown): void {
   logger.error(message, {
     error: toSafeErrorMessage(error),
   });
+}
+
+type PortalConsentSeed = {
+  title: string;
+  consentType: "treatment" | "hipaa" | "financial" | "photography" | "telehealth" | "general";
+  content: string;
+  version?: string;
+  requiresSignature?: boolean;
+  requiresWitness?: boolean;
+  isRequired?: boolean;
+};
+
+const DEFAULT_PORTAL_CONSENT_FORMS: PortalConsentSeed[] = [
+  {
+    title: "Consent to Treat",
+    consentType: "treatment",
+    content:
+      "I consent to evaluation and treatment by this practice. I understand risks, benefits, and alternatives were explained and I may ask questions at any time.",
+    isRequired: true,
+  },
+  {
+    title: "HIPAA Notice of Privacy Practices Acknowledgment",
+    consentType: "hipaa",
+    content:
+      "I acknowledge I received or was offered the Notice of Privacy Practices and understand how my protected health information may be used and disclosed.",
+    isRequired: true,
+  },
+  {
+    title: "Financial Responsibility and Assignment of Benefits",
+    consentType: "financial",
+    content:
+      "I accept responsibility for copays, deductibles, non-covered services, and balances due. I authorize assignment of insurance benefits to this practice.",
+    isRequired: true,
+  },
+  {
+    title: "Communication Consent (SMS, Phone, Email)",
+    consentType: "general",
+    content:
+      "I authorize this practice to contact me regarding appointments and care using phone, SMS, and email. Message/data rates may apply and I may opt out as allowed by law.",
+    isRequired: true,
+  },
+  {
+    title: "Clinical Photography Consent",
+    consentType: "photography",
+    content:
+      "I consent to clinical photography for diagnosis, treatment, and care documentation. Any non-treatment use requires separate authorization.",
+    isRequired: false,
+  },
+  {
+    title: "Telehealth Consent",
+    consentType: "telehealth",
+    content:
+      "I consent to telehealth services when offered, including limits of remote care, privacy considerations, and emergency guidance.",
+    isRequired: false,
+  },
+  {
+    title: "Good Faith Estimate Acknowledgment (Self-Pay/Uninsured)",
+    consentType: "financial",
+    content:
+      "If I am uninsured or self-pay, I understand I may request and receive a Good Faith Estimate before scheduled services.",
+    isRequired: false,
+  },
+  {
+    title: "HIPAA Authorization for Non-Routine Disclosure",
+    consentType: "hipaa",
+    content:
+      "I authorize disclosure of protected health information only for the specific purpose, recipient, and time period I designate in this authorization.",
+    isRequired: false,
+  },
+];
+
+async function ensureDefaultPortalConsentForms(tenantId: string): Promise<void> {
+  for (const consent of DEFAULT_PORTAL_CONSENT_FORMS) {
+    await pool.query(
+      `INSERT INTO portal_consent_forms (
+         tenant_id,
+         title,
+         consent_type,
+         content,
+         version,
+         requires_signature,
+         requires_witness,
+         is_required,
+         is_active
+       )
+       SELECT $1, $2, $3, $4, $5, $6, $7, $8, true
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM portal_consent_forms
+         WHERE tenant_id = $1
+           AND LOWER(title) = LOWER($2)
+       )`,
+      [
+        tenantId,
+        consent.title,
+        consent.consentType,
+        consent.content,
+        consent.version || "1.0",
+        consent.requiresSignature ?? true,
+        consent.requiresWitness ?? false,
+        consent.isRequired ?? false,
+      ],
+    );
+  }
+}
+
+type SignedConsentView = {
+  id: string;
+  consentTitle: string;
+  consentType: string;
+  signerName: string | null;
+  signerRelationship: string | null;
+  version: string | null;
+  signedAt: string;
+  isValid: boolean;
+  source: "portal" | "kiosk";
+};
+
+async function fetchKioskSignedConsents(
+  tenantId: string,
+  patientId: string,
+): Promise<SignedConsentView[]> {
+  try {
+    const patientConsentColumns = await getTableColumns("patient_consents");
+    if (patientConsentColumns.size === 0) {
+      return [];
+    }
+
+    if (patientConsentColumns.has("consent_form_id")) {
+      const consentFormColumns = await getTableColumns("consent_forms");
+      if (!consentFormColumns.has("form_name")) {
+        return [];
+      }
+
+      const legacyResult = await pool.query(
+        `SELECT
+           pc.id,
+           cf.form_name as "consentTitle",
+           COALESCE(cf.form_type, 'general') as "consentType",
+           'Patient (kiosk)'::text as "signerName",
+           'self'::text as "signerRelationship",
+           COALESCE(pc.form_version, '1.0') as "version",
+           pc.signed_at as "signedAt",
+           true as "isValid"
+         FROM patient_consents pc
+         INNER JOIN consent_forms cf ON pc.consent_form_id = cf.id
+         WHERE pc.patient_id = $1
+           AND pc.tenant_id = $2
+         ORDER BY pc.signed_at DESC`,
+        [patientId, tenantId],
+      );
+      return legacyResult.rows.map((row) => ({ ...row, source: "kiosk" as const }));
+    }
+
+    if (patientConsentColumns.has("template_id")) {
+      const templateColumns = await getTableColumns("consent_templates");
+      if (!templateColumns.has("name")) {
+        return [];
+      }
+
+      const modernResult = await pool.query(
+        `SELECT
+           pc.id,
+           ct.name as "consentTitle",
+           COALESCE(ct.form_type, 'general') as "consentType",
+           COALESCE(pc.signer_name, 'Patient') as "signerName",
+           COALESCE(pc.signer_relationship, 'self') as "signerRelationship",
+           COALESCE(pc.form_version, ct.version, '1.0') as "version",
+           pc.signed_at as "signedAt",
+           (pc.status = 'signed') as "isValid"
+         FROM patient_consents pc
+         INNER JOIN consent_templates ct ON pc.template_id = ct.id
+         WHERE pc.patient_id = $1
+           AND pc.tenant_id = $2
+           AND pc.signed_at IS NOT NULL
+         ORDER BY pc.signed_at DESC`,
+        [patientId, tenantId],
+      );
+      return modernResult.rows.map((row) => ({ ...row, source: "kiosk" as const }));
+    }
+  } catch (error) {
+    logPortalIntakeError("Fetch kiosk signed consents error", error);
+  }
+
+  return [];
 }
 
 // ============================================================================
@@ -333,6 +519,7 @@ portalIntakeRouter.get(
   async (req: PatientPortalRequest, res) => {
     try {
       const { tenantId } = req.patient!;
+      await ensureDefaultPortalConsentForms(tenantId);
 
       const result = await pool.query(
         `SELECT
@@ -368,6 +555,7 @@ portalIntakeRouter.get(
   async (req: PatientPortalRequest, res) => {
     try {
       const { patientId, tenantId } = req.patient!;
+      await ensureDefaultPortalConsentForms(tenantId);
 
       const result = await pool.query(
         `SELECT
@@ -501,8 +689,9 @@ portalIntakeRouter.get(
   async (req: PatientPortalRequest, res) => {
     try {
       const { patientId, tenantId } = req.patient!;
+      await ensureDefaultPortalConsentForms(tenantId);
 
-      const result = await pool.query(
+      const portalResult = await pool.query(
         `SELECT
           cs.id,
           cf.title as "consentTitle",
@@ -519,7 +708,15 @@ portalIntakeRouter.get(
         [patientId, tenantId]
       );
 
-      return res.json({ signedConsents: result.rows });
+      const kioskConsents = await fetchKioskSignedConsents(tenantId, patientId);
+      const signedConsents: SignedConsentView[] = [
+        ...portalResult.rows.map((row) => ({ ...row, source: "portal" as const })),
+        ...kioskConsents,
+      ]
+        .filter((consent) => !!consent.signedAt)
+        .sort((a, b) => new Date(b.signedAt).getTime() - new Date(a.signedAt).getTime());
+
+      return res.json({ signedConsents });
     } catch (error) {
       logPortalIntakeError("Get signed consents error", error);
       return res.status(500).json({ error: "Failed to get signed consents" });
@@ -684,6 +881,82 @@ portalIntakeRouter.put(
       const { sessionId } = req.params;
       const data = updateCheckinSchema.parse(req.body);
 
+      const hasAnyUpdate =
+        data.complete ||
+        data.demographicsConfirmed !== undefined ||
+        data.insuranceVerified !== undefined ||
+        data.formsCompleted !== undefined ||
+        data.copayCollected !== undefined ||
+        !!data.insuranceCardFrontUrl ||
+        !!data.insuranceCardBackUrl;
+
+      if (!hasAnyUpdate) {
+        return res.status(400).json({ error: "No updates provided" });
+      }
+
+      const sessionResult = await pool.query(
+        `SELECT id, appointment_id as "appointmentId"
+         FROM portal_checkin_sessions
+         WHERE id = $1 AND patient_id = $2 AND tenant_id = $3`,
+        [sessionId, patientId, tenantId],
+      );
+
+      if (sessionResult.rows.length === 0) {
+        return res.status(404).json({ error: "Check-in session not found" });
+      }
+
+      const session = sessionResult.rows[0] as { appointmentId?: string | null };
+
+      if (data.complete) {
+        await ensureDefaultPortalConsentForms(tenantId);
+
+        const missingRequiredConsents = await pool.query(
+          `SELECT cf.id, cf.title
+           FROM portal_consent_forms cf
+           WHERE cf.tenant_id = $1
+             AND cf.is_active = true
+             AND cf.is_required = true
+             AND NOT EXISTS (
+               SELECT 1
+               FROM portal_consent_signatures cs
+               WHERE cs.consent_form_id = cf.id
+                 AND cs.patient_id = $2
+                 AND cs.is_valid = true
+                 AND cs.consent_version = cf.version
+             )
+           ORDER BY cf.title`,
+          [tenantId, patientId],
+        );
+
+        if (missingRequiredConsents.rows.length > 0) {
+          return res.status(400).json({
+            error: "Required consents must be completed before check-in can be finalized",
+            missingConsents: missingRequiredConsents.rows,
+          });
+        }
+
+        if (session.appointmentId) {
+          const pendingForms = await pool.query(
+            `SELECT a.id, t.name
+             FROM portal_intake_form_assignments a
+             INNER JOIN portal_intake_form_templates t ON a.form_template_id = t.id
+             WHERE a.tenant_id = $1
+               AND a.patient_id = $2
+               AND a.appointment_id = $3
+               AND a.status IN ('pending', 'in_progress')
+             ORDER BY t.name`,
+            [tenantId, patientId, session.appointmentId],
+          );
+
+          if (pendingForms.rows.length > 0) {
+            return res.status(400).json({
+              error: "All assigned intake forms must be completed before check-in can be finalized",
+              pendingForms: pendingForms.rows,
+            });
+          }
+        }
+      }
+
       // Build dynamic update query
       const updates: string[] = [];
       const values: any[] = [];
@@ -721,10 +994,6 @@ portalIntakeRouter.put(
         updates.push(`staff_notified_at = CURRENT_TIMESTAMP`);
       }
 
-      if (updates.length === 0) {
-        return res.status(400).json({ error: "No updates provided" });
-      }
-
       values.push(sessionId, patientId, tenantId);
 
       const result = await pool.query(
@@ -734,10 +1003,6 @@ portalIntakeRouter.put(
          RETURNING id, status, completed_at as "completedAt"`,
         values
       );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ error: "Check-in session not found" });
-      }
 
       // If completed, update appointment status
       if (data.complete) {

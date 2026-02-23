@@ -21,6 +21,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchAppointments: vi.fn(),
   fetchDocuments: vi.fn(),
   fetchPhotos: vi.fn(),
+  fetchVitals: vi.fn(),
   fetchProviders: vi.fn(),
   fetchTasks: vi.fn(),
   fetchOrders: vi.fn(),
@@ -194,6 +195,7 @@ describe('PatientDetailPage', () => {
     apiMocks.fetchAppointments.mockResolvedValue({ appointments: fixtures.appointments });
     apiMocks.fetchDocuments.mockResolvedValue({ documents: fixtures.documents });
     apiMocks.fetchPhotos.mockResolvedValue({ photos: fixtures.photos });
+    apiMocks.fetchVitals.mockResolvedValue({ vitals: [] });
     apiMocks.fetchProviders.mockResolvedValue({ providers: [{ id: 'provider-1', name: 'Dr Demo' }] });
     apiMocks.fetchTasks.mockResolvedValue({ tasks: [] });
     apiMocks.fetchOrders.mockResolvedValue({ orders: [] });

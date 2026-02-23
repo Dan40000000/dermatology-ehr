@@ -58,12 +58,19 @@ export interface WaitingRoomPatient {
 }
 
 export class FrontDeskService {
+  private toLocalIsoDate(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
   /**
    * Get today's schedule with all relevant details
    */
   async getTodaySchedule(tenantId: string, providerId?: string, statusFilter?: string): Promise<AppointmentWithDetails[]> {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = this.toLocalIsoDate(new Date());
 
       let query = `
         SELECT
@@ -89,25 +96,40 @@ export class FrontDeskService {
           a.created_at,
           -- Insurance info
           CASE
-            WHEN p.insurance_details IS NOT NULL
-              AND (p.insurance_details->>'primary' IS NOT NULL)
-              AND (p.insurance_details->'primary'->>'eligibilityStatus' = 'Active')
+            WHEN (
+              to_jsonb(p)->'insurance_details' IS NOT NULL
+              AND (to_jsonb(p)->'insurance_details'->>'primary' IS NOT NULL)
+              AND (to_jsonb(p)->'insurance_details'->'primary'->>'eligibilityStatus' = 'Active')
+            )
+              OR COALESCE(
+                NULLIF(to_jsonb(p)->>'insurance_plan_name', ''),
+                NULLIF(to_jsonb(p)->>'insurance', '')
+              ) IS NOT NULL
             THEN true
             ELSE false
           END as insurance_verified,
-          p.insurance_details->'primary'->>'planName' as insurance_plan_name,
+          COALESCE(
+            NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'planName', ''),
+            NULLIF(to_jsonb(p)->>'insurance_plan_name', ''),
+            NULLIF(to_jsonb(p)->>'insurance', '')
+          ) as insurance_plan_name,
           CASE
-            WHEN p.insurance_details IS NOT NULL
-              AND (p.insurance_details->'primary'->>'copayAmount' IS NOT NULL)
-            THEN (p.insurance_details->'primary'->>'copayAmount')::numeric
+            WHEN NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount', '') IS NOT NULL
+            THEN (to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount')::numeric
             ELSE 0
           END as copay_amount,
           -- Outstanding balance (placeholder - would come from billing system)
           COALESCE(
-            (SELECT SUM(amount_cents) / 100.0
-             FROM bills
-             WHERE patient_id = p.id
-               AND status IN ('pending', 'overdue')
+            (SELECT SUM(
+                COALESCE(
+                  NULLIF(to_jsonb(b)->>'balance_cents', '')::numeric,
+                  NULLIF(to_jsonb(b)->>'amount_cents', '')::numeric,
+                  0
+                )
+              ) / 100.0
+             FROM bills b
+             WHERE b.patient_id = p.id
+               AND b.status NOT IN ('paid', 'void')
             ), 0
           ) as outstanding_balance
         FROM appointments a
@@ -189,7 +211,7 @@ export class FrontDeskService {
    */
   async getDailyStats(tenantId: string): Promise<DailyStats> {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = this.toLocalIsoDate(new Date());
 
       // Get appointment counts
       const appointmentStats = await pool.query(
@@ -303,8 +325,11 @@ export class FrontDeskService {
    */
   async checkInPatient(tenantId: string, appointmentId: string): Promise<{ encounterId: string }> {
     const client = await pool.connect();
+    let inTransaction = false;
+    let appointment: { patient_id: string; provider_id: string } | null = null;
     try {
       await client.query('BEGIN');
+      inTransaction = true;
 
       // Get appointment details
       const appointmentResult = await client.query(
@@ -317,7 +342,7 @@ export class FrontDeskService {
         throw new Error('Appointment not found');
       }
 
-      const appointment = appointmentResult.rows[0];
+      appointment = appointmentResult.rows[0];
 
       // Update appointment status
       await client.query(
@@ -327,24 +352,46 @@ export class FrontDeskService {
         [tenantId, appointmentId]
       );
 
-      // Release connection for encounterService to use
       await client.query('COMMIT');
+      inTransaction = false;
+    } catch (error) {
+      if (inTransaction) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          logger.error('Failed to rollback check-in transaction:', rollbackError);
+        }
+      }
+      logger.error('Error checking in patient:', error);
+      throw error;
+    } finally {
       client.release();
+    }
 
-      // Create encounter (this will check for existing encounter)
+    try {
       const encounter = await encounterService.createEncounterFromAppointment(
         tenantId,
         appointmentId,
-        appointment.patient_id,
-        appointment.provider_id
+        appointment!.patient_id,
+        appointment!.provider_id
       );
 
       logger.info(`Checked in patient and created encounter ${encounter.id} for appointment ${appointmentId}`);
       return { encounterId: encounter.id };
     } catch (error) {
-      await client.query('ROLLBACK');
-      logger.error('Error checking in patient:', error);
-      throw error;
+      logger.error('Encounter creation failed after check-in; continuing with checked-in status:', error);
+
+      // Best-effort fallback for race conditions where encounter may already exist.
+      const existingEncounter = await pool.query(
+        `SELECT id FROM encounters WHERE tenant_id = $1 AND appointment_id = $2 ORDER BY created_at DESC LIMIT 1`,
+        [tenantId, appointmentId]
+      );
+
+      if (existingEncounter.rowCount) {
+        return { encounterId: existingEncounter.rows[0].id };
+      }
+
+      return { encounterId: '' };
     }
   }
 
@@ -442,25 +489,40 @@ export class FrontDeskService {
           a.created_at,
           -- Insurance info
           CASE
-            WHEN p.insurance_details IS NOT NULL
-              AND (p.insurance_details->>'primary' IS NOT NULL)
-              AND (p.insurance_details->'primary'->>'eligibilityStatus' = 'Active')
+            WHEN (
+              to_jsonb(p)->'insurance_details' IS NOT NULL
+              AND (to_jsonb(p)->'insurance_details'->>'primary' IS NOT NULL)
+              AND (to_jsonb(p)->'insurance_details'->'primary'->>'eligibilityStatus' = 'Active')
+            )
+              OR COALESCE(
+                NULLIF(to_jsonb(p)->>'insurance_plan_name', ''),
+                NULLIF(to_jsonb(p)->>'insurance', '')
+              ) IS NOT NULL
             THEN true
             ELSE false
           END as insurance_verified,
-          p.insurance_details->'primary'->>'planName' as insurance_plan_name,
+          COALESCE(
+            NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'planName', ''),
+            NULLIF(to_jsonb(p)->>'insurance_plan_name', ''),
+            NULLIF(to_jsonb(p)->>'insurance', '')
+          ) as insurance_plan_name,
           CASE
-            WHEN p.insurance_details IS NOT NULL
-              AND (p.insurance_details->'primary'->>'copayAmount' IS NOT NULL)
-            THEN (p.insurance_details->'primary'->>'copayAmount')::numeric
+            WHEN NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount', '') IS NOT NULL
+            THEN (to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount')::numeric
             ELSE 0
           END as copay_amount,
           -- Outstanding balance
           COALESCE(
-            (SELECT SUM(amount_cents) / 100.0
-             FROM bills
-             WHERE patient_id = p.id
-               AND status IN ('pending', 'overdue')
+            (SELECT SUM(
+                COALESCE(
+                  NULLIF(to_jsonb(b)->>'balance_cents', '')::numeric,
+                  NULLIF(to_jsonb(b)->>'amount_cents', '')::numeric,
+                  0
+                )
+              ) / 100.0
+             FROM bills b
+             WHERE b.patient_id = p.id
+               AND b.status NOT IN ('paid', 'void')
             ), 0
           ) as outstanding_balance
         FROM appointments a

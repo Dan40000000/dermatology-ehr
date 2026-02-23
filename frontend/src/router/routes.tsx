@@ -47,7 +47,7 @@ const AnalyticsDashboard = lazy(() => import('../pages/admin/AnalyticsDashboard'
 const PrescriptionsPage = lazy(() => import('../pages/PrescriptionsPage').then(m => ({ default: m.PrescriptionsPage })));
 const LabsPage = lazy(() => import('../pages/LabsPage').then(m => ({ default: m.LabsPage })));
 const RadiologyPage = lazy(() => import('../pages/RadiologyPage').then(m => ({ default: m.RadiologyPage })));
-const MailPage = lazy(() => import('../pages/MailPage').then(m => ({ default: m.MailPage })));
+const MessagingPage = lazy(() => import('../pages/MessagingPage').then(m => ({ default: m.MessagingPage })));
 const TasksPage = lazy(() => import('../pages/TasksPage').then(m => ({ default: m.TasksPage })));
 const RemindersPage = lazy(() => import('../pages/RemindersPage').then(m => ({ default: m.RemindersPage })));
 const TextMessagesPage = lazy(() =>
@@ -78,7 +78,6 @@ const PriorAuthPage = lazy(() => import('../pages/PriorAuthPage').then(m => ({ d
 const WaitlistPage = lazy(() => import('../pages/WaitlistPage').then(m => ({ default: m.WaitlistPage })));
 const HandoutsPage = lazy(() => import('../pages/HandoutsPage').then(m => ({ default: m.HandoutsPage })));
 const FaxPage = lazy(() => import('../pages/FaxPage').then(m => ({ default: m.FaxPage })));
-const DirectMessagingPage = lazy(() => import('../pages/DirectMessagingPage').then(m => ({ default: m.DirectMessagingPage })));
 const NotesPage = lazy(() => import('../pages/NotesPage').then(m => ({ default: m.NotesPage })));
 const ClearinghousePage = lazy(() => import('../pages/ClearinghousePage').then(m => ({ default: m.ClearinghousePage })));
 const AdminPage = lazy(() => import('../pages/AdminPage').then(m => ({ default: m.AdminPage })));
@@ -180,8 +179,8 @@ export const routes: RouteObject[] = [
 
       // Communication
       { path: 'text-messages', element: lazyWithSuspense(TextMessagesPage) },
-      { path: 'mail', element: lazyWithSuspense(MailPage) },
-      { path: 'direct', element: lazyWithSuspense(DirectMessagingPage) },
+      { path: 'mail', element: lazyWithSuspense(MessagingPage) },
+      { path: 'direct', element: lazyWithSuspense(MessagingPage) },
       { path: 'fax', element: lazyWithSuspense(FaxPage) },
       { path: 'tasks', element: lazyWithSuspense(TasksPage) },
       { path: 'reminders', element: lazyWithSuspense(RemindersPage) },

@@ -148,20 +148,13 @@ const navItems: NavItem[] = [
     path: '/mail',
     module: 'mail',
     dropdown: [
-      { label: 'Inbox', path: '/mail?tab=inbox' },
-      { label: 'Sent', path: '/mail?tab=sent' },
-      { label: 'Drafts', path: '/mail?tab=drafts' },
-      { label: 'Compose', path: '/mail?action=compose' },
-    ]
-  },
-  {
-    label: 'Direct',
-    path: '/direct',
-    module: 'direct',
-    dropdown: [
-      { label: 'Inbox', path: '/direct' },
-      { label: 'Sent', path: '/direct?tab=sent' },
-      { label: 'Compose', path: '/direct?action=compose' },
+      { label: 'Inbox', path: '/mail?tab=inbox', section: 'Mail' },
+      { label: 'Sent', path: '/mail?tab=sent', section: 'Mail' },
+      { label: 'Drafts', path: '/mail?tab=drafts', section: 'Mail' },
+      { label: 'Compose', path: '/mail?action=compose', section: 'Mail' },
+      { label: 'Inbox', path: '/direct', section: 'Direct Secure Messaging' },
+      { label: 'Sent', path: '/direct?tab=sent', section: 'Direct Secure Messaging' },
+      { label: 'Compose', path: '/direct?action=compose', section: 'Direct Secure Messaging' },
     ]
   },
   {

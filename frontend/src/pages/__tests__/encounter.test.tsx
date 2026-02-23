@@ -230,6 +230,22 @@ vi.mock('../../components/billing', () => ({
       </div>
     );
   },
+  PerformedWorkModal: ({
+    isOpen,
+    onClose,
+  }: {
+    isOpen: boolean;
+    onClose: () => void;
+  }) => {
+    if (!isOpen) return null;
+    return (
+      <div data-testid="performed-work-modal">
+        <button type="button" onClick={onClose}>
+          Close Performed Work
+        </button>
+      </div>
+    );
+  },
 }));
 
 vi.mock('../../components/ScribePanel', () => ({

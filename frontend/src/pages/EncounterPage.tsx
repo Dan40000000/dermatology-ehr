@@ -5,7 +5,7 @@ import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
 import { PatientBanner, TemplateSelector } from '../components/clinical';
 import { PatientBodyDiagram, type BodyMarker } from '../components/body-diagram';
-import { DiagnosisSearchModal, ProcedureSearchModal } from '../components/billing';
+import { DiagnosisSearchModal, ProcedureSearchModal, PerformedWorkModal } from '../components/billing';
 import { InventoryUsageList, InventoryUsageModal } from '../components/inventory';
 import { EncounterPrescriptions } from '../components/prescriptions';
 import { ScribePanel } from '../components/ScribePanel';
@@ -35,6 +35,7 @@ import {
 } from '../api';
 import type { Patient, Encounter, Vitals, Order, EncounterDiagnosis, Charge, ICD10Code, CPTCode } from '../types';
 import type { NoteTemplate, AINoteDraft, AmbientGeneratedNote } from '../api';
+import type { PerformedWorkSubmission } from '../components/billing/PerformedWorkModal';
 import { useAutosave } from '../hooks/useAutosave';
 import { ScribeSummaryCard } from '../components/ScribeSummaryCard';
 import { clearActiveEncounter, setActiveEncounter } from '../utils/activeEncounter';
@@ -114,6 +115,7 @@ export function EncounterPage() {
   const [showSignModal, setShowSignModal] = useState(false);
   const [showDiagnosisModal, setShowDiagnosisModal] = useState(false);
   const [showProcedureModal, setShowProcedureModal] = useState(false);
+  const [showPerformedWorkModal, setShowPerformedWorkModal] = useState(false);
   const [showInventoryUsageModal, setShowInventoryUsageModal] = useState(false);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [showAiDraftModal, setShowAiDraftModal] = useState(false);
@@ -569,6 +571,45 @@ export function EncounterPage() {
     }
   };
 
+  const handleRecordPerformedWork = async (submission: PerformedWorkSubmission) => {
+    if (!session || !encounterId || isNew) return;
+
+    const linkedDiagnosisIds = submission.billingRoute === 'insurance' ? submission.linkedDiagnosisIds : [];
+    const icdCodes = linkedDiagnosisIds
+      .map((diagnosisId) => diagnoses.find((dx) => dx.id === diagnosisId)?.icd10Code)
+      .filter((code): code is string => Boolean(code));
+
+    if (submission.billingRoute === 'insurance' && icdCodes.length === 0) {
+      showError('Select at least one diagnosis for insurance-routed procedures.');
+      return;
+    }
+
+    try {
+      for (const lineItem of submission.lineItems) {
+        await createCharge(session.tenantId, session.accessToken, {
+          encounterId,
+          cptCode: lineItem.cptCode,
+          description: lineItem.description,
+          quantity: lineItem.quantity,
+          feeCents: lineItem.feeCents,
+          amountCents: lineItem.feeCents * lineItem.quantity,
+          linkedDiagnosisIds,
+          icdCodes,
+          status: submission.billingRoute === 'insurance' ? 'pending' : 'self_pay',
+        });
+      }
+
+      const lineItemCount = submission.lineItems.length;
+      showSuccess(
+        `${submission.templateName} recorded (${lineItemCount} ${lineItemCount === 1 ? 'line' : 'lines'})`,
+      );
+      setShowPerformedWorkModal(false);
+      loadData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to record performed work');
+    }
+  };
+
   // Delete charge
   const handleDeleteCharge = async (chargeId: string) => {
     if (!session) return;
@@ -804,6 +845,19 @@ export function EncounterPage() {
     : '';
   const appointmentTypeName = encounterStartState.appointmentTypeName || cachedAppointmentTypeName;
   const isLaserVisit = /laser/i.test(appointmentTypeName);
+  const insuranceCharges = charges.filter((charge) => charge.status !== 'self_pay');
+  const selfPayCharges = charges.filter((charge) => charge.status === 'self_pay');
+  const insuranceChargesTotalCents = insuranceCharges.reduce(
+    (sum, charge) => sum + ((charge.feeCents || 0) * (charge.quantity || 1)),
+    0,
+  );
+  const selfPayChargesTotalCents = selfPayCharges.reduce(
+    (sum, charge) => sum + ((charge.feeCents || 0) * (charge.quantity || 1)),
+    0,
+  );
+  const hasInsuranceChargesMissingDiagnosis = insuranceCharges.some(
+    (charge) => !charge.linkedDiagnosisIds || charge.linkedDiagnosisIds.length === 0,
+  );
 
   return (
     <div className="encounter-page">
@@ -1640,7 +1694,7 @@ export function EncounterPage() {
               </div>
             )}
 
-            {charges.some(c => !c.linkedDiagnosisIds || c.linkedDiagnosisIds.length === 0) && (
+            {hasInsuranceChargesMissingDiagnosis && (
               <div style={{
                 background: '#fef3c7',
                 borderLeft: '4px solid #f59e0b',
@@ -1653,7 +1707,7 @@ export function EncounterPage() {
               }}>
                 <span style={{ fontSize: '1.25rem' }}>⚠</span>
                 <span style={{ color: '#92400e' }}>
-                  <strong>Warning:</strong> Some procedures are not linked to diagnoses. CMS requires all procedures to be linked to at least one diagnosis.
+                  <strong>Warning:</strong> Some insurance-routed procedures are not linked to diagnoses. Add at least one diagnosis before claim submission.
                 </span>
               </div>
             )}
@@ -1774,6 +1828,24 @@ export function EncounterPage() {
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
                     type="button"
+                    onClick={() => setShowPerformedWorkModal(true)}
+                    disabled={isNew || isLocked}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      background: '#059669',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '4px',
+                      fontWeight: 600,
+                      cursor: isNew || isLocked ? 'not-allowed' : 'pointer',
+                      opacity: isNew || isLocked ? 0.6 : 1,
+                      fontSize: '0.875rem'
+                    }}
+                  >
+                    + Performed Work
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setShowProcedureModal(true)}
                     disabled={isNew || isLocked}
                     style={{
@@ -1811,6 +1883,14 @@ export function EncounterPage() {
                 </div>
               </div>
 
+              <div style={{
+                marginBottom: '0.75rem',
+                fontSize: '0.75rem',
+                color: '#475569'
+              }}>
+                Use <strong>Performed Work</strong> for procedure-first visits (HydraFacial, laser hair removal, biopsies, cryotherapy). Insurance-routed items flow to claims when the encounter is signed; self-pay items stay patient-billable.
+              </div>
+
               {charges.length === 0 ? (
                 <div style={{
                   background: '#f9fafb',
@@ -1820,7 +1900,7 @@ export function EncounterPage() {
                   textAlign: 'center',
                   color: '#6b7280'
                 }}>
-                  No procedures added yet. Click "Add Procedure" to start.
+                  No procedures added yet. Click "Performed Work" for quick procedure capture or "Add Procedure" for manual CPT search.
                 </div>
               ) : (
                 <table className="ema-table">
@@ -1831,6 +1911,7 @@ export function EncounterPage() {
                       <th style={{ width: '80px' }}>Qty</th>
                       <th style={{ width: '100px' }}>Fee</th>
                       <th style={{ width: '100px' }}>Total</th>
+                      <th style={{ width: '120px' }}>Billing</th>
                       <th style={{ width: '200px' }}>Linked DX</th>
                       <th style={{ width: '100px' }}>Actions</th>
                     </tr>
@@ -1848,7 +1929,24 @@ export function EncounterPage() {
                           ${(((charge.feeCents || 0) * (charge.quantity || 1)) / 100).toFixed(2)}
                         </td>
                         <td>
-                          {charge.linkedDiagnosisIds && charge.linkedDiagnosisIds.length > 0 ? (
+                          <span
+                            style={{
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '999px',
+                              fontSize: '0.7rem',
+                              fontWeight: 700,
+                              background: charge.status === 'self_pay' ? '#ede9fe' : '#dbeafe',
+                              color: charge.status === 'self_pay' ? '#5b21b6' : '#1e40af',
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            {charge.status === 'self_pay' ? 'Self-Pay' : 'Insurance'}
+                          </span>
+                        </td>
+                        <td>
+                          {charge.status === 'self_pay' ? (
+                            <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Not required</span>
+                          ) : charge.linkedDiagnosisIds && charge.linkedDiagnosisIds.length > 0 ? (
                             <div style={{ fontSize: '0.75rem' }}>
                               {charge.linkedDiagnosisIds.map(dxId => {
                                 const dx = diagnoses.find(d => d.id === dxId);
@@ -1914,7 +2012,7 @@ export function EncounterPage() {
                 }}>
                   Charge Summary
                 </h4>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem' }}>
                   <div>
                     <div style={{ fontSize: '0.75rem', color: '#047857', marginBottom: '0.25rem' }}>
                       Total Procedures
@@ -1929,6 +2027,22 @@ export function EncounterPage() {
                     </div>
                     <div style={{ fontSize: '1.5rem', fontWeight: 600, color: '#065f46' }}>
                       ${(charges.reduce((sum, c) => sum + ((c.feeCents || 0) * (c.quantity || 1)), 0) / 100).toFixed(2)}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: '#047857', marginBottom: '0.25rem' }}>
+                      Insurance Total
+                    </div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 600, color: '#0c4a6e' }}>
+                      ${(insuranceChargesTotalCents / 100).toFixed(2)}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: '#047857', marginBottom: '0.25rem' }}>
+                      Self-Pay Total
+                    </div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 600, color: '#6d28d9' }}>
+                      ${(selfPayChargesTotalCents / 100).toFixed(2)}
                     </div>
                   </div>
                 </div>
@@ -2063,6 +2177,13 @@ export function EncounterPage() {
         onClose={() => setShowProcedureModal(false)}
         onSelect={handleAddProcedure}
         diagnoses={diagnoses}
+      />
+
+      <PerformedWorkModal
+        isOpen={showPerformedWorkModal}
+        onClose={() => setShowPerformedWorkModal(false)}
+        diagnoses={diagnoses}
+        onRecord={handleRecordPerformedWork}
       />
 
       {!isNew && patientId && (

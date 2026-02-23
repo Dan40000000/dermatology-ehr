@@ -14,7 +14,7 @@ const chargeSchema = z.object({
   quantity: z.number().int().min(1).max(100).optional(),
   feeCents: z.number().int().min(0).max(500000).optional(),
   amountCents: z.number().int().min(0).max(500000),
-  status: z.enum(["pending", "submitted", "paid", "denied"]).optional(),
+  status: z.enum(["draft", "pending", "ready", "submitted", "claimed", "self_pay", "paid", "denied"]).optional(),
 });
 
 const updateChargeSchema = z.object({
@@ -23,7 +23,7 @@ const updateChargeSchema = z.object({
   linkedDiagnosisIds: z.array(z.string()).optional(),
   quantity: z.number().int().min(1).max(100).optional(),
   feeCents: z.number().int().min(0).max(500000).optional(),
-  status: z.enum(["pending", "submitted", "paid", "denied"]).optional(),
+  status: z.enum(["draft", "pending", "ready", "submitted", "claimed", "self_pay", "paid", "denied"]).optional(),
 });
 
 export const chargesRouter = Router();
@@ -57,7 +57,7 @@ chargesRouter.get("/encounter/:encounterId", requireAuth, async (req: AuthedRequ
   res.json({ charges: result.rows });
 });
 
-chargesRouter.post("/", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
+chargesRouter.post("/", requireAuth, requireRoles(["admin", "billing", "provider", "ma"]), async (req: AuthedRequest, res) => {
   const parsed = chargeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
   const id = crypto.randomUUID();
@@ -84,7 +84,7 @@ chargesRouter.post("/", requireAuth, requireRoles(["admin", "billing"]), async (
 });
 
 // Update charge
-chargesRouter.put("/:id", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
+chargesRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "provider", "ma"]), async (req: AuthedRequest, res) => {
   const parsed = updateChargeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
@@ -135,7 +135,7 @@ chargesRouter.put("/:id", requireAuth, requireRoles(["admin", "billing"]), async
 });
 
 // Delete charge
-chargesRouter.delete("/:id", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
+chargesRouter.delete("/:id", requireAuth, requireRoles(["admin", "billing", "provider", "ma"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
 

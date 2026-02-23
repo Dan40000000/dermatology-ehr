@@ -922,7 +922,7 @@ export function OfficeFlowPage() {
 
       <div className="flow-layout">
         {/* Room Map */}
-        <Panel title="Room Status">
+        <Panel title="Room Status" className="room-status-panel">
           <div className="room-grid">
             {rooms.map((room) => (
               <div
@@ -1127,7 +1127,7 @@ export function OfficeFlowPage() {
 
           {/* Completed */}
           <div className="flow-column">
-            <div className="column-header checkout">
+            <div className="column-header completed">
               <span className="column-title">Completed</span>
               <span className="column-count">{completedPatients.length}</span>
             </div>

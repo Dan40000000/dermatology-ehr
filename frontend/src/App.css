@@ -7329,18 +7329,26 @@ pre {
 }
 
 .flow-layout {
-  display: grid;
-  grid-template-columns: 300px 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
 }
 
+.room-status-panel {
+  width: 100%;
+}
+
 .room-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  display: flex;
   gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  scrollbar-width: thin;
 }
 
 .room-card {
+  flex: 0 0 190px;
+  min-width: 190px;
   padding: 1rem;
   border: 2px solid var(--gray-200);
   border-radius: 0.5rem;
@@ -7405,12 +7413,16 @@ pre {
 }
 
 .flow-columns {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
   gap: 1rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  scrollbar-width: thin;
 }
 
 .flow-column {
+  flex: 0 0 300px;
+  min-width: 300px;
   background: var(--gray-50);
   border-radius: 0.5rem;
   overflow: hidden;
@@ -7436,6 +7448,11 @@ pre {
 }
 
 .column-header.checkout {
+  background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+  color: #ffffff;
+}
+
+.column-header.completed {
   background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   color: #ffffff;
 }
@@ -7799,8 +7816,9 @@ pre {
     grid-template-columns: 240px 1fr 240px;
   }
 
-  .flow-layout {
-    grid-template-columns: 250px 1fr;
+  .flow-column {
+    flex-basis: 280px;
+    min-width: 280px;
   }
 }
 
@@ -7828,12 +7846,9 @@ pre {
     flex-direction: row;
   }
 
-  .flow-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .flow-columns {
-    grid-template-columns: 1fr;
+  .flow-column {
+    flex: 0 0 82vw;
+    min-width: 82vw;
   }
 
   .overview-row {

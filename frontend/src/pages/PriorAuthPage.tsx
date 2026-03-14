@@ -22,7 +22,7 @@ interface PriorAuth {
   medication_name: string;
   diagnosis_code: string;
   insurance_name: string;
-  status: 'draft' | 'pending' | 'submitted' | 'approved' | 'denied' | 'more_info_needed';
+  status: 'draft' | 'pending' | 'submitted' | 'approved' | 'denied' | 'more_info_needed' | 'appealed';
   urgency: 'routine' | 'urgent' | 'stat';
   created_at: string;
   submitted_at: string | null;
@@ -48,6 +48,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: str
   submitted: { label: 'Submitted', color: '#2563eb', bgColor: '#dbeafe', description: 'Sent to payer' },
   approved: { label: 'Approved', color: '#059669', bgColor: '#d1fae5', description: 'Authorization granted' },
   denied: { label: 'Denied', color: '#dc2626', bgColor: '#fee2e2', description: 'Request denied' },
+  appealed: { label: 'Appealed', color: '#7c3aed', bgColor: '#ede9fe', description: 'Appeal filed with payer' },
   more_info_needed: { label: 'Info Needed', color: '#ea580c', bgColor: '#ffedd5', description: 'Additional info required' },
 };
 
@@ -55,6 +56,60 @@ const URGENCY_CONFIG: Record<string, { label: string; color: string; bgColor: st
   routine: { label: 'Routine', color: '#6b7280', bgColor: '#f3f4f6' },
   urgent: { label: 'Urgent', color: '#d97706', bgColor: '#fef3c7' },
   stat: { label: 'STAT', color: '#dc2626', bgColor: '#fee2e2' },
+};
+
+const FALLBACK_STATUS_CONFIG = {
+  label: 'Unknown',
+  color: '#4b5563',
+  bgColor: '#e5e7eb',
+  description: 'Unknown status',
+};
+
+const FALLBACK_URGENCY_CONFIG = {
+  label: 'Routine',
+  color: '#6b7280',
+  bgColor: '#f3f4f6',
+};
+
+const humanizeKey = (value?: string) => {
+  if (!value) return '';
+  return value
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+};
+
+const getStatusConfig = (status?: string) => {
+  if (status && STATUS_CONFIG[status]) return STATUS_CONFIG[status];
+  if (status) {
+    return {
+      ...FALLBACK_STATUS_CONFIG,
+      label: humanizeKey(status),
+    };
+  }
+  return FALLBACK_STATUS_CONFIG;
+};
+
+const getUrgencyConfig = (urgency?: string) => {
+  if (urgency && URGENCY_CONFIG[urgency]) return URGENCY_CONFIG[urgency];
+  if (urgency) {
+    return {
+      ...FALLBACK_URGENCY_CONFIG,
+      label: humanizeKey(urgency),
+    };
+  }
+  return FALLBACK_URGENCY_CONFIG;
+};
+
+const normalizePriorAuthsPayload = (payload: unknown): PriorAuth[] => {
+  if (Array.isArray(payload)) return payload as PriorAuth[];
+  if (!payload || typeof payload !== 'object') return [];
+
+  const record = payload as Record<string, unknown>;
+  if (Array.isArray(record.data)) return record.data as PriorAuth[];
+  if (Array.isArray(record.priorAuths)) return record.priorAuths as PriorAuth[];
+  if (Array.isArray(record.items)) return record.items as PriorAuth[];
+
+  return [];
 };
 
 export function PriorAuthPage() {
@@ -101,7 +156,7 @@ export function PriorAuthPage() {
     try {
       setLoading(true);
       const data = await fetchPriorAuths(session.tenantId, session.accessToken, {});
-      setPriorAuths(data || []);
+      setPriorAuths(normalizePriorAuthsPayload(data));
     } catch (error) {
       console.error('Failed to load prior authorizations:', error);
       showError('Failed to load prior authorizations');
@@ -113,12 +168,16 @@ export function PriorAuthPage() {
   // Filter PAs by status and search term
   const filteredPAs = priorAuths.filter((pa) => {
     const matchesStatus = selectedStatus === 'all' || pa.status === selectedStatus;
+    const patientName = `${pa.first_name || ''} ${pa.last_name || ''}`.toLowerCase();
+    const medicationName = (pa.medication_name || '').toLowerCase();
+    const authNumber = (pa.auth_number || '').toLowerCase();
+    const insuranceName = (pa.insurance_name || '').toLowerCase();
     const matchesSearch =
       searchTerm === '' ||
-      `${pa.first_name} ${pa.last_name}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      pa.medication_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      pa.auth_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      pa.insurance_name.toLowerCase().includes(searchTerm.toLowerCase());
+      patientName.includes(searchTerm.toLowerCase()) ||
+      medicationName.includes(searchTerm.toLowerCase()) ||
+      authNumber.includes(searchTerm.toLowerCase()) ||
+      insuranceName.includes(searchTerm.toLowerCase());
     return matchesStatus && matchesSearch;
   });
 
@@ -310,8 +369,8 @@ export function PriorAuthPage() {
               </thead>
               <tbody>
                 {filteredPAs.map((pa) => {
-                  const statusConfig = STATUS_CONFIG[pa.status];
-                  const urgencyConfig = URGENCY_CONFIG[pa.urgency];
+                  const statusConfig = getStatusConfig(pa.status);
+                  const urgencyConfig = getUrgencyConfig(pa.urgency);
                   const daysWaiting = getDaysWaiting(pa);
 
                   return (
@@ -334,18 +393,18 @@ export function PriorAuthPage() {
                       </td>
                       <td>
                         <div className="epa-cell-patient">
-                          <span className="epa-patient-name">{pa.first_name} {pa.last_name}</span>
+                          <span className="epa-patient-name">{pa.first_name || 'Unknown'} {pa.last_name || ''}</span>
                           <span className="epa-patient-provider">{pa.provider_name}</span>
                         </div>
                       </td>
                       <td>
                         <div className="epa-cell-medication">
-                          <span className="epa-medication-name">{pa.medication_name}</span>
-                          <span className="epa-diagnosis-code">{pa.diagnosis_code}</span>
+                          <span className="epa-medication-name">{pa.medication_name || 'Medication not specified'}</span>
+                          <span className="epa-diagnosis-code">{pa.diagnosis_code || 'Diagnosis not specified'}</span>
                         </div>
                       </td>
                       <td>
-                        <span className="epa-insurance">{pa.insurance_name}</span>
+                        <span className="epa-insurance">{pa.insurance_name || 'Insurance not specified'}</span>
                       </td>
                       <td>
                         <span
@@ -775,8 +834,8 @@ function DetailPAModal({
   const [documentNotes, setDocumentNotes] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const statusConfig = STATUS_CONFIG[pa.status];
-  const urgencyConfig = URGENCY_CONFIG[pa.urgency];
+  const statusConfig = getStatusConfig(pa.status);
+  const urgencyConfig = getUrgencyConfig(pa.urgency);
 
   const handleUpdate = async () => {
     setUpdating(true);

@@ -314,16 +314,23 @@ describe("Patients routes", () => {
 
   it("GET /patients/:id/balance returns totals", async () => {
     queryMock
-      .mockResolvedValueOnce({ rows: [{ total_charges: "150" }] })
+      .mockResolvedValueOnce({
+        rows: [{ billed_charges: "120", outstanding_balance: "120", past_due_balance: "20" }],
+      })
+      .mockResolvedValueOnce({ rows: [{ unbilled_charges: "30" }] })
       .mockResolvedValueOnce({ rows: [{ total_payments: "50" }] })
       .mockResolvedValueOnce({ rows: [{ id: "pay-1" }] })
-      .mockResolvedValueOnce({ rows: [{ id: "plan-1" }] });
+      .mockResolvedValueOnce({ rows: [{ id: "plan-1" }] })
+      .mockResolvedValueOnce({ rows: [{ id: "charge-1", amount: "50" }] });
 
     const res = await request(app).get("/patients/patient-1/balance");
 
     expect(res.status).toBe(200);
-    expect(res.body.balance).toBe(100);
+    expect(res.body.balance).toBe(150);
+    expect(res.body.currentBalance).toBe(130);
+    expect(res.body.pastDueBalance).toBe(20);
     expect(res.body.recentPayments).toHaveLength(1);
+    expect(res.body.recentCharges).toHaveLength(1);
   });
 
   it("GET /patients/:id/photos returns list", async () => {

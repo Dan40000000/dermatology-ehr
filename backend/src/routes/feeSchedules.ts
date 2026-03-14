@@ -502,7 +502,9 @@ router.get('/default/fee/:cptCode', requireAuth, async (req: AuthedRequest, res:
     const result = await pool.query(
       `SELECT fsi.* FROM fee_schedule_items fsi
        JOIN fee_schedules fs ON fsi.fee_schedule_id = fs.id
-       WHERE fs.tenant_id = $1 AND fs.is_default = true AND fsi.cpt_code = $2`,
+       WHERE fs.tenant_id = $1 AND fsi.cpt_code = $2
+       ORDER BY fs.is_default DESC, fsi.updated_at DESC NULLS LAST, fsi.created_at DESC
+       LIMIT 1`,
       [tenantId, cptCode]
     );
 
@@ -1067,12 +1069,59 @@ router.delete('/packages/:id', requireAuth, requireRoles(['admin']), async (req:
 // Get all cosmetic procedures with pricing
 router.get('/cosmetic/procedures', requireAuth, async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
-  const { category, feeScheduleId } = req.query;
+  const category = typeof req.query.category === 'string' ? req.query.category : undefined;
+  const feeScheduleId = typeof req.query.feeScheduleId === 'string' ? req.query.feeScheduleId : undefined;
 
   try {
+    const params: Array<string> = [tenantId];
+    let filterClauses = `WHERE fs.tenant_id = $1 AND COALESCE(fsi.is_cosmetic, false) = true`;
+
+    if (category) {
+      params.push(category);
+      filterClauses += ` AND LOWER(COALESCE(fsi.category, '')) = LOWER($${params.length})`;
+    }
+
+    if (feeScheduleId) {
+      params.push(feeScheduleId);
+      filterClauses += ` AND fs.id = $${params.length}`;
+    }
+
     const result = await pool.query(
-      `SELECT * FROM get_cosmetic_fees_by_category($1, $2, $3)`,
-      [tenantId, category || null, feeScheduleId || null]
+      `SELECT *
+       FROM (
+         SELECT DISTINCT ON (fsi.cpt_code)
+           fsi.id,
+           fsi.fee_schedule_id,
+           fsi.cpt_code,
+           fsi.cpt_description,
+           fsi.category,
+           fsi.subcategory,
+           fsi.units,
+           fsi.fee_cents,
+           fsi.min_price_cents,
+           fsi.max_price_cents,
+           fsi.typical_units,
+           fsi.package_sessions,
+           fsi.notes,
+           fsi.is_cosmetic,
+           fs.name AS schedule_name,
+           fs.is_default
+         FROM fee_schedule_items fsi
+         JOIN fee_schedules fs ON fsi.fee_schedule_id = fs.id
+         ${filterClauses}
+         ORDER BY
+           fsi.cpt_code,
+           CASE WHEN LOWER(fs.name) LIKE '%cosmetic%' THEN 0 ELSE 1 END,
+           fs.is_default DESC,
+           fsi.updated_at DESC NULLS LAST,
+           fsi.created_at DESC
+       ) cosmetic_items
+       ORDER BY
+         cosmetic_items.category NULLS LAST,
+         cosmetic_items.subcategory NULLS LAST,
+         cosmetic_items.cpt_description NULLS LAST,
+         cosmetic_items.cpt_code`,
+      params
     );
 
     res.json({ procedures: result.rows });

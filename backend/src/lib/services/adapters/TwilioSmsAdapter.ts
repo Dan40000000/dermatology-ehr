@@ -12,11 +12,13 @@ import { formatPhoneE164, validateAndFormatPhone } from "../../../utils/phone";
 export interface TwilioConfig {
   accountSid: string;
   authToken: string;
+  messagingServiceSid?: string;
 }
 
 export class TwilioSmsAdapter implements ISmsService {
   private client: Twilio;
   private authToken: string;
+  private messagingServiceSid?: string;
 
   constructor(config: TwilioConfig) {
     if (!config.accountSid || !config.authToken) {
@@ -24,6 +26,7 @@ export class TwilioSmsAdapter implements ISmsService {
     }
 
     this.authToken = config.authToken;
+    this.messagingServiceSid = config.messagingServiceSid;
     this.client = twilio(config.accountSid, config.authToken);
 
     logger.info("TwilioSmsAdapter initialized", {
@@ -34,22 +37,30 @@ export class TwilioSmsAdapter implements ISmsService {
   async sendSMS(params: SendSMSParams): Promise<SendSMSResult> {
     try {
       const toPhone = validateAndFormatPhone(params.to);
-      const fromPhone = validateAndFormatPhone(params.from);
+      const fromPhone = this.messagingServiceSid ? undefined : validateAndFormatPhone(params.from);
 
       logger.info("Sending SMS", {
         to: toPhone,
-        from: fromPhone,
+        from: fromPhone || params.from,
+        messagingServiceSid: this.messagingServiceSid || null,
         bodyLength: params.body.length,
         hasMedia: !!params.mediaUrls,
       });
 
-      const message = await this.client.messages.create({
+      const createPayload: Record<string, any> = {
         to: toPhone,
-        from: fromPhone,
         body: params.body,
         mediaUrl: params.mediaUrls,
         statusCallback: params.statusCallback,
-      });
+      };
+
+      if (this.messagingServiceSid) {
+        createPayload.messagingServiceSid = this.messagingServiceSid;
+      } else {
+        createPayload.from = fromPhone;
+      }
+
+      const message = await this.client.messages.create(createPayload as any);
 
       logger.info("SMS sent successfully", {
         sid: message.sid,
@@ -61,7 +72,7 @@ export class TwilioSmsAdapter implements ISmsService {
         sid: message.sid,
         status: message.status,
         to: toPhone,
-        from: fromPhone,
+        from: message.from || fromPhone || params.from,
         body: params.body,
         numSegments: parseInt(message.numSegments || "1"),
         price: message.price || undefined,

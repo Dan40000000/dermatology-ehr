@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Modal } from '../ui';
+import { PaymentsPerformancePanel } from './PaymentsPerformancePanel';
 
 interface PaymentMethod {
   id: string;
@@ -221,6 +222,8 @@ export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
           </button>
         </div>
       </div>
+
+      <PaymentsPerformancePanel />
 
       {/* Quick Stats */}
       <div style={{

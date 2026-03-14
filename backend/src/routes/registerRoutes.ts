@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { apiLimiter, portalLimiter, uploadLimiter } from "../middleware/rateLimiter";
 import { requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
-import { FINANCIAL_ROLES } from "../lib/roles";
+import { FINANCIAL_DASHBOARD_ROLES, REVENUE_CYCLE_ROLES } from "../lib/roles";
 import { healthRouter } from "./health";
 import { authRouter } from "./auth";
 import { patientsRouter } from "./patients";
@@ -79,7 +79,6 @@ import voiceTranscriptionRouter from "./voiceTranscription";
 import cdsRouter from "./cds";
 import { faxRouter } from "./fax";
 import { notesRouter } from "./notes";
-import { directMessagingRouter } from "./directMessaging";
 import { clearinghouseRouter } from "./clearinghouse";
 import { qualityMeasuresRouter } from "./qualityMeasures";
 import { referralsRouter } from "./referrals";
@@ -145,11 +144,14 @@ import { productsRouter } from "./products";
 import { referralTrackingRouter } from "./referralTracking";
 import waitTimeRouter from "./waitTime";
 import { remindersRouter } from "./reminders";
+import { publicPagesRouter } from "./publicPages";
 
 export function registerRoutes(app: Express) {
-  const requireFinancialAccess = [requireAuth, requireRoles(FINANCIAL_ROLES)];
+  const requireRevenueCycleAccess = [requireAuth, requireRoles(REVENUE_CYCLE_ROLES)];
+  const requireFinancialDashboardAccess = [requireAuth, requireRoles(FINANCIAL_DASHBOARD_ROLES)];
 
   app.use("/health", healthRouter);
+  app.use("/public", publicPagesRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/patients", patientsRouter);
   app.use("/api/appointments", appointmentsRouter);
@@ -162,7 +164,7 @@ export function registerRoutes(app: Express) {
   app.use("/api/encounters", encountersRouter);
   app.use("/api/documents", documentsRouter);
   app.use("/api/photos", photosRouter);
-  app.use("/api/charges", ...requireFinancialAccess, chargesRouter);
+  app.use("/api/charges", ...requireRevenueCycleAccess, chargesRouter);
   app.use("/api/diagnoses", diagnosesRouter);
   app.use("/api/tasks", tasksRouter);
   app.use("/api/task-templates", taskTemplatesRouter);
@@ -181,10 +183,10 @@ export function registerRoutes(app: Express) {
   app.use("/api/interop/fhir-payloads", fhirPayloadRouter);
   app.use("/api/presign", presignRouter);
   app.use("/api/uploads", serveUploadsRouter);
-  app.use("/api/fee-schedules", ...requireFinancialAccess, feeSchedulesRouter);
+  app.use("/api/fee-schedules", ...requireRevenueCycleAccess, feeSchedulesRouter);
   app.use("/api/cpt-codes", cptCodesRouter);
   app.use("/api/icd10-codes", icd10CodesRouter);
-  app.use("/api/claims", ...requireFinancialAccess, claimsRouter);
+  app.use("/api/claims", ...requireRevenueCycleAccess, claimsRouter);
   app.use("/api/adaptive", adaptiveLearningRouter);
   app.use("/api/note-templates", noteTemplatesRouter);
   app.use("/api/messaging", messagingRouter);
@@ -237,8 +239,13 @@ export function registerRoutes(app: Express) {
   app.use("/api/cds", cdsRouter);
   app.use("/api/fax", faxRouter);
   app.use("/api/notes", notesRouter);
-  app.use("/api/direct", directMessagingRouter);
-  app.use("/api/clearinghouse", ...requireFinancialAccess, clearinghouseRouter);
+  app.use("/api/direct", (_req, res) => {
+    res.status(410).json({
+      error: "Direct messaging is temporarily disabled",
+      code: "DIRECT_MESSAGING_DISABLED",
+    });
+  });
+  app.use("/api/clearinghouse", ...requireRevenueCycleAccess, clearinghouseRouter);
   app.use("/api/quality", qualityMeasuresRouter);
   app.use("/api/mips", mipsRouter);
   app.use("/api/referrals", referralsRouter);
@@ -255,22 +262,22 @@ export function registerRoutes(app: Express) {
   app.use("/api/ai-agent-configs", aiAgentConfigsRouter);
   app.use("/api/inventory", inventoryRouter);
   app.use("/api/inventory-usage", inventoryUsageRouter);
-  app.use("/api/payer-payments", ...requireFinancialAccess, payerPaymentsRouter);
-  app.use("/api/patient-payments", ...requireFinancialAccess, patientPaymentsRouter);
+  app.use("/api/payer-payments", ...requireRevenueCycleAccess, payerPaymentsRouter);
+  app.use("/api/patient-payments", ...requireRevenueCycleAccess, patientPaymentsRouter);
   app.use("/api/integrations", integrationsRouter);
-  app.use("/api/statements", ...requireFinancialAccess, statementsRouter);
-  app.use("/api/batches", ...requireFinancialAccess, batchesRouter);
-  app.use("/api/bills", ...requireFinancialAccess, billsRouter);
-  app.use("/api/financial-metrics", ...requireFinancialAccess, financialMetricsRouter);
+  app.use("/api/statements", ...requireRevenueCycleAccess, statementsRouter);
+  app.use("/api/batches", ...requireRevenueCycleAccess, batchesRouter);
+  app.use("/api/bills", ...requireRevenueCycleAccess, billsRouter);
+  app.use("/api/financial-metrics", ...requireFinancialDashboardAccess, financialMetricsRouter);
   app.use("/api/eligibility", eligibilityRouter);
   app.use("/api/check-in", checkInRouter);
-  app.use("/api/billing", ...requireFinancialAccess, billingRouter);
+  app.use("/api/billing", ...requireRevenueCycleAccess, billingRouter);
   app.use("/api/cosmetic-treatments", cosmeticTreatmentsRouter);
   app.use("/api/cosmetic", cosmeticRouter);
   app.use("/api/intake", intakeRouter);
   app.use("/api/intake-forms", intakeFormsRouter);
   app.use("/api/staff-scheduling", apiLimiter, staffSchedulingRouter);
-  app.use("/api/rcm", ...requireFinancialAccess, revenueCycleRouter);
+  app.use("/api/rcm", ...requireRevenueCycleAccess, revenueCycleRouter);
   app.use("/api/engagement", patientEngagementRouter);
   app.use("/api/communications", communicationsRouter);
   app.use("/api/notifications", notificationsRouter);
@@ -283,7 +290,7 @@ export function registerRoutes(app: Express) {
   app.use("/api/rooms", roomsRouter);
   app.use("/api/superbills", superbillsRouter);
   app.use("/api/quickpicks", quickpicksRouter);
-  app.use("/api/claims-submission", ...requireFinancialAccess, claimsSubmissionRouter);
+  app.use("/api/claims-submission", ...requireRevenueCycleAccess, claimsSubmissionRouter);
   app.use("/api/procedure-templates", procedureTemplatesRouter);
   app.use("/api/procedures", procedureTemplatesRouter);
   app.use("/api/consents", consentsRouter);

@@ -1,6 +1,7 @@
 import { Router, Response } from "express";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
+import { requireModuleAccess } from "../middleware/moduleAccess";
 import { rateLimit } from "../middleware/rateLimit";
 import { analyticsService, DateRange } from "../services/analyticsService";
 import { logger } from "../lib/logger";
@@ -20,8 +21,9 @@ function parseDateRange(query: any): DateRange {
 }
 
 analyticsRouter.use(rateLimit({ windowMs: 60_000, max: 120 }));
+analyticsRouter.use(requireAuth, requireModuleAccess("analytics"));
 
-analyticsRouter.get("/summary", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/summary", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const [patientsRes, apptRes, encRes, chargeRes, providersRes, revenueRes] = await Promise.all([
     pool.query(`select count(*) from patients where tenant_id = $1`, [tenantId]),
@@ -43,7 +45,7 @@ analyticsRouter.get("/summary", requireAuth, async (req: AuthedRequest, res) => 
   });
 });
 
-analyticsRouter.get("/appointments-by-day", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/appointments-by-day", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate, providerId } = req.query;
   const params: any[] = [tenantId];
@@ -72,7 +74,7 @@ analyticsRouter.get("/appointments-by-day", requireAuth, async (req: AuthedReque
   res.json({ points: result.rows });
 });
 
-analyticsRouter.get("/appointments-by-provider", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/appointments-by-provider", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate, providerId } = req.query;
   const params: any[] = [tenantId];
@@ -101,7 +103,7 @@ analyticsRouter.get("/appointments-by-provider", requireAuth, async (req: Authed
   res.json({ points: result.rows });
 });
 
-analyticsRouter.get("/status-counts", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/status-counts", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate, providerId } = req.query;
   const params: any[] = [tenantId];
@@ -125,7 +127,7 @@ analyticsRouter.get("/status-counts", requireAuth, async (req: AuthedRequest, re
   res.json({ points: result.rows });
 });
 
-analyticsRouter.get("/revenue-by-day", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/revenue-by-day", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
@@ -151,7 +153,7 @@ analyticsRouter.get("/revenue-by-day", requireAuth, async (req: AuthedRequest, r
 });
 
 // GET /api/analytics/dashboard - Get dashboard summary (all KPIs)
-analyticsRouter.get("/dashboard", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/dashboard", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
@@ -198,7 +200,7 @@ analyticsRouter.get("/dashboard", requireAuth, async (req: AuthedRequest, res) =
 });
 
 // GET /api/analytics/appointments/trend - Appointment trend over time
-analyticsRouter.get("/appointments/trend", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/appointments/trend", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
@@ -226,7 +228,7 @@ analyticsRouter.get("/appointments/trend", requireAuth, async (req: AuthedReques
 });
 
 // GET /api/analytics/revenue/trend - Revenue trend over time
-analyticsRouter.get("/revenue/trend", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/revenue/trend", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
@@ -254,7 +256,7 @@ analyticsRouter.get("/revenue/trend", requireAuth, async (req: AuthedRequest, re
 });
 
 // GET /api/analytics/top-diagnoses - Top 10 diagnoses
-analyticsRouter.get("/top-diagnoses", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/top-diagnoses", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
@@ -288,7 +290,7 @@ analyticsRouter.get("/top-diagnoses", requireAuth, async (req: AuthedRequest, re
 });
 
 // GET /api/analytics/top-procedures - Top 10 procedures
-analyticsRouter.get("/top-procedures", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/top-procedures", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
@@ -317,7 +319,7 @@ analyticsRouter.get("/top-procedures", requireAuth, async (req: AuthedRequest, r
 });
 
 // GET /api/analytics/provider-productivity - Stats per provider
-analyticsRouter.get("/provider-productivity", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/provider-productivity", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
@@ -360,7 +362,7 @@ analyticsRouter.get("/provider-productivity", requireAuth, async (req: AuthedReq
 });
 
 // GET /api/analytics/patient-demographics - Age groups, gender distribution
-analyticsRouter.get("/patient-demographics", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/patient-demographics", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
 
   const ageGroupsResult = await pool.query(
@@ -398,7 +400,7 @@ analyticsRouter.get("/patient-demographics", requireAuth, async (req: AuthedRequ
 });
 
 // GET /api/analytics/appointment-types - Distribution by type
-analyticsRouter.get("/appointment-types", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/appointment-types", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
@@ -429,7 +431,7 @@ analyticsRouter.get("/appointment-types", requireAuth, async (req: AuthedRequest
 });
 
 // GET /api/analytics/overview - Comprehensive overview with key metrics
-analyticsRouter.get("/overview", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/overview", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
 
@@ -545,7 +547,7 @@ analyticsRouter.get("/overview", requireAuth, async (req: AuthedRequest, res) =>
 });
 
 // GET /api/analytics/appointments - Appointment statistics with detailed breakdown
-analyticsRouter.get("/appointments", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/appointments", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
@@ -601,7 +603,7 @@ analyticsRouter.get("/appointments", requireAuth, async (req: AuthedRequest, res
 });
 
 // GET /api/analytics/revenue - Revenue metrics with payments and collections
-analyticsRouter.get("/revenue", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/revenue", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
@@ -676,7 +678,7 @@ analyticsRouter.get("/revenue", requireAuth, async (req: AuthedRequest, res) => 
 });
 
 // GET /api/analytics/patients - Patient demographics and trends
-analyticsRouter.get("/patients", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/patients", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
 
@@ -737,7 +739,7 @@ analyticsRouter.get("/patients", requireAuth, async (req: AuthedRequest, res) =>
 });
 
 // GET /api/analytics/providers - Provider productivity metrics
-analyticsRouter.get("/providers", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/providers", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
@@ -780,7 +782,7 @@ analyticsRouter.get("/providers", requireAuth, async (req: AuthedRequest, res) =
 });
 
 // GET /api/analytics/quality - Quality measures and compliance metrics
-analyticsRouter.get("/quality", requireAuth, async (req: AuthedRequest, res) => {
+analyticsRouter.get("/quality", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
@@ -879,7 +881,7 @@ analyticsRouter.get("/quality", requireAuth, async (req: AuthedRequest, res) => 
  * GET /api/analytics/dashboard/practice
  * Practice overview dashboard - today's snapshot
  */
-analyticsRouter.get("/dashboard/practice", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/dashboard/practice", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const date = req.query.date as string | undefined;
@@ -907,7 +909,7 @@ analyticsRouter.get("/dashboard/practice", requireAuth, async (req: AuthedReques
  * GET /api/analytics/dashboard/provider/:id
  * Provider performance dashboard
  */
-analyticsRouter.get("/dashboard/provider/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/dashboard/provider/:id", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const providerId = req.params.id!;
@@ -936,7 +938,7 @@ analyticsRouter.get("/dashboard/provider/:id", requireAuth, async (req: AuthedRe
  * GET /api/analytics/dashboard/revenue
  * Revenue analytics dashboard
  */
-analyticsRouter.get("/dashboard/revenue", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/dashboard/revenue", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const dateRange = parseDateRange(req.query);
@@ -964,7 +966,7 @@ analyticsRouter.get("/dashboard/revenue", requireAuth, async (req: AuthedRequest
  * GET /api/analytics/dashboard/quality
  * Quality measures dashboard
  */
-analyticsRouter.get("/dashboard/quality", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/dashboard/quality", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const dateRange = parseDateRange(req.query);
@@ -992,7 +994,7 @@ analyticsRouter.get("/dashboard/quality", requireAuth, async (req: AuthedRequest
  * GET /api/analytics/dashboard/operations
  * Operations metrics dashboard
  */
-analyticsRouter.get("/dashboard/operations", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/dashboard/operations", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const dateRange = parseDateRange(req.query);
@@ -1020,7 +1022,7 @@ analyticsRouter.get("/dashboard/operations", requireAuth, async (req: AuthedRequ
  * GET /api/analytics/dashboard/engagement
  * Patient engagement dashboard
  */
-analyticsRouter.get("/dashboard/engagement", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/dashboard/engagement", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const dateRange = parseDateRange(req.query);
@@ -1048,7 +1050,7 @@ analyticsRouter.get("/dashboard/engagement", requireAuth, async (req: AuthedRequ
  * GET /api/analytics/dashboard/inventory
  * Inventory status dashboard
  */
-analyticsRouter.get("/dashboard/inventory", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/dashboard/inventory", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
 
@@ -1079,7 +1081,7 @@ analyticsRouter.get("/dashboard/inventory", requireAuth, async (req: AuthedReque
  * GET /api/analytics/metrics/:type
  * Get specific metrics by type
  */
-analyticsRouter.get("/metrics/:type", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/metrics/:type", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const metricType = req.params.type;
@@ -1120,7 +1122,7 @@ analyticsRouter.get("/metrics/:type", requireAuth, async (req: AuthedRequest, re
  * GET /api/analytics/trends/:metric
  * Get trend data for a specific metric
  */
-analyticsRouter.get("/trends/:metric", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/trends/:metric", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const metricName = req.params.metric!;
@@ -1140,7 +1142,7 @@ analyticsRouter.get("/trends/:metric", requireAuth, async (req: AuthedRequest, r
  * GET /api/analytics/compare
  * Compare current period to previous period
  */
-analyticsRouter.get("/compare", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/compare", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const metricName = req.query.metric as string;
@@ -1186,7 +1188,7 @@ analyticsRouter.get("/compare", requireAuth, async (req: AuthedRequest, res: Res
  * GET /api/analytics/kpis
  * Get all KPIs with targets and current values
  */
-analyticsRouter.get("/kpis", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/kpis", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const kpis = await analyticsService.getKPIsWithTargets(tenantId);
@@ -1201,7 +1203,7 @@ analyticsRouter.get("/kpis", requireAuth, async (req: AuthedRequest, res: Respon
  * GET /api/analytics/kpis/:name
  * Get specific KPI details
  */
-analyticsRouter.get("/kpis/:name", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/kpis/:name", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const kpiName = req.params.name;
@@ -1288,7 +1290,7 @@ analyticsRouter.post("/kpis/targets", requireAuth, async (req: AuthedRequest, re
  * GET /api/analytics/reports
  * Get saved reports for user
  */
-analyticsRouter.get("/reports", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/reports", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
@@ -1337,7 +1339,7 @@ analyticsRouter.post("/reports", requireAuth, async (req: AuthedRequest, res: Re
  * GET /api/analytics/reports/:id
  * Get a specific saved report configuration
  */
-analyticsRouter.get("/reports/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/reports/:id", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const reportId = req.params.id!;
@@ -1408,7 +1410,7 @@ analyticsRouter.post("/reports/:id/run", requireAuth, async (req: AuthedRequest,
  * GET /api/analytics/reports/export/:id
  * Export report to CSV or JSON
  */
-analyticsRouter.get("/reports/export/:id", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/reports/export/:id", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const reportId = req.params.id!;
@@ -1454,7 +1456,7 @@ analyticsRouter.get("/reports/export/:id", requireAuth, async (req: AuthedReques
  * GET /api/analytics/widgets/:dashboardType
  * Get widget configurations for a dashboard type
  */
-analyticsRouter.get("/widgets/:dashboardType", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/widgets/:dashboardType", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
@@ -1598,7 +1600,7 @@ analyticsRouter.post("/cache/invalidate", requireAuth, async (req: AuthedRequest
  * GET /api/analytics/alerts
  * Get unacknowledged analytics alerts
  */
-analyticsRouter.get("/alerts", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/alerts", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const limit = parseInt(req.query.limit as string) || 50;
@@ -1661,7 +1663,7 @@ analyticsRouter.post("/alerts/:id/acknowledge", requireAuth, async (req: AuthedR
  * GET /api/analytics/benchmarks
  * Get industry benchmarks for comparison
  */
-analyticsRouter.get("/benchmarks", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/benchmarks", async (req: AuthedRequest, res: Response) => {
   try {
     const specialty = (req.query.specialty as string) || 'dermatology';
     const practiceSize = req.query.practiceSize as string;
@@ -1694,7 +1696,7 @@ analyticsRouter.get("/benchmarks", requireAuth, async (req: AuthedRequest, res: 
  * GET /api/analytics/dermatology-metrics
  * Get dermatology-specific metrics including biopsies, cosmetic/medical split, skin conditions
  */
-analyticsRouter.get("/dermatology-metrics", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/dermatology-metrics", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const dateRange = parseDateRange(req.query);
@@ -1726,7 +1728,7 @@ analyticsRouter.get("/dermatology-metrics", requireAuth, async (req: AuthedReque
  * GET /api/analytics/yoy-comparison
  * Compare current period to same period last year
  */
-analyticsRouter.get("/yoy-comparison", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/yoy-comparison", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const dateRange = parseDateRange(req.query);
@@ -1758,7 +1760,7 @@ analyticsRouter.get("/yoy-comparison", requireAuth, async (req: AuthedRequest, r
  * GET /api/analytics/no-show-risk
  * Get predictive no-show analysis and risk factors
  */
-analyticsRouter.get("/no-show-risk", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/no-show-risk", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const dateRange = parseDateRange(req.query);
@@ -1786,7 +1788,7 @@ analyticsRouter.get("/no-show-risk", requireAuth, async (req: AuthedRequest, res
  * GET /api/analytics/no-show-risk/patient/:patientId
  * Get no-show risk score for a specific patient
  */
-analyticsRouter.get("/no-show-risk/patient/:patientId", requireAuth, async (req: AuthedRequest, res: Response) => {
+analyticsRouter.get("/no-show-risk/patient/:patientId", async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const patientId = req.params.patientId;

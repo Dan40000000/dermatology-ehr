@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { EmptyState, Modal } from '../components/ui';
@@ -6,6 +7,39 @@ import { createReferral, fetchPatients, fetchReferrals, updateReferral } from '.
 import type { Patient, Referral } from '../types';
 
 const actionStyle = { minHeight: '44px', minWidth: '140px' };
+
+type ReferralDirectionFilter = 'all' | 'incoming' | 'outgoing';
+type ReferralStatusFilter = 'all' | 'new' | 'scheduled' | 'in_progress' | 'completed' | 'declined' | 'cancelled';
+type ReferralPriorityFilter = 'all' | 'routine' | 'urgent' | 'stat';
+type ReferralActionQuery = 'new' | 'incoming';
+
+const REFERRAL_TAB_QUERY_MAP: Record<string, ReferralDirectionFilter> = {
+  all: 'all',
+  incoming: 'incoming',
+  outgoing: 'outgoing',
+  in: 'incoming',
+  out: 'outgoing',
+};
+
+const REFERRAL_STATUS_QUERY_MAP: Record<string, ReferralStatusFilter> = {
+  all: 'all',
+  new: 'new',
+  scheduled: 'scheduled',
+  in_progress: 'in_progress',
+  'in-progress': 'in_progress',
+  progress: 'in_progress',
+  completed: 'completed',
+  declined: 'declined',
+  cancelled: 'cancelled',
+  canceled: 'cancelled',
+};
+
+const REFERRAL_PRIORITY_QUERY_MAP: Record<string, ReferralPriorityFilter> = {
+  all: 'all',
+  routine: 'routine',
+  urgent: 'urgent',
+  stat: 'stat',
+};
 
 const defaultForm = {
   patientId: '',
@@ -24,13 +58,14 @@ const defaultForm = {
 export function ReferralsPage() {
   const { session } = useAuth();
   const { showError, showSuccess } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [referrals, setReferrals] = useState<Referral[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [filters, setFilters] = useState({
-    status: 'all',
-    direction: 'all',
-    priority: 'all',
+    status: 'all' as ReferralStatusFilter,
+    direction: 'all' as ReferralDirectionFilter,
+    priority: 'all' as ReferralPriorityFilter,
   });
   const [formData, setFormData] = useState(defaultForm);
   const [editData, setEditData] = useState({
@@ -69,6 +104,80 @@ export function ReferralsPage() {
   }, [session, showError]);
 
   useEffect(() => {
+    const requestedTab = searchParams.get('tab');
+    if (requestedTab) {
+      const normalized = requestedTab.toLowerCase();
+      const mappedDirection = REFERRAL_TAB_QUERY_MAP[normalized];
+      if (mappedDirection && filters.direction !== mappedDirection) {
+        setFilters((prev) => ({ ...prev, direction: mappedDirection }));
+      }
+
+      if (mappedDirection && mappedDirection !== normalized) {
+        const params = new URLSearchParams(searchParams);
+        if (mappedDirection === 'all') {
+          params.delete('tab');
+        } else {
+          params.set('tab', mappedDirection);
+        }
+        setSearchParams(params, { replace: true });
+      }
+    }
+
+    const requestedStatus = searchParams.get('status');
+    if (requestedStatus) {
+      const normalized = requestedStatus.toLowerCase();
+      const mappedStatus = REFERRAL_STATUS_QUERY_MAP[normalized];
+      if (mappedStatus && filters.status !== mappedStatus) {
+        setFilters((prev) => ({ ...prev, status: mappedStatus }));
+      }
+
+      if (mappedStatus && mappedStatus !== normalized) {
+        const params = new URLSearchParams(searchParams);
+        if (mappedStatus === 'all') {
+          params.delete('status');
+        } else {
+          params.set('status', mappedStatus);
+        }
+        setSearchParams(params, { replace: true });
+      }
+    }
+
+    const requestedPriority = searchParams.get('priority');
+    if (requestedPriority) {
+      const normalized = requestedPriority.toLowerCase();
+      const mappedPriority = REFERRAL_PRIORITY_QUERY_MAP[normalized];
+      if (mappedPriority && filters.priority !== mappedPriority) {
+        setFilters((prev) => ({ ...prev, priority: mappedPriority }));
+      }
+
+      if (mappedPriority && mappedPriority !== normalized) {
+        const params = new URLSearchParams(searchParams);
+        if (mappedPriority === 'all') {
+          params.delete('priority');
+        } else {
+          params.set('priority', mappedPriority);
+        }
+        setSearchParams(params, { replace: true });
+      }
+    }
+
+    const requestedAction = (searchParams.get('action') || '').toLowerCase() as ReferralActionQuery | '';
+    if (requestedAction === 'new' || requestedAction === 'incoming') {
+      const direction = requestedAction === 'incoming' ? 'incoming' : 'outgoing';
+      setFormData({ ...defaultForm, direction });
+      setShowCreateModal(true);
+      if (filters.direction !== direction) {
+        setFilters((prev) => ({ ...prev, direction }));
+      }
+
+      const params = new URLSearchParams(searchParams);
+      params.delete('action');
+      params.set('tab', direction);
+      setSearchParams(params, { replace: true });
+    }
+  }, [filters.direction, filters.priority, filters.status, searchParams, setSearchParams]);
+
+  useEffect(() => {
     loadReferrals();
   }, [loadReferrals]);
 
@@ -76,10 +185,48 @@ export function ReferralsPage() {
     loadPatients();
   }, [loadPatients]);
 
-  const openCreateModal = (direction: 'incoming' | 'outgoing') => {
+  const updateDirectionFilter = useCallback((direction: ReferralDirectionFilter) => {
+    setFilters((prev) => ({ ...prev, direction }));
+
+    const params = new URLSearchParams(searchParams);
+    if (direction === 'all') {
+      params.delete('tab');
+    } else {
+      params.set('tab', direction);
+    }
+    params.delete('action');
+    setSearchParams(params, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const updateStatusFilter = useCallback((status: ReferralStatusFilter) => {
+    setFilters((prev) => ({ ...prev, status }));
+
+    const params = new URLSearchParams(searchParams);
+    if (status === 'all') {
+      params.delete('status');
+    } else {
+      params.set('status', status);
+    }
+    setSearchParams(params, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const updatePriorityFilter = useCallback((priority: ReferralPriorityFilter) => {
+    setFilters((prev) => ({ ...prev, priority }));
+
+    const params = new URLSearchParams(searchParams);
+    if (priority === 'all') {
+      params.delete('priority');
+    } else {
+      params.set('priority', priority);
+    }
+    setSearchParams(params, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const openCreateModal = useCallback((direction: 'incoming' | 'outgoing') => {
     setFormData({ ...defaultForm, direction });
     setShowCreateModal(true);
-  };
+    updateDirectionFilter(direction);
+  }, [updateDirectionFilter]);
 
   const handleCreateReferral = async () => {
     if (!session) return;
@@ -150,7 +297,7 @@ export function ReferralsPage() {
             <select
               id="filter-status"
               value={filters.status}
-              onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
+              onChange={(e) => updateStatusFilter(e.target.value as ReferralStatusFilter)}
             >
               <option value="all">All</option>
               <option value="new">New</option>
@@ -166,7 +313,7 @@ export function ReferralsPage() {
             <select
               id="filter-direction"
               value={filters.direction}
-              onChange={(e) => setFilters((prev) => ({ ...prev, direction: e.target.value }))}
+              onChange={(e) => updateDirectionFilter(e.target.value as ReferralDirectionFilter)}
             >
               <option value="all">All</option>
               <option value="incoming">Incoming</option>
@@ -178,7 +325,7 @@ export function ReferralsPage() {
             <select
               id="filter-priority"
               value={filters.priority}
-              onChange={(e) => setFilters((prev) => ({ ...prev, priority: e.target.value }))}
+              onChange={(e) => updatePriorityFilter(e.target.value as ReferralPriorityFilter)}
             >
               <option value="all">All</option>
               <option value="routine">Routine</option>
@@ -348,7 +495,14 @@ export function ReferralsPage() {
           </div>
         </div>
         <div className="modal-footer">
-          <button type="button" className="btn-secondary" onClick={() => setShowCreateModal(false)}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setShowCreateModal(false);
+              setFormData(defaultForm);
+            }}
+          >
             Cancel
           </button>
           <button type="button" className="btn-primary" onClick={handleCreateReferral}>

@@ -98,6 +98,23 @@ async function checkMessageStatus() {
     }
     console.log('');
 
+    const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
+    if (messagingServiceSid) {
+      try {
+        const service = await (twilioService as any).client.messaging.v1
+          .services(messagingServiceSid)
+          .fetch();
+        console.log('📡 Messaging Service Compliance:');
+        console.log(`  Service SID: ${messagingServiceSid}`);
+        console.log(`  US A2P registered: ${service.usAppToPersonRegistered ? 'yes' : 'no'}`);
+        console.log('');
+      } catch (serviceError: any) {
+        console.log('⚠️  Could not fetch Messaging Service compliance status.');
+        console.log(`   ${serviceError.message}`);
+        console.log('');
+      }
+    }
+
   } catch (error: any) {
     console.log('\n❌ Error fetching message status:');
     console.log('==================================');
@@ -135,6 +152,7 @@ function explainErrorCode(errorCode: number) {
     30006: '❌ Landline or unreachable carrier\n   The number is a landline or the carrier cannot be reached.',
     30007: '❌ Message filtered (spam)\n   The carrier flagged this message as spam.',
     30008: '❌ Unknown error\n   An unknown error occurred. Contact Twilio support.',
+    30034: '❌ US A2P 10DLC compliance failure\n   Register a brand + campaign and attach this sender before sending US messages.',
   };
 
   if (errorExplanations[errorCode]) {

@@ -159,6 +159,90 @@ export async function fetchFinancialMetrics(options: FetchOptions, date?: string
   return res.json();
 }
 
+export async function fetchCollectionsTrend(
+  options: FetchOptions,
+  filters?: {
+    startDate?: string;
+    endDate?: string;
+    granularity?: 'day' | 'week' | 'month';
+  }
+) {
+  const params = new URLSearchParams();
+  if (filters?.startDate) params.append('startDate', filters.startDate);
+  if (filters?.endDate) params.append('endDate', filters.endDate);
+  if (filters?.granularity) params.append('granularity', filters.granularity);
+
+  const res = await fetch(`${API_BASE}/api/financial-metrics/collections-trend?${params}`, {
+    headers: {
+      Authorization: `Bearer ${options.accessToken}`,
+      [TENANT_HEADER]: options.tenantId,
+    },
+  });
+  if (!res.ok) throw new Error("Failed to fetch collections trend");
+  return res.json();
+}
+
+export async function fetchPaymentsSummary(
+  options: FetchOptions,
+  filters: {
+    startDate: string;
+    endDate: string;
+  }
+) {
+  const params = new URLSearchParams();
+  params.append('startDate', filters.startDate);
+  params.append('endDate', filters.endDate);
+
+  const res = await fetch(`${API_BASE}/api/financial-metrics/payments-summary?${params}`, {
+    headers: {
+      Authorization: `Bearer ${options.accessToken}`,
+      [TENANT_HEADER]: options.tenantId,
+    },
+  });
+  if (!res.ok) throw new Error("Failed to fetch payments summary");
+  return res.json();
+}
+
+export async function fetchARAging(
+  options: FetchOptions,
+  filters?: {
+    asOfDate?: string;
+  }
+) {
+  const params = new URLSearchParams();
+  if (filters?.asOfDate) params.append('asOfDate', filters.asOfDate);
+
+  const res = await fetch(`${API_BASE}/api/financial-metrics/ar-aging?${params}`, {
+    headers: {
+      Authorization: `Bearer ${options.accessToken}`,
+      [TENANT_HEADER]: options.tenantId,
+    },
+  });
+  if (!res.ok) throw new Error("Failed to fetch A/R aging");
+  return res.json();
+}
+
+export async function fetchBillsSummary(
+  options: FetchOptions,
+  filters: {
+    startDate: string;
+    endDate: string;
+  }
+) {
+  const params = new URLSearchParams();
+  params.append('startDate', filters.startDate);
+  params.append('endDate', filters.endDate);
+
+  const res = await fetch(`${API_BASE}/api/financial-metrics/bills-summary?${params}`, {
+    headers: {
+      Authorization: `Bearer ${options.accessToken}`,
+      [TENANT_HEADER]: options.tenantId,
+    },
+  });
+  if (!res.ok) throw new Error("Failed to fetch bills summary");
+  return res.json();
+}
+
 // Claims (existing)
 export async function fetchClaims(options: FetchOptions, filters?: {
   status?: string;

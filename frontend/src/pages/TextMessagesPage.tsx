@@ -15,8 +15,11 @@ import {
   fetchSMSConversations,
   fetchSMSConversation,
   sendSMSConversationMessage,
+  simulateInboundSMSConversationMessage,
   markSMSConversationRead,
+  updateSMSConversationRouting,
   getSMSConsent,
+  requestSMSConsent,
   recordSMSConsent,
   revokeSMSConsent,
   fetchSMSAuditLog,
@@ -42,6 +45,7 @@ import type {
   SMSAutoResponse,
 } from '../api';
 import '../styles/text-messages.css';
+import { formatPhoneDisplay } from '../utils/phone';
 
 interface PatientWithSMS extends Patient {
   lastMessage?: string;
@@ -51,6 +55,9 @@ interface PatientWithSMS extends Patient {
   smsOptInDate?: string;
   hasConsent?: boolean;
   consentExpiresDays?: number | null;
+  category?: RoutedConversationGroup;
+  threadStatus?: 'open' | 'in-progress' | 'waiting-patient' | 'waiting-provider' | 'closed';
+  threadId?: string;
 }
 
 interface Message {
@@ -67,6 +74,9 @@ interface Conversation {
   patientId: string;
   patientName: string;
   patientPhone: string;
+  category?: RoutedConversationGroup;
+  threadStatus?: 'open' | 'in-progress' | 'waiting-patient' | 'waiting-provider' | 'closed';
+  threadId?: string;
   messages: Message[];
 }
 
@@ -86,14 +96,6 @@ const getInitials = (firstName: string, lastName: string) => {
   return `${(firstName || '?').charAt(0)}${(lastName || '?').charAt(0)}`.toUpperCase();
 };
 
-const formatPhoneNumber = (phone: string) => {
-  const cleaned = phone.replace(/\D/g, '');
-  if (cleaned.length === 10) {
-    return `(${cleaned.slice(0, 3)}) ${cleaned.slice(3, 6)}-${cleaned.slice(6)}`;
-  }
-  return phone;
-};
-
 const formatTime = (dateStr: string) => {
   const date = new Date(dateStr);
   const now = new Date();
@@ -109,7 +111,9 @@ const formatTime = (dateStr: string) => {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
-type TabType = 'conversations' | 'templates' | 'bulk' | 'scheduled' | 'rules' | 'audit' | 'settings';
+type TabType = 'conversations' | 'templates' | 'bulk' | 'scheduled' | 'rules' | 'audit' | 'settings' | 'optin';
+type ConversationGroup = 'all' | 'general' | 'appointment' | 'billing' | 'prescription' | 'medical' | 'other';
+type RoutedConversationGroup = Exclude<ConversationGroup, 'all'>;
 
 type SMSAuditSummary = {
   messagesSent: number;
@@ -129,9 +133,38 @@ type SMSAutoResponseDraft = {
 const getTemplateMessageBody = (template: Partial<SMSTemplate> & { body?: string }) =>
   template.messageBody || template.body || '';
 
+const conversationGroupLabels: Record<RoutedConversationGroup, string> = {
+  general: 'General',
+  appointment: 'Scheduling',
+  billing: 'Billing',
+  prescription: 'Prescription',
+  medical: 'Medical',
+  other: 'Other',
+};
+
+const getConversationGroupLabel = (category?: RoutedConversationGroup | null) =>
+  conversationGroupLabels[category || 'general'];
+
+const getConversationGroupClassName = (category?: RoutedConversationGroup | null) =>
+  category || 'general';
+
+const getDefaultConversationGroup = (role?: string | null): ConversationGroup => {
+  switch (role) {
+    case 'billing':
+      return 'billing';
+    case 'front_desk':
+    case 'scheduler':
+      return 'appointment';
+    default:
+      return 'all';
+  }
+};
+
 export default function TextMessagesPage() {
-  const { session } = useAuth();
+  const auth = useAuth();
+  const { session, user } = auth;
   const { showSuccess, showError } = useToast();
+  const currentRole = user?.role || session?.user?.role || null;
 
   const [activeTab, setActiveTab] = useState<TabType>('conversations');
   const [loading, setLoading] = useState(true);
@@ -142,7 +175,10 @@ export default function TextMessagesPage() {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
+  const [simulatingInbound, setSimulatingInbound] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [groupFilter, setGroupFilter] = useState<ConversationGroup>(getDefaultConversationGroup(currentRole));
+  const [updatingRouting, setUpdatingRouting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Templates
@@ -162,7 +198,15 @@ export default function TextMessagesPage() {
 
   // Consent
   const [showConsentModal, setShowConsentModal] = useState(false);
-  const [patientConsent, setPatientConsent] = useState<{ [patientId: string]: { hasConsent: boolean; daysUntilExpiration?: number | null } }>({});
+  const [patientConsent, setPatientConsent] = useState<{
+    [patientId: string]: {
+      hasConsent: boolean;
+      pendingRequest?: boolean;
+      requestedAt?: string | null;
+      optedOut?: boolean;
+      daysUntilExpiration?: number | null;
+    };
+  }>({});
 
   // Audit Log
   const [auditLogs, setAuditLogs] = useState<SMSAuditLog[]>([]);
@@ -191,6 +235,10 @@ export default function TextMessagesPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [conversation?.messages]);
 
+  useEffect(() => {
+    setGroupFilter(getDefaultConversationGroup(currentRole));
+  }, [currentRole]);
+
   // Load data - fetch real SMS conversations
   const loadPatients = useCallback(async () => {
     if (!session) return;
@@ -209,6 +257,9 @@ export default function TextMessagesPage() {
         unreadCount: conv.unreadCount || 0,
         smsOptIn: conv.smsOptIn,
         smsOptInDate: conv.optedOutAt ? undefined : new Date().toISOString(),
+        category: conv.category || 'general',
+        threadStatus: conv.threadStatus,
+        threadId: conv.threadId,
         // These fields aren't used but required by Patient type
         tenantId: session.tenantId,
         dateOfBirth: '',
@@ -257,6 +308,9 @@ export default function TextMessagesPage() {
         ...prev,
         [patientId]: {
           hasConsent: consentData.hasConsent,
+          pendingRequest: consentData.pendingRequest,
+          requestedAt: consentData.requestedAt,
+          optedOut: consentData.optedOut,
           daysUntilExpiration: consentData.daysUntilExpiration,
         },
       }));
@@ -296,6 +350,7 @@ export default function TextMessagesPage() {
       setSettingsDraft({
         twilioPhoneNumber: settings.twilioPhoneNumber || '',
         appointmentRemindersEnabled: settings.appointmentRemindersEnabled,
+        appointmentReminderChannel: settings.appointmentReminderChannel || 'sms',
         reminderHoursBefore: settings.reminderHoursBefore,
         allowPatientReplies: settings.allowPatientReplies,
         reminderTemplate: settings.reminderTemplate || '',
@@ -355,8 +410,10 @@ export default function TextMessagesPage() {
       loadAuditLogs();
     } else if (activeTab === 'settings') {
       loadSMSSettings();
+    } else if (activeTab === 'optin') {
+      loadPatients();
     }
-  }, [activeTab, loadScheduledMessages, loadAutoResponseRules, loadAuditLogs, loadSMSSettings]);
+  }, [activeTab, loadScheduledMessages, loadAutoResponseRules, loadAuditLogs, loadSMSSettings, loadPatients]);
 
   const loadConversation = async (patientId: string) => {
     if (!session) return;
@@ -373,7 +430,15 @@ export default function TextMessagesPage() {
       // Mark as read
       await markSMSConversationRead(session.tenantId, session.accessToken, patientId);
       setPatients(prev => prev.map(p =>
-        p.id === patientId ? { ...p, unreadCount: 0 } : p
+        p.id === patientId
+          ? {
+              ...p,
+              unreadCount: 0,
+              category: data.category || p.category || 'general',
+              threadStatus: data.threadStatus || p.threadStatus,
+              threadId: data.threadId || p.threadId,
+            }
+          : p
       ));
     } catch (err: any) {
       showError(err.message || 'Failed to load conversation');
@@ -412,8 +477,20 @@ export default function TextMessagesPage() {
 
       setConversation(prev => prev ? {
         ...prev,
+        threadStatus: 'waiting-patient',
         messages: [...prev.messages, newMessage],
       } : null);
+
+      setPatients(prev => prev.map(patient =>
+        patient.id === selectedPatientId
+          ? {
+              ...patient,
+              lastMessage: messageText,
+              lastMessageTime: newMessage.createdAt,
+              threadStatus: 'waiting-patient',
+            }
+          : patient
+      ));
 
       showSuccess('Message sent');
       setMessageText('');
@@ -421,6 +498,71 @@ export default function TextMessagesPage() {
       showError(err.message || 'Failed to send message');
     } finally {
       setSending(false);
+    }
+  };
+
+  const simulateInboundMessage = async () => {
+    if (!messageText.trim() || !selectedPatientId || !session) return;
+
+    setSimulatingInbound(true);
+    try {
+      await simulateInboundSMSConversationMessage(
+        session.tenantId,
+        session.accessToken,
+        selectedPatientId,
+        messageText
+      );
+      await loadConversation(selectedPatientId);
+      showSuccess('Inbound test message simulated');
+      setMessageText('');
+    } catch (err: any) {
+      showError(err.message || 'Failed to simulate inbound message');
+    } finally {
+      setSimulatingInbound(false);
+    }
+  };
+
+  const handleRoutingChange = async (category: RoutedConversationGroup) => {
+    if (!selectedPatientId || !session) return;
+
+    setUpdatingRouting(true);
+    try {
+      const result = await updateSMSConversationRouting(
+        session.tenantId,
+        session.accessToken,
+        selectedPatientId,
+        category
+      );
+
+      setConversation(prev =>
+        prev
+          ? {
+              ...prev,
+              category: result.category,
+              threadStatus: result.threadStatus,
+              threadId: result.threadId,
+            }
+          : prev
+      );
+
+      setPatients(prev =>
+        prev.map(patient =>
+          patient.id === selectedPatientId
+            ? {
+                ...patient,
+                category: result.category,
+                threadStatus: result.threadStatus,
+                threadId: result.threadId,
+              }
+            : patient
+        )
+      );
+
+      showSuccess(`Conversation routed to ${getConversationGroupLabel(category)}`);
+    } catch (err: any) {
+      showError(err.message || 'Failed to update conversation routing');
+    } finally {
+      setUpdatingRouting(false);
     }
   };
 
@@ -564,6 +706,20 @@ export default function TextMessagesPage() {
     }
   };
 
+  const handleConsentRequest = async () => {
+    if (!session || !selectedPatientId) return;
+
+    try {
+      await requestSMSConsent(session.tenantId, session.accessToken, selectedPatientId);
+      await checkPatientConsent(selectedPatientId);
+      await loadConversation(selectedPatientId);
+      showSuccess('Opt-in text sent');
+      setShowConsentModal(false);
+    } catch (err: any) {
+      showError(err.message || 'Failed to send opt-in text');
+    }
+  };
+
   const handleExportAuditLog = async () => {
     if (!session) return;
 
@@ -589,6 +745,7 @@ export default function TextMessagesPage() {
     try {
       const payload: Partial<SMSSettings> = {
         appointmentRemindersEnabled: settingsDraft.appointmentRemindersEnabled,
+        appointmentReminderChannel: settingsDraft.appointmentReminderChannel || 'sms',
         reminderHoursBefore: settingsDraft.reminderHoursBefore,
         allowPatientReplies: settingsDraft.allowPatientReplies,
         reminderTemplate: settingsDraft.reminderTemplate,
@@ -675,7 +832,8 @@ export default function TextMessagesPage() {
   const filteredPatients = patients.filter(p => {
     const name = `${p.firstName} ${p.lastName}`.toLowerCase();
     const query = searchQuery.toLowerCase();
-    return name.includes(query) || (p.phone || '').includes(query);
+    const matchesGroup = groupFilter === 'all' || (p.category || 'general') === groupFilter;
+    return matchesGroup && (name.includes(query) || (p.phone || '').includes(query));
   });
 
   const selectedPatient = patients.find(p => p.id === selectedPatientId);
@@ -731,6 +889,7 @@ export default function TextMessagesPage() {
             { id: 'rules', label: 'Rules' },
             { id: 'audit', label: 'Audit Log' },
             { id: 'settings', label: 'Settings' },
+            { id: 'optin', label: 'Opt-In Mgmt' },
           ].map(tab => (
             <button
               key={tab.id}
@@ -764,11 +923,24 @@ export default function TextMessagesPage() {
                   onChange={e => setSearchQuery(e.target.value)}
                   className="sms-search-input"
                 />
+                <select
+                  aria-label="Conversation group filter"
+                  value={groupFilter}
+                  onChange={e => setGroupFilter(e.target.value as ConversationGroup)}
+                  className="sms-group-filter"
+                >
+                  <option value="all">All Groups</option>
+                  {Object.entries(conversationGroupLabels).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="sms-patient-items">
                 {filteredPatients.length === 0 ? (
                   <div className="sms-empty-list">
-                    <p>No patients with phone numbers</p>
+                    <p>{groupFilter === 'all' ? 'No patients with phone numbers' : `No ${getConversationGroupLabel(groupFilter as RoutedConversationGroup).toLowerCase()} texts right now`}</p>
                   </div>
                 ) : (
                   filteredPatients.map(patient => (
@@ -786,10 +958,13 @@ export default function TextMessagesPage() {
                       <div className="sms-patient-info">
                         <div className="sms-patient-name">
                           {patient.firstName} {patient.lastName}
+                          <span className={`sms-category-badge ${getConversationGroupClassName(patient.category)}`}>
+                            {getConversationGroupLabel(patient.category)}
+                          </span>
                           {!patient.smsOptIn && <span className="opt-out-badge">Opted Out</span>}
                         </div>
                         <div className="sms-patient-preview">
-                          {patient.lastMessage || formatPhoneNumber(patient.phone || '')}
+                          {patient.lastMessage || formatPhoneDisplay(patient.phone || '')}
                         </div>
                       </div>
                       <div className="sms-patient-meta">
@@ -818,11 +993,14 @@ export default function TextMessagesPage() {
                     >
                       {getInitials(selectedPatient.firstName, selectedPatient.lastName)}
                     </div>
-                    <div className="sms-chat-header-info">
+                      <div className="sms-chat-header-info">
                       <div className="sms-chat-header-name">
-                        {selectedPatient.firstName} {selectedPatient.lastName}
-                        {patientConsent[selectedPatientId]?.hasConsent && (
-                          <span className="sms-consent-badge" title="SMS consent documented">
+                          {selectedPatient.firstName} {selectedPatient.lastName}
+                          <span className={`sms-category-badge ${getConversationGroupClassName(conversation.category)}`}>
+                            {getConversationGroupLabel(conversation.category)}
+                          </span>
+                          {patientConsent[selectedPatientId]?.hasConsent && (
+                            <span className="sms-consent-badge" title="SMS consent documented">
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                               <circle cx="8" cy="8" r="7" fill="#22c55e"/>
                               <path d="M5 8L7 10L11 6" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -836,17 +1014,49 @@ export default function TextMessagesPage() {
                             Consent expires in {patientConsent[selectedPatientId]?.daysUntilExpiration} days
                           </span>
                         )}
+                        {patientConsent[selectedPatientId]?.pendingRequest && (
+                          <span className="sms-consent-pending" title="Waiting for patient to reply YES or START">
+                            Opt-in pending
+                          </span>
+                        )}
+                        {patientConsent[selectedPatientId]?.optedOut && (
+                          <span className="opt-out-badge">Opted Out</span>
+                        )}
                       </div>
-                      <div className="sms-chat-header-phone">{formatPhoneNumber(selectedPatient.phone || '')}</div>
+                      <div className="sms-chat-header-phone">{formatPhoneDisplay(selectedPatient.phone || '')}</div>
+                      {conversation.threadStatus && (
+                        <div className="sms-thread-status">
+                          {conversation.threadStatus === 'waiting-patient'
+                            ? 'Awaiting patient reply'
+                            : conversation.threadStatus === 'waiting-provider'
+                            ? 'Needs staff follow-up'
+                            : conversation.threadStatus.replace(/-/g, ' ')}
+                        </div>
+                      )}
                     </div>
                     <div className="sms-chat-header-actions">
+                      <label className="sms-routing-control">
+                        <span>Route to</span>
+                        <select
+                          aria-label="Route conversation"
+                          value={conversation.category || 'general'}
+                          onChange={e => handleRoutingChange(e.target.value as RoutedConversationGroup)}
+                          disabled={updatingRouting}
+                        >
+                          {Object.entries(conversationGroupLabels).map(([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                       {!patientConsent[selectedPatientId]?.hasConsent && (
                         <button
                           className="btn-primary btn-sm"
                           onClick={() => setShowConsentModal(true)}
                           style={{ marginRight: '8px' }}
                         >
-                          Record Consent
+                          {patientConsent[selectedPatientId]?.pendingRequest ? 'Manage Consent' : 'Request Consent'}
                         </button>
                       )}
                       <button
@@ -935,6 +1145,14 @@ export default function TextMessagesPage() {
                         disabled={sending || !messageText.trim()}
                       >
                         {sending ? 'Sending...' : 'Send'}
+                      </button>
+                      <button
+                        className="btn-secondary btn-sm"
+                        onClick={simulateInboundMessage}
+                        disabled={simulatingInbound || !messageText.trim()}
+                        title="Test mode helper: simulate patient replying with this message"
+                      >
+                        {simulatingInbound ? 'Simulating...' : 'Simulate Reply'}
                       </button>
                     </div>
 
@@ -1105,7 +1323,7 @@ export default function TextMessagesPage() {
                       </div>
                       <div className="sms-patient-info">
                         <div className="sms-patient-name">{patient.firstName} {patient.lastName}</div>
-                        <div className="sms-patient-preview">{formatPhoneNumber(patient.phone || '')}</div>
+                        <div className="sms-patient-preview">{formatPhoneDisplay(patient.phone || '')}</div>
                       </div>
                     </label>
                   ))}
@@ -1480,6 +1698,192 @@ export default function TextMessagesPage() {
           <div className="sms-settings-tab">
             <h2>SMS Settings</h2>
 
+            <Panel title="Message Settings">
+              {settingsLoading ? (
+                <p className="muted">Loading settings...</p>
+              ) : (
+                <div className="sms-settings-form">
+                  <section className="sms-settings-section">
+                    <div className="sms-settings-section-header">
+                      <h3>Channel Setup</h3>
+                      <p>Configure baseline reminder delivery behavior for your practice.</p>
+                    </div>
+                    <div className="sms-settings-grid">
+                      <div className="sms-form-group sms-form-group-full">
+                        <label htmlFor="sms-settings-phone-number">Practice SMS Number</label>
+                        <input
+                          id="sms-settings-phone-number"
+                          type="text"
+                          className="sms-input"
+                          value={settingsDraft.twilioPhoneNumber || ''}
+                          readOnly
+                        />
+                        <span className="muted tiny">Configured in SMS settings. Contact support to change number assignment.</span>
+                      </div>
+                      <div className="sms-form-group">
+                        <label htmlFor="sms-settings-reminder-hours">Reminder Lead Time (Hours)</label>
+                        <input
+                          id="sms-settings-reminder-hours"
+                          type="number"
+                          min={1}
+                          max={168}
+                          className="sms-input"
+                          value={settingsDraft.reminderHoursBefore || 24}
+                          onChange={e => setSettingsDraft(prev => ({
+                            ...prev,
+                            reminderHoursBefore: Number(e.target.value) || 24,
+                          }))}
+                        />
+                      </div>
+                      <div className="sms-form-group">
+                        <label htmlFor="sms-settings-reminder-channel">Reminder Delivery</label>
+                        <select
+                          id="sms-settings-reminder-channel"
+                          className="sms-select"
+                          value={settingsDraft.appointmentReminderChannel || 'sms'}
+                          onChange={e => setSettingsDraft(prev => ({
+                            ...prev,
+                            appointmentReminderChannel: (e.target.value === 'voice' ? 'voice' : 'sms'),
+                          }))}
+                        >
+                          <option value="sms">SMS Text Message</option>
+                          <option value="voice">Automated Phone Call</option>
+                        </select>
+                      </div>
+                      <div className="sms-form-group">
+                        <label htmlFor="sms-settings-channel-mode">Channel Mode</label>
+                        <select
+                          id="sms-settings-channel-mode"
+                          className="sms-select"
+                          value={settingsDraft.isTestMode ? 'test' : 'production'}
+                          onChange={e => setSettingsDraft(prev => ({
+                            ...prev,
+                            isTestMode: e.target.value === 'test',
+                          }))}
+                        >
+                          <option value="test">Test Mode</option>
+                          <option value="production">Production Mode</option>
+                        </select>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="sms-settings-section">
+                    <div className="sms-settings-section-header">
+                      <h3>Workflow Controls</h3>
+                      <p>Choose which messaging behaviors are enabled for daily operations.</p>
+                    </div>
+                    <div className="sms-settings-toggle-grid">
+                      <label className="sms-inline-checkbox sms-inline-checkbox-card">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(settingsDraft.isActive)}
+                          onChange={e => setSettingsDraft(prev => ({ ...prev, isActive: e.target.checked }))}
+                        />
+                        <span className="sms-inline-checkbox-text">
+                          <span className="sms-inline-checkbox-title">SMS channel active</span>
+                          <span className="sms-inline-checkbox-caption">Allow outbound patient messaging from the practice line.</span>
+                        </span>
+                      </label>
+                      <label className="sms-inline-checkbox sms-inline-checkbox-card">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(settingsDraft.appointmentRemindersEnabled)}
+                          onChange={e => setSettingsDraft(prev => ({
+                            ...prev,
+                            appointmentRemindersEnabled: e.target.checked,
+                          }))}
+                        />
+                        <span className="sms-inline-checkbox-text">
+                          <span className="sms-inline-checkbox-title">Appointment reminder rules enabled</span>
+                          <span className="sms-inline-checkbox-caption">Send reminders automatically based on lead time.</span>
+                        </span>
+                      </label>
+                      <label className="sms-inline-checkbox sms-inline-checkbox-card">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(settingsDraft.allowPatientReplies)}
+                          onChange={e => setSettingsDraft(prev => ({
+                            ...prev,
+                            allowPatientReplies: e.target.checked,
+                          }))}
+                        />
+                        <span className="sms-inline-checkbox-text">
+                          <span className="sms-inline-checkbox-title">Allow inbound patient replies</span>
+                          <span className="sms-inline-checkbox-caption">Keep two-way texting enabled for active conversations.</span>
+                        </span>
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="sms-settings-section">
+                    <div className="sms-settings-section-header">
+                      <h3>Template Defaults</h3>
+                      <p>Set the standard wording used in automated patient messages.</p>
+                    </div>
+                    <div className="sms-settings-template-grid">
+                      <div className="sms-form-group">
+                        <label htmlFor="sms-settings-reminder-template">Reminder Template</label>
+                        <textarea
+                          id="sms-settings-reminder-template"
+                          className="sms-textarea"
+                          rows={2}
+                          value={settingsDraft.reminderTemplate || ''}
+                          onChange={e => setSettingsDraft(prev => ({ ...prev, reminderTemplate: e.target.value }))}
+                        />
+                      </div>
+
+                      <div className="sms-form-group">
+                        <label htmlFor="sms-settings-confirmation-template">Confirmation Template</label>
+                        <textarea
+                          id="sms-settings-confirmation-template"
+                          className="sms-textarea"
+                          rows={2}
+                          value={settingsDraft.confirmationTemplate || ''}
+                          onChange={e => setSettingsDraft(prev => ({ ...prev, confirmationTemplate: e.target.value }))}
+                        />
+                      </div>
+
+                      <div className="sms-form-group">
+                        <label htmlFor="sms-settings-cancellation-template">Cancellation Template</label>
+                        <textarea
+                          id="sms-settings-cancellation-template"
+                          className="sms-textarea"
+                          rows={2}
+                          value={settingsDraft.cancellationTemplate || ''}
+                          onChange={e => setSettingsDraft(prev => ({ ...prev, cancellationTemplate: e.target.value }))}
+                        />
+                      </div>
+
+                      <div className="sms-form-group">
+                        <label htmlFor="sms-settings-reschedule-template">Reschedule Template</label>
+                        <textarea
+                          id="sms-settings-reschedule-template"
+                          className="sms-textarea"
+                          rows={2}
+                          value={settingsDraft.rescheduleTemplate || ''}
+                          onChange={e => setSettingsDraft(prev => ({ ...prev, rescheduleTemplate: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+                  </section>
+
+                  <div className="sms-settings-actions">
+                    <button className="btn-primary" onClick={handleSaveSettings} disabled={savingSettings}>
+                      {savingSettings ? 'Saving Settings...' : 'Save Messaging Settings'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </Panel>
+          </div>
+        )}
+
+        {/* Opt-In Management Tab */}
+        {activeTab === 'optin' && (
+          <div className="sms-settings-tab">
+            <h2>Patient Opt-In Management</h2>
+
             <Panel title="Patient Opt-In Management">
               <p className="muted" style={{ marginBottom: '16px' }}>
                 Manage which patients have opted in or out of receiving SMS messages.
@@ -1498,7 +1902,7 @@ export default function TextMessagesPage() {
                   {patients.map(patient => (
                     <tr key={patient.id}>
                       <td className="strong">{patient.firstName} {patient.lastName}</td>
-                      <td>{formatPhoneNumber(patient.phone || '')}</td>
+                      <td>{formatPhoneDisplay(patient.phone || '')}</td>
                       <td>
                         <span className={`sms-optin-badge ${patient.smsOptIn !== false ? 'opted-in' : 'opted-out'}`}>
                           {patient.smsOptIn !== false ? 'Opted In' : 'Opted Out'}
@@ -1517,142 +1921,6 @@ export default function TextMessagesPage() {
                   ))}
                 </tbody>
               </table>
-            </Panel>
-
-            <Panel title="Message Settings">
-              {settingsLoading ? (
-                <p className="muted">Loading settings...</p>
-              ) : (
-                <div className="sms-settings-form">
-                  <div className="sms-form-group">
-                    <label htmlFor="sms-settings-phone-number">Practice SMS Number</label>
-                    <input
-                      id="sms-settings-phone-number"
-                      type="text"
-                      className="sms-input"
-                      value={settingsDraft.twilioPhoneNumber || ''}
-                      readOnly
-                    />
-                    <span className="muted tiny">Configured in SMS settings. Contact support to change number assignment.</span>
-                  </div>
-
-                  <div className="sms-form-row">
-                    <div className="sms-form-group">
-                      <label htmlFor="sms-settings-reminder-hours">Reminder Lead Time (Hours)</label>
-                      <input
-                        id="sms-settings-reminder-hours"
-                        type="number"
-                        min={1}
-                        max={168}
-                        className="sms-input"
-                        value={settingsDraft.reminderHoursBefore || 24}
-                        onChange={e => setSettingsDraft(prev => ({
-                          ...prev,
-                          reminderHoursBefore: Number(e.target.value) || 24,
-                        }))}
-                      />
-                    </div>
-                    <div className="sms-form-group">
-                      <label htmlFor="sms-settings-channel-mode">Channel Mode</label>
-                      <select
-                        id="sms-settings-channel-mode"
-                        className="sms-select"
-                        value={settingsDraft.isTestMode ? 'test' : 'production'}
-                        onChange={e => setSettingsDraft(prev => ({
-                          ...prev,
-                          isTestMode: e.target.value === 'test',
-                        }))}
-                      >
-                        <option value="test">Test Mode</option>
-                        <option value="production">Production Mode</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="sms-form-group">
-                    <label className="sms-inline-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(settingsDraft.isActive)}
-                        onChange={e => setSettingsDraft(prev => ({ ...prev, isActive: e.target.checked }))}
-                      />
-                      SMS channel active
-                    </label>
-                    <label className="sms-inline-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(settingsDraft.appointmentRemindersEnabled)}
-                        onChange={e => setSettingsDraft(prev => ({
-                          ...prev,
-                          appointmentRemindersEnabled: e.target.checked,
-                        }))}
-                      />
-                      Appointment reminder rules enabled
-                    </label>
-                    <label className="sms-inline-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(settingsDraft.allowPatientReplies)}
-                        onChange={e => setSettingsDraft(prev => ({
-                          ...prev,
-                          allowPatientReplies: e.target.checked,
-                        }))}
-                      />
-                      Allow inbound patient replies
-                    </label>
-                  </div>
-
-                  <div className="sms-form-group">
-                    <label htmlFor="sms-settings-reminder-template">Reminder Template</label>
-                    <textarea
-                      id="sms-settings-reminder-template"
-                      className="sms-textarea"
-                      rows={2}
-                      value={settingsDraft.reminderTemplate || ''}
-                      onChange={e => setSettingsDraft(prev => ({ ...prev, reminderTemplate: e.target.value }))}
-                    />
-                  </div>
-
-                  <div className="sms-form-group">
-                    <label htmlFor="sms-settings-confirmation-template">Confirmation Template</label>
-                    <textarea
-                      id="sms-settings-confirmation-template"
-                      className="sms-textarea"
-                      rows={2}
-                      value={settingsDraft.confirmationTemplate || ''}
-                      onChange={e => setSettingsDraft(prev => ({ ...prev, confirmationTemplate: e.target.value }))}
-                    />
-                  </div>
-
-                  <div className="sms-form-group">
-                    <label htmlFor="sms-settings-cancellation-template">Cancellation Template</label>
-                    <textarea
-                      id="sms-settings-cancellation-template"
-                      className="sms-textarea"
-                      rows={2}
-                      value={settingsDraft.cancellationTemplate || ''}
-                      onChange={e => setSettingsDraft(prev => ({ ...prev, cancellationTemplate: e.target.value }))}
-                    />
-                  </div>
-
-                  <div className="sms-form-group">
-                    <label htmlFor="sms-settings-reschedule-template">Reschedule Template</label>
-                    <textarea
-                      id="sms-settings-reschedule-template"
-                      className="sms-textarea"
-                      rows={2}
-                      value={settingsDraft.rescheduleTemplate || ''}
-                      onChange={e => setSettingsDraft(prev => ({ ...prev, rescheduleTemplate: e.target.value }))}
-                    />
-                  </div>
-
-                  <div className="sms-settings-actions">
-                    <button className="btn-primary" onClick={handleSaveSettings} disabled={savingSettings}>
-                      {savingSettings ? 'Saving Settings...' : 'Save Messaging Settings'}
-                    </button>
-                  </div>
-                </div>
-              )}
             </Panel>
           </div>
         )}
@@ -1706,12 +1974,16 @@ export default function TextMessagesPage() {
       {/* Consent Modal */}
       <Modal
         isOpen={showConsentModal}
-        title="Record SMS Consent"
+        title="SMS Consent"
         onClose={() => setShowConsentModal(false)}
       >
         <ConsentForm
           patientName={selectedPatient ? `${selectedPatient.firstName} ${selectedPatient.lastName}` : ''}
+          initialObtainedByName={session?.user?.fullName || user?.fullName || ''}
+          pendingRequest={Boolean(selectedPatientId && patientConsent[selectedPatientId]?.pendingRequest)}
+          optedOut={Boolean(selectedPatientId && patientConsent[selectedPatientId]?.optedOut)}
           onSave={handleConsentSave}
+          onRequestConsent={handleConsentRequest}
           onCancel={() => setShowConsentModal(false)}
         />
       </Modal>
@@ -1897,15 +2169,24 @@ function ScheduleForm({
 // Consent Form Component
 function ConsentForm({
   patientName,
+  initialObtainedByName,
+  pendingRequest,
+  optedOut,
   onSave,
+  onRequestConsent,
   onCancel,
 }: {
   patientName: string;
+  initialObtainedByName: string;
+  pendingRequest: boolean;
+  optedOut: boolean;
   onSave: (data: { consentMethod: 'verbal' | 'written' | 'electronic'; obtainedByName: string; expirationDate?: string; notes?: string }) => void;
+  onRequestConsent: () => void;
   onCancel: () => void;
 }) {
+  const [mode, setMode] = useState<'request' | 'record'>(pendingRequest ? 'request' : 'record');
   const [consentMethod, setConsentMethod] = useState<'verbal' | 'written' | 'electronic'>('verbal');
-  const [obtainedByName, setObtainedByName] = useState('');
+  const [obtainedByName, setObtainedByName] = useState(initialObtainedByName);
   const [expirationDate, setExpirationDate] = useState('');
   const [notes, setNotes] = useState('');
 
@@ -1921,67 +2202,102 @@ function ConsentForm({
   };
 
   return (
-    <form onSubmit={handleSubmit}>
+    <div>
       <div className="sms-consent-info">
-        <p>Recording SMS consent for: <strong>{patientName}</strong></p>
-        <p className="muted">This consent authorizes sending SMS messages to the patient's phone number.</p>
+        <p>Managing SMS consent for: <strong>{patientName}</strong></p>
+        <p className="muted">Patients must opt in before staff can text them from the office line.</p>
       </div>
 
-      <div className="sms-form-group">
-        <label>Consent Method *</label>
-        <select
-          value={consentMethod}
-          onChange={e => setConsentMethod(e.target.value as 'verbal' | 'written' | 'electronic')}
-          className="sms-select"
-          required
+      <div className="sms-consent-actions">
+        <button
+          type="button"
+          className={`btn-secondary ${mode === 'request' ? 'active' : ''}`}
+          onClick={() => setMode('request')}
         >
-          <option value="verbal">Verbal Consent</option>
-          <option value="written">Written Consent</option>
-          <option value="electronic">Electronic Consent</option>
-        </select>
-      </div>
-
-      <div className="sms-form-group">
-        <label>Staff Member Obtaining Consent *</label>
-        <input
-          type="text"
-          value={obtainedByName}
-          onChange={e => setObtainedByName(e.target.value)}
-          placeholder="Enter your name"
-          className="sms-input"
-          required
-        />
-      </div>
-
-      <div className="sms-form-group">
-        <label>Expiration Date (optional)</label>
-        <input
-          type="date"
-          value={expirationDate}
-          onChange={e => setExpirationDate(e.target.value)}
-          min={new Date().toISOString().split('T')[0]}
-          className="sms-input"
-        />
-        <span className="muted tiny">Leave blank for no expiration</span>
-      </div>
-
-      <div className="sms-form-group">
-        <label>Notes (optional)</label>
-        <textarea
-          value={notes}
-          onChange={e => setNotes(e.target.value)}
-          placeholder="Any additional notes about consent..."
-          className="sms-textarea"
-          rows={3}
-        />
-      </div>
-
-      <div className="sms-modal-actions">
-        <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
-        <button type="submit" className="btn-primary" disabled={!obtainedByName.trim()}>
-          Record Consent
+          Send Opt-In Text
+        </button>
+        <button
+          type="button"
+          className={`btn-secondary ${mode === 'record' ? 'active' : ''}`}
+          onClick={() => setMode('record')}
+        >
+          Record Existing Consent
         </button>
       </div>
-    </form>
+
+      {mode === 'request' ? (
+        <>
+          <div className="sms-consent-helper">
+            <p>{pendingRequest ? 'An opt-in request is already pending for this patient.' : 'This sends a compliant opt-in text. The patient must reply YES or START before staff can text them.'}</p>
+            {optedOut && <p>The patient is currently opted out. They need to reply START or YES to opt back in.</p>}
+          </div>
+
+          <div className="sms-modal-actions">
+            <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
+            <button type="button" className="btn-primary" onClick={onRequestConsent}>
+              {pendingRequest ? 'Re-Send Opt-In Text' : 'Send Opt-In Text'}
+            </button>
+          </div>
+        </>
+      ) : (
+        <form onSubmit={handleSubmit}>
+          <div className="sms-form-group">
+            <label>Consent Method *</label>
+            <select
+              value={consentMethod}
+              onChange={e => setConsentMethod(e.target.value as 'verbal' | 'written' | 'electronic')}
+              className="sms-select"
+              required
+            >
+              <option value="verbal">Verbal Consent</option>
+              <option value="written">Written Consent</option>
+              <option value="electronic">Electronic Consent</option>
+            </select>
+          </div>
+
+          <div className="sms-form-group">
+            <label>Staff Member Obtaining Consent *</label>
+            <input
+              type="text"
+              value={obtainedByName}
+              onChange={e => setObtainedByName(e.target.value)}
+              placeholder="Enter your name"
+              className="sms-input"
+              required
+            />
+          </div>
+
+          <div className="sms-form-group">
+            <label>Expiration Date (optional)</label>
+            <input
+              type="date"
+              value={expirationDate}
+              onChange={e => setExpirationDate(e.target.value)}
+              min={new Date().toISOString().split('T')[0]}
+              className="sms-input"
+            />
+            <span className="muted tiny">Leave blank for no expiration</span>
+          </div>
+
+          <div className="sms-form-group">
+            <label>Notes (optional)</label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Any additional notes about consent..."
+              className="sms-textarea"
+              rows={3}
+            />
+          </div>
+
+          <div className="sms-modal-actions">
+            <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
+            <button type="submit" className="btn-primary" disabled={!obtainedByName.trim()}>
+              Record Consent
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
   );
 }

@@ -208,3 +208,73 @@ export async function saveInsuranceCardPhoto(
     objectKey: savedFile.objectKey || filename,
   };
 }
+
+/**
+ * Process and save kiosk profile photo image for a patient.
+ */
+export async function savePatientProfilePhoto(
+  base64Data: string,
+  patientId: string
+): Promise<SignatureData> {
+  const dataUrlPattern = /^data:image\/(png|jpeg|jpg|heic|heif);base64,/;
+  if (!dataUrlPattern.test(base64Data)) {
+    throw new Error("Invalid profile photo format");
+  }
+
+  const matches = base64Data.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+  if (!matches || matches.length !== 3 || !matches[1] || !matches[2]) {
+    throw new Error("Invalid data URL format");
+  }
+
+  const mimeType = matches[1].toLowerCase();
+  const base64Content = matches[2];
+  const buffer = Buffer.from(base64Content, "base64");
+
+  const scanOk = await scanBuffer(buffer);
+  if (!scanOk) {
+    throw new Error("Profile photo failed security scan");
+  }
+
+  const extension =
+    mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : mimeType.includes("png") ? "png" : "heic";
+  const timestamp = Date.now();
+  const randomId = crypto.randomBytes(8).toString("hex");
+  const filename = `kiosk-profile-${patientId}-${timestamp}-${randomId}.${extension}`;
+
+  const fakeFile = {
+    buffer,
+    originalname: filename,
+    mimetype: mimeType,
+    size: buffer.length,
+  } as Express.Multer.File;
+
+  const savedFile = await saveFileLocal(fakeFile, buffer);
+
+  let thumbnailUrl: string | undefined;
+  try {
+    const thumbnailBuffer = await sharp(buffer)
+      .resize(320, 320, { fit: "cover" })
+      .jpeg({ quality: 85 })
+      .toBuffer();
+
+    const thumbnailFilename = `kiosk-profile-thumb-${patientId}-${timestamp}-${randomId}.jpg`;
+    const thumbnailFile = {
+      buffer: thumbnailBuffer,
+      originalname: thumbnailFilename,
+      mimetype: "image/jpeg",
+      size: thumbnailBuffer.length,
+    } as Express.Multer.File;
+
+    const savedThumbnail = await saveFileLocal(thumbnailFile, thumbnailBuffer);
+    thumbnailUrl = savedThumbnail.url;
+  } catch (err) {
+    logSignatureServiceError("Error generating profile photo thumbnail:", err);
+  }
+
+  return {
+    url: savedFile.url,
+    thumbnailUrl,
+    storage: savedFile.storage,
+    objectKey: savedFile.objectKey || filename,
+  };
+}

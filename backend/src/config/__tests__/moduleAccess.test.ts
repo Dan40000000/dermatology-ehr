@@ -10,11 +10,27 @@ describe('module access', () => {
 
   it('denies roles that are not configured', () => {
     expect(canAccessModule('front_desk', 'admin')).toBe(false);
+    expect(canAccessModule('front_desk', 'financials')).toBe(false);
+    expect(canAccessModule('front_desk', 'claims')).toBe(true);
+    expect(canAccessModule('compliance_officer', 'financials')).toBe(true);
+    expect(canAccessModule('billing', 'analytics')).toBe(false);
     expect(canAccessModule(undefined, 'home')).toBe(false);
   });
 
   it('keeps module access definitions aligned with roles', () => {
-    const roles = new Set(['admin', 'provider', 'ma', 'front_desk']);
+    const roles = new Set([
+      'admin',
+      'provider',
+      'ma',
+      'front_desk',
+      'billing',
+      'nurse',
+      'manager',
+      'scheduler',
+      'compliance_officer',
+      'staff',
+      'hr',
+    ]);
     Object.values(moduleAccess).forEach(roleList => {
       roleList.forEach(role => {
         expect(roles.has(role)).toBe(true);

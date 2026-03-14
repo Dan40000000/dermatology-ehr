@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { API_BASE_URL } from "../utils/apiBase";
 import { hasRole } from "../utils/roles";
@@ -38,8 +39,24 @@ interface User {
 
 const TENANT_HEADER_NAME = "x-tenant-id";
 
+function toDateTimeLocalInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function startOfTodayInput(): string {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return toDateTimeLocalInput(date);
+}
+
 export function AuditLogPage() {
   const { session } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [users, setUsers] = useState<User[]>([]);
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [summary, setSummary] = useState<AuditSummary | null>(null);
@@ -60,7 +77,7 @@ export function AuditLogPage() {
     action: "",
     resourceType: "",
     resourceId: "",
-    startDate: "",
+    startDate: startOfTodayInput(),
     endDate: "",
     ipAddress: "",
     severity: "",
@@ -70,6 +87,8 @@ export function AuditLogPage() {
 
   const [page, setPage] = useState(0);
   const limit = 50;
+
+  const searchParamsKey = searchParams.toString();
 
   const fetchUsers = async () => {
     if (!session) return;
@@ -89,17 +108,17 @@ export function AuditLogPage() {
     }
   };
 
-  const fetchLogs = async () => {
+  const fetchLogs = async (filtersOverride: typeof filters = filters, pageOverride: number = page) => {
     if (!session) return;
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({
         limit: limit.toString(),
-        offset: (page * limit).toString(),
+        offset: (pageOverride * limit).toString(),
       });
 
-      Object.entries(filters).forEach(([key, value]) => {
+      Object.entries(filtersOverride).forEach(([key, value]) => {
         if (value) {
           params.append(key, value);
         }
@@ -113,7 +132,16 @@ export function AuditLogPage() {
       });
 
       if (!response.ok) {
-        throw new Error("Failed to fetch audit logs");
+        let errorMessage = `Failed to fetch audit logs (${response.status})`;
+        try {
+          const payload = await response.json();
+          if (payload?.error && typeof payload.error === "string") {
+            errorMessage = payload.error;
+          }
+        } catch {
+          // Ignore parse failures and use status-based message.
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
@@ -206,7 +234,7 @@ export function AuditLogPage() {
       action: "",
       resourceType: "",
       resourceId: "",
-      startDate: "",
+      startDate: startOfTodayInput(),
       endDate: "",
       ipAddress: "",
       severity: "",
@@ -216,13 +244,83 @@ export function AuditLogPage() {
     setPage(0);
   };
 
+  const setTodayFilter = () => {
+    setFilters((prev) => ({
+      ...prev,
+      startDate: startOfTodayInput(),
+      endDate: "",
+    }));
+    setPage(0);
+  };
+
+  const setAllTimeFilter = () => {
+    setFilters((prev) => ({
+      ...prev,
+      startDate: "",
+      endDate: "",
+    }));
+    setPage(0);
+  };
+
+  const handlePageChange = (nextPage: number) => {
+    const normalizedPage = Math.max(0, nextPage);
+    setPage(normalizedPage);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (normalizedPage === 0) {
+        next.delete("page");
+      } else {
+        next.set("page", String(normalizedPage));
+      }
+      return next;
+    });
+  };
+
   useEffect(() => {
+    const params = new URLSearchParams(searchParamsKey);
+    const preset = (params.get("preset") || params.get("filter") || "").toLowerCase();
+    const nextFilters = {
+      userId: params.get("userId") || "",
+      action: params.get("action") || "",
+      resourceType: params.get("resourceType") || "",
+      resourceId: params.get("resourceId") || "",
+      startDate: params.get("startDate") || startOfTodayInput(),
+      endDate: params.get("endDate") || "",
+      ipAddress: params.get("ipAddress") || "",
+      severity: params.get("severity") || "",
+      status: params.get("status") || "",
+      search: params.get("search") || "",
+    };
+
+    if (preset === "recent") {
+      nextFilters.startDate = startOfTodayInput();
+      nextFilters.endDate = "";
+    } else if (preset === "by-user") {
+      if (!nextFilters.resourceType) {
+        nextFilters.resourceType = "user";
+      }
+    } else if (preset === "failed-logins") {
+      if (!nextFilters.action) {
+        nextFilters.action = "failed_login";
+      }
+    }
+
+    const nextPageRaw = Number.parseInt(params.get("page") || "0", 10);
+    const nextPage = Number.isFinite(nextPageRaw) && nextPageRaw >= 0 ? nextPageRaw : 0;
+
+    setFilters(nextFilters);
+    setPage(nextPage);
+
     if (session) {
-      fetchUsers();
-      fetchLogs();
+      fetchLogs(nextFilters, nextPage);
       fetchSummary();
     }
-  }, [page, session]);
+  }, [searchParamsKey, session]);
+
+  useEffect(() => {
+    if (!session) return;
+    fetchUsers();
+  }, [session]);
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
@@ -364,6 +462,32 @@ export function AuditLogPage() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
           <h2 style={{ fontSize: "1.125rem", fontWeight: 600, color: "#1f2937" }}>Filters</h2>
           <div style={{ display: "flex", gap: "0.5rem" }}>
+            <button
+              onClick={setTodayFilter}
+              style={{
+                padding: "0.5rem 1rem",
+                background: "white",
+                border: "1px solid #d1d5db",
+                borderRadius: "6px",
+                fontSize: "0.875rem",
+                cursor: "pointer",
+              }}
+            >
+              Today
+            </button>
+            <button
+              onClick={setAllTimeFilter}
+              style={{
+                padding: "0.5rem 1rem",
+                background: "white",
+                border: "1px solid #d1d5db",
+                borderRadius: "6px",
+                fontSize: "0.875rem",
+                cursor: "pointer",
+              }}
+            >
+              All Time
+            </button>
             <button
               onClick={clearFilters}
               style={{
@@ -619,7 +743,7 @@ export function AuditLogPage() {
               ) : logs.length === 0 ? (
                 <tr>
                   <td colSpan={7} style={{ padding: "2rem", textAlign: "center", color: "#6b7280" }}>
-                    No audit logs found
+                    No audit logs found for the selected filters
                   </td>
                 </tr>
               ) : (
@@ -796,7 +920,7 @@ export function AuditLogPage() {
           </div>
           <div style={{ display: "flex", gap: "0.5rem" }}>
             <button
-              onClick={() => setPage(Math.max(0, page - 1))}
+              onClick={() => handlePageChange(page - 1)}
               disabled={page === 0}
               style={{
                 padding: "0.5rem 1rem",
@@ -810,7 +934,7 @@ export function AuditLogPage() {
               Previous
             </button>
             <button
-              onClick={() => setPage(page + 1)}
+              onClick={() => handlePageChange(page + 1)}
               disabled={(page + 1) * limit >= total}
               style={{
                 padding: "0.5rem 1rem",

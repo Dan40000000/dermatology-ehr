@@ -5,7 +5,7 @@ import { pool } from "../../db/pool";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.user = { id: "user-1", tenantId: "tenant-1", role: "admin" };
+    req.user = { id: "user-1", tenantId: "tenant-1", role: String(req.headers["x-test-role"] || "admin") };
     return next();
   },
 }));
@@ -30,6 +30,18 @@ beforeEach(() => {
 });
 
 describe("Analytics routes", () => {
+  it("blocks provider access to analytics routes", async () => {
+    const res = await request(app).get("/analytics/summary").set("x-test-role", "provider");
+    expect(res.status).toBe(403);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks billing access to analytics routes", async () => {
+    const res = await request(app).get("/analytics/summary").set("x-test-role", "billing");
+    expect(res.status).toBe(403);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   it("GET /analytics/summary", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ count: "2" }] })

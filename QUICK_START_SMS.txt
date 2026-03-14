@@ -13,6 +13,8 @@ STEP 2: Update Backend Config
    TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
    TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
    TWILIO_PHONE_NUMBER=+15551234567
+   TWILIO_A2P_CONTACT_EMAIL=dan@perrysoftwarellc.com
+   TWILIO_STATUS_CALLBACK_URL=http://localhost:4000/api/sms/webhook/status
 
 STEP 3: Update Database
    Run this SQL (replace with your actual credentials):

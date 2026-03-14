@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import DOMPurify from 'dompurify';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
@@ -8,9 +9,14 @@ import {
   fetchPatients,
   createDocument,
   uploadDocumentFile,
+  fetchPracticeConsentForms,
+  createPracticeConsentForm,
+  updatePracticeConsentForm,
+  deactivatePracticeConsentForm,
   API_BASE_URL,
 } from '../api';
 import type { Document, Patient } from '../types';
+import type { PracticeConsentFormRecord } from '../api';
 
 type ViewMode = 'grid' | 'list';
 type DocCategory = 'all' | 'lab-result' | 'imaging' | 'referral' | 'consent' | 'other';
@@ -52,11 +58,84 @@ function toDocCategory(value?: string): Exclude<DocCategory, 'all'> {
   return 'other';
 }
 
+type DocumentPreviewKind = 'none' | 'image' | 'pdf';
+
+const createInitialUploadForm = () => ({
+  patientId: '',
+  category: 'other' as DocCategory,
+  title: '',
+  description: '',
+  file: null as File | null,
+  previewUrl: '',
+});
+
+type ConsentEditorForm = {
+  formName: string;
+  formType: string;
+  formContent: string;
+  requiresSignature: boolean;
+  isActive: boolean;
+  version: string;
+  effectiveDate: string;
+};
+
+const COMMON_CONSENT_TYPES = [
+  { value: 'general-consent', label: 'General Treatment' },
+  { value: 'hipaa', label: 'HIPAA Acknowledgment' },
+  { value: 'procedure-consent', label: 'Procedure Specific' },
+  { value: 'cosmetic-consent', label: 'Cosmetic / Self-Pay' },
+  { value: 'financial', label: 'Financial Policy' },
+];
+
+function normalizeDateInputValue(value?: string | null): string {
+  if (!value) return '';
+  return value.slice(0, 10);
+}
+
+function createInitialConsentDraft(): ConsentEditorForm {
+  return {
+    formName: '',
+    formType: 'general-consent',
+    formContent: '',
+    requiresSignature: true,
+    isActive: true,
+    version: '1.0',
+    effectiveDate: new Date().toISOString().slice(0, 10),
+  };
+}
+
+function mapConsentFormToDraft(form: PracticeConsentFormRecord): ConsentEditorForm {
+  return {
+    formName: form.formName,
+    formType: form.formType,
+    formContent: form.formContent,
+    requiresSignature: form.requiresSignature,
+    isActive: form.isActive,
+    version: form.version || '1.0',
+    effectiveDate: normalizeDateInputValue(form.effectiveDate) || new Date().toISOString().slice(0, 10),
+  };
+}
+
+function getConsentTypeLabel(formType: string): string {
+  const match = COMMON_CONSENT_TYPES.find((option) => option.value === formType);
+  if (match) {
+    return match.label;
+  }
+
+  return formType
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+    .join(' ');
+}
+
 export function DocumentsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -69,14 +148,16 @@ export function DocumentsPage() {
 
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [isUploadDragOver, setIsUploadDragOver] = useState(false);
 
-  const [uploadForm, setUploadForm] = useState({
-    patientId: '',
-    category: 'other' as DocCategory,
-    title: '',
-    description: '',
-    file: null as File | null,
-  });
+  const [uploadForm, setUploadForm] = useState(createInitialUploadForm);
+  const [consentFormsLoading, setConsentFormsLoading] = useState(true);
+  const [consentForms, setConsentForms] = useState<PracticeConsentFormRecord[]>([]);
+  const [selectedConsentId, setSelectedConsentId] = useState<string | null>(null);
+  const [consentDraft, setConsentDraft] = useState<ConsentEditorForm>(createInitialConsentDraft);
+  const [consentSavePending, setConsentSavePending] = useState(false);
+  const [consentWorkspaceError, setConsentWorkspaceError] = useState('');
+  const selectedConsentIdRef = useRef<string | null>(null);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -98,6 +179,44 @@ export function DocumentsPage() {
   }, [session, showError]);
 
   useEffect(() => {
+    selectedConsentIdRef.current = selectedConsentId;
+  }, [selectedConsentId]);
+
+  const loadConsentWorkspace = useCallback(async (preferredConsentId?: string | null) => {
+    if (!session) return;
+
+    setConsentFormsLoading(true);
+    setConsentWorkspaceError('');
+
+    try {
+      const response = await fetchPracticeConsentForms(session.tenantId, session.accessToken);
+      const forms = response.forms || [];
+
+      setConsentForms(forms);
+
+      const preferredId =
+        preferredConsentId === undefined ? selectedConsentIdRef.current : preferredConsentId;
+      const nextSelection =
+        forms.find((form) => form.id === preferredId)
+        || forms.find((form) => form.isActive)
+        || forms[0]
+        || null;
+
+      setSelectedConsentId(nextSelection?.id ?? null);
+      setConsentDraft(nextSelection ? mapConsentFormToDraft(nextSelection) : createInitialConsentDraft());
+    } catch (err: any) {
+      const message = err.message || 'Failed to load consent forms';
+      setConsentForms([]);
+      setSelectedConsentId(null);
+      setConsentDraft(createInitialConsentDraft());
+      setConsentWorkspaceError(message);
+      showError(message);
+    } finally {
+      setConsentFormsLoading(false);
+    }
+  }, [session, showError]);
+
+  useEffect(() => {
     loadData();
   }, [loadData]);
 
@@ -105,6 +224,8 @@ export function DocumentsPage() {
   useEffect(() => {
     const action = searchParams.get('action');
     const filter = searchParams.get('filter');
+    const section = searchParams.get('section');
+    const category = searchParams.get('category');
 
     // Handle action=upload
     if (action === 'upload') {
@@ -117,17 +238,119 @@ export function DocumentsPage() {
     } else {
       setRecentFilter(false);
     }
+
+    // Forms workspace merged into Documents
+    if (section === 'forms') {
+      setCategoryFilter('consent');
+      setRecentFilter(false);
+    } else if (
+      category &&
+      ['all', 'lab-result', 'imaging', 'referral', 'consent', 'other'].includes(category)
+    ) {
+      setCategoryFilter(category as DocCategory);
+    }
   }, [searchParams]);
+
+  useEffect(
+    () => () => {
+      if (uploadForm.previewUrl) {
+        URL.revokeObjectURL(uploadForm.previewUrl);
+      }
+    },
+    [uploadForm.previewUrl]
+  );
+
+  const clearUploadActionParam = () => {
+    if (searchParams.get('action') !== 'upload') {
+      return;
+    }
+    const params = new URLSearchParams(searchParams);
+    params.delete('action');
+    setSearchParams(params);
+  };
+
+  const resetUploadForm = () => {
+    setUploadForm((prev) => {
+      if (prev.previewUrl) {
+        URL.revokeObjectURL(prev.previewUrl);
+      }
+      return createInitialUploadForm();
+    });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+    }
+    setIsUploadDragOver(false);
+  };
+
+  const clearSelectedFile = () => {
+    setUploadForm((prev) => {
+      if (prev.previewUrl) {
+        URL.revokeObjectURL(prev.previewUrl);
+      }
+      return { ...prev, file: null, previewUrl: '' };
+    });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+    }
+    setIsUploadDragOver(false);
+  };
+
+  const applySelectedFile = (file: File) => {
+    const canPreview = file.type.startsWith('image/') || file.type === 'application/pdf';
+    const previewUrl = canPreview ? URL.createObjectURL(file) : '';
+    setUploadForm((prev) => {
+      if (prev.previewUrl) {
+        URL.revokeObjectURL(prev.previewUrl);
+      }
+      return {
+        ...prev,
+        file,
+        previewUrl,
+        title: prev.title || file.name.replace(/\.[^/.]+$/, ''),
+      };
+    });
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setUploadForm((prev) => ({
-        ...prev,
-        file,
-        title: prev.title || file.name.replace(/\.[^/.]+$/, ''),
-      }));
+      applySelectedFile(file);
     }
+  };
+
+  const handleUploadDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsUploadDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      applySelectedFile(file);
+    }
+  };
+
+  const getPreviewKind = (file: File | null): DocumentPreviewKind => {
+    if (!file) {
+      return 'none';
+    }
+    if (file.type.startsWith('image/')) {
+      return 'image';
+    }
+    if (file.type === 'application/pdf') {
+      return 'pdf';
+    }
+    return 'none';
+  };
+
+  const openUploadModal = () => {
+    setShowUploadModal(true);
+    const params = new URLSearchParams(searchParams);
+    params.set('action', 'upload');
+    setSearchParams(params);
   };
 
   const handleUpload = async () => {
@@ -161,19 +384,9 @@ export function DocumentsPage() {
 
       showSuccess('Document uploaded successfully');
       setShowUploadModal(false);
-      setUploadForm({
-        patientId: '',
-        category: 'other',
-        title: '',
-        description: '',
-        file: null,
-      });
+      resetUploadForm();
       // Clear the action parameter from URL
-      if (searchParams.get('action') === 'upload') {
-        const params = new URLSearchParams(searchParams);
-        params.delete('action');
-        setSearchParams(params);
-      }
+      clearUploadActionParam();
       loadData();
     } catch (err: any) {
       showError(err.message || 'Failed to upload document');
@@ -243,6 +456,119 @@ export function DocumentsPage() {
     return '';
   };
 
+  const openTemplateLibrary = (instructionType?: string) => {
+    const query = instructionType ? `?instructionType=${encodeURIComponent(instructionType)}` : '';
+    navigate(`/handouts${query}`);
+  };
+
+  const openFormsWorkspace = () => {
+    setCategoryFilter('consent');
+    setRecentFilter(false);
+    const params = new URLSearchParams(searchParams);
+    params.set('section', 'forms');
+    params.set('category', 'consent');
+    params.delete('filter');
+    setSearchParams(params);
+  };
+
+  const isConsentWorkspaceActive =
+    searchParams.get('section') === 'forms' || categoryFilter === 'consent';
+  const selectedConsentForm = consentForms.find((form) => form.id === selectedConsentId) || null;
+  const canManageConsentForms =
+    session?.user.role === 'admin' || session?.user.role === 'provider';
+
+  const handleSelectConsentForm = (form: PracticeConsentFormRecord) => {
+    setSelectedConsentId(form.id);
+    setConsentDraft(mapConsentFormToDraft(form));
+    setConsentWorkspaceError('');
+  };
+
+  const handleStartNewConsent = () => {
+    setSelectedConsentId(null);
+    setConsentDraft(createInitialConsentDraft());
+    setConsentWorkspaceError('');
+  };
+
+  const handleResetConsentDraft = () => {
+    setConsentDraft(selectedConsentForm ? mapConsentFormToDraft(selectedConsentForm) : createInitialConsentDraft());
+    setConsentWorkspaceError('');
+  };
+
+  const handleSaveConsent = async () => {
+    if (!session || !canManageConsentForms) {
+      return;
+    }
+
+    if (!consentDraft.formName.trim() || !consentDraft.formType.trim() || !consentDraft.formContent.trim()) {
+      setConsentWorkspaceError('Form name, type, and content are required.');
+      return;
+    }
+
+    setConsentSavePending(true);
+    setConsentWorkspaceError('');
+
+    try {
+      const payload = {
+        formName: consentDraft.formName.trim(),
+        formType: consentDraft.formType.trim(),
+        formContent: consentDraft.formContent,
+        requiresSignature: consentDraft.requiresSignature,
+        isActive: consentDraft.isActive,
+        version: consentDraft.version.trim() || '1.0',
+        effectiveDate: consentDraft.effectiveDate || undefined,
+      };
+
+      if (selectedConsentForm) {
+        await updatePracticeConsentForm(session.tenantId, session.accessToken, selectedConsentForm.id, payload);
+        showSuccess('Consent form updated');
+        await loadConsentWorkspace(selectedConsentForm.id);
+      } else {
+        const created = await createPracticeConsentForm(session.tenantId, session.accessToken, payload);
+        showSuccess('Consent form created');
+        await loadConsentWorkspace(created.id);
+      }
+    } catch (err: any) {
+      const message = err.message || 'Failed to save consent form';
+      setConsentWorkspaceError(message);
+      showError(message);
+    } finally {
+      setConsentSavePending(false);
+    }
+  };
+
+  const handleDeactivateSelectedConsent = async () => {
+    if (!session || !selectedConsentForm) {
+      return;
+    }
+
+    if (!window.confirm(`Retire "${selectedConsentForm.formName}" from active kiosk use?`)) {
+      return;
+    }
+
+    setConsentSavePending(true);
+    setConsentWorkspaceError('');
+
+    try {
+      await deactivatePracticeConsentForm(session.tenantId, session.accessToken, selectedConsentForm.id);
+      showSuccess('Consent form retired');
+      await loadConsentWorkspace();
+    } catch (err: any) {
+      const message = err.message || 'Failed to retire consent form';
+      setConsentWorkspaceError(message);
+      showError(message);
+    } finally {
+      setConsentSavePending(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isConsentWorkspaceActive) {
+      return;
+    }
+
+    loadConsentWorkspace();
+  }, [isConsentWorkspaceActive, loadConsentWorkspace]);
+
   if (loading) {
     return (
       <div className="documents-page">
@@ -285,12 +611,7 @@ export function DocumentsPage() {
         }}>Document Management</h1>
         <button
           type="button"
-          onClick={() => {
-            setShowUploadModal(true);
-            const params = new URLSearchParams(searchParams);
-            params.set('action', 'upload');
-            setSearchParams(params);
-          }}
+          onClick={openUploadModal}
           style={{
             padding: '0.75rem 1.5rem',
             background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
@@ -323,6 +644,89 @@ export function DocumentsPage() {
         gap: '1.5rem',
         marginBottom: '1.5rem',
       }}>
+        {/* Clinical Print Templates */}
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.95)',
+          borderRadius: '12px',
+          padding: '1.5rem',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+          backdropFilter: 'blur(10px)',
+          gridColumn: 'span 2',
+        }}>
+          <h3 style={{
+            margin: '0 0 1rem 0',
+            fontSize: '1.25rem',
+            fontWeight: 700,
+            color: '#0d9488',
+          }}>Clinical Print Templates</h3>
+          <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
+            Open office-editable pre-made templates for patient printouts: lab results, prescription instructions,
+            aftercare, rash care, and cleansing routines.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+            <button onClick={() => openTemplateLibrary('lab_results')} style={{
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}>Lab Result Templates</button>
+            <button onClick={() => openTemplateLibrary('prescription_instructions')} style={{
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}>Prescription Templates</button>
+            <button onClick={() => openTemplateLibrary('aftercare')} style={{
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}>Aftercare Templates</button>
+            <button onClick={() => openTemplateLibrary('rash_care')} style={{
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}>Rash Care Templates</button>
+            <button onClick={() => openTemplateLibrary('cleansing')} style={{
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}>Cleansing Templates</button>
+            <button onClick={() => openTemplateLibrary()} style={{
+              padding: '0.75rem',
+              background: '#ffffff',
+              color: '#0d9488',
+              border: '2px solid #14b8a6',
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}>Open Full Template Library</button>
+          </div>
+        </div>
+
         {/* Patient Attachments */}
         <div style={{
           background: 'rgba(255, 255, 255, 0.95)',
@@ -341,12 +745,7 @@ export function DocumentsPage() {
             Upload attachments (images, scans, etc) and associate them with patients or add to the fax queue.
           </p>
           <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <button onClick={() => {
-              setShowUploadModal(true);
-              const params = new URLSearchParams(searchParams);
-              params.set('action', 'upload');
-              setSearchParams(params);
-            }} style={{
+            <button onClick={openUploadModal} style={{
               flex: 1,
               padding: '0.75rem',
               background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
@@ -447,7 +846,7 @@ export function DocumentsPage() {
           }}>Manage Faxes</button>
         </div>
 
-        {/* Consents Section */}
+        {/* Forms & Consents Section */}
         <div style={{
           background: 'rgba(255, 255, 255, 0.95)',
           borderRadius: '12px',
@@ -460,55 +859,443 @@ export function DocumentsPage() {
             fontSize: '1.25rem',
             fontWeight: 700,
             color: '#0d9488',
-          }}>Consents and Procedure Forms</h3>
+          }}>Forms & Consents</h3>
           <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
-            Manage consent forms and procedure consents.
+            Intake, consent, and procedure form documents are managed here.
           </p>
-          <button style={{
-            width: '100%',
-            padding: '0.75rem',
-            background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '8px',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-            cursor: 'pointer',
-            transition: 'all 0.3s ease',
-          }}>Manage Consents</button>
-        </div>
-
-        {/* Clinical Quality Measures */}
-        <div style={{
-          background: 'rgba(255, 255, 255, 0.95)',
-          borderRadius: '12px',
-          padding: '1.5rem',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-          backdropFilter: 'blur(10px)',
-          gridColumn: 'span 2',
-        }}>
-          <h3 style={{
-            margin: '0 0 1rem 0',
-            fontSize: '1.25rem',
-            fontWeight: 700,
-            color: '#0d9488',
-          }}>Clinical Quality Measures</h3>
-          <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
-            Manage CQM Category 1 Files.
-          </p>
-          <button style={{
-            padding: '0.75rem 1.5rem',
-            background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '8px',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-            cursor: 'pointer',
-            transition: 'all 0.3s ease',
-          }}>Import CQM Category 1 Files</button>
+          <button
+            type="button"
+            onClick={openFormsWorkspace}
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+            }}
+          >
+            Open Forms Workspace
+          </button>
         </div>
       </div>
+
+      {isConsentWorkspaceActive && (
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.97)',
+          borderRadius: '16px',
+          padding: '1.5rem',
+          marginBottom: '1.5rem',
+          boxShadow: '0 12px 32px rgba(15, 23, 42, 0.14)',
+          border: '1px solid rgba(20, 184, 166, 0.16)',
+        }}>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            gap: '1rem',
+            marginBottom: '1.25rem',
+            flexWrap: 'wrap',
+          }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800, color: '#0f172a' }}>
+                Kiosk Consent Workspace
+              </h2>
+              <p style={{ margin: '0.5rem 0 0 0', color: '#475569', maxWidth: '50rem', lineHeight: 1.6 }}>
+                Edit the practice&apos;s live treatment and HIPAA forms here. Changes save back to the kiosk
+                consent catalog for this practice, with a built-in preview before patients see them.
+              </p>
+            </div>
+            {canManageConsentForms && (
+              <button
+                type="button"
+                onClick={handleStartNewConsent}
+                style={{
+                  padding: '0.8rem 1.2rem',
+                  borderRadius: '10px',
+                  border: 'none',
+                  background: 'linear-gradient(135deg, #0f766e 0%, #14b8a6 100%)',
+                  color: '#ffffff',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                + New Consent Form
+              </button>
+            )}
+          </div>
+
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+            gap: '1.25rem',
+            alignItems: 'start',
+          }}>
+            <div style={{
+              border: '1px solid #dbeafe',
+              borderRadius: '14px',
+              background: '#f8fafc',
+              overflow: 'hidden',
+            }}>
+              <div style={{
+                padding: '1rem 1rem 0.75rem 1rem',
+                borderBottom: '1px solid #dbeafe',
+                background: '#eff6ff',
+              }}>
+                <div style={{ fontWeight: 800, color: '#0f172a', marginBottom: '0.25rem' }}>
+                  Available Forms
+                </div>
+                <div style={{ fontSize: '0.875rem', color: '#475569' }}>
+                  {consentForms.length} template{consentForms.length === 1 ? '' : 's'}
+                </div>
+              </div>
+
+              {consentFormsLoading ? (
+                <div style={{ padding: '1rem' }}>
+                  <Skeleton variant="card" height={72} />
+                  <Skeleton variant="card" height={72} />
+                </div>
+              ) : consentForms.length === 0 ? (
+                <div style={{ padding: '1rem', color: '#475569', lineHeight: 1.6 }}>
+                  No kiosk consent forms are configured yet.
+                </div>
+              ) : (
+                <div style={{ maxHeight: '36rem', overflowY: 'auto' }}>
+                  {consentForms.map((form) => {
+                    const isSelected = form.id === selectedConsentId;
+                    return (
+                      <button
+                        key={form.id}
+                        type="button"
+                        onClick={() => handleSelectConsentForm(form)}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          padding: '1rem',
+                          border: 'none',
+                          borderBottom: '1px solid #e2e8f0',
+                          cursor: 'pointer',
+                          background: isSelected ? '#dcfce7' : '#ffffff',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                          <div>
+                            <div style={{ fontWeight: 700, color: '#0f172a' }}>{form.formName}</div>
+                            <div style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: '#475569' }}>
+                              {getConsentTypeLabel(form.formType)} · v{form.version || '1.0'}
+                            </div>
+                          </div>
+                          <div style={{
+                            alignSelf: 'flex-start',
+                            padding: '0.2rem 0.55rem',
+                            borderRadius: '999px',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            background: form.isActive ? '#d1fae5' : '#e2e8f0',
+                            color: form.isActive ? '#065f46' : '#475569',
+                          }}>
+                            {form.isActive ? 'Active' : 'Inactive'}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+              gap: '1.25rem',
+            }}>
+              <div style={{
+                border: '1px solid #dbeafe',
+                borderRadius: '14px',
+                background: '#ffffff',
+                padding: '1.25rem',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 800, color: '#0f172a' }}>
+                      {selectedConsentForm ? 'Edit Consent Form' : 'Create Consent Form'}
+                    </h3>
+                    <p style={{ margin: '0.4rem 0 0 0', color: '#64748b', fontSize: '0.875rem' }}>
+                      Use HTML for formatting. The preview updates as you edit.
+                    </p>
+                  </div>
+                  {!canManageConsentForms && (
+                    <div style={{
+                      padding: '0.5rem 0.75rem',
+                      borderRadius: '999px',
+                      background: '#fef3c7',
+                      color: '#92400e',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                      height: 'fit-content',
+                    }}>
+                      Read Only
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'grid', gap: '1rem' }}>
+                  <div style={{ display: 'grid', gap: '0.35rem' }}>
+                    <label htmlFor="consent-form-name" style={{ fontWeight: 700, color: '#0f172a' }}>
+                      Form Name
+                    </label>
+                    <input
+                      id="consent-form-name"
+                      type="text"
+                      value={consentDraft.formName}
+                      disabled={!canManageConsentForms}
+                      onChange={(e) => setConsentDraft((prev) => ({ ...prev, formName: e.target.value }))}
+                      placeholder="Consent form title"
+                      style={{
+                        padding: '0.8rem 0.9rem',
+                        borderRadius: '10px',
+                        border: '1px solid #cbd5e1',
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
+                    <div style={{ display: 'grid', gap: '0.35rem' }}>
+                      <label htmlFor="consent-form-type" style={{ fontWeight: 700, color: '#0f172a' }}>
+                        Form Type
+                      </label>
+                      <input
+                        id="consent-form-type"
+                        list="consent-form-type-options"
+                        value={consentDraft.formType}
+                        disabled={!canManageConsentForms}
+                        onChange={(e) => setConsentDraft((prev) => ({ ...prev, formType: e.target.value }))}
+                        placeholder="general-consent"
+                        style={{
+                          padding: '0.8rem 0.9rem',
+                          borderRadius: '10px',
+                          border: '1px solid #cbd5e1',
+                        }}
+                      />
+                      <datalist id="consent-form-type-options">
+                        {COMMON_CONSENT_TYPES.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </datalist>
+                    </div>
+
+                    <div style={{ display: 'grid', gap: '0.35rem' }}>
+                      <label htmlFor="consent-form-version" style={{ fontWeight: 700, color: '#0f172a' }}>
+                        Version
+                      </label>
+                      <input
+                        id="consent-form-version"
+                        type="text"
+                        value={consentDraft.version}
+                        disabled={!canManageConsentForms}
+                        onChange={(e) => setConsentDraft((prev) => ({ ...prev, version: e.target.value }))}
+                        placeholder="1.0"
+                        style={{
+                          padding: '0.8rem 0.9rem',
+                          borderRadius: '10px',
+                          border: '1px solid #cbd5e1',
+                        }}
+                      />
+                    </div>
+
+                    <div style={{ display: 'grid', gap: '0.35rem' }}>
+                      <label htmlFor="consent-effective-date" style={{ fontWeight: 700, color: '#0f172a' }}>
+                        Effective Date
+                      </label>
+                      <input
+                        id="consent-effective-date"
+                        type="date"
+                        value={normalizeDateInputValue(consentDraft.effectiveDate)}
+                        disabled={!canManageConsentForms}
+                        onChange={(e) => setConsentDraft((prev) => ({ ...prev, effectiveDate: e.target.value }))}
+                        style={{
+                          padding: '0.8rem 0.9rem',
+                          borderRadius: '10px',
+                          border: '1px solid #cbd5e1',
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                    <label style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.55rem',
+                      padding: '0.7rem 0.9rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '10px',
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={consentDraft.requiresSignature}
+                        disabled={!canManageConsentForms}
+                        onChange={(e) => setConsentDraft((prev) => ({ ...prev, requiresSignature: e.target.checked }))}
+                      />
+                      <span style={{ fontWeight: 600, color: '#0f172a' }}>Requires signature</span>
+                    </label>
+
+                    <label style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.55rem',
+                      padding: '0.7rem 0.9rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '10px',
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={consentDraft.isActive}
+                        disabled={!canManageConsentForms}
+                        onChange={(e) => setConsentDraft((prev) => ({ ...prev, isActive: e.target.checked }))}
+                      />
+                      <span style={{ fontWeight: 600, color: '#0f172a' }}>Active in kiosk</span>
+                    </label>
+                  </div>
+
+                  <div style={{ display: 'grid', gap: '0.35rem' }}>
+                    <label htmlFor="consent-form-content" style={{ fontWeight: 700, color: '#0f172a' }}>
+                      Form HTML
+                    </label>
+                    <textarea
+                      id="consent-form-content"
+                      value={consentDraft.formContent}
+                      disabled={!canManageConsentForms}
+                      onChange={(e) => setConsentDraft((prev) => ({ ...prev, formContent: e.target.value }))}
+                      placeholder="<div><h2>Consent title</h2><p>Consent body...</p></div>"
+                      rows={18}
+                      style={{
+                        padding: '0.9rem',
+                        borderRadius: '12px',
+                        border: '1px solid #cbd5e1',
+                        fontFamily: 'SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace',
+                        fontSize: '0.87rem',
+                        lineHeight: 1.6,
+                        resize: 'vertical',
+                      }}
+                    />
+                  </div>
+
+                  {consentWorkspaceError && (
+                    <div style={{
+                      padding: '0.85rem 1rem',
+                      borderRadius: '10px',
+                      background: '#fef2f2',
+                      border: '1px solid #fecaca',
+                      color: '#991b1b',
+                    }}>
+                      {consentWorkspaceError}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={handleSaveConsent}
+                      disabled={
+                        consentSavePending
+                        || !canManageConsentForms
+                        || !consentDraft.formName.trim()
+                        || !consentDraft.formType.trim()
+                        || !consentDraft.formContent.trim()
+                      }
+                      style={{
+                        padding: '0.85rem 1.2rem',
+                        borderRadius: '10px',
+                        border: 'none',
+                        background: 'linear-gradient(135deg, #0f766e 0%, #14b8a6 100%)',
+                        color: '#ffffff',
+                        fontWeight: 700,
+                        cursor: consentSavePending ? 'wait' : 'pointer',
+                      }}
+                    >
+                      {consentSavePending ? 'Saving...' : selectedConsentForm ? 'Save Changes' : 'Create Consent Form'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetConsentDraft}
+                      disabled={consentSavePending}
+                      style={{
+                        padding: '0.85rem 1.2rem',
+                        borderRadius: '10px',
+                        border: '1px solid #94a3b8',
+                        background: '#ffffff',
+                        color: '#0f172a',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Reset
+                    </button>
+                    {session?.user.role === 'admin' && selectedConsentForm && selectedConsentForm.isActive && (
+                      <button
+                        type="button"
+                        onClick={handleDeactivateSelectedConsent}
+                        disabled={consentSavePending}
+                        style={{
+                          padding: '0.85rem 1.2rem',
+                          borderRadius: '10px',
+                          border: '1px solid #fca5a5',
+                          background: '#fef2f2',
+                          color: '#b91c1c',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Retire Form
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{
+                border: '1px solid #dbeafe',
+                borderRadius: '14px',
+                background: '#f8fafc',
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  padding: '1rem 1.25rem',
+                  borderBottom: '1px solid #dbeafe',
+                  background: '#eff6ff',
+                }}>
+                  <h3 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 800, color: '#0f172a' }}>
+                    Live Preview
+                  </h3>
+                  <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.875rem', color: '#64748b' }}>
+                    This preview reflects the HTML patients will read during kiosk check-in.
+                  </p>
+                </div>
+                <div style={{ padding: '1.25rem', minHeight: '34rem', maxHeight: '46rem', overflowY: 'auto' }}>
+                  {consentDraft.formContent.trim() ? (
+                    <div
+                      dangerouslySetInnerHTML={{
+                        __html: DOMPurify.sanitize(consentDraft.formContent),
+                      }}
+                    />
+                  ) : (
+                    <div style={{ color: '#64748b', lineHeight: 1.7 }}>
+                      Enter HTML content to preview this form.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="documents-filters" style={{
@@ -629,12 +1416,7 @@ export function DocumentsPage() {
             <button
               type="button"
               className="btn-primary"
-              onClick={() => {
-                setShowUploadModal(true);
-                const params = new URLSearchParams(searchParams);
-                params.set('action', 'upload');
-                setSearchParams(params);
-              }}
+              onClick={openUploadModal}
             >
               Upload Document
             </button>
@@ -719,19 +1501,9 @@ export function DocumentsPage() {
         title="Upload Document"
         onClose={() => {
           setShowUploadModal(false);
-          setUploadForm({
-            patientId: '',
-            category: 'other',
-            title: '',
-            description: '',
-            file: null,
-          });
+          resetUploadForm();
           // Clear the action parameter from URL when closing modal
-          if (searchParams.get('action') === 'upload') {
-            const params = new URLSearchParams(searchParams);
-            params.delete('action');
-            setSearchParams(params);
-          }
+          clearUploadActionParam();
         }}
         size="lg"
       >
@@ -803,6 +1575,15 @@ export function DocumentsPage() {
             <input
               ref={fileInputRef}
               type="file"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,image/*"
+              onChange={handleFileSelect}
+              style={{ display: 'none' }}
+            />
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
               onChange={handleFileSelect}
               style={{ display: 'none' }}
             />
@@ -820,22 +1601,57 @@ export function DocumentsPage() {
                 <button
                   type="button"
                   className="btn-sm btn-secondary"
-                  onClick={() => {
-                    setUploadForm((prev) => ({ ...prev, file: null }));
-                    if (fileInputRef.current) fileInputRef.current.value = '';
-                  }}
+                  onClick={clearSelectedFile}
                 >
                   Remove
                 </button>
               </div>
             ) : (
               <div
-                className="upload-dropzone"
+                className={`upload-dropzone ${isUploadDragOver ? 'drag-active' : ''}`}
                 onClick={() => fileInputRef.current?.click()}
+                onDragEnter={() => setIsUploadDragOver(true)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsUploadDragOver(true);
+                }}
+                onDragLeave={() => setIsUploadDragOver(false)}
+                onDrop={handleUploadDrop}
               >
                 <div className="upload-icon"></div>
-                <p>Click to select a file</p>
+                <p>Drag and drop a document here</p>
                 <p className="muted tiny">PDF, Word, Excel, images supported</p>
+                <div className="upload-dropzone-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      fileInputRef.current?.click();
+                    }}
+                  >
+                    Browse Files
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      cameraInputRef.current?.click();
+                    }}
+                  >
+                    Take Photo
+                  </button>
+                </div>
+              </div>
+            )}
+            {uploadForm.file && uploadForm.previewUrl && getPreviewKind(uploadForm.file) !== 'none' && (
+              <div className="document-upload-preview">
+                {getPreviewKind(uploadForm.file) === 'image' ? (
+                  <img src={uploadForm.previewUrl} alt="Document preview" />
+                ) : (
+                  <iframe src={uploadForm.previewUrl} title="Document preview" />
+                )}
               </div>
             )}
           </div>
@@ -845,7 +1661,11 @@ export function DocumentsPage() {
           <button
             type="button"
             className="btn-secondary"
-            onClick={() => setShowUploadModal(false)}
+            onClick={() => {
+              setShowUploadModal(false);
+              resetUploadForm();
+              clearUploadActionParam();
+            }}
           >
             Cancel
           </button>

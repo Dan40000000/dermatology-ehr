@@ -5,7 +5,7 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
-import { userHasRole } from "../lib/roles";
+import { CLINICAL_ROLES, userHasRole } from "../lib/roles";
 import { logger } from "../lib/logger";
 
 const noteFilterSchema = z.object({
@@ -50,7 +50,7 @@ function logNotesError(message: string, error: unknown): void {
 }
 
 // GET /api/notes - List notes with filters
-notesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
+notesRouter.get("/", requireAuth, requireRoles([...CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const parsed = noteFilterSchema.safeParse(req.query);
   if (!parsed.success) {
@@ -434,7 +434,7 @@ notesRouter.patch(
 );
 
 // GET /api/notes/:id/addendums - Get all addendums for a note
-notesRouter.get("/:id/addendums", requireAuth, async (req: AuthedRequest, res) => {
+notesRouter.get("/:id/addendums", requireAuth, requireRoles([...CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const noteId = String(req.params.id);
 

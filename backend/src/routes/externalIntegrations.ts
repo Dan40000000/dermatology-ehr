@@ -33,6 +33,9 @@ const router = Router();
 const integrationTypeSchema = z.enum([
   'clearinghouse', 'eligibility', 'eprescribe', 'lab', 'payment', 'fax',
 ]);
+// Keep route params compatible with Express 5 path matching.
+// Integration type constraints are enforced via Zod parsing in handlers.
+const integrationTypePath = ':type';
 
 const configureIntegrationSchema = z.object({
   provider: z.string().min(1),
@@ -112,7 +115,7 @@ const labOrderSchema = z.object({
 
 const paymentIntentSchema = z.object({
   amountCents: z.number().int().positive(),
-  patientId: z.string().uuid(),
+  patientId: z.string().min(1),
   metadata: z.record(z.string(), z.string()).optional(),
 });
 
@@ -125,6 +128,12 @@ const refundPaymentSchema = z.object({
   paymentIntentId: z.string(),
   amountCents: z.number().int().positive().optional(),
   reason: z.string().optional(),
+});
+
+const configureStripeSchema = z.object({
+  secretKey: z.string().min(1),
+  publishableKey: z.string().min(1),
+  syncFrequencyMinutes: z.number().int().min(5).max(1440).optional(),
 });
 
 const sendFaxSchema = z.object({
@@ -169,7 +178,7 @@ router.get('/', requireAuth, requireRoles(['admin']), async (req: AuthedRequest,
  *     summary: Get detailed status of specific integration
  *     tags: [External Integrations]
  */
-router.get('/:type', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
+router.get(`/${integrationTypePath}`, requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
   try {
     const type = integrationTypeSchema.parse(req.params.type);
     const service = getIntegrationService(req.user!.tenantId);
@@ -191,7 +200,7 @@ router.get('/:type', requireAuth, requireRoles(['admin']), async (req: AuthedReq
  *     summary: Configure an integration
  *     tags: [External Integrations]
  */
-router.patch('/:type', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
+router.patch(`/${integrationTypePath}`, requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
   try {
     const type = integrationTypeSchema.parse(req.params.type);
     const data = configureIntegrationSchema.parse(req.body);
@@ -224,7 +233,7 @@ router.patch('/:type', requireAuth, requireRoles(['admin']), async (req: AuthedR
  *     summary: Test integration connection
  *     tags: [External Integrations]
  */
-router.post('/:type/test', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
+router.post(`/${integrationTypePath}/test`, requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
   try {
     const type = integrationTypeSchema.parse(req.params.type);
     const service = getIntegrationService(req.user!.tenantId);
@@ -246,7 +255,7 @@ router.post('/:type/test', requireAuth, requireRoles(['admin']), async (req: Aut
  *     summary: Trigger manual sync for integration
  *     tags: [External Integrations]
  */
-router.post('/:type/sync', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
+router.post(`/${integrationTypePath}/sync`, requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
   try {
     const type = integrationTypeSchema.parse(req.params.type);
     const service = getIntegrationService(req.user!.tenantId);
@@ -908,6 +917,115 @@ router.post('/payments/refund', requireAuth, requireRoles(['admin']), async (req
     }
     logger.error('Failed to process refund', { error: error.message });
     res.status(500).json({ error: 'Failed to process refund' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/external-integrations/payments/stripe/configure:
+ *   post:
+ *     summary: Configure Stripe keys (test or live) for payment integration
+ *     tags: [Payments]
+ */
+router.post('/payments/stripe/configure', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
+  try {
+    const data = configureStripeSchema.parse(req.body);
+    const { tenantId, id: userId } = req.user!;
+    const secretKey = data.secretKey.trim();
+    const publishableKey = data.publishableKey.trim();
+    const syncFrequencyMinutes = data.syncFrequencyMinutes ?? 60;
+
+    const secretMode = secretKey.startsWith('sk_test_')
+      ? 'test'
+      : secretKey.startsWith('sk_live_')
+        ? 'live'
+        : null;
+    const publishableMode = publishableKey.startsWith('pk_test_')
+      ? 'test'
+      : publishableKey.startsWith('pk_live_')
+        ? 'live'
+        : null;
+
+    if (!secretMode || !publishableMode) {
+      return res.status(400).json({
+        error: 'Invalid Stripe key format. Provide sk_test/sk_live and pk_test/pk_live keys.',
+      });
+    }
+
+    if (secretMode !== publishableMode) {
+      return res.status(400).json({
+        error: 'Stripe secret and publishable keys must both be test or both be live.',
+      });
+    }
+
+    const service = getIntegrationService(tenantId);
+    await service.configureIntegration('payment', {
+      provider: 'stripe',
+      config: {
+        environment: 'stripe',
+        mode: secretMode,
+        publishableKey,
+      },
+      credentials: {
+        stripeSecretKey: secretKey,
+        stripePublishableKey: publishableKey,
+      },
+      isActive: true,
+      syncFrequencyMinutes,
+    });
+
+    const testResult = await service.testConnection('payment');
+    await auditLog(tenantId, userId, 'integration.configured', 'integration', 'payment:stripe');
+
+    return res.json({
+      success: testResult.success,
+      message: testResult.message,
+      mode: secretMode,
+      noLiveCharges: secretMode === 'test',
+    });
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: error.issues });
+    }
+    logger.error('Failed to configure Stripe integration', { error: error.message });
+    return res.status(500).json({ error: 'Failed to configure Stripe integration' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/external-integrations/payments/stripe/use-mock:
+ *   post:
+ *     summary: Force payment integration into mock mode (no external charges)
+ *     tags: [Payments]
+ */
+router.post('/payments/stripe/use-mock', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
+  try {
+    const { tenantId, id: userId } = req.user!;
+    const service = getIntegrationService(tenantId);
+
+    await service.configureIntegration('payment', {
+      provider: 'stripe',
+      config: {
+        environment: 'mock',
+        mode: 'test',
+      },
+      isActive: true,
+      syncFrequencyMinutes: 60,
+    });
+
+    const testResult = await service.testConnection('payment');
+    await auditLog(tenantId, userId, 'integration.configured', 'integration', 'payment:mock');
+
+    return res.json({
+      success: testResult.success,
+      message: testResult.message,
+      mode: 'mock',
+      noLiveCharges: true,
+    });
+  } catch (error: any) {
+    logger.error('Failed to enable mock payment integration', { error: error.message });
+    return res.status(500).json({ error: 'Failed to enable mock payment integration' });
   }
 });
 

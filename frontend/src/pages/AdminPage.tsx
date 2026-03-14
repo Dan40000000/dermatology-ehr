@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Navigate, Link } from 'react-router-dom';
+import { Navigate, Link, useSearchParams } from 'react-router-dom';
 import { API_BASE_URL } from '../utils/apiBase';
 import { buildEffectiveRoles, hasRole, normalizeRoleArray } from '../utils/roles';
 
@@ -179,6 +179,9 @@ const MANAGEABLE_USER_ROLES = [
   'front_desk',
   'ma',
   'nurse',
+  'scheduler',
+  'staff',
+  'hr',
   'manager',
   'compliance_officer',
 ] as const;
@@ -190,8 +193,36 @@ const roleLabels: Record<string, string> = {
   front_desk: 'Front Desk',
   ma: 'Medical Assistant',
   nurse: 'Nurse',
+  scheduler: 'Scheduler',
+  staff: 'Staff',
+  hr: 'HR',
   manager: 'Manager',
   compliance_officer: 'Compliance Officer',
+};
+
+type AdminTab = 'facilities' | 'rooms' | 'providers' | 'users' | 'settings';
+
+const DEFAULT_ADMIN_TAB: AdminTab = 'facilities';
+
+function resolveAdminTab(rawValue: string | null): AdminTab {
+  switch (rawValue) {
+    case 'facilities':
+    case 'rooms':
+    case 'providers':
+    case 'users':
+    case 'settings':
+      return rawValue;
+    default:
+      return DEFAULT_ADMIN_TAB;
+  }
+}
+
+const adminTabLabels: Record<AdminTab, string> = {
+  facilities: 'Facilities',
+  rooms: 'Rooms',
+  providers: 'Providers',
+  users: 'Users',
+  settings: 'Settings',
 };
 
 const formatRoomType = (roomType?: string) => {
@@ -272,7 +303,8 @@ const badgeInactiveStyle: React.CSSProperties = {
 
 export function AdminPage() {
   const { session, user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'facilities' | 'rooms' | 'providers' | 'users'>('facilities');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<AdminTab>(() => resolveAdminTab(searchParams.get('tab')));
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -288,6 +320,11 @@ export function AdminPage() {
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    const tabFromUrl = resolveAdminTab(searchParams.get('tab'));
+    setActiveTab((prev) => (prev === tabFromUrl ? prev : tabFromUrl));
+  }, [searchParams]);
 
   // Redirect non-admin users
   if (!hasRole(user, 'admin')) {
@@ -333,6 +370,8 @@ export function AdminPage() {
           const userData = await userRes.json();
           if (signal?.aborted || !isMountedRef.current) return;
           setUsers(userData.users || []);
+          break;
+        case 'settings':
           break;
       }
     } catch (err: any) {
@@ -408,11 +447,25 @@ export function AdminPage() {
     setShowModal(true);
   };
 
+  const setActiveTabWithUrl = useCallback((nextTab: AdminTab) => {
+    setActiveTab(nextTab);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (nextTab === DEFAULT_ADMIN_TAB) {
+        next.delete('tab');
+      } else {
+        next.set('tab', nextTab);
+      }
+      return next;
+    });
+  }, [setSearchParams]);
+
   const tabs = [
     { key: 'facilities', label: 'Facilities' },
     { key: 'rooms', label: 'Rooms' },
     { key: 'providers', label: 'Providers' },
     { key: 'users', label: 'Users' },
+    { key: 'settings', label: 'Settings' },
   ] as const;
 
   return (
@@ -536,7 +589,7 @@ export function AdminPage() {
           {tabs.map((tab) => (
             <button
               key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => setActiveTabWithUrl(tab.key)}
               style={activeTab === tab.key ? activeTabStyle : inactiveTabStyle}
             >
               {tab.label}
@@ -547,11 +600,13 @@ export function AdminPage() {
         <div style={cardStyle}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
             <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#111827' }}>
-              {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
+              {adminTabLabels[activeTab]}
             </h2>
-            <button onClick={openAddModal} style={btnPrimaryStyle}>
-              + Add {activeTab === 'facilities' ? 'Facility' : activeTab.slice(0, -1)}
-            </button>
+            {activeTab !== 'settings' ? (
+              <button onClick={openAddModal} style={btnPrimaryStyle}>
+                + Add {activeTab === 'facilities' ? 'Facility' : activeTab.slice(0, -1)}
+              </button>
+            ) : null}
           </div>
 
           {loading ? (
@@ -564,11 +619,12 @@ export function AdminPage() {
               {activeTab === 'rooms' && <RoomsTable rooms={rooms} onEdit={openEditModal} onDelete={handleDelete} />}
               {activeTab === 'providers' && <ProvidersTable providers={providers} onEdit={openEditModal} onDelete={handleDelete} />}
               {activeTab === 'users' && <UsersTable users={users} onEdit={openEditModal} onDelete={handleDelete} />}
+              {activeTab === 'settings' && <AdminSettingsPanel />}
             </>
           )}
         </div>
 
-        {showModal && (
+        {showModal && activeTab !== 'settings' && (
           <Modal
             type={activeTab}
             item={editingItem}
@@ -577,6 +633,123 @@ export function AdminPage() {
             onSave={handleSave}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+function AdminSettingsPanel() {
+  const [workspaceSettings, setWorkspaceSettings] = useState(() => {
+    const fallback = {
+      requireCheckInCopayPrompt: true,
+      showNoShowConfirmations: true,
+      enableCompactScheduleActions: true,
+      defaultAdminLanding: '/admin?tab=users',
+    };
+
+    try {
+      const raw = localStorage.getItem('admin:workspaceSettings');
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      return {
+        ...fallback,
+        ...parsed,
+      };
+    } catch {
+      return fallback;
+    }
+  });
+
+  const handleToggle = (key: 'requireCheckInCopayPrompt' | 'showNoShowConfirmations' | 'enableCompactScheduleActions') => {
+    setWorkspaceSettings((prev: any) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  };
+
+  const handleSaveSettings = () => {
+    localStorage.setItem('admin:workspaceSettings', JSON.stringify(workspaceSettings));
+    window.alert('Admin settings saved.');
+  };
+
+  return (
+    <div style={{ display: 'grid', gap: '1rem' }}>
+      <div
+        style={{
+          border: '1px solid #e5e7eb',
+          borderRadius: '12px',
+          padding: '1rem',
+          background: '#f9fafb',
+        }}
+      >
+        <h3 style={{ margin: 0, marginBottom: '0.5rem', fontSize: '1.05rem', color: '#111827' }}>
+          Administrative Workflow
+        </h3>
+        <p style={{ margin: 0, marginBottom: '1rem', color: '#6b7280', fontSize: '0.875rem' }}>
+          Configure front desk and scheduling behavior used across admin tools.
+        </p>
+        <div style={{ display: 'grid', gap: '0.75rem' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: '#374151', fontSize: '0.9rem' }}>
+            <input
+              type="checkbox"
+              checked={workspaceSettings.requireCheckInCopayPrompt}
+              onChange={() => handleToggle('requireCheckInCopayPrompt')}
+            />
+            Require copay prompt at check-in when balance exists
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: '#374151', fontSize: '0.9rem' }}>
+            <input
+              type="checkbox"
+              checked={workspaceSettings.showNoShowConfirmations}
+              onChange={() => handleToggle('showNoShowConfirmations')}
+            />
+            Require no-show confirmation before fee posting
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: '#374151', fontSize: '0.9rem' }}>
+            <input
+              type="checkbox"
+              checked={workspaceSettings.enableCompactScheduleActions}
+              onChange={() => handleToggle('enableCompactScheduleActions')}
+            />
+            Use compact inline schedule action menu
+          </label>
+        </div>
+      </div>
+
+      <div
+        style={{
+          border: '1px solid #e5e7eb',
+          borderRadius: '12px',
+          padding: '1rem',
+          background: '#ffffff',
+        }}
+      >
+        <h3 style={{ margin: 0, marginBottom: '0.5rem', fontSize: '1.05rem', color: '#111827' }}>
+          Admin Quick Links
+        </h3>
+        <p style={{ margin: 0, marginBottom: '1rem', color: '#6b7280', fontSize: '0.875rem' }}>
+          Jump to commonly used administrative modules.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
+          <Link to="/admin/integrations" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
+            Integrations
+          </Link>
+          <Link to="/admin/fee-schedules" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
+            Fee Schedules
+          </Link>
+          <Link to="/admin/audit-log" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
+            Audit Log
+          </Link>
+          <Link to="/admin/ai-agents" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
+            AI Agents
+          </Link>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button type="button" style={btnPrimaryStyle} onClick={handleSaveSettings}>
+          Save Admin Settings
+        </button>
       </div>
     </div>
   );
@@ -715,6 +888,9 @@ function UsersTable({ users, onEdit, onDelete }: { users: User[]; onEdit: (u: Us
       ma: { bg: '#dcfce7', text: '#166534' },
       front_desk: { bg: '#fef3c7', text: '#92400e' },
       nurse: { bg: '#e0e7ff', text: '#3730a3' },
+      scheduler: { bg: '#ecfeff', text: '#155e75' },
+      staff: { bg: '#f1f5f9', text: '#1e293b' },
+      hr: { bg: '#ffedd5', text: '#9a3412' },
       manager: { bg: '#ffe4e6', text: '#be123c' },
       compliance_officer: { bg: '#f3e8ff', text: '#6b21a8' },
     };

@@ -9,14 +9,71 @@ import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { auditLog } from '../services/audit';
 import { createTwilioService, TwilioService } from '../services/twilioService';
-import { processIncomingSMS, updateSMSStatus } from '../services/smsProcessor';
+import {
+  addMessageToThread,
+  findOrCreateMessageThread,
+  markThreadReadByStaff,
+  markThreadUnreadByPatient,
+  processIncomingSMS,
+  SMSRoutingCategory,
+  updateMessageThreadRoute,
+  updateSMSStatus,
+} from '../services/smsProcessor';
 import { sendImmediateReminder } from '../services/smsReminderScheduler';
 import { formatPhoneE164, validateAndFormatPhone, formatPhoneDisplay } from '../utils/phone';
 import { logger } from '../lib/logger';
 import { userHasRole } from '../lib/roles';
 import * as crypto from 'crypto';
+import { getSMSPracticeBranding, buildSMSHelpText, buildSMSOptInConfirmationText, buildSMSOptOutConfirmationText } from '../services/smsConsentText';
+import { getSMSConsentState, revokeSMSConsent, upsertSMSOptOut } from '../services/smsConsentState';
 
 const router = Router();
+const DEFAULT_TEST_SMS_FROM = '+15555550100';
+const smsRoutingCategories = ['general', 'appointment', 'billing', 'prescription', 'medical', 'other'] as const;
+
+function calculateSmsSegments(body: string): number {
+  const hasUnicode = /[^\x00-\x7F]/.test(body);
+  const segmentLength = hasUnicode ? 70 : 160;
+  return Math.max(1, Math.ceil(body.length / segmentLength));
+}
+
+function buildMockSmsResult(body: string) {
+  return {
+    sid: `mock_sms_${crypto.randomUUID()}`,
+    status: 'sent',
+    numSegments: calculateSmsSegments(body),
+  };
+}
+
+async function getPatientSMSMessagingBlock(
+  tenantId: string,
+  patientId: string
+): Promise<{ error: string; code: 'opted_out' | 'consent_pending' | 'consent_required' } | null> {
+  const consentState = await getSMSConsentState(tenantId, patientId, pool);
+
+  if (consentState.hasConsent) {
+    return null;
+  }
+
+  if (consentState.optedOut) {
+    return {
+      error: 'Patient has opted out of SMS',
+      code: 'opted_out',
+    };
+  }
+
+  if (consentState.pendingRequest) {
+    return {
+      error: 'SMS opt-in request is pending. The patient must reply YES or START before staff can text them.',
+      code: 'consent_pending',
+    };
+  }
+
+  return {
+    error: 'SMS consent is required before sending messages to this patient.',
+    code: 'consent_required',
+  };
+}
 
 // ============================================================================
 // ADMIN/PROVIDER ROUTES (require authentication)
@@ -36,6 +93,7 @@ router.get('/settings', requireAuth, async (req: AuthedRequest, res: Response) =
         tenant_id as "tenantId",
         twilio_phone_number as "twilioPhoneNumber",
         appointment_reminders_enabled as "appointmentRemindersEnabled",
+        appointment_reminder_channel as "appointmentReminderChannel",
         reminder_hours_before as "reminderHoursBefore",
         allow_patient_replies as "allowPatientReplies",
         reminder_template as "reminderTemplate",
@@ -66,6 +124,7 @@ router.get('/settings', requireAuth, async (req: AuthedRequest, res: Response) =
         isActive: false,
         isTestMode: true,
         appointmentRemindersEnabled: true,
+        appointmentReminderChannel: 'sms',
         reminderHoursBefore: 24,
         allowPatientReplies: true,
       });
@@ -92,6 +151,7 @@ const updateSettingsSchema = z.object({
   twilioAuthToken: z.string().optional(),
   twilioPhoneNumber: z.string().optional(),
   appointmentRemindersEnabled: z.boolean().optional(),
+  appointmentReminderChannel: z.enum(['sms', 'voice']).optional(),
   reminderHoursBefore: z.number().min(1).max(168).optional(),
   allowPatientReplies: z.boolean().optional(),
   reminderTemplate: z.string().optional(),
@@ -206,7 +266,7 @@ router.post('/test-connection', requireAuth, async (req: AuthedRequest, res: Res
  * Send SMS manually (staff use)
  */
 const sendSMSSchema = z.object({
-  patientId: z.string().uuid(),
+  patientId: z.string().min(1),
   messageBody: z.string().min(1).max(1600),
   messageType: z.enum(['notification', 'conversation', 'confirmation', 'reminder']).optional(),
 });
@@ -238,19 +298,14 @@ router.post('/send', requireAuth, async (req: AuthedRequest, res: Response) => {
       return res.status(400).json({ error: 'Patient has no phone number' });
     }
 
-    // Check if patient opted out
-    const prefsResult = await pool.query(
-      `SELECT opted_in FROM patient_sms_preferences WHERE tenant_id = $1 AND patient_id = $2`,
-      [tenantId, patientId]
-    );
-
-    if (prefsResult.rows.length > 0 && !prefsResult.rows[0].opted_in) {
-      return res.status(400).json({ error: 'Patient has opted out of SMS' });
+    const messagingBlock = await getPatientSMSMessagingBlock(tenantId, patientId);
+    if (messagingBlock) {
+      return res.status(400).json(messagingBlock);
     }
 
     // Get SMS settings
     const settingsResult = await pool.query(
-      `SELECT twilio_account_sid, twilio_auth_token, twilio_phone_number, is_active
+      `SELECT twilio_account_sid, twilio_auth_token, twilio_phone_number, is_active, is_test_mode
        FROM sms_settings
        WHERE tenant_id = $1`,
       [tenantId]
@@ -261,32 +316,34 @@ router.post('/send', requireAuth, async (req: AuthedRequest, res: Response) => {
     }
 
     const settings = settingsResult.rows[0];
-    const twilioService = createTwilioService(
-      settings.twilio_account_sid,
-      settings.twilio_auth_token
-    );
+    const fromNumber = settings.twilio_phone_number || DEFAULT_TEST_SMS_FROM;
 
-    // Send SMS
-    const result = await twilioService.sendSMS({
-      to: patient.phone,
-      from: settings.twilio_phone_number,
-      body: messageBody,
-    });
+    const result = settings.is_test_mode
+      ? buildMockSmsResult(messageBody)
+      : await createTwilioService(
+          settings.twilio_account_sid,
+          settings.twilio_auth_token
+        ).sendSMS({
+          to: patient.phone,
+          from: fromNumber,
+          body: messageBody,
+        });
 
     // Log message
     const messageId = crypto.randomUUID();
     await pool.query(
       `INSERT INTO sms_messages
        (id, tenant_id, twilio_message_sid, direction, from_number, to_number,
-        patient_id, message_body, status, message_type, sent_at, segment_count)
-       VALUES ($1, $2, $3, 'outbound', $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP, $10)`,
+        patient_id, content, message_body, status, message_type, sent_at, segment_count)
+       VALUES ($1, $2, $3, 'outbound', $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, $11)`,
       [
         messageId,
         tenantId,
         result.sid,
-        settings.twilio_phone_number,
+        fromNumber,
         formatPhoneE164(patient.phone),
         patientId,
+        messageBody,
         messageBody,
         result.status,
         messageType || 'conversation',
@@ -466,83 +523,73 @@ router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Respon
     const status = req.query.status as string | undefined;
     const limit = parseInt(req.query.limit as string) || 50;
     const offset = parseInt(req.query.offset as string) || 0;
+    const conversationStatusSql = `
+      CASE
+        WHEN c.consent_status = 'opted_out' OR c.opt_out_date IS NOT NULL THEN 'blocked'
+        ELSE 'active'
+      END
+    `;
+    const lastMessageAtSql = `
+      COALESCE(
+        c.last_message_at,
+        (
+          SELECT m.created_at
+          FROM sms_messages m
+          WHERE m.patient_id = p.id AND m.tenant_id = $1
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        )
+      )
+    `;
+    const lastMessageDirectionSql = `
+      (
+        SELECT m.direction
+        FROM sms_messages m
+        WHERE m.patient_id = p.id AND m.tenant_id = $1
+        ORDER BY m.created_at DESC
+        LIMIT 1
+      )
+    `;
+    const lastMessagePreviewSql = `
+      (
+        SELECT LEFT(COALESCE(NULLIF(m.message_body, ''), NULLIF(m.content, ''), ''), 160)
+        FROM sms_messages m
+        WHERE m.patient_id = p.id AND m.tenant_id = $1
+        ORDER BY m.created_at DESC
+        LIMIT 1
+      )
+    `;
 
-    // First try to use sms_conversations if it exists, otherwise fall back to aggregation
-    const conversationsResult = await pool.query(
-      `SELECT
-        c.id,
-        c.patient_id as "patientId",
-        p.first_name || ' ' || p.last_name as "patientName",
-        p.mrn as "patientMrn",
-        c.phone_number as "phoneNumber",
-        c.status,
-        c.last_message_at as "lastMessageAt",
-        c.last_message_direction as "lastMessageDirection",
-        c.last_message_preview as "lastMessagePreview",
-        c.unread_count as "unreadCount"
-       FROM sms_conversations c
-       JOIN patients p ON p.id = c.patient_id
-       WHERE c.tenant_id = $1
-         ${status ? 'AND c.status = $4' : 'AND c.status != \'blocked\''}
-       ORDER BY c.last_message_at DESC NULLS LAST
-       LIMIT $2 OFFSET $3`,
-      status ? [tenantId, limit, offset, status] : [tenantId, limit, offset]
-    ).catch(() => null);
-
-    if (conversationsResult && conversationsResult.rows.length > 0) {
-      return res.json({ conversations: conversationsResult.rows });
-    }
-
-    // Fall back to getting all patients with phone numbers (with message info if available)
     const result = await pool.query(
       `SELECT DISTINCT ON (p.id)
-        gen_random_uuid() as "id",
+        COALESCE(c.id::text, gen_random_uuid()::text) as "id",
         p.id as "patientId",
         p.first_name as "firstName",
         p.last_name as "lastName",
         p.first_name || ' ' || p.last_name as "patientName",
         p.mrn as "patientMrn",
-        p.phone as "phoneNumber",
-        p.phone as "phone",
-        COALESCE(prefs.opted_in, true) as "smsOptIn",
-        prefs.opted_out_at as "optedOutAt",
-        'active' as "status",
-        (
-          SELECT m.created_at
-          FROM sms_messages m
-          WHERE m.patient_id = p.id AND m.tenant_id = $1
-          ORDER BY m.created_at DESC
-          LIMIT 1
-        ) as "lastMessageAt",
-        (
-          SELECT m.created_at
-          FROM sms_messages m
-          WHERE m.patient_id = p.id AND m.tenant_id = $1
-          ORDER BY m.created_at DESC
-          LIMIT 1
-        ) as "lastMessageTime",
-        (
-          SELECT m.direction
-          FROM sms_messages m
-          WHERE m.patient_id = p.id AND m.tenant_id = $1
-          ORDER BY m.created_at DESC
-          LIMIT 1
-        ) as "lastMessageDirection",
-        (
-          SELECT LEFT(m.message_body, 160)
-          FROM sms_messages m
-          WHERE m.patient_id = p.id AND m.tenant_id = $1
-          ORDER BY m.created_at DESC
-          LIMIT 1
-        ) as "lastMessagePreview",
-        (
-          SELECT LEFT(m.message_body, 160)
-          FROM sms_messages m
-          WHERE m.patient_id = p.id AND m.tenant_id = $1
-          ORDER BY m.created_at DESC
-          LIMIT 1
-        ) as "lastMessage",
-        (
+        COALESCE(NULLIF(BTRIM(p.phone), ''), NULLIF(BTRIM(c.phone_number), '')) as "phoneNumber",
+        COALESCE(NULLIF(BTRIM(p.phone), ''), NULLIF(BTRIM(c.phone_number), '')) as "phone",
+        COALESCE(
+          prefs.opted_in,
+          CASE
+            WHEN c.consent_status = 'opted_out' OR c.opt_out_date IS NOT NULL THEN false
+            ELSE true
+          END
+        ) as "smsOptIn",
+        COALESCE(prefs.opted_out_at, c.opt_out_date) as "optedOutAt",
+        ${conversationStatusSql} as "status",
+        COALESCE(thread.category, 'general') as "category",
+        COALESCE(thread.status, 'open') as "threadStatus",
+        thread.id as "threadId",
+        ${lastMessageAtSql} as "lastMessageAt",
+        ${lastMessageAtSql} as "lastMessageTime",
+        ${lastMessageDirectionSql} as "lastMessageDirection",
+        ${lastMessagePreviewSql} as "lastMessagePreview",
+        ${lastMessagePreviewSql} as "lastMessage",
+        COALESCE(
+          c.unread_count,
+          (
           SELECT COUNT(*)::int
           FROM sms_messages m
           WHERE m.patient_id = p.id
@@ -552,21 +599,26 @@ router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Respon
               SELECT last_read_at FROM sms_message_reads
               WHERE patient_id = p.id AND tenant_id = $1
             ), '1970-01-01'::timestamp)
+          )
         ) as "unreadCount"
       FROM patients p
+      LEFT JOIN sms_conversations c ON c.patient_id = p.id AND c.tenant_id = $1
       LEFT JOIN patient_sms_preferences prefs ON prefs.patient_id = p.id AND prefs.tenant_id = $1
-      WHERE p.tenant_id = $1
-        AND p.phone IS NOT NULL
-        AND p.phone != ''
-      ORDER BY p.id, (
-        SELECT m.created_at
-        FROM sms_messages m
-        WHERE m.patient_id = p.id AND m.tenant_id = $1
-        ORDER BY m.created_at DESC
+      LEFT JOIN LATERAL (
+        SELECT t.id, t.category, t.status
+        FROM patient_message_threads t
+        WHERE t.patient_id = p.id AND t.tenant_id = $1
+        ORDER BY t.last_message_at DESC NULLS LAST, t.created_at DESC
         LIMIT 1
+      ) thread ON true
+      WHERE p.tenant_id = $1
+        AND COALESCE(NULLIF(BTRIM(p.phone), ''), NULLIF(BTRIM(c.phone_number), '')) IS NOT NULL
+        ${status ? `AND ${conversationStatusSql} = $4` : `AND ${conversationStatusSql} != 'blocked'`}
+      ORDER BY p.id, (
+        ${lastMessageAtSql}
       ) DESC NULLS LAST
       LIMIT $2 OFFSET $3`,
-      [tenantId, limit, offset]
+      status ? [tenantId, limit, offset, status] : [tenantId, limit, offset]
     );
 
     res.json({ conversations: result.rows });
@@ -587,9 +639,23 @@ router.get('/conversations/:patientId', requireAuth, async (req: AuthedRequest, 
 
     // Get patient info
     const patientResult = await pool.query(
-      `SELECT id, first_name as "firstName", last_name as "lastName", phone
-       FROM patients
-       WHERE id = $1 AND tenant_id = $2`,
+      `SELECT
+        p.id,
+        p.first_name as "firstName",
+        p.last_name as "lastName",
+        p.phone,
+        COALESCE(thread.category, 'general') as "category",
+        COALESCE(thread.status, 'open') as "threadStatus",
+        thread.id as "threadId"
+       FROM patients p
+       LEFT JOIN LATERAL (
+         SELECT t.id, t.category, t.status
+         FROM patient_message_threads t
+         WHERE t.patient_id = p.id AND t.tenant_id = p.tenant_id
+         ORDER BY t.last_message_at DESC NULLS LAST, t.created_at DESC
+         LIMIT 1
+       ) thread ON true
+       WHERE p.id = $1 AND p.tenant_id = $2`,
       [patientId, tenantId]
     );
 
@@ -619,6 +685,9 @@ router.get('/conversations/:patientId', requireAuth, async (req: AuthedRequest, 
       patientId: patient.id,
       patientName: `${patient.firstName} ${patient.lastName}`,
       patientPhone: patient.phone,
+      category: patient.category,
+      threadStatus: patient.threadStatus,
+      threadId: patient.threadId,
       messages: messagesResult.rows,
     });
   } catch (error: any) {
@@ -635,11 +704,20 @@ const sendConversationMessageSchema = z.object({
   message: z.string().min(1).max(1600),
 });
 
+const updateConversationRoutingSchema = z.object({
+  category: z.enum(smsRoutingCategories),
+});
+
 router.post('/conversations/:patientId/send', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
-    const patientId = req.params.patientId;
+    const userName = req.user!.fullName || 'Staff Member';
+    const patientId = req.params.patientId || '';
+
+    if (!patientId) {
+      return res.status(400).json({ error: 'Patient ID required' });
+    }
 
     const parsed = sendConversationMessageSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -663,19 +741,14 @@ router.post('/conversations/:patientId/send', requireAuth, async (req: AuthedReq
       return res.status(400).json({ error: 'Patient has no phone number' });
     }
 
-    // Check opt-in status
-    const prefsResult = await pool.query(
-      `SELECT opted_in FROM patient_sms_preferences WHERE tenant_id = $1 AND patient_id = $2`,
-      [tenantId, patientId]
-    );
-
-    if (prefsResult.rows.length > 0 && !prefsResult.rows[0].opted_in) {
-      return res.status(400).json({ error: 'Patient has opted out of SMS' });
+    const messagingBlock = await getPatientSMSMessagingBlock(tenantId, patientId);
+    if (messagingBlock) {
+      return res.status(400).json(messagingBlock);
     }
 
     // Get SMS settings
     const settingsResult = await pool.query(
-      `SELECT twilio_account_sid, twilio_auth_token, twilio_phone_number, is_active
+      `SELECT twilio_account_sid, twilio_auth_token, twilio_phone_number, is_active, is_test_mode
        FROM sms_settings
        WHERE tenant_id = $1`,
       [tenantId]
@@ -686,37 +759,71 @@ router.post('/conversations/:patientId/send', requireAuth, async (req: AuthedReq
     }
 
     const settings = settingsResult.rows[0];
-    const twilioService = createTwilioService(
-      settings.twilio_account_sid,
-      settings.twilio_auth_token
-    );
+    const fromNumber = settings.twilio_phone_number || DEFAULT_TEST_SMS_FROM;
 
-    // Send SMS
-    const result = await twilioService.sendSMS({
-      to: patient.phone,
-      from: settings.twilio_phone_number,
-      body: message,
-    });
+    const result = settings.is_test_mode
+      ? buildMockSmsResult(message)
+      : await createTwilioService(
+          settings.twilio_account_sid,
+          settings.twilio_auth_token
+        ).sendSMS({
+          to: patient.phone,
+          from: fromNumber,
+          body: message,
+        });
 
-    // Log message
+    const client = await pool.connect();
     const messageId = crypto.randomUUID();
-    await pool.query(
-      `INSERT INTO sms_messages
-       (id, tenant_id, twilio_message_sid, direction, from_number, to_number,
-        patient_id, message_body, status, message_type, sent_at, segment_count)
-       VALUES ($1, $2, $3, 'outbound', $4, $5, $6, $7, $8, 'conversation', CURRENT_TIMESTAMP, $9)`,
-      [
-        messageId,
-        tenantId,
-        result.sid,
-        settings.twilio_phone_number,
-        formatPhoneE164(patient.phone),
-        patientId,
-        message,
-        result.status,
-        result.numSegments,
-      ]
-    );
+
+    try {
+      await client.query('BEGIN');
+
+      await client.query(
+        `INSERT INTO sms_messages
+         (id, tenant_id, twilio_message_sid, direction, from_number, to_number,
+          patient_id, content, message_body, status, message_type, sent_at, segment_count)
+         VALUES ($1, $2, $3, 'outbound', $4, $5, $6, $7, $8, $9, 'conversation', CURRENT_TIMESTAMP, $10)`,
+        [
+          messageId,
+          tenantId,
+          result.sid,
+          fromNumber,
+          formatPhoneE164(patient.phone),
+          patientId,
+          message,
+          message,
+          result.status,
+          result.numSegments,
+        ]
+      );
+
+      const thread = await findOrCreateMessageThread(tenantId, patientId, message, client);
+      await addMessageToThread(
+        {
+          threadId: thread.id,
+          senderType: 'staff',
+          senderUserId: userId,
+          senderName: userName,
+          messageText: message,
+          deliveredToPatient: true,
+        },
+        client
+      );
+      await markThreadUnreadByPatient(thread.id, client);
+      await updateMessageThreadRoute(
+        thread.id,
+        (thread.category || 'general') as SMSRoutingCategory,
+        'waiting-patient',
+        client
+      );
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
 
     await auditLog(tenantId, userId, 'sms_send', 'sms_message', messageId);
 
@@ -732,6 +839,59 @@ router.post('/conversations/:patientId/send', requireAuth, async (req: AuthedReq
   }
 });
 
+router.put('/conversations/:patientId/routing', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const patientId = req.params.patientId || '';
+
+    if (!patientId) {
+      return res.status(400).json({ error: 'Patient ID required' });
+    }
+
+    const parsed = updateConversationRoutingSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const patientResult = await pool.query(
+      `SELECT id FROM patients WHERE id = $1 AND tenant_id = $2`,
+      [patientId, tenantId]
+    );
+
+    if (patientResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const thread = await findOrCreateMessageThread(tenantId, patientId, 'SMS conversation', client);
+      const nextStatus = thread.status === 'waiting-patient' ? 'open' : thread.status || 'open';
+      await updateMessageThreadRoute(thread.id, parsed.data.category, nextStatus, client);
+      await client.query('COMMIT');
+
+      await auditLog(tenantId, userId, 'sms_conversation_route_update', 'patient_message_thread', thread.id);
+
+      return res.json({
+        success: true,
+        patientId,
+        threadId: thread.id,
+        category: parsed.data.category,
+        threadStatus: nextStatus,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error: any) {
+    logger.error('Error updating SMS conversation routing', { error: error.message });
+    res.status(500).json({ error: 'Failed to update conversation routing' });
+  }
+});
+
 /**
  * PUT /api/sms/conversations/:patientId/mark-read
  * Mark conversation as read
@@ -739,16 +899,41 @@ router.post('/conversations/:patientId/send', requireAuth, async (req: AuthedReq
 router.put('/conversations/:patientId/mark-read', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
     const patientId = req.params.patientId;
 
-    // Create or update read status
-    await pool.query(
-      `INSERT INTO sms_message_reads (tenant_id, patient_id, last_read_at)
-       VALUES ($1, $2, CURRENT_TIMESTAMP)
-       ON CONFLICT (tenant_id, patient_id)
-       DO UPDATE SET last_read_at = CURRENT_TIMESTAMP`,
-      [tenantId, patientId]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      await client.query(
+        `INSERT INTO sms_message_reads (tenant_id, patient_id, last_read_at)
+         VALUES ($1, $2, CURRENT_TIMESTAMP)
+         ON CONFLICT (tenant_id, patient_id)
+         DO UPDATE SET last_read_at = CURRENT_TIMESTAMP`,
+        [tenantId, patientId]
+      );
+
+      const threadResult = await client.query(
+        `SELECT id
+         FROM patient_message_threads
+         WHERE tenant_id = $1 AND patient_id = $2 AND status != 'closed'
+         ORDER BY last_message_at DESC NULLS LAST, created_at DESC
+         LIMIT 1`,
+        [tenantId, patientId]
+      );
+
+      if (threadResult.rows[0]?.id) {
+        await markThreadReadByStaff(threadResult.rows[0].id, userId, client);
+      }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
 
     res.json({ success: true });
   } catch (error: any) {
@@ -764,6 +949,7 @@ router.put('/conversations/:patientId/mark-read', requireAuth, async (req: Authe
 router.get('/auto-responses', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
+    const branding = await getSMSPracticeBranding(tenantId, pool);
 
     const result = await pool.query(
       `SELECT
@@ -777,11 +963,28 @@ router.get('/auto-responses', requireAuth, async (req: AuthedRequest, res: Respo
         created_at as "createdAt"
        FROM sms_auto_responses
        WHERE tenant_id = $1
-       ORDER BY priority DESC, keyword`,
+      ORDER BY priority DESC, keyword`,
       [tenantId]
     );
 
-    res.json({ autoResponses: result.rows });
+    const autoResponses = result.rows.map((row) => {
+      if (!row.isSystemKeyword) {
+        return row;
+      }
+
+      switch (String(row.keyword || '').toUpperCase()) {
+        case 'HELP':
+          return { ...row, responseText: buildSMSHelpText(branding) };
+        case 'START':
+          return { ...row, responseText: buildSMSOptInConfirmationText(branding) };
+        case 'STOP':
+          return { ...row, responseText: buildSMSOptOutConfirmationText(branding) };
+        default:
+          return row;
+      }
+    });
+
+    res.json({ autoResponses });
   } catch (error: any) {
     logger.error('Error fetching auto-responses', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch auto-responses' });
@@ -1032,29 +1235,17 @@ router.post('/opt-out', requireAuth, async (req: AuthedRequest, res: Response) =
       return res.status(400).json({ error: 'Invalid phone number' });
     }
 
-    // Add to opt-out table
-    await pool.query(
-      `INSERT INTO sms_opt_out (tenant_id, phone_number, patient_id, reason, opted_out_via)
-       VALUES ($1, $2, $3, $4, 'staff')
-       ON CONFLICT (tenant_id, phone_number) DO UPDATE SET
-         is_active = true,
-         opted_out_at = CURRENT_TIMESTAMP,
-         reason = $4,
-         opted_in_at = NULL`,
-      [tenantId, phoneNumber, patientId, reason || 'Staff action']
+    await revokeSMSConsent(
+      tenantId,
+      patientId,
+      {
+        reason: reason || 'Staff action',
+        notes: 'Patient opted out from SMS management screen',
+        optedOutVia: 'staff',
+      },
+      pool
     );
-
-    // Update patient preferences
-    await pool.query(
-      `INSERT INTO patient_sms_preferences (tenant_id, patient_id, opted_in, opted_out_at, opted_out_via)
-       VALUES ($1, $2, false, CURRENT_TIMESTAMP, 'staff')
-       ON CONFLICT (tenant_id, patient_id) DO UPDATE SET
-         opted_in = false,
-         opted_out_at = CURRENT_TIMESTAMP,
-         opted_out_via = 'staff',
-         updated_at = CURRENT_TIMESTAMP`,
-      [tenantId, patientId]
-    );
+    await upsertSMSOptOut(tenantId, phoneNumber, reason || 'Staff action', pool);
 
     await auditLog(tenantId, userId, 'sms_opt_out', 'patient', patientId);
 
@@ -1075,24 +1266,57 @@ router.post('/opt-out', requireAuth, async (req: AuthedRequest, res: Response) =
  * POST /api/sms/send-reminder/:appointmentId
  * Send immediate reminder for appointment
  */
+const sendReminderSchema = z.object({
+  channel: z.enum(['sms', 'voice']).optional(),
+});
+
 router.post('/send-reminder/:appointmentId', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
     const appointmentId = req.params.appointmentId!;
+    const parsed = sendReminderSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
 
-    const result = await sendImmediateReminder(tenantId, appointmentId);
+    const channel = parsed.data.channel || 'sms';
+    const result = await sendImmediateReminder(tenantId, appointmentId, channel);
 
     if (!result.success) {
       return res.status(400).json({ error: result.error });
     }
 
-    await auditLog(tenantId, userId, 'sms_reminder_send', 'appointment', appointmentId!);
+    await auditLog(tenantId, userId, `sms_reminder_send_${channel}`, 'appointment', appointmentId!);
 
-    res.json({ success: true });
+    res.json({ success: true, channel });
   } catch (error: any) {
     logger.error('Error sending reminder', { error: error.message });
     res.status(500).json({ error: 'Failed to send reminder' });
+  }
+});
+
+/**
+ * POST /api/sms/send-call-reminder/:appointmentId
+ * Convenience endpoint for immediate voice reminder calls
+ */
+router.post('/send-call-reminder/:appointmentId', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const appointmentId = req.params.appointmentId!;
+
+    const result = await sendImmediateReminder(tenantId, appointmentId, 'voice');
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    await auditLog(tenantId, userId, 'sms_reminder_send_voice', 'appointment', appointmentId);
+
+    res.json({ success: true, channel: 'voice' });
+  } catch (error: any) {
+    logger.error('Error sending reminder call', { error: error.message });
+    res.status(500).json({ error: 'Failed to send reminder call' });
   }
 });
 
@@ -1346,7 +1570,7 @@ router.post('/send-bulk', requireAuth, async (req: AuthedRequest, res: Response)
 
     // Get SMS settings
     const settingsResult = await pool.query(
-      `SELECT twilio_account_sid, twilio_auth_token, twilio_phone_number, is_active
+      `SELECT twilio_account_sid, twilio_auth_token, twilio_phone_number, is_active, is_test_mode
        FROM sms_settings
        WHERE tenant_id = $1`,
       [tenantId]
@@ -1384,10 +1608,10 @@ router.post('/send-bulk', requireAuth, async (req: AuthedRequest, res: Response)
     }
 
     // Send immediately
-    const twilioService = createTwilioService(
-      settings.twilio_account_sid,
-      settings.twilio_auth_token
-    );
+    const fromNumber = settings.twilio_phone_number || DEFAULT_TEST_SMS_FROM;
+    const twilioService = settings.is_test_mode
+      ? null
+      : createTwilioService(settings.twilio_account_sid, settings.twilio_auth_token);
 
     const results = {
       total: patientIds.length,
@@ -1427,25 +1651,28 @@ router.post('/send-bulk', requireAuth, async (req: AuthedRequest, res: Response)
           .replace(/{lastName}/g, patient.last_name)
           .replace(/{patientName}/g, `${patient.first_name} ${patient.last_name}`);
 
-        const result = await twilioService.sendSMS({
-          to: patient.phone,
-          from: settings.twilio_phone_number,
-          body: personalizedMessage,
-        });
+        const result = settings.is_test_mode
+          ? buildMockSmsResult(personalizedMessage)
+          : await twilioService!.sendSMS({
+              to: patient.phone,
+              from: fromNumber,
+              body: personalizedMessage,
+            });
 
         const messageId = crypto.randomUUID();
         await pool.query(
           `INSERT INTO sms_messages
            (id, tenant_id, twilio_message_sid, direction, from_number, to_number,
-            patient_id, message_body, status, message_type, sent_at, segment_count)
-           VALUES ($1, $2, $3, 'outbound', $4, $5, $6, $7, $8, 'notification', CURRENT_TIMESTAMP, $9)`,
+            patient_id, content, message_body, status, message_type, sent_at, segment_count)
+           VALUES ($1, $2, $3, 'outbound', $4, $5, $6, $7, $8, $9, 'notification', CURRENT_TIMESTAMP, $10)`,
           [
             messageId,
             tenantId,
             result.sid,
-            settings.twilio_phone_number,
+            fromNumber,
             formatPhoneE164(patient.phone),
             patient.id,
+            personalizedMessage,
             personalizedMessage,
             result.status,
             result.numSegments,
@@ -1628,6 +1855,89 @@ router.delete('/scheduled/:id', requireAuth, async (req: AuthedRequest, res: Res
   } catch (error: any) {
     logger.error('Error cancelling scheduled message', { error: error.message });
     res.status(500).json({ error: 'Failed to cancel scheduled message' });
+  }
+});
+
+// ============================================================================
+// TEST MODE HELPERS
+// ============================================================================
+
+const simulateInboundSchema = z.object({
+  patientId: z.string().uuid(),
+  messageBody: z.string().min(1).max(1600),
+});
+
+/**
+ * POST /api/sms/test/inbound
+ * Simulate an inbound patient SMS in test mode.
+ */
+router.post('/test/inbound', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+
+    const parsed = simulateInboundSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { patientId, messageBody } = parsed.data;
+
+    const settingsResult = await pool.query(
+      `SELECT twilio_phone_number, is_active, is_test_mode
+       FROM sms_settings
+       WHERE tenant_id = $1`,
+      [tenantId]
+    );
+
+    if (settingsResult.rows.length === 0 || !settingsResult.rows[0].is_active) {
+      return res.status(400).json({ error: 'SMS not configured or not active' });
+    }
+    if (!settingsResult.rows[0].is_test_mode) {
+      return res.status(400).json({ error: 'Inbound simulation is only available in test mode' });
+    }
+
+    const patientResult = await pool.query(
+      `SELECT phone FROM patients WHERE id = $1 AND tenant_id = $2`,
+      [patientId, tenantId]
+    );
+    if (patientResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+    if (!patientResult.rows[0].phone) {
+      return res.status(400).json({ error: 'Patient has no phone number' });
+    }
+
+    const toNumber = settingsResult.rows[0].twilio_phone_number || DEFAULT_TEST_SMS_FROM;
+
+    const mockTwilioService = {
+      sendSMS: async (params: { body: string }) => buildMockSmsResult(params.body),
+    } as unknown as TwilioService;
+
+    const result = await processIncomingSMS(
+      {
+        messageSid: `mock_inbound_${crypto.randomUUID()}`,
+        from: patientResult.rows[0].phone,
+        to: toNumber,
+        body: messageBody,
+        numMedia: 0,
+        mediaUrls: [],
+        tenantId,
+      },
+      mockTwilioService
+    );
+
+    await auditLog(tenantId, userId, 'sms_test_inbound', 'sms_message', result.messageId);
+
+    res.json({
+      success: true,
+      messageId: result.messageId,
+      autoResponseSent: result.autoResponseSent || false,
+      actionPerformed: result.actionPerformed || null,
+    });
+  } catch (error: any) {
+    logger.error('Error simulating inbound SMS', { error: error.message });
+    res.status(500).json({ error: 'Failed to simulate inbound SMS' });
   }
 });
 

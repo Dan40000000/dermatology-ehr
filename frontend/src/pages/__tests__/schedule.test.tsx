@@ -12,12 +12,16 @@ const toastMocks = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   fetchAppointments: vi.fn(),
+  fetchFrontDeskSchedule: vi.fn(),
+  fetchPriorAuths: vi.fn(),
   fetchProviders: vi.fn(),
   fetchLocations: vi.fn(),
   fetchAppointmentTypes: vi.fn(),
   fetchAvailability: vi.fn(),
   fetchPatients: vi.fn(),
   updateAppointmentStatus: vi.fn(),
+  checkInFrontDeskAppointment: vi.fn(),
+  updatePatientFlowStatus: vi.fn(),
   createAppointment: vi.fn(),
   rescheduleAppointment: vi.fn(),
   fetchTimeBlocks: vi.fn(),
@@ -95,11 +99,21 @@ vi.mock('../../components/ui', () => ({
 }));
 
 vi.mock('../../components/schedule/Calendar', () => ({
-  Calendar: ({ appointments, providers, timeBlocks, onAppointmentClick, onSlotClick, onTimeBlockClick }: any) => (
+  Calendar: ({
+    appointments,
+    providers,
+    timeBlocks,
+    showWeekends,
+    onAppointmentClick,
+    onSlotClick,
+    onTimeBlockClick,
+    onAppointmentReschedule,
+  }: any) => (
     <div data-testid="calendar">
       <div data-testid="calendar-appointments">{appointments?.length ?? 0}</div>
       <div data-testid="calendar-providers">{providers?.length ?? 0}</div>
       <div data-testid="calendar-timeblocks">{timeBlocks?.length ?? 0}</div>
+      <div data-testid="calendar-show-weekends">{showWeekends ? 'yes' : 'no'}</div>
       <button type="button" onClick={() => appointments?.[0] && onAppointmentClick?.(appointments[0])}>
         Select Appointment
       </button>
@@ -111,6 +125,9 @@ vi.mock('../../components/schedule/Calendar', () => ({
       </button>
       <button type="button" onClick={() => onTimeBlockClick?.(timeBlocks?.[0]?.id ?? 'tb-1')}>
         Select Time Block
+      </button>
+      <button type="button" onClick={() => appointments?.[0] && onAppointmentReschedule?.(appointments[0])}>
+        Inline Reschedule
       </button>
     </div>
   ),
@@ -319,6 +336,8 @@ describe('SchedulePage', () => {
     rescheduleProviderId.value = 'provider-2';
     const fixtures = buildFixtures();
     apiMocks.fetchAppointments.mockResolvedValue({ appointments: fixtures.appointments });
+    apiMocks.fetchFrontDeskSchedule.mockResolvedValue({ appointments: [] });
+    apiMocks.fetchPriorAuths.mockResolvedValue({ data: [] });
     apiMocks.fetchProviders.mockResolvedValue({ providers: fixtures.providers });
     apiMocks.fetchLocations.mockResolvedValue({ locations: fixtures.locations });
     apiMocks.fetchAppointmentTypes.mockResolvedValue({ appointmentTypes: fixtures.appointmentTypes });
@@ -326,6 +345,8 @@ describe('SchedulePage', () => {
     apiMocks.fetchPatients.mockResolvedValue({ patients: fixtures.patients });
     apiMocks.fetchTimeBlocks.mockResolvedValue(fixtures.timeBlocks);
     apiMocks.updateAppointmentStatus.mockResolvedValue({ ok: true });
+    apiMocks.checkInFrontDeskAppointment.mockResolvedValue({ ok: true });
+    apiMocks.updatePatientFlowStatus.mockResolvedValue({ ok: true });
     apiMocks.createAppointment.mockResolvedValue({ ok: true });
     apiMocks.rescheduleAppointment.mockResolvedValue({ ok: true });
     apiMocks.createTimeBlock.mockResolvedValue({ ok: true });
@@ -375,12 +396,16 @@ describe('SchedulePage', () => {
 
     fireEvent.change(locationSelect, { target: { value: 'loc-2' } });
     await waitFor(() => expect(screen.getByTestId('calendar-appointments')).toHaveTextContent('1'));
+    expect(screen.getByTestId('calendar-providers')).toHaveTextContent('1');
+    expect(screen.getByTestId('calendar-timeblocks')).toHaveTextContent('1');
 
     fireEvent.change(typeSelect, { target: { value: 'type-1' } });
     await waitFor(() => expect(screen.getByTestId('calendar-appointments')).toHaveTextContent('0'));
 
     fireEvent.change(locationSelect, { target: { value: 'all' } });
     await waitFor(() => expect(screen.getByTestId('calendar-appointments')).toHaveTextContent('2'));
+    expect(screen.getByTestId('calendar-providers')).toHaveTextContent('2');
+    expect(screen.getByTestId('calendar-timeblocks')).toHaveTextContent('2');
 
     fireEvent.click(screen.getByRole('button', { name: /Prev/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Today' }));
@@ -394,19 +419,20 @@ describe('SchedulePage', () => {
 
     const finderPanel = screen.getByRole('heading', { name: 'Appointment Finder' }).closest('div')?.parentElement as HTMLElement;
     const finderSelects = within(finderPanel).getAllByRole('combobox');
-    fireEvent.change(finderSelects[0], { target: { value: 'loc-1' } });
-    fireEvent.change(finderSelects[1], { target: { value: 'provider-1' } });
-    fireEvent.change(finderSelects[2], { target: { value: '' } });
+    fireEvent.change(finderSelects[1], { target: { value: 'loc-1' } });
+    fireEvent.change(finderSelects[2], { target: { value: 'provider-1' } });
+    fireEvent.change(finderSelects[3], { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     expect(toastMocks.showError).toHaveBeenCalledWith('Please select an appointment type');
-    fireEvent.change(finderSelects[2], { target: { value: 'type-1' } });
-    fireEvent.change(finderSelects[3], { target: { value: '30' } });
-    fireEvent.change(finderSelects[4], { target: { value: 'Morning' } });
-    fireEvent.change(finderSelects[5], { target: { value: 'Weekdays' } });
-    fireEvent.change(finderSelects[6], { target: { value: 'Specific date' } });
+    fireEvent.change(finderSelects[3], { target: { value: 'type-1' } });
+    fireEvent.change(finderSelects[4], { target: { value: '30' } });
+    fireEvent.change(finderSelects[5], { target: { value: 'Morning' } });
+    fireEvent.change(finderSelects[6], { target: { value: 'Weekdays' } });
+    fireEvent.change(finderSelects[7], { target: { value: 'Specific date' } });
+    fireEvent.change(finderSelects[0], { target: { value: 'patient-1' } });
     fireEvent.click(within(finderPanel).getByRole('radio', { name: 'By Time Availability' }));
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Searching for available appointments...');
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Loaded patient into New Appointment. Pick an available time.');
     fireEvent.click(within(finderPanel).getByRole('button', { name: 'Close' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Quick Filters' }));
@@ -445,18 +471,29 @@ describe('SchedulePage', () => {
 
     await screen.findByTestId('calendar');
 
-    fireEvent.click(screen.getByRole('button', { name: /New Appointment/i }));
+    const actionBar = document.querySelector('.ema-action-bar');
+    if (!actionBar) {
+      throw new Error('Action bar not found');
+    }
+    const actionScope = within(actionBar);
+
+    fireEvent.click(actionScope.getByRole('button', { name: /New Appointment/i }));
     expect(screen.getByText('Appointment Modal')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close Appointment' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Select Appointment' }));
 
-    fireEvent.click(screen.getByRole('button', { name: /Check In/ }));
+    fireEvent.click(actionScope.getByRole('button', { name: /Check In/ }));
+    expect(screen.getByText('Check-In Review')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Check In Now' }));
     await waitFor(() =>
-      expect(apiMocks.updateAppointmentStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', 'checked_in'),
+      expect(apiMocks.checkInFrontDeskAppointment).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', undefined),
+    );
+    await waitFor(() =>
+      expect(apiMocks.updatePatientFlowStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', 'checked_in'),
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Cancel Appointment/ }));
+    fireEvent.click(actionScope.getByRole('button', { name: /Cancel Appointment/ }));
     await waitFor(() =>
       expect(apiMocks.updateAppointmentStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', 'cancelled'),
     );
@@ -470,10 +507,10 @@ describe('SchedulePage', () => {
       expect(apiMocks.updateAppointmentStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', 'completed'),
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Reschedule/ }));
+    fireEvent.click(actionScope.getByRole('button', { name: /Reschedule/ }));
     expect(screen.getByText('Reschedule Modal')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close Reschedule' }));
-    fireEvent.click(screen.getByRole('button', { name: /Reschedule/ }));
+    fireEvent.click(actionScope.getByRole('button', { name: /Reschedule/ }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Save Reschedule' }));
     const rescheduleStart = new Date('2024-04-12T10:00:00');
@@ -511,7 +548,7 @@ describe('SchedulePage', () => {
       ),
     );
 
-    fireEvent.click(screen.getAllByRole('button', { name: /Time Block/ })[0]);
+    fireEvent.click(actionScope.getByRole('button', { name: /Time Block/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save Time Block' }));
     const timeBlockStart = new Date('2024-04-11T13:00:00');
     const timeBlockEnd = new Date('2024-04-11T14:00:00');
@@ -550,16 +587,195 @@ describe('SchedulePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete Time Block' }));
     await waitFor(() => expect(apiMocks.deleteTimeBlock).toHaveBeenCalledWith('tenant-1', 'token-1', 'tb-1'));
 
+    fireEvent.click(actionScope.getByRole('button', { name: /Time Block/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close Time Block' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ana Derm' }));
+    expect(navigateMock).toHaveBeenCalledWith('/patients/patient-1');
+  }, 15000);
+
+  it('opens copay modal at check-in and supports defer path', async () => {
+    apiMocks.fetchFrontDeskSchedule.mockResolvedValueOnce({
+      appointments: [{ id: 'appt-1', copayAmount: 35 }],
+    });
+
+    render(<SchedulePage />);
+    await screen.findByTestId('calendar');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Appointment' }));
     const actionBar = document.querySelector('.ema-action-bar');
     if (!actionBar) {
       throw new Error('Action bar not found');
     }
-    fireEvent.click(within(actionBar).getByRole('button', { name: /Time Block/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Close Time Block' }));
+    const actionScope = within(actionBar);
 
-    fireEvent.click(screen.getByRole('link', { name: 'Ana Derm' }));
-    expect(navigateMock).toHaveBeenCalledWith('/patients/patient-1');
-  }, 15000);
+    fireEvent.click(actionScope.getByRole('button', { name: /Check In/ }));
+    expect(screen.getByText('Check-In Review')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bypass Payment + Check In' }));
+
+    await waitFor(() =>
+      expect(apiMocks.checkInFrontDeskAppointment).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        'appt-1',
+        expect.objectContaining({ deferCopay: true }),
+      ),
+    );
+  });
+
+  it('shows past balance due in check-in review', async () => {
+    apiMocks.fetchFrontDeskSchedule.mockResolvedValueOnce({
+      appointments: [{ id: 'appt-1', copayAmount: 20, outstandingBalance: 150 }],
+    });
+
+    render(<SchedulePage />);
+    await screen.findByTestId('calendar');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Appointment' }));
+    const actionBar = document.querySelector('.ema-action-bar');
+    if (!actionBar) {
+      throw new Error('Action bar not found');
+    }
+    const actionScope = within(actionBar);
+
+    fireEvent.click(actionScope.getByRole('button', { name: /Check In/ }));
+    expect(screen.getByText(/Past balance due:/i)).toBeInTheDocument();
+    expect(screen.getByText(/Total due today:/i)).toBeInTheDocument();
+    expect(screen.getByText('$150.00')).toBeInTheDocument();
+  });
+
+  it('splits check-in collection between copay and past balance', async () => {
+    apiMocks.fetchFrontDeskSchedule.mockResolvedValueOnce({
+      appointments: [{ id: 'appt-1', copayAmount: 60, outstandingBalance: 145 }],
+    });
+
+    render(<SchedulePage />);
+    await screen.findByTestId('calendar');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Appointment' }));
+    const actionBar = document.querySelector('.ema-action-bar');
+    if (!actionBar) {
+      throw new Error('Action bar not found');
+    }
+    const actionScope = within(actionBar);
+
+    fireEvent.click(actionScope.getByRole('button', { name: /Check In/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Total Due \$205\.00/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collect + Check In' }));
+
+    await waitFor(() =>
+      expect(apiMocks.checkInFrontDeskAppointment).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        'appt-1',
+        expect.objectContaining({
+          collectCopay: true,
+          collectOutstandingBalance: true,
+          copayAmountCents: 6000,
+          outstandingBalanceAmountCents: 14500,
+        }),
+      ),
+    );
+  });
+
+  it('opens reschedule modal from calendar inline action callback', async () => {
+    render(<SchedulePage />);
+    await screen.findByTestId('calendar');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Inline Reschedule' }));
+    expect(screen.getByText('Reschedule Modal')).toBeInTheDocument();
+  });
+
+  it('shows prior auth flag in check-in modal and supports assist actions', async () => {
+    apiMocks.fetchPriorAuths.mockResolvedValueOnce({
+      data: [
+        {
+          id: 'pa-1',
+          patient_id: 'patient-1',
+          status: 'pending',
+          auth_number: 'PA-12345',
+        },
+      ],
+    });
+    const fixtures = buildFixtures();
+    fixtures.appointments = [
+      {
+        ...fixtures.appointments[0],
+        appointmentTypeName: 'Laser Hair Removal',
+      },
+    ];
+    apiMocks.fetchAppointments.mockResolvedValueOnce({ appointments: fixtures.appointments });
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    render(<SchedulePage />);
+    await screen.findByTestId('calendar');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Appointment' }));
+    const actionBar = document.querySelector('.ema-action-bar');
+    if (!actionBar) {
+      throw new Error('Action bar not found');
+    }
+    const actionScope = within(actionBar);
+
+    fireEvent.click(actionScope.getByRole('button', { name: /Check In/ }));
+
+    expect(await screen.findByText(/Prior authorization:/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Pending/i).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Patient Check-In Link' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open iPad Kiosk' }));
+    expect(openSpy).toHaveBeenCalled();
+
+    openSpy.mockRestore();
+  });
+
+it('confirms no-show for overdue appointments and posts a no-show fee', async () => {
+  const overdueStart = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const overdueEnd = new Date(overdueStart.getTime() + 30 * 60000);
+  const fixtures = buildFixtures();
+  fixtures.appointments = [
+    {
+      ...fixtures.appointments[0],
+      scheduledStart: overdueStart.toISOString(),
+      scheduledEnd: overdueEnd.toISOString(),
+      status: 'scheduled',
+    },
+  ];
+  apiMocks.fetchAppointments.mockResolvedValueOnce({ appointments: fixtures.appointments });
+  apiMocks.updateAppointmentStatus.mockResolvedValueOnce({ ok: true, noShowFeeBillId: 'bill-noshow-1' });
+
+  render(<SchedulePage />);
+  await screen.findByTestId('calendar');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Select Appointment' }));
+  fireEvent.click(screen.getByTestId('action-mark-no-show'));
+
+  const noShowModal = await screen.findByTestId('modal-confirm-no-show');
+  const reasonInput = within(noShowModal).getByRole('textbox');
+  fireEvent.change(reasonInput, { target: { value: 'Confirmed no-show after front desk outreach.' } });
+  fireEvent.click(within(noShowModal).getByRole('button', { name: 'Confirm No-Show' }));
+
+  await waitFor(() =>
+    expect(apiMocks.updateAppointmentStatus).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      'appt-1',
+      'no_show',
+      { reason: 'Confirmed no-show after front desk outreach.' },
+    ),
+  );
+  expect(toastMocks.showSuccess).toHaveBeenCalledWith(expect.stringContaining('No-show fee posted'));
+});
 
   it('shows conflict warnings with fallback provider labels', async () => {
     apiMocks.fetchAppointments.mockResolvedValueOnce({
@@ -653,13 +869,18 @@ describe('SchedulePage', () => {
     render(<SchedulePage />);
 
     await screen.findByTestId('calendar');
+    const actionBar = document.querySelector('.ema-action-bar');
+    if (!actionBar) {
+      throw new Error('Action bar not found');
+    }
+    const actionScope = within(actionBar);
 
     fireEvent.click(screen.getByRole('button', { name: 'Select Appointment' }));
     const cancelCalls = apiMocks.updateAppointmentStatus.mock.calls.length;
-    fireEvent.click(screen.getByRole('button', { name: /Cancel Appointment/ }));
+    fireEvent.click(actionScope.getByRole('button', { name: /Cancel Appointment/ }));
     expect(apiMocks.updateAppointmentStatus.mock.calls.length).toBe(cancelCalls);
 
-    fireEvent.click(screen.getByRole('button', { name: /Reschedule/ }));
+    fireEvent.click(actionScope.getByRole('button', { name: /Reschedule/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save Reschedule' }));
     const rescheduleStart = new Date('2024-04-12T10:00:00');
     const rescheduleEnd = new Date(rescheduleStart.getTime() + 60 * 60000);
@@ -726,5 +947,22 @@ describe('SchedulePage', () => {
       startDate: toIsoDate(expectedStartDate),
       endDate: toIsoDate(expectedEndDate),
     });
+  });
+
+  it('toggles weekend visibility in week view and persists preference', async () => {
+    render(<SchedulePage />);
+
+    await screen.findByTestId('calendar');
+    fireEvent.click(screen.getByRole('button', { name: 'Week' }));
+
+    const toggle = screen.getByRole('checkbox', { name: /Show weekends/i });
+    expect(toggle).not.toBeChecked();
+
+    fireEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(localStorage.getItem('sched:showWeekends')).toBe('true');
+
+    fireEvent.click(toggle);
+    expect(localStorage.getItem('sched:showWeekends')).toBe('false');
   });
 });

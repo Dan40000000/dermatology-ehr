@@ -1,12 +1,56 @@
 import type { Role } from "../types";
 
-export const FINANCIAL_ROLES: Role[] = ["admin", "billing", "front_desk"];
+const ROLE_ALIASES: Record<string, Role> = {
+  medical_assistant: "ma",
+  medicalassistant: "ma",
+  frontdesk: "front_desk",
+  front_desk: "front_desk",
+  receptionist: "front_desk",
+  biller: "billing",
+  billing_staff: "billing",
+  owner: "admin",
+  practice_owner: "admin",
+  compliance: "compliance_officer",
+  compliance_officer: "compliance_officer",
+  complianceofficer: "compliance_officer",
+  physician: "provider",
+  doctor: "provider",
+  clinician: "provider",
+};
+
+export const CLINICAL_ROLES: Role[] = [
+  "admin",
+  "provider",
+  "ma",
+  "nurse",
+  "manager",
+  "compliance_officer",
+];
+
+export const FINANCIAL_DASHBOARD_ROLES: Role[] = [
+  "admin",
+  "billing",
+  "manager",
+  "compliance_officer",
+];
+
+export const REVENUE_CYCLE_ROLES: Role[] = [
+  "admin",
+  "billing",
+  "front_desk",
+  "manager",
+  "compliance_officer",
+];
+
+export const FINANCIAL_ROLES: Role[] = REVENUE_CYCLE_ROLES;
 
 function normalizeRole(value: unknown): Role | null {
   if (typeof value !== "string") return null;
-  const normalized = value.trim();
-  if (!normalized) return null;
-  return normalized as Role;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.toLowerCase().replace(/[\s-]+/g, "_");
+  const canonical = ROLE_ALIASES[normalized] || normalized;
+  return canonical as Role;
 }
 
 export function normalizeRoleArray(value: unknown): Role[] {
@@ -47,7 +91,9 @@ export function buildEffectiveRoles(primaryRole: unknown, secondaryRoles: unknow
 
 export function userHasRole(user: { role?: Role; roles?: Role[]; secondaryRoles?: Role[] } | undefined, role: Role): boolean {
   if (!user) return false;
-  return buildEffectiveRoles(user.role, user.roles || user.secondaryRoles).includes(role);
+  const normalizedRole = normalizeRole(role);
+  if (!normalizedRole) return false;
+  return buildEffectiveRoles(user.role, user.roles || user.secondaryRoles).includes(normalizedRole);
 }
 
 export function userHasAnyRole(
@@ -55,7 +101,8 @@ export function userHasAnyRole(
   allowedRoles: Role[],
 ): boolean {
   if (!user) return false;
+  const normalizedAllowedRoles = normalizeRoleArray(allowedRoles);
+  if (normalizedAllowedRoles.length === 0) return false;
   const effectiveRoles = buildEffectiveRoles(user.role, user.roles || user.secondaryRoles);
-  return allowedRoles.some((allowed) => effectiveRoles.includes(allowed));
+  return normalizedAllowedRoles.some((allowed) => effectiveRoles.includes(allowed));
 }
-

@@ -32,7 +32,8 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
-const renderWithRouter = (ui: React.ReactElement) => render(<MemoryRouter>{ui}</MemoryRouter>);
+const renderWithRouter = (ui: React.ReactElement, initialEntries = ['/']) =>
+  render(<MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>);
 
 describe('Admin pages', () => {
   beforeEach(() => {
@@ -193,5 +194,28 @@ describe('Admin pages', () => {
 
     fetchSpy.mockRestore();
     confirmSpy.mockRestore();
+  });
+
+  it('opens requested admin tab from query string', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url.includes('/api/admin/users') && (!init || !init.method || init.method === 'GET')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ users: [{ id: 'user-1', fullName: 'Admin User', email: 'admin@example.com', role: 'admin' }] }),
+        } as Response);
+      }
+      if (url.includes('/api/admin/facilities') && (!init || !init.method || init.method === 'GET')) {
+        return Promise.resolve({ ok: true, json: async () => ({ facilities: [] }) } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    renderWithRouter(<AdminPage />, ['/admin?tab=users']);
+
+    expect(await screen.findByText('Admin User')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Users' })).toBeInTheDocument();
+
+    fetchSpy.mockRestore();
   });
 });

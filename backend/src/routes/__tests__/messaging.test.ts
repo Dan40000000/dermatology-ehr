@@ -8,7 +8,13 @@ import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.user = { id: "user-1", tenantId: "tenant-1", role: "admin" };
+    req.user = {
+      id: "user-1",
+      tenantId: "tenant-1",
+      role: "admin",
+      email: "admin@example.com",
+      fullName: "Admin User",
+    };
     return next();
   },
 }));
@@ -31,6 +37,13 @@ jest.mock("../../lib/logger", () => ({
     warn: jest.fn(),
     debug: jest.fn(),
   },
+}));
+
+const mockSendEmail = jest.fn();
+jest.mock("../../lib/container", () => ({
+  getEmailService: () => ({
+    sendEmail: mockSendEmail,
+  }),
 }));
 
 jest.mock("crypto", () => {
@@ -57,6 +70,13 @@ beforeEach(() => {
   connectMock.mockReset();
   auditLogMock.mockReset();
   loggerMock.error.mockReset();
+  delete process.env.MESSAGING_WEBHOOK_SECRET;
+  mockSendEmail.mockReset();
+  mockSendEmail.mockResolvedValue({
+    accepted: [],
+    rejected: [],
+    messageId: "email-message-id",
+  });
 
   mockClient = {
     query: jest.fn(),
@@ -67,8 +87,37 @@ beforeEach(() => {
 });
 
 describe("Messaging routes", () => {
+  describe("GET /api/messaging/recipients", () => {
+    it("should return compose recipients", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [{ id: "user-2", fullName: "Ben Skin", email: "ben@example.com", role: "provider" }],
+      });
+
+      const res = await request(app).get("/api/messaging/recipients");
+
+      expect(res.status).toBe(200);
+      expect(res.body.recipients).toHaveLength(1);
+      expect(res.body.recipients[0].id).toBe("user-2");
+    });
+
+    it("should handle database errors", async () => {
+      queryMock.mockRejectedValueOnce(new Error("Database error"));
+
+      const res = await request(app).get("/api/messaging/recipients");
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to fetch recipients");
+      expect(loggerMock.error).toHaveBeenCalledWith("Error fetching message recipients:", {
+        error: "Database error",
+      });
+    });
+  });
+
   describe("GET /api/messaging/threads", () => {
     it("should return inbox threads", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [],
+      });
       queryMock.mockResolvedValueOnce({
         rows: [
           {
@@ -91,6 +140,9 @@ describe("Messaging routes", () => {
 
     it("should return sent threads", async () => {
       queryMock.mockResolvedValueOnce({
+        rows: [],
+      });
+      queryMock.mockResolvedValueOnce({
         rows: [
           {
             id: "thread-1",
@@ -107,6 +159,9 @@ describe("Messaging routes", () => {
     });
 
     it("should return archived threads", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [],
+      });
       queryMock.mockResolvedValueOnce({
         rows: [
           {
@@ -125,11 +180,28 @@ describe("Messaging routes", () => {
 
     it("should default to inbox filter", async () => {
       queryMock.mockResolvedValueOnce({ rows: [] });
+      queryMock.mockResolvedValueOnce({ rows: [] });
 
       const res = await request(app).get("/api/messaging/threads");
 
       expect(res.status).toBe(200);
       expect(queryMock).toHaveBeenCalled();
+    });
+
+    it("should keep inbox threads with any non-self message (not only unread)", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      await request(app).get("/api/messaging/threads").query({ filter: "inbox" });
+
+      const listQuery = queryMock.mock.calls.find((call: any) =>
+        typeof call[0] === "string" &&
+        call[0].toLowerCase().includes("select") &&
+        call[0].includes("from message_threads mt")
+      )?.[0] as string;
+
+      expect(listQuery).toContain("tm_inbox_any.sender_id != $2");
+      expect(listQuery).not.toContain("tm_inbox.created_at > mp.last_read_at");
     });
 
     it("should handle database error", async () => {
@@ -214,7 +286,12 @@ describe("Messaging routes", () => {
     };
 
     it("should create new thread", async () => {
-      mockClient.query.mockResolvedValue({ rows: [] });
+      mockClient.query.mockImplementation((query: string) => {
+        if (typeof query === "string" && query.includes("from users") && query.includes("id = any")) {
+          return Promise.resolve({ rows: [{ id: "user-2" }] });
+        }
+        return Promise.resolve({ rows: [] });
+      });
 
       const res = await request(app).post("/api/messaging/threads").send(validPayload);
 
@@ -226,7 +303,12 @@ describe("Messaging routes", () => {
     });
 
     it("should add creator as participant", async () => {
-      mockClient.query.mockResolvedValue({ rows: [] });
+      mockClient.query.mockImplementation((query: string) => {
+        if (typeof query === "string" && query.includes("from users") && query.includes("id = any")) {
+          return Promise.resolve({ rows: [{ id: "user-2" }] });
+        }
+        return Promise.resolve({ rows: [] });
+      });
 
       const res = await request(app).post("/api/messaging/threads").send(validPayload);
 
@@ -238,7 +320,12 @@ describe("Messaging routes", () => {
     });
 
     it("should not duplicate creator in participants", async () => {
-      mockClient.query.mockResolvedValue({ rows: [] });
+      mockClient.query.mockImplementation((query: string) => {
+        if (typeof query === "string" && query.includes("from users") && query.includes("id = any")) {
+          return Promise.resolve({ rows: [{ id: "user-2" }] });
+        }
+        return Promise.resolve({ rows: [] });
+      });
 
       const res = await request(app)
         .post("/api/messaging/threads")
@@ -250,6 +337,22 @@ describe("Messaging routes", () => {
         call[0]?.includes("insert into message_participants")
       );
       expect(participantCalls).toHaveLength(2); // Creator + user-2
+    });
+
+    it("should reject invalid participant ids", async () => {
+      mockClient.query.mockImplementation((query: string) => {
+        if (typeof query === "string" && query.includes("from users") && query.includes("id = any")) {
+          return Promise.resolve({ rows: [] });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      const res = await request(app).post("/api/messaging/threads").send(validPayload);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("One or more internal recipients are invalid");
+      expect(res.body.invalidParticipantIds).toEqual(["user-2"]);
+      expect(mockClient.query).toHaveBeenCalledWith("ROLLBACK");
     });
 
     it("should validate required fields", async () => {
@@ -267,10 +370,45 @@ describe("Messaging routes", () => {
       expect(res.status).toBe(400);
     });
 
-    it("should validate participantIds is an array with at least one element", async () => {
+    it("should require at least one recipient across internal or external", async () => {
       const res = await request(app)
         .post("/api/messaging/threads")
         .send({ ...validPayload, participantIds: [] });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("should allow external recipients without internal participants", async () => {
+      mockClient.query.mockResolvedValue({ rows: [] });
+      mockSendEmail.mockResolvedValueOnce({
+        accepted: ["outside@gmail.com"],
+        rejected: [],
+        messageId: "email-message-id",
+      });
+
+      const res = await request(app)
+        .post("/api/messaging/threads")
+        .send({ ...validPayload, participantIds: [], externalEmails: ["outside@gmail.com"] });
+
+      expect(res.status).toBe(201);
+      expect(mockSendEmail).toHaveBeenCalledWith({
+        to: ["outside@gmail.com"],
+        subject: "Test Subject",
+        text: expect.stringContaining("Test message"),
+        from: "Admin User <admin@example.com>",
+      });
+      expect(mockSendEmail.mock.calls[0][0].text).toContain("IntraMail Thread ID: test-uuid");
+      expect(res.body.externalEmail).toMatchObject({
+        requested: ["outside@gmail.com"],
+        accepted: ["outside@gmail.com"],
+        rejected: [],
+      });
+    });
+
+    it("should reject invalid external email addresses", async () => {
+      const res = await request(app)
+        .post("/api/messaging/threads")
+        .send({ ...validPayload, participantIds: [], externalEmails: ["not-an-email"] });
 
       expect(res.status).toBe(400);
     });
@@ -294,7 +432,12 @@ describe("Messaging routes", () => {
     });
 
     it("should allow optional patientId", async () => {
-      mockClient.query.mockResolvedValue({ rows: [] });
+      mockClient.query.mockImplementation((query: string) => {
+        if (typeof query === "string" && query.includes("from users") && query.includes("id = any")) {
+          return Promise.resolve({ rows: [{ id: "user-2" }] });
+        }
+        return Promise.resolve({ rows: [] });
+      });
 
       const res = await request(app)
         .post("/api/messaging/threads")
@@ -489,6 +632,73 @@ describe("Messaging routes", () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe("Failed to fetch unread count");
+    });
+  });
+
+  describe("POST /api/messaging/webhook/email", () => {
+    it("should reject inbound webhook when secret is configured and missing", async () => {
+      process.env.MESSAGING_WEBHOOK_SECRET = "secret-123";
+
+      const res = await request(app).post("/api/messaging/webhook/email").send({
+        from: "outside@gmail.com",
+        to: "inbox+thread-thread-1@example.com",
+        text: "Thanks for the update.",
+      });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("Invalid webhook credentials");
+    });
+
+    it("should map inbound email to thread using reply-to alias", async () => {
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({ rows: [{ id: "thread-1", tenantId: "tenant-1" }] }) // thread lookup
+        .mockResolvedValueOnce({ rows: [{ id: "user-2" }] }) // sender user lookup
+        .mockResolvedValueOnce({ rows: [] }) // insert message
+        .mockResolvedValueOnce({ rows: [] }) // update timestamp
+        .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+      const res = await request(app).post("/api/messaging/webhook/email").send({
+        from: "outside@gmail.com",
+        to: "inbox+thread-thread-1@example.com",
+        text: "Thanks for the update.",
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.threadId).toBe("thread-1");
+      expect(mockClient.query).toHaveBeenCalledWith(
+        expect.stringContaining("insert into thread_messages"),
+        expect.arrayContaining(["tenant-1", "thread-1", "Thanks for the update.", "user-2"])
+      );
+    });
+
+    it("should ignore webhook payloads without a mappable thread", async () => {
+      const res = await request(app).post("/api/messaging/webhook/email").send({
+        from: "outside@gmail.com",
+        to: "support@example.com",
+        text: "No thread id in this one",
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.ignored).toBe(true);
+    });
+
+    it("should ignore unknown thread ids safely", async () => {
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({ rows: [] }) // thread lookup miss
+        .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+      const res = await request(app).post("/api/messaging/webhook/email").send({
+        from: "outside@gmail.com",
+        to: "inbox+thread-thread-missing@example.com",
+        text: "Checking in",
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.ignored).toBe(true);
+      expect(mockClient.query).toHaveBeenCalledWith("ROLLBACK");
     });
   });
 });

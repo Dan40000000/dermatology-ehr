@@ -143,9 +143,13 @@
 .sms-search {
   padding: 16px;
   border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  gap: 12px;
+  align-items: center;
 }
 
 .sms-search-input {
+  flex: 1;
   width: 100%;
   padding: 10px 16px;
   border: 1px solid #e2e8f0;
@@ -158,6 +162,16 @@
 
 .sms-search-input:focus {
   border-color: #3b82f6;
+}
+
+.sms-group-filter {
+  min-width: 180px;
+  padding: 10px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 14px;
+  color: #0f172a;
 }
 
 .sms-patient-items {
@@ -344,6 +358,32 @@
 .sms-chat-header-actions {
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+
+.sms-thread-status {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #64748b;
+  text-transform: capitalize;
+}
+
+.sms-routing-control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.sms-routing-control select {
+  min-width: 180px;
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
 }
 
 /* Messages */
@@ -660,6 +700,11 @@
   text-transform: capitalize;
 }
 
+.sms-patient-name .sms-category-badge,
+.sms-chat-header-name .sms-category-badge {
+  margin-left: 8px;
+}
+
 .sms-category-badge.appointment {
   background-color: #dbeafe;
   color: #1d4ed8;
@@ -683,6 +728,21 @@
 .sms-category-badge.general {
   background-color: #f1f5f9;
   color: #475569;
+}
+
+.sms-category-badge.prescription {
+  background-color: #ede9fe;
+  color: #6d28d9;
+}
+
+.sms-category-badge.medical {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.sms-category-badge.other {
+  background-color: #fef3c7;
+  color: #92400e;
 }
 
 /* Status Badges */
@@ -798,12 +858,67 @@
 }
 
 .sms-settings-form {
-  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sms-settings-section {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background-color: #f8fafc;
+  padding: 16px;
+}
+
+.sms-settings-section-header {
+  margin-bottom: 14px;
+}
+
+.sms-settings-section-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.sms-settings-section-header p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.sms-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+
+.sms-form-group-full {
+  grid-column: 1 / -1;
+}
+
+.sms-settings-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.sms-settings-template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+
+.sms-settings-template-grid .sms-form-group {
+  margin-bottom: 0;
 }
 
 .sms-settings-actions {
   display: flex;
   justify-content: flex-end;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 12px;
 }
 
 .sms-rules-actions {
@@ -834,6 +949,38 @@
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.sms-inline-checkbox-card {
+  align-items: flex-start;
+  margin-bottom: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background-color: #ffffff;
+  padding: 10px 12px;
+}
+
+.sms-inline-checkbox-card input[type="checkbox"] {
+  margin-top: 2px;
+}
+
+.sms-inline-checkbox-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sms-inline-checkbox-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  line-height: 1.3;
+}
+
+.sms-inline-checkbox-caption {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.35;
 }
 
 /* Form Elements */
@@ -976,6 +1123,11 @@
     width: 280px;
   }
 
+  .sms-search {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .sms-header-top {
     flex-direction: column;
     align-items: flex-start;
@@ -984,6 +1136,20 @@
 
   .sms-stats {
     flex-wrap: wrap;
+  }
+
+  .sms-settings-section {
+    padding: 14px;
+  }
+
+  .sms-settings-grid,
+  .sms-settings-template-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sms-group-filter,
+  .sms-routing-control select {
+    width: 100%;
   }
 }
 
@@ -1008,6 +1174,17 @@
   border-radius: 4px;
 }
 
+.sms-consent-pending {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  background-color: #dbeafe;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px;
+}
+
 .sms-consent-info {
   padding: 16px;
   background-color: #f0f9ff;
@@ -1020,6 +1197,36 @@
   margin: 4px 0;
   font-size: 14px;
   color: #0c4a6e;
+}
+
+.sms-consent-actions {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.sms-consent-actions .btn-secondary.active {
+  background-color: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #0f172a;
+}
+
+.sms-consent-helper {
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.sms-consent-helper p {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #334155;
+}
+
+.sms-consent-helper p:last-child {
+  margin-bottom: 0;
 }
 
 /* PHI Warning Banner */

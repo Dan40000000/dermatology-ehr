@@ -14,9 +14,17 @@
 
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
-import { TwilioService, createTwilioService } from './twilioService';
+import { createTwilioService } from './twilioService';
 import { formatPhoneE164, formatPhoneDisplay } from '../utils/phone';
 import crypto from 'crypto';
+
+const DEFAULT_TEST_SMS_FROM = '+15555550100';
+
+function calculateSmsSegments(body: string): number {
+  const hasUnicode = /[^\x00-\x7F]/.test(body);
+  const segmentLength = hasUnicode ? 70 : 160;
+  return Math.max(1, Math.ceil(body.length / segmentLength));
+}
 
 // ============================================
 // SMS TEMPLATES
@@ -111,6 +119,7 @@ interface SMSWorkflowConfig {
   twilioAccountSid?: string;
   twilioAuthToken?: string;
   twilioPhoneNumber?: string;
+  isTestMode?: boolean;
   clinicName?: string;
   clinicPhone?: string;
   portalUrl?: string;
@@ -142,6 +151,7 @@ export class SMSWorkflowService {
         twilio_account_sid,
         twilio_auth_token,
         twilio_phone_number,
+        is_test_mode,
         clinic_name,
         clinic_phone,
         portal_url
@@ -160,6 +170,7 @@ export class SMSWorkflowService {
       twilioAccountSid: row.twilio_account_sid,
       twilioAuthToken: row.twilio_auth_token,
       twilioPhoneNumber: row.twilio_phone_number,
+      isTestMode: row.is_test_mode === true,
       clinicName: row.clinic_name || 'Our Clinic',
       clinicPhone: row.clinic_phone || '',
       portalUrl: row.portal_url || '',
@@ -240,9 +251,13 @@ export class SMSWorkflowService {
     try {
       // 1. Get tenant SMS config
       const config = await this.getTenantSMSConfig(tenantId);
-      if (!config || !config.twilioAccountSid || !config.twilioAuthToken || !config.twilioPhoneNumber) {
+      if (!config) {
         logger.debug('SMS not configured for tenant', { tenantId });
         return { success: false, error: 'SMS not configured' };
+      }
+      if (!config.isTestMode && (!config.twilioAccountSid || !config.twilioAuthToken || !config.twilioPhoneNumber)) {
+        logger.debug('SMS missing production credentials', { tenantId });
+        return { success: false, error: 'SMS credentials not configured' };
       }
 
       // 2. Check patient opt-in
@@ -276,13 +291,19 @@ export class SMSWorkflowService {
       };
       const messageBody = this.replaceTemplateVars(template, allVariables);
 
-      // 6. Create Twilio service and send
-      const twilioService = createTwilioService(config.twilioAccountSid!, config.twilioAuthToken!);
-      const result = await twilioService.sendSMS({
-        to: patientPhone,
-        from: config.twilioPhoneNumber!,
-        body: messageBody,
-      });
+      // 6. Send via Twilio (or test-mode mock)
+      const fromNumber = config.twilioPhoneNumber || DEFAULT_TEST_SMS_FROM;
+      const result = config.isTestMode
+        ? {
+            sid: `mock_sms_${crypto.randomUUID()}`,
+            status: 'sent',
+            numSegments: calculateSmsSegments(messageBody),
+          }
+        : await createTwilioService(config.twilioAccountSid!, config.twilioAuthToken!).sendSMS({
+            to: patientPhone,
+            from: fromNumber,
+            body: messageBody,
+          });
 
       // 7. Log the message
       const messageId = crypto.randomUUID();
@@ -296,7 +317,7 @@ export class SMSWorkflowService {
           messageId,
           tenantId,
           result.sid,
-          config.twilioPhoneNumber,
+          fromNumber,
           patientPhone,
           patientId,
           messageBody,

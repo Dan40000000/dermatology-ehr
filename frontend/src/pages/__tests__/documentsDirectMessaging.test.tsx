@@ -20,6 +20,10 @@ const apiMocks = vi.hoisted(() => ({
   fetchPatients: vi.fn(),
   createDocument: vi.fn(),
   uploadDocumentFile: vi.fn(),
+  fetchPracticeConsentForms: vi.fn(),
+  createPracticeConsentForm: vi.fn(),
+  updatePracticeConsentForm: vi.fn(),
+  deactivatePracticeConsentForm: vi.fn(),
   API_BASE_URL: 'http://localhost:4000',
 }));
 
@@ -141,6 +145,33 @@ describe('DocumentsPage', () => {
       storage: 's3',
     });
     apiMocks.createDocument.mockResolvedValue({ id: 'doc-3' });
+    apiMocks.fetchPracticeConsentForms.mockResolvedValue({
+      forms: [
+        {
+          id: 'consent-1',
+          formName: 'General Consent for Treatment',
+          formType: 'general-consent',
+          formContent: '<div><h2>General Consent</h2><p>Medical consent.</p></div>',
+          isActive: true,
+          requiresSignature: true,
+          version: '2.0',
+          effectiveDate: '2026-03-06',
+        },
+        {
+          id: 'consent-2',
+          formName: 'HIPAA Notice of Privacy Practices Acknowledgment',
+          formType: 'hipaa',
+          formContent: '<div><h2>HIPAA</h2><p>Privacy notice.</p></div>',
+          isActive: true,
+          requiresSignature: true,
+          version: '2.0',
+          effectiveDate: '2026-03-06',
+        },
+      ],
+    });
+    apiMocks.createPracticeConsentForm.mockResolvedValue({ id: 'consent-3' });
+    apiMocks.updatePracticeConsentForm.mockResolvedValue({ success: true, id: 'consent-1' });
+    apiMocks.deactivatePracticeConsentForm.mockResolvedValue({ success: true });
   });
 
   afterEach(() => {
@@ -188,6 +219,35 @@ describe('DocumentsPage', () => {
         description: 'Uploaded',
         filename: 'new-lab.pdf',
       })),
+    );
+  });
+
+  it('edits live kiosk consent forms from the forms workspace', async () => {
+    render(
+      <MemoryRouter initialEntries={['/documents?section=forms']}>
+        <DocumentsPage />
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Kiosk Consent Workspace');
+    await screen.findByDisplayValue('General Consent for Treatment');
+    expect(apiMocks.fetchPracticeConsentForms).toHaveBeenCalledWith('tenant-1', 'token-1');
+
+    const nameInput = screen.getByLabelText('Form Name');
+    fireEvent.change(nameInput, { target: { value: 'Updated Treatment Consent' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() =>
+      expect(apiMocks.updatePracticeConsentForm).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        'consent-1',
+        expect.objectContaining({
+          formName: 'Updated Treatment Consent',
+          formType: 'general-consent',
+        }),
+      ),
     );
   });
 });

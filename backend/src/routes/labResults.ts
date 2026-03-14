@@ -6,6 +6,8 @@
 import { Router, Response } from 'express';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
+import { requireRoles } from '../middleware/rbac';
+import { CLINICAL_ROLES } from '../lib/roles';
 import { logger } from '../lib/logger';
 import { HL7Service } from '../services/hl7Service';
 
@@ -13,6 +15,24 @@ const router = Router();
 
 // All routes require authentication
 router.use(requireAuth);
+router.use(requireRoles([...CLINICAL_ROLES]));
+
+const releasableObservationStatuses = new Set(['final', 'corrected', 'amended']);
+
+function isMissingRelationError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (error as Error & { code?: string }).code === '42P01';
+}
+
+function parseVisibleAt(value: unknown): Date | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return new Date('invalid');
+  }
+  return new Date(value);
+}
 
 /**
  * GET /api/lab-results
@@ -80,6 +100,244 @@ router.get('/', async (req: AuthedRequest, res: Response) => {
   } catch (error: any) {
     logger.error('Error fetching lab results', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch lab results' });
+  }
+});
+
+/**
+ * GET /api/lab-results/observations/pending
+ * Staff work queue for patient_observations not yet released to the portal.
+ */
+router.get('/observations/pending', async (req: AuthedRequest, res: Response) => {
+  try {
+    const patientId = typeof req.query.patient_id === 'string' ? req.query.patient_id : undefined;
+    const requestedLimit = Number.parseInt((req.query.limit as string) || '100', 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.max(1, Math.min(requestedLimit, 500))
+      : 100;
+
+    let query = `
+      SELECT
+        po.id::text as id,
+        po.patient_id::text as "patientId",
+        p.first_name || ' ' || p.last_name as "patientName",
+        p.mrn as "patientMrn",
+        po.observation_date as "observationDate",
+        COALESCE(NULLIF(po.observation_name, ''), po.observation_code) as "testName",
+        po.observation_value as value,
+        po.units as unit,
+        po.reference_range as "referenceRange",
+        po.abnormal_flag as "abnormalFlag",
+        po.status,
+        COALESCE(pr.release_status, 'pending') as "releaseStatus",
+        pr.hold_reason as "holdReason",
+        pr.portal_visible_from as "portalVisibleFrom",
+        pr.released_at as "releasedAt"
+      FROM patient_observations po
+      JOIN patients p
+        ON p.id::text = po.patient_id::text
+       AND p.tenant_id = po.tenant_id
+      LEFT JOIN patient_observation_portal_releases pr
+        ON pr.tenant_id = po.tenant_id
+       AND pr.observation_id = po.id::text
+      WHERE po.tenant_id = $1
+        AND COALESCE(po.status, 'final') IN ('final', 'corrected', 'amended')
+        AND COALESCE(pr.release_status, 'pending') IN ('pending', 'held')
+    `;
+
+    const params: any[] = [req.user!.tenantId];
+    let paramIndex = 2;
+
+    if (patientId) {
+      query += ` AND po.patient_id::text = $${paramIndex}`;
+      params.push(patientId);
+      paramIndex++;
+    }
+
+    query += ` ORDER BY po.observation_date DESC LIMIT $${paramIndex}`;
+    params.push(limit);
+
+    const result = await pool.query(query, params);
+    res.json({ observations: result.rows });
+  } catch (error: any) {
+    if (isMissingRelationError(error)) {
+      return res.status(503).json({
+        error: 'Patient observation release controls are not installed. Run latest migrations.',
+      });
+    }
+    logger.error('Error fetching pending patient observations', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch pending observations' });
+  }
+});
+
+/**
+ * POST /api/lab-results/observations/:id/release
+ * Mark an observation released to patient portal.
+ */
+router.post('/observations/:id/release', async (req: AuthedRequest, res: Response) => {
+  try {
+    const observationId = req.params.id;
+    const visibleAtRaw = req.body?.visibleAt;
+    const visibleAt = parseVisibleAt(visibleAtRaw);
+
+    if (visibleAtRaw !== undefined && visibleAtRaw !== null && Number.isNaN(visibleAt?.getTime() ?? Number.NaN)) {
+      return res.status(400).json({ error: 'visibleAt must be a valid ISO date-time string' });
+    }
+
+    const observationResult = await pool.query(
+      `SELECT
+         id::text as id,
+         patient_id::text as patient_id,
+         COALESCE(status, 'final') as status
+       FROM patient_observations
+       WHERE id::text = $1
+         AND tenant_id = $2
+       LIMIT 1`,
+      [observationId, req.user!.tenantId]
+    );
+
+    if (observationResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Observation not found' });
+    }
+
+    const observation = observationResult.rows[0];
+    const normalizedStatus = String(observation.status || '').toLowerCase();
+    if (!releasableObservationStatuses.has(normalizedStatus)) {
+      return res.status(409).json({
+        error: `Only finalized observations can be released (current status: ${observation.status})`,
+      });
+    }
+
+    const releaseResult = await pool.query(
+      `INSERT INTO patient_observation_portal_releases (
+         tenant_id, observation_id, patient_id,
+         release_status, released_at, released_by,
+         hold_reason, portal_visible_from, updated_at
+       ) VALUES (
+         $1, $2, $3,
+         'released', NOW(), $4,
+         NULL, $5, NOW()
+       )
+       ON CONFLICT (tenant_id, observation_id)
+       DO UPDATE SET
+         release_status = 'released',
+         released_at = NOW(),
+         released_by = EXCLUDED.released_by,
+         hold_reason = NULL,
+         portal_visible_from = EXCLUDED.portal_visible_from,
+         updated_at = NOW()
+       RETURNING
+         observation_id as "observationId",
+         release_status as "releaseStatus",
+         portal_visible_from as "portalVisibleFrom",
+         released_at as "releasedAt"`,
+      [
+        req.user!.tenantId,
+        observation.id,
+        observation.patient_id,
+        req.user!.id,
+        visibleAt || null,
+      ]
+    );
+
+    logger.info('Observation released to patient portal', {
+      tenantId: req.user!.tenantId,
+      observationId: observation.id,
+      releasedBy: req.user!.id,
+    });
+
+    res.json(releaseResult.rows[0]);
+  } catch (error: any) {
+    if (isMissingRelationError(error)) {
+      return res.status(503).json({
+        error: 'Patient observation release controls are not installed. Run latest migrations.',
+      });
+    }
+    logger.error('Error releasing patient observation', { error: error.message });
+    res.status(500).json({ error: 'Failed to release observation' });
+  }
+});
+
+/**
+ * POST /api/lab-results/observations/:id/hold
+ * Hold an observation so it is hidden from patient portal.
+ */
+router.post('/observations/:id/hold', async (req: AuthedRequest, res: Response) => {
+  try {
+    const observationId = req.params.id;
+    const holdReason = typeof req.body?.holdReason === 'string'
+      ? req.body.holdReason.trim()
+      : typeof req.body?.reason === 'string'
+        ? req.body.reason.trim()
+        : '';
+
+    if (!holdReason) {
+      return res.status(400).json({ error: 'holdReason is required' });
+    }
+
+    if (holdReason.length > 1000) {
+      return res.status(400).json({ error: 'holdReason must be 1000 characters or less' });
+    }
+
+    const observationResult = await pool.query(
+      `SELECT id::text as id, patient_id::text as patient_id
+       FROM patient_observations
+       WHERE id::text = $1
+         AND tenant_id = $2
+       LIMIT 1`,
+      [observationId, req.user!.tenantId]
+    );
+
+    if (observationResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Observation not found' });
+    }
+
+    const observation = observationResult.rows[0];
+
+    const holdResult = await pool.query(
+      `INSERT INTO patient_observation_portal_releases (
+         tenant_id, observation_id, patient_id,
+         release_status, released_at, released_by,
+         hold_reason, portal_visible_from, updated_at
+       ) VALUES (
+         $1, $2, $3,
+         'held', NULL, NULL,
+         $4, NULL, NOW()
+       )
+       ON CONFLICT (tenant_id, observation_id)
+       DO UPDATE SET
+         release_status = 'held',
+         released_at = NULL,
+         released_by = NULL,
+         hold_reason = EXCLUDED.hold_reason,
+         portal_visible_from = NULL,
+         updated_at = NOW()
+       RETURNING
+         observation_id as "observationId",
+         release_status as "releaseStatus",
+         hold_reason as "holdReason"`,
+      [
+        req.user!.tenantId,
+        observation.id,
+        observation.patient_id,
+        holdReason,
+      ]
+    );
+
+    logger.info('Observation held from patient portal', {
+      tenantId: req.user!.tenantId,
+      observationId: observation.id,
+      heldBy: req.user!.id,
+    });
+
+    res.json(holdResult.rows[0]);
+  } catch (error: any) {
+    if (isMissingRelationError(error)) {
+      return res.status(503).json({
+        error: 'Patient observation release controls are not installed. Run latest migrations.',
+      });
+    }
+    logger.error('Error holding patient observation', { error: error.message });
+    res.status(500).json({ error: 'Failed to hold observation' });
   }
 });
 

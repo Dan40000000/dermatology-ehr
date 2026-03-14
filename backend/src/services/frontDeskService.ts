@@ -1,6 +1,9 @@
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { encounterService } from './encounterService';
+import { randomUUID } from 'crypto';
+import type { PoolClient } from 'pg';
+import { sendPatientPaymentReceiptEmail } from './paymentConfirmationService';
 
 export interface AppointmentWithDetails {
   id: string;
@@ -57,13 +60,125 @@ export interface WaitingRoomPatient {
   isDelayed: boolean;
 }
 
+export interface CheckInCopayOptions {
+  collectCopay?: boolean;
+  deferCopay?: boolean;
+  copayAmountCents?: number;
+  collectOutstandingBalance?: boolean;
+  outstandingBalanceAmountCents?: number;
+  paymentMethod?: 'cash' | 'credit' | 'debit' | 'check';
+  notes?: string;
+  priorAuthOverrideReason?: string;
+  checkedInBy?: string;
+}
+
+export interface CheckInPatientResult {
+  encounterId: string;
+  copayAmount: number;
+  copayAmountCents: number;
+  copaySource: 'insurance_profile' | 'none';
+  copayDisposition: 'none' | 'collected' | 'deferred';
+  copayCollectedAmountCents: number;
+  outstandingBalanceCollectedAmountCents?: number;
+  totalCollectedAmountCents?: number;
+  priorAuthOverrideUsed?: boolean;
+  priorAuthStatus?: string;
+  eligibilityStatus?: string;
+  eligibilityVerifiedAt?: string;
+  paymentId?: string;
+  paymentReceiptNumber?: string;
+  paymentConfirmationEmailSent?: boolean;
+  paymentConfirmationEmailAddress?: string;
+}
+
+interface OutstandingBillBalance {
+  id: string;
+  balanceCents: number;
+  paidAmountCents: number;
+}
+
 export class FrontDeskService {
+  private toLocalIsoDate(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  private async getOutstandingBills(
+    client: PoolClient,
+    tenantId: string,
+    patientId: string
+  ): Promise<OutstandingBillBalance[]> {
+    const result = await client.query(
+      `SELECT
+         id,
+         COALESCE(balance_cents, 0) AS balance_cents,
+         COALESCE(paid_amount_cents, 0) AS paid_amount_cents
+       FROM bills
+       WHERE tenant_id = $1
+         AND patient_id = $2
+         AND COALESCE(balance_cents, 0) > 0
+         AND status NOT IN ('paid', 'cancelled')
+       ORDER BY COALESCE(service_date_start, bill_date, created_at) ASC, created_at ASC`,
+      [tenantId, patientId]
+    );
+
+    const rows = Array.isArray(result.rows) ? result.rows : [];
+
+    return rows.map((row: { id: string; balance_cents: number | string; paid_amount_cents: number | string }) => ({
+      id: row.id,
+      balanceCents: Number.parseInt(String(row.balance_cents ?? 0), 10) || 0,
+      paidAmountCents: Number.parseInt(String(row.paid_amount_cents ?? 0), 10) || 0,
+    }));
+  }
+
+  private async applyOutstandingBalancePayment(
+    client: PoolClient,
+    tenantId: string,
+    bills: OutstandingBillBalance[],
+    amountCents: number
+  ): Promise<number> {
+    let remaining = Math.max(0, amountCents);
+    let applied = 0;
+
+    for (const bill of bills) {
+      if (remaining <= 0) {
+        break;
+      }
+
+      const appliedToBill = Math.min(remaining, bill.balanceCents);
+      if (appliedToBill <= 0) {
+        continue;
+      }
+
+      const newPaidAmountCents = bill.paidAmountCents + appliedToBill;
+      const newBalanceCents = Math.max(0, bill.balanceCents - appliedToBill);
+      const newStatus = newBalanceCents === 0 ? 'paid' : 'partial';
+
+      await client.query(
+        `UPDATE bills
+         SET paid_amount_cents = $1,
+             balance_cents = $2,
+             status = $3,
+             updated_at = NOW()
+         WHERE tenant_id = $4 AND id = $5`,
+        [newPaidAmountCents, newBalanceCents, newStatus, tenantId, bill.id]
+      );
+
+      remaining -= appliedToBill;
+      applied += appliedToBill;
+    }
+
+    return applied;
+  }
+
   /**
    * Get today's schedule with all relevant details
    */
   async getTodaySchedule(tenantId: string, providerId?: string, statusFilter?: string): Promise<AppointmentWithDetails[]> {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = this.toLocalIsoDate(new Date());
 
       let query = `
         SELECT
@@ -89,25 +204,41 @@ export class FrontDeskService {
           a.created_at,
           -- Insurance info
           CASE
-            WHEN p.insurance_details IS NOT NULL
-              AND (p.insurance_details->>'primary' IS NOT NULL)
-              AND (p.insurance_details->'primary'->>'eligibilityStatus' = 'Active')
+            WHEN (
+              to_jsonb(p)->'insurance_details' IS NOT NULL
+              AND (to_jsonb(p)->'insurance_details'->>'primary' IS NOT NULL)
+              AND (to_jsonb(p)->'insurance_details'->'primary'->>'eligibilityStatus' = 'Active')
+            )
+              OR COALESCE(
+                NULLIF(to_jsonb(p)->>'insurance_plan_name', ''),
+                NULLIF(to_jsonb(p)->>'insurance', '')
+              ) IS NOT NULL
             THEN true
             ELSE false
           END as insurance_verified,
-          p.insurance_details->'primary'->>'planName' as insurance_plan_name,
+          COALESCE(
+            NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'planName', ''),
+            NULLIF(to_jsonb(p)->>'insurance_plan_name', ''),
+            NULLIF(to_jsonb(p)->>'insurance', '')
+          ) as insurance_plan_name,
           CASE
-            WHEN p.insurance_details IS NOT NULL
-              AND (p.insurance_details->'primary'->>'copayAmount' IS NOT NULL)
-            THEN (p.insurance_details->'primary'->>'copayAmount')::numeric
+            WHEN NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount', '') IS NOT NULL
+            THEN (to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount')::numeric
             ELSE 0
           END as copay_amount,
           -- Outstanding balance (placeholder - would come from billing system)
           COALESCE(
-            (SELECT SUM(amount_cents) / 100.0
-             FROM bills
-             WHERE patient_id = p.id
-               AND status IN ('pending', 'overdue')
+            (SELECT SUM(
+                COALESCE(
+                  NULLIF(to_jsonb(b)->>'balance_cents', '')::numeric,
+                  NULLIF(to_jsonb(b)->>'amount_cents', '')::numeric,
+                  0
+                )
+              ) / 100.0
+             FROM bills b
+             WHERE b.patient_id = p.id
+               AND b.tenant_id = a.tenant_id
+               AND b.status NOT IN ('paid', 'written_off', 'cancelled')
             ), 0
           ) as outstanding_balance
         FROM appointments a
@@ -189,7 +320,7 @@ export class FrontDeskService {
    */
   async getDailyStats(tenantId: string): Promise<DailyStats> {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = this.toLocalIsoDate(new Date());
 
       // Get appointment counts
       const appointmentStats = await pool.query(
@@ -301,15 +432,84 @@ export class FrontDeskService {
   /**
    * Check in a patient and automatically create an encounter
    */
-  async checkInPatient(tenantId: string, appointmentId: string): Promise<{ encounterId: string }> {
+  async checkInPatient(
+    tenantId: string,
+    appointmentId: string,
+    copayOptions?: CheckInCopayOptions
+  ): Promise<CheckInPatientResult> {
     const client = await pool.connect();
+    let inTransaction = false;
+    let appointment:
+      | {
+          patient_id: string;
+          patient_first_name: string | null;
+          patient_last_name: string | null;
+          patient_email: string | null;
+          provider_id: string;
+          appointment_type_id: string;
+          appointment_type_name: string | null;
+          prior_auth_required: boolean;
+          latest_prior_auth_status: string | null;
+          insurance_copay_amount: string | null;
+          insurance_eligibility_status: string | null;
+          insurance_verified_at: string | null;
+        }
+      | null = null;
+    let collectedPayment:
+      | {
+          paymentId: string;
+          receiptNumber: string;
+          amountCents: number;
+          paymentMethod: string;
+        }
+      | null = null;
     try {
       await client.query('BEGIN');
+      inTransaction = true;
 
       // Get appointment details
       const appointmentResult = await client.query(
-        `SELECT patient_id, provider_id FROM appointments
-         WHERE id = $1 AND tenant_id = $2`,
+        `SELECT
+           a.patient_id,
+           p.first_name as patient_first_name,
+           p.last_name as patient_last_name,
+           p.email as patient_email,
+           a.provider_id,
+           a.appointment_type_id,
+           at.name as appointment_type_name,
+           COALESCE(at.prior_auth_required, false) as prior_auth_required,
+           latest_pa.status as latest_prior_auth_status,
+           NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount', '') as insurance_copay_amount,
+           NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'eligibilityStatus', '') as insurance_eligibility_status,
+           COALESCE(
+             NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'verifiedAt', ''),
+             NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'eligibilityCheckedAt', ''),
+             NULLIF(to_jsonb(p)->>'eligibility_checked_at', '')
+           ) as insurance_verified_at
+         FROM appointments a
+         INNER JOIN patients p ON p.id = a.patient_id
+         INNER JOIN appointment_types at ON at.id = a.appointment_type_id
+         LEFT JOIN LATERAL (
+           SELECT pa.status
+           FROM prior_authorizations pa
+           WHERE pa.tenant_id = a.tenant_id
+             AND pa.patient_id = a.patient_id
+           ORDER BY
+             CASE pa.status
+               WHEN 'approved' THEN 0
+               WHEN 'pending' THEN 1
+               WHEN 'submitted' THEN 2
+               WHEN 'appealed' THEN 3
+               WHEN 'more_info_needed' THEN 4
+               WHEN 'denied' THEN 5
+               WHEN 'expired' THEN 6
+               WHEN 'cancelled' THEN 7
+               ELSE 8
+             END,
+             COALESCE(pa.updated_at, pa.created_at) DESC
+           LIMIT 1
+         ) latest_pa ON true
+         WHERE a.id = $1 AND a.tenant_id = $2`,
         [appointmentId, tenantId]
       );
 
@@ -317,7 +517,25 @@ export class FrontDeskService {
         throw new Error('Appointment not found');
       }
 
-      const appointment = appointmentResult.rows[0];
+      appointment = appointmentResult.rows[0];
+      const appointmentRecord = appointment;
+      if (!appointmentRecord) {
+        throw new Error('Appointment details missing after lookup');
+      }
+
+      const priorAuthRequired = appointmentRecord.prior_auth_required === true;
+      const priorAuthStatus = (appointmentRecord.latest_prior_auth_status || '').toLowerCase();
+      const hasApprovedPriorAuth = priorAuthStatus === 'approved';
+      const priorAuthOverrideReason = copayOptions?.priorAuthOverrideReason?.trim();
+      const usedPriorAuthOverride = priorAuthRequired && !hasApprovedPriorAuth && Boolean(priorAuthOverrideReason);
+
+      if (priorAuthRequired && !hasApprovedPriorAuth && !priorAuthOverrideReason) {
+        const error = new Error(
+          'Prior authorization required before check-in. Complete prior auth or enter an override reason.'
+        );
+        (error as Error & { code?: string }).code = 'PRIOR_AUTH_REQUIRED';
+        throw error;
+      }
 
       // Update appointment status
       await client.query(
@@ -327,11 +545,180 @@ export class FrontDeskService {
         [tenantId, appointmentId]
       );
 
-      // Release connection for encounterService to use
-      await client.query('COMMIT');
-      client.release();
+      const parsedCopay = Number.parseFloat(appointmentRecord.insurance_copay_amount ?? '');
+      const normalizedCopay = Number.isFinite(parsedCopay) && parsedCopay > 0 ? parsedCopay : 0;
+      const defaultCopayAmountCents = Math.round(normalizedCopay * 100);
+      const outstandingBills = await this.getOutstandingBills(client, tenantId, appointmentRecord.patient_id);
+      const outstandingBalanceAmountCents = outstandingBills.reduce((sum, bill) => sum + bill.balanceCents, 0);
+      const requestedCopayAmountCents =
+        typeof copayOptions?.copayAmountCents === 'number' && Number.isFinite(copayOptions.copayAmountCents)
+          ? Math.max(0, Math.round(copayOptions.copayAmountCents))
+          : defaultCopayAmountCents;
+      const collectedCopayAmountCents =
+        Boolean(copayOptions?.collectCopay) && requestedCopayAmountCents > 0
+          ? Math.min(requestedCopayAmountCents, defaultCopayAmountCents)
+          : 0;
+      const requestedOutstandingBalanceAmountCents =
+        typeof copayOptions?.outstandingBalanceAmountCents === 'number' &&
+        Number.isFinite(copayOptions.outstandingBalanceAmountCents)
+          ? Math.max(0, Math.round(copayOptions.outstandingBalanceAmountCents))
+          : 0;
+      const shouldCollectOutstandingBalance =
+        Boolean(copayOptions?.collectOutstandingBalance) && requestedOutstandingBalanceAmountCents > 0;
+      const collectedOutstandingBalanceAmountCents = shouldCollectOutstandingBalance
+        ? Math.min(requestedOutstandingBalanceAmountCents, outstandingBalanceAmountCents)
+        : 0;
+      const totalCollectedAmountCents = collectedCopayAmountCents + collectedOutstandingBalanceAmountCents;
+      const shouldCollectCopay = totalCollectedAmountCents > 0;
+      const shouldDeferCopay = !shouldCollectCopay && Boolean(copayOptions?.deferCopay);
+      const copayNotes = [
+        usedPriorAuthOverride && priorAuthOverrideReason
+          ? `Prior auth override: ${priorAuthOverrideReason}`
+          : null,
+        copayOptions?.notes || null,
+      ]
+        .filter(Boolean)
+        .join(' | ')
+        .slice(0, 500);
 
-      // Create encounter (this will check for existing encounter)
+      if (shouldCollectCopay) {
+        const paymentId = randomUUID();
+        const receiptResult = await client.query(
+          `SELECT COUNT(*) as count FROM patient_payments WHERE tenant_id = $1`,
+          [tenantId]
+        );
+        const receiptCountRow =
+          Array.isArray(receiptResult.rows) && receiptResult.rows.length > 0 ? receiptResult.rows[0] : null;
+        const receiptNumber = `RCP-${new Date().getFullYear()}-${String(
+          parseInt(receiptCountRow?.count ?? '0', 10) + 1
+        ).padStart(6, '0')}`;
+        await client.query(
+          `INSERT INTO patient_payments (
+             id, tenant_id, patient_id, payment_date, amount_cents,
+             payment_method, receipt_number, status, notes, processed_by, reference_number
+           ) VALUES ($1, $2, $3, CURRENT_DATE, $4, $5, $6, 'posted', $7, $8, $9)`,
+          [
+            paymentId,
+            tenantId,
+            appointmentRecord.patient_id,
+            totalCollectedAmountCents,
+            copayOptions?.paymentMethod || 'cash',
+            receiptNumber,
+            [
+              collectedCopayAmountCents > 0 ? `Check-in copay: $${(collectedCopayAmountCents / 100).toFixed(2)}` : null,
+              collectedOutstandingBalanceAmountCents > 0
+                ? `Past balance: $${(collectedOutstandingBalanceAmountCents / 100).toFixed(2)}`
+                : null,
+              copayNotes || null,
+            ]
+              .filter(Boolean)
+              .join(' | '),
+            copayOptions?.checkedInBy || null,
+            appointmentId,
+          ]
+        );
+
+        if (collectedOutstandingBalanceAmountCents > 0) {
+          await this.applyOutstandingBalancePayment(
+            client,
+            tenantId,
+            outstandingBills,
+            collectedOutstandingBalanceAmountCents
+          );
+        }
+
+        collectedPayment = {
+          paymentId,
+          receiptNumber,
+          amountCents: totalCollectedAmountCents,
+          paymentMethod: copayOptions?.paymentMethod || 'cash',
+        };
+      }
+
+      (appointment as any).__copay_disposition = shouldCollectCopay
+        ? 'collected'
+        : shouldDeferCopay
+          ? 'deferred'
+          : 'none';
+      (appointment as any).__copay_collected_amount_cents = shouldCollectCopay
+        ? collectedCopayAmountCents
+        : 0;
+      (appointment as any).__outstanding_balance_collected_amount_cents = shouldCollectCopay
+        ? collectedOutstandingBalanceAmountCents
+        : 0;
+      (appointment as any).__total_collected_amount_cents = shouldCollectCopay ? totalCollectedAmountCents : 0;
+      (appointment as any).__prior_auth_override_used = usedPriorAuthOverride;
+      (appointment as any).__prior_auth_status = priorAuthStatus || null;
+
+      await client.query('COMMIT');
+      inTransaction = false;
+    } catch (error) {
+      if (inTransaction) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          logger.error('Failed to rollback check-in transaction:', rollbackError);
+        }
+      }
+      logger.error('Error checking in patient:', error);
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    if (!appointment) {
+      throw new Error('Appointment details missing after check-in');
+    }
+
+    const parsedCopay = Number.parseFloat(appointment.insurance_copay_amount ?? '');
+    const normalizedCopay = Number.isFinite(parsedCopay) && parsedCopay > 0 ? parsedCopay : 0;
+    const copayAmountCents = Math.round(normalizedCopay * 100);
+    const copaySource: 'insurance_profile' | 'none' = normalizedCopay > 0 ? 'insurance_profile' : 'none';
+    const copayDisposition =
+      ((appointment as any)?.__copay_disposition as 'none' | 'collected' | 'deferred' | undefined) || 'none';
+    const copayCollectedAmountCents = Number(
+      (appointment as any)?.__copay_collected_amount_cents || 0
+    );
+    const outstandingBalanceCollectedAmountCents = Number(
+      (appointment as any)?.__outstanding_balance_collected_amount_cents || 0
+    );
+    const totalCollectedAmountCents = Number((appointment as any)?.__total_collected_amount_cents || 0);
+    const paymentEmailResult = collectedPayment
+      ? await sendPatientPaymentReceiptEmail({
+          tenantId,
+          patientEmail: appointment?.patient_email,
+          patientFirstName: appointment?.patient_first_name,
+          patientLastName: appointment?.patient_last_name,
+          amountCents: collectedPayment.amountCents,
+          paymentMethod: collectedPayment.paymentMethod,
+          paymentDate: new Date(),
+          receiptNumber: collectedPayment.receiptNumber,
+          paymentTypeLabel: outstandingBalanceCollectedAmountCents > 0 ? 'Check-in Payment' : 'Check-in Copay',
+        })
+      : undefined;
+    const checkInResultBase: Omit<CheckInPatientResult, 'encounterId'> = {
+      copayAmount: normalizedCopay,
+      copayAmountCents,
+      copaySource,
+      copayDisposition,
+      copayCollectedAmountCents,
+      outstandingBalanceCollectedAmountCents,
+      totalCollectedAmountCents,
+      priorAuthOverrideUsed: Boolean((appointment as any)?.__prior_auth_override_used),
+      priorAuthStatus: ((appointment as any)?.__prior_auth_status as string | null) || undefined,
+      eligibilityStatus: appointment?.insurance_eligibility_status ?? undefined,
+      eligibilityVerifiedAt: appointment?.insurance_verified_at ?? undefined,
+      ...(collectedPayment
+        ? {
+            paymentId: collectedPayment.paymentId,
+            paymentReceiptNumber: collectedPayment.receiptNumber,
+            paymentConfirmationEmailSent: paymentEmailResult?.sent ?? false,
+            paymentConfirmationEmailAddress: paymentEmailResult?.emailAddress,
+          }
+        : {}),
+    };
+
+    try {
       const encounter = await encounterService.createEncounterFromAppointment(
         tenantId,
         appointmentId,
@@ -340,11 +727,30 @@ export class FrontDeskService {
       );
 
       logger.info(`Checked in patient and created encounter ${encounter.id} for appointment ${appointmentId}`);
-      return { encounterId: encounter.id };
+      return {
+        encounterId: encounter.id,
+        ...checkInResultBase,
+      };
     } catch (error) {
-      await client.query('ROLLBACK');
-      logger.error('Error checking in patient:', error);
-      throw error;
+      logger.error('Encounter creation failed after check-in; continuing with checked-in status:', error);
+
+      // Best-effort fallback for race conditions where encounter may already exist.
+      const existingEncounter = await pool.query(
+        `SELECT id FROM encounters WHERE tenant_id = $1 AND appointment_id = $2 ORDER BY created_at DESC LIMIT 1`,
+        [tenantId, appointmentId]
+      );
+
+      if (existingEncounter.rowCount) {
+        return {
+          encounterId: existingEncounter.rows[0].id,
+          ...checkInResultBase,
+        };
+      }
+
+      return {
+        encounterId: '',
+        ...checkInResultBase,
+      };
     }
   }
 
@@ -442,25 +848,41 @@ export class FrontDeskService {
           a.created_at,
           -- Insurance info
           CASE
-            WHEN p.insurance_details IS NOT NULL
-              AND (p.insurance_details->>'primary' IS NOT NULL)
-              AND (p.insurance_details->'primary'->>'eligibilityStatus' = 'Active')
+            WHEN (
+              to_jsonb(p)->'insurance_details' IS NOT NULL
+              AND (to_jsonb(p)->'insurance_details'->>'primary' IS NOT NULL)
+              AND (to_jsonb(p)->'insurance_details'->'primary'->>'eligibilityStatus' = 'Active')
+            )
+              OR COALESCE(
+                NULLIF(to_jsonb(p)->>'insurance_plan_name', ''),
+                NULLIF(to_jsonb(p)->>'insurance', '')
+              ) IS NOT NULL
             THEN true
             ELSE false
           END as insurance_verified,
-          p.insurance_details->'primary'->>'planName' as insurance_plan_name,
+          COALESCE(
+            NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'planName', ''),
+            NULLIF(to_jsonb(p)->>'insurance_plan_name', ''),
+            NULLIF(to_jsonb(p)->>'insurance', '')
+          ) as insurance_plan_name,
           CASE
-            WHEN p.insurance_details IS NOT NULL
-              AND (p.insurance_details->'primary'->>'copayAmount' IS NOT NULL)
-            THEN (p.insurance_details->'primary'->>'copayAmount')::numeric
+            WHEN NULLIF(to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount', '') IS NOT NULL
+            THEN (to_jsonb(p)->'insurance_details'->'primary'->>'copayAmount')::numeric
             ELSE 0
           END as copay_amount,
           -- Outstanding balance
           COALESCE(
-            (SELECT SUM(amount_cents) / 100.0
-             FROM bills
-             WHERE patient_id = p.id
-               AND status IN ('pending', 'overdue')
+            (SELECT SUM(
+                COALESCE(
+                  NULLIF(to_jsonb(b)->>'balance_cents', '')::numeric,
+                  NULLIF(to_jsonb(b)->>'amount_cents', '')::numeric,
+                  0
+                )
+              ) / 100.0
+             FROM bills b
+             WHERE b.patient_id = p.id
+               AND b.tenant_id = a.tenant_id
+               AND b.status NOT IN ('paid', 'written_off', 'cancelled')
             ), 0
           ) as outstanding_balance
         FROM appointments a

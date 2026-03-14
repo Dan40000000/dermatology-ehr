@@ -14,6 +14,54 @@ const router = Router();
 // All routes require authentication
 router.use(requireAuth);
 
+type DemoResultProfile = 'normal' | 'abnormal' | 'critical';
+
+interface DemoLabObservation {
+  valueText: string;
+  valueNumeric: number | null;
+  unit: string;
+  referenceRangeText: string;
+  isAbnormal: boolean;
+  abnormalFlag: string | null;
+  isCritical: boolean;
+}
+
+const buildDemoObservation = (profile: DemoResultProfile): DemoLabObservation => {
+  if (profile === 'critical') {
+    return {
+      valueText: '31.4',
+      valueNumeric: 31.4,
+      unit: 'units',
+      referenceRangeText: '10.0 - 20.0',
+      isAbnormal: true,
+      abnormalFlag: 'HH',
+      isCritical: true
+    };
+  }
+
+  if (profile === 'abnormal') {
+    return {
+      valueText: '24.6',
+      valueNumeric: 24.6,
+      unit: 'units',
+      referenceRangeText: '10.0 - 20.0',
+      isAbnormal: true,
+      abnormalFlag: 'H',
+      isCritical: false
+    };
+  }
+
+  return {
+    valueText: '14.2',
+    valueNumeric: 14.2,
+    unit: 'units',
+    referenceRangeText: '10.0 - 20.0',
+    isAbnormal: false,
+    abnormalFlag: null,
+    isCritical: false
+  };
+};
+
 /**
  * GET /api/lab-orders
  * Get lab orders with filtering
@@ -375,6 +423,159 @@ router.post('/:id/submit', async (req: AuthedRequest, res: Response) => {
   } catch (error: any) {
     logger.error('Error submitting lab order', { error: error.message });
     res.status(500).json({ error: 'Failed to submit lab order' });
+  }
+});
+
+/**
+ * POST /api/lab-orders/:id/demo-generate-results
+ * Generate demo lab results for local QA (non-production workflow)
+ */
+router.post('/:id/demo-generate-results', async (req: AuthedRequest, res: Response) => {
+  const client = await pool.connect();
+
+  try {
+    const { id } = req.params;
+    const profile = (req.body?.profile || 'normal') as DemoResultProfile;
+
+    if (!['normal', 'abnormal', 'critical'].includes(profile)) {
+      return res.status(400).json({ error: 'Invalid profile. Use normal, abnormal, or critical.' });
+    }
+
+    await client.query('BEGIN');
+
+    const orderResult = await client.query(
+      `SELECT id, patient_id
+      FROM lab_orders
+      WHERE id = $1 AND tenant_id = $2`,
+      [id, req.user!.tenantId]
+    );
+
+    if (orderResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Lab order not found' });
+    }
+
+    const testsResult = await client.query(
+      `SELECT id, test_code, test_name
+      FROM lab_order_tests
+      WHERE lab_order_id = $1
+      ORDER BY created_at`,
+      [id]
+    );
+
+    if (testsResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Lab order has no tests to generate results for' });
+    }
+
+    const patientId: string = orderResult.rows[0].patient_id;
+    const insertedResults: Array<Record<string, unknown>> = [];
+    let hasAbnormal = false;
+    let hasCritical = false;
+
+    for (const test of testsResult.rows) {
+      const observation = buildDemoObservation(profile);
+
+      const insertResult = await client.query(
+        `INSERT INTO lab_results (
+          tenant_id, lab_order_id, lab_order_test_id, patient_id,
+          test_code, test_name, result_value, result_value_numeric,
+          result_unit, reference_range_text, is_abnormal, abnormal_flag,
+          is_critical, result_status, result_date, result_notes
+        ) VALUES (
+          $1, $2, $3, $4,
+          $5, $6, $7, $8,
+          $9, $10, $11, $12,
+          $13, $14, $15, $16
+        )
+        RETURNING id, test_code, test_name, result_value, is_abnormal, is_critical`,
+        [
+          req.user!.tenantId,
+          id,
+          test.id,
+          patientId,
+          test.test_code,
+          test.test_name,
+          observation.valueText,
+          observation.valueNumeric,
+          observation.unit,
+          observation.referenceRangeText,
+          observation.isAbnormal,
+          observation.abnormalFlag,
+          observation.isCritical,
+          'final',
+          new Date(),
+          `Demo ${profile} result generated for QA validation`
+        ]
+      );
+
+      insertedResults.push(insertResult.rows[0]);
+
+      await client.query(
+        `UPDATE lab_order_tests
+        SET has_results = true, status = 'completed', result_status = 'final'
+        WHERE id = $1`,
+        [test.id]
+      );
+
+      if (observation.isAbnormal) {
+        hasAbnormal = true;
+      }
+
+      if (observation.isCritical) {
+        hasCritical = true;
+
+        await client.query(
+          `INSERT INTO lab_critical_notifications (
+            tenant_id, lab_result_id, lab_order_id, patient_id,
+            test_name, result_value, critical_reason, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
+          [
+            req.user!.tenantId,
+            insertResult.rows[0].id,
+            id,
+            patientId,
+            test.test_name,
+            observation.valueText,
+            'Demo critical value generated for workflow testing'
+          ]
+        );
+      }
+    }
+
+    await client.query(
+      `UPDATE lab_orders
+      SET status = 'completed',
+          results_received_at = NOW(),
+          is_abnormal = $1,
+          has_critical_values = $2,
+          updated_at = NOW()
+      WHERE id = $3 AND tenant_id = $4`,
+      [hasAbnormal, hasCritical, id, req.user!.tenantId]
+    );
+
+    await client.query('COMMIT');
+
+    logger.info('Demo lab results generated', {
+      orderId: id,
+      profile,
+      count: insertedResults.length,
+      generatedBy: req.user!.id
+    });
+
+    res.json({
+      success: true,
+      message: 'Demo results generated successfully',
+      profile,
+      count: insertedResults.length,
+      results: insertedResults
+    });
+  } catch (error: any) {
+    await client.query('ROLLBACK');
+    logger.error('Error generating demo lab results', { error: error.message });
+    res.status(500).json({ error: 'Failed to generate demo lab results' });
+  } finally {
+    client.release();
   }
 });
 

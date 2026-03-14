@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const authMocks = vi.hoisted(() => ({
@@ -74,7 +75,11 @@ describe('ReportsPage', () => {
     const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
 
-    render(<ReportsPage />);
+    render(
+      <MemoryRouter>
+        <ReportsPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Appointments Report');
 
@@ -129,7 +134,11 @@ describe('ReportsPage', () => {
       }),
     } as Response);
 
-    render(<ReportsPage />);
+    render(
+      <MemoryRouter>
+        <ReportsPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Appointments Report');
     fireEvent.click(screen.getByRole('button', { name: 'Financial' }));

@@ -33,7 +33,7 @@ async function createAppointments() {
       `INSERT INTO patients (id, tenant_id, first_name, last_name, dob, phone, email, address, city, state, zip, insurance)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT (id) DO NOTHING`,
-      [danielId, tenantId, 'Daniel', 'Perry', '1985-03-15', '555-123-4567', 'daniel.perry@email.com', '123 Main St', 'Phoenix', 'AZ', '85001', 'Blue Cross Blue Shield']
+      [danielId, tenantId, 'Daniel', 'Perry', '1985-03-15', '541-231-8693', 'daniel.perry@email.com', '123 Main St', 'Phoenix', 'AZ', '85001', 'Blue Cross Blue Shield']
     );
   }
   console.log('Daniel Perry ID:', danielId);

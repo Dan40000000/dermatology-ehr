@@ -1,9 +1,30 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { exportToCSV, exportToPDF, formatCurrency, formatDate } from '../utils/exportUtils';
 import { API_BASE_URL } from '../utils/apiBase';
 
 type ReportType = 'appointments' | 'financial' | 'clinical' | 'patients' | 'productivity' | 'no-shows';
+
+const REPORT_TYPE_QUERY_MAP: Record<string, ReportType> = {
+  appointments: 'appointments',
+  visits: 'appointments',
+  schedule: 'appointments',
+  financial: 'financial',
+  billing: 'financial',
+  revenue: 'financial',
+  clinical: 'clinical',
+  labs: 'clinical',
+  lab: 'clinical',
+  patients: 'patients',
+  patient: 'patients',
+  productivity: 'productivity',
+  treatments: 'productivity',
+  treatment: 'productivity',
+  'no-shows': 'no-shows',
+  'no-show': 'no-shows',
+  noshows: 'no-shows',
+};
 
 interface ReportFilters {
   startDate: string;
@@ -38,6 +59,7 @@ interface AppointmentType {
 
 export default function ReportsPage() {
   const { session } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedReport, setSelectedReport] = useState<ReportType>('appointments');
   const [filters, setFilters] = useState<ReportFilters>({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -49,6 +71,27 @@ export default function ReportsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
+
+  useEffect(() => {
+    const requestedType = searchParams.get('type');
+    if (!requestedType) return;
+
+    const normalized = requestedType.toLowerCase();
+    const mappedType = REPORT_TYPE_QUERY_MAP[normalized];
+    if (!mappedType) return;
+
+    if (mappedType !== selectedReport) {
+      setSelectedReport(mappedType);
+      setReportData([]);
+      setSummary(null);
+    }
+
+    if (mappedType !== normalized) {
+      const params = new URLSearchParams(searchParams);
+      params.set('type', mappedType);
+      setSearchParams(params, { replace: true });
+    }
+  }, [searchParams, selectedReport, setSearchParams]);
 
   // Fetch filter options
   useEffect(() => {
@@ -287,6 +330,9 @@ export default function ReportsPage() {
                 setSelectedReport(type.id);
                 setReportData([]);
                 setSummary(null);
+                const params = new URLSearchParams(searchParams);
+                params.set('type', type.id);
+                setSearchParams(params, { replace: true });
               }}
               style={{
                 padding: '12px 16px',

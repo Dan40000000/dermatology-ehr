@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { serveUploadsRouter } from "../serveUploads";
 import { auditLog } from "../../services/audit";
+import { pool } from "../../db/pool";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -16,6 +17,12 @@ jest.mock("../../services/audit", () => ({
   auditLog: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock("../../db/pool", () => ({
+  pool: {
+    query: jest.fn(),
+  },
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/uploads", serveUploadsRouter);
@@ -23,6 +30,7 @@ app.use("/uploads", serveUploadsRouter);
 const uploadDir = path.join(process.cwd(), "uploads");
 const testFilePath = path.join(uploadDir, "test.txt");
 const auditMock = auditLog as jest.Mock;
+const poolQueryMock = pool.query as jest.Mock;
 
 beforeAll(() => {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -30,6 +38,8 @@ beforeAll(() => {
 
 afterEach(() => {
   auditMock.mockClear();
+  poolQueryMock.mockReset();
+  poolQueryMock.mockResolvedValue({ rowCount: 1, rows: [{}] });
 });
 
 afterAll(() => {
@@ -39,6 +49,10 @@ afterAll(() => {
 });
 
 describe("Serve uploads routes", () => {
+  beforeEach(() => {
+    poolQueryMock.mockResolvedValue({ rowCount: 1, rows: [{}] });
+  });
+
   it("POST /uploads/sign rejects missing key", async () => {
     const res = await request(app).post("/uploads/sign").send({});
 
@@ -51,6 +65,13 @@ describe("Serve uploads routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.token).toBeDefined();
     expect(res.body.url).toContain("file.txt");
+  });
+
+  it("POST /uploads/sign rejects unauthorized keys", async () => {
+    poolQueryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const res = await request(app).post("/uploads/sign").send({ key: "file.txt" });
+
+    expect(res.status).toBe(403);
   });
 
   it("GET /uploads/:key rejects missing token", async () => {
@@ -83,5 +104,12 @@ describe("Serve uploads routes", () => {
     expect(res.status).toBe(200);
     expect(res.text).toBe("hello");
     expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("GET /uploads/:key rejects when token key and path key do not match", async () => {
+    const signRes = await request(app).post("/uploads/sign").send({ key: "file.txt" });
+    const res = await request(app).get(`/uploads/other.txt?token=${signRes.body.token}`);
+
+    expect(res.status).toBe(403);
   });
 });

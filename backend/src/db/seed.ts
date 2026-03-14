@@ -14,9 +14,17 @@ async function seed() {
 
     const users = [
       { id: "u-admin", email: "admin@demo.practice", role: "admin", fullName: "Admin User" },
+      { id: "u-owner", email: "owner@demo.practice", role: "admin", fullName: "Practice Owner" },
       { id: "u-provider", email: "provider@demo.practice", role: "provider", fullName: "Derm Provider" },
       { id: "u-ma", email: "ma@demo.practice", role: "ma", fullName: "Medical Assistant" },
       { id: "u-front", email: "frontdesk@demo.practice", role: "front_desk", fullName: "Front Desk" },
+      { id: "u-billing", email: "billing@demo.practice", role: "billing", fullName: "Billing User" },
+      { id: "u-nurse", email: "nurse@demo.practice", role: "nurse", fullName: "Clinic Nurse" },
+      { id: "u-manager", email: "manager@demo.practice", role: "manager", fullName: "Practice Manager" },
+      { id: "u-scheduler", email: "scheduler@demo.practice", role: "scheduler", fullName: "Scheduler" },
+      { id: "u-compliance", email: "compliance@demo.practice", role: "compliance_officer", fullName: "Compliance Officer" },
+      { id: "u-staff", email: "staff@demo.practice", role: "staff", fullName: "General Staff" },
+      { id: "u-hr", email: "hr@demo.practice", role: "hr", fullName: "HR User" },
     ];
 
     const passwordHash = bcrypt.hashSync("Password123!", 12); // Dev/test only
@@ -1781,6 +1789,13 @@ async function seed() {
        on conflict (id) do nothing`,
       [feeScheduleId, tenantId, "Medical Dermatology Fee Schedule", true, "Comprehensive fee schedule for medical dermatology procedures"],
     );
+    const cosmeticScheduleId = "cosmetic-fee-schedule";
+    await pool.query(
+      `insert into fee_schedules(id, tenant_id, name, is_default, description)
+       values ($1,$2,$3,$4,$5)
+       on conflict (id) do nothing`,
+      [cosmeticScheduleId, tenantId, "Cosmetic Services", false, "Cosmetic dermatology procedures"],
+    );
 
     // Seed comprehensive dermatology fee schedule items with 2025 realistic pricing
     // Prices based on industry standards: https://integritydermatology.com, https://derrowdermatology.com
@@ -1976,7 +1991,7 @@ async function seed() {
       // COSMETIC - CONSULTATIONS & PACKAGES
       // ═══════════════════════════════════════════════════════════════════════════
       { cptCode: "COSM-CONS", description: "Cosmetic consultation (new patient)", category: "Cosmetic - Consults", feeCents: 10000 },
-      { cptCode: "COSM-FU", description: "Cosmetic follow-up", category: "Cosmetic - Consults", feeCents: 0 },
+      { cptCode: "COSM-FU", description: "Cosmetic follow-up", category: "Cosmetic - Consults", feeCents: 7500 },
       { cptCode: "PKG-BOTOX3", description: "Botox package (3 treatments)", category: "Cosmetic - Packages", feeCents: 145000 },
       { cptCode: "PKG-FILLER2", description: "Filler package (2 syringes)", category: "Cosmetic - Packages", feeCents: 135000 },
       { cptCode: "PKG-LASER3", description: "IPL package (3 treatments)", category: "Cosmetic - Packages", feeCents: 90000 },
@@ -1984,12 +1999,15 @@ async function seed() {
 
     // Insert all fee schedule items
     for (const item of feeScheduleItems) {
+      const targetScheduleId = item.category?.startsWith("Cosmetic -")
+        ? cosmeticScheduleId
+        : feeScheduleId;
       await pool.query(
         `insert into fee_schedule_items(id, fee_schedule_id, cpt_code, cpt_description, category, fee_cents)
          values ($1,$2,$3,$4,$5,$6)
          on conflict (fee_schedule_id, cpt_code) do update
          set cpt_description = $4, category = $5, fee_cents = $6, updated_at = CURRENT_TIMESTAMP`,
-        [randomUUID(), feeScheduleId, item.cptCode, item.description, item.category, item.feeCents],
+        [randomUUID(), targetScheduleId, item.cptCode, item.description, item.category, item.feeCents],
       );
     }
 

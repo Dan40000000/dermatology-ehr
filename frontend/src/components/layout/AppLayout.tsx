@@ -33,6 +33,11 @@ export function AppLayout() {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  // Keep the browser tab locked to kiosk routes while a patient intake is active.
+  if (sessionStorage.getItem('kioskMode') === 'active') {
+    return <Navigate to="/kiosk" replace />;
+  }
+
   const activeModule = getModuleForPath(location.pathname);
   const effectiveRoles = getEffectiveRoles(user);
   if (activeModule && !canAccessModule(effectiveRoles, activeModule)) {

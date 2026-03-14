@@ -4,6 +4,7 @@ import { AuthenticatedSocket } from "../auth";
 import { logger } from "../../lib/logger";
 import { pool } from "../../db/pool";
 import { transcribeLiveAudioChunk } from "../../services/ambientAI";
+import { generateAmbientLiveInsights } from "../../services/ambientLiveInsights";
 
 interface AmbientJoinPayload {
   recordingId: string;
@@ -31,6 +32,15 @@ interface SavedChunk {
   confidence: number;
   source: "live" | "mock";
   receivedAt: string;
+}
+
+interface AmbientInsightsEvent {
+  recordingId: string;
+  source: "heuristic";
+  updatedAt: string;
+  symptoms: Array<{ label: string; confidence: number; evidence?: string }>;
+  workingDiagnoses: Array<{ condition: string; confidence: number; reasoning: string; icd10Code?: string }>;
+  suggestedTests: Array<{ testName: string; urgency: "routine" | "soon" | "urgent"; rationale: string; cptCode?: string }>;
 }
 
 const LIVE_TRANSCRIBE_ENABLED = process.env.AMBIENT_LIVE_TRANSCRIBE_ENABLED !== "false";
@@ -173,9 +183,43 @@ function getAmbientRoom(recordingId: string): string {
 
 function ensureAmbientSessionState(socket: AuthenticatedSocket) {
   if (!socket.data.ambientSessions) {
-    socket.data.ambientSessions = new Map<string, { lastTranscriptAt: number }>();
+    socket.data.ambientSessions = new Map<string, {
+      lastTranscriptAt: number;
+      transcriptHistory: SavedChunk[];
+      lastInsightsSignature: string | null;
+    }>();
   }
-  return socket.data.ambientSessions as Map<string, { lastTranscriptAt: number }>;
+  return socket.data.ambientSessions as Map<string, {
+    lastTranscriptAt: number;
+    transcriptHistory: SavedChunk[];
+    lastInsightsSignature: string | null;
+  }>;
+}
+
+function upsertTranscriptHistory(history: SavedChunk[], chunk: SavedChunk): SavedChunk[] {
+  const filtered = history.filter((item) => item.chunkIndex !== chunk.chunkIndex);
+  filtered.push(chunk);
+  return filtered.sort((a, b) => a.chunkIndex - b.chunkIndex).slice(-40);
+}
+
+function buildAmbientInsightsPayload(recordingId: string, history: SavedChunk[]): AmbientInsightsEvent {
+  const insights = generateAmbientLiveInsights(history.map((item) => item.text));
+  return {
+    recordingId,
+    source: insights.source,
+    updatedAt: insights.updatedAt,
+    symptoms: insights.symptoms,
+    workingDiagnoses: insights.workingDiagnoses,
+    suggestedTests: insights.suggestedTests,
+  };
+}
+
+function buildInsightsSignature(payload: AmbientInsightsEvent): string {
+  return JSON.stringify({
+    symptoms: payload.symptoms.map((item) => item.label),
+    diagnoses: payload.workingDiagnoses.map((item) => item.condition),
+    tests: payload.suggestedTests.map((item) => item.testName),
+  });
 }
 
 async function verifyRecordingAccess(
@@ -223,15 +267,20 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
         return;
       }
 
-      socket.join(getAmbientRoom(recordingId));
-      const sessions = ensureAmbientSessionState(socket);
-      sessions.set(recordingId, { lastTranscriptAt: 0 });
-
       // Retrieve any saved chunks for recovery
       const savedChunks = await getSavedChunks(socket.tenantId, recordingId);
+      const transcriptHistory = [...savedChunks].sort((a, b) => a.chunkIndex - b.chunkIndex);
       const lastChunkIndex = savedChunks.length > 0
         ? Math.max(...savedChunks.map(c => c.chunkIndex))
         : -1;
+
+      socket.join(getAmbientRoom(recordingId));
+      const sessions = ensureAmbientSessionState(socket);
+      sessions.set(recordingId, {
+        lastTranscriptAt: 0,
+        transcriptHistory,
+        lastInsightsSignature: null,
+      });
 
       socket.emit("ambient:joined", {
         recordingId,
@@ -251,6 +300,13 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
       });
 
       if (savedChunks.length > 0) {
+        const recoveredInsights = buildAmbientInsightsPayload(recordingId, transcriptHistory);
+        const recoveredSession = sessions.get(recordingId);
+        if (recoveredSession) {
+          recoveredSession.lastInsightsSignature = buildInsightsSignature(recoveredInsights);
+        }
+        socket.emit("ambient:insights", recoveredInsights);
+
         logger.info("Session joined with recovery data", {
           recordingId,
           savedChunksCount: savedChunks.length,
@@ -367,6 +423,16 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
 
       // Save transcript chunk to database for persistence/recovery
       // This runs async and doesn't block the response
+      const savedChunk: SavedChunk = {
+        chunkIndex: payload.chunkIndex,
+        text: result.text,
+        confidence: result.confidence,
+        source: result.source,
+        receivedAt,
+      };
+
+      sessionState.transcriptHistory = upsertTranscriptHistory(sessionState.transcriptHistory, savedChunk);
+
       saveTranscriptChunk(
         socket.tenantId,
         recordingId,
@@ -392,6 +458,13 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
       };
 
       io.to(getAmbientRoom(recordingId)).emit("ambient:transcript", eventPayload);
+
+      const insightsPayload = buildAmbientInsightsPayload(recordingId, sessionState.transcriptHistory);
+      const nextSignature = buildInsightsSignature(insightsPayload);
+      if (nextSignature !== sessionState.lastInsightsSignature) {
+        sessionState.lastInsightsSignature = nextSignature;
+        io.to(getAmbientRoom(recordingId)).emit("ambient:insights", insightsPayload);
+      }
     } catch (error: any) {
       logger.warn("Live transcription failed", {
         error: error?.message,

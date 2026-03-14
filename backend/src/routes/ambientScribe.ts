@@ -19,8 +19,10 @@ import {
   transcribeAudio,
   generateClinicalNote,
   maskPHI,
+  PatientContext,
   TranscriptionResult
 } from '../services/ambientAI';
+import { AgentConfiguration, agentConfigService } from '../services/agentConfigService';
 
 const router = Router();
 
@@ -91,6 +93,7 @@ const reviewActionSchema = z.object({
 
 const AMBIENT_CLINICAL_ROLES = ['provider', 'ma', 'admin'] as const;
 const AMBIENT_REVIEW_ROLES = ['provider', 'admin'] as const;
+const AMBIENT_SCRIBE_PROMPT_VERSION = 'ambient-scribe-contextual-v1';
 
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -1057,8 +1060,213 @@ type SummaryDiagnosisCandidate = {
   probabilityWeight: number;
 };
 
+type NoteGenerationContext = {
+  recordingId: string | null;
+  encounterId: string | null;
+  providerId: string | null;
+  agentConfig: AgentConfiguration | null;
+  agentConfigSnapshot: string | null;
+  patientContext?: PatientContext;
+};
+
 function toTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function calculateAge(dob: unknown): number | undefined {
+  const normalizedDob = toTrimmedString(dob);
+  if (!normalizedDob) {
+    return undefined;
+  }
+
+  const birthDate = new Date(normalizedDob);
+  if (Number.isNaN(birthDate.getTime())) {
+    return undefined;
+  }
+
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDelta = today.getMonth() - birthDate.getMonth();
+  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birthDate.getDate())) {
+    age -= 1;
+  }
+
+  return age >= 0 ? age : undefined;
+}
+
+function deriveSpecialtyFocus(
+  appointmentTypeCategory: unknown,
+  appointmentTypeName: unknown
+): string | undefined {
+  const category = toTrimmedString(appointmentTypeCategory).toLowerCase();
+  const name = toTrimmedString(appointmentTypeName).toLowerCase();
+  const combined = `${category} ${name}`.trim();
+
+  if (!combined) {
+    return undefined;
+  }
+  if (combined.includes('cosmetic') || combined.includes('botox') || combined.includes('filler') || combined.includes('laser')) {
+    return 'cosmetic';
+  }
+  if (combined.includes('mohs')) {
+    return 'mohs';
+  }
+  if (combined.includes('pediatric') || combined.includes('child')) {
+    return 'pediatric_derm';
+  }
+  if (combined.includes('surgery') || combined.includes('procedure')) {
+    return 'surgical_derm';
+  }
+  if (combined.includes('acne') || combined.includes('psoriasis') || combined.includes('eczema') || combined.includes('rash') || combined.includes('derm')) {
+    return 'medical_derm';
+  }
+  return 'general';
+}
+
+function buildRelevantHistory(parts: Array<{ label: string; value: unknown }>): string | undefined {
+  const history = parts
+    .map(({ label, value }) => {
+      const normalized = toTrimmedString(value);
+      return normalized ? `${label}: ${normalized}` : '';
+    })
+    .filter(Boolean)
+    .slice(0, 6);
+
+  return history.length > 0 ? history.join('\n') : undefined;
+}
+
+function serializeAgentConfigSnapshot(agentConfig: AgentConfiguration | null): string | null {
+  if (!agentConfig) {
+    return null;
+  }
+
+  return JSON.stringify(agentConfig);
+}
+
+async function resolveNoteGenerationContext(
+  tenantId: string,
+  transcriptId: string,
+  encounterId: string | null
+): Promise<NoteGenerationContext> {
+  const contextResult = await pool.query(
+    `SELECT
+       t.recording_id,
+       COALESCE($3::text, t.encounter_id, r.encounter_id) as effective_encounter_id,
+       r.provider_id as recording_provider_id,
+       r.agent_config_id as recording_agent_config_id,
+       p.first_name as patient_first_name,
+       p.last_name as patient_last_name,
+       p.dob as patient_dob,
+       p.allergies as patient_allergies,
+       p.medications as patient_medications,
+       e.provider_id as encounter_provider_id,
+       e.chief_complaint as encounter_chief_complaint,
+       e.hpi as encounter_hpi,
+       e.ros as encounter_ros,
+       e.exam as encounter_exam,
+       e.assessment_plan as encounter_assessment_plan,
+       pr.full_name as provider_name,
+       at.id as appointment_type_id,
+       at.name as appointment_type_name,
+       at.category as appointment_type_category
+     FROM ambient_transcripts t
+     LEFT JOIN ambient_recordings r
+       ON r.id = t.recording_id
+      AND r.tenant_id = t.tenant_id
+     LEFT JOIN encounters e
+       ON e.id = COALESCE($3::text, t.encounter_id, r.encounter_id)
+      AND e.tenant_id = t.tenant_id
+     LEFT JOIN patients p
+       ON p.id = r.patient_id
+      AND p.tenant_id = t.tenant_id
+     LEFT JOIN providers pr
+       ON pr.id = COALESCE(e.provider_id, r.provider_id)
+      AND pr.tenant_id = t.tenant_id
+     LEFT JOIN appointments a
+       ON a.id = e.appointment_id
+      AND a.tenant_id = t.tenant_id
+     LEFT JOIN appointment_types at
+       ON at.id = a.appointment_type_id
+      AND at.tenant_id = t.tenant_id
+     WHERE t.id = $1
+       AND t.tenant_id = $2`,
+    [transcriptId, tenantId, encounterId]
+  );
+
+  const row = contextResult.rows[0] || {};
+  const recordingId = row.recording_id || null;
+  const providerId = row.encounter_provider_id || row.recording_provider_id || null;
+  const appointmentTypeId = toTrimmedString(row.appointment_type_id) || null;
+  const appointmentTypeName = toTrimmedString(row.appointment_type_name) || undefined;
+  const appointmentTypeCategory = toTrimmedString(row.appointment_type_category) || undefined;
+
+  let agentConfig: AgentConfiguration | null = null;
+  const persistedAgentConfigId = toTrimmedString(row.recording_agent_config_id) || null;
+
+  if (persistedAgentConfigId) {
+    agentConfig = await agentConfigService.getConfiguration(persistedAgentConfigId, tenantId);
+  }
+
+  if (!agentConfig && appointmentTypeId) {
+    agentConfig = await agentConfigService.getConfigurationForAppointmentType(tenantId, appointmentTypeId);
+  }
+
+  if (!agentConfig) {
+    agentConfig = await agentConfigService.getDefaultConfiguration(tenantId);
+  }
+
+  if (recordingId && agentConfig?.id && agentConfig.id !== persistedAgentConfigId) {
+    await pool.query(
+      `UPDATE ambient_recordings
+       SET agent_config_id = $1,
+           updated_at = NOW()
+       WHERE id = $2
+         AND tenant_id = $3`,
+      [agentConfig.id, recordingId, tenantId]
+    );
+  }
+
+  const specialtyFocus =
+    agentConfig?.specialtyFocus ||
+    deriveSpecialtyFocus(appointmentTypeCategory, appointmentTypeName);
+
+  const patientName = [toTrimmedString(row.patient_first_name), toTrimmedString(row.patient_last_name)]
+    .filter(Boolean)
+    .join(' ');
+
+  const chiefComplaint =
+    toTrimmedString(row.encounter_chief_complaint) ||
+    appointmentTypeName ||
+    undefined;
+
+  const patientContext: PatientContext | undefined = patientName || chiefComplaint || specialtyFocus
+    ? {
+        patientName: patientName || undefined,
+        patientAge: calculateAge(row.patient_dob),
+        chiefComplaint,
+        relevantHistory: buildRelevantHistory([
+          { label: 'Known allergies', value: row.patient_allergies },
+          { label: 'Active medications', value: row.patient_medications },
+          { label: 'Existing HPI draft', value: row.encounter_hpi },
+          { label: 'Existing ROS draft', value: row.encounter_ros },
+          { label: 'Existing exam draft', value: row.encounter_exam },
+          { label: 'Existing assessment/plan draft', value: row.encounter_assessment_plan },
+        ]),
+        providerName: toTrimmedString(row.provider_name) || undefined,
+        appointmentTypeName,
+        appointmentTypeCategory,
+        specialtyFocus,
+      }
+    : undefined;
+
+  return {
+    recordingId,
+    encounterId: row.effective_encounter_id || encounterId || null,
+    providerId,
+    agentConfig,
+    agentConfigSnapshot: serializeAgentConfigSnapshot(agentConfig),
+    patientContext,
+  };
 }
 
 function toProbabilityWeight(value: unknown): number {
@@ -1406,19 +1614,30 @@ async function generateNote(
     'SELECT recording_id, encounter_id FROM ambient_transcripts WHERE id = $1 AND tenant_id = $2',
     [transcriptId, tenantId]
   );
-  const recordingId = transcriptMeta.rows[0]?.recording_id || null;
   const effectiveEncounterId = encounterId || transcriptMeta.rows[0]?.encounter_id || null;
+  const generationContext = await resolveNoteGenerationContext(tenantId, transcriptId, effectiveEncounterId);
 
   // Create note record
   await pool.query(
     `INSERT INTO ambient_generated_notes (
-      id, tenant_id, transcript_id, recording_id, encounter_id, generation_status, started_at, note_content
-    ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)`,
-    [noteId, tenantId, transcriptId, recordingId, effectiveEncounterId, 'processing', JSON.stringify({})]
+      id, tenant_id, transcript_id, recording_id, encounter_id, agent_config_id,
+      agent_config_snapshot, generation_status, started_at, note_content
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)`,
+    [
+      noteId,
+      tenantId,
+      transcriptId,
+      generationContext.recordingId,
+      generationContext.encounterId,
+      generationContext.agentConfig?.id || null,
+      generationContext.agentConfigSnapshot,
+      'processing',
+      JSON.stringify({}),
+    ]
   );
 
   // Process note generation asynchronously
-  processNoteGeneration(noteId, tenantId, transcriptText, segments).catch(error => {
+  processNoteGeneration(noteId, tenantId, transcriptText, segments, generationContext).catch(error => {
     logAmbientError('Note generation error', error);
   });
 
@@ -1432,11 +1651,17 @@ async function processNoteGeneration(
   noteId: string,
   tenantId: string,
   transcriptText: string,
-  segments: any
+  segments: any,
+  generationContext: NoteGenerationContext
 ): Promise<void> {
   try {
-    // Call mock AI service
-    const result = await generateClinicalNote(transcriptText, segments);
+    const result = await generateClinicalNote(
+      transcriptText,
+      segments,
+      generationContext.agentConfig,
+      generationContext.patientContext
+    );
+    const generationMetadata = result.generationMetadata;
 
     // Update note
     await pool.query(
@@ -1457,10 +1682,15 @@ async function processNoteGeneration(
            differential_diagnoses = $14,
            recommended_tests = $15,
            note_content = $16,
-           generation_status = $17,
+           agent_config_id = $17,
+           agent_config_snapshot = $18,
+           ai_model = $19,
+           ai_version = $20,
+           generation_prompt = $21,
+           generation_status = $22,
            completed_at = NOW(),
            updated_at = NOW()
-       WHERE id = $18 AND tenant_id = $19`,
+       WHERE id = $23 AND tenant_id = $24`,
       [
         result.chiefComplaint,
         result.hpi,
@@ -1478,6 +1708,11 @@ async function processNoteGeneration(
         JSON.stringify(result.differentialDiagnoses || []),
         JSON.stringify(result.recommendedTests || []),
         JSON.stringify(buildNoteContent(result)),
+        generationContext.agentConfig?.id || generationMetadata?.agentConfigId || null,
+        generationContext.agentConfigSnapshot,
+        generationMetadata?.model || generationContext.agentConfig?.aiModel || null,
+        AMBIENT_SCRIBE_PROMPT_VERSION,
+        generationMetadata?.prompt || null,
         'completed',
         noteId,
         tenantId

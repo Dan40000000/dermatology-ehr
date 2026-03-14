@@ -52,7 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_notifications_priority ON notifications(priority)
 CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id, read_at) WHERE read_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_notifications_active ON notifications(user_id, dismissed_at, expires_at)
-  WHERE dismissed_at IS NULL AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP);
+  WHERE dismissed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_notifications_source ON notifications(source_type, source_id) WHERE source_id IS NOT NULL;
 
 -- ============================================================================
@@ -296,7 +296,7 @@ COMMENT ON TABLE notification_triggers IS 'Event-driven notification rules confi
 
 -- Appointment Reminder Template
 INSERT INTO email_templates (tenant_id, template_name, subject, html_content, text_content, variables, description, is_active)
-SELECT 'default-tenant', 'appointment_reminder',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'appointment_reminder',
   'Reminder: Your Appointment on {appointment_date}',
   '<html><body>
 <h2>Appointment Reminder</h2>
@@ -336,7 +336,7 @@ WHERE NOT EXISTS (SELECT 1 FROM email_templates WHERE template_name = 'appointme
 
 -- Appointment Confirmation Template
 INSERT INTO email_templates (tenant_id, template_name, subject, html_content, text_content, variables, description, is_active)
-SELECT 'default-tenant', 'appointment_confirmation',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'appointment_confirmation',
   'Appointment Confirmed: {appointment_date} at {appointment_time}',
   '<html><body>
 <h2>Appointment Confirmed</h2>
@@ -379,7 +379,7 @@ WHERE NOT EXISTS (SELECT 1 FROM email_templates WHERE template_name = 'appointme
 
 -- Lab Results Ready Template
 INSERT INTO email_templates (tenant_id, template_name, subject, html_content, text_content, variables, description, is_active)
-SELECT 'default-tenant', 'lab_results_ready',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'lab_results_ready',
   'Your Lab Results Are Ready',
   '<html><body>
 <h2>Lab Results Available</h2>
@@ -409,7 +409,7 @@ WHERE NOT EXISTS (SELECT 1 FROM email_templates WHERE template_name = 'lab_resul
 
 -- Prescription Sent Template
 INSERT INTO email_templates (tenant_id, template_name, subject, html_content, text_content, variables, description, is_active)
-SELECT 'default-tenant', 'prescription_sent',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'prescription_sent',
   'Prescription Sent to Your Pharmacy',
   '<html><body>
 <h2>Prescription Notification</h2>
@@ -447,7 +447,7 @@ WHERE NOT EXISTS (SELECT 1 FROM email_templates WHERE template_name = 'prescript
 
 -- Payment Receipt Template
 INSERT INTO email_templates (tenant_id, template_name, subject, html_content, text_content, variables, description, is_active)
-SELECT 'default-tenant', 'payment_receipt',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'payment_receipt',
   'Payment Receipt - {clinic_name}',
   '<html><body>
 <h2>Payment Receipt</h2>
@@ -484,7 +484,7 @@ WHERE NOT EXISTS (SELECT 1 FROM email_templates WHERE template_name = 'payment_r
 
 -- Statement Ready Template
 INSERT INTO email_templates (tenant_id, template_name, subject, html_content, text_content, variables, description, is_active)
-SELECT 'default-tenant', 'statement_ready',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'statement_ready',
   'Your Statement is Ready',
   '<html><body>
 <h2>Statement Available</h2>
@@ -521,7 +521,7 @@ WHERE NOT EXISTS (SELECT 1 FROM email_templates WHERE template_name = 'statement
 
 -- Credential Expiring Template
 INSERT INTO email_templates (tenant_id, template_name, subject, html_content, text_content, variables, description, is_active)
-SELECT 'default-tenant', 'credential_expiring',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'credential_expiring',
   'Action Required: Credential Expiring Soon',
   '<html><body>
 <h2>Credential Expiration Notice</h2>
@@ -559,7 +559,7 @@ WHERE NOT EXISTS (SELECT 1 FROM email_templates WHERE template_name = 'credentia
 
 -- Task Assigned Template
 INSERT INTO email_templates (tenant_id, template_name, subject, html_content, text_content, variables, description, is_active)
-SELECT 'default-tenant', 'task_assigned',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'task_assigned',
   'New Task Assigned: {task_title}',
   '<html><body>
 <h2>New Task Assignment</h2>
@@ -601,7 +601,7 @@ WHERE NOT EXISTS (SELECT 1 FROM email_templates WHERE template_name = 'task_assi
 
 -- Denial Received Template
 INSERT INTO email_templates (tenant_id, template_name, subject, html_content, text_content, variables, description, is_active)
-SELECT 'default-tenant', 'denial_received',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'denial_received',
   'Claim Denial Alert: {patient_name}',
   '<html><body>
 <h2>Claim Denial Notice</h2>
@@ -638,7 +638,7 @@ WHERE NOT EXISTS (SELECT 1 FROM email_templates WHERE template_name = 'denial_re
 
 -- Welcome Email Template
 INSERT INTO email_templates (tenant_id, template_name, subject, html_content, text_content, variables, description, is_active)
-SELECT 'default-tenant', 'welcome_email',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'welcome_email',
   'Welcome to {clinic_name}!',
   '<html><body>
 <h2>Welcome to {clinic_name}!</h2>
@@ -684,7 +684,7 @@ WHERE NOT EXISTS (SELECT 1 FROM email_templates WHERE template_name = 'welcome_e
 
 -- Lab Result Received Trigger
 INSERT INTO notification_triggers (tenant_id, trigger_event, name, category, recipient_type, recipient_value, title_template, message_template, priority, channels, is_active)
-SELECT 'default-tenant', 'lab_result_received', 'Lab Results Notification', 'clinical', 'dynamic', 'assigned_provider',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'lab_result_received', 'Lab Results Notification', 'clinical', 'dynamic', 'assigned_provider',
   'Lab Results Ready: {patient_name}',
   'Lab results for {patient_name} have been received and are ready for review.',
   'normal',
@@ -694,7 +694,7 @@ WHERE NOT EXISTS (SELECT 1 FROM notification_triggers WHERE trigger_event = 'lab
 
 -- Prior Auth Approved Trigger
 INSERT INTO notification_triggers (tenant_id, trigger_event, name, category, recipient_type, recipient_value, title_template, message_template, priority, channels, is_active)
-SELECT 'default-tenant', 'prior_auth_approved', 'Prior Auth Approved', 'administrative', 'dynamic', 'requesting_provider',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'prior_auth_approved', 'Prior Auth Approved', 'administrative', 'dynamic', 'requesting_provider',
   'Prior Authorization Approved',
   'Prior authorization for {patient_name} has been approved for {procedure_name}.',
   'normal',
@@ -704,7 +704,7 @@ WHERE NOT EXISTS (SELECT 1 FROM notification_triggers WHERE trigger_event = 'pri
 
 -- Prior Auth Denied Trigger
 INSERT INTO notification_triggers (tenant_id, trigger_event, name, category, recipient_type, recipient_value, title_template, message_template, priority, channels, is_active)
-SELECT 'default-tenant', 'prior_auth_denied', 'Prior Auth Denied', 'administrative', 'dynamic', 'requesting_provider',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'prior_auth_denied', 'Prior Auth Denied', 'administrative', 'dynamic', 'requesting_provider',
   'Prior Authorization Denied',
   'Prior authorization for {patient_name} has been denied for {procedure_name}. Reason: {denial_reason}',
   'high',
@@ -714,7 +714,7 @@ WHERE NOT EXISTS (SELECT 1 FROM notification_triggers WHERE trigger_event = 'pri
 
 -- Claim Denied Trigger
 INSERT INTO notification_triggers (tenant_id, trigger_event, name, category, recipient_type, recipient_value, title_template, message_template, priority, channels, is_active)
-SELECT 'default-tenant', 'claim_denied', 'Claim Denial Alert', 'billing', 'role', 'billing_staff',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'claim_denied', 'Claim Denial Alert', 'billing', 'role', 'billing_staff',
   'Claim Denied: {patient_name}',
   'A claim for {patient_name} has been denied. Reason: {denial_reason}. Amount: ${amount}',
   'high',
@@ -724,7 +724,7 @@ WHERE NOT EXISTS (SELECT 1 FROM notification_triggers WHERE trigger_event = 'cla
 
 -- Credential Expiring Trigger
 INSERT INTO notification_triggers (tenant_id, trigger_event, name, category, recipient_type, recipient_value, title_template, message_template, priority, channels, is_active)
-SELECT 'default-tenant', 'credential_expiring', 'Credential Expiration Warning', 'compliance', 'dynamic', 'credential_owner',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'credential_expiring', 'Credential Expiration Warning', 'compliance', 'dynamic', 'credential_owner',
   'Credential Expiring: {credential_type}',
   'Your {credential_type} expires on {expiration_date}. Please renew before expiration.',
   'high',
@@ -734,7 +734,7 @@ WHERE NOT EXISTS (SELECT 1 FROM notification_triggers WHERE trigger_event = 'cre
 
 -- Inventory Low Trigger
 INSERT INTO notification_triggers (tenant_id, trigger_event, name, category, recipient_type, recipient_value, title_template, message_template, priority, channels, is_active)
-SELECT 'default-tenant', 'inventory_low', 'Low Inventory Alert', 'inventory', 'role', 'admin',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'inventory_low', 'Low Inventory Alert', 'inventory', 'role', 'admin',
   'Low Inventory: {item_name}',
   '{item_name} is below minimum stock level. Current: {current_quantity}, Minimum: {minimum_quantity}',
   'normal',
@@ -744,7 +744,7 @@ WHERE NOT EXISTS (SELECT 1 FROM notification_triggers WHERE trigger_event = 'inv
 
 -- New Message Received Trigger
 INSERT INTO notification_triggers (tenant_id, trigger_event, name, category, recipient_type, recipient_value, title_template, message_template, priority, channels, is_active)
-SELECT 'default-tenant', 'message_received', 'New Message', 'patient', 'dynamic', 'assigned_staff',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'message_received', 'New Message', 'patient', 'dynamic', 'assigned_staff',
   'New Message from {sender_name}',
   'You have received a new message regarding {subject}.',
   'normal',
@@ -754,7 +754,7 @@ WHERE NOT EXISTS (SELECT 1 FROM notification_triggers WHERE trigger_event = 'mes
 
 -- Appointment Cancelled Trigger
 INSERT INTO notification_triggers (tenant_id, trigger_event, name, category, recipient_type, recipient_value, title_template, message_template, priority, channels, is_active)
-SELECT 'default-tenant', 'appointment_cancelled', 'Appointment Cancellation', 'scheduling', 'dynamic', 'assigned_provider',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'appointment_cancelled', 'Appointment Cancellation', 'scheduling', 'dynamic', 'assigned_provider',
   'Appointment Cancelled: {patient_name}',
   '{patient_name} has cancelled their appointment on {appointment_date} at {appointment_time}.',
   'normal',
@@ -764,7 +764,7 @@ WHERE NOT EXISTS (SELECT 1 FROM notification_triggers WHERE trigger_event = 'app
 
 -- Task Assigned Trigger
 INSERT INTO notification_triggers (tenant_id, trigger_event, name, category, recipient_type, recipient_value, title_template, message_template, priority, channels, is_active)
-SELECT 'default-tenant', 'task_assigned', 'Task Assignment', 'administrative', 'dynamic', 'assignee',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'task_assigned', 'Task Assignment', 'administrative', 'dynamic', 'assignee',
   'New Task: {task_title}',
   'You have been assigned a new task: {task_title}. Due: {due_date}',
   'normal',
@@ -774,7 +774,7 @@ WHERE NOT EXISTS (SELECT 1 FROM notification_triggers WHERE trigger_event = 'tas
 
 -- Urgent Referral Trigger
 INSERT INTO notification_triggers (tenant_id, trigger_event, name, category, recipient_type, recipient_value, title_template, message_template, priority, channels, is_active)
-SELECT 'default-tenant', 'urgent_referral', 'Urgent Referral', 'clinical', 'role', 'scheduling',
+SELECT (SELECT id FROM tenants ORDER BY created_at LIMIT 1), 'urgent_referral', 'Urgent Referral', 'clinical', 'role', 'scheduling',
   'Urgent Referral: {patient_name}',
   'Urgent referral received for {patient_name}. Specialty: {specialty}. Please schedule promptly.',
   'urgent',

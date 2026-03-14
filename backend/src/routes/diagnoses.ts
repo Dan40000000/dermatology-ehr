@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { CLINICAL_ROLES } from "../lib/roles";
 
 const diagnosisSchema = z.object({
   encounterId: z.string(),
@@ -15,7 +16,7 @@ const diagnosisSchema = z.object({
 export const diagnosesRouter = Router();
 
 // Get all diagnoses for an encounter
-diagnosesRouter.get("/encounter/:encounterId", requireAuth, async (req: AuthedRequest, res) => {
+diagnosesRouter.get("/encounter/:encounterId", requireAuth, requireRoles([...CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { encounterId } = req.params;
 
@@ -101,7 +102,7 @@ diagnosesRouter.delete("/:id", requireAuth, requireRoles(["provider", "admin"]),
 });
 
 // Search ICD-10 codes
-diagnosesRouter.get("/search/icd10", requireAuth, async (req: AuthedRequest, res) => {
+diagnosesRouter.get("/search/icd10", requireAuth, requireRoles([...CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   const { q } = req.query;
 
   if (!q || typeof q !== 'string') {

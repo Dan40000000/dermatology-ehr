@@ -29,7 +29,7 @@ import {
   Visibility as ViewIcon,
   Send as SendIcon,
   Science as ScienceIcon,
-  LocalShipping as ShipIcon,
+  AutoFixHigh as DemoIcon,
   CheckCircle as CheckIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
@@ -136,6 +136,30 @@ const LabOrdersPage: React.FC = () => {
   const handleOrderCreated = () => {
     setCreateDialogOpen(false);
     fetchOrders();
+  };
+
+  const handleGenerateDemoResults = async (
+    orderId: string,
+    profile: 'normal' | 'abnormal' | 'critical' = 'normal'
+  ) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/lab-orders/${orderId}/demo-generate-results`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile })
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to generate demo results');
+      }
+
+      await fetchOrders();
+      alert(`Generated ${profile} demo results`);
+    } catch (err: any) {
+      alert('Error: ' + err.message);
+    }
   };
 
   return (
@@ -305,6 +329,17 @@ const LabOrdersPage: React.FC = () => {
                           onClick={() => handleSubmitOrder(order.id)}
                         >
                           <SendIcon />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {!['completed', 'cancelled'].includes(order.status) && order.result_count === 0 && (
+                      <Tooltip title="Generate Demo Results">
+                        <IconButton
+                          size="small"
+                          color="success"
+                          onClick={() => handleGenerateDemoResults(order.id, 'normal')}
+                        >
+                          <DemoIcon />
                         </IconButton>
                       </Tooltip>
                     )}

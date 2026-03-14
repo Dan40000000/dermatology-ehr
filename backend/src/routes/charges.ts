@@ -153,12 +153,31 @@ chargesRouter.get("/search/cpt", requireAuth, async (req: AuthedRequest, res) =>
 
   const searchTerm = `%${q}%`;
   const result = await pool.query(
-    `select code, description, category, default_fee_cents as "defaultFeeCents", is_common as "isCommon"
-     from cpt_codes
-     where code ilike $1 or description ilike $1
-     order by is_common desc, code asc
+    `with tenant_fee_items as (
+       select distinct on (fsi.cpt_code)
+         fsi.cpt_code,
+         nullif(fsi.cpt_description, '') as cpt_description,
+         nullif(fsi.category, '') as category,
+         fsi.fee_cents
+       from fee_schedule_items fsi
+       join fee_schedules fs on fs.id = fsi.fee_schedule_id
+       where fs.tenant_id = $1
+       order by fsi.cpt_code, fs.is_default desc, fsi.updated_at desc nulls last, fsi.created_at desc
+     )
+     select
+       coalesce(tfi.cpt_code, c.code) as code,
+       coalesce(c.description, tfi.cpt_description, tfi.cpt_code) as description,
+       coalesce(c.category, tfi.category) as category,
+       coalesce(tfi.fee_cents, c.default_fee_cents, 0) as "defaultFeeCents",
+       coalesce(c.is_common, false) as "isCommon"
+     from tenant_fee_items tfi
+     full outer join cpt_codes c on c.code = tfi.cpt_code
+     where coalesce(tfi.cpt_code, c.code) ilike $2
+        or coalesce(c.description, tfi.cpt_description, '') ilike $2
+        or coalesce(c.category, tfi.category, '') ilike $2
+     order by "isCommon" desc, code asc
      limit 50`,
-    [searchTerm],
+    [req.user!.tenantId, searchTerm],
   );
 
   res.json({ codes: result.rows });

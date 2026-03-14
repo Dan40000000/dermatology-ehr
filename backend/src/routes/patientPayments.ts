@@ -6,6 +6,7 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
 import { logger } from "../lib/logger";
+import { sendPatientPaymentReceiptEmail } from "../services/paymentConfirmationService";
 
 const patientPaymentCreateSchema = z.object({
   patientId: z.string(),
@@ -164,6 +165,7 @@ patientPaymentsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "
   const tenantId = req.user!.tenantId;
   const payload = parsed.data;
   const paymentId = crypto.randomUUID();
+  let patientContact: { first_name: string | null; last_name: string | null; email: string | null } | null = null;
 
   const client = await pool.connect();
   try {
@@ -252,9 +254,29 @@ patientPaymentsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "
       );
     }
 
+    const patientContactResult = await client.query(
+      `select first_name, last_name, email
+       from patients
+       where id = $1 and tenant_id = $2
+       limit 1`,
+      [payload.patientId, tenantId]
+    );
+    patientContact = patientContactResult.rowCount ? patientContactResult.rows[0] : null;
+
     await client.query('COMMIT');
     await auditLog(tenantId, req.user!.id, "patient_payment_create", "patient_payment", paymentId);
-    res.status(201).json({ id: paymentId, receiptNumber });
+    const emailConfirmation = await sendPatientPaymentReceiptEmail({
+      tenantId,
+      patientEmail: patientContact?.email,
+      patientFirstName: patientContact?.first_name,
+      patientLastName: patientContact?.last_name,
+      amountCents: payload.amountCents,
+      paymentMethod: payload.paymentMethod,
+      paymentDate: payload.paymentDate,
+      receiptNumber,
+      paymentTypeLabel: "Payment",
+    });
+    res.status(201).json({ id: paymentId, receiptNumber, emailConfirmation });
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -547,6 +569,7 @@ patientPaymentsRouter.post("/plans/:id/pay", requireAuth, requireRoles(["admin",
   }
 
   const client = await pool.connect();
+  let patientContact: { first_name: string | null; last_name: string | null; email: string | null } | null = null;
   try {
     await client.query('BEGIN');
 
@@ -618,8 +641,28 @@ patientPaymentsRouter.post("/plans/:id/pay", requireAuth, requireRoles(["admin",
       [newPaidAmount, newRemainingAmount, nextPaymentDate.toISOString().split('T')[0], newStatus, planId, tenantId],
     );
 
+    const patientContactResult = await client.query(
+      `select first_name, last_name, email
+       from patients
+       where id = $1 and tenant_id = $2
+       limit 1`,
+      [plan.patient_id, tenantId]
+    );
+    patientContact = patientContactResult.rowCount ? patientContactResult.rows[0] : null;
+
     await client.query('COMMIT');
     await auditLog(tenantId, req.user!.id, "payment_plan_payment", "payment_plan", planId);
+    const emailConfirmation = await sendPatientPaymentReceiptEmail({
+      tenantId,
+      patientEmail: patientContact?.email,
+      patientFirstName: patientContact?.first_name,
+      patientLastName: patientContact?.last_name,
+      amountCents,
+      paymentMethod: paymentMethod || "credit",
+      paymentDate: new Date(),
+      receiptNumber,
+      paymentTypeLabel: "Payment Plan Installment",
+    });
 
     res.json({
       success: true,
@@ -627,6 +670,7 @@ patientPaymentsRouter.post("/plans/:id/pay", requireAuth, requireRoles(["admin",
       receiptNumber,
       newBalance: newRemainingAmount,
       planStatus: newStatus,
+      emailConfirmation,
     });
   } catch (error) {
     await client.query('ROLLBACK');

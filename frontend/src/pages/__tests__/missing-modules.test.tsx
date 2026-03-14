@@ -4,7 +4,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { RegistryPage } from '../RegistryPage';
 import { ReferralsPage } from '../ReferralsPage';
 import { ProtocolsPage } from '../ProtocolsPage';
-import { PreferencesPage } from '../PreferencesPage';
 import { HelpPage } from '../HelpPage';
 import { RecallsPage } from '../RecallsPage';
 import { FormsPage } from '../FormsPage';
@@ -80,8 +79,7 @@ describe('Missing module placeholder pages', () => {
     { Component: ReferralsPage, heading: 'Referrals', emptyTitle: 'No referrals yet' },
     { Component: FormsPage, heading: 'Forms', emptyTitle: 'No forms configured' },
     { Component: ProtocolsPage, heading: 'Treatment Protocols', emptyTitle: 'No protocols found' },
-    { Component: PreferencesPage, heading: 'admin:settings.preferences', emptyTitle: 'No preferences configured' },
-    { Component: HelpPage, heading: 'Help', emptyTitle: 'Help resources coming soon' },
+    { Component: HelpPage, heading: 'Role-Based Training Center', emptyTitle: 'First-time user onboarding with role-specific workflows, visual snapshots, and step-by-step checklists.' },
     { Component: RecallsPage, heading: 'Recalls', emptyTitle: 'No recall campaigns' },
   ];
 

@@ -1,6 +1,6 @@
 /**
- * SMS Reminder Scheduler Service
- * Cron job that sends automated appointment reminders via SMS
+ * SMS/Voice Reminder Scheduler Service
+ * Cron job that sends automated appointment reminders.
  */
 
 import { pool } from '../db/pool';
@@ -21,6 +21,41 @@ export interface AppointmentToRemind {
   tenantId: string;
 }
 
+export type ReminderChannel = 'sms' | 'voice';
+
+const DEFAULT_CLINIC_NUMBER = '+15555550100';
+const DEFAULT_SMS_TEMPLATE =
+  'Hi {patientName}, this is a reminder for your appointment with {providerName} on {appointmentDate} at {appointmentTime}. Reply C to confirm, R to reschedule, or X to cancel.';
+
+interface ReminderTenantSettings {
+  tenant_id: string;
+  twilio_account_sid: string | null;
+  twilio_auth_token: string | null;
+  twilio_phone_number: string | null;
+  reminder_hours_before: number;
+  reminder_template: string | null;
+  appointmentReminderChannel: ReminderChannel | null;
+  is_test_mode: boolean;
+}
+
+interface ReminderSendResult {
+  sid: string;
+  status: string;
+  body: string;
+  numSegments: number;
+}
+
+function getDefaultReminderChannel(): ReminderChannel {
+  const configured = (process.env.APPOINTMENT_REMINDER_CHANNEL || 'sms').toLowerCase();
+  if (configured === 'voice') {
+    return 'voice';
+  }
+  if (configured !== 'sms') {
+    logger.warn('Invalid APPOINTMENT_REMINDER_CHANNEL, defaulting to sms', { configured });
+  }
+  return 'sms';
+}
+
 /**
  * Main scheduler function - runs every hour via cron
  * Finds appointments that need reminders and sends them
@@ -30,15 +65,16 @@ export async function sendScheduledReminders(): Promise<{
   failed: number;
   skipped: number;
 }> {
-  logger.info('Starting scheduled SMS reminder job');
+  const defaultChannel = getDefaultReminderChannel();
+  logger.info('Starting scheduled reminder job', { defaultChannel });
 
   let sent = 0;
   let failed = 0;
   let skipped = 0;
 
   try {
-    // Get all tenants with SMS enabled
-    const tenants = await getTenantsWithSMSEnabled();
+    // Get all tenants with reminder capability enabled
+    const tenants = await getTenantsWithRemindersEnabled();
 
     for (const tenant of tenants) {
       try {
@@ -47,16 +83,14 @@ export async function sendScheduledReminders(): Promise<{
           tenant.tenant_id,
           tenant.reminder_hours_before
         );
+        const reminderChannel = getReminderChannelForTenant(tenant, defaultChannel);
 
         logger.info(`Found ${appointments.length} appointments needing reminders`, {
           tenantId: tenant.tenant_id,
+          reminderChannel,
         });
 
-        // Create Twilio service for tenant
-        const twilioService = createTwilioService(
-          tenant.twilio_account_sid,
-          tenant.twilio_auth_token
-        );
+        const twilioService = buildTwilioServiceForTenant(tenant);
 
         // Send reminders
         for (const appt of appointments) {
@@ -73,12 +107,11 @@ export async function sendScheduledReminders(): Promise<{
               continue;
             }
 
-            // Send reminder
-            await sendAppointmentReminder(
-              twilioService,
-              tenant,
-              appt
-            );
+            if (reminderChannel === 'voice') {
+              await sendAppointmentVoiceReminder(twilioService, tenant, appt);
+            } else {
+              await sendAppointmentReminder(twilioService, tenant, appt);
+            }
 
             sent++;
           } catch (error: any) {
@@ -98,25 +131,27 @@ export async function sendScheduledReminders(): Promise<{
       }
     }
 
-    logger.info('SMS reminder job completed', {
+    logger.info('Reminder job completed', {
       sent,
       failed,
       skipped,
+      defaultChannel,
     });
 
     return { sent, failed, skipped };
   } catch (error: any) {
-    logger.error('SMS reminder job failed', {
+    logger.error('Reminder job failed', {
       error: error.message,
+      defaultChannel,
     });
     throw error;
   }
 }
 
 /**
- * Get tenants with SMS reminders enabled
+ * Get tenants with reminders enabled
  */
-async function getTenantsWithSMSEnabled(): Promise<any[]> {
+async function getTenantsWithRemindersEnabled(): Promise<ReminderTenantSettings[]> {
   const result = await pool.query(
     `SELECT
       tenant_id,
@@ -124,16 +159,40 @@ async function getTenantsWithSMSEnabled(): Promise<any[]> {
       twilio_auth_token,
       twilio_phone_number,
       reminder_hours_before,
-      reminder_template
+      reminder_template,
+      appointment_reminder_channel as "appointmentReminderChannel",
+      is_test_mode
      FROM sms_settings
      WHERE is_active = true
        AND appointment_reminders_enabled = true
-       AND twilio_account_sid IS NOT NULL
-       AND twilio_auth_token IS NOT NULL
-       AND twilio_phone_number IS NOT NULL`
+       AND (
+         is_test_mode = true
+         OR (
+           twilio_account_sid IS NOT NULL
+           AND twilio_auth_token IS NOT NULL
+           AND twilio_phone_number IS NOT NULL
+         )
+       )`
   );
 
   return result.rows;
+}
+
+function getReminderChannelForTenant(
+  tenant: ReminderTenantSettings,
+  defaultChannel: ReminderChannel
+): ReminderChannel {
+  if (tenant.appointmentReminderChannel === 'sms' || tenant.appointmentReminderChannel === 'voice') {
+    return tenant.appointmentReminderChannel;
+  }
+  if (tenant.appointmentReminderChannel && tenant.appointmentReminderChannel !== defaultChannel) {
+    logger.warn('Invalid tenant reminder channel, using default', {
+      tenantId: tenant.tenant_id,
+      channel: tenant.appointmentReminderChannel,
+      defaultChannel,
+    });
+  }
+  return defaultChannel;
 }
 
 /**
@@ -206,8 +265,8 @@ async function shouldSendReminder(tenantId: string, patientId: string): Promise<
  * Send appointment reminder SMS
  */
 async function sendAppointmentReminder(
-  twilioService: TwilioService,
-  tenant: any,
+  twilioService: TwilioService | null,
+  tenant: ReminderTenantSettings,
   appointment: AppointmentToRemind
 ): Promise<void> {
   const client = await pool.connect();
@@ -239,19 +298,45 @@ async function sendAppointmentReminder(
       [reminderId, tenant.tenant_id, appointment.appointmentId, appointment.patientId]
     );
 
-    // Send SMS via Twilio
-    const result = await twilioService.sendAppointmentReminder(
-      tenant.twilio_phone_number,
-      {
-        patientPhone: patientPhone,
-        patientName: appointment.patientName,
-        providerName: appointment.providerName,
-        appointmentDate: formattedDate,
-        appointmentTime: appointment.appointmentTime,
-        clinicPhone: appointment.clinicPhone,
-        template: tenant.reminder_template,
+    const reminderBody = applyReminderTemplate(tenant.reminder_template, {
+      patientName: appointment.patientName,
+      providerName: appointment.providerName,
+      appointmentDate: formattedDate,
+      appointmentTime: appointment.appointmentTime,
+      clinicPhone: appointment.clinicPhone,
+    });
+
+    let result: ReminderSendResult;
+    if (tenant.is_test_mode) {
+      result = {
+        sid: `mock_sms_${crypto.randomUUID()}`,
+        status: 'sent',
+        body: reminderBody,
+        numSegments: 1,
+      };
+    } else {
+      if (!twilioService || !tenant.twilio_phone_number) {
+        throw new Error('Twilio SMS is not configured');
       }
-    );
+      const twilioResult = await twilioService.sendAppointmentReminder(
+        tenant.twilio_phone_number,
+        {
+          patientPhone,
+          patientName: appointment.patientName,
+          providerName: appointment.providerName,
+          appointmentDate: formattedDate,
+          appointmentTime: appointment.appointmentTime,
+          clinicPhone: appointment.clinicPhone,
+          template: tenant.reminder_template || DEFAULT_SMS_TEMPLATE,
+        }
+      );
+      result = {
+        sid: twilioResult.sid,
+        status: twilioResult.status,
+        body: twilioResult.body,
+        numSegments: twilioResult.numSegments,
+      };
+    }
 
     // Log SMS message
     const smsMessageId = crypto.randomUUID();
@@ -265,7 +350,7 @@ async function sendAppointmentReminder(
         smsMessageId,
         tenant.tenant_id,
         result.sid,
-        tenant.twilio_phone_number,
+        tenant.twilio_phone_number || DEFAULT_CLINIC_NUMBER,
         patientPhone,
         appointment.patientId,
         result.body,
@@ -312,12 +397,147 @@ async function sendAppointmentReminder(
   }
 }
 
+async function sendAppointmentVoiceReminder(
+  twilioService: TwilioService | null,
+  tenant: ReminderTenantSettings,
+  appointment: AppointmentToRemind
+): Promise<void> {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const patientPhone = formatPhoneE164(appointment.patientPhone);
+    if (!patientPhone) {
+      throw new Error(`Invalid patient phone number: ${appointment.patientPhone}`);
+    }
+
+    const appointmentDate = new Date(appointment.appointmentDate);
+    const formattedDate = appointmentDate.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+
+    const voiceMessage = `Hello ${appointment.patientName}. This is a reminder from your dermatology clinic. You have an appointment with ${appointment.providerName} on ${formattedDate} at ${appointment.appointmentTime}. If you need to reschedule, please call ${appointment.clinicPhone}.`;
+
+    const callResult = tenant.is_test_mode
+      ? {
+          sid: `mock_call_${crypto.randomUUID()}`,
+          status: 'queued',
+        }
+      : await placeVoiceReminderCall(twilioService, tenant, patientPhone, voiceMessage);
+
+    const messageId = crypto.randomUUID();
+    await client.query(
+      `INSERT INTO sms_messages
+       (id, tenant_id, twilio_message_sid, direction, from_number, to_number,
+        patient_id, message_body, status, message_type, related_appointment_id,
+        sent_at, segment_count, created_at)
+       VALUES ($1, $2, $3, 'outbound', $4, $5, $6, $7, $8, 'reminder_call', $9, CURRENT_TIMESTAMP, 0, CURRENT_TIMESTAMP)`,
+      [
+        messageId,
+        tenant.tenant_id,
+        callResult.sid,
+        tenant.twilio_phone_number || DEFAULT_CLINIC_NUMBER,
+        patientPhone,
+        appointment.patientId,
+        voiceMessage,
+        callResult.status,
+        appointment.appointmentId,
+      ]
+    );
+
+    const reminderId = crypto.randomUUID();
+    await client.query(
+      `INSERT INTO appointment_sms_reminders
+       (id, tenant_id, appointment_id, patient_id, scheduled_send_time, status, sent_message_id, sent_at)
+       VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, 'sent', $5, CURRENT_TIMESTAMP)
+       ON CONFLICT (appointment_id) DO UPDATE SET
+         status = EXCLUDED.status,
+         sent_message_id = EXCLUDED.sent_message_id,
+         sent_at = EXCLUDED.sent_at,
+         failed_at = NULL,
+         failure_reason = NULL`,
+      [reminderId, tenant.tenant_id, appointment.appointmentId, appointment.patientId, messageId]
+    );
+
+    await client.query('COMMIT');
+
+    logger.info('Appointment reminder call placed', {
+      appointmentId: appointment.appointmentId,
+      patientId: appointment.patientId,
+      patientPhone: formatPhoneDisplay(patientPhone),
+      callSid: callResult.sid,
+      isTestMode: tenant.is_test_mode,
+    });
+  } catch (error: any) {
+    await client.query('ROLLBACK');
+
+    try {
+      await client.query(
+        `UPDATE appointment_sms_reminders
+         SET status = 'failed', failed_at = CURRENT_TIMESTAMP, failure_reason = $1
+         WHERE appointment_id = $2`,
+        [error.message, appointment.appointmentId]
+      );
+    } catch (_updateError) {
+      // Best effort logging only.
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function placeVoiceReminderCall(
+  twilioService: TwilioService | null,
+  tenant: ReminderTenantSettings,
+  patientPhone: string,
+  voiceMessage: string
+) {
+  if (!twilioService || !tenant.twilio_phone_number) {
+    throw new Error('Twilio voice calling is not configured');
+  }
+
+  return twilioService.placeVoiceCall({
+    to: patientPhone,
+    from: tenant.twilio_phone_number,
+    message: voiceMessage,
+  });
+}
+
+function buildTwilioServiceForTenant(tenant: ReminderTenantSettings): TwilioService | null {
+  if (tenant.is_test_mode) {
+    return null;
+  }
+  if (!tenant.twilio_account_sid || !tenant.twilio_auth_token) {
+    throw new Error('Twilio credentials missing for active reminder tenant');
+  }
+  return createTwilioService(tenant.twilio_account_sid, tenant.twilio_auth_token);
+}
+
+function applyReminderTemplate(
+  template: string | null,
+  vars: Record<string, string>
+): string {
+  let result = template || DEFAULT_SMS_TEMPLATE;
+  for (const [key, value] of Object.entries(vars)) {
+    const token = new RegExp(`\\{${key}\\}`, 'g');
+    result = result.replace(token, value || '');
+  }
+  return result;
+}
+
 /**
  * Send immediate reminder for a specific appointment (manual trigger)
  */
 export async function sendImmediateReminder(
   tenantId: string,
-  appointmentId: string
+  appointmentId: string,
+  channel: ReminderChannel = 'sms'
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Get tenant SMS settings
@@ -326,7 +546,10 @@ export async function sendImmediateReminder(
         twilio_account_sid,
         twilio_auth_token,
         twilio_phone_number,
-        reminder_template
+        reminder_template,
+        is_test_mode,
+        reminder_hours_before,
+        tenant_id
        FROM sms_settings
        WHERE tenant_id = $1 AND is_active = true`,
       [tenantId]
@@ -336,7 +559,10 @@ export async function sendImmediateReminder(
       return { success: false, error: 'SMS not configured for tenant' };
     }
 
-    const tenant = tenantResult.rows[0];
+    const tenant: ReminderTenantSettings = {
+      ...tenantResult.rows[0],
+      tenant_id: tenantId,
+    };
 
     // Get appointment details
     const apptResult = await pool.query(
@@ -372,13 +598,12 @@ export async function sendImmediateReminder(
       return { success: false, error: 'Patient has opted out of SMS' };
     }
 
-    // Create Twilio service and send
-    const twilioService = createTwilioService(
-      tenant.twilio_account_sid,
-      tenant.twilio_auth_token
-    );
-
-    await sendAppointmentReminder(twilioService, tenant, appt);
+    const twilioService = buildTwilioServiceForTenant(tenant);
+    if (channel === 'voice') {
+      await sendAppointmentVoiceReminder(twilioService, tenant, appt);
+    } else {
+      await sendAppointmentReminder(twilioService, tenant, appt);
+    }
 
     return { success: true };
   } catch (error: any) {
@@ -386,6 +611,7 @@ export async function sendImmediateReminder(
       error: error.message,
       tenantId,
       appointmentId,
+      channel,
     });
     return { success: false, error: error.message };
   }
@@ -408,5 +634,7 @@ export function startReminderScheduler() {
     });
   }, 60 * 60 * 1000); // 1 hour
 
-  logger.info('SMS reminder scheduler started (runs every hour)');
+  logger.info('Reminder scheduler started (runs every hour)', {
+    channel: getDefaultReminderChannel(),
+  });
 }

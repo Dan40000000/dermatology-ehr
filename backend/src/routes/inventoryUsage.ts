@@ -13,6 +13,8 @@ const usageSchema = z.object({
   patientId: z.string(),
   providerId: z.string(),
   quantityUsed: z.number().int().min(1),
+  sellPriceCents: z.number().int().min(0).optional(),
+  givenAsSample: z.boolean().optional(),
   notes: z.string().optional(),
 });
 
@@ -25,6 +27,8 @@ const batchUsageSchema = z.object({
     z.object({
       itemId: z.string().uuid(),
       quantityUsed: z.number().int().min(1),
+      sellPriceCents: z.number().int().min(0).optional(),
+      givenAsSample: z.boolean().optional(),
       notes: z.string().optional(),
     })
   ),
@@ -66,8 +70,8 @@ inventoryUsageRouter.post("/", requireAuth, requireRoles(["provider", "ma", "adm
     const result = await pool.query(
       `INSERT INTO inventory_usage(
         tenant_id, item_id, encounter_id, appointment_id, patient_id, provider_id,
-        quantity_used, unit_cost_cents, notes, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        quantity_used, unit_cost_cents, sell_price_cents, given_as_sample, notes, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING id`,
       [
         tenantId,
@@ -78,6 +82,8 @@ inventoryUsageRouter.post("/", requireAuth, requireRoles(["provider", "ma", "adm
         payload.providerId,
         payload.quantityUsed,
         unitCostCents,
+        payload.givenAsSample ? 0 : payload.sellPriceCents ?? null,
+        payload.givenAsSample ?? false,
         payload.notes || null,
         req.user!.id,
       ]
@@ -137,8 +143,8 @@ inventoryUsageRouter.post("/batch", requireAuth, requireRoles(["provider", "ma",
       const result = await client.query(
         `INSERT INTO inventory_usage(
           tenant_id, item_id, encounter_id, appointment_id, patient_id, provider_id,
-          quantity_used, unit_cost_cents, notes, created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          quantity_used, unit_cost_cents, sell_price_cents, given_as_sample, notes, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING id`,
         [
           tenantId,
@@ -149,6 +155,8 @@ inventoryUsageRouter.post("/batch", requireAuth, requireRoles(["provider", "ma",
           payload.providerId,
           item.quantityUsed,
           unitCostCents,
+          item.givenAsSample ? 0 : item.sellPriceCents ?? null,
+          item.givenAsSample ?? false,
           item.notes || null,
           req.user!.id,
         ]
@@ -184,6 +192,8 @@ inventoryUsageRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
       u.item_id as "itemId",
       u.quantity_used as "quantityUsed",
       u.unit_cost_cents as "unitCostCents",
+      u.sell_price_cents as "sellPriceCents",
+      u.given_as_sample as "givenAsSample",
       u.notes,
       u.used_at as "usedAt",
       u.encounter_id as "encounterId",
@@ -248,6 +258,8 @@ inventoryUsageRouter.get("/encounter/:encounterId", requireAuth, async (req: Aut
       u.item_id as "itemId",
       u.quantity_used as "quantityUsed",
       u.unit_cost_cents as "unitCostCents",
+      u.sell_price_cents as "sellPriceCents",
+      u.given_as_sample as "givenAsSample",
       u.notes,
       u.used_at as "usedAt",
       i.name as "itemName",

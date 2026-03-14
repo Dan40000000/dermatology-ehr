@@ -14,25 +14,7 @@ import { pool } from "../db/pool";
 import { auditLog } from "./audit";
 import { logger } from "../lib/logger";
 import { config } from "../config";
-
-// Email configuration interface
-interface EmailConfig {
-  from: string;
-  smtpHost?: string;
-  smtpPort?: number;
-  smtpUser?: string;
-  smtpPassword?: string;
-}
-
-// For demonstration, we'll log emails instead of sending them
-// In production, integrate with SendGrid, AWS SES, or similar service
-const EMAIL_CONFIG: EmailConfig = {
-  from: "noreply@dermatologyehr.com",
-  smtpHost: process.env.SMTP_HOST || "localhost",
-  smtpPort: parseInt(process.env.SMTP_PORT || "587"),
-  smtpUser: process.env.SMTP_USER,
-  smtpPassword: process.env.SMTP_PASSWORD,
-};
+import { getEmailService } from "../lib/container";
 
 /**
  * Send email notification to patient when staff sends a message
@@ -41,14 +23,13 @@ export async function notifyPatientOfNewMessage(
   tenantId: string,
   patientId: string,
   threadId: string,
-  threadSubject: string
+  _threadSubject: string
 ): Promise<void> {
   try {
     // Get patient email and notification preferences
     const result = await pool.query(
       `SELECT
         p.email,
-        p.first_name,
         COALESCE(pref.email_notifications_enabled, true) as email_enabled,
         COALESCE(pref.notification_email, p.email) as notification_email
       FROM patients p
@@ -78,7 +59,7 @@ export async function notifyPatientOfNewMessage(
     // HIPAA COMPLIANT: Generic message, no PHI
     const emailSubject = "You have a new message from your healthcare provider";
     const emailBody = `
-Dear ${patient.first_name},
+Hello,
 
 You have received a new message from your healthcare provider.
 
@@ -97,13 +78,18 @@ This is an automated message. Please do not reply to this email.
 To manage your notification preferences, log in to the patient portal.
     `.trim();
 
-    // In production, send actual email here
-    // For now, log metadata only (no body)
     logger.info('Patient message notification prepared', {
       tenantId,
       patientId,
       to: recipientEmail,
       subject: emailSubject,
+    });
+
+    await maybeSendEmail({
+      to: recipientEmail,
+      subject: emailSubject,
+      text: emailBody,
+      html: emailBody.replace(/\n/g, "<br>"),
     });
 
     // Audit log
@@ -127,14 +113,14 @@ export async function notifyStaffOfNewPatientMessage(
   tenantId: string,
   threadId: string,
   patientId: string,
-  threadSubject: string,
+  _threadSubject: string,
   assignedUserId?: string
 ): Promise<void> {
   try {
-    // Get patient name (for staff notification context)
+    // Ensure patient exists within the same tenant before notifying staff.
     const patientResult = await pool.query(
-      `SELECT first_name, last_name, mrn FROM patients WHERE id = $1`,
-      [patientId]
+      `SELECT id FROM patients WHERE id = $1 AND tenant_id = $2`,
+      [patientId, tenantId]
     );
 
     if (patientResult.rows.length === 0) {
@@ -142,16 +128,18 @@ export async function notifyStaffOfNewPatientMessage(
       return;
     }
 
-    const patient = patientResult.rows[0];
-    const patientName = `${patient.first_name} ${patient.last_name}`;
-
     // Determine who to notify
     let notifyUsers: any[] = [];
 
     if (assignedUserId) {
       // Notify assigned user
       const assignedUser = await pool.query(
-        `SELECT id, email, name FROM users WHERE id = $1 AND tenant_id = $2`,
+        `SELECT
+          id,
+          email,
+          COALESCE(full_name, first_name || ' ' || last_name, email) as name
+        FROM users
+        WHERE id = $1 AND tenant_id = $2`,
         [assignedUserId, tenantId]
       );
       if (assignedUser.rows.length > 0) {
@@ -160,7 +148,11 @@ export async function notifyStaffOfNewPatientMessage(
     } else {
       // Notify all users with messaging permissions (or admin role)
       const allUsers = await pool.query(
-        `SELECT id, email, name FROM users
+        `SELECT
+          id,
+          email,
+          COALESCE(full_name, first_name || ' ' || last_name, email) as name
+        FROM users
         WHERE tenant_id = $1 AND role IN ('admin', 'provider', 'nurse', 'medical_assistant')
         LIMIT 5`,
         [tenantId]
@@ -172,15 +164,12 @@ export async function notifyStaffOfNewPatientMessage(
     for (const user of notifyUsers) {
       if (!user.email) continue;
 
-      // HIPAA COMPLIANT: Only include minimal patient identifier (not full message)
+      // HIPAA COMPLIANT: no patient identifiers or message content in staff email.
       const emailSubject = "New Patient Message - Action Required";
       const emailBody = `
 Hello ${user.name},
 
 You have received a new message from a patient.
-
-Patient: ${patientName} (MRN: ${patient.mrn})
-Subject: ${threadSubject}
 
 To view and respond to this message, please log in to your EHR:
 ${getStaffPortalUrl(tenantId)}
@@ -194,12 +183,18 @@ Dermatology EHR System
 This is an automated message. Please do not reply to this email.
       `.trim();
 
-      // In production, send actual email here
       logger.info('Staff message notification prepared', {
         tenantId,
         userId: user.id,
         to: user.email,
         subject: emailSubject,
+      });
+
+      await maybeSendEmail({
+        to: user.email,
+        subject: emailSubject,
+        text: emailBody,
+        html: emailBody.replace(/\n/g, "<br>"),
       });
 
       // Audit log
@@ -223,23 +218,14 @@ This is an automated message. Please do not reply to this email.
  */
 export async function sendStaffDigestEmail(tenantId: string): Promise<void> {
   try {
-    // Get all unread threads grouped by assigned user
+    // Get unread counts grouped by assigned user.
     const result = await pool.query(
       `SELECT
         COALESCE(t.assigned_to, 'unassigned') as user_id,
         u.email,
         u.name,
-        COUNT(*) as unread_count,
-        json_agg(json_build_object(
-          'threadId', t.id,
-          'subject', t.subject,
-          'patientName', p.first_name || ' ' || p.last_name,
-          'category', t.category,
-          'priority', t.priority,
-          'lastMessageAt', t.last_message_at
-        ) ORDER BY t.priority DESC, t.last_message_at DESC) as threads
+        COUNT(*) as unread_count
       FROM patient_message_threads t
-      JOIN patients p ON t.patient_id = p.id
       LEFT JOIN users u ON t.assigned_to = u.id
       WHERE t.tenant_id = $1
         AND t.is_read_by_staff = false
@@ -252,22 +238,10 @@ export async function sendStaffDigestEmail(tenantId: string): Promise<void> {
       if (!row.email) continue;
 
       const emailSubject = `Patient Messages Digest - ${row.unread_count} Unread Messages`;
-      const threadList = row.threads
-        .slice(0, 10) // Max 10 in digest
-        .map((t: any, i: number) => {
-          const priorityFlag = t.priority === "urgent" ? "[URGENT] " : t.priority === "high" ? "[HIGH] " : "";
-          return `${i + 1}. ${priorityFlag}${t.patientName} - ${t.subject} (${t.category})`;
-        })
-        .join("\n");
-
       const emailBody = `
 Hello ${row.name},
 
 You have ${row.unread_count} unread patient message(s) requiring attention.
-
-${threadList}
-
-${row.unread_count > 10 ? `\n... and ${row.unread_count - 10} more messages` : ""}
 
 Please log in to review and respond:
 ${getStaffPortalUrl(tenantId)}
@@ -281,6 +255,13 @@ Dermatology EHR System
         to: row.email,
         subject: emailSubject,
         totalMessages: row.unread_count,
+      });
+
+      await maybeSendEmail({
+        to: row.email,
+        subject: emailSubject,
+        text: emailBody,
+        html: emailBody.replace(/\n/g, "<br>"),
       });
 
       await auditLog(tenantId, "system", "staff_digest_email_sent", "user", row.user_id);
@@ -301,6 +282,29 @@ function getPortalUrl(tenantId: string): string {
 function getStaffPortalUrl(tenantId: string): string {
   const baseUrl = config.frontendUrl || "http://localhost:5173";
   return `${baseUrl}/mail?tab=patient-messages&tenantId=${tenantId}`;
+}
+
+async function maybeSendEmail(params: {
+  to: string | string[];
+  subject: string;
+  text: string;
+  html: string;
+  containsPhi?: boolean;
+}): Promise<void> {
+  if (!config.features.emailDelivery) {
+    return;
+  }
+
+  if (config.email.notificationOnly && params.containsPhi) {
+    logger.warn("Blocked email containing PHI because EMAIL_NOTIFICATION_ONLY is enabled");
+    return;
+  }
+
+  try {
+    await getEmailService().sendEmail(params);
+  } catch (error) {
+    logger.error("Email delivery failed", { error: (error as Error).message });
+  }
 }
 
 /**

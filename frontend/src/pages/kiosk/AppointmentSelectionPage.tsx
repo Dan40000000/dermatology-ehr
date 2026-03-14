@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
+import { getKioskHeaders, syncKioskContextFromUrl } from '../../utils/kioskContext';
 import '../../styles/kiosk.css';
 
 interface Appointment {
@@ -14,30 +15,34 @@ interface Appointment {
 
 export function KioskAppointmentSelectionPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null);
-
-  const patientId = sessionStorage.getItem('kioskPatientId');
-  const patientName = sessionStorage.getItem('kioskPatientName');
+  const queryParams = new URLSearchParams(location.search);
+  const queryPatientId = queryParams.get('patientId') || '';
+  const queryPatientName = queryParams.get('patientName') || '';
+  const queryAppointmentId = queryParams.get('appointmentId') || '';
+  const patientId = sessionStorage.getItem('kioskPatientId') || queryPatientId;
+  const patientName = sessionStorage.getItem('kioskPatientName') || queryPatientName;
 
   useEffect(() => {
+    syncKioskContextFromUrl(location.search);
+
     if (!patientId) {
       navigate('/kiosk');
       return;
     }
 
-    fetchTodayAppointments();
-  }, [patientId]);
+    void fetchTodayAppointments();
+  }, [location.search, navigate, patientId]);
 
   const fetchTodayAppointments = async () => {
     try {
+      const headers = await getKioskHeaders({ search: location.search });
       const response = await fetch('/api/kiosk/today-appointments', {
-        headers: {
-          'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
-          'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
-        },
+        headers,
       });
 
       if (!response.ok) {
@@ -52,7 +57,9 @@ export function KioskAppointmentSelectionPage() {
 
       setAppointments(patientAppointments);
 
-      if (patientAppointments.length === 1) {
+      if (queryAppointmentId && patientAppointments.some((appointment) => appointment.id === queryAppointmentId)) {
+        setSelectedAppointmentId(queryAppointmentId);
+      } else if (patientAppointments.length === 1) {
         setSelectedAppointmentId(patientAppointments[0].id);
       }
     } catch (err) {
@@ -79,12 +86,12 @@ export function KioskAppointmentSelectionPage() {
     }
 
     try {
+      const headers = await getKioskHeaders({ search: location.search });
       const response = await fetch('/api/kiosk/checkin/start', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
-          'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
+          ...headers,
         },
         body: JSON.stringify({
           patientId,
@@ -100,6 +107,7 @@ export function KioskAppointmentSelectionPage() {
 
       const data = await response.json();
       sessionStorage.setItem('kioskSessionId', data.sessionId);
+      sessionStorage.setItem('kioskAppointmentId', selectedAppointmentId);
 
       navigate('/kiosk/demographics');
     } catch (err) {
@@ -122,7 +130,7 @@ export function KioskAppointmentSelectionPage() {
 
   if (loading) {
     return (
-      <KioskLayout currentStep={1} totalSteps={6} stepName="Loading..." onTimeout={handleTimeout}>
+      <KioskLayout currentStep={1} totalSteps={7} stepName="Loading..." onTimeout={handleTimeout}>
         <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem' }}>
           <div className="kiosk-spinner" style={{ margin: '0 auto 1rem' }} />
           <p style={{ fontSize: '1.5rem', color: '#4b5563' }}>Finding your appointments...</p>
@@ -132,7 +140,7 @@ export function KioskAppointmentSelectionPage() {
   }
 
   return (
-    <KioskLayout currentStep={1} totalSteps={6} stepName="Select Appointment" onTimeout={handleTimeout}>
+    <KioskLayout currentStep={1} totalSteps={7} stepName="Select Appointment" onTimeout={handleTimeout}>
       <div style={cardStyle}>
         <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '1rem' }}>
           Welcome, {patientName}!

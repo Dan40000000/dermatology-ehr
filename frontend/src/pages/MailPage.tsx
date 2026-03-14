@@ -11,19 +11,42 @@ import {
   markThreadAsRead,
   archiveThread,
   fetchPatients,
-  fetchProviders,
+  fetchMessagingRecipients,
 } from '../api';
+import type { MessagingRecipient } from '../api';
 import type {
   MessageThreadPreview,
   MessageThread,
   MessageThreadMessage,
   Patient,
-  Provider,
   CreateThreadData,
 } from '../types';
 
 type MailFolder = 'inbox' | 'sent' | 'archived' | 'drafts';
 type MailSection = 'intramail' | 'direct-mail';
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function parseEmailList(value: string): string[] {
+  const emails = value
+    .split(/[\n,;]+/)
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+
+  return Array.from(new Set(emails));
+}
+
+function getInvalidEmails(emails: string[]): string[] {
+  return emails.filter((email) => !EMAIL_PATTERN.test(email));
+}
+
+function cleanExternalDeliveryError(error?: string): string | undefined {
+  if (!error) return undefined;
+
+  const withoutPrefix = error.replace(/^Message failed:\s*/i, "").trim();
+  const withoutDocsUrl = withoutPrefix.replace(/\s+Visit\s+https?:\/\/\S+.*/i, "").trim();
+  return withoutDocsUrl || undefined;
+}
 
 export function MailPage() {
   const { session } = useAuth();
@@ -35,7 +58,7 @@ export function MailPage() {
   const [selectedThread, setSelectedThread] = useState<MessageThread | null>(null);
   const [messages, setMessages] = useState<MessageThreadMessage[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
-  const [providers, setProviders] = useState<Provider[]>([]);
+  const [recipients, setRecipients] = useState<MessagingRecipient[]>([]);
   const [mailSection, setMailSection] = useState<MailSection>('intramail');
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(true);
@@ -62,8 +85,10 @@ export function MailPage() {
     subject: '',
     patientId: '',
     participantIds: [],
+    externalEmails: [],
     message: '',
   });
+  const [externalEmailInput, setExternalEmailInput] = useState('');
 
   // Handle URL parameters - open compose modal if action=compose
   useEffect(() => {
@@ -98,15 +123,15 @@ export function MailPage() {
 
     setLoading(true);
     try {
-      const [threadsRes, patientsRes, providersRes] = await Promise.all([
+      const [threadsRes, patientsRes, recipientsRes] = await Promise.all([
         fetchMessageThreads(session.tenantId, session.accessToken, folder),
         fetchPatients(session.tenantId, session.accessToken),
-        fetchProviders(session.tenantId, session.accessToken),
+        fetchMessagingRecipients(session.tenantId, session.accessToken),
       ]);
 
       setThreads(threadsRes.threads || []);
       setPatients(patientsRes.patients || []);
-      setProviders(providersRes.providers || []);
+      setRecipients(recipientsRes.recipients || []);
     } catch (err: any) {
       showError(err.message || 'Failed to load threads');
     } finally {
@@ -142,22 +167,63 @@ export function MailPage() {
   };
 
   const handleCreateThread = async () => {
-    if (!session || !newThread.subject || !newThread.message || newThread.participantIds.length === 0) {
-      showError('Please fill in all required fields');
+    const subject = newThread.subject.trim();
+    const message = newThread.message.trim();
+    const externalEmails = newThread.externalEmails || [];
+    const hasAnyRecipient = newThread.participantIds.length > 0 || externalEmails.length > 0;
+
+    if (!session || !subject || !message || !hasAnyRecipient) {
+      showError('Please add at least one recipient, subject, and message');
+      return;
+    }
+
+    const invalidEmails = getInvalidEmails(externalEmails);
+    if (invalidEmails.length > 0) {
+      showError(`Invalid email: ${invalidEmails[0]}`);
       return;
     }
 
     setSending(true);
     try {
-      await createMessageThread(session.tenantId, session.accessToken, newThread);
-      showSuccess('Message sent');
+      const createResult = await createMessageThread(session.tenantId, session.accessToken, {
+        ...newThread,
+        subject,
+        message,
+        externalEmails,
+      });
+
+      const externalStatus = createResult.externalEmail;
+      if (!externalStatus) {
+        showSuccess('Message sent');
+      } else {
+        const requestedCount = externalStatus.requested.length;
+        const acceptedCount = externalStatus.accepted.length;
+        const rejectedEmails = externalStatus.rejected;
+        const cleanedError = cleanExternalDeliveryError(externalStatus.error);
+        const errorDetails = cleanedError ? ` (${cleanedError})` : '';
+
+        if (rejectedEmails.length === 0) {
+          showSuccess('Message sent');
+        } else if (acceptedCount > 0) {
+          showError(
+            `Thread created, but only ${acceptedCount}/${requestedCount} external email(s) delivered. Failed: ${rejectedEmails.join(", ")}${errorDetails}`
+          );
+        } else {
+          showError(
+            `Thread created, but external email was not delivered to ${rejectedEmails.join(", ")}${errorDetails}`
+          );
+        }
+      }
+
       setShowComposeModal(false);
       setNewThread({
         subject: '',
         patientId: '',
         participantIds: [],
+        externalEmails: [],
         message: '',
       });
+      setExternalEmailInput('');
       // Clear the action parameter from URL
       const newParams = new URLSearchParams(searchParams);
       newParams.delete('action');
@@ -239,14 +305,81 @@ export function MailPage() {
     return `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
   };
 
+  const formatDisplayName = (firstName?: string, lastName?: string) => {
+    const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+    return fullName || 'Unknown User';
+  };
+
+  const formatParticipantAddress = (participant: { firstName: string; lastName: string; email?: string }) => {
+    const name = formatDisplayName(participant.firstName, participant.lastName);
+    return participant.email ? `${name} <${participant.email}>` : name;
+  };
+
+  const getThreadRecipients = (thread: MessageThread | MessageThreadPreview) => {
+    const internalRecipients = thread.participants
+      .filter((participant) => participant.id !== thread.createdBy)
+      .map((participant) => formatParticipantAddress(participant));
+
+    const externalRecipients = (thread.externalRecipients || []).map((email) => email.trim()).filter(Boolean);
+    return Array.from(new Set([...internalRecipients, ...externalRecipients]));
+  };
+
+  const formatThreadFrom = (thread: MessageThread | MessageThreadPreview) => {
+    if (thread.createdByEmail) {
+      return thread.createdByName ? `${thread.createdByName} <${thread.createdByEmail}>` : thread.createdByEmail;
+    }
+
+    if (thread.createdByName) {
+      return thread.createdByName;
+    }
+
+    const fallbackSender = thread.participants.find((participant) => participant.id === thread.createdBy);
+    if (fallbackSender) {
+      return formatParticipantAddress(fallbackSender);
+    }
+
+    return 'Unknown Sender';
+  };
+
+  const formatThreadTo = (thread: MessageThread | MessageThreadPreview) => {
+    const recipients = getThreadRecipients(thread);
+    if (recipients.length > 0) {
+      return recipients.join(', ');
+    }
+
+    return 'No recipients recorded';
+  };
+
+  const parseExternalGatewayMessage = (body: string) => {
+    const match = body.match(/^From:\s*([^\n]+)\n\n([\s\S]*)$/);
+    if (!match) {
+      return { body, externalFrom: undefined as string | undefined };
+    }
+
+    return {
+      externalFrom: match[1].trim(),
+      body: match[2].trim(),
+    };
+  };
+
+  const invalidExternalEmails = getInvalidEmails(newThread.externalEmails || []);
+  const hasAnyRecipient = newThread.participantIds.length > 0 || (newThread.externalEmails?.length || 0) > 0;
+  const canSendThread =
+    !sending &&
+    newThread.subject.trim().length > 0 &&
+    newThread.message.trim().length > 0 &&
+    hasAnyRecipient &&
+    invalidExternalEmails.length === 0;
+
   const filteredThreads = threads.filter((thread) => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return (
       thread.subject.toLowerCase().includes(query) ||
       thread.lastMessage?.body.toLowerCase().includes(query) ||
+      (thread.externalRecipients || []).some((email) => email.toLowerCase().includes(query)) ||
       thread.participants.some((p) =>
-        `${p.firstName} ${p.lastName}`.toLowerCase().includes(query)
+        `${p.firstName} ${p.lastName} ${p.email}`.toLowerCase().includes(query)
       )
     );
   });
@@ -595,6 +728,22 @@ export function MailPage() {
                   {thread.subject}
                 </h3>
 
+                <p
+                  style={{
+                    margin: '0 0 0.25rem 0',
+                    fontSize: '0.75rem',
+                    color: '#4b5563',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={folder === 'sent' ? formatThreadTo(thread) : formatThreadFrom(thread)}
+                >
+                  {folder === 'sent'
+                    ? `To: ${formatThreadTo(thread)}`
+                    : `From: ${formatThreadFrom(thread)}`}
+                </p>
+
                 {thread.lastMessage && (
                   <p
                     style={{
@@ -671,9 +820,13 @@ export function MailPage() {
                       Patient: {getPatientName(selectedThread.patientId)}
                     </div>
                   )}
-                  <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-                    Participants:{' '}
-                    {selectedThread.participants.map((p) => `${p.firstName} ${p.lastName}`).join(', ')}
+                  <div style={{ fontSize: '0.875rem', color: '#6b7280', lineHeight: 1.5 }}>
+                    <div>
+                      <strong style={{ color: '#374151' }}>From:</strong> {formatThreadFrom(selectedThread)}
+                    </div>
+                    <div>
+                      <strong style={{ color: '#374151' }}>To:</strong> {formatThreadTo(selectedThread)}
+                    </div>
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -717,9 +870,11 @@ export function MailPage() {
             {/* Messages */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
               {messages.map((msg, idx) => {
-                const senderName = msg.senderFirstName && msg.senderLastName
-                  ? `${msg.senderFirstName} ${msg.senderLastName}`
-                  : 'System';
+                const parsedMessage = parseExternalGatewayMessage(msg.body);
+                const senderName = parsedMessage.externalFrom ||
+                  (msg.senderFirstName && msg.senderLastName
+                    ? `${msg.senderFirstName} ${msg.senderLastName}`
+                    : 'System');
                 const isCurrentUser = msg.sender === session?.user.id;
 
                 return (
@@ -751,7 +906,9 @@ export function MailPage() {
                           flexShrink: 0,
                         }}
                       >
-                        {msg.senderFirstName && msg.senderLastName
+                        {parsedMessage.externalFrom
+                          ? parsedMessage.externalFrom.slice(0, 2).toUpperCase()
+                          : msg.senderFirstName && msg.senderLastName
                           ? getParticipantInitials(msg.senderFirstName, msg.senderLastName)
                           : 'SY'}
                       </div>
@@ -787,7 +944,7 @@ export function MailPage() {
                             whiteSpace: 'pre-wrap',
                           }}
                         >
-                          {msg.body}
+                          {parsedMessage.body}
                         </div>
                       </div>
                     </div>
@@ -874,8 +1031,10 @@ export function MailPage() {
             subject: '',
             patientId: '',
             participantIds: [],
+            externalEmails: [],
             message: '',
           });
+          setExternalEmailInput('');
           // Clear the action parameter from URL
           const newParams = new URLSearchParams(searchParams);
           newParams.delete('action');
@@ -894,7 +1053,7 @@ export function MailPage() {
                 color: '#374151',
               }}
             >
-              To (Staff Members) *
+              To (Staff Members)
             </label>
             <select
               multiple
@@ -912,15 +1071,57 @@ export function MailPage() {
                 minHeight: '100px',
               }}
             >
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.fullName || p.name}
+              {recipients.map((recipient) => (
+                <option key={recipient.id} value={recipient.id}>
+                  {recipient.fullName} ({recipient.email})
                 </option>
               ))}
             </select>
             <p style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
               Hold Ctrl/Cmd to select multiple recipients
             </p>
+            <p style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
+              Add staff recipients and/or external emails below.
+            </p>
+          </div>
+
+          <div style={{ marginBottom: '1rem' }}>
+            <label
+              style={{
+                display: 'block',
+                marginBottom: '0.5rem',
+                fontSize: '0.875rem',
+                fontWeight: 600,
+                color: '#374151',
+              }}
+            >
+              External Email Recipients (Optional)
+            </label>
+            <input
+              type="text"
+              value={externalEmailInput}
+              onChange={(e) => {
+                const value = e.target.value;
+                setExternalEmailInput(value);
+                setNewThread((prev) => ({ ...prev, externalEmails: parseEmailList(value) }));
+              }}
+              placeholder="name@example.com, other@example.com"
+              style={{
+                width: '100%',
+                padding: '0.5rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '4px',
+                fontSize: '0.875rem',
+              }}
+            />
+            <p style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
+              Separate emails with commas, semicolons, or new lines.
+            </p>
+            {invalidExternalEmails.length > 0 && (
+              <p style={{ fontSize: '0.75rem', color: '#dc2626', marginTop: '0.25rem' }}>
+                Invalid emails: {invalidExternalEmails.join(', ')}
+              </p>
+            )}
           </div>
 
           <div style={{ marginBottom: '1rem' }}>
@@ -1029,8 +1230,10 @@ export function MailPage() {
                 subject: '',
                 patientId: '',
                 participantIds: [],
+                externalEmails: [],
                 message: '',
               });
+              setExternalEmailInput('');
               // Clear the action parameter from URL
               const newParams = new URLSearchParams(searchParams);
               newParams.delete('action');
@@ -1051,22 +1254,16 @@ export function MailPage() {
           <button
             type="button"
             onClick={handleCreateThread}
-            disabled={sending || !newThread.subject || !newThread.message || newThread.participantIds.length === 0}
+            disabled={!canSendThread}
             style={{
               padding: '0.5rem 1.5rem',
-              background:
-                !sending && newThread.subject && newThread.message && newThread.participantIds.length > 0
-                  ? '#7c3aed'
-                  : '#d1d5db',
+              background: canSendThread ? '#7c3aed' : '#d1d5db',
               color: '#ffffff',
               border: 'none',
               borderRadius: '4px',
               fontSize: '0.875rem',
               fontWeight: 600,
-              cursor:
-                !sending && newThread.subject && newThread.message && newThread.participantIds.length > 0
-                  ? 'pointer'
-                  : 'not-allowed',
+              cursor: canSendThread ? 'pointer' : 'not-allowed',
             }}
           >
             {sending ? 'Sending...' : 'Send Message'}

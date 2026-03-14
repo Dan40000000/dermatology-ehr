@@ -1,7 +1,8 @@
 import { useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import '../../styles/kiosk.css';
+import { ensureKioskContext } from '../../utils/kioskContext';
 
 interface KioskLayoutProps {
   children: ReactNode;
@@ -16,13 +17,27 @@ interface KioskLayoutProps {
 export function KioskLayout({
   children,
   currentStep,
-  totalSteps = 6,
+  totalSteps = 7,
   stepName,
   onTimeout,
   timeoutSeconds = 180, // 3 minutes default
   showProgress = true,
 }: KioskLayoutProps) {
+  const location = useLocation();
   const navigate = useNavigate();
+
+  // Mark non-welcome kiosk steps as an active locked flow.
+  useEffect(() => {
+    if (location.pathname === '/kiosk') {
+      sessionStorage.removeItem('kioskMode');
+      return;
+    }
+    sessionStorage.setItem('kioskMode', 'active');
+  }, [location.pathname]);
+
+  useEffect(() => {
+    void ensureKioskContext({ search: location.search });
+  }, [location.search]);
 
   // Inactivity timeout
   useEffect(() => {
@@ -72,6 +87,23 @@ export function KioskLayout({
     // Could trigger a staff notification here
     alert('Please see the front desk staff for assistance.');
   }, []);
+
+  const handleFrontDeskExit = useCallback(() => {
+    const confirmed = window.confirm('Exit kiosk mode and return to staff view?');
+    if (!confirmed) return;
+
+    sessionStorage.removeItem('kioskMode');
+    sessionStorage.removeItem('kioskPatientId');
+    sessionStorage.removeItem('kioskPatientName');
+    sessionStorage.removeItem('kioskSessionId');
+
+    if (window.opener && !window.opener.closed) {
+      window.close();
+      return;
+    }
+
+    navigate('/schedule', { replace: true });
+  }, [navigate]);
 
   return (
     <div className="kiosk-container">
@@ -123,6 +155,9 @@ export function KioskLayout({
       {/* Footer */}
       <footer className="kiosk-footer">
         <div className="kiosk-footer-content">
+          <button onClick={handleFrontDeskExit} className="kiosk-staff-exit-btn">
+            Front Desk Exit
+          </button>
           <button onClick={handleNeedHelp} className="kiosk-help-btn">
             Need Help? See Staff
           </button>

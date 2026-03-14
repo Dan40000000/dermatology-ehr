@@ -6,6 +6,8 @@
  */
 
 import crypto from 'crypto';
+import axios from 'axios';
+import FormData from 'form-data';
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { BaseAdapter, AdapterOptions } from './baseAdapter';
@@ -128,7 +130,7 @@ export class FaxAdapter extends BaseAdapter {
 
     const startTime = Date.now();
     try {
-      await this.sleep(300);
+      await this.requestPhaxio('GET', '/account/status');
 
       await this.logIntegration({
         direction: 'outbound',
@@ -586,18 +588,110 @@ export class FaxAdapter extends BaseAdapter {
   // ============================================================================
 
   private async realSendFax(request: FaxSendRequest, faxId: string): Promise<FaxSendResult> {
-    throw new Error('Real API not implemented - use mock mode');
+    const { fromNumber } = this.getPhaxioConfig();
+    const form = new FormData();
+    form.append('to', request.toNumber);
+    if (request.fromNumber || fromNumber) {
+      form.append('from_number', request.fromNumber || fromNumber);
+    }
+
+    if (request.document.type === 'url') {
+      form.append('content_url', request.document.content);
+    } else if (request.document.type === 'base64') {
+      const fileBuffer = Buffer.from(request.document.content, 'base64');
+      form.append('file', fileBuffer, {
+        filename: request.document.filename || `fax-${Date.now()}.pdf`,
+      });
+    } else {
+      throw new Error('document.type=documentId is not supported for real fax sending');
+    }
+
+    if (request.tags?.length) {
+      form.append('tags', request.tags.join(','));
+    }
+
+    const payload = await this.requestPhaxio('POST', '/faxes', form, {
+      headers: form.getHeaders(),
+    });
+    const record = this.extractRecord(payload);
+    const outboundStatus = this.mapOutboundStatus(record?.status);
+
+    return {
+      success: outboundStatus !== 'failed',
+      faxId: String(record?.id || faxId),
+      status: outboundStatus,
+      pageCount: Number(record?.num_pages || record?.pages || 0) || undefined,
+      message: record?.message || undefined,
+      errorCode: record?.error_code || undefined,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   private async realReceiveFaxes(options?: {
     since?: string;
     limit?: number;
   }): Promise<FaxListResult> {
-    throw new Error('Real API not implemented - use mock mode');
+    const payload = await this.requestPhaxio('GET', '/faxes', undefined, {
+      params: {
+        direction: 'received',
+        per_page: options?.limit || 50,
+      },
+    });
+
+    const rows = this.extractCollection(payload);
+    const sinceEpoch = options?.since ? new Date(options.since).getTime() : 0;
+    const mapped = rows
+      .map((row) => {
+        const receivedAt = String(
+          row?.created_at ||
+          row?.received_at ||
+          new Date().toISOString()
+        );
+        return {
+          faxId: String(row?.id || row?.fax_id || crypto.randomUUID()),
+          fromNumber: String(row?.from_number || ''),
+          toNumber: String(row?.to_number || ''),
+          pageCount: Number(row?.num_pages || row?.pages || 0) || 0,
+          receivedAt,
+          documentUrl: row?.file_url || row?.content_url || row?.document_url || undefined,
+          callerIdName: row?.caller_id_name || row?.from_display_name || undefined,
+          subject: row?.subject || undefined,
+          isProcessed: false,
+        } as IncomingFax;
+      })
+      .filter((fax) => {
+        if (!sinceEpoch) return true;
+        return new Date(fax.receivedAt).getTime() >= sinceEpoch;
+      });
+
+    return {
+      faxes: mapped,
+      totalCount: mapped.length,
+      hasMore: Boolean(payload?.paging?.next_page || payload?.next_page_url),
+    };
   }
 
   private async realGetFaxStatus(faxId: string): Promise<FaxStatus> {
-    throw new Error('Real API not implemented - use mock mode');
+    const payload = await this.requestPhaxio('GET', `/faxes/${encodeURIComponent(faxId)}`);
+    const row = this.extractRecord(payload);
+    const normalized = this.mapStatus(row?.status);
+
+    return {
+      faxId: String(row?.id || faxId),
+      status: normalized,
+      direction: this.mapDirection(row?.direction),
+      toNumber: row?.to_number || undefined,
+      fromNumber: row?.from_number || undefined,
+      pageCount: Number(row?.num_pages || row?.pages || 0) || 0,
+      attempts: Number(row?.attempts || row?.retry_count || row?.retries || 1) || 1,
+      sentAt: row?.completed_at || row?.sent_at || row?.updated_at || undefined,
+      deliveredAt:
+        normalized === 'delivered'
+          ? row?.completed_at || row?.delivered_at || row?.updated_at || undefined
+          : undefined,
+      errorMessage: row?.error_message || undefined,
+      errorCode: row?.error_code || undefined,
+    };
   }
 
   // ============================================================================
@@ -651,6 +745,106 @@ export class FaxAdapter extends BaseAdapter {
     } catch (error) {
       logger.error('Failed to store incoming fax', { error });
     }
+  }
+
+  private getPhaxioConfig(): {
+    apiKey: string;
+    apiSecret: string;
+    fromNumber: string;
+    baseUrl: string;
+  } {
+    const credentials = this.getCredentials();
+    const apiKey = String(
+      credentials.phaxioApiKey ||
+      credentials.apiKey ||
+      credentials.api_key ||
+      process.env.PHAXIO_API_KEY ||
+      ''
+    ).trim();
+    const apiSecret = String(
+      credentials.phaxioApiSecret ||
+      credentials.apiSecret ||
+      credentials.api_secret ||
+      process.env.PHAXIO_API_SECRET ||
+      ''
+    ).trim();
+    const fromNumber = String(
+      credentials.phaxioFromNumber ||
+      credentials.fromNumber ||
+      credentials.from_number ||
+      process.env.PHAXIO_FROM_NUMBER ||
+      ''
+    ).trim();
+    const baseUrl = String(
+      credentials.baseUrl ||
+      process.env.PHAXIO_BASE_URL ||
+      'https://api.phaxio.com/v2'
+    ).trim();
+
+    if (!apiKey || !apiSecret) {
+      throw new Error('Phaxio credentials not configured');
+    }
+
+    return { apiKey, apiSecret, fromNumber, baseUrl };
+  }
+
+  private async requestPhaxio(
+    method: 'GET' | 'POST',
+    path: string,
+    data?: unknown,
+    options?: { params?: Record<string, unknown>; headers?: Record<string, string> }
+  ): Promise<any> {
+    const { apiKey, apiSecret, baseUrl } = this.getPhaxioConfig();
+    const url = `${baseUrl.replace(/\/+$/, '')}${path}`;
+    const response = await axios.request({
+      method,
+      url,
+      auth: {
+        username: apiKey,
+        password: apiSecret,
+      },
+      params: options?.params,
+      headers: options?.headers,
+      data,
+      timeout: 15000,
+    });
+    return response.data;
+  }
+
+  private extractRecord(payload: any): any {
+    if (payload?.data && !Array.isArray(payload.data)) {
+      return payload.data;
+    }
+    return payload;
+  }
+
+  private extractCollection(payload: any): any[] {
+    if (Array.isArray(payload?.data)) return payload.data;
+    if (Array.isArray(payload?.faxes)) return payload.faxes;
+    if (Array.isArray(payload)) return payload;
+    return [];
+  }
+
+  private mapDirection(direction: string | undefined): 'outbound' | 'inbound' {
+    return String(direction || '').toLowerCase() === 'received' ? 'inbound' : 'outbound';
+  }
+
+  private mapOutboundStatus(status: string | undefined): FaxSendResult['status'] {
+    const normalized = this.mapStatus(status);
+    if (normalized === 'failed') return 'failed';
+    if (normalized === 'queued') return 'queued';
+    if (normalized === 'sending') return 'sending';
+    return 'sent';
+  }
+
+  private mapStatus(status: string | undefined): FaxStatus['status'] {
+    const normalized = String(status || '').toLowerCase();
+    if (['queued', 'queueing'].includes(normalized)) return 'queued';
+    if (['in_progress', 'sending', 'processing'].includes(normalized)) return 'sending';
+    if (['success', 'sent', 'complete', 'completed'].includes(normalized)) return 'delivered';
+    if (['partial_success', 'partial'].includes(normalized)) return 'partial';
+    if (['failed', 'failure', 'error', 'cancelled', 'canceled'].includes(normalized)) return 'failed';
+    return 'sent';
   }
 }
 

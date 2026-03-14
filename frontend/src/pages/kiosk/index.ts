@@ -3,5 +3,6 @@ export { KioskPatientVerificationPage } from './PatientVerificationPage';
 export { KioskAppointmentSelectionPage } from './AppointmentSelectionPage';
 export { KioskDemographicsReviewPage } from './DemographicsReviewPage';
 export { KioskInsuranceReviewPage } from './InsuranceReviewPage';
+export { KioskMedicalHistoryPage } from './MedicalHistoryPage';
 export { KioskConsentFormsPage } from './ConsentFormsPage';
 export { KioskCompletionPage } from './CompletionPage';

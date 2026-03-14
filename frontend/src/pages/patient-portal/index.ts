@@ -9,3 +9,5 @@ export { PortalProfilePage } from './PortalProfilePage';
 export { PortalRegisterPage } from './PortalRegisterPage';
 export { PortalBillingPage } from './PortalBillingPage';
 export { PortalBookAppointmentPage } from './PortalBookAppointmentPage';
+export { PortalIntakePage } from './PortalIntakePage';
+export { PortalCheckInPage } from './PortalCheckInPage';

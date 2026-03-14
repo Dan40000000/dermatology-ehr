@@ -7,6 +7,7 @@
  */
 
 import crypto from 'crypto';
+import Stripe from 'stripe';
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { BaseAdapter, AdapterOptions } from './baseAdapter';
@@ -133,20 +134,12 @@ export class PaymentAdapter extends BaseAdapter {
 
     const startTime = Date.now();
     try {
-      // In production, verify Stripe API key
-      const credentials = this.getCredentials();
-      if (!credentials.stripeSecretKey) {
-        return {
-          success: false,
-          message: 'Stripe API key not configured',
-        };
-      }
-
-      await this.sleep(300);
+      const stripe = this.getStripeClient();
+      await stripe.balance.retrieve();
 
       await this.logIntegration({
         direction: 'outbound',
-        endpoint: '/v1/account',
+        endpoint: '/v1/balance',
         method: 'GET',
         status: 'success',
         durationMs: Date.now() - startTime,
@@ -691,14 +684,57 @@ export class PaymentAdapter extends BaseAdapter {
     customerId: string,
     metadata?: Record<string, string>
   ): Promise<PaymentIntent> {
-    throw new Error('Real API not implemented - use mock mode');
+    const stripe = this.getStripeClient();
+    const intent = await stripe.paymentIntents.create({
+      amount: amountCents,
+      currency: 'usd',
+      customer: customerId,
+      metadata: this.normalizeMetadata(metadata),
+      automatic_payment_methods: {
+        enabled: true,
+      },
+    });
+
+    return {
+      id: intent.id,
+      amount: intent.amount,
+      currency: intent.currency,
+      status: this.mapPaymentIntentStatus(intent.status),
+      clientSecret: intent.client_secret || '',
+      paymentMethodId: typeof intent.payment_method === 'string' ? intent.payment_method : intent.payment_method?.id,
+      metadata: intent.metadata || undefined,
+      createdAt: new Date(intent.created * 1000).toISOString(),
+    };
   }
 
   private async realProcessPayment(
     paymentIntentId: string,
     paymentMethodId: string
   ): Promise<PaymentResult> {
-    throw new Error('Real API not implemented - use mock mode');
+    const stripe = this.getStripeClient();
+    const intent = await stripe.paymentIntents.confirm(paymentIntentId, {
+      payment_method: paymentMethodId,
+      expand: ['latest_charge'],
+    });
+
+    const charge =
+      typeof intent.latest_charge === 'string' || !intent.latest_charge
+        ? null
+        : intent.latest_charge;
+    const mappedStatus = this.mapProcessStatus(intent.status);
+    const success = mappedStatus === 'succeeded' || mappedStatus === 'processing';
+
+    return {
+      success,
+      paymentIntentId: intent.id,
+      status: mappedStatus,
+      amount: intent.amount,
+      currency: intent.currency,
+      receiptUrl: charge?.receipt_url || undefined,
+      failureCode: intent.last_payment_error?.code || undefined,
+      failureMessage: intent.last_payment_error?.message || undefined,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   private async realRefundPayment(
@@ -706,11 +742,53 @@ export class PaymentAdapter extends BaseAdapter {
     amountCents?: number,
     reason?: string
   ): Promise<RefundResult> {
-    throw new Error('Real API not implemented - use mock mode');
+    const stripe = this.getStripeClient();
+    const refund = await stripe.refunds.create({
+      payment_intent: paymentIntentId,
+      amount: amountCents,
+      reason: this.mapRefundReason(reason),
+      metadata: this.normalizeMetadata(
+        reason
+          ? {
+              note: reason,
+            }
+          : undefined
+      ),
+    });
+
+    return {
+      success: refund.status !== 'failed' && refund.status !== 'canceled',
+      refundId: refund.id,
+      paymentIntentId,
+      amount: refund.amount,
+      status: this.mapRefundStatus(refund.status),
+      reason,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   private async realCreateCustomer(patient: Patient): Promise<StripeCustomer> {
-    throw new Error('Real API not implemented - use mock mode');
+    const stripe = this.getStripeClient();
+    const customer = await stripe.customers.create({
+      name: `${patient.firstName} ${patient.lastName}`.trim(),
+      email: patient.email || undefined,
+      phone: patient.phone || undefined,
+      metadata: {
+        patientId: patient.id,
+        tenantId: this.tenantId,
+      },
+    });
+
+    return {
+      id: customer.id,
+      email: customer.email || undefined,
+      name: customer.name || undefined,
+      defaultPaymentMethod:
+        typeof customer.invoice_settings?.default_payment_method === 'string'
+          ? customer.invoice_settings.default_payment_method
+          : customer.invoice_settings?.default_payment_method?.id,
+      createdAt: new Date(customer.created * 1000).toISOString(),
+    };
   }
 
   private async realSavePaymentMethod(
@@ -718,7 +796,53 @@ export class PaymentAdapter extends BaseAdapter {
     paymentMethodId: string,
     setAsDefault: boolean
   ): Promise<PaymentMethod> {
-    throw new Error('Real API not implemented - use mock mode');
+    const stripe = this.getStripeClient();
+
+    let paymentMethod: Stripe.PaymentMethod;
+    try {
+      paymentMethod = await stripe.paymentMethods.attach(paymentMethodId, { customer: customerId });
+    } catch (error: any) {
+      // If already attached to this customer, retrieve and continue.
+      const maybeCode = String(error?.code || '').toLowerCase();
+      const maybeType = String(error?.type || '').toLowerCase();
+      if (maybeCode.includes('already') || maybeType.includes('invalid_request')) {
+        paymentMethod = (await stripe.paymentMethods.retrieve(paymentMethodId)) as Stripe.PaymentMethod;
+      } else {
+        throw error;
+      }
+    }
+
+    if (setAsDefault) {
+      await stripe.customers.update(customerId, {
+        invoice_settings: {
+          default_payment_method: paymentMethod.id,
+        },
+      });
+    }
+
+    if (paymentMethod.type !== 'card' || !paymentMethod.card) {
+      throw new Error(`Unsupported payment method type: ${paymentMethod.type}`);
+    }
+
+    return {
+      id: paymentMethod.id,
+      type: 'card',
+      card: {
+        brand: paymentMethod.card.brand,
+        last4: paymentMethod.card.last4,
+        expMonth: paymentMethod.card.exp_month,
+        expYear: paymentMethod.card.exp_year,
+      },
+      billingDetails: {
+        name: paymentMethod.billing_details.name || undefined,
+        email: paymentMethod.billing_details.email || undefined,
+        address: {
+          postalCode: paymentMethod.billing_details.address?.postal_code || undefined,
+        },
+      },
+      isDefault: setAsDefault,
+      createdAt: new Date(paymentMethod.created * 1000).toISOString(),
+    };
   }
 
   private async realSetupRecurring(
@@ -728,7 +852,54 @@ export class PaymentAdapter extends BaseAdapter {
     intervalMonths: number,
     totalPayments: number
   ): Promise<RecurringPayment> {
-    throw new Error('Real API not implemented - use mock mode');
+    const stripe = this.getStripeClient();
+    const product = await stripe.products.create({
+      name: 'Patient Payment Plan',
+      metadata: {
+        tenantId: this.tenantId,
+      },
+    });
+    const subscription = await stripe.subscriptions.create({
+      customer: customerId,
+      default_payment_method: paymentMethodId,
+      collection_method: 'charge_automatically',
+      metadata: {
+        tenantId: this.tenantId,
+        totalPayments: String(totalPayments),
+      },
+      items: [
+        {
+          price_data: {
+            currency: 'usd',
+            unit_amount: amountCents,
+            recurring: {
+              interval: 'month',
+              interval_count: intervalMonths,
+            },
+            product: product.id,
+          },
+        },
+      ],
+    });
+
+    const firstItem = subscription.items.data[0];
+    const nextPaymentDate = firstItem?.current_period_end
+      ? new Date(firstItem.current_period_end * 1000).toISOString()
+      : new Date().toISOString();
+
+    return {
+      id: subscription.id,
+      customerId,
+      paymentMethodId,
+      amount: amountCents,
+      currency: 'usd',
+      interval: 'month',
+      intervalCount: intervalMonths,
+      status: this.mapSubscriptionStatus(subscription.status),
+      nextPaymentDate,
+      totalPayments,
+      completedPayments: 0,
+    };
   }
 
   // ============================================================================
@@ -790,6 +961,76 @@ export class PaymentAdapter extends BaseAdapter {
     } catch (error) {
       logger.error('Failed to store payment intent', { error });
     }
+  }
+
+  private getStripeSecretKey(): string {
+    const credentials = this.getCredentials();
+    const candidates = [
+      credentials.stripeSecretKey,
+      credentials.secretKey,
+      credentials.secret_key,
+      credentials.apiKey,
+      credentials.api_key,
+      process.env.STRIPE_SECRET_KEY,
+    ];
+    const resolved = candidates.find((candidate) => typeof candidate === 'string' && candidate.trim().length > 0);
+    return typeof resolved === 'string' ? resolved.trim() : '';
+  }
+
+  private getStripeClient(): Stripe {
+    const secretKey = this.getStripeSecretKey();
+    if (!secretKey) {
+      throw new Error('Stripe API key not configured');
+    }
+    return new Stripe(secretKey);
+  }
+
+  private normalizeMetadata(metadata?: Record<string, string>): Record<string, string> | undefined {
+    if (!metadata) {
+      return undefined;
+    }
+    const entries = Object.entries(metadata)
+      .filter(([key, value]) => key && value !== undefined && value !== null)
+      .map(([key, value]) => [String(key), String(value)]);
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  }
+
+  private mapPaymentIntentStatus(status: Stripe.PaymentIntent.Status): PaymentIntent['status'] {
+    if (status === 'requires_payment_method') return 'requires_payment_method';
+    if (status === 'requires_confirmation') return 'requires_confirmation';
+    if (status === 'processing') return 'processing';
+    if (status === 'succeeded') return 'succeeded';
+    if (status === 'canceled') return 'cancelled';
+    // requires_action / requires_capture are closest to confirmation state
+    return 'requires_confirmation';
+  }
+
+  private mapProcessStatus(status: Stripe.PaymentIntent.Status): PaymentResult['status'] {
+    if (status === 'succeeded') return 'succeeded';
+    if (status === 'processing') return 'processing';
+    if (status === 'requires_action') return 'requires_action';
+    return 'failed';
+  }
+
+  private mapRefundStatus(status: string | null | undefined): RefundResult['status'] {
+    if (status === 'succeeded') return 'succeeded';
+    if (status === 'pending') return 'pending';
+    return 'failed';
+  }
+
+  private mapRefundReason(reason?: string): Stripe.RefundCreateParams.Reason | undefined {
+    if (!reason) return undefined;
+    const normalized = reason.trim().toLowerCase();
+    if (normalized.includes('fraud')) return 'fraudulent';
+    if (normalized.includes('duplicate')) return 'duplicate';
+    return 'requested_by_customer';
+  }
+
+  private mapSubscriptionStatus(status: Stripe.Subscription.Status): RecurringPayment['status'] {
+    if (status === 'active' || status === 'trialing') return 'active';
+    if (status === 'paused' || status === 'past_due' || status === 'unpaid') return 'paused';
+    if (status === 'canceled' || status === 'incomplete_expired') return 'cancelled';
+    return 'active';
   }
 }
 

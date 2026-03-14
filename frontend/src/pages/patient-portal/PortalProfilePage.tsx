@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
 import { fetchPortalProfile, updatePortalProfile } from '../../portalApi';
+import { formatPhoneDisplay } from '../../utils/phone';
 
 interface PatientProfile {
   id: string;
@@ -856,7 +857,7 @@ export function PortalProfilePage() {
                       <div className="info-item">
                         <span className="info-label">Phone</span>
                         <span className={`info-value ${!profile?.phone ? 'empty' : ''}`}>
-                          {profile?.phone || 'Not set'}
+                          {formatPhoneDisplay(profile?.phone) || 'Not set'}
                         </span>
                       </div>
                       <div className="info-item" style={{ gridColumn: 'span 2' }}>
@@ -886,7 +887,7 @@ export function PortalProfilePage() {
                         <div className="info-item">
                           <span className="info-label">Phone</span>
                           <span className={`info-value ${!profile?.emergencyContactPhone ? 'empty' : ''}`}>
-                            {profile?.emergencyContactPhone || 'Not set'}
+                            {formatPhoneDisplay(profile?.emergencyContactPhone) || 'Not set'}
                           </span>
                         </div>
                       </div>

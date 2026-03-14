@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ReactNode } from 'react';
 
@@ -150,7 +151,11 @@ describe('AnalyticsPage', () => {
   });
 
   it('renders analytics dashboard and handles interactions', async () => {
-    render(<AnalyticsPage />);
+    render(
+      <MemoryRouter>
+        <AnalyticsPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Analytics & Reports');
     expect(screen.getByText('Total Patients')).toBeInTheDocument();
@@ -197,7 +202,11 @@ describe('AnalyticsPage', () => {
 
   it('shows error toast when load fails', async () => {
     apiMocks.fetchDashboardKPIs.mockRejectedValueOnce(new Error('boom'));
-    render(<AnalyticsPage />);
+    render(
+      <MemoryRouter>
+        <AnalyticsPage />
+      </MemoryRouter>
+    );
 
     await waitFor(() => expect(toastMocks.showError).toHaveBeenCalledWith('boom'));
   });

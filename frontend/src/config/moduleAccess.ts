@@ -2,6 +2,23 @@ import type { User } from '../types';
 
 export type Role = User['role'];
 
+const ROLE_ALIASES: Record<string, Role> = {
+  medical_assistant: 'ma',
+  medicalassistant: 'ma',
+  frontdesk: 'front_desk',
+  front_desk: 'front_desk',
+  receptionist: 'front_desk',
+  biller: 'billing',
+  owner: 'admin',
+  practice_owner: 'admin',
+  compliance: 'compliance_officer',
+  compliance_officer: 'compliance_officer',
+  complianceofficer: 'compliance_officer',
+  physician: 'provider',
+  doctor: 'provider',
+  clinician: 'provider',
+};
+
 export type ModuleKey =
   | 'home'
   | 'schedule'
@@ -35,7 +52,6 @@ export type ModuleKey =
   | 'forms'
   | 'protocols'
   | 'templates'
-  | 'preferences'
   | 'help'
   | 'telehealth'
   | 'inventory'
@@ -45,58 +61,72 @@ export type ModuleKey =
   | 'quotes'
   | 'admin';
 
+const CLINICAL_ROLES: Role[] = ['admin', 'provider', 'ma', 'nurse', 'manager', 'compliance_officer'];
+const OPERATIONS_ROLES: Role[] = ['admin', 'front_desk', 'scheduler', 'manager'];
+const COMMUNICATION_ROLES: Role[] = [...OPERATIONS_ROLES, 'provider', 'ma', 'nurse', 'billing'];
+const FINANCIAL_DASHBOARD_ROLES: Role[] = ['admin', 'billing', 'manager', 'compliance_officer'];
+const REVENUE_CYCLE_ROLES: Role[] = ['admin', 'billing', 'front_desk', 'manager', 'compliance_officer'];
+const BASIC_WORKFORCE_ROLES: Role[] = ['staff', 'hr'];
+const PATIENT_ACCESS_ROLES: Role[] = [
+  ...OPERATIONS_ROLES,
+  'provider',
+  'ma',
+  'nurse',
+  'billing',
+  'compliance_officer',
+];
+
 export const MODULE_ACCESS: Record<ModuleKey, Role[]> = {
-  home: ['admin', 'provider', 'ma', 'front_desk'],
-  schedule: ['admin', 'provider', 'ma', 'front_desk'],
-  office_flow: ['admin', 'provider', 'ma', 'front_desk'],
-  appt_flow: ['admin', 'provider', 'ma', 'front_desk'],
-  waitlist: ['admin', 'provider', 'ma', 'front_desk'],
-  patients: ['admin', 'provider', 'ma', 'front_desk'],
-  notes: ['admin', 'provider', 'ma'],
-  ambient_scribe: ['admin', 'provider', 'ma'],
-  orders: ['admin', 'provider'],
-  rx: ['admin', 'provider'],
-  epa: ['admin', 'provider'],
-  labs: ['admin', 'provider', 'ma'],
-  radiology: ['admin', 'provider', 'ma'],
-  text_messages: ['admin', 'provider', 'ma', 'front_desk'],
-  mail: ['admin', 'provider', 'ma', 'front_desk'],
-  direct: ['admin', 'provider', 'ma', 'front_desk'],
-  fax: ['admin', 'provider', 'ma', 'front_desk'],
-  documents: ['admin', 'provider', 'ma', 'front_desk'],
-  photos: ['admin', 'provider', 'ma'],
-  body_diagram: ['admin', 'provider', 'ma'],
-  handouts: ['admin', 'provider', 'ma', 'front_desk'],
-  tasks: ['admin', 'provider', 'ma', 'front_desk'],
-  reminders: ['admin', 'provider', 'ma', 'front_desk'],
-  recalls: ['admin', 'provider', 'ma', 'front_desk'],
-  analytics: ['admin', 'provider'],
-  reports: ['admin', 'provider'],
-  quality: ['admin', 'provider'],
-  registry: ['admin', 'provider'],
-  referrals: ['admin', 'provider', 'ma', 'front_desk'],
-  forms: ['admin', 'provider', 'ma', 'front_desk'],
-  protocols: ['admin', 'provider'],
-  templates: ['admin', 'provider'],
-  preferences: ['admin', 'provider', 'ma', 'front_desk'],
-  help: ['admin', 'provider', 'ma', 'front_desk'],
-  telehealth: ['admin', 'provider'],
-  inventory: ['admin', 'ma', 'front_desk'],
-  financials: ['admin', 'billing', 'front_desk'],
-  claims: ['admin', 'billing', 'front_desk'],
-  clearinghouse: ['admin', 'billing', 'front_desk'],
-  quotes: ['admin', 'front_desk', 'ma'],
+  home: [...PATIENT_ACCESS_ROLES, ...BASIC_WORKFORCE_ROLES],
+  schedule: PATIENT_ACCESS_ROLES,
+  office_flow: PATIENT_ACCESS_ROLES,
+  appt_flow: PATIENT_ACCESS_ROLES,
+  waitlist: PATIENT_ACCESS_ROLES,
+  patients: PATIENT_ACCESS_ROLES,
+  notes: CLINICAL_ROLES,
+  ambient_scribe: CLINICAL_ROLES,
+  orders: CLINICAL_ROLES,
+  rx: CLINICAL_ROLES,
+  epa: CLINICAL_ROLES,
+  labs: CLINICAL_ROLES,
+  radiology: CLINICAL_ROLES,
+  text_messages: COMMUNICATION_ROLES,
+  mail: COMMUNICATION_ROLES,
+  direct: COMMUNICATION_ROLES,
+  fax: COMMUNICATION_ROLES,
+  documents: PATIENT_ACCESS_ROLES,
+  photos: CLINICAL_ROLES,
+  body_diagram: CLINICAL_ROLES,
+  handouts: PATIENT_ACCESS_ROLES,
+  tasks: [...PATIENT_ACCESS_ROLES, ...BASIC_WORKFORCE_ROLES],
+  reminders: PATIENT_ACCESS_ROLES,
+  recalls: PATIENT_ACCESS_ROLES,
+  analytics: ['admin', 'manager', 'compliance_officer'],
+  reports: ['admin', 'provider', 'manager', 'billing', 'compliance_officer'],
+  quality: ['admin', 'provider', 'manager', 'compliance_officer'],
+  registry: ['admin', 'provider', 'ma', 'nurse', 'manager', 'compliance_officer'],
+  referrals: ['admin', 'provider', 'ma', 'nurse', 'front_desk', 'scheduler', 'manager'],
+  forms: PATIENT_ACCESS_ROLES,
+  protocols: ['admin', 'provider', 'ma', 'nurse', 'manager'],
+  templates: ['admin', 'provider', 'ma', 'manager'],
+  help: ['admin', 'provider', 'ma', 'front_desk', 'billing', 'nurse', 'manager', 'scheduler', 'compliance_officer', 'staff', 'hr'],
+  telehealth: ['admin', 'provider', 'ma', 'nurse', 'manager'],
+  inventory: ['admin', 'ma', 'front_desk', 'manager'],
+  financials: FINANCIAL_DASHBOARD_ROLES,
+  claims: REVENUE_CYCLE_ROLES,
+  clearinghouse: REVENUE_CYCLE_ROLES,
+  quotes: ['admin', 'front_desk', 'ma', 'manager', 'billing'],
   admin: ['admin'],
 };
 
 export const MODULE_PATHS: Array<{ path: string; module: ModuleKey }> = [
   { path: '/admin', module: 'admin' },
+  { path: '/documents/templates', module: 'templates' },
   { path: '/templates', module: 'templates' },
   { path: '/forms', module: 'forms' },
   { path: '/registry', module: 'registry' },
   { path: '/referrals', module: 'referrals' },
   { path: '/protocols', module: 'protocols' },
-  { path: '/preferences', module: 'preferences' },
   { path: '/help', module: 'help' },
   { path: '/quality', module: 'quality' },
   { path: '/reports', module: 'reports' },
@@ -140,6 +170,13 @@ export function getModuleForPath(pathname: string): ModuleKey | null {
 
 export function canAccessModule(role: Role | Role[] | undefined, moduleKey: ModuleKey): boolean {
   if (!role) return false;
-  const roles = Array.isArray(role) ? role : [role];
-  return roles.some((candidate) => MODULE_ACCESS[moduleKey].includes(candidate));
+  const roles = (Array.isArray(role) ? role : [role])
+    .map((candidate) => String(candidate || '').trim().toLowerCase().replace(/[\s-]+/g, '_'))
+    .map((candidate) => ROLE_ALIASES[candidate] || candidate)
+    .filter(Boolean);
+  if (roles.length === 0) return false;
+  const allowed = MODULE_ACCESS[moduleKey]
+    .map((candidate) => String(candidate || '').trim().toLowerCase().replace(/[\s-]+/g, '_'))
+    .map((candidate) => ROLE_ALIASES[candidate] || candidate);
+  return roles.some((candidate) => allowed.includes(candidate));
 }

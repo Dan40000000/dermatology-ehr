@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
@@ -64,53 +64,128 @@ export function FeeSchedulePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('');
   const [scheduleToDelete, setScheduleToDelete] = useState<FeeSchedule | null>(null);
+  const showErrorRef = useRef(showError);
+
+  useEffect(() => {
+    showErrorRef.current = showError;
+  }, [showError]);
 
   // Check if user has permission
   const hasPermission = hasAnyRole(session?.user, ['admin', 'billing', 'front_desk']);
 
-  const loadSchedules = useCallback(async () => {
+  useEffect(() => {
+    if (!session) {
+      setLoading(false);
+      setSchedules([]);
+      setSelectedSchedule(null);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      setLoading(true);
+      try {
+        const data = await fetchFeeSchedules(session.tenantId, session.accessToken);
+        if (cancelled) return;
+
+        const nextSchedules = Array.isArray(data) ? data : [];
+        setSchedules(nextSchedules);
+
+        setSelectedSchedule((current) => {
+          if (nextSchedules.length === 0) return null;
+          if (current) {
+            const matchingSchedule = nextSchedules.find((schedule) => schedule.id === current.id);
+            if (matchingSchedule) return matchingSchedule;
+          }
+          return nextSchedules.find((schedule) => schedule.isDefault) || nextSchedules[0];
+        });
+      } catch (err: any) {
+        if (!cancelled) {
+          showErrorRef.current(err.message || 'Failed to load fee schedules');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.tenantId, session?.accessToken]);
+
+  useEffect(() => {
+    if (!session || !selectedSchedule?.id) {
+      setScheduleItems([]);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      setItemsLoading(true);
+      try {
+        const data = await fetchFeeSchedule(session.tenantId, session.accessToken, selectedSchedule.id);
+        if (!cancelled) {
+          setScheduleItems(Array.isArray(data.items) ? data.items : []);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          showErrorRef.current(err.message || 'Failed to load fee schedule items');
+        }
+      } finally {
+        if (!cancelled) {
+          setItemsLoading(false);
+        }
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.tenantId, session?.accessToken, selectedSchedule?.id]);
+
+  const refreshSchedules = async () => {
     if (!session) return;
 
     setLoading(true);
     try {
       const data = await fetchFeeSchedules(session.tenantId, session.accessToken);
-      setSchedules(data || []);
+      const nextSchedules = Array.isArray(data) ? data : [];
+      setSchedules(nextSchedules);
 
-      // Auto-select the first schedule or default
-      if (data && data.length > 0 && !selectedSchedule) {
-        const defaultSchedule = data.find((s: FeeSchedule) => s.isDefault) || data[0];
-        setSelectedSchedule(defaultSchedule);
-      }
+      setSelectedSchedule((current) => {
+        if (nextSchedules.length === 0) return null;
+        if (current) {
+          const matchingSchedule = nextSchedules.find((schedule) => schedule.id === current.id);
+          if (matchingSchedule) return matchingSchedule;
+        }
+        return nextSchedules.find((schedule) => schedule.isDefault) || nextSchedules[0];
+      });
     } catch (err: any) {
       showError(err.message || 'Failed to load fee schedules');
     } finally {
       setLoading(false);
     }
-  }, [session, showError, selectedSchedule]);
+  };
 
-  const loadScheduleItems = useCallback(async () => {
+  const refreshScheduleItems = async () => {
     if (!session || !selectedSchedule) return;
 
     setItemsLoading(true);
     try {
       const data = await fetchFeeSchedule(session.tenantId, session.accessToken, selectedSchedule.id);
-      setScheduleItems(data.items || []);
+      setScheduleItems(Array.isArray(data.items) ? data.items : []);
     } catch (err: any) {
       showError(err.message || 'Failed to load fee schedule items');
     } finally {
       setItemsLoading(false);
     }
-  }, [session, selectedSchedule, showError]);
-
-  useEffect(() => {
-    loadSchedules();
-  }, [loadSchedules]);
-
-  useEffect(() => {
-    if (selectedSchedule) {
-      loadScheduleItems();
-    }
-  }, [loadScheduleItems, selectedSchedule]);
+  };
 
   const handleCreateSchedule = async () => {
     if (!session || !createForm.name.trim()) {
@@ -130,7 +205,7 @@ export function FeeSchedulePage() {
       showSuccess('Fee schedule created successfully');
       setShowCreateModal(false);
       setCreateForm({ name: '', isDefault: false, description: '', cloneFromId: '' });
-      loadSchedules();
+      refreshSchedules();
     } catch (err: any) {
       showError(err.message || 'Failed to create fee schedule');
     }
@@ -142,7 +217,7 @@ export function FeeSchedulePage() {
     try {
       await updateFeeSchedule(session.tenantId, session.accessToken, schedule.id, updates);
       showSuccess('Fee schedule updated');
-      loadSchedules();
+      refreshSchedules();
       if (selectedSchedule?.id === schedule.id) {
         setSelectedSchedule({ ...schedule, ...updates });
       }
@@ -165,7 +240,7 @@ export function FeeSchedulePage() {
         setScheduleItems([]);
       }
 
-      loadSchedules();
+      refreshSchedules();
     } catch (err: any) {
       showError(err.message || 'Failed to delete fee schedule');
     }
@@ -199,7 +274,7 @@ export function FeeSchedulePage() {
       showSuccess('Fee updated successfully');
       setShowEditFeeModal(false);
       setEditFeeForm({ cptCode: '', cptDescription: '', fee: '' });
-      loadScheduleItems();
+      refreshScheduleItems();
     } catch (err: any) {
       showError(err.message || 'Failed to update fee');
     }
@@ -213,7 +288,7 @@ export function FeeSchedulePage() {
     try {
       await deleteFeeScheduleItem(session.tenantId, session.accessToken, selectedSchedule.id, cptCode);
       showSuccess('Fee deleted');
-      loadScheduleItems();
+      refreshScheduleItems();
     } catch (err: any) {
       showError(err.message || 'Failed to delete fee');
     }
@@ -296,7 +371,7 @@ export function FeeSchedulePage() {
         setShowImportModal(false);
         setImportFile(null);
         setImportPreview([]);
-        loadScheduleItems();
+        refreshScheduleItems();
       };
 
       reader.readAsText(importFile);
@@ -325,16 +400,21 @@ export function FeeSchedulePage() {
   };
 
   const formatCurrency = (cents: number) => {
+    const safeCents = Number.isFinite(cents) ? cents : 0;
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
-    }).format(cents / 100);
+    }).format(safeCents / 100);
   };
 
   // Get unique categories from schedule items
   const categories = Array.from(new Set(scheduleItems.map(item => item.category).filter(Boolean))).sort();
 
   const filteredItems = scheduleItems.filter((item) => {
+    const itemCode = String(item.cptCode || '').toLowerCase();
+    const itemDescription = String(item.cptDescription || '').toLowerCase();
+    const itemCategory = String(item.category || '').toLowerCase();
+
     // Apply category filter
     if (categoryFilter && item.category !== categoryFilter) return false;
 
@@ -342,9 +422,9 @@ export function FeeSchedulePage() {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
-      item.cptCode.toLowerCase().includes(q) ||
-      (item.cptDescription && item.cptDescription.toLowerCase().includes(q)) ||
-      (item.category && item.category.toLowerCase().includes(q))
+      itemCode.includes(q) ||
+      itemDescription.includes(q) ||
+      itemCategory.includes(q)
     );
   });
 
@@ -533,22 +613,23 @@ export function FeeSchedulePage() {
                       ) : (
                         filteredItems.map((item) => (
                           <tr key={item.id}>
-                            <td className="strong">{item.cptCode}</td>
+                            <td className="strong">{item.cptCode || '-'}</td>
                             <td>
                               <span className="pill info tiny">{item.category || 'Uncategorized'}</span>
                             </td>
                             <td className="muted">{item.cptDescription || '-'}</td>
-                            <td>{formatCurrency(item.feeCents)}</td>
+                            <td>{formatCurrency(Number(item.feeCents || 0))}</td>
                             <td>
                               <div className="action-buttons">
                                 <button
                                   type="button"
                                   className="btn-sm btn-secondary"
                                   onClick={() => {
+                                    const itemFeeCents = Number(item.feeCents || 0);
                                     setEditFeeForm({
-                                      cptCode: item.cptCode,
+                                      cptCode: item.cptCode || '',
                                       cptDescription: item.cptDescription || '',
-                                      fee: (item.feeCents / 100).toFixed(2),
+                                      fee: ((Number.isFinite(itemFeeCents) ? itemFeeCents : 0) / 100).toFixed(2),
                                     });
                                     setShowEditFeeModal(true);
                                   }}

@@ -86,7 +86,6 @@ export const ActiveMedicationsCard: React.FC<ActiveMedicationsCardProps> = ({
 
       setMedications(active);
     } catch (err: any) {
-      console.error('Error fetching active medications:', err);
       setError(err.response?.data?.error || 'Failed to load medications');
     } finally {
       setLoading(false);

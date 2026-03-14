@@ -158,7 +158,7 @@ export class IntegrationService {
       // Log test result
       await pool.query(
         `INSERT INTO integration_logs
-         (tenant_id, integration_type, provider, direction, endpoint, method, status, durationMs)
+         (tenant_id, integration_type, provider, direction, endpoint, method, status, duration_ms)
          VALUES ($1, $2, $3, 'outbound', '/test', 'GET', $4, 0)`,
         [this.tenantId, type, adapter.getProvider(), result.success ? 'success' : 'error']
       );
@@ -515,7 +515,11 @@ export class IntegrationService {
   async getPaymentAdapter(): Promise<PaymentAdapter> {
     if (!this.adapters.has('payment')) {
       const config = await getIntegrationConfig(this.tenantId, 'payment');
-      const adapter = createPaymentAdapter(this.tenantId, this.useMock);
+      const configuredEnvironment = String(config?.config?.environment || '').trim().toLowerCase();
+      const forceMockFromConfig = configuredEnvironment === 'mock';
+      const paymentUseMock = this.useMock || forceMockFromConfig;
+
+      const adapter = createPaymentAdapter(this.tenantId, paymentUseMock);
       if (config) {
         adapter.loadConfig();
       }
@@ -630,11 +634,21 @@ export function createIntegrationService(
 // Singleton-like accessor for convenience
 const integrationServices = new Map<string, IntegrationService>();
 
+function shouldUseMockIntegrations(): boolean {
+  if (process.env.USE_REAL_SERVICES === 'true') {
+    return false;
+  }
+  if (process.env.USE_MOCK_SERVICES === 'true') {
+    return true;
+  }
+  return process.env.NODE_ENV !== 'production';
+}
+
 export function getIntegrationService(tenantId: string): IntegrationService {
   if (!integrationServices.has(tenantId)) {
     integrationServices.set(
       tenantId,
-      createIntegrationService(tenantId, process.env.NODE_ENV !== 'production')
+      createIntegrationService(tenantId, shouldUseMockIntegrations())
     );
   }
   return integrationServices.get(tenantId)!;

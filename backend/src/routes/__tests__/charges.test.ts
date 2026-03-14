@@ -92,4 +92,12 @@ describe("Charges routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.codes).toHaveLength(1);
   });
+
+  it("GET /charges/search/cpt searches fee schedule cosmetic codes too", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ code: "LASER-HAIR-S", defaultFeeCents: 15000 }] });
+    const res = await request(app).get("/charges/search/cpt?q=laser");
+    expect(res.status).toBe(200);
+    expect(res.body.codes[0].code).toBe("LASER-HAIR-S");
+    expect(String(queryMock.mock.calls[0]?.[0] ?? "")).toContain("fee_schedule_items");
+  });
 });

@@ -68,6 +68,51 @@ describe("Lab results routes", () => {
     expect(res.status).toBe(500);
   });
 
+  it("GET /lab-results/observations/pending returns queue", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "obs-1", releaseStatus: "pending" }] });
+    const res = await request(app).get("/lab-results/observations/pending");
+    expect(res.status).toBe(200);
+    expect(res.body.observations).toHaveLength(1);
+  });
+
+  it("POST /lab-results/observations/:id/release releases finalized observation", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "obs-1", patient_id: "p1", status: "final" }] })
+      .mockResolvedValueOnce({
+        rows: [{
+          observationId: "obs-1",
+          releaseStatus: "released",
+          portalVisibleFrom: null,
+          releasedAt: "2026-03-01T00:00:00Z",
+        }],
+      });
+
+    const res = await request(app)
+      .post("/lab-results/observations/obs-1/release")
+      .send({ visibleAt: "2026-03-01T00:00:00Z" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.releaseStatus).toBe("released");
+  });
+
+  it("POST /lab-results/observations/:id/release rejects non-finalized observation", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "obs-1", patient_id: "p1", status: "preliminary" }] });
+
+    const res = await request(app)
+      .post("/lab-results/observations/obs-1/release")
+      .send({});
+
+    expect(res.status).toBe(409);
+  });
+
+  it("POST /lab-results/observations/:id/hold requires hold reason", async () => {
+    const res = await request(app)
+      .post("/lab-results/observations/obs-1/hold")
+      .send({});
+
+    expect(res.status).toBe(400);
+  });
+
   it("GET /lab-results/trends returns stats", async () => {
     queryMock.mockResolvedValueOnce({
       rows: [

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import DOMPurify from 'dompurify';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_BASE_URL, TENANT_HEADER_NAME } from '../../api';
 
@@ -566,7 +567,9 @@ export function ConsentViewer({
             borderRadius: '8px',
             border: '1px solid #e5e7eb',
           }}
-          dangerouslySetInnerHTML={{ __html: consent.formContentSnapshot || '<p>No content available</p>' }}
+          dangerouslySetInnerHTML={{
+            __html: DOMPurify.sanitize(consent.formContentSnapshot || '<p>No content available</p>'),
+          }}
         />
       )}
 

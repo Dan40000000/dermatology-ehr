@@ -429,11 +429,11 @@ router.post('/', async (req: AuthedRequest, res, next) => {
         normalized.patientId,
         'Submit Prior Authorization',
         `Submit prior auth ${authNumber} for ${normalized.medicationName} to ${normalized.insuranceName}`,
-        'open',
+        'todo',
         normalized.urgency === 'stat'
           ? 'high'
           : normalized.urgency === 'urgent'
-            ? 'medium'
+            ? 'high'
             : 'normal',
         null,
         userId,

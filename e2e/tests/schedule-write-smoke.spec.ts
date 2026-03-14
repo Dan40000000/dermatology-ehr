@@ -10,8 +10,12 @@ test.describe('Schedule Write Smoke', () => {
     await expect(appointmentRow).toContainText(/scheduled/i);
 
     const updatedResult = await authenticatedPage.evaluate(async () => {
-      const nextStartIso = '2026-02-14T17:45:00.000Z';
-      const nextEndIso = '2026-02-14T18:15:00.000Z';
+      const nextStart = new Date();
+      nextStart.setHours(11, 45, 0, 0);
+      const nextEnd = new Date(nextStart.getTime() + 30 * 60 * 1000);
+
+      const nextStartIso = nextStart.toISOString();
+      const nextEndIso = nextEnd.toISOString();
 
       const statusResponse = await fetch('/api/appointments/appointment-smoke-1/status', {
         method: 'POST',
@@ -57,7 +61,7 @@ test.describe('Schedule Write Smoke', () => {
     await authenticatedPage.goto('/schedule');
     const updatedRow = authenticatedPage.locator('tr', { hasText: 'Smoke Patient' });
     await expect(updatedRow).toBeVisible();
-    await expect(updatedRow).toContainText(/checked_in/i);
+    await expect(updatedRow).toContainText(/checked in|checked_in/i);
     await expect(updatedRow).toContainText(updatedResult.formattedLabel);
   });
 });

@@ -112,7 +112,26 @@
   margin: 0 auto;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.kiosk-staff-exit-btn {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #374151;
+  background: white;
+  border: 2px solid #d1d5db;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.kiosk-staff-exit-btn:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
 }
 
 .kiosk-help-btn {

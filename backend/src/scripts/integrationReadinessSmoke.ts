@@ -119,6 +119,90 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): SmokeCheck[] {
         )
   );
 
+  const sentryDsn = (env.SENTRY_DSN || '').trim();
+  checks.push(
+    sentryDsn
+      ? check(
+          'sentry:env',
+          'pass',
+          'Sentry environment variables',
+          'SENTRY_DSN is present.'
+        )
+      : check(
+          'sentry:env',
+          missingConfigStatus,
+          'Sentry environment variables',
+          'SENTRY_DSN is missing.',
+          'Set SENTRY_DSN for production monitoring and incident triage.'
+        )
+  );
+
+  const stripeSecret = (env.STRIPE_SECRET_KEY || '').trim();
+  const stripePublishable = (env.STRIPE_PUBLISHABLE_KEY || '').trim();
+  checks.push(
+    stripeSecret && stripePublishable
+      ? check(
+          'stripe:env',
+          'pass',
+          'Stripe environment variables',
+          'STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY are present.'
+        )
+      : check(
+          'stripe:env',
+          missingConfigStatus,
+          'Stripe environment variables',
+          'One or more Stripe env vars are missing.',
+          'Set STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY.'
+        )
+  );
+
+  const sesRegion = (env.AWS_SES_REGION || env.AWS_REGION || '').trim();
+  const hasSesAwsKeys = Boolean((env.AWS_ACCESS_KEY_ID || '').trim() && (env.AWS_SECRET_ACCESS_KEY || '').trim());
+  const hasSmtpAuth = Boolean(
+    (env.SMTP_HOST || '').trim() &&
+    (env.SMTP_PORT || '').trim() &&
+    (env.SMTP_USER || '').trim() &&
+    (env.SMTP_PASSWORD || '').trim()
+  );
+  checks.push(
+    sesRegion && (hasSesAwsKeys || hasSmtpAuth)
+      ? check(
+          'email:ses-env',
+          'pass',
+          'AWS SES/SMTP environment variables',
+          hasSesAwsKeys
+            ? 'AWS SES region + AWS credentials are present.'
+            : 'SMTP host/port/user/password are present.'
+        )
+      : check(
+          'email:ses-env',
+          missingConfigStatus,
+          'AWS SES/SMTP environment variables',
+          'Email transport env vars are incomplete for SES/SMTP.',
+          'Set AWS_SES_REGION (or AWS_REGION) plus AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, or configure SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASSWORD.'
+        )
+  );
+
+  const phaxioApiKey = (env.PHAXIO_API_KEY || '').trim();
+  const phaxioApiSecret = (env.PHAXIO_API_SECRET || '').trim();
+  const phaxioFromNumber = (env.PHAXIO_FROM_NUMBER || '').trim();
+  checks.push(
+    phaxioApiKey && phaxioApiSecret && phaxioFromNumber
+      ? check(
+          'phaxio:env',
+          'pass',
+          'Phaxio environment variables',
+          'PHAXIO_API_KEY, PHAXIO_API_SECRET, and PHAXIO_FROM_NUMBER are present.'
+        )
+      : check(
+          'phaxio:env',
+          missingConfigStatus,
+          'Phaxio environment variables',
+          'One or more Phaxio env vars are missing.',
+          'Set PHAXIO_API_KEY, PHAXIO_API_SECRET, and PHAXIO_FROM_NUMBER.'
+        )
+  );
+
   return checks;
 }
 

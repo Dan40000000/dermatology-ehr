@@ -41,6 +41,7 @@ let appointmentDetailRows: any[] = [];
 
 const twilioServiceMock = {
   sendAppointmentReminder: jest.fn(),
+  placeVoiceCall: jest.fn(),
 };
 
 const buildClient = () => ({
@@ -61,6 +62,7 @@ beforeEach(() => {
   formatPhoneMock.mockReset();
   formatDisplayMock.mockReset();
   twilioServiceMock.sendAppointmentReminder.mockReset();
+  twilioServiceMock.placeVoiceCall.mockReset();
   (logger.info as jest.Mock).mockReset();
   (logger.error as jest.Mock).mockReset();
 
@@ -312,6 +314,36 @@ describe("smsReminderScheduler", () => {
     expect(twilioServiceMock.sendAppointmentReminder).toHaveBeenCalled();
   });
 
+  it("sends voice reminder in test mode without Twilio credentials", async () => {
+    settingsRows = [
+      {
+        twilio_account_sid: null,
+        twilio_auth_token: null,
+        twilio_phone_number: null,
+        reminder_template: "Template",
+        is_test_mode: true,
+      },
+    ];
+    appointmentDetailRows = [
+      {
+        appointmentId: "appt-1",
+        patientId: "patient-1",
+        patientName: "Pat Lee",
+        patientPhone: "5550100",
+        providerName: "Dr. Smith",
+        appointmentDate: new Date("2024-01-01T10:00:00Z"),
+        appointmentTime: "10:00 AM",
+        clinicPhone: "5559999",
+      },
+    ];
+
+    const result = await sendImmediateReminder("tenant-1", "appt-1", "voice");
+
+    expect(result).toEqual({ success: true });
+    expect(createTwilioServiceMock).not.toHaveBeenCalled();
+    expect(twilioServiceMock.placeVoiceCall).not.toHaveBeenCalled();
+  });
+
   it("starts reminder scheduler with hourly interval", async () => {
     jest.useFakeTimers();
     const intervalSpy = jest.spyOn(global, "setInterval");
@@ -319,7 +351,10 @@ describe("smsReminderScheduler", () => {
     startReminderScheduler();
 
     expect(intervalSpy).toHaveBeenCalledWith(expect.any(Function), 60 * 60 * 1000);
-    expect(logger.info).toHaveBeenCalledWith("SMS reminder scheduler started (runs every hour)");
+    expect(logger.info).toHaveBeenCalledWith(
+      "Reminder scheduler started (runs every hour)",
+      expect.objectContaining({ channel: "sms" })
+    );
 
     jest.clearAllTimers();
     jest.useRealTimers();

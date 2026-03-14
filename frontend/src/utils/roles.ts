@@ -1,10 +1,28 @@
 import type { User, UserRole } from '../types';
 
+const ROLE_ALIASES: Record<string, UserRole> = {
+  medical_assistant: 'ma',
+  medicalassistant: 'ma',
+  frontdesk: 'front_desk',
+  front_desk: 'front_desk',
+  receptionist: 'front_desk',
+  biller: 'billing',
+  owner: 'admin',
+  practice_owner: 'admin',
+  compliance: 'compliance_officer',
+  compliance_officer: 'compliance_officer',
+  complianceofficer: 'compliance_officer',
+  physician: 'provider',
+  doctor: 'provider',
+  clinician: 'provider',
+};
+
 function normalizeRole(value: unknown): UserRole | null {
   if (typeof value !== 'string') return null;
-  const normalized = value.trim();
-  if (!normalized) return null;
-  return normalized as UserRole;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.toLowerCase().replace(/[\s-]+/g, '_');
+  return (ROLE_ALIASES[normalized] || normalized) as UserRole;
 }
 
 export function normalizeRoleArray(value: unknown): UserRole[] {

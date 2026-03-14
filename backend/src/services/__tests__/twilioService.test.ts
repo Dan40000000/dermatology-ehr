@@ -8,12 +8,14 @@ var messagesCreateMock: jest.Mock;
 var messagesFetchMock: jest.Mock;
 var incomingListMock: jest.Mock;
 var accountsFetchMock: jest.Mock;
+var callsCreateMock: jest.Mock;
 
 jest.mock('twilio', () => {
   messagesCreateMock = jest.fn();
   messagesFetchMock = jest.fn();
   incomingListMock = jest.fn();
   accountsFetchMock = jest.fn();
+  callsCreateMock = jest.fn();
   validateRequestMock = jest.fn();
 
   const messagesFn = Object.assign(
@@ -29,6 +31,9 @@ jest.mock('twilio', () => {
     incomingPhoneNumbers: {
       list: incomingListMock,
     },
+    calls: {
+      create: callsCreateMock,
+    },
   }));
   (twilioMock as any).validateRequest = validateRequestMock;
 
@@ -39,6 +44,7 @@ jest.mock('../../lib/logger', () => ({
   logger: {
     info: jest.fn(),
     error: jest.fn(),
+    warn: jest.fn(),
   },
 }));
 
@@ -55,6 +61,7 @@ describe('TwilioService', () => {
     messagesFetchMock.mockReset();
     incomingListMock.mockReset();
     accountsFetchMock.mockReset();
+    callsCreateMock.mockReset();
     validateRequestMock.mockReset();
     validateMock.mockClear();
     (logger.info as jest.Mock).mockReset();
@@ -104,6 +111,33 @@ describe('TwilioService', () => {
     });
   });
 
+  it('skips localhost status callbacks for SMS sends', async () => {
+    messagesCreateMock.mockResolvedValueOnce({
+      sid: 'msg-local',
+      status: 'queued',
+      numSegments: '1',
+      price: null,
+      errorCode: null,
+      errorMessage: null,
+    });
+
+    const service = new TwilioService('sid', 'token');
+    await service.sendSMS({
+      to: '5550001',
+      from: '5550002',
+      body: 'Hello there',
+      statusCallback: 'http://localhost:4000/api/sms/webhook/status',
+    });
+
+    expect(messagesCreateMock).toHaveBeenCalledWith({
+      to: '+15550001',
+      from: '+15550002',
+      body: 'Hello there',
+      mediaUrl: undefined,
+    });
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
   it('surfaces Twilio failures when sending SMS', async () => {
     messagesCreateMock.mockRejectedValueOnce(Object.assign(new Error('boom'), { code: '123', status: 500 }));
 
@@ -148,6 +182,60 @@ describe('TwilioService', () => {
       body: 'Hi Pat, see Dr. Smith on Jan 10 at 9:00 AM. Call 5551234.',
       statusCallback: 'https://callback.test',
     });
+  });
+
+  it('places automated reminder calls', async () => {
+    callsCreateMock.mockResolvedValueOnce({
+      sid: 'call-1',
+      status: 'queued',
+      direction: 'outbound-api',
+      price: null,
+      errorCode: null,
+      errorMessage: null,
+    });
+
+    const service = new TwilioService('sid', 'token');
+    const result = await service.placeVoiceCall({
+      to: '5550001',
+      from: '5550002',
+      message: 'Hello & welcome <test>',
+    });
+
+    expect(callsCreateMock).toHaveBeenCalledWith({
+      to: '+15550001',
+      from: '+15550002',
+      twiml: '<Response><Pause length="1"/><Say voice="alice">Hello &amp; welcome &lt;test&gt;</Say></Response>',
+      statusCallback: undefined,
+    });
+    expect(result.sid).toBe('call-1');
+    expect(result.status).toBe('queued');
+  });
+
+  it('skips localhost status callbacks for voice calls', async () => {
+    callsCreateMock.mockResolvedValueOnce({
+      sid: 'call-local',
+      status: 'queued',
+      direction: 'outbound-api',
+      price: null,
+      errorCode: null,
+      errorMessage: null,
+    });
+
+    const service = new TwilioService('sid', 'token');
+    await service.placeVoiceCall({
+      to: '5550001',
+      from: '5550002',
+      message: 'Hello there',
+      statusCallback: 'http://127.0.0.1:4000/api/sms/webhook/status',
+    });
+
+    expect(callsCreateMock).toHaveBeenCalledWith({
+      to: '+15550001',
+      from: '+15550002',
+      twiml: '<Response><Pause length="1"/><Say voice="alice">Hello there</Say></Response>',
+      statusCallback: undefined,
+    });
+    expect(logger.warn).toHaveBeenCalled();
   });
 
   it('validates webhook signatures', () => {

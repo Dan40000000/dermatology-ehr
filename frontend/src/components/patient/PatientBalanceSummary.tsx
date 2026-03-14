@@ -2,16 +2,59 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchPatientBalance } from '../../api';
 import { Skeleton } from '../ui';
-import { DollarSign, CreditCard, Calendar, TrendingDown } from 'lucide-react';
+import { DollarSign, CreditCard, TrendingDown } from 'lucide-react';
 
 interface PatientBalanceSummaryProps {
   patientId: string;
 }
 
+interface PatientBalancePayment {
+  id: string;
+  amount: number;
+  paymentMethod: string;
+  paymentDate: string;
+  status: string;
+  notes?: string;
+}
+
+interface PatientPaymentPlan {
+  id: string;
+  totalAmount: number;
+  amountPaid: number;
+  monthlyPayment: number;
+  status: string;
+  startDate: string;
+}
+
+interface PatientCharge {
+  id: string;
+  billId?: string;
+  billNumber?: string;
+  cptCode?: string;
+  description?: string;
+  serviceDate?: string;
+  amount?: number;
+  billBalance?: number;
+  dueDate?: string;
+  billStatus?: string;
+  isPastDue?: boolean;
+}
+
+interface PatientBalanceResponse {
+  balance: number;
+  currentBalance?: number;
+  pastDueBalance?: number;
+  totalCharges: number;
+  totalPayments: number;
+  recentCharges?: PatientCharge[];
+  recentPayments: PatientBalancePayment[];
+  paymentPlans: PatientPaymentPlan[];
+}
+
 export function PatientBalanceSummary({ patientId }: PatientBalanceSummaryProps) {
   const { session } = useAuth();
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error } = useQuery<PatientBalanceResponse>({
     queryKey: ['patient-balance', patientId],
     queryFn: () => fetchPatientBalance(session!.tenantId, session!.accessToken, patientId),
     enabled: !!session && !!patientId,
@@ -62,8 +105,11 @@ export function PatientBalanceSummary({ patientId }: PatientBalanceSummaryProps)
   }
 
   const balance = data?.balance || 0;
+  const currentBalance = data?.currentBalance || Math.max(0, balance - (data?.pastDueBalance || 0));
+  const pastDueBalance = data?.pastDueBalance || 0;
   const totalCharges = data?.totalCharges || 0;
   const totalPayments = data?.totalPayments || 0;
+  const recentCharges = data?.recentCharges || [];
   const recentPayments = data?.recentPayments || [];
   const paymentPlans = data?.paymentPlans || [];
 
@@ -93,14 +139,30 @@ export function PatientBalanceSummary({ patientId }: PatientBalanceSummaryProps)
           paddingTop: '1.5rem',
           borderTop: '1px solid rgba(255, 255, 255, 0.3)',
           display: 'grid',
-          gridTemplateColumns: 'repeat(2, 1fr)',
+          gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
           gap: '1rem'
         }}>
           <div>
             <div style={{ fontSize: '0.75rem', opacity: 0.8, marginBottom: '0.25rem' }}>
+              Current
+            </div>
+            <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>
+              {formatCurrency(currentBalance)}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: '0.75rem', opacity: 0.8, marginBottom: '0.25rem' }}>
+              Past Due
+            </div>
+            <div style={{ fontSize: '1.1rem', fontWeight: 700, color: pastDueBalance > 0 ? '#fee2e2' : '#ffffff' }}>
+              {formatCurrency(pastDueBalance)}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: '0.75rem', opacity: 0.8, marginBottom: '0.25rem' }}>
               Total Charges
             </div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>
+            <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>
               {formatCurrency(totalCharges)}
             </div>
           </div>
@@ -108,7 +170,7 @@ export function PatientBalanceSummary({ patientId }: PatientBalanceSummaryProps)
             <div style={{ fontSize: '0.75rem', opacity: 0.8, marginBottom: '0.25rem' }}>
               Total Payments
             </div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>
+            <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>
               {formatCurrency(totalPayments)}
             </div>
           </div>
@@ -116,7 +178,7 @@ export function PatientBalanceSummary({ patientId }: PatientBalanceSummaryProps)
       </div>
 
       {/* Payment Plans */}
-      {paymentPlans.filter((p: any) => p.status === 'active').length > 0 && (
+      {paymentPlans.filter((p) => p.status === 'active').length > 0 && (
         <div>
           <h3 style={{
             margin: '0 0 1rem',
@@ -127,7 +189,7 @@ export function PatientBalanceSummary({ patientId }: PatientBalanceSummaryProps)
             Active Payment Plans
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            {paymentPlans.filter((p: any) => p.status === 'active').map((plan: any) => {
+            {paymentPlans.filter((p) => p.status === 'active').map((plan) => {
               const remaining = plan.totalAmount - plan.amountPaid;
               const progress = (plan.amountPaid / plan.totalAmount) * 100;
 
@@ -192,6 +254,64 @@ export function PatientBalanceSummary({ patientId }: PatientBalanceSummaryProps)
         </div>
       )}
 
+      {/* Recent Charges */}
+      {recentCharges.length > 0 && (
+        <div>
+          <h3 style={{
+            margin: '0 0 1rem',
+            fontSize: '1.125rem',
+            fontWeight: 600,
+            color: '#111827'
+          }}>
+            Recent Charges
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {recentCharges.map((charge) => (
+              <div
+                key={charge.id}
+                style={{
+                  background: '#ffffff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '6px',
+                  padding: '0.75rem',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#111827' }}>
+                    {charge.description || charge.cptCode || 'Charge'}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                    {charge.serviceDate ? formatDate(charge.serviceDate) : 'Service date unavailable'}
+                    {charge.billNumber ? ' • ' + charge.billNumber : ''}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#111827' }}>
+                    {formatCurrency(charge.amount || 0)}
+                  </div>
+                  <span
+                    style={{
+                      padding: '0.2rem 0.45rem',
+                      borderRadius: '999px',
+                      fontSize: '0.65rem',
+                      fontWeight: 700,
+                      background: charge.isPastDue ? '#fee2e2' : '#dbeafe',
+                      color: charge.isPastDue ? '#991b1b' : '#1d4ed8',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {charge.isPastDue ? 'Past Due' : (charge.billStatus || 'open')}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Recent Payments */}
       {recentPayments.length > 0 && (
         <div>
@@ -204,7 +324,7 @@ export function PatientBalanceSummary({ patientId }: PatientBalanceSummaryProps)
             Recent Payments
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {recentPayments.map((payment: any) => (
+            {recentPayments.map((payment) => (
               <div
                 key={payment.id}
                 style={{
@@ -257,7 +377,7 @@ export function PatientBalanceSummary({ patientId }: PatientBalanceSummaryProps)
         </div>
       )}
 
-      {balance === 0 && recentPayments.length === 0 && (
+      {balance === 0 && recentPayments.length === 0 && recentCharges.length === 0 && (
         <div style={{
           background: '#f0fdf4',
           border: '1px dashed #86efac',

@@ -2,7 +2,10 @@ import { Router } from "express";
 import crypto from "crypto";
 import { z } from "zod";
 import { pool } from "../db/pool";
+import { getTableColumns } from "../db/schema";
+import { REVENUE_CYCLE_ROLES } from "../lib/roles";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
+import { requireModuleAccess } from "../middleware/moduleAccess";
 import { requireRoles } from "../middleware/rbac";
 import { parsePagination, paginatedResponse } from "../middleware/pagination";
 import { parseFields, buildSelectClause } from "../middleware/fieldSelection";
@@ -165,7 +168,7 @@ export const patientsRouter = Router();
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-patientsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
+patientsRouter.get("/", requireAuth, requireModuleAccess("patients"), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { page, limit, offset } = parsePagination(req);
   const selectedFields = parseFields(req);
@@ -394,7 +397,7 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-patientsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
+patientsRouter.get("/:id", requireAuth, requireModuleAccess("patients"), async (req: AuthedRequest, res) => {
   const id = req.params.id as string;
   const tenantId = req.user!.tenantId;
   const canViewSsn = canAccessSsnLast4(req);
@@ -772,7 +775,7 @@ patientsRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async (req: 
  *                 appointments:
  *                   type: array
  */
-patientsRouter.get("/:id/appointments", requireAuth, async (req: AuthedRequest, res) => {
+patientsRouter.get("/:id/appointments", requireAuth, requireModuleAccess("schedule"), async (req: AuthedRequest, res) => {
   const { id } = req.params;
   const tenantId = req.user!.tenantId;
 
@@ -807,7 +810,7 @@ patientsRouter.get("/:id/appointments", requireAuth, async (req: AuthedRequest, 
  *     summary: Get patient encounters
  *     description: Retrieve all encounters for a specific patient
  */
-patientsRouter.get("/:id/encounters", requireAuth, async (req: AuthedRequest, res) => {
+patientsRouter.get("/:id/encounters", requireAuth, requireModuleAccess("notes"), async (req: AuthedRequest, res) => {
   const { id } = req.params;
   const tenantId = req.user!.tenantId;
 
@@ -840,12 +843,15 @@ patientsRouter.get("/:id/encounters", requireAuth, async (req: AuthedRequest, re
  *     summary: Get patient prescriptions
  *     description: Retrieve all prescriptions for a specific patient
  */
-patientsRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest, res) => {
+patientsRouter.get("/:id/prescriptions", requireAuth, requireModuleAccess("rx"), async (req: AuthedRequest, res) => {
   const { id } = req.params;
   const tenantId = req.user!.tenantId;
   const { status, includeInactive } = req.query;
 
   try {
+    const prescriptionColumns = await getTableColumns("prescriptions");
+    const hasStatusColumn = prescriptionColumns.has("status");
+
     // Verify patient exists
     const patientCheck = await pool.query(
       'SELECT id FROM patients WHERE id = $1 AND tenant_id = $2',
@@ -856,17 +862,13 @@ patientsRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest,
     }
 
     let query = `
-      SELECT p.id, p.patient_id as "patientId", p.provider_id as "providerId",
+      SELECT p.*,
+             p.patient_id as "patientId",
+             p.provider_id as "providerId",
              p.encounter_id as "encounterId",
-             p.medication_name as "medicationName", p.generic_name as "genericName",
-             p.strength, p.dosage_form as "dosageForm", p.sig, p.quantity, p.quantity_unit as "quantityUnit",
-             p.refills, p.refills_remaining as "refillsRemaining", p.days_supply as "daysSupply",
-             p.status, p.is_controlled as "isControlled", p.dea_schedule as "deaSchedule",
-             p.pharmacy_id as "pharmacyId", p.pharmacy_name as "pharmacyName",
-             p.indication, p.notes,
-             p.written_date as "writtenDate", p.sent_at as "sentAt",
-             p.last_filled_date as "lastFilledDate",
-             p.created_at as "createdAt", p.updated_at as "updatedAt",
+             p.medication_name as "medicationName",
+             p.created_at as "createdAt",
+             p.updated_at as "updatedAt",
              prov.full_name as "providerName",
              ph.name as "pharmacyFullName", ph.phone as "pharmacyPhone",
              e.created_at as "encounterDate"
@@ -881,11 +883,11 @@ patientsRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest,
     let paramIndex = 3;
 
     // Filter by status if provided
-    if (status) {
+    if (status && hasStatusColumn) {
       query += ` AND p.status = $${paramIndex}`;
       params.push(status);
       paramIndex++;
-    } else if (includeInactive !== 'true') {
+    } else if (includeInactive !== 'true' && hasStatusColumn) {
       // By default, exclude cancelled and discontinued prescriptions
       query += ` AND p.status NOT IN ('cancelled', 'discontinued')`;
     }
@@ -893,27 +895,46 @@ patientsRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest,
     query += ' ORDER BY p.created_at DESC';
 
     const result = await pool.query(query, params);
+    const prescriptions = result.rows.map((row: Record<string, any>) => ({
+      ...row,
+      patientId: row.patientId ?? row.patient_id ?? id,
+      providerId: row.providerId ?? row.provider_id ?? null,
+      encounterId: row.encounterId ?? row.encounter_id ?? null,
+      medicationName: row.medicationName ?? row.medication_name ?? '',
+      genericName: row.genericName ?? row.generic_name ?? null,
+      dosageForm: row.dosageForm ?? row.dosage_form ?? null,
+      quantityUnit: row.quantityUnit ?? row.quantity_unit ?? null,
+      refillsRemaining: row.refillsRemaining ?? row.refills_remaining ?? row.refills ?? null,
+      daysSupply: row.daysSupply ?? row.days_supply ?? null,
+      isControlled: row.isControlled ?? row.is_controlled ?? false,
+      deaSchedule: row.deaSchedule ?? row.dea_schedule ?? null,
+      pharmacyId: row.pharmacyId ?? row.pharmacy_id ?? null,
+      pharmacyName: row.pharmacyName ?? row.pharmacy_name ?? row.pharmacyFullName ?? null,
+      writtenDate: row.writtenDate ?? row.written_date ?? null,
+      sentAt: row.sentAt ?? row.sent_at ?? null,
+      lastFilledDate: row.lastFilledDate ?? row.last_filled_date ?? null,
+      createdAt: row.createdAt ?? row.created_at ?? null,
+      updatedAt: row.updatedAt ?? row.updated_at ?? null,
+      status: row.status ?? null,
+    }));
 
-    // Group prescriptions by active vs inactive
-    const prescriptions = result.rows;
-    const active = prescriptions.filter(p =>
-      p.status !== 'cancelled' &&
-      p.status !== 'discontinued' &&
-      (p.refillsRemaining === null || p.refillsRemaining > 0)
-    );
-    const inactive = prescriptions.filter(p =>
-      p.status === 'cancelled' ||
-      p.status === 'discontinued' ||
-      (p.refillsRemaining !== null && p.refillsRemaining <= 0)
-    );
+    const active = prescriptions.filter((prescription) => {
+      const normalizedStatus = String(prescription.status || '').toLowerCase();
+      const inactiveStatus = normalizedStatus === 'cancelled' || normalizedStatus === 'discontinued';
+      const hasNumericRefills = typeof prescription.refillsRemaining === 'number';
+      const exhaustedRefills = hasNumericRefills && prescription.refillsRemaining <= 0;
+
+      return !inactiveStatus && !exhaustedRefills;
+    });
+    const inactive = prescriptions.filter((prescription) => !active.includes(prescription));
 
     return res.json({
-      prescriptions: result.rows,
+      prescriptions,
       summary: {
         total: prescriptions.length,
         active: active.length,
         inactive: inactive.length,
-        controlled: prescriptions.filter(p => p.isControlled).length,
+        controlled: prescriptions.filter((prescription) => Boolean(prescription.isControlled)).length,
       }
     });
   } catch (error) {
@@ -928,7 +949,7 @@ patientsRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest,
  *   get:
  *     summary: Get patient prior authorizations
  */
-patientsRouter.get("/:id/prior-auths", requireAuth, async (req: AuthedRequest, res) => {
+patientsRouter.get("/:id/prior-auths", requireAuth, requireModuleAccess("epa"), async (req: AuthedRequest, res) => {
   const { id } = req.params;
   const tenantId = req.user!.tenantId;
 
@@ -961,7 +982,7 @@ patientsRouter.get("/:id/prior-auths", requireAuth, async (req: AuthedRequest, r
  *   get:
  *     summary: Get patient biopsies
  */
-patientsRouter.get("/:id/biopsies", requireAuth, async (req: AuthedRequest, res) => {
+patientsRouter.get("/:id/biopsies", requireAuth, requireModuleAccess("labs"), async (req: AuthedRequest, res) => {
   const { id } = req.params;
   const tenantId = req.user!.tenantId;
 
@@ -1001,30 +1022,83 @@ patientsRouter.get("/:id/biopsies", requireAuth, async (req: AuthedRequest, res)
  *   get:
  *     summary: Get patient account balance
  */
-patientsRouter.get("/:id/balance", requireAuth, async (req: AuthedRequest, res) => {
+patientsRouter.get("/:id/balance", requireAuth, requireRoles(REVENUE_CYCLE_ROLES), async (req: AuthedRequest, res) => {
   const { id } = req.params;
   const tenantId = req.user!.tenantId;
 
   try {
-    // Get total charges
-    const chargesResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total_charges
-       FROM charges
-       WHERE patient_id = $1 AND tenant_id = $2`,
+    // Bill-backed balances (includes no-show/late-fee bills)
+    const billingSummaryResult = await pool.query(
+      `SELECT
+         COALESCE(
+           SUM(
+             CASE
+               WHEN b.status <> 'cancelled' THEN COALESCE(b.total_charges_cents, 0)
+               ELSE 0
+             END
+           ),
+           0
+         ) / 100.0 AS billed_charges,
+         COALESCE(
+           SUM(
+             CASE
+               WHEN b.status NOT IN ('paid', 'written_off', 'cancelled')
+                 THEN GREATEST(COALESCE(b.balance_cents, 0), 0)
+               ELSE 0
+             END
+           ),
+           0
+         ) / 100.0 AS outstanding_balance,
+         COALESCE(
+           SUM(
+             CASE
+               WHEN b.status NOT IN ('paid', 'written_off', 'cancelled')
+                 AND b.due_date IS NOT NULL
+                 AND b.due_date < CURRENT_DATE
+                 THEN GREATEST(COALESCE(b.balance_cents, 0), 0)
+               ELSE 0
+             END
+           ),
+           0
+         ) / 100.0 AS past_due_balance
+       FROM bills b
+       WHERE b.patient_id = $1
+         AND b.tenant_id = $2`,
+      [id, tenantId]
+    );
+
+    // Encounter charges that are not yet linked to any bill line item
+    const unbilledChargesResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(c.amount_cents), 0) / 100.0 AS unbilled_charges
+       FROM charges c
+       WHERE c.patient_id = $1
+         AND c.tenant_id = $2
+         AND COALESCE(c.status, 'pending') <> 'voided'
+         AND NOT EXISTS (
+           SELECT 1
+           FROM bill_line_items li
+           WHERE li.tenant_id = c.tenant_id
+             AND li.charge_id = c.id
+         )`,
       [id, tenantId]
     );
 
     // Get total payments
     const paymentsResult = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total_payments
+      `SELECT COALESCE(SUM(amount_cents) / 100.0, 0) as total_payments
        FROM patient_payments
-       WHERE patient_id = $1 AND tenant_id = $2 AND status != 'failed'`,
+       WHERE patient_id = $1
+         AND tenant_id = $2
+         AND status NOT IN ('failed', 'voided')`,
       [id, tenantId]
     );
 
     // Get recent payments
     const recentPaymentsResult = await pool.query(
-      `SELECT id, amount, payment_method as "paymentMethod",
+      `SELECT id,
+              amount_cents / 100.0 as amount,
+              payment_method as "paymentMethod",
               payment_date as "paymentDate", status, notes,
               created_at as "createdAt"
        FROM patient_payments
@@ -1045,14 +1119,55 @@ patientsRouter.get("/:id/balance", requireAuth, async (req: AuthedRequest, res) 
       [id, tenantId]
     );
 
-    const totalCharges = parseFloat(chargesResult.rows[0].total_charges);
+    // Get recent charge postings (line-item ledger)
+    const recentChargesResult = await pool.query(
+      `SELECT
+         li.id,
+         b.id as "billId",
+         b.bill_number as "billNumber",
+         li.cpt_code as "cptCode",
+         li.description,
+         li.service_date as "serviceDate",
+         li.total_cents / 100.0 as amount,
+         b.balance_cents / 100.0 as "billBalance",
+         b.due_date as "dueDate",
+         b.status as "billStatus",
+         (
+           b.due_date IS NOT NULL
+           AND b.due_date < CURRENT_DATE
+           AND COALESCE(b.balance_cents, 0) > 0
+           AND b.status NOT IN ('paid', 'written_off', 'cancelled')
+         ) as "isPastDue"
+       FROM bill_line_items li
+       JOIN bills b
+         ON b.id = li.bill_id
+        AND b.tenant_id = li.tenant_id
+       WHERE b.patient_id = $1
+         AND b.tenant_id = $2
+         AND b.status <> 'cancelled'
+       ORDER BY li.service_date DESC NULLS LAST, li.created_at DESC
+       LIMIT 15`,
+      [id, tenantId]
+    );
+
+    const billedCharges = parseFloat(billingSummaryResult.rows[0]?.billed_charges || "0");
+    const outstandingFromBills = parseFloat(billingSummaryResult.rows[0]?.outstanding_balance || "0");
+    const pastDueBalance = parseFloat(billingSummaryResult.rows[0]?.past_due_balance || "0");
+    const unbilledCharges = parseFloat(unbilledChargesResult.rows[0]?.unbilled_charges || "0");
+    const totalCharges = billedCharges + unbilledCharges;
     const totalPayments = parseFloat(paymentsResult.rows[0].total_payments);
-    const balance = totalCharges - totalPayments;
+    const outstandingBalance = Math.max(0, outstandingFromBills + unbilledCharges);
+    const currentBalance = Math.max(0, outstandingBalance - pastDueBalance);
+    const fallbackBalance = Math.max(0, totalCharges - totalPayments);
+    const balance = outstandingBalance > 0 ? outstandingBalance : fallbackBalance;
 
     return res.json({
       balance,
+      currentBalance,
+      pastDueBalance,
       totalCharges,
       totalPayments,
+      recentCharges: recentChargesResult.rows,
       recentPayments: recentPaymentsResult.rows,
       paymentPlans: paymentPlansResult.rows
     });
@@ -1068,7 +1183,7 @@ patientsRouter.get("/:id/balance", requireAuth, async (req: AuthedRequest, res) 
  *   get:
  *     summary: Get patient photos
  */
-patientsRouter.get("/:id/photos", requireAuth, async (req: AuthedRequest, res) => {
+patientsRouter.get("/:id/photos", requireAuth, requireModuleAccess("photos"), async (req: AuthedRequest, res) => {
   const { id } = req.params;
   const tenantId = req.user!.tenantId;
 
@@ -1098,7 +1213,7 @@ patientsRouter.get("/:id/photos", requireAuth, async (req: AuthedRequest, res) =
  *   get:
  *     summary: Get patient body map with lesions
  */
-patientsRouter.get("/:id/body-map", requireAuth, async (req: AuthedRequest, res) => {
+patientsRouter.get("/:id/body-map", requireAuth, requireModuleAccess("body_diagram"), async (req: AuthedRequest, res) => {
   const { id } = req.params;
   const tenantId = req.user!.tenantId;
 
@@ -1131,7 +1246,7 @@ patientsRouter.get("/:id/body-map", requireAuth, async (req: AuthedRequest, res)
  *   get:
  *     summary: Get patient insurance and eligibility status
  */
-patientsRouter.get("/:id/insurance", requireAuth, async (req: AuthedRequest, res) => {
+patientsRouter.get("/:id/insurance", requireAuth, requireModuleAccess("patients"), async (req: AuthedRequest, res) => {
   const { id } = req.params;
   const tenantId = req.user!.tenantId;
 

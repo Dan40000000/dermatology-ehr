@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../api';
+import { formatPhoneDisplay } from '../utils/phone';
 
 interface Patient {
   id: string;
@@ -185,7 +186,7 @@ export function FaceSheetPage() {
             </div>
             <div>
               <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Phone:</p>
-              <p style={{ fontSize: '1.125rem' }}>{patient.phone}</p>
+              <p style={{ fontSize: '1.125rem' }}>{formatPhoneDisplay(patient.phone)}</p>
             </div>
             <div>
               <p style={{ fontSize: '0.875rem', color: '#4b5563', fontWeight: '600' }}>Email:</p>

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { CLINICAL_ROLES } from "../lib/roles";
 import { auditLog } from "../services/audit";
 import { recordEncounterLearning } from "../services/learningService";
 import { encounterService } from "../services/encounterService";
@@ -37,6 +38,7 @@ const encounterUpdateSchema = z.object({
 });
 
 const ENCOUNTER_CLOSURE_STATUSES = new Set(["closed", "completed", "signed", "locked", "finalized"]);
+const ENCOUNTER_FINANCIAL_READ_ROLES = [...CLINICAL_ROLES, "billing"] as const;
 
 function shouldAutoStopAmbientRecording(status: string): boolean {
   return ENCOUNTER_CLOSURE_STATUSES.has(String(status || "").toLowerCase());
@@ -138,7 +140,7 @@ export const encountersRouter = Router();
  *                         type: string
  *                         format: date-time
  */
-encountersRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
+encountersRouter.get("/", requireAuth, requireRoles([...CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const result = await pool.query(
     `SELECT e.id, e.patient_id as "patientId", e.provider_id as "providerId", e.appointment_id as "appointmentId",
@@ -383,7 +385,7 @@ encountersRouter.post("/:id/status", requireAuth, requireRoles(["provider", "adm
   res.json({ ok: true });
 });
 
-encountersRouter.get("/:id/superbill", requireAuth, async (req: AuthedRequest, res) => {
+encountersRouter.get("/:id/superbill", requireAuth, requireRoles([...ENCOUNTER_FINANCIAL_READ_ROLES]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const encId = String(req.params.id);
 
@@ -649,7 +651,7 @@ encountersRouter.get("/:id/superbill", requireAuth, async (req: AuthedRequest, r
   res.send(html);
 });
 
-encountersRouter.get("/:id/prescriptions", requireAuth, async (req: AuthedRequest, res) => {
+encountersRouter.get("/:id/prescriptions", requireAuth, requireRoles([...CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const encId = String(req.params.id);
 

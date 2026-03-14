@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
+import { getKioskHeaders } from '../../utils/kioskContext';
 import '../../styles/kiosk.css';
 
 interface Patient {
@@ -12,30 +13,65 @@ interface Patient {
   email?: string;
 }
 
-const numberPadStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(3, 1fr)',
-  gap: '0.75rem',
-  marginTop: '1.5rem',
-};
+function formatDateOfBirthInput(value: string): string {
+  const digits = value.replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
 
-const numberBtnStyle: React.CSSProperties = {
-  padding: '1.5rem',
-  fontSize: '1.5rem',
-  fontWeight: 600,
-  borderRadius: '0.5rem',
-  border: 'none',
-  cursor: 'pointer',
-  background: '#f3f4f6',
-  color: '#111827',
-  transition: 'background 0.2s',
-};
+function normalizeDateOfBirth(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
 
-const clearBtnStyle: React.CSSProperties = {
-  ...numberBtnStyle,
-  background: '#fee2e2',
-  color: '#b91c1c',
-};
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    return trimmed;
+  }
+
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length !== 8) {
+    return null;
+  }
+
+  const month = Number(digits.slice(0, 2));
+  const day = Number(digits.slice(2, 4));
+  const year = Number(digits.slice(4, 8));
+
+  if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900) {
+    return null;
+  }
+
+  const candidate = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(candidate.getTime())
+    || candidate.getFullYear() !== year
+    || candidate.getMonth() !== month - 1
+    || candidate.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function formatPhoneInput(value: string): string {
+  const digits = value.replace(/\D/g, '').slice(0, 10);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+async function parseResponseJson(response: Response): Promise<any | null> {
+  const text = await response.text();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
 
 export function KioskPatientVerificationPage() {
   const navigate = useNavigate();
@@ -62,15 +98,17 @@ export function KioskPatientVerificationPage() {
     setLoading(true);
 
     try {
-      const body: any = { method, lastName };
+      const trimmedLastName = lastName.trim();
+      const body: any = { method, lastName: trimmedLastName };
 
       if (method === 'dob') {
-        if (!dob) {
-          setError('Please enter your date of birth');
+        const normalizedDob = normalizeDateOfBirth(dob);
+        if (!normalizedDob) {
+          setError('Please enter a complete date of birth');
           setLoading(false);
           return;
         }
-        body.dob = dob;
+        body.dob = normalizedDob;
       } else if (method === 'phone') {
         if (!phone) {
           setError('Please enter your phone number');
@@ -87,22 +125,21 @@ export function KioskPatientVerificationPage() {
         body.mrn = mrn;
       }
 
+      const headers = await getKioskHeaders();
       const response = await fetch('/api/kiosk/verify-patient', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
-          'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
+          ...headers,
         },
         body: JSON.stringify(body),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Patient not found');
-      }
+      const data = await parseResponseJson(response);
 
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Unable to verify patient. Please see the front desk.');
+      }
 
       if (data.patients && data.patients.length > 0) {
         setPatients(data.patients);
@@ -127,40 +164,6 @@ export function KioskPatientVerificationPage() {
     navigate('/kiosk/appointment');
   };
 
-  const NumberPad = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => {
-    const buttons = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'Clear', '0', 'Delete'];
-
-    const handleClick = (btn: string) => {
-      if (btn === 'Clear') {
-        onChange('');
-      } else if (btn === 'Delete') {
-        onChange(value.slice(0, -1));
-      } else {
-        onChange(value + btn);
-      }
-    };
-
-    return (
-      <div style={numberPadStyle}>
-        {buttons.map((btn) => (
-          <button
-            key={btn}
-            onClick={() => handleClick(btn)}
-            style={btn === 'Clear' || btn === 'Delete' ? clearBtnStyle : numberBtnStyle}
-            onMouseOver={(e) => {
-              e.currentTarget.style.opacity = '0.8';
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.opacity = '1';
-            }}
-          >
-            {btn}
-          </button>
-        ))}
-      </div>
-    );
-  };
-
   const cardStyle: React.CSSProperties = {
     background: 'white',
     borderRadius: '1rem',
@@ -182,7 +185,7 @@ export function KioskPatientVerificationPage() {
 
   if (showPatientList) {
     return (
-      <KioskLayout currentStep={0} totalSteps={6} stepName="Select Your Profile" onTimeout={handleTimeout}>
+      <KioskLayout currentStep={0} totalSteps={7} stepName="Select Your Profile" onTimeout={handleTimeout}>
         <div style={cardStyle}>
           <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '1.5rem' }}>
             Select Your Profile
@@ -237,7 +240,7 @@ export function KioskPatientVerificationPage() {
   }
 
   return (
-    <KioskLayout currentStep={0} totalSteps={6} stepName="Find Your Appointment" onTimeout={handleTimeout}>
+    <KioskLayout currentStep={0} totalSteps={7} stepName="Find Your Appointment" onTimeout={handleTimeout}>
       <div style={cardStyle}>
         <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '1.5rem' }}>
           Find Your Appointment
@@ -283,14 +286,16 @@ export function KioskPatientVerificationPage() {
           <div className="kiosk-form-group">
             <label className="kiosk-form-label">Date of Birth (MM/DD/YYYY)</label>
             <input
-              type="text"
+              type="tel"
               value={dob}
-              readOnly
+              onChange={(e) => setDob(formatDateOfBirthInput(e.target.value))}
               className="kiosk-form-input"
               placeholder="MM/DD/YYYY"
-              style={{ background: '#f9fafb' }}
+              inputMode="numeric"
+              autoComplete="bday"
+              enterKeyHint="done"
+              maxLength={10}
             />
-            <NumberPad value={dob} onChange={setDob} />
           </div>
         )}
 
@@ -299,14 +304,15 @@ export function KioskPatientVerificationPage() {
           <div className="kiosk-form-group">
             <label className="kiosk-form-label">Phone Number</label>
             <input
-              type="text"
+              type="tel"
               value={phone}
-              readOnly
+              onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
               className="kiosk-form-input"
               placeholder="Enter your phone number"
-              style={{ background: '#f9fafb' }}
+              inputMode="tel"
+              autoComplete="tel"
+              enterKeyHint="done"
             />
-            <NumberPad value={phone} onChange={setPhone} />
           </div>
         )}
 

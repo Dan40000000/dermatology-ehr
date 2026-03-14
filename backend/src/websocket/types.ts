@@ -95,6 +95,35 @@ export interface AmbientTranscriptEventData {
   source: 'live' | 'mock';
 }
 
+export interface AmbientLiveSymptomData {
+  label: string;
+  confidence: number;
+  evidence?: string;
+}
+
+export interface AmbientLiveDiagnosisData {
+  condition: string;
+  confidence: number;
+  reasoning: string;
+  icd10Code?: string;
+}
+
+export interface AmbientLiveSuggestedTestData {
+  testName: string;
+  urgency: 'routine' | 'soon' | 'urgent';
+  rationale: string;
+  cptCode?: string;
+}
+
+export interface AmbientInsightsEventData {
+  recordingId: string;
+  source: 'heuristic';
+  updatedAt: string;
+  symptoms: AmbientLiveSymptomData[];
+  workingDiagnoses: AmbientLiveDiagnosisData[];
+  suggestedTests: AmbientLiveSuggestedTestData[];
+}
+
 // Patient events
 export interface PatientEventData {
   id: string;
@@ -269,6 +298,7 @@ export interface ServerToClientEvents {
   'ambient:joined': (data: { recordingId: string; joinedAt: string }) => void;
   'ambient:left': (data: { recordingId: string; leftAt: string }) => void;
   'ambient:transcript': (data: AmbientTranscriptEventData) => void;
+  'ambient:insights': (data: AmbientInsightsEventData) => void;
   'ambient:error': (data: { recordingId?: string; message: string }) => void;
 }
 

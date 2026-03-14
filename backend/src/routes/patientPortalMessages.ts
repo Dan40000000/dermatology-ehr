@@ -10,6 +10,9 @@ import { env } from "../config/env";
 import { NextFunction, Request, Response } from "express";
 import { notificationService } from "../services/integrations/notificationService";
 import { logger } from "../lib/logger";
+import {
+  notifyStaffOfNewPatientMessage,
+} from "../services/messageNotificationService";
 
 const router = Router();
 
@@ -187,7 +190,11 @@ router.get("/threads/:id", requirePatientAuth, async (req: PatientAuthRequest, r
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
-    const threadId = req.params.id;
+    const threadId = req.params.id || "";
+
+    if (!threadId) {
+      return res.status(400).json({ error: "Thread ID required" });
+    }
 
     // Get thread details
     const threadResult = await pool.query(
@@ -356,7 +363,12 @@ router.post("/threads", requirePatientAuth, async (req: PatientAuthRequest, res)
 
       await client.query("COMMIT");
 
-      // TODO: Send notification to staff about new message
+      await notifyStaffOfNewPatientMessage(
+        tenantId,
+        threadId,
+        patientId,
+        subject
+      );
 
       res.status(201).json({ threadId, messageId });
     } catch (error) {
@@ -376,7 +388,11 @@ router.post("/threads/:id/messages", requirePatientAuth, async (req: PatientAuth
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
-    const threadId = req.params.id;
+    const threadId = req.params.id || "";
+
+    if (!threadId) {
+      return res.status(400).json({ error: "Thread ID required" });
+    }
 
     const parsed = sendMessageSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -387,15 +403,20 @@ router.post("/threads/:id/messages", requirePatientAuth, async (req: PatientAuth
 
     // Verify thread exists and belongs to patient
     const threadCheck = await pool.query(
-      "SELECT id, status FROM patient_message_threads WHERE id = $1 AND patient_id = $2 AND tenant_id = $3",
+      "SELECT id, status, subject, assigned_to FROM patient_message_threads WHERE id = $1 AND patient_id = $2 AND tenant_id = $3",
       [threadId, patientId, tenantId]
     );
 
     if (threadCheck.rows.length === 0) {
       return res.status(404).json({ error: "Thread not found" });
     }
+    const threadRow = threadCheck.rows[0] as {
+      status?: string;
+      subject?: string;
+      assigned_to?: string | null;
+    };
 
-    if (threadCheck.rows[0].status === "closed") {
+    if (threadRow.status === "closed") {
       return res.status(400).json({ error: "Cannot send message to closed thread" });
     }
 
@@ -433,7 +454,13 @@ router.post("/threads/:id/messages", requirePatientAuth, async (req: PatientAuth
 
       await client.query("COMMIT");
 
-      // TODO: Send notification to staff about new patient message
+      await notifyStaffOfNewPatientMessage(
+        tenantId,
+        threadId,
+        patientId,
+        threadRow.subject || "New patient message",
+        threadRow.assigned_to || undefined
+      );
 
       res.status(201).json({ messageId });
     } catch (error) {

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const authMocks = vi.hoisted(() => ({
   session: null as null | { tenantId: string; accessToken: string },
+  user: { role: 'admin' as string },
 }));
 
 const toastMocks = vi.hoisted(() => ({
@@ -23,8 +24,11 @@ const apiMocks = vi.hoisted(() => ({
   fetchSMSConversations: vi.fn(),
   fetchSMSConversation: vi.fn(),
   sendSMSConversationMessage: vi.fn(),
+  simulateInboundSMSConversationMessage: vi.fn(),
   markSMSConversationRead: vi.fn(),
+  updateSMSConversationRouting: vi.fn(),
   getSMSConsent: vi.fn(),
+  requestSMSConsent: vi.fn(),
   recordSMSConsent: vi.fn(),
   revokeSMSConsent: vi.fn(),
   fetchSMSAuditLog: vi.fn(),
@@ -146,11 +150,19 @@ const buildFixtures = () => ({
 describe('TextMessagesPage', () => {
   beforeEach(() => {
     authMocks.session = { tenantId: 'tenant-1', accessToken: 'token-1' };
+    authMocks.user = { role: 'admin' };
     const fixtures = buildFixtures();
     apiMocks.fetchSMSConversations.mockResolvedValue({ conversations: fixtures.conversations });
     apiMocks.fetchSMSTemplates.mockResolvedValue({ templates: fixtures.templates });
     apiMocks.fetchSMSConversation.mockResolvedValue(fixtures.conversation);
     apiMocks.markSMSConversationRead.mockResolvedValue({ ok: true });
+    apiMocks.updateSMSConversationRouting.mockResolvedValue({
+      success: true,
+      patientId: 'patient-1',
+      threadId: 'thread-1',
+      category: 'billing',
+      threadStatus: 'open',
+    });
     apiMocks.sendSMSConversationMessage.mockResolvedValue({ ok: true });
     apiMocks.createScheduledMessage.mockResolvedValue({ ok: true });
     apiMocks.createSMSTemplate.mockResolvedValue({ ok: true });
@@ -160,6 +172,7 @@ describe('TextMessagesPage', () => {
     apiMocks.fetchScheduledMessages.mockResolvedValue({ scheduled: fixtures.scheduled });
     apiMocks.cancelScheduledMessage.mockResolvedValue({ ok: true });
     apiMocks.getSMSConsent.mockResolvedValue({ hasConsent: true, daysUntilExpiration: 30 });
+    apiMocks.requestSMSConsent.mockResolvedValue({ success: true, consentId: 'consent-1', messageId: 'msg-1', status: 'sent', pendingRequest: true });
     apiMocks.recordSMSConsent.mockResolvedValue({ ok: true });
     apiMocks.revokeSMSConsent.mockResolvedValue({ ok: true });
     apiMocks.fetchSMSAuditLog.mockResolvedValue({
@@ -179,6 +192,7 @@ describe('TextMessagesPage', () => {
       tenantId: 'tenant-1',
       twilioPhoneNumber: '+15551112222',
       appointmentRemindersEnabled: true,
+      appointmentReminderChannel: 'sms',
       reminderHoursBefore: 24,
       allowPatientReplies: true,
       reminderTemplate: 'Reminder body',
@@ -189,6 +203,7 @@ describe('TextMessagesPage', () => {
       isTestMode: false,
     });
     apiMocks.updateSMSSettings.mockResolvedValue({ success: true });
+    apiMocks.simulateInboundSMSConversationMessage.mockResolvedValue({ success: true, messageId: 'in-1' });
     apiMocks.fetchSMSAutoResponses.mockResolvedValue({
       autoResponses: [
         {
@@ -287,6 +302,58 @@ describe('TextMessagesPage', () => {
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('Message scheduled');
   });
 
+  it('simulates inbound replies for test-mode conversation QA', async () => {
+    render(<TextMessagesPage />);
+
+    await screen.findByRole('heading', { name: 'Text Messages' });
+    fireEvent.click(screen.getByText('Ana Derm'));
+    await waitFor(() => expect(apiMocks.fetchSMSConversation).toHaveBeenCalledWith('tenant-1', 'token-1', 'patient-1'));
+
+    const messageBox = screen.getByPlaceholderText('Type a message...') as HTMLTextAreaElement;
+    fireEvent.change(messageBox, { target: { value: 'C' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate Reply' }));
+    await waitFor(() =>
+      expect(apiMocks.simulateInboundSMSConversationMessage).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        'patient-1',
+        'C',
+      ),
+    );
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Inbound test message simulated');
+  });
+
+  it('opens SMS consent workflow and sends an opt-in request when consent is missing', async () => {
+    apiMocks.getSMSConsent.mockResolvedValueOnce({
+      hasConsent: false,
+      pendingRequest: false,
+      optedOut: false,
+      daysUntilExpiration: null,
+    });
+
+    render(<TextMessagesPage />);
+
+    await screen.findByRole('heading', { name: 'Text Messages' });
+    fireEvent.click(screen.getByText('Ana Derm'));
+    await waitFor(() => expect(apiMocks.fetchSMSConversation).toHaveBeenCalledWith('tenant-1', 'token-1', 'patient-1'));
+
+    const messageBox = screen.getByPlaceholderText('Type a message...') as HTMLTextAreaElement;
+    fireEvent.change(messageBox, { target: { value: 'Hello there' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    const consentModal = await screen.findByTestId('modal-sms-consent');
+    expect(within(consentModal).getByText('Send Opt-In Text')).toBeInTheDocument();
+
+    fireEvent.click(within(consentModal).getByRole('button', { name: 'Send Opt-In Text' }));
+    fireEvent.click(within(consentModal).getAllByRole('button', { name: 'Send Opt-In Text' })[1]);
+
+    await waitFor(() =>
+      expect(apiMocks.requestSMSConsent).toHaveBeenCalledWith('tenant-1', 'token-1', 'patient-1'),
+    );
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Opt-in text sent');
+  });
+
   it('manages templates, bulk send, scheduled cancel, and opt-in settings', async () => {
     const fixtures = buildFixtures();
     render(<TextMessagesPage />);
@@ -357,7 +424,7 @@ describe('TextMessagesPage', () => {
     );
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('Scheduled message cancelled');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Opt-In Mgmt' }));
     fireEvent.click(screen.getByRole('button', { name: 'Opt Out' }));
     await waitFor(() =>
       expect(toastMocks.showSuccess).toHaveBeenCalledWith('Patient opted out of SMS'),
@@ -449,6 +516,70 @@ describe('TextMessagesPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Templates' }));
     expect(screen.getByText('No templates yet')).toBeInTheDocument();
+  });
+
+  it('routes conversations between support groups and defaults billing users to billing texts', async () => {
+    authMocks.user = { role: 'billing' };
+    apiMocks.fetchSMSConversations.mockResolvedValueOnce({
+      conversations: [
+        {
+          patientId: 'patient-1',
+          firstName: 'Ana',
+          lastName: 'Derm',
+          phone: '5551112222',
+          lastMessage: 'Balance question',
+          lastMessageTime: '2024-04-10T10:00:00.000Z',
+          unreadCount: 1,
+          smsOptIn: true,
+          category: 'billing',
+          threadStatus: 'open',
+          threadId: 'thread-1',
+        },
+        {
+          patientId: 'patient-2',
+          firstName: 'Ben',
+          lastName: 'Skin',
+          phone: '5553334444',
+          lastMessage: 'Need to reschedule',
+          lastMessageTime: '2024-04-09T10:00:00.000Z',
+          unreadCount: 0,
+          smsOptIn: true,
+          category: 'appointment',
+          threadStatus: 'open',
+          threadId: 'thread-2',
+        },
+      ],
+    });
+    apiMocks.fetchSMSConversation.mockResolvedValueOnce({
+      patientId: 'patient-1',
+      patientName: 'Ana Derm',
+      patientPhone: '5551112222',
+      category: 'billing',
+      threadStatus: 'open',
+      threadId: 'thread-1',
+      messages: [],
+    });
+
+    render(<TextMessagesPage />);
+
+    await screen.findByRole('heading', { name: 'Text Messages' });
+    expect(screen.getByText('Ana Derm')).toBeInTheDocument();
+    expect(screen.queryByText('Ben Skin')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Ana Derm'));
+    await screen.findByText('No messages yet');
+
+    fireEvent.change(screen.getByLabelText('Route conversation'), { target: { value: 'medical' } });
+
+    await waitFor(() =>
+      expect(apiMocks.updateSMSConversationRouting).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        'patient-1',
+        'medical',
+      ),
+    );
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Conversation routed to Medical');
   });
 
   it('handles fallbacks, scheduling, and settings toggles', async () => {
@@ -614,7 +745,7 @@ describe('TextMessagesPage', () => {
     // After cancellation, the status should be updated to 'cancelled'
     await waitFor(() => expect(screen.getByText('cancelled')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Opt-In Mgmt' }));
     fireEvent.click(screen.getByRole('button', { name: 'Opt In' }));
     await waitFor(() =>
       expect(toastMocks.showSuccess).toHaveBeenCalledWith('Patient opted in to SMS'),
@@ -870,7 +1001,7 @@ describe('TextMessagesPage', () => {
     expect(screen.getByText('5550009999')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Opt-In Mgmt' }));
     expect(screen.getByText('(555) 222-3333')).toBeInTheDocument();
     const optedOutRow = screen.getByText('Null').closest('tr') as HTMLElement;
     expect(within(optedOutRow).getByText('-')).toBeInTheDocument();

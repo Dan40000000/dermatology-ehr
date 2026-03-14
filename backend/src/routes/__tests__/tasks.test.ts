@@ -66,7 +66,26 @@ describe("Tasks routes - List", () => {
     const res = await request(app).get("/tasks?status=completed");
 
     expect(res.status).toBe(200);
-    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining("t.status = $2"), expect.arrayContaining(["completed"]));
+    const [query, params] = queryMock.mock.calls[0];
+    expect(query).toContain("LOWER(COALESCE(t.status, '')) = ANY($2)");
+    expect(params[1]).toContain("completed");
+  });
+
+  it("GET /tasks supports legacy open status and normalizes response", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ id: "task-legacy", title: "Legacy Task", status: "open", priority: "medium" }],
+      rowCount: 1,
+    });
+
+    const res = await request(app).get("/tasks?status=open");
+
+    expect(res.status).toBe(200);
+    expect(res.body.tasks[0].status).toBe("todo");
+    expect(res.body.tasks[0].priority).toBe("normal");
+
+    const [query, params] = queryMock.mock.calls[0];
+    expect(query).toContain("LOWER(COALESCE(t.status, '')) = ANY($2)");
+    expect(params[1]).toEqual(expect.arrayContaining(["todo", "open"]));
   });
 
   it("GET /tasks filters by category", async () => {

@@ -6,6 +6,26 @@ describe('moduleAccess', () => {
     expect(canAccessModule('admin', 'admin')).toBe(true);
   });
 
+  it('treats owner aliases as admin-equivalent access', () => {
+    expect(canAccessModule('owner', 'admin')).toBe(true);
+    expect(canAccessModule('practice_owner', 'financials')).toBe(true);
+  });
+
+  it('hides analytics from providers', () => {
+    expect(canAccessModule('provider', 'analytics')).toBe(false);
+  });
+
+  it('hides analytics from billing while keeping financial dashboards', () => {
+    expect(canAccessModule('billing', 'analytics')).toBe(false);
+    expect(canAccessModule('billing', 'financials')).toBe(true);
+  });
+
+  it('keeps front desk out of financial dashboards while preserving claims access', () => {
+    expect(canAccessModule('front_desk', 'financials')).toBe(false);
+    expect(canAccessModule('front_desk', 'claims')).toBe(true);
+    expect(canAccessModule('front_desk', 'clearinghouse')).toBe(true);
+  });
+
   it('denies front desk access to quality', () => {
     expect(canAccessModule('front_desk', 'quality')).toBe(false);
   });
@@ -22,5 +42,26 @@ describe('moduleAccess', () => {
     expect(getModuleForPath('/ambient-scribe')).toBe('ambient_scribe');
     expect(canAccessModule('front_desk', 'ambient_scribe')).toBe(false);
     expect(canAccessModule('provider', 'ambient_scribe')).toBe(true);
+  });
+
+  it('blocks front desk access from clinical modules', () => {
+    expect(canAccessModule('front_desk', 'notes')).toBe(false);
+    expect(canAccessModule('front_desk', 'orders')).toBe(false);
+    expect(canAccessModule('front_desk', 'rx')).toBe(false);
+    expect(canAccessModule('front_desk', 'labs')).toBe(false);
+    expect(canAccessModule('front_desk', 'photos')).toBe(false);
+    expect(canAccessModule('front_desk', 'body_diagram')).toBe(false);
+  });
+
+  it('normalizes role aliases for module access decisions', () => {
+    expect(canAccessModule('medical_assistant', 'labs')).toBe(true);
+    expect(canAccessModule('receptionist', 'schedule')).toBe(true);
+    expect(canAccessModule('receptionist', 'notes')).toBe(false);
+  });
+
+  it('keeps non-clinical staff constrained to non-clinical modules', () => {
+    expect(canAccessModule('staff', 'home')).toBe(true);
+    expect(canAccessModule('staff', 'tasks')).toBe(true);
+    expect(canAccessModule('staff', 'notes')).toBe(false);
   });
 });

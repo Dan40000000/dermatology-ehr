@@ -602,7 +602,7 @@ export function AppointmentFlowPage() {
                   e.currentTarget.style.boxShadow = '0 4px 6px rgba(251, 191, 36, 0.3)';
                 }}
               >
-                Record Inventory
+                Add Used Items
               </button>
             )}
             {selectedAppointment && selectedAppointment.flowStatus !== 'completed' && selectedAppointment.flowStatus !== 'no-show' && (

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import type { ReactNode } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -8,29 +9,76 @@ import { PatientBodyDiagram } from '../components/body-diagram';
 import { ScribePanel } from '../components/ScribePanel';
 import { ClinicalTrendsTab } from '../components/clinical/ClinicalTrendsTab';
 // Lesion type no longer needed - using PatientBodyDiagram with BodyMarker type
-import { TasksTab, PatientScribeSummaries, PatientScribeSnapshot } from '../components/patient';
+import { TasksTab, PatientBalanceSummary, PatientScribeSummaries, PatientScribeSnapshot } from '../components/patient';
 import { RxHistoryTab } from '../components/RxHistoryTab';
 import { ActiveMedicationsCard } from '../components/prescriptions';
 import { CoverageSummaryCard } from '../components/Insurance/CoverageSummaryCard';
 import { hasRole } from '../utils/roles';
+import { formatPhoneDisplay } from '../utils/phone';
 import {
   fetchPatient,
   fetchEncounters,
   fetchAppointments,
   fetchDocuments,
   fetchPhotos,
+  fetchVitals,
   fetchOrders,
   fetchPrescriptionsEnhanced,
   fetchTasks,
   fetchEligibilityHistory,
   verifyPatientEligibility,
   deletePatient,
+  uploadPhotoFile,
+  createPhoto,
+  getPresignedAccess,
+  signUploadKey,
   API_BASE_URL,
   TENANT_HEADER_NAME,
 } from '../api';
-import type { Patient, Encounter, Appointment, Document, Photo, Prescription, Task, Order } from '../types';
+import type {
+  Patient,
+  Encounter,
+  Appointment,
+  Document,
+  Photo,
+  Prescription,
+  Task,
+  Order,
+  PhotoType,
+} from '../types';
+import type { Vital } from '../api';
 
-type TabId = 'overview' | 'demographics' | 'insurance' | 'medical-history' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks' | 'scribe';
+type TabId = 'overview' | 'demographics' | 'insurance' | 'account' | 'medical-history' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks' | 'scribe';
+
+const PHOTO_BODY_LOCATIONS = [
+  'Face',
+  'Scalp',
+  'Neck',
+  'Chest',
+  'Back',
+  'Abdomen',
+  'Upper Arm (L)',
+  'Upper Arm (R)',
+  'Forearm (L)',
+  'Forearm (R)',
+  'Hand (L)',
+  'Hand (R)',
+  'Upper Leg (L)',
+  'Upper Leg (R)',
+  'Lower Leg (L)',
+  'Lower Leg (R)',
+  'Foot (L)',
+  'Foot (R)',
+  'Other',
+];
+
+const PHOTO_TYPE_OPTIONS: Array<{ value: PhotoType; label: string }> = [
+  { value: 'clinical', label: 'Clinical' },
+  { value: 'before', label: 'Before Treatment' },
+  { value: 'after', label: 'After Treatment' },
+  { value: 'dermoscopy', label: 'Dermoscopy' },
+  { value: 'baseline', label: 'Baseline' },
+];
 
 export function PatientDetailPage() {
   const { patientId } = useParams<{ patientId: string }>();
@@ -51,6 +99,7 @@ export function PatientDetailPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+  const [vitalsHistory, setVitalsHistory] = useState<Vital[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   // Body diagram state is now managed by the PatientBodyDiagram component
@@ -66,6 +115,35 @@ export function PatientDetailPage() {
   const [editMedicationOpen, setEditMedicationOpen] = useState(false);
   const [editProblemOpen, setEditProblemOpen] = useState(false);
   const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
+  const [resolvedPhotoUrls, setResolvedPhotoUrls] = useState<Record<string, string>>({});
+  const [showPhotoUploadModal, setShowPhotoUploadModal] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [isPhotoUploadDragOver, setIsPhotoUploadDragOver] = useState(false);
+  const photoFileInputRef = useRef<HTMLInputElement | null>(null);
+  const photoCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const [photoUploadForm, setPhotoUploadForm] = useState({
+    bodyLocation: '',
+    description: '',
+    photoType: 'clinical' as PhotoType,
+    file: null as File | null,
+    previewUrl: '',
+  });
+  const buildInitialPhotoUploadForm = (
+    overrides?: Partial<{
+      bodyLocation: string;
+      description: string;
+      photoType: PhotoType;
+      file: File | null;
+      previewUrl: string;
+    }>
+  ) => ({
+    bodyLocation: '',
+    description: '',
+    photoType: 'clinical' as PhotoType,
+    file: null as File | null,
+    previewUrl: '',
+    ...(overrides || {}),
+  });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -99,22 +177,29 @@ export function PatientDetailPage() {
 
       // Non-critical fetches - don't fail the page if these fail
       try {
+        const vitalsRes = await fetchVitals(session.tenantId, session.accessToken, patientId);
+        setVitalsHistory(vitalsRes.vitals || []);
+      } catch {
+        setVitalsHistory([]);
+      }
+
+      try {
         const documentsRes = await fetchDocuments(session.tenantId, session.accessToken);
         setDocuments(
           (documentsRes.documents || []).filter((d: Document) => d.patientId === patientId)
         );
-      } catch (docErr) {
-        console.warn('Failed to load documents:', docErr);
+      } catch {
         setDocuments([]);
       }
 
       try {
-        const photosRes = await fetchPhotos(session.tenantId, session.accessToken);
+        const photosRes = await fetchPhotos(session.tenantId, session.accessToken, { patientId });
         setPhotos(
-          (photosRes.photos || []).filter((p: Photo) => p.patientId === patientId)
+          (photosRes.photos || []).filter(
+            (p: Photo & { patient_id?: string }) => p.patientId === patientId || p.patient_id === patientId
+          )
         );
-      } catch (photoErr) {
-        console.warn('Failed to load photos:', photoErr);
+      } catch {
         setPhotos([]);
       }
 
@@ -123,24 +208,21 @@ export function PatientDetailPage() {
         setTasks(
           (tasksRes.tasks || []).filter((t: Task) => t.patientId === patientId)
         );
-      } catch (taskErr) {
-        console.warn('Failed to load tasks:', taskErr);
+      } catch {
         setTasks([]);
       }
 
       try {
         const prescriptionsRes = await fetchPrescriptionsEnhanced(session.tenantId, session.accessToken, { patientId });
         setPrescriptions(prescriptionsRes.prescriptions || []);
-      } catch (rxErr) {
-        console.warn('Failed to load prescriptions:', rxErr);
+      } catch {
         setPrescriptions([]);
       }
 
       try {
         const ordersRes = await fetchOrders(session.tenantId, session.accessToken, { patientId });
         setOrders(ordersRes.orders || []);
-      } catch (ordersErr) {
-        console.warn('Failed to load orders:', ordersErr);
+      } catch {
         setOrders([]);
       }
     } catch (err: any) {
@@ -155,13 +237,234 @@ export function PatientDetailPage() {
     }
   }, [session, patientId, showError, navigate]);
 
+  const resetPhotoUploadForm = () => {
+    setPhotoUploadForm((prev) => {
+      if (prev.previewUrl) {
+        URL.revokeObjectURL(prev.previewUrl);
+      }
+      return {
+        bodyLocation: '',
+        description: '',
+        photoType: 'clinical' as PhotoType,
+        file: null,
+        previewUrl: '',
+      };
+    });
+    if (photoFileInputRef.current) {
+      photoFileInputRef.current.value = '';
+    }
+    if (photoCameraInputRef.current) {
+      photoCameraInputRef.current.value = '';
+    }
+    setIsPhotoUploadDragOver(false);
+  };
+
+  const clearSelectedPhotoUploadFile = () => {
+    setPhotoUploadForm((prev) => {
+      if (prev.previewUrl) {
+        URL.revokeObjectURL(prev.previewUrl);
+      }
+      return { ...prev, file: null, previewUrl: '' };
+    });
+    if (photoFileInputRef.current) {
+      photoFileInputRef.current.value = '';
+    }
+    if (photoCameraInputRef.current) {
+      photoCameraInputRef.current.value = '';
+    }
+    setIsPhotoUploadDragOver(false);
+  };
+
+  const applySelectedPhotoUploadFile = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      showError('Please select an image file');
+      return;
+    }
+    const previewUrl = URL.createObjectURL(file);
+    setPhotoUploadForm((prev) => {
+      if (prev.previewUrl) {
+        URL.revokeObjectURL(prev.previewUrl);
+      }
+      return { ...prev, file, previewUrl };
+    });
+  };
+
+  const handleProfilePhotoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      applySelectedPhotoUploadFile(file);
+    }
+  };
+
+  const handleProfilePhotoDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsPhotoUploadDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      applySelectedPhotoUploadFile(file);
+    }
+  };
+
+  const getPhotoDisplayUrl = (photo: Photo) => {
+    const resolved = resolvedPhotoUrls[photo.id];
+    if (resolved) {
+      return resolved;
+    }
+    if (photo.url?.startsWith('/')) {
+      return `${API_BASE_URL}${photo.url}`;
+    }
+    return photo.url;
+  };
+
+  const getLocalUploadKey = (photo: Photo) => {
+    if (photo.objectKey) {
+      return photo.objectKey;
+    }
+    if (!photo.url) {
+      return null;
+    }
+
+    try {
+      const path = photo.url.startsWith('http')
+        ? new URL(photo.url).pathname
+        : photo.url;
+      const match = path.match(/\/(?:api\/)?uploads\/([^/?#]+)/i);
+      if (match?.[1]) {
+        return decodeURIComponent(match[1]);
+      }
+    } catch {
+      // Fall through to basic parsing below.
+    }
+
+    const fallback = photo.url.split('/').pop();
+    if (!fallback) {
+      return null;
+    }
+    return decodeURIComponent(fallback.split('?')[0]?.split('#')[0] || fallback);
+  };
+
+  const handleProfilePhotoUpload = async () => {
+    if (!session || !patientId || !photoUploadForm.file) {
+      showError('Please select a photo');
+      return;
+    }
+
+    setIsUploadingPhoto(true);
+    try {
+      const uploadResult = await uploadPhotoFile(
+        session.tenantId,
+        session.accessToken,
+        photoUploadForm.file
+      );
+
+      await createPhoto(session.tenantId, session.accessToken, {
+        patientId,
+        url: uploadResult.url,
+        objectKey: uploadResult.objectKey,
+        storage: uploadResult.storage,
+        photoType: photoUploadForm.photoType,
+        bodyLocation: photoUploadForm.bodyLocation || undefined,
+        bodyRegion: photoUploadForm.bodyLocation || undefined,
+        description: photoUploadForm.description || undefined,
+        filename: photoUploadForm.file.name,
+        mimeType: photoUploadForm.file.type,
+        fileSize: photoUploadForm.file.size,
+      });
+
+      showSuccess('Photo uploaded successfully');
+      setShowPhotoUploadModal(false);
+      resetPhotoUploadForm();
+      await loadPatientData();
+      setActiveTab('photos');
+    } catch (err: any) {
+      showError(err.message || 'Failed to upload photo');
+    } finally {
+      setIsUploadingPhoto(false);
+    }
+  };
+
   const nextAppointment = appointments
     .filter((a) => a.status !== 'cancelled')
     .sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime())[0];
+  const latestVital = vitalsHistory[0];
 
   useEffect(() => {
     loadPatientData();
   }, [loadPatientData]);
+
+  useEffect(
+    () => () => {
+      if (photoUploadForm.previewUrl) {
+        URL.revokeObjectURL(photoUploadForm.previewUrl);
+      }
+    },
+    [photoUploadForm.previewUrl]
+  );
+
+  useEffect(() => {
+    if (!session || photos.length === 0) {
+      setResolvedPhotoUrls({});
+      return;
+    }
+
+    let cancelled = false;
+
+    const resolveUrls = async () => {
+      const urlEntries = await Promise.all(
+        photos.map(async (photo) => {
+          try {
+            const localUploadKey = getLocalUploadKey(photo);
+            if (photo.storage === 'local' || (!photo.storage && localUploadKey)) {
+              const key = localUploadKey;
+              if (key) {
+                const signed = await signUploadKey(session.tenantId, session.accessToken, key);
+                const signedUrl = signed.url.startsWith('http')
+                  ? signed.url
+                  : `${API_BASE_URL}${signed.url}`;
+                return [photo.id, signedUrl] as const;
+              }
+            }
+
+            if (photo.storage === 's3' && photo.objectKey) {
+              if (photo.url && /^https?:\/\//.test(photo.url)) {
+                return [photo.id, photo.url] as const;
+              }
+              try {
+                const signed = await getPresignedAccess(
+                  session.tenantId,
+                  session.accessToken,
+                  photo.objectKey
+                );
+                return [photo.id, signed.url] as const;
+              } catch {
+                // Fallback to persisted URL if presign lookup fails.
+              }
+            }
+
+            if (photo.url?.startsWith('/')) {
+              return [photo.id, `${API_BASE_URL}${photo.url}`] as const;
+            }
+
+            return [photo.id, photo.url] as const;
+          } catch {
+            return [photo.id, photo.url] as const;
+          }
+        })
+      );
+
+      if (!cancelled) {
+        setResolvedPhotoUrls(
+          Object.fromEntries(urlEntries.filter((entry): entry is [string, string] => Boolean(entry[1])))
+        );
+      }
+    };
+
+    resolveUrls();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [photos, session]);
 
   useEffect(() => {
     if (!scribeParam || !patient) return;
@@ -250,6 +553,7 @@ export function PatientDetailPage() {
     { id: 'overview', label: 'Overview', icon: '' },
     { id: 'demographics', label: 'Demographics', icon: '' },
     { id: 'insurance', label: 'Insurance', icon: '' },
+    { id: 'account', label: 'Account', icon: '' },
     { id: 'medical-history', label: 'Medical History', icon: '' },
     { id: 'clinical-trends', label: 'Clinical Trends', icon: '📊' },
     { id: 'encounters', label: 'Encounters', icon: '', count: encounters.length },
@@ -372,7 +676,12 @@ export function PatientDetailPage() {
       <div style={{
         display: 'flex',
         background: '#f3f4f6',
-        borderBottom: '1px solid #e5e7eb'
+        borderBottom: '1px solid #e5e7eb',
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        whiteSpace: 'nowrap',
+        WebkitOverflowScrolling: 'touch',
+        scrollbarWidth: 'thin',
       }}>
         {tabs.map((tab) => (
           <button
@@ -390,7 +699,9 @@ export function PatientDetailPage() {
               display: 'flex',
               alignItems: 'center',
               gap: '0.5rem',
-              fontSize: '0.875rem'
+              fontSize: '0.875rem',
+              whiteSpace: 'nowrap',
+              flex: '0 0 auto',
             }}
           >
             <span>{tab.icon}</span>
@@ -436,10 +747,20 @@ export function PatientDetailPage() {
                   gap: '0.75rem'
                 }}>
                   {[
-                    { label: 'BP', value: '120/80', unit: 'mmHg' },
-                    { label: 'Pulse', value: '72', unit: 'bpm' },
-                    { label: 'Temp', value: '98.6', unit: '°F' },
-                    { label: 'Weight', value: '165', unit: 'lbs' },
+                    {
+                      label: 'BP',
+                      value: latestVital?.bpSystolic && latestVital?.bpDiastolic
+                        ? `${latestVital.bpSystolic}/${latestVital.bpDiastolic}`
+                        : '--',
+                      unit: 'mmHg',
+                    },
+                    { label: 'Pulse', value: latestVital?.pulse ?? '--', unit: 'bpm' },
+                    {
+                      label: 'Temp',
+                      value: latestVital?.tempC ?? '--',
+                      unit: '°C',
+                    },
+                    { label: 'Weight', value: latestVital?.weightKg ?? '--', unit: 'kg' },
                   ].map((vital) => (
                     <div
                       key={vital.label}
@@ -464,8 +785,25 @@ export function PatientDetailPage() {
                   ))}
                 </div>
                 <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.5rem' }}>
-                  Last recorded: {new Date().toLocaleDateString()}
+                  Last recorded: {latestVital
+                    ? new Date(latestVital.recordedAt || latestVital.createdAt).toLocaleDateString()
+                    : 'No vitals on file'}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('clinical-trends')}
+                  style={{
+                    marginTop: '0.5rem',
+                    border: 'none',
+                    background: 'transparent',
+                    color: '#0369a1',
+                    fontSize: '0.75rem',
+                    cursor: 'pointer',
+                    padding: 0,
+                  }}
+                >
+                  View full vitals history
+                </button>
               </div>
 
               {/* Recent Activity */}
@@ -777,6 +1115,10 @@ export function PatientDetailPage() {
           <InsuranceTab patient={patient} onEdit={() => setEditInsuranceOpen(true)} />
         )}
 
+        {activeTab === 'account' && patientId && (
+          <PatientBalanceSummary patientId={patientId} />
+        )}
+
         {activeTab === 'medical-history' && (
           <MedicalHistoryTab
             patient={patient}
@@ -800,8 +1142,9 @@ export function PatientDetailPage() {
         {activeTab === 'photos' && (
           <PhotosTab
             photos={photos}
-            onUpload={() => alert('Photo upload feature coming soon')}
+            onUpload={() => setShowPhotoUploadModal(true)}
             onView={(photo) => setSelectedPhoto(photo)}
+            getPhotoUrl={getPhotoDisplayUrl}
           />
         )}
 
@@ -830,6 +1173,7 @@ export function PatientDetailPage() {
             appointments={appointments}
             documents={documents}
             photos={photos}
+            getPhotoUrl={getPhotoDisplayUrl}
           />
         )}
       </div>
@@ -846,7 +1190,7 @@ export function PatientDetailPage() {
               <div>
                 <h3 style={{ margin: 0 }}>{patient.lastName}, {patient.firstName}</h3>
                 <p style={{ margin: '0.25rem 0', color: '#4b5563' }}>{patient.dob ? new Date(patient.dob).toLocaleDateString() : 'DOB: N/A'} • {patient.sex || 'Sex: N/A'}</p>
-                <p style={{ margin: '0.25rem 0', color: '#6b7280' }}>{patient.phone || 'No phone'} • {patient.email || 'No email'}</p>
+                <p style={{ margin: '0.25rem 0', color: '#6b7280' }}>{formatPhoneDisplay(patient.phone) || 'No phone'} • {patient.email || 'No email'}</p>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button type="button" className="btn secondary" onClick={() => setShowFaceSheet(false)}>Close</button>
@@ -948,11 +1292,164 @@ export function PatientDetailPage() {
         session={session}
       />
 
+      <Modal
+        isOpen={showPhotoUploadModal}
+        onClose={() => {
+          setShowPhotoUploadModal(false);
+          resetPhotoUploadForm();
+        }}
+        size="lg"
+        title="Upload Clinical Photo"
+      >
+        <div className="modal-form">
+          <div className="form-row">
+            <div className="form-field">
+              <label>Body Location</label>
+              <select
+                value={photoUploadForm.bodyLocation}
+                onChange={(e) =>
+                  setPhotoUploadForm((prev) => ({ ...prev, bodyLocation: e.target.value }))
+                }
+              >
+                <option value="">Select location...</option>
+                {PHOTO_BODY_LOCATIONS.map((location) => (
+                  <option key={location} value={location}>
+                    {location}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-field">
+              <label>Type</label>
+              <select
+                value={photoUploadForm.photoType}
+                onChange={(e) =>
+                  setPhotoUploadForm((prev) => ({
+                    ...prev,
+                    photoType: e.target.value as PhotoType,
+                  }))
+                }
+              >
+                {PHOTO_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="form-field">
+            <label>Description</label>
+            <textarea
+              value={photoUploadForm.description}
+              onChange={(e) =>
+                setPhotoUploadForm((prev) => ({ ...prev, description: e.target.value }))
+              }
+              rows={3}
+              placeholder="Optional note about this photo..."
+            />
+          </div>
+
+          <div className="form-field">
+            <label>Photo *</label>
+            <input
+              ref={photoFileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleProfilePhotoFileSelect}
+              style={{ display: 'none' }}
+            />
+            <input
+              ref={photoCameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleProfilePhotoFileSelect}
+              style={{ display: 'none' }}
+            />
+
+            {photoUploadForm.previewUrl ? (
+              <div className="upload-preview">
+                <img src={photoUploadForm.previewUrl} alt="Photo preview" />
+                <button
+                  type="button"
+                  className="btn-sm btn-secondary"
+                  onClick={clearSelectedPhotoUploadFile}
+                >
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <div
+                className={`upload-dropzone ${isPhotoUploadDragOver ? 'drag-active' : ''}`}
+                onClick={() => photoFileInputRef.current?.click()}
+                onDragEnter={() => setIsPhotoUploadDragOver(true)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsPhotoUploadDragOver(true);
+                }}
+                onDragLeave={() => setIsPhotoUploadDragOver(false)}
+                onDrop={handleProfilePhotoDrop}
+              >
+                <div className="upload-icon"></div>
+                <p>Drag and drop an image here</p>
+                <p className="muted tiny">JPG, PNG, or HEIC supported</p>
+                <div className="upload-dropzone-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      photoFileInputRef.current?.click();
+                    }}
+                  >
+                    Browse Files
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      photoCameraInputRef.current?.click();
+                    }}
+                  >
+                    Take Photo
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="modal-footer">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setShowPhotoUploadModal(false);
+              resetPhotoUploadForm();
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={handleProfilePhotoUpload}
+            disabled={isUploadingPhoto || !photoUploadForm.file}
+          >
+            {isUploadingPhoto ? 'Uploading...' : 'Upload Photo'}
+          </button>
+        </div>
+      </Modal>
+
       {selectedPhoto && (
         <Modal isOpen={true} onClose={() => setSelectedPhoto(null)} size="lg" title="Photo Viewer">
           <div style={{ textAlign: 'center' }}>
             <img
-              src={selectedPhoto.url}
+              src={getPhotoDisplayUrl(selectedPhoto)}
               alt={selectedPhoto.description || 'Patient photo'}
               style={{ maxWidth: '100%', maxHeight: '70vh', objectFit: 'contain' }}
             />
@@ -1017,7 +1514,7 @@ function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => 
             Contact Information
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <InfoRow label="Phone" value={patient.phone || 'Not provided'} />
+            <InfoRow label="Phone" value={formatPhoneDisplay(patient.phone) || 'Not provided'} />
             <InfoRow label="Email" value={patient.email || 'Not provided'} />
             <InfoRow
               label="Address"
@@ -1034,7 +1531,7 @@ function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <InfoRow label="Name" value={(patient as any).emergencyContactName || 'Not provided'} />
             <InfoRow label="Relationship" value={(patient as any).emergencyContactRelationship || 'Not provided'} />
-            <InfoRow label="Phone" value={(patient as any).emergencyContactPhone || 'Not provided'} />
+            <InfoRow label="Phone" value={formatPhoneDisplay((patient as any).emergencyContactPhone) || 'Not provided'} />
           </div>
         </div>
 
@@ -1599,11 +2096,13 @@ function DocumentsTab({
 function PhotosTab({
   photos,
   onUpload,
-  onView
+  onView,
+  getPhotoUrl,
 }: {
   photos: Photo[];
   onUpload: () => void;
   onView: (photo: Photo) => void;
+  getPhotoUrl: (photo: Photo) => string;
 }) {
   return (
     <div style={{ maxWidth: '1200px' }}>
@@ -1653,7 +2152,7 @@ function PhotosTab({
             >
               <div style={{ aspectRatio: '1', overflow: 'hidden', background: '#f3f4f6' }}>
                 <img
-                  src={photo.url}
+                  src={getPhotoUrl(photo)}
                   alt={photo.description || 'Patient photo'}
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 />
@@ -1675,7 +2174,7 @@ function PhotosTab({
 }
 
 // Helper component for displaying info rows
-function InfoRow({ label, value }: { label: string; value: string | number }) {
+function InfoRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
       <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem' }}>{label}</div>
@@ -2038,12 +2537,14 @@ function TimelineTab({
   appointments,
   documents,
   photos,
+  getPhotoUrl,
 }: {
   patient: Patient;
   encounters: Encounter[];
   appointments: Appointment[];
   documents: Document[];
   photos: Photo[];
+  getPhotoUrl: (photo: Photo) => string;
 }) {
   const [selectedFilters, setSelectedFilters] = useState<Set<string>>(
     new Set(['encounter', 'appointment', 'document', 'photo'])
@@ -2414,7 +2915,7 @@ function TimelineTab({
                     <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #e5e7eb' }}>
                       <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                         <img
-                          src={(event.data as Photo).url}
+                          src={getPhotoUrl(event.data as Photo)}
                           alt={event.description}
                           style={{
                             width: '80px',
@@ -2478,3 +2979,4 @@ function TimelineTab({
     </div>
   );
 }
+ 

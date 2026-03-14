@@ -23,6 +23,8 @@ const apiMocks = vi.hoisted(() => ({
   updatePhotoAnnotations: vi.fn(),
   createComparisonGroup: vi.fn(),
   fetchComparisonGroup: vi.fn(),
+  getPresignedAccess: vi.fn(),
+  signUploadKey: vi.fn(),
   API_BASE_URL: 'http://api.test',
 }));
 
@@ -164,6 +166,8 @@ describe('PhotosPage', () => {
     });
     apiMocks.createPhoto.mockResolvedValue({ id: 'photo-3' });
     apiMocks.updatePhotoAnnotations.mockResolvedValue({ ok: true });
+    apiMocks.getPresignedAccess.mockResolvedValue({ url: 'http://signed.test/photo' });
+    apiMocks.signUploadKey.mockResolvedValue({ url: '/api/uploads/file?token=t', token: 't' });
   });
 
   afterEach(() => {
@@ -242,9 +246,9 @@ describe('PhotosPage', () => {
     );
 
     await screen.findByText('Clinical Photos');
-    const checkboxes = screen.getAllByRole('checkbox');
-    fireEvent.click(checkboxes[0]);
-    fireEvent.click(checkboxes[1]);
+    const compareButtons = screen.getAllByRole('button', { name: 'Compare' });
+    fireEvent.click(compareButtons[0]);
+    fireEvent.click(compareButtons[1]);
 
     const compareButton = screen.getByRole('button', { name: /Compare \(2\)/ });
     expect(compareButton).not.toBeDisabled();

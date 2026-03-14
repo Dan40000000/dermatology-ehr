@@ -150,6 +150,7 @@ function registerSmsService(container: ServiceContainer): void {
       new TwilioSmsAdapter({
         accountSid: process.env.TWILIO_ACCOUNT_SID!,
         authToken: process.env.TWILIO_AUTH_TOKEN!,
+        messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID || undefined,
       })
     );
     logger.debug("Registered TwilioSmsAdapter");
@@ -218,11 +219,27 @@ function registerVirusScanService(container: ServiceContainer): void {
  */
 function registerEmailService(container: ServiceContainer): void {
   const useMock = shouldMockService("USE_MOCK_EMAIL");
-  const hasSmtpConfig = hasCredentials(["SMTP_HOST"]);
+  const smtpHost = (process.env.SMTP_HOST || process.env.SENDGRID_SMTP_HOST || config.email.smtp.host || "").trim();
+  const smtpPassword = (
+    process.env.SMTP_PASSWORD ||
+    process.env.SENDGRID_SMTP_API_KEY ||
+    process.env.TWILIO_SENDGRID_API_KEY ||
+    config.email.smtp.password ||
+    ""
+  ).trim();
+  const explicitSmtpUser = (process.env.SMTP_USER || process.env.SENDGRID_SMTP_USERNAME || config.email.smtp.user || "").trim();
+  const smtpUser = explicitSmtpUser || (/sendgrid/i.test(smtpHost) && smtpPassword ? "apikey" : "");
+  const hasSmtpConfig = !!(smtpHost && smtpUser && smtpPassword);
+  const hasSesConfig =
+    hasCredentials(["AWS_SES_REGION"]) ||
+    (hasCredentials(["AWS_REGION"]) &&
+      (hasCredentials(["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]) ||
+        process.env.AWS_PROFILE !== undefined));
+  const hasEmailConfig = hasSmtpConfig || hasSesConfig;
 
-  if (useMock || !hasSmtpConfig) {
-    if (!useMock && !hasSmtpConfig) {
-      logger.warn("SMTP not configured, using mock email service");
+  if (useMock || !hasEmailConfig) {
+    if (!useMock && !hasEmailConfig) {
+      logger.warn("Email transport not configured, using mock email service");
     }
 
     container.registerSingleton<IEmailService>(SERVICE_NAMES.EMAIL, () => new MockEmailService());

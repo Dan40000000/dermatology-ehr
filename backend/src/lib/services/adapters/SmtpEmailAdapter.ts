@@ -1,18 +1,21 @@
 /**
  * SMTP Email Adapter
  *
- * Adapter that implements IEmailService interface using console logging.
- * In production, this should be replaced with a real email service
- * (nodemailer, SendGrid, AWS SES, etc.)
- *
- * To use with nodemailer:
- * 1. npm install nodemailer @types/nodemailer
- * 2. Uncomment the nodemailer implementation below
+ * Adapter that implements IEmailService with automatic transport selection:
+ * - SMTP (nodemailer) when SMTP credentials are configured
+ * - AWS SES when SES region/credentials are configured
+ * - Console fallback in development/testing
  */
 
 import { IEmailService, SendEmailParams, SendEmailResult, EmailAttachment } from "../../types/services";
 import { logger } from "../../logger";
 import { config } from "../../../config";
+import {
+  SESClient,
+  SendEmailCommand,
+  GetAccountSendingEnabledCommand,
+} from "@aws-sdk/client-ses";
+import nodemailer, { Transporter } from "nodemailer";
 
 export interface SmtpConfig {
   host: string;
@@ -34,6 +37,9 @@ export interface SmtpConfig {
  */
 export class SmtpEmailAdapter implements IEmailService {
   private defaultFrom: string;
+  private smtpTransporter: Transporter | null;
+  private sesClient: SESClient | null;
+  private sendMode: "console" | "smtp" | "ses";
   private templates: Map<string, (variables: Record<string, unknown>) => { subject: string; html: string; text?: string }> =
     new Map();
 
@@ -44,19 +50,112 @@ export class SmtpEmailAdapter implements IEmailService {
     const fromName = smtpConfig?.fromName || emailConfig.from.name;
 
     this.defaultFrom = fromName ? `${fromName} <${from}>` : from;
+    this.smtpTransporter = this.createSmtpTransporter(smtpConfig);
+    this.sesClient = this.createSesClient();
+    this.sendMode = this.smtpTransporter ? "smtp" : this.sesClient ? "ses" : "console";
 
-    logger.info("SmtpEmailAdapter initialized (console mode)", { from });
+    logger.info("SmtpEmailAdapter initialized", {
+      from,
+      mode: this.sendMode,
+      smtpConfigured: !!this.smtpTransporter,
+      sesRegion: process.env.AWS_SES_REGION || process.env.AWS_REGION || null,
+    });
 
     this.registerDefaultTemplates();
   }
 
   async sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
     const to = Array.isArray(params.to) ? params.to : [params.to];
-    const messageId = `<${Date.now()}-${Math.random().toString(36).substring(2)}@dermatologyehr.local>`;
+    const fallbackMessageId = `<${Date.now()}-${Math.random().toString(36).substring(2)}@dermatologyehr.local>`;
+
+    if (this.sendMode === "smtp" && this.smtpTransporter) {
+      const response = await this.smtpTransporter.sendMail({
+        from: params.from || this.defaultFrom,
+        to: this.normalizeAddressList(params.to),
+        cc: this.normalizeAddressList(params.cc),
+        bcc: this.normalizeAddressList(params.bcc),
+        subject: params.subject || "Message from Dermatology EHR",
+        text: params.text || this.stripHtml(params.html || ""),
+        html: params.html,
+        replyTo: this.normalizeAddressList(params.replyTo),
+        attachments: params.attachments?.map((attachment) => this.toSmtpAttachment(attachment)),
+      });
+
+      const accepted = (response.accepted || []).map((entry: string | { address: string }) =>
+        typeof entry === "string" ? entry : entry.address
+      );
+      const rejected = (response.rejected || []).map((entry: string | { address: string }) =>
+        typeof entry === "string" ? entry : entry.address
+      );
+      const messageId = response.messageId || fallbackMessageId;
+
+      logger.info("Email sent via SMTP", {
+        messageId,
+        acceptedCount: accepted.length,
+        rejectedCount: rejected.length,
+        subject: params.subject,
+      });
+
+      return {
+        messageId,
+        accepted: accepted.length > 0 ? accepted : to,
+        rejected,
+      };
+    }
+
+    if (this.sendMode === "ses" && this.sesClient) {
+      if (params.attachments?.length) {
+        // Simple SES sendEmail does not support attachments; keep this explicit.
+        logger.warn("SES sendEmail called with attachments; attachments are ignored in simple SES mode", {
+          attachmentCount: params.attachments.length,
+        });
+      }
+
+      const destination = {
+        ToAddresses: this.normalizeAddressList(params.to),
+        CcAddresses: this.normalizeAddressList(params.cc),
+        BccAddresses: this.normalizeAddressList(params.bcc),
+      };
+
+      const subject = params.subject || "Message from Dermatology EHR";
+      const text = params.text || this.stripHtml(params.html || "");
+      const html = params.html;
+      const source = params.from || this.defaultFrom;
+
+      const response = await this.sesClient.send(
+        new SendEmailCommand({
+          Source: source,
+          ReplyToAddresses: this.normalizeAddressList(params.replyTo),
+          Destination: destination,
+          Message: {
+            Subject: { Data: subject, Charset: "UTF-8" },
+            Body: {
+              Text: { Data: text, Charset: "UTF-8" },
+              ...(html ? { Html: { Data: html, Charset: "UTF-8" } } : {}),
+            },
+          },
+        })
+      );
+
+      const messageId = response.MessageId || fallbackMessageId;
+      logger.info("Email sent via SES", {
+        messageId,
+        to: destination.ToAddresses,
+        ccCount: destination.CcAddresses?.length || 0,
+        bccCount: destination.BccAddresses?.length || 0,
+        subject,
+      });
+
+      return {
+        messageId,
+        accepted: to,
+        rejected: [],
+      };
+    }
 
     // Log email content (in production, this would actually send)
     logger.info("Email prepared for sending", {
-      messageId,
+      messageId: fallbackMessageId,
       from: params.from || this.defaultFrom,
       to,
       subject: params.subject,
@@ -74,7 +173,7 @@ export class SmtpEmailAdapter implements IEmailService {
     }
 
     return {
-      messageId,
+      messageId: fallbackMessageId,
       accepted: to,
       rejected: [],
     };
@@ -102,7 +201,28 @@ export class SmtpEmailAdapter implements IEmailService {
   }
 
   async verifyConnection(): Promise<boolean> {
-    // In console mode, always return true
+    if (this.sendMode === "smtp" && this.smtpTransporter) {
+      try {
+        await this.smtpTransporter.verify();
+        logger.info("Email connection verified (SMTP mode)");
+        return true;
+      } catch (error) {
+        logger.error("Email SMTP verification failed", { error: (error as Error).message });
+        return false;
+      }
+    }
+
+    if (this.sendMode === "ses" && this.sesClient) {
+      try {
+        await this.sesClient.send(new GetAccountSendingEnabledCommand({}));
+        logger.info("Email connection verified (SES mode)");
+        return true;
+      } catch (error) {
+        logger.error("Email SES verification failed", { error: (error as Error).message });
+        return false;
+      }
+    }
+
     logger.info("Email connection verified (console mode)");
     return true;
   }
@@ -225,6 +345,99 @@ Your Healthcare Team
 This is an automated message. Please do not reply to this email.
       `.trim(),
     }));
+  }
+
+  private createSmtpTransporter(smtpConfig?: Partial<SmtpConfig>): Transporter | null {
+    const host = (
+      smtpConfig?.host ||
+      process.env.SMTP_HOST ||
+      process.env.SENDGRID_SMTP_HOST ||
+      config.email.smtp.host ||
+      ""
+    ).trim();
+    const pass = (
+      smtpConfig?.auth?.pass ||
+      process.env.SMTP_PASSWORD ||
+      process.env.SENDGRID_SMTP_API_KEY ||
+      process.env.TWILIO_SENDGRID_API_KEY ||
+      config.email.smtp.password ||
+      ""
+    ).trim();
+    const explicitUser = (
+      smtpConfig?.auth?.user ||
+      process.env.SMTP_USER ||
+      process.env.SENDGRID_SMTP_USERNAME ||
+      config.email.smtp.user ||
+      ""
+    ).trim();
+    const user = explicitUser || (/sendgrid/i.test(host) && pass ? "apikey" : "");
+
+    if (!host || !user || !pass) {
+      return null;
+    }
+
+    const parsedPort = Number(smtpConfig?.port ?? process.env.SMTP_PORT ?? config.email.smtp.port ?? 587);
+    const port = Number.isFinite(parsedPort) ? parsedPort : 587;
+    const secure = smtpConfig?.secure ?? config.email.smtp.secure;
+
+    return nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: {
+        user,
+        pass,
+      },
+    });
+  }
+
+  private createSesClient(): SESClient | null {
+    const region = (process.env.AWS_SES_REGION || process.env.AWS_REGION || "").trim();
+    if (!region) {
+      return null;
+    }
+
+    const accessKeyId = (process.env.AWS_ACCESS_KEY_ID || "").trim();
+    const secretAccessKey = (process.env.AWS_SECRET_ACCESS_KEY || "").trim();
+    const sessionToken = (process.env.AWS_SESSION_TOKEN || "").trim();
+
+    if (accessKeyId && secretAccessKey) {
+      return new SESClient({
+        region,
+        credentials: {
+          accessKeyId,
+          secretAccessKey,
+          ...(sessionToken ? { sessionToken } : {}),
+        },
+      });
+    }
+
+    // Allow IAM role/instance profile credential provider chain.
+    return new SESClient({ region });
+  }
+
+  private normalizeAddressList(value?: string | string[]): string[] {
+    if (!value) {
+      return [];
+    }
+    const values = Array.isArray(value) ? value : [value];
+    return values.map((entry) => entry.trim()).filter(Boolean);
+  }
+
+  private stripHtml(value: string): string {
+    return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  private toSmtpAttachment(attachment: EmailAttachment): {
+    filename: string;
+    content: Buffer | string;
+    contentType?: string;
+  } {
+    return {
+      filename: attachment.filename,
+      content: attachment.content,
+      ...(attachment.contentType ? { contentType: attachment.contentType } : {}),
+    };
   }
 }
 

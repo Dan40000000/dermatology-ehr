@@ -2,8 +2,17 @@ import request from "supertest";
 import express from "express";
 import { kioskRouter } from "../kiosk";
 import { pool } from "../../db/pool";
+import * as schema from "../../db/schema";
 import * as signatureService from "../../services/signatureService";
 import * as audit from "../../services/audit";
+
+jest.mock("../../middleware/auth", () => ({
+  requireAuth: (req: any, _res: any, next: any) => {
+    req.user = { id: "u-front" };
+    req.tenantId = "tenant-1";
+    return next();
+  },
+}));
 
 jest.mock("../../middleware/kioskAuth", () => ({
   requireKioskAuth: (req: any, _res: any, next: any) => {
@@ -23,6 +32,10 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../db/schema", () => ({
+  getTableColumns: jest.fn(),
+}));
+
 jest.mock("../../services/signatureService");
 jest.mock("../../services/audit");
 
@@ -36,8 +49,10 @@ app.use(express.json());
 app.use("/api/kiosk", kioskRouter);
 
 const queryMock = pool.query as jest.Mock;
+const getTableColumnsMock = schema.getTableColumns as jest.Mock;
 const saveSignatureMock = signatureService.saveSignature as jest.Mock;
 const saveInsuranceCardPhotoMock = signatureService.saveInsuranceCardPhoto as jest.Mock;
+const savePatientProfilePhotoMock = signatureService.savePatientProfilePhoto as jest.Mock;
 const validateSignatureDataMock = signatureService.validateSignatureData as jest.Mock;
 const auditLogMock = audit.auditLog as jest.Mock;
 
@@ -52,10 +67,55 @@ beforeEach(() => {
   jest.clearAllMocks();
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [] });
+  getTableColumnsMock.mockReset();
+  savePatientProfilePhotoMock.mockReset();
+  getTableColumnsMock.mockImplementation(async (tableName: string) => {
+    if (tableName === "patients") {
+      return new Set([
+        "insurance_member_id",
+        "insurance_group_number",
+        "insurance_plan_name",
+        "allergies",
+        "medications",
+        "past_medical_history",
+        "family_history",
+        "surgical_history",
+        "social_history",
+        "current_symptoms",
+      ]);
+    }
+
+    if (tableName === "checkin_sessions") {
+      return new Set(["medical_history_updated"]);
+    }
+
+    if (tableName === "kiosk_patient_consents") {
+      return new Set(["consent_form_id"]);
+    }
+
+    return new Set();
+  });
   auditLogMock.mockResolvedValue(undefined);
 });
 
 describe("Kiosk Routes", () => {
+  describe("GET /api/kiosk/launch-context", () => {
+    it("should return an existing kiosk device for the tenant location", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: "location-1", name: "Main Clinic" }] })
+        .mockResolvedValueOnce({
+          rows: [{ id: "kiosk-1", deviceCode: "KIOSK-TEST", deviceName: "Main Clinic Kiosk", locationId: "location-1" }],
+        });
+
+      const res = await request(app).get("/api/kiosk/launch-context");
+
+      expect(res.status).toBe(200);
+      expect(res.body.kioskCode).toBe("KIOSK-TEST");
+      expect(res.body.tenantId).toBe("tenant-1");
+      expect(res.body.locationId).toBe("location-1");
+    });
+  });
+
   describe("POST /api/kiosk/heartbeat", () => {
     it("should update heartbeat timestamp", async () => {
       queryMock.mockResolvedValueOnce({ rows: [{ id: "kiosk-1" }] });
@@ -103,6 +163,31 @@ describe("Kiosk Routes", () => {
       expect(res.status).toBe(200);
       expect(res.body.patients).toHaveLength(1);
       expect(res.body.patients[0].lastName).toBe("Doe");
+    });
+
+    it("should verify patient by DOB entered as MM/DD/YYYY", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          {
+            id: patientId,
+            firstName: "John",
+            lastName: "Doe",
+            dob: "1990-01-01",
+          },
+        ],
+      });
+
+      const res = await request(app).post("/api/kiosk/verify-patient").send({
+        method: "dob",
+        lastName: "Doe",
+        dob: "01/01/1990",
+      });
+
+      expect(res.status).toBe(200);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("AND LOWER(last_name) = LOWER($2) AND dob = $3"),
+        ["tenant-1", "Doe", "1990-01-01"]
+      );
     });
 
     it("should verify patient by phone", async () => {
@@ -169,6 +254,17 @@ describe("Kiosk Routes", () => {
       expect(res.body.error).toBe("Invalid verification method or missing data");
     });
 
+    it("should return 400 for malformed DOB input", async () => {
+      const res = await request(app).post("/api/kiosk/verify-patient").send({
+        method: "dob",
+        lastName: "Doe",
+        dob: "0101",
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid verification method or missing data");
+    });
+
     it("should return 404 when patient not found", async () => {
       queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -229,6 +325,40 @@ describe("Kiosk Routes", () => {
     });
   });
 
+  describe("GET /api/kiosk/consent-forms/active", () => {
+    it("should return active consent forms for kiosk tenant", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          {
+            id: "consent-1",
+            formName: "Treatment Consent",
+            formType: "treatment",
+            requiresSignature: true,
+            version: "1.0",
+          },
+        ],
+      });
+
+      const res = await request(app).get("/api/kiosk/consent-forms/active");
+
+      expect(res.status).toBe(200);
+      expect(res.body.forms).toHaveLength(1);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("FROM consent_templates"),
+        ["tenant-1"],
+      );
+    });
+
+    it("should return 500 when consent form query fails", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app).get("/api/kiosk/consent-forms/active");
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to fetch consent forms");
+    });
+  });
+
   describe("POST /api/kiosk/checkin/start", () => {
     it("should start checkin session", async () => {
       queryMock
@@ -266,7 +396,8 @@ describe("Kiosk Routes", () => {
 
     it("should return 400 for invalid input", async () => {
       const res = await request(app).post("/api/kiosk/checkin/start").send({
-        patientId: "not-a-uuid",
+        verificationMethod: "dob",
+        verificationValue: "1990-01-01",
       });
 
       expect(res.status).toBe(400);
@@ -299,6 +430,24 @@ describe("Kiosk Routes", () => {
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("Appointment not found");
+    });
+
+    it("should accept non-UUID text identifiers", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: "p-001" }] })
+        .mockResolvedValueOnce({ rows: [{ id: "appt-001" }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).post("/api/kiosk/checkin/start").send({
+        patientId: "p-001",
+        appointmentId: "appt-001",
+        verificationMethod: "kiosk",
+        verificationValue: "tablet-checkin",
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.patientId).toBe("p-001");
+      expect(res.body.appointmentId).toBe("appt-001");
     });
 
     it("should return 500 on database error", async () => {
@@ -465,6 +614,64 @@ describe("Kiosk Routes", () => {
     });
   });
 
+  describe("PUT /api/kiosk/checkin/:sessionId/medical-history", () => {
+    it("should update medical history", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ patientId }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .put("/api/kiosk/checkin/session-1/medical-history")
+        .send({
+          allergies: "Penicillin",
+          medications: "Topical steroid",
+          pastMedicalHistory: "History of eczema",
+          familyHistory: "Family history of melanoma",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(auditLogMock).toHaveBeenCalled();
+    });
+
+    it("should return 400 for invalid input", async () => {
+      const res = await request(app)
+        .put("/api/kiosk/checkin/session-1/medical-history")
+        .send({
+          allergies: 123,
+        });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("should return 404 when session not found", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .put("/api/kiosk/checkin/session-999/medical-history")
+        .send({
+          allergies: "Penicillin",
+        });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Session not found");
+    });
+
+    it("should return 500 on database error", async () => {
+      queryMock.mockRejectedValueOnce(new Error("DB error"));
+
+      const res = await request(app)
+        .put("/api/kiosk/checkin/session-1/medical-history")
+        .send({
+          allergies: "Penicillin",
+        });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Failed to update medical history");
+    });
+  });
+
   describe("POST /api/kiosk/checkin/:sessionId/insurance-photo", () => {
     it("should upload insurance card photo", async () => {
       queryMock
@@ -529,6 +736,71 @@ describe("Kiosk Routes", () => {
     });
   });
 
+  describe("POST /api/kiosk/checkin/:sessionId/profile-photo", () => {
+    it("should upload profile photo and create photo record", async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ patientId }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      savePatientProfilePhotoMock.mockResolvedValue({
+        url: "https://example.com/profile.jpg",
+        thumbnailUrl: "https://example.com/profile-thumb.jpg",
+        storage: "local",
+        objectKey: "uploads/profile.jpg",
+      });
+
+      const res = await request(app)
+        .post("/api/kiosk/checkin/session-1/profile-photo")
+        .send({
+          photoData: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+          photoType: "clinical",
+          description: "Intake profile",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.photo.url).toBe("https://example.com/profile.jpg");
+      expect(auditLogMock).toHaveBeenCalled();
+    });
+
+    it("should return 400 for invalid payload", async () => {
+      const res = await request(app)
+        .post("/api/kiosk/checkin/session-1/profile-photo")
+        .send({
+          photoData: 123,
+        });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("should return 404 when session not found", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .post("/api/kiosk/checkin/session-999/profile-photo")
+        .send({
+          photoData: "data:image/png;base64,abc",
+        });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Session not found");
+    });
+
+    it("should return 500 on save error", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ patientId }] });
+      savePatientProfilePhotoMock.mockRejectedValue(new Error("Save failed"));
+
+      const res = await request(app)
+        .post("/api/kiosk/checkin/session-1/profile-photo")
+        .send({
+          photoData: "data:image/png;base64,abc",
+        });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe("Save failed");
+    });
+  });
+
   describe("POST /api/kiosk/checkin/:sessionId/signature", () => {
     const validFormId = "44444444-4444-4444-8444-444444444444";
 
@@ -580,7 +852,6 @@ describe("Kiosk Routes", () => {
         .post("/api/kiosk/checkin/session-1/signature")
         .send({
           signatureData: "data:image/png;base64,abc",
-          consentFormId: "not-a-uuid",
         });
 
       expect(res.status).toBe(400);

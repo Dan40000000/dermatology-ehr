@@ -3,6 +3,7 @@ import express from "express";
 import { patientPaymentsRouter } from "../patientPayments";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { sendPatientPaymentReceiptEmail } from "../../services/paymentConfirmationService";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -26,12 +27,17 @@ jest.mock("../../services/audit", () => ({
   auditLog: jest.fn(),
 }));
 
+jest.mock("../../services/paymentConfirmationService", () => ({
+  sendPatientPaymentReceiptEmail: jest.fn(),
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/patient-payments", patientPaymentsRouter);
 
 const queryMock = pool.query as jest.Mock;
 const connectMock = pool.connect as jest.Mock;
+const sendPatientPaymentReceiptEmailMock = sendPatientPaymentReceiptEmail as jest.Mock;
 
 const makeClient = () => ({
   query: jest.fn().mockResolvedValue({ rows: [] }),
@@ -41,6 +47,8 @@ const makeClient = () => ({
 beforeEach(() => {
   queryMock.mockReset();
   connectMock.mockReset();
+  sendPatientPaymentReceiptEmailMock.mockReset();
+  sendPatientPaymentReceiptEmailMock.mockResolvedValue({ attempted: false, sent: false });
   (auditLog as jest.Mock).mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
@@ -99,8 +107,17 @@ describe("Patient payments routes", () => {
       .mockResolvedValueOnce({ rows: [] }) // update claim status
       .mockResolvedValueOnce({ rows: [] }) // insert claim history
       .mockResolvedValueOnce({ rows: [] }) // update batch count
+      .mockResolvedValueOnce({
+        rows: [{ first_name: "Ada", last_name: "Lovelace", email: "ada@example.com" }],
+        rowCount: 1,
+      }) // patient contact
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
     connectMock.mockResolvedValueOnce(client);
+    sendPatientPaymentReceiptEmailMock.mockResolvedValueOnce({
+      attempted: true,
+      sent: true,
+      emailAddress: "ada@example.com",
+    });
 
     const res = await request(app).post("/patient-payments").send({
       patientId: "patient-1",
@@ -114,7 +131,21 @@ describe("Patient payments routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.id).toBeTruthy();
     expect(res.body.receiptNumber).toBeTruthy();
+    expect(res.body.emailConfirmation).toEqual(
+      expect.objectContaining({
+        attempted: true,
+        sent: true,
+        emailAddress: "ada@example.com",
+      })
+    );
     expect(auditLog).toHaveBeenCalled();
+    expect(sendPatientPaymentReceiptEmailMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "tenant-1",
+        patientEmail: "ada@example.com",
+        amountCents: 1000,
+      })
+    );
   });
 
   it("PUT /patient-payments/:id returns 404 when missing", async () => {
@@ -277,8 +308,17 @@ describe("Patient payments routes", () => {
       })
       .mockResolvedValueOnce({ rows: [] }) // insert payment
       .mockResolvedValueOnce({ rows: [] }) // update plan
+      .mockResolvedValueOnce({
+        rows: [{ first_name: "Ada", last_name: "Lovelace", email: "ada@example.com" }],
+        rowCount: 1,
+      }) // patient contact
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
     connectMock.mockResolvedValueOnce(client);
+    sendPatientPaymentReceiptEmailMock.mockResolvedValueOnce({
+      attempted: true,
+      sent: true,
+      emailAddress: "ada@example.com",
+    });
 
     const res = await request(app).post("/patient-payments/plans/plan-1/pay").send({
       amountCents: 500,
@@ -287,6 +327,13 @@ describe("Patient payments routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.planStatus).toBe("completed");
+    expect(res.body.emailConfirmation).toEqual(
+      expect.objectContaining({
+        attempted: true,
+        sent: true,
+        emailAddress: "ada@example.com",
+      })
+    );
   });
 
   it("PUT /patient-payments/plans/:id/cancel returns 404 when missing", async () => {

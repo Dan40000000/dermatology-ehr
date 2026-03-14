@@ -134,7 +134,6 @@ export function OrdersPageEnhanced() {
     try {
       await createOrder(session.tenantId, session.accessToken, {
         patientId: newOrder.patientId,
-        providerId: session.user.id,
         type: newOrder.type,
         details: newOrder.details,
         priority: newOrder.priority,

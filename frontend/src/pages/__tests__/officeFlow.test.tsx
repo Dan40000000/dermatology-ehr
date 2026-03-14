@@ -20,8 +20,13 @@ const apiMocks = vi.hoisted(() => ({
   fetchFrontDeskSchedule: vi.fn(),
   updateFrontDeskStatus: vi.fn(),
   checkOutFrontDeskAppointment: vi.fn(),
+  fetchExamRooms: vi.fn(),
+  fetchPatientFlowActive: vi.fn(),
+  updatePatientFlowStatus: vi.fn(),
   fetchPatients: vi.fn(),
   fetchProviders: vi.fn(),
+  fetchPatientEncounters: vi.fn(),
+  createEncounter: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -92,6 +97,16 @@ beforeEach(() => {
   apiMocks.fetchFrontDeskSchedule.mockResolvedValue({ appointments });
   apiMocks.updateFrontDeskStatus.mockResolvedValue({ ok: true });
   apiMocks.checkOutFrontDeskAppointment.mockResolvedValue({ ok: true });
+  apiMocks.fetchExamRooms.mockResolvedValue({
+    rooms: [
+      { id: 'room-1', roomNumber: 'Exam 1', roomName: '', roomType: 'exam' },
+      { id: 'room-2', roomNumber: 'Exam 2', roomName: '', roomType: 'exam' },
+    ],
+  });
+  apiMocks.fetchPatientFlowActive.mockResolvedValue({ flows: [] });
+  apiMocks.updatePatientFlowStatus.mockResolvedValue({ ok: true });
+  apiMocks.fetchPatientEncounters.mockResolvedValue({ encounters: [] });
+  apiMocks.createEncounter.mockResolvedValue({ id: 'enc-1' });
   apiMocks.fetchPatients.mockResolvedValue({
     patients: appointments.map((appt) => ({
       id: appt.patientId,
@@ -109,6 +124,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
@@ -132,7 +148,27 @@ describe('OfficeFlowPage', () => {
     const startButtons = await screen.findAllByRole('button', { name: 'Start Visit' });
     fireEvent.click(startButtons[0]);
     await waitFor(() =>
-      expect(toastMocks.showSuccess).toHaveBeenCalledWith('Status updated to with provider')
+      expect(toastMocks.showSuccess).toHaveBeenCalledWith('Visit started')
+    );
+    expect(apiMocks.fetchPatientEncounters).toHaveBeenCalledWith('tenant-1', 'token-1', 'pat-1');
+    expect(apiMocks.createEncounter).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      expect.objectContaining({
+        patientId: 'pat-1',
+        providerId: 'prov-1',
+        appointmentId: 'appt-1',
+      })
+    );
+    expect(navigateMock).toHaveBeenCalledWith(
+      '/patients/pat-1/encounter/enc-1',
+      expect.objectContaining({
+        state: expect.objectContaining({
+          startedEncounterFrom: 'office_flow',
+          undoAppointmentStatus: 'in_room',
+          returnPath: '/office-flow',
+        }),
+      })
     );
 
     const checkoutButtons = await screen.findAllByRole('button', { name: 'Check Out' });
@@ -140,5 +176,124 @@ describe('OfficeFlowPage', () => {
     await waitFor(() =>
       expect(toastMocks.showSuccess).toHaveBeenCalledWith('Status updated to completed')
     );
+  });
+
+  it('calculates avg wait and avg appointment time from timestamp data', async () => {
+    const now = new Date();
+
+    const minutesAgo = (minutes: number) => new Date(now.getTime() - minutes * 60 * 1000).toISOString();
+    const appointments = [
+      {
+        id: 'appt-waiting',
+        tenantId: 'tenant-1',
+        patientId: 'pat-waiting',
+        patientFirstName: 'Waiting',
+        patientLastName: 'Patient',
+        providerId: 'prov-1',
+        providerName: 'Dr. House',
+        locationId: 'loc-1',
+        locationName: 'Mountain Pine Dermatology PLLC',
+        appointmentTypeId: 'type-1',
+        appointmentTypeName: 'Visit',
+        scheduledStart: minutesAgo(30),
+        scheduledEnd: minutesAgo(10),
+        status: 'checked_in',
+        arrivedAt: minutesAgo(14),
+        waitTimeMinutes: 14,
+        createdAt: minutesAgo(35),
+      },
+      {
+        id: 'appt-roomed',
+        tenantId: 'tenant-1',
+        patientId: 'pat-roomed',
+        patientFirstName: 'Roomed',
+        patientLastName: 'Patient',
+        providerId: 'prov-1',
+        providerName: 'Dr. House',
+        locationId: 'loc-1',
+        locationName: 'Mountain Pine Dermatology PLLC',
+        appointmentTypeId: 'type-1',
+        appointmentTypeName: 'Visit',
+        scheduledStart: minutesAgo(60),
+        scheduledEnd: minutesAgo(40),
+        status: 'in_room',
+        arrivedAt: minutesAgo(40),
+        roomedAt: minutesAgo(20),
+        createdAt: minutesAgo(65),
+      },
+      {
+        id: 'appt-completed',
+        tenantId: 'tenant-1',
+        patientId: 'pat-completed',
+        patientFirstName: 'Completed',
+        patientLastName: 'Patient',
+        providerId: 'prov-1',
+        providerName: 'Dr. House',
+        locationId: 'loc-1',
+        locationName: 'Mountain Pine Dermatology PLLC',
+        appointmentTypeId: 'type-1',
+        appointmentTypeName: 'Visit',
+        scheduledStart: minutesAgo(90),
+        scheduledEnd: minutesAgo(60),
+        status: 'completed',
+        arrivedAt: minutesAgo(70),
+        roomedAt: minutesAgo(50),
+        completedAt: minutesAgo(20),
+        createdAt: minutesAgo(95),
+      },
+    ];
+
+    apiMocks.fetchFrontDeskSchedule.mockResolvedValue({ appointments });
+    apiMocks.fetchPatients.mockResolvedValue({
+      patients: appointments.map((appt) => ({
+        id: appt.patientId,
+        tenantId: 'tenant-1',
+        firstName: appt.patientFirstName,
+        lastName: appt.patientLastName,
+        createdAt: new Date().toISOString(),
+      })),
+    });
+
+    render(<OfficeFlowPage />);
+
+    await screen.findByText('Office Flow');
+    const avgWaitStat = await screen.findByTestId('avg-wait-stat');
+    const avgApptTimeStat = await screen.findByTestId('avg-appt-time-stat');
+
+    expect(within(avgWaitStat).getByText('18')).toBeInTheDocument();
+    expect(within(avgApptTimeStat).getByText('30')).toBeInTheDocument();
+  });
+
+  it('moves an accidentally roomed patient back to waiting room', async () => {
+    render(<OfficeFlowPage />);
+
+    await screen.findByText('Office Flow');
+    await screen.findByText('Waiting Room');
+
+    const roomSelects = screen.getAllByRole('combobox');
+    const roomSelect = roomSelects.find((select) =>
+      within(select).queryByRole('option', { name: 'Room patient...' })
+    ) as HTMLSelectElement;
+
+    fireEvent.change(roomSelect, { target: { value: 'room-1' } });
+    await waitFor(() =>
+      expect(toastMocks.showSuccess).toHaveBeenCalledWith(expect.stringMatching(/roomed in/i))
+    );
+
+    const moveBackButton = await screen.findByRole('button', { name: 'Move to Waiting' });
+    fireEvent.click(moveBackButton);
+
+    await waitFor(() =>
+      expect(apiMocks.updatePatientFlowStatus).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        'appt-1',
+        'checked_in'
+      )
+    );
+    await waitFor(() =>
+      expect(toastMocks.showSuccess).toHaveBeenCalledWith(expect.stringMatching(/moved back to waiting room/i))
+    );
+    expect(screen.queryByRole('button', { name: 'Move to Waiting' })).not.toBeInTheDocument();
   });
 });

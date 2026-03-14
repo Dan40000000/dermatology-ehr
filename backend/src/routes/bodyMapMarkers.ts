@@ -4,10 +4,12 @@ import { z } from 'zod';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
+import { CLINICAL_ROLES } from '../lib/roles';
 import { auditLog } from '../services/audit';
 import { logger } from '../lib/logger';
 
 const router = Router();
+router.use(requireAuth, requireRoles([...CLINICAL_ROLES]));
 
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -35,8 +37,8 @@ function logBodyMapMarkersError(message: string, error: unknown): void {
 
 // Schemas
 const createBodyMapMarkerSchema = z.object({
-  patient_id: z.string().uuid(),
-  encounter_id: z.string().uuid().optional(),
+  patient_id: z.string().min(1),
+  encounter_id: z.string().min(1).optional(),
   marker_type: z.enum(['lesion', 'procedure', 'condition', 'cosmetic', 'wound']),
   sub_type: z.string().optional(),
   body_region: z.string(),
@@ -67,9 +69,9 @@ const updateBodyMapMarkerSchema = z.object({
 });
 
 const createProcedureSiteSchema = z.object({
-  patient_id: z.string().uuid(),
-  encounter_id: z.string().uuid().optional(),
-  body_map_marker_id: z.string().uuid().optional(),
+  patient_id: z.string().min(1),
+  encounter_id: z.string().min(1).optional(),
+  body_map_marker_id: z.string().min(1).optional(),
   procedure_type: z.enum([
     'biopsy_shave', 'biopsy_punch', 'excision', 'mohs',
     'cryotherapy', 'laser', 'injection', 'other'
@@ -78,7 +80,7 @@ const createProcedureSiteSchema = z.object({
   x_position: z.number().min(0).max(100).optional(),
   y_position: z.number().min(0).max(100).optional(),
   procedure_date: z.string(),
-  performed_by: z.string().uuid().optional(),
+  performed_by: z.string().min(1).optional(),
   clinical_indication: z.string().optional(),
   procedure_notes: z.string().optional(),
   pathology_status: z.enum(['pending', 'benign', 'malignant', 'inconclusive', 'not_sent']).default('pending'),
@@ -94,7 +96,7 @@ const createProcedureSiteSchema = z.object({
 });
 
 const updateProcedureSiteSchema = z.object({
-  body_map_marker_id: z.string().uuid().optional(),
+  body_map_marker_id: z.string().min(1).optional(),
   procedure_type: z.enum([
     'biopsy_shave', 'biopsy_punch', 'excision', 'mohs',
     'cryotherapy', 'laser', 'injection', 'other'
@@ -103,7 +105,7 @@ const updateProcedureSiteSchema = z.object({
   x_position: z.number().min(0).max(100).optional(),
   y_position: z.number().min(0).max(100).optional(),
   procedure_date: z.string().optional(),
-  performed_by: z.string().uuid().optional(),
+  performed_by: z.string().min(1).optional(),
   clinical_indication: z.string().optional(),
   procedure_notes: z.string().optional(),
   pathology_status: z.enum(['pending', 'benign', 'malignant', 'inconclusive', 'not_sent']).optional(),
@@ -245,8 +247,8 @@ router.post(
           data.marker_type,
           data.sub_type || null,
           data.body_region,
-          data.x_position || null,
-          data.y_position || null,
+          data.x_position ?? null,
+          data.y_position ?? null,
           data.description || null,
           data.clinical_notes || null,
           data.status,
@@ -433,8 +435,8 @@ router.post(
           data.body_map_marker_id || null,
           data.procedure_type,
           data.body_region,
-          data.x_position || null,
-          data.y_position || null,
+          data.x_position ?? null,
+          data.y_position ?? null,
           data.procedure_date,
           data.performed_by || userId,
           data.clinical_indication || null,

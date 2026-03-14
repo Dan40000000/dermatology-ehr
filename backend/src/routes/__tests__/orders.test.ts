@@ -73,7 +73,9 @@ describe("Orders routes", () => {
   });
 
   it("POST /orders creates order", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "prov-1", full_name: "Dr. Demo" }] })
+      .mockResolvedValueOnce({ rows: [] });
     const res = await request(app).post("/orders").send({
       patientId: "p1",
       providerId: "prov-1",
@@ -83,6 +85,24 @@ describe("Orders routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.id).toBe("order-1");
     expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /orders falls back to encounter provider when provided provider is invalid", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "prov-enc", full_name: "Dr. Encounter" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/orders").send({
+      encounterId: "enc-1",
+      patientId: "p1",
+      providerId: "user-1",
+      type: "biopsy",
+      details: "Shave biopsy",
+    });
+
+    expect(res.status).toBe(201);
+    expect(queryMock.mock.calls[2]?.[1]?.[4]).toBe("prov-enc");
   });
 
   it("POST /orders uses default provider when missing", async () => {
@@ -109,6 +129,22 @@ describe("Orders routes", () => {
     });
 
     expect(res.status).toBe(400);
+  });
+
+  it("POST /orders returns 500 when insert fails", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "prov-1", full_name: "Dr. Demo" }] })
+      .mockRejectedValueOnce(new Error("DB error"));
+
+    const res = await request(app).post("/orders").send({
+      patientId: "p1",
+      providerId: "prov-1",
+      type: "lab",
+      details: "CBC",
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Failed to create order");
   });
 
   it("POST /orders/:id/status rejects invalid payload", async () => {

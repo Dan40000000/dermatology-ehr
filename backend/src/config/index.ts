@@ -84,16 +84,20 @@ export const config = {
   // Email
   email: {
     smtp: {
-      host: envVars.SMTP_HOST,
+      host: envVars.SMTP_HOST || envVars.SENDGRID_SMTP_HOST || 'smtp.sendgrid.net',
       port: envVars.SMTP_PORT,
       secure: envVars.SMTP_SECURE,
-      user: envVars.SMTP_USER || '',
-      password: envVars.SMTP_PASSWORD || '',
+      user: envVars.SMTP_USER || envVars.SENDGRID_SMTP_USERNAME || '',
+      password: envVars.SMTP_PASSWORD || envVars.SENDGRID_SMTP_API_KEY || envVars.TWILIO_SENDGRID_API_KEY || '',
+    },
+    ses: {
+      region: envVars.AWS_SES_REGION || envVars.AWS_REGION,
     },
     from: {
       email: envVars.FROM_EMAIL || envVars.EMAIL_FROM || 'noreply@example.com',
       name: envVars.FROM_NAME,
     },
+    notificationOnly: envVars.EMAIL_NOTIFICATION_ONLY,
   },
 
   // Monitoring
@@ -128,6 +132,7 @@ export const config = {
     telehealth: envVars.ENABLE_TELEHEALTH,
     messaging: envVars.ENABLE_MESSAGING,
     documentExport: envVars.ENABLE_DOCUMENT_EXPORT,
+    emailDelivery: envVars.ENABLE_EMAIL_DELIVERY,
   },
 
   // CORS
@@ -178,10 +183,17 @@ export const config = {
       accountSid: envVars.TWILIO_ACCOUNT_SID || '',
       authToken: envVars.TWILIO_AUTH_TOKEN || '',
       phoneNumber: envVars.TWILIO_PHONE_NUMBER || '',
+      messagingServiceSid: envVars.TWILIO_MESSAGING_SERVICE_SID || '',
     },
     stripe: {
       secretKey: envVars.STRIPE_SECRET_KEY || '',
       publishableKey: envVars.STRIPE_PUBLISHABLE_KEY || '',
+    },
+    phaxio: {
+      apiKey: envVars.PHAXIO_API_KEY || '',
+      apiSecret: envVars.PHAXIO_API_SECRET || '',
+      fromNumber: envVars.PHAXIO_FROM_NUMBER || '',
+      baseUrl: envVars.PHAXIO_BASE_URL || 'https://api.phaxio.com/v2',
     },
   },
 

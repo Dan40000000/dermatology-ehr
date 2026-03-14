@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useAuth } from "../contexts/AuthContext";
 import { API_BASE_URL } from "../utils/apiBase";
@@ -32,6 +32,58 @@ interface NotificationLog {
   sent_at: string;
 }
 
+type ExternalIntegrationType =
+  | "clearinghouse"
+  | "eligibility"
+  | "eprescribe"
+  | "lab"
+  | "payment"
+  | "fax";
+
+interface ExternalIntegrationStatus {
+  type: ExternalIntegrationType;
+  provider: string;
+  isConfigured: boolean;
+  isActive: boolean;
+  lastSyncAt?: string;
+  syncFrequencyMinutes?: number;
+  connectionStatus: "connected" | "disconnected" | "error" | "unknown";
+  lastError?: string;
+}
+
+interface ExternalIntegrationForm {
+  provider: string;
+  configJson: string;
+  credentialsJson: string;
+  isActive: boolean;
+  syncFrequencyMinutes: string;
+}
+
+interface ExternalIntegrationLog {
+  id: string;
+  integration_type: ExternalIntegrationType;
+  provider: string;
+  direction: "inbound" | "outbound";
+  endpoint: string;
+  method: string;
+  status: "success" | "error" | "warning";
+  status_code?: number;
+  error_message?: string;
+  duration_ms?: number;
+  created_at: string;
+}
+
+interface ExternalIntegrationStats {
+  totalCalls: number;
+  successfulCalls: number;
+  failedCalls: number;
+  averageDurationMs: number;
+  callsByType: Record<string, number>;
+  errorsByType: Record<string, number>;
+}
+
+type IntegrationsTab = "notifications" | "external" | "logs";
+
 const notificationTypeLabels: Record<string, string> = {
   appointment_booked: "Appointment Booked",
   appointment_cancelled: "Appointment Cancelled",
@@ -46,12 +98,160 @@ const notificationTypeLabels: Record<string, string> = {
 
 const allNotificationTypes = Object.keys(notificationTypeLabels);
 
+const externalTypeOrder: ExternalIntegrationType[] = [
+  "clearinghouse",
+  "eligibility",
+  "eprescribe",
+  "lab",
+  "payment",
+  "fax",
+];
+
+const externalTypeLabels: Record<ExternalIntegrationType, string> = {
+  clearinghouse: "Claims Clearinghouse",
+  eligibility: "Eligibility",
+  eprescribe: "E-Prescribing",
+  lab: "Labs",
+  payment: "Payments",
+  fax: "Fax",
+};
+
+const defaultExternalProviders: Record<ExternalIntegrationType, string> = {
+  clearinghouse: "change_healthcare",
+  eligibility: "availity",
+  eprescribe: "surescripts",
+  lab: "labcorp",
+  payment: "stripe",
+  fax: "phaxio",
+};
+
+const parseError = (err: any, fallback: string): string => {
+  const payload = err?.response?.data;
+  if (typeof payload?.error === "string") {
+    return payload.error;
+  }
+
+  if (Array.isArray(payload?.error)) {
+    const messages = payload.error
+      .map((issue: any) => {
+        if (typeof issue === "string") return issue;
+        if (typeof issue?.message === "string") return issue.message;
+        return "";
+      })
+      .filter(Boolean);
+
+    if (messages.length > 0) {
+      return messages.join(", ");
+    }
+  }
+
+  if (typeof err?.message === "string" && err.message) {
+    return err.message;
+  }
+
+  return fallback;
+};
+
+const seedExternalStatus = (
+  type: ExternalIntegrationType,
+  partial?: Partial<ExternalIntegrationStatus>
+): ExternalIntegrationStatus => ({
+  type,
+  provider: partial?.provider || defaultExternalProviders[type],
+  isConfigured: Boolean(partial?.isConfigured),
+  isActive: Boolean(partial?.isActive),
+  lastSyncAt: partial?.lastSyncAt,
+  syncFrequencyMinutes: partial?.syncFrequencyMinutes,
+  connectionStatus: partial?.connectionStatus || "disconnected",
+  lastError: partial?.lastError,
+});
+
+const buildDefaultExternalForms = (): Record<ExternalIntegrationType, ExternalIntegrationForm> => ({
+  clearinghouse: {
+    provider: defaultExternalProviders.clearinghouse,
+    configJson: "{}",
+    credentialsJson: "{}",
+    isActive: false,
+    syncFrequencyMinutes: "60",
+  },
+  eligibility: {
+    provider: defaultExternalProviders.eligibility,
+    configJson: "{}",
+    credentialsJson: "{}",
+    isActive: false,
+    syncFrequencyMinutes: "60",
+  },
+  eprescribe: {
+    provider: defaultExternalProviders.eprescribe,
+    configJson: "{}",
+    credentialsJson: "{}",
+    isActive: false,
+    syncFrequencyMinutes: "60",
+  },
+  lab: {
+    provider: defaultExternalProviders.lab,
+    configJson: "{}",
+    credentialsJson: "{}",
+    isActive: false,
+    syncFrequencyMinutes: "60",
+  },
+  payment: {
+    provider: defaultExternalProviders.payment,
+    configJson: "{}",
+    credentialsJson: "{}",
+    isActive: false,
+    syncFrequencyMinutes: "60",
+  },
+  fax: {
+    provider: defaultExternalProviders.fax,
+    configJson: "{}",
+    credentialsJson: "{}",
+    isActive: false,
+    syncFrequencyMinutes: "60",
+  },
+});
+
+const parseJsonObject = (label: string, raw: string): Record<string, any> => {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error(`${label} must be valid JSON`);
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must be a JSON object`);
+  }
+
+  return parsed as Record<string, any>;
+};
+
+const parseSyncFrequencyMinutes = (raw: string): number | null => {
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed < 5 || parsed > 1440) {
+    return null;
+  }
+  return parsed;
+};
+
+const connectionBadgeClass: Record<ExternalIntegrationStatus["connectionStatus"], string> = {
+  connected: "bg-green-100 text-green-700",
+  disconnected: "bg-gray-100 text-gray-700",
+  error: "bg-red-100 text-red-700",
+  unknown: "bg-yellow-100 text-yellow-700",
+};
+
 export default function IntegrationsSettingsPage() {
   const { headers } = useAuth();
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [logs, setLogs] = useState<NotificationLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"setup" | "logs">("setup");
+  const [activeTab, setActiveTab] = useState<IntegrationsTab>("external");
 
   // Slack setup
   const [showSlackSetup, setShowSlackSetup] = useState(false);
@@ -65,36 +265,115 @@ export default function IntegrationsSettingsPage() {
   const [teamsChannel, setTeamsChannel] = useState("");
   const [teamsNotifications, setTeamsNotifications] = useState<string[]>([]);
 
+  // External integrations
+  const [externalIntegrations, setExternalIntegrations] = useState<ExternalIntegrationStatus[]>(
+    externalTypeOrder.map((type) => seedExternalStatus(type))
+  );
+  const [externalForms, setExternalForms] =
+    useState<Record<ExternalIntegrationType, ExternalIntegrationForm>>(buildDefaultExternalForms());
+  const [externalLogs, setExternalLogs] = useState<ExternalIntegrationLog[]>([]);
+  const [externalStats, setExternalStats] = useState<ExternalIntegrationStats | null>(null);
+
   // UI state
   const [testingId, setTestingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchIntegrations();
-    fetchLogs();
-  }, []);
+  const [savingExternalType, setSavingExternalType] = useState<ExternalIntegrationType | null>(null);
+  const [testingExternalType, setTestingExternalType] = useState<ExternalIntegrationType | null>(null);
+  const [syncingExternalType, setSyncingExternalType] = useState<ExternalIntegrationType | null>(null);
+  const [refreshingExternal, setRefreshingExternal] = useState(false);
+  const [stripeSecretKey, setStripeSecretKey] = useState("");
+  const [stripePublishableKey, setStripePublishableKey] = useState("");
+  const [configuringStripe, setConfiguringStripe] = useState(false);
+  const [enablingMockPayments, setEnablingMockPayments] = useState(false);
 
   const fetchIntegrations = async () => {
-    try {
-      const response = await axios.get(`${API_URL}/api/integrations`, { headers });
-      setIntegrations(response.data.integrations);
-    } catch (err: any) {
-      setError("Failed to load integrations");
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
+    const response = await axios.get(`${API_URL}/api/integrations`, { headers });
+    setIntegrations(response.data.integrations || []);
   };
 
   const fetchLogs = async () => {
+    const response = await axios.get(`${API_URL}/api/integrations/logs?limit=20`, { headers });
+    setLogs(response.data.logs || []);
+  };
+
+  const fetchExternalIntegrations = async () => {
+    const response = await axios.get(`${API_URL}/api/external-integrations`, { headers });
+    const payload = (response.data?.integrations || {}) as Partial<
+      Record<ExternalIntegrationType, Partial<ExternalIntegrationStatus>>
+    >;
+
+    const mapped = externalTypeOrder.map((type) =>
+      seedExternalStatus(type, {
+        ...payload[type],
+        type,
+      })
+    );
+
+    setExternalIntegrations(mapped);
+
+    setExternalForms((prev) => {
+      const next = { ...prev };
+      for (const item of mapped) {
+        const current = next[item.type];
+        next[item.type] = {
+          ...current,
+          provider: current.provider || item.provider || defaultExternalProviders[item.type],
+          isActive: item.isActive,
+          syncFrequencyMinutes: item.syncFrequencyMinutes
+            ? String(item.syncFrequencyMinutes)
+            : current.syncFrequencyMinutes || "60",
+        };
+      }
+      return next;
+    });
+  };
+
+  const fetchExternalLogs = async () => {
+    const response = await axios.get(`${API_URL}/api/external-integrations/logs?limit=20`, {
+      headers,
+    });
+    setExternalLogs(response.data.logs || []);
+  };
+
+  const fetchExternalStats = async () => {
+    const response = await axios.get(`${API_URL}/api/external-integrations/stats?days=7`, {
+      headers,
+    });
+    setExternalStats(response.data.stats || null);
+  };
+
+  const refreshExternalData = async () => {
+    setRefreshingExternal(true);
     try {
-      const response = await axios.get(`${API_URL}/api/integrations/logs?limit=20`, { headers });
-      setLogs(response.data.logs);
-    } catch (err: any) {
-      console.error("Failed to load logs:", err);
+      await Promise.all([fetchExternalIntegrations(), fetchExternalLogs(), fetchExternalStats()]);
+    } finally {
+      setRefreshingExternal(false);
     }
   };
+
+  useEffect(() => {
+    const loadAll = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        await Promise.all([
+          fetchIntegrations(),
+          fetchLogs(),
+          fetchExternalIntegrations(),
+          fetchExternalLogs(),
+          fetchExternalStats(),
+        ]);
+      } catch (err: any) {
+        setError(parseError(err, "Failed to load integrations"));
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const createSlackIntegration = async () => {
     if (!slackWebhook.startsWith("https://hooks.slack.com/")) {
@@ -123,9 +402,9 @@ export default function IntegrationsSettingsPage() {
       setSlackWebhook("");
       setSlackChannel("");
       setSlackNotifications([]);
-      fetchIntegrations();
+      await fetchIntegrations();
     } catch (err: any) {
-      setError(err.response?.data?.error || "Failed to create Slack integration");
+      setError(parseError(err, "Failed to create Slack integration"));
     }
   };
 
@@ -156,9 +435,9 @@ export default function IntegrationsSettingsPage() {
       setTeamsWebhook("");
       setTeamsChannel("");
       setTeamsNotifications([]);
-      fetchIntegrations();
+      await fetchIntegrations();
     } catch (err: any) {
-      setError(err.response?.data?.error || "Failed to create Teams integration");
+      setError(parseError(err, "Failed to create Teams integration"));
     }
   };
 
@@ -168,9 +447,9 @@ export default function IntegrationsSettingsPage() {
     try {
       await axios.post(`${API_URL}/api/integrations/${integrationId}/test`, {}, { headers });
       setSuccess("Test notification sent successfully!");
-      setTimeout(() => fetchLogs(), 1000);
+      await fetchLogs();
     } catch (err: any) {
-      setError("Test failed: " + (err.response?.data?.error || "Unknown error"));
+      setError("Test failed: " + parseError(err, "Unknown error"));
     } finally {
       setTestingId(null);
     }
@@ -183,9 +462,9 @@ export default function IntegrationsSettingsPage() {
         { enabled: !enabled },
         { headers }
       );
-      fetchIntegrations();
+      await fetchIntegrations();
     } catch (err: any) {
-      setError("Failed to toggle integration");
+      setError(parseError(err, "Failed to toggle integration"));
     }
   };
 
@@ -197,9 +476,9 @@ export default function IntegrationsSettingsPage() {
     try {
       await axios.delete(`${API_URL}/api/integrations/${integrationId}`, { headers });
       setSuccess("Integration deleted successfully");
-      fetchIntegrations();
+      await fetchIntegrations();
     } catch (err: any) {
-      setError("Failed to delete integration");
+      setError(parseError(err, "Failed to delete integration"));
     }
   };
 
@@ -210,10 +489,162 @@ export default function IntegrationsSettingsPage() {
         { notificationTypes: types },
         { headers }
       );
-      fetchIntegrations();
+      await fetchIntegrations();
       setSuccess("Notification types updated");
     } catch (err: any) {
-      setError("Failed to update notification types");
+      setError(parseError(err, "Failed to update notification types"));
+    }
+  };
+
+  const updateExternalForm = (
+    type: ExternalIntegrationType,
+    patch: Partial<ExternalIntegrationForm>
+  ) => {
+    setExternalForms((prev) => ({
+      ...prev,
+      [type]: {
+        ...prev[type],
+        ...patch,
+      },
+    }));
+  };
+
+  const saveExternalIntegration = async (type: ExternalIntegrationType) => {
+    setError(null);
+    const form = externalForms[type];
+
+    let config: Record<string, any>;
+    let credentials: Record<string, any>;
+
+    try {
+      config = parseJsonObject("Config", form.configJson);
+      credentials = parseJsonObject("Credentials", form.credentialsJson);
+    } catch (err: any) {
+      setError(err.message || "Invalid JSON");
+      return;
+    }
+
+    const syncFrequencyMinutes = parseSyncFrequencyMinutes(form.syncFrequencyMinutes);
+    if (syncFrequencyMinutes === null) {
+      setError("Sync frequency must be between 5 and 1440 minutes");
+      return;
+    }
+
+    const body: Record<string, any> = {
+      provider: form.provider.trim() || defaultExternalProviders[type],
+      config,
+      isActive: form.isActive,
+      syncFrequencyMinutes,
+    };
+
+    if (Object.keys(credentials).length > 0) {
+      body.credentials = credentials;
+    }
+
+    setSavingExternalType(type);
+
+    try {
+      await axios.patch(`${API_URL}/api/external-integrations/${type}`, body, { headers });
+      setSuccess(`${externalTypeLabels[type]} integration saved`);
+      await refreshExternalData();
+    } catch (err: any) {
+      setError(parseError(err, `Failed to save ${externalTypeLabels[type]} integration`));
+    } finally {
+      setSavingExternalType(null);
+    }
+  };
+
+  const configureStripePayment = async () => {
+    const secretKey = stripeSecretKey.trim();
+    const publishableKey = stripePublishableKey.trim();
+    const syncFrequencyMinutes = parseSyncFrequencyMinutes(externalForms.payment.syncFrequencyMinutes);
+
+    if (!secretKey || !publishableKey) {
+      setError("Enter both Stripe secret key and publishable key");
+      return;
+    }
+
+    if (syncFrequencyMinutes === null) {
+      setError("Sync frequency must be between 5 and 1440 minutes");
+      return;
+    }
+
+    setError(null);
+    setConfiguringStripe(true);
+    try {
+      const response = await axios.post(
+        `${API_URL}/api/external-integrations/payments/stripe/configure`,
+        {
+          secretKey,
+          publishableKey,
+          syncFrequencyMinutes,
+        },
+        { headers }
+      );
+      const message = response.data?.message || "Stripe configured successfully";
+      const mode = response.data?.mode;
+      setSuccess(mode === "test" ? `${message} (test mode, no live charges)` : message);
+      setStripeSecretKey("");
+      setStripePublishableKey("");
+      await refreshExternalData();
+    } catch (err: any) {
+      setError(parseError(err, "Failed to configure Stripe"));
+    } finally {
+      setConfiguringStripe(false);
+    }
+  };
+
+  const enableMockPaymentMode = async () => {
+    setError(null);
+    setEnablingMockPayments(true);
+    try {
+      const response = await axios.post(
+        `${API_URL}/api/external-integrations/payments/stripe/use-mock`,
+        {},
+        { headers }
+      );
+      const message = response.data?.message || "Mock payment mode enabled";
+      setSuccess(`${message} (no real charges)`);
+      setStripeSecretKey("");
+      setStripePublishableKey("");
+      await refreshExternalData();
+    } catch (err: any) {
+      setError(parseError(err, "Failed to enable mock payments"));
+    } finally {
+      setEnablingMockPayments(false);
+    }
+  };
+
+  const testExternalIntegration = async (type: ExternalIntegrationType) => {
+    setError(null);
+    setTestingExternalType(type);
+
+    try {
+      const response = await axios.post(`${API_URL}/api/external-integrations/${type}/test`, {}, { headers });
+      const message = response.data?.message || `${externalTypeLabels[type]} test succeeded`;
+      setSuccess(message);
+      await refreshExternalData();
+    } catch (err: any) {
+      setError(parseError(err, `Failed to test ${externalTypeLabels[type]} integration`));
+    } finally {
+      setTestingExternalType(null);
+    }
+  };
+
+  const syncExternalIntegration = async (type: ExternalIntegrationType) => {
+    setError(null);
+    setSyncingExternalType(type);
+
+    try {
+      const response = await axios.post(`${API_URL}/api/external-integrations/${type}/sync`, {}, { headers });
+      const items = response.data?.itemsProcessed;
+      const suffix = Number.isFinite(items) ? ` (${items} items)` : "";
+      setSuccess(`${externalTypeLabels[type]} sync completed${suffix}`);
+      await refreshExternalData();
+    } catch (err: any) {
+      setError(parseError(err, `Failed to sync ${externalTypeLabels[type]} integration`));
+    } finally {
+      setSyncingExternalType(null);
     }
   };
 
@@ -229,11 +660,11 @@ export default function IntegrationsSettingsPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto p-6">
+    <div className="max-w-7xl mx-auto p-6">
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900">Integrations</h1>
         <p className="text-gray-600 mt-2">
-          Connect Slack and Microsoft Teams to receive real-time notifications
+          Connect messaging channels and external clinical vendors from one page.
         </p>
       </div>
 
@@ -258,14 +689,24 @@ export default function IntegrationsSettingsPage() {
       <div className="border-b border-gray-200 mb-6">
         <nav className="-mb-px flex space-x-8">
           <button
-            onClick={() => setActiveTab("setup")}
+            onClick={() => setActiveTab("external")}
             className={`${
-              activeTab === "setup"
+              activeTab === "external"
                 ? "border-blue-500 text-blue-600"
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
             } whitespace-nowrap py-4 px-1 border-b-2 font-medium`}
           >
-            Setup
+            External Vendors
+          </button>
+          <button
+            onClick={() => setActiveTab("notifications")}
+            className={`${
+              activeTab === "notifications"
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            } whitespace-nowrap py-4 px-1 border-b-2 font-medium`}
+          >
+            Slack / Teams
           </button>
           <button
             onClick={() => setActiveTab("logs")}
@@ -275,14 +716,341 @@ export default function IntegrationsSettingsPage() {
                 : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
             } whitespace-nowrap py-4 px-1 border-b-2 font-medium`}
           >
-            Activity Logs
+            Notification Logs
           </button>
         </nav>
       </div>
 
-      {activeTab === "setup" && (
+      {activeTab === "external" && (
         <div className="space-y-6">
-          {/* Slack Integration */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-gray-600">
+              Configure and test claims, eligibility, eRx, labs, payments, and fax providers.
+            </div>
+            <button
+              onClick={() => {
+                void refreshExternalData();
+              }}
+              disabled={refreshingExternal}
+              className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+            >
+              {refreshingExternal ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+
+          {externalStats && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-white border border-gray-200 rounded-lg p-4">
+                <p className="text-xs text-gray-500">Total Calls (7d)</p>
+                <p className="text-2xl font-semibold text-gray-900">{externalStats.totalCalls}</p>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-lg p-4">
+                <p className="text-xs text-gray-500">Successful</p>
+                <p className="text-2xl font-semibold text-green-600">{externalStats.successfulCalls}</p>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-lg p-4">
+                <p className="text-xs text-gray-500">Failed</p>
+                <p className="text-2xl font-semibold text-red-600">{externalStats.failedCalls}</p>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-lg p-4">
+                <p className="text-xs text-gray-500">Avg Duration</p>
+                <p className="text-2xl font-semibold text-gray-900">{externalStats.averageDurationMs} ms</p>
+              </div>
+            </div>
+          )}
+
+          {externalIntegrations.map((integration) => {
+            const form = externalForms[integration.type];
+            const isSaving = savingExternalType === integration.type;
+            const isTesting = testingExternalType === integration.type;
+            const isSyncing = syncingExternalType === integration.type;
+
+            return (
+              <div
+                key={integration.type}
+                className="bg-white border border-gray-200 rounded-lg shadow-sm"
+              >
+                <div className="p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900">
+                        {externalTypeLabels[integration.type]}
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        Provider: {integration.provider || defaultExternalProviders[integration.type]}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${connectionBadgeClass[integration.connectionStatus]}`}
+                      >
+                        {integration.connectionStatus}
+                      </span>
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          integration.isConfigured
+                            ? "bg-blue-100 text-blue-700"
+                            : "bg-gray-100 text-gray-700"
+                        }`}
+                      >
+                        {integration.isConfigured ? "Configured" : "Not configured"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {integration.lastError && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded text-sm">
+                      {integration.lastError}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
+                      <input
+                        type="text"
+                        value={form.provider}
+                        onChange={(e) =>
+                          updateExternalForm(integration.type, {
+                            provider: e.target.value,
+                          })
+                        }
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Sync Frequency (minutes)
+                      </label>
+                      <input
+                        type="number"
+                        min={5}
+                        max={1440}
+                        value={form.syncFrequencyMinutes}
+                        onChange={(e) =>
+                          updateExternalForm(integration.type, {
+                            syncFrequencyMinutes: e.target.value,
+                          })
+                        }
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      />
+                    </div>
+
+                    <div className="flex items-end">
+                      <label className="inline-flex items-center space-x-2 text-sm text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={form.isActive}
+                          onChange={(e) =>
+                            updateExternalForm(integration.type, {
+                              isActive: e.target.checked,
+                            })
+                          }
+                          className="rounded border-gray-300"
+                        />
+                        <span>Active</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {integration.type === "payment" ? (
+                    <div className="space-y-4">
+                      <div className="bg-blue-50 border border-blue-200 text-blue-900 px-4 py-3 rounded-lg text-sm">
+                        Connect Stripe in test mode to avoid any live charges. If you do not have keys yet, use
+                        mock mode for internal testing.
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Stripe Secret Key
+                          </label>
+                          <input
+                            type="password"
+                            value={stripeSecretKey}
+                            onChange={(e) => setStripeSecretKey(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm"
+                            placeholder="sk_test_..."
+                            autoComplete="off"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Stripe Publishable Key
+                          </label>
+                          <input
+                            type="text"
+                            value={stripePublishableKey}
+                            onChange={(e) => setStripePublishableKey(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm"
+                            placeholder="pk_test_..."
+                            autoComplete="off"
+                          />
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        Stripe account logins are managed in Stripe. In this app, you only store test API keys.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Config (JSON object)
+                        </label>
+                        <textarea
+                          value={form.configJson}
+                          onChange={(e) =>
+                            updateExternalForm(integration.type, {
+                              configJson: e.target.value,
+                            })
+                          }
+                          rows={6}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm"
+                          placeholder='{"baseUrl":"https://..."}'
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Credentials (JSON object)
+                        </label>
+                        <textarea
+                          value={form.credentialsJson}
+                          onChange={(e) =>
+                            updateExternalForm(integration.type, {
+                              credentialsJson: e.target.value,
+                            })
+                          }
+                          rows={6}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm"
+                          placeholder='{"apiKey":"...","apiSecret":"..."}'
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="text-xs text-gray-500">
+                    Last sync: {integration.lastSyncAt ? new Date(integration.lastSyncAt).toLocaleString() : "Never"}
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    {integration.type === "payment" ? (
+                      <>
+                        <button
+                          onClick={() => {
+                            void configureStripePayment();
+                          }}
+                          disabled={
+                            configuringStripe || !stripeSecretKey.trim() || !stripePublishableKey.trim()
+                          }
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {configuringStripe ? "Connecting..." : "Connect Stripe (Test Mode)"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            void enableMockPaymentMode();
+                          }}
+                          disabled={enablingMockPayments}
+                          className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50"
+                        >
+                          {enablingMockPayments ? "Switching..." : "Use Mock Payments"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            void testExternalIntegration(integration.type);
+                          }}
+                          disabled={isTesting}
+                          className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {isTesting ? "Testing..." : "Test Payments"}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => {
+                            void saveExternalIntegration(integration.type);
+                          }}
+                          disabled={isSaving}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {isSaving ? "Saving..." : "Save Configuration"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            void testExternalIntegration(integration.type);
+                          }}
+                          disabled={isTesting}
+                          className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {isTesting ? "Testing..." : "Test Connection"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            void syncExternalIntegration(integration.type);
+                          }}
+                          disabled={isSyncing}
+                          className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                        >
+                          {isSyncing ? "Syncing..." : "Run Sync"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          <div className="bg-white border border-gray-200 rounded-lg shadow-sm">
+            <div className="p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">External Integration Logs</h3>
+              {externalLogs.length === 0 ? (
+                <p className="text-gray-500 text-center py-6">No external integration logs yet</p>
+              ) : (
+                <div className="space-y-3">
+                  {externalLogs.map((log) => (
+                    <div
+                      key={log.id}
+                      className={`p-4 rounded-lg border ${
+                        log.status === "success"
+                          ? "bg-green-50 border-green-200"
+                          : log.status === "error"
+                          ? "bg-red-50 border-red-200"
+                          : "bg-yellow-50 border-yellow-200"
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-medium text-gray-900">
+                            {externalTypeLabels[log.integration_type] || log.integration_type} · {log.method} {log.endpoint}
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            {log.provider} · {log.direction}
+                            {typeof log.duration_ms === "number" ? ` · ${log.duration_ms}ms` : ""}
+                          </p>
+                          {log.error_message && (
+                            <p className="text-xs text-red-600 mt-1">{log.error_message}</p>
+                          )}
+                        </div>
+                        <div className="text-right text-xs text-gray-500">
+                          <span className="uppercase font-medium">{log.status}</span>
+                          <div>{new Date(log.created_at).toLocaleString()}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "notifications" && (
+        <div className="space-y-6">
           <div className="bg-white border border-gray-200 rounded-lg shadow-sm">
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
@@ -360,13 +1128,11 @@ export default function IntegrationsSettingsPage() {
                               const newTypes = e.target.checked
                                 ? [...slackIntegration.notification_types, type]
                                 : slackIntegration.notification_types.filter((t) => t !== type);
-                              updateNotificationTypes(slackIntegration.id, newTypes);
+                              void updateNotificationTypes(slackIntegration.id, newTypes);
                             }}
                             className="rounded border-gray-300"
                           />
-                          <span className="text-sm text-gray-700">
-                            {notificationTypeLabels[type]}
-                          </span>
+                          <span className="text-sm text-gray-700">{notificationTypeLabels[type]}</span>
                         </label>
                       ))}
                     </div>
@@ -374,14 +1140,18 @@ export default function IntegrationsSettingsPage() {
 
                   <div className="flex space-x-3">
                     <button
-                      onClick={() => testIntegration(slackIntegration.id)}
+                      onClick={() => {
+                        void testIntegration(slackIntegration.id);
+                      }}
                       disabled={testingId === slackIntegration.id}
                       className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                     >
                       {testingId === slackIntegration.id ? "Testing..." : "Test Connection"}
                     </button>
                     <button
-                      onClick={() => deleteIntegration(slackIntegration.id)}
+                      onClick={() => {
+                        void deleteIntegration(slackIntegration.id);
+                      }}
                       className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                     >
                       Remove
@@ -393,9 +1163,7 @@ export default function IntegrationsSettingsPage() {
               {showSlackSetup && !slackIntegration && (
                 <div className="mt-4 space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Webhook URL
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Webhook URL</label>
                     <input
                       type="url"
                       value={slackWebhook}
@@ -440,9 +1208,7 @@ export default function IntegrationsSettingsPage() {
                             }}
                             className="rounded border-gray-300"
                           />
-                          <span className="text-sm text-gray-700">
-                            {notificationTypeLabels[type]}
-                          </span>
+                          <span className="text-sm text-gray-700">{notificationTypeLabels[type]}</span>
                         </label>
                       ))}
                     </div>
@@ -450,7 +1216,9 @@ export default function IntegrationsSettingsPage() {
 
                   <div className="flex space-x-3">
                     <button
-                      onClick={createSlackIntegration}
+                      onClick={() => {
+                        void createSlackIntegration();
+                      }}
                       className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                     >
                       Save Integration
@@ -467,7 +1235,6 @@ export default function IntegrationsSettingsPage() {
             </div>
           </div>
 
-          {/* Microsoft Teams Integration */}
           <div className="bg-white border border-gray-200 rounded-lg shadow-sm">
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
@@ -545,13 +1312,11 @@ export default function IntegrationsSettingsPage() {
                               const newTypes = e.target.checked
                                 ? [...teamsIntegration.notification_types, type]
                                 : teamsIntegration.notification_types.filter((t) => t !== type);
-                              updateNotificationTypes(teamsIntegration.id, newTypes);
+                              void updateNotificationTypes(teamsIntegration.id, newTypes);
                             }}
                             className="rounded border-gray-300"
                           />
-                          <span className="text-sm text-gray-700">
-                            {notificationTypeLabels[type]}
-                          </span>
+                          <span className="text-sm text-gray-700">{notificationTypeLabels[type]}</span>
                         </label>
                       ))}
                     </div>
@@ -559,14 +1324,18 @@ export default function IntegrationsSettingsPage() {
 
                   <div className="flex space-x-3">
                     <button
-                      onClick={() => testIntegration(teamsIntegration.id)}
+                      onClick={() => {
+                        void testIntegration(teamsIntegration.id);
+                      }}
                       disabled={testingId === teamsIntegration.id}
                       className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                     >
                       {testingId === teamsIntegration.id ? "Testing..." : "Test Connection"}
                     </button>
                     <button
-                      onClick={() => deleteIntegration(teamsIntegration.id)}
+                      onClick={() => {
+                        void deleteIntegration(teamsIntegration.id);
+                      }}
                       className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                     >
                       Remove
@@ -578,9 +1347,7 @@ export default function IntegrationsSettingsPage() {
               {showTeamsSetup && !teamsIntegration && (
                 <div className="mt-4 space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Webhook URL
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Webhook URL</label>
                     <input
                       type="url"
                       value={teamsWebhook}
@@ -625,9 +1392,7 @@ export default function IntegrationsSettingsPage() {
                             }}
                             className="rounded border-gray-300"
                           />
-                          <span className="text-sm text-gray-700">
-                            {notificationTypeLabels[type]}
-                          </span>
+                          <span className="text-sm text-gray-700">{notificationTypeLabels[type]}</span>
                         </label>
                       ))}
                     </div>
@@ -635,7 +1400,9 @@ export default function IntegrationsSettingsPage() {
 
                   <div className="flex space-x-3">
                     <button
-                      onClick={createTeamsIntegration}
+                      onClick={() => {
+                        void createTeamsIntegration();
+                      }}
                       className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                     >
                       Save Integration
@@ -666,9 +1433,7 @@ export default function IntegrationsSettingsPage() {
                   <div
                     key={log.id}
                     className={`p-4 rounded-lg border ${
-                      log.success
-                        ? "bg-green-50 border-green-200"
-                        : "bg-red-50 border-red-200"
+                      log.success ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"
                     }`}
                   >
                     <div className="flex items-center justify-between">
@@ -691,9 +1456,7 @@ export default function IntegrationsSettingsPage() {
                       <div className="text-right">
                         <span
                           className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            log.success
-                              ? "bg-green-100 text-green-800"
-                              : "bg-red-100 text-red-800"
+                            log.success ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
                           }`}
                         >
                           {log.success ? "Sent" : "Failed"}

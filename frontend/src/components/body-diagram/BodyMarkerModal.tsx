@@ -25,6 +25,11 @@ const severityOptions: { value: BodyMarker['severity']; label: string }[] = [
   { value: 'high', label: 'High' },
 ];
 
+function getDefaultMarkerNote(type: BodyMarker['type']): string {
+  const selectedType = markerTypes.find((markerType) => markerType.value === type);
+  return selectedType ? selectedType.label : 'Body Marker';
+}
+
 export function BodyMarkerModal({
   isOpen,
   onClose,
@@ -51,15 +56,19 @@ export function BodyMarkerModal({
 
   if (!isOpen) return null;
 
+  const hasValidPosition = Boolean(marker || position);
+  const noteValue = note.trim();
+  const markerNote = noteValue || getDefaultMarkerNote(type);
+
   const handleSave = () => {
-    if (!note.trim()) return;
+    if (!hasValidPosition) return;
 
     const markerData: Omit<BodyMarker, 'id'> = {
       x: marker?.x ?? position?.x ?? 0,
       y: marker?.y ?? position?.y ?? 0,
       view: marker?.view ?? position?.view ?? 'front',
       type,
-      note: note.trim(),
+      note: markerNote,
       date: marker?.date ?? new Date().toISOString(),
       severity,
     };
@@ -223,7 +232,7 @@ export function BodyMarkerModal({
               color: '#374151',
             }}
           >
-            Clinical Note
+            Clinical Note (Optional)
           </label>
           <textarea
             value={note}
@@ -311,19 +320,19 @@ export function BodyMarkerModal({
           </button>
           <button
             onClick={handleSave}
-            disabled={!note.trim()}
+            disabled={!hasValidPosition}
             style={{
               padding: '10px 24px',
               border: 'none',
               borderRadius: '8px',
-              background: note.trim()
+              background: hasValidPosition
                 ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
                 : '#e5e7eb',
-              color: note.trim() ? 'white' : '#9ca3af',
+              color: hasValidPosition ? 'white' : '#9ca3af',
               fontSize: '14px',
               fontWeight: '600',
-              cursor: note.trim() ? 'pointer' : 'not-allowed',
-              boxShadow: note.trim() ? '0 4px 12px rgba(102, 126, 234, 0.4)' : 'none',
+              cursor: hasValidPosition ? 'pointer' : 'not-allowed',
+              boxShadow: hasValidPosition ? '0 4px 12px rgba(102, 126, 234, 0.4)' : 'none',
             }}
           >
             {marker ? 'Update' : 'Add Marker'}

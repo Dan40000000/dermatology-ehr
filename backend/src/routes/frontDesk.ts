@@ -181,24 +181,112 @@ frontDeskRouter.get(
 frontDeskRouter.post(
   '/check-in/:appointmentId',
   requireAuth,
-  requireRoles(['admin', 'front_desk', 'ma']),
+  requireRoles(['admin', 'front_desk', 'ma', 'provider']),
   async (req: AuthedRequest, res) => {
     try {
       const { appointmentId } = req.params;
       const tenantId = req.tenantId!;
       const userId = req.user!.id;
 
-      const result = await frontDeskService.checkInPatient(tenantId, appointmentId!);
+      const rawCopayAmountCents = req.body?.copayAmountCents;
+      const copayAmountCents =
+        typeof rawCopayAmountCents === 'number'
+          ? rawCopayAmountCents
+          : typeof rawCopayAmountCents === 'string'
+            ? Number.parseInt(rawCopayAmountCents, 10)
+            : undefined;
+      const rawOutstandingBalanceAmountCents = req.body?.outstandingBalanceAmountCents;
+      const outstandingBalanceAmountCents =
+        typeof rawOutstandingBalanceAmountCents === 'number'
+          ? rawOutstandingBalanceAmountCents
+          : typeof rawOutstandingBalanceAmountCents === 'string'
+            ? Number.parseInt(rawOutstandingBalanceAmountCents, 10)
+            : undefined;
+      const paymentMethod = ['cash', 'credit', 'debit', 'check'].includes(req.body?.paymentMethod)
+        ? req.body.paymentMethod
+        : undefined;
+      const notes = typeof req.body?.notes === 'string' ? req.body.notes.trim().slice(0, 500) : undefined;
+      const priorAuthOverrideReason =
+        typeof req.body?.priorAuthOverrideReason === 'string'
+          ? req.body.priorAuthOverrideReason.trim().slice(0, 250)
+          : undefined;
 
-      // Audit log
-      await auditLog(tenantId, userId, 'check_in', 'appointment', appointmentId!);
+      const result = await frontDeskService.checkInPatient(tenantId, appointmentId!, {
+        collectCopay: req.body?.collectCopay === true,
+        collectOutstandingBalance: req.body?.collectOutstandingBalance === true,
+        deferCopay: req.body?.deferCopay === true,
+        copayAmountCents: Number.isFinite(copayAmountCents as number) ? (copayAmountCents as number) : undefined,
+        outstandingBalanceAmountCents: Number.isFinite(outstandingBalanceAmountCents as number)
+          ? (outstandingBalanceAmountCents as number)
+          : undefined,
+        paymentMethod,
+        notes,
+        priorAuthOverrideReason,
+        checkedInBy: userId,
+      });
 
-      res.json({
+      try {
+        await auditLog(tenantId, userId, 'check_in', 'appointment', appointmentId!);
+        if (priorAuthOverrideReason) {
+          await auditLog(tenantId, userId, 'check_in_prior_auth_override', 'appointment', appointmentId!);
+        }
+      } catch (auditError) {
+        logger.error('Check-in audit log failed:', auditError);
+      }
+
+      const payload: {
+        success: boolean;
+        message: string;
+        encounterId?: string;
+        copayAmount: number;
+        copayAmountCents: number;
+        copaySource: 'insurance_profile' | 'none';
+        copayDisposition: 'none' | 'collected' | 'deferred';
+        copayCollectedAmountCents: number;
+        outstandingBalanceCollectedAmountCents?: number;
+        totalCollectedAmountCents?: number;
+        priorAuthOverrideUsed?: boolean;
+        priorAuthStatus?: string;
+        eligibilityStatus?: string;
+        eligibilityVerifiedAt?: string;
+        paymentId?: string;
+        paymentReceiptNumber?: string;
+        paymentConfirmationEmailSent?: boolean;
+        paymentConfirmationEmailAddress?: string;
+      } = {
         success: true,
         message: 'Patient checked in successfully',
-        encounterId: result.encounterId
-      });
+        copayAmount: result.copayAmount,
+        copayAmountCents: result.copayAmountCents,
+        copaySource: result.copaySource,
+        copayDisposition: result.copayDisposition,
+        copayCollectedAmountCents: result.copayCollectedAmountCents,
+        outstandingBalanceCollectedAmountCents: result.outstandingBalanceCollectedAmountCents,
+        totalCollectedAmountCents: result.totalCollectedAmountCents,
+        priorAuthOverrideUsed: result.priorAuthOverrideUsed,
+        priorAuthStatus: result.priorAuthStatus,
+        eligibilityStatus: result.eligibilityStatus,
+        eligibilityVerifiedAt: result.eligibilityVerifiedAt,
+        paymentId: result.paymentId,
+        paymentReceiptNumber: result.paymentReceiptNumber,
+        paymentConfirmationEmailSent: result.paymentConfirmationEmailSent,
+        paymentConfirmationEmailAddress: result.paymentConfirmationEmailAddress,
+      };
+      if (result.encounterId) {
+        payload.encounterId = result.encounterId;
+      }
+
+      res.json(payload);
     } catch (error) {
+      if (error instanceof Error && (error as Error & { code?: string }).code === 'PRIOR_AUTH_REQUIRED') {
+        return res.status(400).json({
+          error: error.message,
+          code: 'PRIOR_AUTH_REQUIRED',
+        });
+      }
+      if (error instanceof Error && error.message === 'Appointment not found') {
+        return res.status(404).json({ error: 'Appointment not found' });
+      }
       logger.error('Error checking in patient:', error);
       res.status(500).json({ error: 'Failed to check in patient' });
     }
@@ -228,7 +316,7 @@ frontDeskRouter.post(
 frontDeskRouter.post(
   '/check-out/:appointmentId',
   requireAuth,
-  requireRoles(['admin', 'front_desk', 'ma']),
+  requireRoles(['admin', 'front_desk', 'ma', 'provider']),
   async (req: AuthedRequest, res) => {
     try {
       const { appointmentId } = req.params;
@@ -237,8 +325,11 @@ frontDeskRouter.post(
 
       await frontDeskService.checkOutPatient(tenantId, appointmentId!);
 
-      // Audit log
-      await auditLog(tenantId, userId, 'check_out', 'appointment', appointmentId!);
+      try {
+        await auditLog(tenantId, userId, 'check_out', 'appointment', appointmentId!);
+      } catch (auditError) {
+        logger.error('Check-out audit log failed:', auditError);
+      }
 
       res.json({ success: true, message: 'Patient checked out successfully' });
     } catch (error) {
@@ -297,8 +388,11 @@ frontDeskRouter.put(
 
       await frontDeskService.updateAppointmentStatus(tenantId, appointmentId!, status);
 
-      // Audit log
-      await auditLog(tenantId, userId, 'update_status', 'appointment', appointmentId!);
+      try {
+        await auditLog(tenantId, userId, 'update_status', 'appointment', appointmentId!);
+      } catch (auditError) {
+        logger.error('Status update audit log failed:', auditError);
+      }
 
       res.json({ success: true, message: 'Status updated successfully' });
     } catch (error) {

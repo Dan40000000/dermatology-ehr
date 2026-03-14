@@ -62,6 +62,19 @@ describe('authService', () => {
     ]);
   });
 
+  it('issues tokens when refresh_tokens table is missing', async () => {
+    signMock.mockReturnValueOnce('access-token').mockReturnValueOnce('refresh-token');
+    queryMock.mockRejectedValueOnce({ code: '42P01', message: 'relation "refresh_tokens" does not exist' });
+
+    const tokens = await issueTokens(user as any);
+
+    expect(tokens).toEqual({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      expiresIn: env.accessTokenTtlSec,
+    });
+  });
+
   it('returns null when refresh token is invalid', async () => {
     verifyMock.mockReturnValueOnce({ type: 'access' });
 
@@ -177,6 +190,36 @@ describe('authService', () => {
       user.tenantId,
       expect.any(String),
     ]);
+  });
+
+  it('rotates refresh tokens in stateless mode when refresh_tokens table is missing', async () => {
+    verifyMock.mockReturnValueOnce({
+      type: 'refresh',
+      sub: user.id,
+      tenantId: user.tenantId,
+    });
+    queryMock.mockRejectedValue({ code: '42P01', message: 'relation "refresh_tokens" does not exist' });
+    findByIdMock.mockResolvedValueOnce(user);
+    signMock.mockReturnValueOnce('access-new').mockReturnValueOnce('refresh-new');
+
+    const result = await rotateRefreshToken('stateless-token');
+
+    expect(result).toEqual({
+      tokens: {
+        accessToken: 'access-new',
+        refreshToken: 'refresh-new',
+        expiresIn: env.accessTokenTtlSec,
+      },
+      user: {
+        id: user.id,
+        tenantId: user.tenantId,
+        role: user.role,
+        secondaryRoles: ['billing'],
+        roles: ['admin', 'billing'],
+        email: user.email,
+        fullName: user.fullName,
+      },
+    });
   });
 
   it('returns null when verification throws', async () => {

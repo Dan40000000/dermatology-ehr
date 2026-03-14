@@ -95,13 +95,76 @@ describe("Front desk routes", () => {
   });
 
   it("POST /front-desk/check-in returns success", async () => {
-    serviceMock.checkInPatient.mockResolvedValueOnce({ encounterId: "enc-1" } as any);
+    serviceMock.checkInPatient.mockResolvedValueOnce({
+      encounterId: "enc-1",
+      copayAmount: 35,
+      copayAmountCents: 3500,
+      copaySource: "insurance_profile",
+      eligibilityStatus: "Active",
+      eligibilityVerifiedAt: "2026-02-27T12:00:00.000Z",
+    } as any);
 
     const res = await request(app).post("/front-desk/check-in/apt-1");
 
     expect(res.status).toBe(200);
     expect(res.body.encounterId).toBe("enc-1");
+    expect(res.body.copayAmount).toBe(35);
+    expect(res.body.copayAmountCents).toBe(3500);
+    expect(res.body.copaySource).toBe("insurance_profile");
     expect(auditLog).toHaveBeenCalled();
+  });
+
+  it("POST /front-desk/check-in still succeeds when audit logging fails", async () => {
+    serviceMock.checkInPatient.mockResolvedValueOnce({
+      encounterId: "enc-1",
+      copayAmount: 0,
+      copayAmountCents: 0,
+      copaySource: "none",
+    } as any);
+    (auditLog as jest.Mock).mockRejectedValueOnce(new Error("audit down"));
+
+    const res = await request(app).post("/front-desk/check-in/apt-1");
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.encounterId).toBe("enc-1");
+  });
+
+  it("POST /front-desk/check-in forwards copay collect payload", async () => {
+    serviceMock.checkInPatient.mockResolvedValueOnce({
+      encounterId: "enc-1",
+      copayAmount: 35,
+      copayAmountCents: 3500,
+      copaySource: "insurance_profile",
+      copayDisposition: "collected",
+      copayCollectedAmountCents: 3500,
+      paymentReceiptNumber: "RCP-2026-000001",
+      paymentConfirmationEmailSent: true,
+      paymentConfirmationEmailAddress: "patient@example.com",
+    } as any);
+
+    const res = await request(app).post("/front-desk/check-in/apt-1").send({
+      collectCopay: true,
+      copayAmountCents: 3500,
+      paymentMethod: "credit",
+      notes: "Paid at desk",
+    });
+
+    expect(res.status).toBe(200);
+    expect(serviceMock.checkInPatient).toHaveBeenCalledWith(
+      "tenant-1",
+      "apt-1",
+      expect.objectContaining({
+        collectCopay: true,
+        copayAmountCents: 3500,
+        paymentMethod: "credit",
+      })
+    );
+    expect(res.body.copayDisposition).toBe("collected");
+    expect(res.body.copayCollectedAmountCents).toBe(3500);
+    expect(res.body.paymentReceiptNumber).toBe("RCP-2026-000001");
+    expect(res.body.paymentConfirmationEmailSent).toBe(true);
+    expect(res.body.paymentConfirmationEmailAddress).toBe("patient@example.com");
   });
 
   it("POST /front-desk/check-out returns success", async () => {

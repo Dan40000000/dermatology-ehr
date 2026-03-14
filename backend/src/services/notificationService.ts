@@ -6,6 +6,7 @@
 
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
+import { getEmailService } from '../lib/container';
 import crypto from 'crypto';
 
 // ============================================================================
@@ -766,18 +767,62 @@ export async function processNotificationQueue(
 
 // Queue item processors
 async function processEmailQueueItem(item: any): Promise<boolean> {
-  // In production, integrate with email service (SendGrid, SES, etc.)
-  // For now, log the email
-  logger.info('Sending email', {
-    to: item.payload.to,
-    subject: item.payload.subject,
+  const payload = item.payload && typeof item.payload === 'object' ? item.payload : {};
+  let recipient = payload.to as string | string[] | undefined;
+
+  // Queue items from broadcast notifications may not include explicit recipients.
+  // Resolve recipient from the user record when possible.
+  if (!recipient && item.recipient_id) {
+    const userResult = await pool.query(
+      `SELECT email FROM users WHERE tenant_id = $1 AND id = $2 LIMIT 1`,
+      [item.tenant_id, item.recipient_id]
+    );
+
+    if (userResult.rowCount && userResult.rows[0]?.email) {
+      recipient = userResult.rows[0].email as string;
+    }
+  }
+
+  if (!recipient) {
+    logger.warn('Skipping email queue item without recipient', {
+      queueId: item.id,
+      tenantId: item.tenant_id,
+      notificationType: item.notification_type,
+    });
+    return false;
+  }
+
+  const subject =
+    (typeof payload.subject === 'string' && payload.subject.trim()) ||
+    (typeof payload.title === 'string' && payload.title.trim()) ||
+    `Notification: ${item.notification_type || 'update'}`;
+
+  const textBody =
+    (typeof payload.text === 'string' && payload.text) ||
+    (typeof payload.textContent === 'string' && payload.textContent) ||
+    (typeof payload.message === 'string' && payload.message) ||
+    undefined;
+
+  const htmlBody =
+    (typeof payload.html === 'string' && payload.html) ||
+    (typeof payload.htmlContent === 'string' && payload.htmlContent) ||
+    undefined;
+
+  const sendResult = await getEmailService().sendEmail({
+    to: recipient,
+    subject,
+    text: textBody,
+    html: htmlBody,
   });
 
-  // TODO: Integrate with actual email service
-  // const emailService = getEmailService();
-  // await emailService.send(item.payload);
+  logger.info('Email queue item sent', {
+    queueId: item.id,
+    messageId: sendResult.messageId,
+    acceptedCount: sendResult.accepted.length,
+    rejectedCount: sendResult.rejected.length,
+  });
 
-  return true;
+  return sendResult.accepted.length > 0;
 }
 
 async function processPushQueueItem(item: any): Promise<boolean> {

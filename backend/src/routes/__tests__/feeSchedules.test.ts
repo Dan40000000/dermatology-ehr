@@ -371,6 +371,13 @@ describe("Fee schedules routes", () => {
     expect(res.body.cpt_code).toBe("11100");
   });
 
+  it("GET /fee-schedules/default/fee/:cptCode falls back to matching non-default schedules", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ cpt_code: "LASER-HAIR-S", fee_cents: 15000 }] });
+    const res = await request(app).get("/fee-schedules/default/fee/LASER-HAIR-S");
+    expect(res.status).toBe(200);
+    expect(res.body.cpt_code).toBe("LASER-HAIR-S");
+  });
+
   describe("Payer contracts", () => {
     it("GET /fee-schedules/contracts/list returns list", async () => {
       queryMock.mockResolvedValueOnce({ rows: [{ id: "pc-1" }] });
@@ -584,6 +591,7 @@ describe("Fee schedules routes", () => {
       const res = await request(app).get("/fee-schedules/cosmetic/procedures");
       expect(res.status).toBe(200);
       expect(res.body.procedures).toHaveLength(1);
+      expect(String(queryMock.mock.calls[0]?.[0] ?? "")).toContain("fee_schedule_items");
     });
 
     it("GET /fee-schedules/cosmetic/categories returns list", async () => {

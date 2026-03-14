@@ -43,6 +43,7 @@
 ```
 Account SID: AC1234567890abcdef1234567890abcd
 Auth Token: 1234567890abcdef1234567890abcd
+A2P Contact Email: dan@perrysoftwarellc.com
 ```
 
 ---
@@ -57,7 +58,8 @@ Auth Token: 1234567890abcdef1234567890abcd
 TWILIO_ACCOUNT_SID=AC1234567890abcdef1234567890abcd
 TWILIO_AUTH_TOKEN=1234567890abcdef1234567890abcd
 TWILIO_PHONE_NUMBER=+17205551234
-TWILIO_STATUS_CALLBACK_URL=http://localhost:4000/api/sms/status
+TWILIO_A2P_CONTACT_EMAIL=dan@perrysoftwarellc.com
+TWILIO_STATUS_CALLBACK_URL=http://localhost:4000/api/sms/webhook/status
 
 # SMS Settings
 SMS_REMINDER_ENABLED=true

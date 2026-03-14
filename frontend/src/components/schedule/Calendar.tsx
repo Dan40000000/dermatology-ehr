@@ -19,6 +19,7 @@ interface TimeBlock {
 interface CalendarProps {
   currentDate: Date;
   viewMode: 'day' | 'week' | 'month';
+  showWeekends?: boolean;
   appointments: Appointment[];
   providers: Provider[];
   availability: Availability[];
@@ -27,6 +28,14 @@ interface CalendarProps {
   onAppointmentClick: (appointment: Appointment) => void;
   onSlotClick: (providerId: string, date: Date, hour: number, minute: number) => void;
   onTimeBlockClick?: (timeBlockId: string) => void;
+  checkInActionId?: string | null;
+  noShowActionId?: string | null;
+  canMarkNoShowAppointment?: (appointment: Appointment) => boolean;
+  onAppointmentCheckIn?: (appointment: Appointment) => void;
+  onAppointmentNoShow?: (appointment: Appointment) => void;
+  onAppointmentUndoNoShow?: (appointment: Appointment) => void;
+  onAppointmentCancel?: (appointment: Appointment) => void;
+  onAppointmentReschedule?: (appointment: Appointment) => void;
 }
 
 function toDateKey(date: Date): string {
@@ -39,6 +48,7 @@ function toDateKey(date: Date): string {
 export function Calendar({
   currentDate,
   viewMode,
+  showWeekends = false,
   appointments,
   providers,
   availability,
@@ -47,6 +57,14 @@ export function Calendar({
   onAppointmentClick,
   onSlotClick,
   onTimeBlockClick,
+  checkInActionId = null,
+  noShowActionId = null,
+  canMarkNoShowAppointment,
+  onAppointmentCheckIn,
+  onAppointmentNoShow,
+  onAppointmentUndoNoShow,
+  onAppointmentCancel,
+  onAppointmentReschedule,
 }: CalendarProps) {
   const [hoveredTimeBlock, setHoveredTimeBlock] = useState<TimeBlock | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
@@ -80,21 +98,22 @@ export function Calendar({
     if (viewMode === 'day') {
       return [new Date(currentDate)];
     } else {
-      // Week view: show 5 days (Monday-Friday)
+      // Week view: default Monday-Friday, optionally include weekends
+      const totalWeekDays = showWeekends ? 7 : 5;
       const days = [];
       const startOfWeek = new Date(currentDate);
       const day = startOfWeek.getDay();
       const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // adjust to Monday
       startOfWeek.setDate(diff);
 
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < totalWeekDays; i++) {
         const date = new Date(startOfWeek);
         date.setDate(startOfWeek.getDate() + i);
         days.push(date);
       }
       return days;
     }
-  }, [currentDate, viewMode]);
+  }, [currentDate, viewMode, showWeekends]);
 
   const availabilityByProviderDay = useMemo(() => {
     const index = new Map<string, Availability[]>();
@@ -372,6 +391,133 @@ export function Calendar({
     }
   };
 
+  const handleInlineButtonClick = (event: React.MouseEvent<HTMLButtonElement>, action: () => void) => {
+    event.stopPropagation();
+    action();
+  };
+
+  const renderInlineActions = (appointment: Appointment, alignLeft: boolean) => {
+    if (selectedAppointment?.id !== appointment.id) return null;
+
+    const isNoShow = appointment.status === 'no_show';
+    const canCheckIn = appointment.status === 'scheduled';
+    const canReschedule = appointment.status !== 'completed' && appointment.status !== 'cancelled';
+    const canCancel = appointment.status !== 'completed' && appointment.status !== 'cancelled';
+    const canMarkNoShow = canMarkNoShowAppointment
+      ? canMarkNoShowAppointment(appointment)
+      : appointment.status === 'scheduled';
+    const noShowBusy = noShowActionId === appointment.id;
+    const checkInBusy = checkInActionId === appointment.id;
+
+    return (
+      <div
+        data-testid={`calendar-inline-actions-${appointment.id}`}
+        style={{
+          position: 'absolute',
+          top: 0,
+          ...(alignLeft
+            ? { right: 'calc(100% + 6px)' }
+            : { left: 'calc(100% + 6px)' }),
+          zIndex: 30,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '4px',
+          minWidth: '120px',
+          padding: '6px',
+          borderRadius: '8px',
+          border: '1px solid #d1d5db',
+          background: '#ffffff',
+          boxShadow: '0 8px 16px rgba(0,0,0,0.15)',
+        }}
+      >
+        <button
+          type="button"
+          disabled={!canCheckIn || checkInBusy || !onAppointmentCheckIn}
+          onClick={(event) => handleInlineButtonClick(event, () => onAppointmentCheckIn?.(appointment))}
+          style={{
+            border: '1px solid #ddd6fe',
+            background: canCheckIn ? '#ede9fe' : '#f3f4f6',
+            color: canCheckIn ? '#5b21b6' : '#9ca3af',
+            borderRadius: '6px',
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            padding: '4px 6px',
+            cursor: canCheckIn ? 'pointer' : 'not-allowed',
+          }}
+        >
+          {checkInBusy ? 'Checking...' : 'Check In'}
+        </button>
+        <button
+          type="button"
+          disabled={!canReschedule || !onAppointmentReschedule}
+          onClick={(event) => handleInlineButtonClick(event, () => onAppointmentReschedule?.(appointment))}
+          style={{
+            border: canReschedule ? '1px solid #bae6fd' : '1px solid #e5e7eb',
+            background: canReschedule ? '#ecfeff' : '#f3f4f6',
+            color: canReschedule ? '#0e7490' : '#9ca3af',
+            borderRadius: '6px',
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            padding: '4px 6px',
+            cursor: canReschedule ? 'pointer' : 'not-allowed',
+          }}
+        >
+          Reschedule
+        </button>
+        <button
+          type="button"
+          disabled={noShowBusy || (!isNoShow && !canMarkNoShow) || (isNoShow ? !onAppointmentUndoNoShow : !onAppointmentNoShow)}
+          onClick={(event) =>
+            handleInlineButtonClick(event, () => {
+              if (isNoShow) {
+                onAppointmentUndoNoShow?.(appointment);
+              } else {
+                onAppointmentNoShow?.(appointment);
+              }
+            })
+          }
+          style={{
+            border: isNoShow ? '1px solid #93c5fd' : '1px solid #fdba74',
+            background: isNoShow
+              ? '#eff6ff'
+              : canMarkNoShow
+                ? '#fff7ed'
+                : '#f3f4f6',
+            color: isNoShow
+              ? '#1d4ed8'
+              : canMarkNoShow
+                ? '#9a3412'
+                : '#9ca3af',
+            borderRadius: '6px',
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            padding: '4px 6px',
+            cursor: noShowBusy || (!isNoShow && !canMarkNoShow) ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {noShowBusy ? (isNoShow ? 'Undoing...' : 'Marking...') : (isNoShow ? 'Undo No-Show' : 'Mark No-Show')}
+        </button>
+        <button
+          type="button"
+          disabled={!canCancel || !onAppointmentCancel}
+          onClick={(event) => handleInlineButtonClick(event, () => onAppointmentCancel?.(appointment))}
+          style={{
+            border: canCancel ? '1px solid #fecaca' : '1px solid #e5e7eb',
+            background: canCancel ? '#fef2f2' : '#f3f4f6',
+            color: canCancel ? '#991b1b' : '#9ca3af',
+            borderRadius: '6px',
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            padding: '4px 6px',
+            cursor: canCancel ? 'pointer' : 'not-allowed',
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  };
+
   const formatTime = (hour: number, minute: number) => {
     const h = hour % 12 || 12;
     const m = minute.toString().padStart(2, '0');
@@ -509,7 +655,7 @@ export function Calendar({
         {/* Provider/Day columns */}
         {viewMode === 'day' ? (
           // Day view: one column per provider
-          Array.isArray(providers) && providers.map((provider) => (
+          Array.isArray(providers) && providers.map((provider, providerIndex) => (
             <div key={provider.id} className="calendar-provider-column">
               {timeSlots.map(({ hour, minute }) => {
                 const day = days[0]; // Single day in day view
@@ -610,6 +756,7 @@ export function Calendar({
                         {slotAppointments.length > 1 && (
                           <div className="appointment-conflict">+{slotAppointments.length - 1} conflict</div>
                         )}
+                        {renderInlineActions(appointment, providerIndex === providers.length - 1)}
                       </div>
                     )}
                   </div>
@@ -619,7 +766,7 @@ export function Calendar({
           ))
         ) : (
           // Week view: one column per day (all providers combined)
-          days.map((day) => (
+          days.map((day, dayIndex) => (
             <div key={day.toISOString()} className="calendar-day-column">
               {timeSlots.map(({ hour, minute }) => {
                 // In week view, check all providers for this time slot
@@ -684,6 +831,7 @@ export function Calendar({
                         {allSlotAppointments.length > 1 && (
                           <div className="appointment-conflict">+{allSlotAppointments.length - 1} conflict</div>
                         )}
+                        {renderInlineActions(appointment, dayIndex === days.length - 1)}
                       </div>
                     )}
                   </div>

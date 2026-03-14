@@ -24,7 +24,7 @@ const apiMocks = vi.hoisted(() => ({
   markThreadAsRead: vi.fn(),
   archiveThread: vi.fn(),
   fetchPatients: vi.fn(),
-  fetchProviders: vi.fn(),
+  fetchMessagingRecipients: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -115,7 +115,7 @@ const buildFixtures = () => ({
     },
   ],
   patients: [{ id: 'patient-1', firstName: 'Ana', lastName: 'Derm' }],
-  providers: [{ id: 'user-2', fullName: 'Ben Skin' }],
+  recipients: [{ id: 'user-2', fullName: 'Ben Skin', email: 'ben@example.com', role: 'provider' }],
 });
 
 describe('MailPage', () => {
@@ -131,7 +131,7 @@ describe('MailPage', () => {
       messages: fixtures.messages,
     });
     apiMocks.fetchPatients.mockResolvedValue({ patients: fixtures.patients });
-    apiMocks.fetchProviders.mockResolvedValue({ providers: fixtures.providers });
+    apiMocks.fetchMessagingRecipients.mockResolvedValue({ recipients: fixtures.recipients });
     apiMocks.createMessageThread.mockResolvedValue({ id: 'thread-2' });
     apiMocks.sendThreadMessage.mockResolvedValue({ id: 'msg-2' });
     apiMocks.markThreadAsRead.mockResolvedValue({ ok: true });
@@ -196,7 +196,42 @@ describe('MailPage', () => {
         subject: 'Follow up',
         patientId: '',
         participantIds: ['user-2'],
+        externalEmails: [],
         message: 'Please schedule a follow-up.',
+      }),
+    );
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Message sent');
+  });
+
+  it('composes a new message to an external email only', async () => {
+    render(
+      <MemoryRouter>
+        <MailPage />
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Inbox');
+    fireEvent.click(screen.getByRole('button', { name: '+ New Message' }));
+    const modal = await screen.findByTestId('modal-new-message');
+
+    fireEvent.change(within(modal).getByPlaceholderText('name@example.com, other@example.com'), {
+      target: { value: 'outside@gmail.com' },
+    });
+    fireEvent.change(within(modal).getByPlaceholderText('Message subject...'), {
+      target: { value: 'External follow up' },
+    });
+    fireEvent.change(within(modal).getByPlaceholderText('Type your message...'), {
+      target: { value: 'Sending this outside the org.' },
+    });
+    fireEvent.click(within(modal).getByRole('button', { name: 'Send Message' }));
+
+    await waitFor(() =>
+      expect(apiMocks.createMessageThread).toHaveBeenCalledWith('tenant-1', 'token-1', {
+        subject: 'External follow up',
+        patientId: '',
+        participantIds: [],
+        externalEmails: ['outside@gmail.com'],
+        message: 'Sending this outside the org.',
       }),
     );
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('Message sent');

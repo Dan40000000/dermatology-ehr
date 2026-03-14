@@ -151,6 +151,67 @@ describe("Lab orders routes", () => {
     expect(sendMock).toHaveBeenCalled();
   });
 
+  it("POST /lab-orders/:id/demo-generate-results rejects invalid profile", async () => {
+    const res = await request(app).post("/lab-orders/order-1/demo-generate-results").send({ profile: "bad-profile" });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /lab-orders/:id/demo-generate-results returns 404", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // order lookup
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/lab-orders/order-1/demo-generate-results").send({ profile: "normal" });
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /lab-orders/:id/demo-generate-results returns 400 when order has no tests", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: "order-1", patient_id: "p1" }] }) // order lookup
+      .mockResolvedValueOnce({ rows: [] }) // tests lookup
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/lab-orders/order-1/demo-generate-results").send({ profile: "normal" });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /lab-orders/:id/demo-generate-results generates results", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: "order-1", patient_id: "p1" }] }) // order lookup
+      .mockResolvedValueOnce({
+        rows: [{ id: "lot-1", test_code: "CBC", test_name: "Complete Blood Count" }],
+      }) // tests lookup
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "result-1",
+            test_code: "CBC",
+            test_name: "Complete Blood Count",
+            result_value: "14.2",
+            is_abnormal: false,
+            is_critical: false,
+          },
+        ],
+      }) // result insert
+      .mockResolvedValueOnce({ rows: [] }) // update lot
+      .mockResolvedValueOnce({ rows: [] }) // update order
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/lab-orders/order-1/demo-generate-results").send({ profile: "normal" });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.count).toBe(1);
+  });
+
   it("PATCH /lab-orders/:id/specimen returns 404", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
     const res = await request(app).patch("/lab-orders/order-1/specimen").send({ specimen_collected_at: "2025-01-01" });

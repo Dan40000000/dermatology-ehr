@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import type { Patient } from '../../types';
+import { formatPhoneDisplay } from '../../utils/phone';
 
 interface PatientBannerProps {
   patient: Patient;
@@ -111,7 +112,7 @@ export function PatientBanner({
           </div>
 
           <div className="patient-contact-row">
-            {patient.phone && <span className="contact-item">{patient.phone}</span>}
+            {patient.phone && <span className="contact-item">{formatPhoneDisplay(patient.phone)}</span>}
             {patient.email && <span className="contact-item">{patient.email}</span>}
           </div>
         </div>

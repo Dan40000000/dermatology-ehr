@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton } from '../components/ui';
@@ -133,11 +134,25 @@ interface NoShowRiskAnalysis {
 type DateRangePreset = 'today' | 'week' | 'month' | '30days' | 'year';
 type AnalyticsTab = 'financials' | 'clinical' | 'compliance' | 'inventory' | 'dermatology';
 
+const ANALYTICS_TAB_QUERY_MAP: Record<string, AnalyticsTab> = {
+  financials: 'financials',
+  financial: 'financials',
+  revenue: 'financials',
+  dashboard: 'financials',
+  clinical: 'clinical',
+  operational: 'clinical',
+  productivity: 'clinical',
+  compliance: 'compliance',
+  inventory: 'inventory',
+  dermatology: 'dermatology',
+};
+
 const COLORS = ['#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6'];
 
 export function AnalyticsPage() {
   const { session } = useAuth();
   const { showError, showSuccess } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -158,6 +173,23 @@ export function AnalyticsPage() {
   const [dermMetrics, setDermMetrics] = useState<DermatologyMetrics | null>(null);
   const [yoyComparison, setYoyComparison] = useState<YoYComparison | null>(null);
   const [noShowRisk, setNoShowRisk] = useState<NoShowRiskAnalysis | null>(null);
+
+  useEffect(() => {
+    const requestedTab = searchParams.get('tab');
+    if (!requestedTab) return;
+
+    const mappedTab = ANALYTICS_TAB_QUERY_MAP[requestedTab.toLowerCase()];
+    if (mappedTab && mappedTab !== activeTab) {
+      setActiveTab(mappedTab);
+    }
+  }, [activeTab, searchParams]);
+
+  const setAnalyticsTab = useCallback((tab: AnalyticsTab) => {
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams);
+    params.set('tab', tab);
+    setSearchParams(params, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const getDateFilter = useCallback(() => {
     if (useCustomRange && customStartDate && customEndDate) {
@@ -337,35 +369,35 @@ export function AnalyticsPage() {
         <button
           type="button"
           className={`analytics-tab ${activeTab === 'financials' ? 'active' : ''}`}
-          onClick={() => setActiveTab('financials')}
+          onClick={() => setAnalyticsTab('financials')}
         >
           Financials
         </button>
         <button
           type="button"
           className={`analytics-tab ${activeTab === 'clinical' ? 'active' : ''}`}
-          onClick={() => setActiveTab('clinical')}
+          onClick={() => setAnalyticsTab('clinical')}
         >
           Clinical and Operational
         </button>
         <button
           type="button"
           className={`analytics-tab ${activeTab === 'compliance' ? 'active' : ''}`}
-          onClick={() => setActiveTab('compliance')}
+          onClick={() => setAnalyticsTab('compliance')}
         >
           Compliance
         </button>
         <button
           type="button"
           className={`analytics-tab ${activeTab === 'inventory' ? 'active' : ''}`}
-          onClick={() => setActiveTab('inventory')}
+          onClick={() => setAnalyticsTab('inventory')}
         >
           Inventory
         </button>
         <button
           type="button"
           className={`analytics-tab ${activeTab === 'dermatology' ? 'active' : ''}`}
-          onClick={() => setActiveTab('dermatology')}
+          onClick={() => setAnalyticsTab('dermatology')}
         >
           Dermatology
         </button>

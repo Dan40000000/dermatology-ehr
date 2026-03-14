@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import DOMPurify from 'dompurify';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_BASE_URL, TENANT_HEADER_NAME } from '../../api';
 import { SignaturePad } from './SignaturePad';
@@ -400,7 +401,7 @@ export function ConsentForm({
           borderRadius: '8px',
           marginBottom: '2rem',
         }}
-        dangerouslySetInnerHTML={{ __html: template?.contentHtml || '' }}
+        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(template?.contentHtml || '') }}
       />
 
       {/* Dynamic Fields */}

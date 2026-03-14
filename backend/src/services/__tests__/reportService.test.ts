@@ -433,6 +433,19 @@ describe('ReportService', () => {
       expect(result).toEqual([]);
       // Should not throw division by zero error
     });
+
+    it('should not reference appointment_status_history.notes', async () => {
+      (pool.query as jest.Mock)
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ total: '0' }] });
+
+      await reportService.generateNoShowReport(tenantId, {});
+
+      const sql = (pool.query as jest.Mock).mock.calls[0]?.[0] as string;
+      expect(sql).toContain(`when a.status = 'no_show' then 'No-show'`);
+      expect(sql).not.toContain('ash.notes');
+      expect(sql).not.toContain('appointment_status_history');
+    });
   });
 
   describe('getFinancialSummary', () => {

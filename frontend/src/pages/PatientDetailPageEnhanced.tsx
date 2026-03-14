@@ -32,6 +32,7 @@ import {
   MapPinIcon,
   Clock
 } from 'lucide-react';
+import { formatPhoneDisplay } from '../utils/phone';
 
 type TabId =
   | 'overview'
@@ -290,7 +291,7 @@ export function PatientDetailPageEnhanced() {
                     <Phone size={16} />
                     <div>
                       <div style={{ fontSize: '0.75rem', opacity: 0.8 }}>Phone</div>
-                      <div style={{ fontWeight: 600 }}>{patient.phone}</div>
+                      <div style={{ fontWeight: 600 }}>{formatPhoneDisplay(patient.phone)}</div>
                     </div>
                   </div>
                 )}

@@ -4,11 +4,13 @@ import { z } from 'zod';
 import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
+import { CLINICAL_ROLES } from '../lib/roles';
 import { validatePrescription, checkDrugInteractions, checkAllergies } from '../services/prescriptionValidator';
 import { sendNewRx, checkFormulary, getPatientBenefits } from '../services/surescriptsService';
 import { logger } from '../lib/logger';
 
 export const prescriptionsRouter = Router();
+prescriptionsRouter.use(requireAuth, requireRoles([...CLINICAL_ROLES]));
 
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {

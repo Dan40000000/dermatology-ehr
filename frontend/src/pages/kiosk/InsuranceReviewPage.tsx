@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
+import { getKioskHeaders } from '../../utils/kioskContext';
 import '../../styles/kiosk.css';
 
 interface InsuranceData {
@@ -50,11 +51,9 @@ export function KioskInsuranceReviewPage() {
 
   const fetchSessionData = async () => {
     try {
+      const headers = await getKioskHeaders();
       const response = await fetch(`/api/kiosk/checkin/${sessionId}`, {
-        headers: {
-          'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
-          'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
-        },
+        headers,
       });
 
       if (!response.ok) {
@@ -108,12 +107,12 @@ export function KioskInsuranceReviewPage() {
     setError('');
 
     try {
+      const headers = await getKioskHeaders();
       const response = await fetch(`/api/kiosk/checkin/${sessionId}/insurance`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
-          'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
+          ...headers,
         },
         body: JSON.stringify(editedData),
       });
@@ -122,7 +121,7 @@ export function KioskInsuranceReviewPage() {
         throw new Error('Failed to update insurance');
       }
 
-      navigate('/kiosk/consent');
+      navigate('/kiosk/medical-history');
     } catch (err) {
       setError('Unable to save changes. Please try again.');
       console.error('Error saving insurance:', err);
@@ -132,7 +131,7 @@ export function KioskInsuranceReviewPage() {
   };
 
   const handleContinue = async () => {
-    navigate('/kiosk/consent');
+    navigate('/kiosk/medical-history');
   };
 
   const startCamera = async (side: 'front' | 'back') => {
@@ -187,12 +186,12 @@ export function KioskInsuranceReviewPage() {
   const uploadPhoto = async (side: 'front' | 'back', photoData: string) => {
     setUploadingPhoto(true);
     try {
+      const headers = await getKioskHeaders();
       const response = await fetch(`/api/kiosk/checkin/${sessionId}/insurance-photo`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
-          'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
+          ...headers,
         },
         body: JSON.stringify({ side, photoData }),
       });
@@ -210,7 +209,7 @@ export function KioskInsuranceReviewPage() {
 
   if (loading) {
     return (
-      <KioskLayout currentStep={3} totalSteps={6} stepName="Loading..." onTimeout={handleTimeout}>
+      <KioskLayout currentStep={3} totalSteps={7} stepName="Loading..." onTimeout={handleTimeout}>
         <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem' }}>
           <div className="kiosk-spinner" style={{ margin: '0 auto 1rem' }} />
           <p style={{ fontSize: '1.5rem', color: '#4b5563' }}>Loading insurance information...</p>
@@ -221,7 +220,7 @@ export function KioskInsuranceReviewPage() {
 
   if (capturingSide) {
     return (
-      <KioskLayout currentStep={3} totalSteps={6} stepName="Capture Insurance Card" onTimeout={handleTimeout}>
+      <KioskLayout currentStep={3} totalSteps={7} stepName="Capture Insurance Card" onTimeout={handleTimeout}>
         <div style={cardStyle}>
           <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '1.5rem' }}>
             Capture {capturingSide === 'front' ? 'Front' : 'Back'} of Card
@@ -259,7 +258,7 @@ export function KioskInsuranceReviewPage() {
   }
 
   return (
-    <KioskLayout currentStep={3} totalSteps={6} stepName="Review Insurance" onTimeout={handleTimeout}>
+    <KioskLayout currentStep={3} totalSteps={7} stepName="Review Insurance" onTimeout={handleTimeout}>
       <div style={cardStyle}>
         <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '1rem' }}>
           Review Insurance Information

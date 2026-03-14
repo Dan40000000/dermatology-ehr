@@ -11,12 +11,16 @@ import { TimeBlockModal, type TimeBlockFormData } from '../components/schedule/T
 import { RescheduleModal, type RescheduleFormData } from '../components/schedule/RescheduleModal';
 import {
   fetchAppointments,
+  fetchFrontDeskSchedule,
+  fetchPriorAuths,
   fetchProviders,
   fetchLocations,
   fetchAppointmentTypes,
   fetchAvailability,
   fetchPatients,
   updateAppointmentStatus,
+  checkInFrontDeskAppointment,
+  updatePatientFlowStatus,
   createAppointment,
   createEncounter,
   fetchPatientEncounters,
@@ -26,10 +30,18 @@ import {
   updateTimeBlock,
   deleteTimeBlock,
   type TimeBlock,
+  type FrontDeskCheckInOptions,
+  type FrontDeskCheckInResponse,
 } from '../api';
 import type { Appointment, Provider, Location, AppointmentType, Availability, Patient, ConflictInfo } from '../types';
+import { setActiveEncounter } from '../utils/activeEncounter';
+import { ensureKioskContext } from '../utils/kioskContext';
 
 type ScheduleViewMode = 'day' | 'week' | 'month';
+
+function isLaserAppointmentType(appointmentTypeName?: string): boolean {
+  return /laser/i.test(appointmentTypeName || '');
+}
 
 function startOfDay(date: Date): Date {
   const result = new Date(date);
@@ -43,7 +55,11 @@ function endOfDay(date: Date): Date {
   return result;
 }
 
-function getViewRange(currentDate: Date, viewMode: ScheduleViewMode): { start: Date; end: Date } {
+function getViewRange(
+  currentDate: Date,
+  viewMode: ScheduleViewMode,
+  showWeekends: boolean
+): { start: Date; end: Date } {
   if (viewMode === 'day') {
     return {
       start: startOfDay(currentDate),
@@ -56,11 +72,11 @@ function getViewRange(currentDate: Date, viewMode: ScheduleViewMode): { start: D
     const dayOfWeek = monday.getDay();
     const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
     monday.setDate(monday.getDate() + diffToMonday);
-    const friday = endOfDay(monday);
-    friday.setDate(monday.getDate() + 4);
+    const weekEnd = endOfDay(monday);
+    weekEnd.setDate(monday.getDate() + (showWeekends ? 6 : 4));
     return {
       start: monday,
-      end: friday,
+      end: weekEnd,
     };
   }
 
@@ -72,6 +88,231 @@ function getViewRange(currentDate: Date, viewMode: ScheduleViewMode): { start: D
     start: monthStart,
     end: monthEnd,
   };
+}
+
+function buildCheckInMessage(
+  result: {
+    copayAmount?: number;
+    copayDisposition?: 'none' | 'collected' | 'deferred';
+    copayCollectedAmountCents?: number;
+    outstandingBalanceCollectedAmountCents?: number;
+    totalCollectedAmountCents?: number;
+    paymentReceiptNumber?: string;
+    paymentConfirmationEmailSent?: boolean;
+    paymentConfirmationEmailAddress?: string;
+  },
+  patientName?: string
+): string {
+  const base = patientName ? `${patientName} checked in` : 'Patient checked in';
+  const copayAmount =
+    typeof result.copayAmount === 'number' && Number.isFinite(result.copayAmount)
+      ? result.copayAmount
+      : 0;
+  const collectedAmount =
+    typeof result.copayCollectedAmountCents === 'number' && Number.isFinite(result.copayCollectedAmountCents)
+      ? result.copayCollectedAmountCents / 100
+      : 0;
+  const outstandingCollectedAmount =
+    typeof result.outstandingBalanceCollectedAmountCents === 'number' &&
+    Number.isFinite(result.outstandingBalanceCollectedAmountCents)
+      ? result.outstandingBalanceCollectedAmountCents / 100
+      : 0;
+  const totalCollectedAmount =
+    typeof result.totalCollectedAmountCents === 'number' && Number.isFinite(result.totalCollectedAmountCents)
+      ? result.totalCollectedAmountCents / 100
+      : collectedAmount + outstandingCollectedAmount;
+
+  if (result.copayDisposition === 'collected') {
+    const statusParts = [`${base}. Payment collected: $${totalCollectedAmount.toFixed(2)}.`];
+    if (collectedAmount > 0 && outstandingCollectedAmount > 0) {
+      statusParts.push(
+        `Included copay $${collectedAmount.toFixed(2)} and past balance $${outstandingCollectedAmount.toFixed(2)}.`
+      );
+    } else if (collectedAmount > 0) {
+      statusParts.push(`Copay collected: $${collectedAmount.toFixed(2)}.`);
+    } else if (outstandingCollectedAmount > 0) {
+      statusParts.push(`Applied to past balance: $${outstandingCollectedAmount.toFixed(2)}.`);
+    }
+    if (result.paymentReceiptNumber) {
+      statusParts.push(`Receipt: ${result.paymentReceiptNumber}.`);
+    }
+    if (result.paymentConfirmationEmailSent && result.paymentConfirmationEmailAddress) {
+      statusParts.push(`Confirmation emailed to ${result.paymentConfirmationEmailAddress}.`);
+    } else if (result.paymentConfirmationEmailSent) {
+      statusParts.push('Confirmation email sent.');
+    } else if (result.paymentConfirmationEmailAddress) {
+      statusParts.push(`Confirmation email failed to send to ${result.paymentConfirmationEmailAddress}.`);
+    } else {
+      statusParts.push('No patient email on file for confirmation.');
+    }
+    return statusParts.join(' ');
+  }
+
+  if (result.copayDisposition === 'deferred' && copayAmount > 0) {
+    return `${base}. Copay deferred to checkout: $${copayAmount.toFixed(2)}.`;
+  }
+
+  if (copayAmount > 0) {
+    return `${base}. Copay due now: $${copayAmount.toFixed(2)}`;
+  }
+
+  return `${base}. No copay due now.`;
+}
+
+type CopayBypassReason =
+  | 'pay_at_checkout'
+  | 'no_wallet'
+  | 'financial_hardship'
+  | 'insurance_issue'
+  | 'other';
+
+const COPAY_BYPASS_REASON_LABELS: Record<CopayBypassReason, string> = {
+  pay_at_checkout: 'Will pay at checkout',
+  no_wallet: "Didn't bring wallet",
+  financial_hardship: 'Financial hardship',
+  insurance_issue: 'Insurance verification issue',
+  other: 'Other',
+};
+
+const NO_SHOW_CHECK_IN_GRACE_MINUTES = 15;
+
+type PriorAuthUiStatus =
+  | 'not_required'
+  | 'missing'
+  | 'approved'
+  | 'pending'
+  | 'submitted'
+  | 'appealed'
+  | 'more_info_needed'
+  | 'denied'
+  | 'draft'
+  | 'expired'
+  | 'cancelled'
+  | 'unknown';
+
+interface PriorAuthListItem {
+  id: string;
+  patient_id: string;
+  status?: string;
+  auth_number?: string | null;
+  insurance_auth_number?: string | null;
+  updated_at?: string;
+  created_at?: string;
+}
+
+interface PriorAuthSnapshot {
+  required: boolean;
+  status: PriorAuthUiStatus;
+  onFile: boolean;
+  actionNeeded: boolean;
+  authId?: string;
+  authNumber?: string;
+}
+
+const PRIOR_AUTH_REQUIRED_APPOINTMENT_PATTERN =
+  /(laser|mohs|surgery|biopsy|excision|graft|procedure|resurfacing|tattoo|hair\s*removal|hydrafacial)/i;
+
+function normalizePriorAuthPayload(payload: unknown): PriorAuthListItem[] {
+  if (Array.isArray(payload)) return payload as PriorAuthListItem[];
+  if (!payload || typeof payload !== 'object') return [];
+
+  const record = payload as Record<string, unknown>;
+  if (Array.isArray(record.data)) return record.data as PriorAuthListItem[];
+  if (Array.isArray(record.priorAuths)) return record.priorAuths as PriorAuthListItem[];
+  if (Array.isArray(record.items)) return record.items as PriorAuthListItem[];
+  return [];
+}
+
+function inferPriorAuthRequired(appointmentTypeName?: string): boolean {
+  return PRIOR_AUTH_REQUIRED_APPOINTMENT_PATTERN.test(appointmentTypeName || '');
+}
+
+function normalizePriorAuthStatus(rawStatus?: string): PriorAuthUiStatus {
+  const normalized = (rawStatus || '').trim().toLowerCase();
+  if (!normalized) return 'unknown';
+
+  switch (normalized) {
+    case 'approved':
+    case 'pending':
+    case 'submitted':
+    case 'appealed':
+    case 'denied':
+    case 'draft':
+    case 'expired':
+    case 'cancelled':
+      return normalized;
+    case 'additional_info_needed':
+      return 'more_info_needed';
+    case 'more_info_needed':
+      return 'more_info_needed';
+    default:
+      return 'unknown';
+  }
+}
+
+function getPriorAuthStatusPriority(status: PriorAuthUiStatus): number {
+  switch (status) {
+    case 'approved':
+      return 0;
+    case 'pending':
+      return 1;
+    case 'submitted':
+      return 2;
+    case 'appealed':
+      return 3;
+    case 'more_info_needed':
+      return 4;
+    case 'draft':
+      return 5;
+    case 'denied':
+      return 6;
+    case 'expired':
+      return 7;
+    case 'cancelled':
+      return 8;
+    case 'missing':
+      return 9;
+    case 'unknown':
+      return 10;
+    case 'not_required':
+      return 11;
+    default:
+      return 12;
+  }
+}
+
+function buildPriorAuthByPatientMap(items: PriorAuthListItem[]): Record<string, PriorAuthSnapshot> {
+  const map: Record<string, PriorAuthSnapshot> = {};
+
+  for (const item of items) {
+    const patientId = item?.patient_id;
+    if (!patientId) continue;
+
+    const status = normalizePriorAuthStatus(item.status);
+    const snapshot: PriorAuthSnapshot = {
+      required: true,
+      status,
+      onFile: status === 'approved',
+      actionNeeded: status !== 'approved',
+      authId: item.id,
+      authNumber: item.insurance_auth_number || item.auth_number || undefined,
+    };
+
+    const current = map[patientId];
+    if (!current) {
+      map[patientId] = snapshot;
+      continue;
+    }
+
+    const currentPriority = getPriorAuthStatusPriority(current.status);
+    const nextPriority = getPriorAuthStatusPriority(snapshot.status);
+    if (nextPriority < currentPriority) {
+      map[patientId] = snapshot;
+      continue;
+    }
+  }
+
+  return map;
 }
 
 export function SchedulePage() {
@@ -94,6 +335,9 @@ export function SchedulePage() {
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([]);
   const [availability, setAvailability] = useState<Availability[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [copayByAppointmentId, setCopayByAppointmentId] = useState<Record<string, number>>({});
+  const [outstandingBalanceByAppointmentId, setOutstandingBalanceByAppointmentId] = useState<Record<string, number>>({});
+  const [priorAuthByPatientId, setPriorAuthByPatientId] = useState<Record<string, PriorAuthSnapshot>>({});
 
   // Schedule state - Initialize from URL parameter or localStorage
   const [dayOffset, setDayOffset] = useState(() => {
@@ -115,7 +359,8 @@ export function SchedulePage() {
   });
   const [providerFilter, setProviderFilter] = useState(() => localStorage.getItem('sched:provider') || 'all');
   const [typeFilter, setTypeFilter] = useState(() => localStorage.getItem('sched:type') || 'all');
-  const [locationFilter, setLocationFilter] = useState('all');
+  const [locationFilter, setLocationFilter] = useState(() => localStorage.getItem('sched:location') || 'all');
+  const [showWeekends, setShowWeekends] = useState(() => localStorage.getItem('sched:showWeekends') === 'true');
 
   const [overlaps, setOverlaps] = useState<ConflictInfo[]>([]);
   const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([]);
@@ -127,7 +372,18 @@ export function SchedulePage() {
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [selectedTimeBlock, setSelectedTimeBlock] = useState<TimeBlock | null>(null);
   const [creating, setCreating] = useState(false);
-  const [rowAction, setRowAction] = useState<{ id: string; action: 'encounter' | 'scribe' } | null>(null);
+  const [rowAction, setRowAction] = useState<{ id: string; action: 'encounter' } | null>(null);
+  const [checkInActionId, setCheckInActionId] = useState<string | null>(null);
+  const [showCopayCheckInModal, setShowCopayCheckInModal] = useState(false);
+  const [copayCheckInAppointment, setCopayCheckInAppointment] = useState<Appointment | null>(null);
+  const [copayDecisionPaymentMethod, setCopayDecisionPaymentMethod] = useState<'cash' | 'credit' | 'debit' | 'check'>('cash');
+  const [copayDecisionAmount, setCopayDecisionAmount] = useState('0.00');
+  const [copayDecisionNotes, setCopayDecisionNotes] = useState('');
+  const [copayBypassReason, setCopayBypassReason] = useState<CopayBypassReason>('pay_at_checkout');
+  const [showNoShowModal, setShowNoShowModal] = useState(false);
+  const [noShowAppointment, setNoShowAppointment] = useState<Appointment | null>(null);
+  const [noShowReason, setNoShowReason] = useState('');
+  const [noShowActionId, setNoShowActionId] = useState<string | null>(null);
 
   // New appointment form
   const [newAppt, setNewAppt] = useState({
@@ -145,6 +401,7 @@ export function SchedulePage() {
   const [showAppointmentFinder, setShowAppointmentFinder] = useState(false);
   const [showExpandedFinder, setShowExpandedFinder] = useState(false);
   const [finderData, setFinderData] = useState({
+    patientId: '',
     locations: '',
     providers: '',
     appointmentType: '',
@@ -190,10 +447,13 @@ export function SchedulePage() {
       showError('Appointment not found');
     }
 
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.delete('appointmentId');
-    setSearchParams(nextParams);
-  }, [appointmentIdParam, appointments, searchParams, setSearchParams, showError]);
+    setSearchParams((prev) => {
+      if (!prev.has('appointmentId')) return prev;
+      const nextParams = new URLSearchParams(prev);
+      nextParams.delete('appointmentId');
+      return nextParams;
+    }, { replace: true });
+  }, [appointmentIdParam, appointments, setSearchParams, showError]);
 
   useEffect(() => {
     if (!patientIdParam || appointmentIdParam) return;
@@ -203,25 +463,23 @@ export function SchedulePage() {
     setNewAppt((prev) => ({ ...prev, patientId: patientIdParam }));
     setShowNewApptModal(true);
 
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.delete('patientId');
-    setSearchParams(nextParams);
-  }, [patientIdParam, appointmentIdParam, searchParams, setSearchParams]);
-
-  // Auto-select first provider when switching to month view if "all" is selected
-  useEffect(() => {
-    if (viewMode === 'month' && providerFilter === 'all' && providers.length > 0) {
-      setProviderFilter(providers[0].id);
-    }
-  }, [viewMode, providerFilter, providers]);
+    setSearchParams((prev) => {
+      if (!prev.has('patientId')) return prev;
+      const nextParams = new URLSearchParams(prev);
+      nextParams.delete('patientId');
+      return nextParams;
+    }, { replace: true });
+  }, [patientIdParam, appointmentIdParam, setSearchParams]);
 
   // Save filter state
   useEffect(() => {
     localStorage.setItem('sched:provider', providerFilter);
     localStorage.setItem('sched:type', typeFilter);
+    localStorage.setItem('sched:location', locationFilter);
     localStorage.setItem('sched:dayOffset', String(dayOffset));
     localStorage.setItem('sched:viewMode', viewMode);
-  }, [providerFilter, typeFilter, dayOffset, viewMode]);
+    localStorage.setItem('sched:showWeekends', String(showWeekends));
+  }, [providerFilter, typeFilter, locationFilter, dayOffset, viewMode, showWeekends]);
 
   const updateViewMode = useCallback((nextView: ScheduleViewMode) => {
     setViewMode(nextView);
@@ -243,7 +501,10 @@ export function SchedulePage() {
     return date;
   }, [dayOffset]);
 
-  const activeViewRange = useMemo(() => getViewRange(currentDate, viewMode), [currentDate, viewMode]);
+  const activeViewRange = useMemo(
+    () => getViewRange(currentDate, viewMode, showWeekends),
+    [currentDate, viewMode, showWeekends]
+  );
 
   const filteredAppointments = useMemo(() => {
     const startMs = activeViewRange.start.getTime();
@@ -267,6 +528,62 @@ export function SchedulePage() {
     () => filteredAppointments.filter((appointment) => appointment.status !== 'cancelled'),
     [filteredAppointments]
   );
+
+  const locationScopedProviderIds = useMemo(() => {
+    if (locationFilter === 'all') return null;
+    const startMs = activeViewRange.start.getTime();
+    const endMs = activeViewRange.end.getTime();
+    const ids = new Set<string>();
+
+    appointments.forEach((appointment) => {
+      if (appointment.locationId !== locationFilter || !appointment.providerId) return;
+      const appointmentStart = new Date(appointment.scheduledStart).getTime();
+      if (Number.isNaN(appointmentStart)) return;
+      if (appointmentStart < startMs || appointmentStart > endMs) return;
+      ids.add(appointment.providerId);
+    });
+
+    return ids;
+  }, [appointments, locationFilter, activeViewRange]);
+
+  const calendarProviders = useMemo(() => {
+    if (providerFilter !== 'all') {
+      return providers.filter((provider) => provider.id === providerFilter);
+    }
+    if (!locationScopedProviderIds) {
+      return providers;
+    }
+    return providers.filter((provider) => locationScopedProviderIds.has(provider.id));
+  }, [providers, providerFilter, locationScopedProviderIds]);
+
+  const calendarProviderIdSet = useMemo(
+    () => new Set(calendarProviders.map((provider) => provider.id)),
+    [calendarProviders]
+  );
+
+  const calendarTimeBlocks = useMemo(() => {
+    const startMs = activeViewRange.start.getTime();
+    const endMs = activeViewRange.end.getTime();
+
+    return timeBlocks.filter((block) => {
+      const providerMatches =
+        providerFilter === 'all'
+          ? calendarProviderIdSet.has(block.providerId)
+          : block.providerId === providerFilter;
+      if (!providerMatches) return false;
+
+      const blockStart = new Date(block.startTime).getTime();
+      if (Number.isNaN(blockStart)) return false;
+      return blockStart >= startMs && blockStart <= endMs;
+    });
+  }, [timeBlocks, providerFilter, calendarProviderIdSet, activeViewRange]);
+
+  // Auto-select first visible provider when switching to month view if "all" is selected
+  useEffect(() => {
+    if (viewMode === 'month' && providerFilter === 'all' && calendarProviders.length > 0) {
+      setProviderFilter(calendarProviders[0].id);
+    }
+  }, [viewMode, providerFilter, calendarProviders]);
 
   useEffect(() => {
     if (!selectedAppt) return;
@@ -307,7 +624,7 @@ export function SchedulePage() {
 
       const formatDate = (d: Date) => d.toISOString().split('T')[0];
 
-      const [apptRes, provRes, locRes, typeRes, availRes, patRes, timeBlocksRes] = await Promise.all([
+      const [apptRes, provRes, locRes, typeRes, availRes, patRes, timeBlocksRes, frontDeskRes, priorAuthRes] = await Promise.all([
         fetchAppointments(session.tenantId, session.accessToken, {
           startDate: formatDate(startDate),
           endDate: formatDate(endDate),
@@ -318,7 +635,25 @@ export function SchedulePage() {
         fetchAvailability(session.tenantId, session.accessToken),
         fetchPatients(session.tenantId, session.accessToken),
         fetchTimeBlocks(session.tenantId, session.accessToken).catch(() => []),
+        fetchFrontDeskSchedule(session.tenantId, session.accessToken).catch(() => ({ appointments: [] })),
+        fetchPriorAuths(session.tenantId, session.accessToken).catch(() => []),
       ]);
+      const frontDeskCopayMap: Record<string, number> = {};
+      const frontDeskOutstandingBalanceMap: Record<string, number> = {};
+      for (const appointment of frontDeskRes?.appointments || []) {
+        if (appointment?.id && typeof appointment.copayAmount === 'number' && Number.isFinite(appointment.copayAmount)) {
+          frontDeskCopayMap[appointment.id] = appointment.copayAmount;
+        }
+        if (
+          appointment?.id &&
+          typeof appointment.outstandingBalance === 'number' &&
+          Number.isFinite(appointment.outstandingBalance)
+        ) {
+          frontDeskOutstandingBalanceMap[appointment.id] = appointment.outstandingBalance;
+        }
+      }
+      const priorAuthItems = normalizePriorAuthPayload(priorAuthRes);
+      const priorAuthMap = buildPriorAuthByPatientMap(priorAuthItems);
       setAppointments(apptRes.appointments || []);
       setProviders(provRes.providers || []);
       setLocations(locRes.locations || []);
@@ -326,6 +661,9 @@ export function SchedulePage() {
       setAvailability(availRes.availability || []);
       setPatients(patRes.data || patRes.patients || []);
       setTimeBlocks(Array.isArray(timeBlocksRes) ? timeBlocksRes : []);
+      setCopayByAppointmentId(frontDeskCopayMap);
+      setOutstandingBalanceByAppointmentId(frontDeskOutstandingBalanceMap);
+      setPriorAuthByPatientId(priorAuthMap);
     } catch (err: any) {
       showError(err.message);
     } finally {
@@ -401,12 +739,265 @@ export function SchedulePage() {
     })));
   }, [filteredAppointments]);
 
+  const isAppointmentOverdueCheckIn = useCallback((appt: Appointment): boolean => {
+    if (appt.status !== 'scheduled') return false;
+    const scheduledStartMs = new Date(appt.scheduledStart).getTime();
+    if (Number.isNaN(scheduledStartMs)) return false;
+    const deadlineMs = scheduledStartMs + NO_SHOW_CHECK_IN_GRACE_MINUTES * 60 * 1000;
+    return Date.now() > deadlineMs;
+  }, []);
+
+  const overdueCheckInAppointments = useMemo(
+    () => filteredAppointments.filter((appt) => isAppointmentOverdueCheckIn(appt)),
+    [filteredAppointments, isAppointmentOverdueCheckIn]
+  );
+  const getAppointmentCopayAmount = useCallback((appt: Appointment | null): number => {
+    if (!appt) return 0;
+    const mappedCopay = copayByAppointmentId[appt.id];
+    if (typeof mappedCopay === 'number' && Number.isFinite(mappedCopay) && mappedCopay > 0) {
+      return mappedCopay;
+    }
+    const inlineCopay = (appt as Appointment & { copayAmount?: number }).copayAmount;
+    if (typeof inlineCopay === 'number' && Number.isFinite(inlineCopay) && inlineCopay > 0) {
+      return inlineCopay;
+    }
+    return 0;
+  }, [copayByAppointmentId]);
+
+  const getAppointmentOutstandingBalance = useCallback((appt: Appointment | null): number => {
+    if (!appt) return 0;
+    const mappedBalance = outstandingBalanceByAppointmentId[appt.id];
+    if (typeof mappedBalance === 'number' && Number.isFinite(mappedBalance) && mappedBalance > 0) {
+      return mappedBalance;
+    }
+    const inlineBalance = (appt as Appointment & { outstandingBalance?: number }).outstandingBalance;
+    if (typeof inlineBalance === 'number' && Number.isFinite(inlineBalance) && inlineBalance > 0) {
+      return inlineBalance;
+    }
+    return 0;
+  }, [outstandingBalanceByAppointmentId]);
+
+  const getAppointmentPriorAuthSnapshot = useCallback((appt: Appointment | null): PriorAuthSnapshot => {
+    if (!appt) {
+      return {
+        required: false,
+        status: 'not_required',
+        onFile: false,
+        actionNeeded: false,
+      };
+    }
+
+    const required = inferPriorAuthRequired(appt.appointmentTypeName);
+    const patientSnapshot = priorAuthByPatientId[appt.patientId];
+
+    if (!required) {
+      return {
+        required: false,
+        status: 'not_required',
+        onFile: false,
+        actionNeeded: false,
+      };
+    }
+
+    if (!patientSnapshot) {
+      return {
+        required: true,
+        status: 'missing',
+        onFile: false,
+        actionNeeded: true,
+      };
+    }
+
+    return {
+      ...patientSnapshot,
+      required: true,
+      onFile: patientSnapshot.status === 'approved',
+      actionNeeded: patientSnapshot.status !== 'approved',
+    };
+  }, [priorAuthByPatientId]);
+
+  const priorAuthStatusLabel = useCallback((status: PriorAuthUiStatus): string => {
+    switch (status) {
+      case 'not_required':
+        return 'Not Required';
+      case 'missing':
+        return 'Missing';
+      case 'approved':
+        return 'Approved';
+      case 'pending':
+        return 'Pending';
+      case 'submitted':
+        return 'Submitted';
+      case 'appealed':
+        return 'Appealed';
+      case 'more_info_needed':
+        return 'More Info Needed';
+      case 'denied':
+        return 'Denied';
+      case 'draft':
+        return 'Draft';
+      case 'expired':
+        return 'Expired';
+      case 'cancelled':
+        return 'Cancelled';
+      default:
+        return 'Unknown';
+    }
+  }, []);
+
+  const priorAuthStatusColors = useCallback((status: PriorAuthUiStatus): { bg: string; text: string; border: string } => {
+    switch (status) {
+      case 'approved':
+        return { bg: '#ecfdf5', text: '#065f46', border: '#6ee7b7' };
+      case 'pending':
+      case 'submitted':
+      case 'appealed':
+      case 'more_info_needed':
+      case 'draft':
+        return { bg: '#fffbeb', text: '#92400e', border: '#fcd34d' };
+      case 'missing':
+      case 'denied':
+      case 'expired':
+      case 'cancelled':
+        return { bg: '#fef2f2', text: '#991b1b', border: '#fca5a5' };
+      default:
+        return { bg: '#f3f4f6', text: '#374151', border: '#d1d5db' };
+    }
+  }, []);
+
+  const buildPortalCheckInLink = useCallback((appt: Appointment | null): string => {
+    if (!appt || typeof window === 'undefined') return '';
+    return window.location.origin + '/portal/check-in?appointmentId=' + encodeURIComponent(appt.id);
+  }, []);
+
+  const closeCopayDecisionModal = useCallback(() => {
+    setShowCopayCheckInModal(false);
+    setCopayCheckInAppointment(null);
+    setCopayDecisionPaymentMethod('cash');
+    setCopayDecisionAmount('0.00');
+    setCopayDecisionNotes('');
+    setCopayBypassReason('pay_at_checkout');
+  }, []);
+
+  const handleCopyCheckInLink = useCallback(async () => {
+    if (!copayCheckInAppointment) {
+      showError('Select an appointment first.');
+      return;
+    }
+
+    const link = buildPortalCheckInLink(copayCheckInAppointment);
+    if (!link) {
+      showError('Could not build check-in link.');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(link);
+      showSuccess('Patient check-in link copied. Send this to the patient to complete intake before check-in.');
+    } catch {
+      showError('Clipboard permission was blocked. Copy this link manually: ' + link);
+    }
+  }, [buildPortalCheckInLink, copayCheckInAppointment, showError, showSuccess]);
+
+  const handleOpenKioskFromCheckIn = useCallback(async () => {
+    if (!copayCheckInAppointment || !session) {
+      showError('Select an appointment first.');
+      return;
+    }
+
+    const kioskContext = await ensureKioskContext({
+      accessToken: session.accessToken,
+      tenantId: session.tenantId,
+      locationId: copayCheckInAppointment.locationId,
+    });
+
+    if (!kioskContext?.kioskCode) {
+      showError('Kiosk device configuration is missing for this location.');
+      return;
+    }
+
+    const params = new URLSearchParams({
+      appointmentId: copayCheckInAppointment.id,
+      kioskCode: kioskContext.kioskCode,
+      patientId: copayCheckInAppointment.patientId,
+      patientName: copayCheckInAppointment.patientName || '',
+      tenantId: kioskContext.tenantId,
+    });
+    window.open('/kiosk/appointment?' + params.toString(), '_blank', 'noopener,noreferrer');
+    showSuccess('Opened kiosk check-in flow in a new tab for iPad use.');
+  }, [copayCheckInAppointment, session, showError, showSuccess]);
+
+  const handleOpenPriorAuthQueue = useCallback(() => {
+    if (!copayCheckInAppointment) {
+      navigate('/prior-auth');
+      return;
+    }
+    navigate('/prior-auth?status=pending&patientId=' + encodeURIComponent(copayCheckInAppointment.patientId));
+  }, [copayCheckInAppointment, navigate]);
+
+  const executeCheckIn = useCallback(async (appt: Appointment, options?: FrontDeskCheckInOptions) => {
+    if (!session) return;
+    setCheckInActionId(appt.id);
+    try {
+      const checkInResult: FrontDeskCheckInResponse = await checkInFrontDeskAppointment(
+        session.tenantId,
+        session.accessToken,
+        appt.id,
+        options
+      );
+      try {
+        await updatePatientFlowStatus(session.tenantId, session.accessToken, appt.id, 'checked_in');
+      } catch {
+        // Do not fail check-in if flow sync is unavailable
+      }
+      const priorAuth = getAppointmentPriorAuthSnapshot(appt);
+      const priorAuthMessage = priorAuth.required
+        ? priorAuth.onFile
+          ? ' Prior auth verified.'
+          : ' Prior auth still needs front desk follow-up.'
+        : '';
+      showSuccess(buildCheckInMessage(checkInResult, appt.patientName) + priorAuthMessage);
+      await loadData();
+    } finally {
+      setCheckInActionId(null);
+    }
+  }, [getAppointmentPriorAuthSnapshot, loadData, session, showSuccess]);
+
+  const beginCheckInFlow = useCallback(async (appt: Appointment) => {
+    if (appt.status !== 'scheduled') {
+      showError(`Cannot check in appointment with status "${appt.status}".`);
+      return;
+    }
+    const copayAmount = getAppointmentCopayAmount(appt);
+    setCopayCheckInAppointment(appt);
+    setCopayDecisionPaymentMethod('cash');
+    setCopayDecisionAmount(copayAmount.toFixed(2));
+    setCopayDecisionNotes('');
+    setCopayBypassReason('pay_at_checkout');
+    setShowCopayCheckInModal(true);
+  }, [executeCheckIn, getAppointmentCopayAmount]);
+
   const handleStatusChange = async (id: string, status: string) => {
     if (!session) return;
+    const apptForMessage = appointments.find((appt) => appt.id === id);
     try {
-      await updateAppointmentStatus(session.tenantId, session.accessToken, id, status);
-      showSuccess('Status updated');
-      loadData();
+      if (status === 'checked_in') {
+        if (!apptForMessage) {
+          showError('Select an appointment before checking in.');
+          return;
+        }
+        await beginCheckInFlow(apptForMessage);
+      } else if (status === 'no_show') {
+        if (!apptForMessage) {
+          showError('Select an appointment before marking no-show.');
+          return;
+        }
+        openNoShowModal(apptForMessage);
+      } else {
+        await updateAppointmentStatus(session.tenantId, session.accessToken, id, status);
+        showSuccess('Status updated');
+        await loadData();
+      }
     } catch (err: any) {
       showError(err.message);
     }
@@ -433,23 +1024,46 @@ export function SchedulePage() {
     return created.id as string;
   }, [session]);
 
-  const handleStartEncounterFromSchedule = async (appt: Appointment, mode: 'encounter' | 'scribe') => {
+  const handleStartEncounterFromSchedule = async (appt: Appointment) => {
     if (!session) return;
     try {
-      setRowAction({ id: appt.id, action: mode });
+      setRowAction({ id: appt.id, action: 'encounter' });
       const encounterId = await ensureEncounterForAppointment(appt);
-      if (appt.status !== 'completed' && appt.status !== 'cancelled' && appt.status !== 'in_progress') {
+      if (appt.status !== 'completed' && appt.status !== 'cancelled' && appt.status !== 'with_provider') {
         try {
-          await updateAppointmentStatus(session.tenantId, session.accessToken, appt.id, 'in_progress');
+          await updateAppointmentStatus(session.tenantId, session.accessToken, appt.id, 'with_provider');
         } catch {
           // Don't block the workflow if status update fails
         }
       }
-      if (mode === 'scribe') {
-        navigate(`/patients/${appt.patientId}?scribe=1&auto=1&encounterId=${encounterId}&providerId=${appt.providerId}`);
-      } else {
-        navigate(`/patients/${appt.patientId}/encounter/${encounterId}`);
+      const scheduleQuery = searchParams.toString();
+      const returnPath = scheduleQuery ? `/schedule?${scheduleQuery}` : '/schedule';
+      try {
+        sessionStorage.setItem(
+          `encounter:appointmentType:${appt.id}`,
+          appt.appointmentTypeName || ''
+        );
+      } catch {
+        // Ignore storage failures in private/locked contexts.
       }
+      setActiveEncounter({
+        encounterId,
+        patientId: appt.patientId,
+        patientName: appt.patientName,
+        appointmentTypeName: appt.appointmentTypeName,
+        startedAt: new Date().toISOString(),
+        startedEncounterFrom: 'schedule',
+        undoAppointmentStatus: appt.status,
+        returnPath,
+      });
+      navigate(`/patients/${appt.patientId}/encounter/${encounterId}`, {
+        state: {
+          startedEncounterFrom: 'schedule',
+          undoAppointmentStatus: appt.status,
+          appointmentTypeName: appt.appointmentTypeName,
+          returnPath,
+        },
+      });
     } catch (err: any) {
       showError(err.message || 'Failed to start encounter');
     } finally {
@@ -518,7 +1132,156 @@ export function SchedulePage() {
   };
 
   const handleCheckIn = async (appt: Appointment) => {
-    await handleStatusChange(appt.id, 'checked_in');
+    if (!session) return;
+    try {
+      await beginCheckInFlow(appt);
+    } catch (err: any) {
+      showError(err.message);
+    }
+  };
+
+  const openNoShowModal = (appt: Appointment) => {
+    if (appt.status !== 'scheduled') {
+      showError('Only scheduled appointments can be marked as no-show.');
+      return;
+    }
+    if (!isAppointmentOverdueCheckIn(appt)) {
+      showError('No-show can be confirmed after ' + NO_SHOW_CHECK_IN_GRACE_MINUTES + ' minutes without check-in.');
+      return;
+    }
+    setNoShowAppointment(appt);
+    setNoShowReason('No-show confirmed by front desk after ' + NO_SHOW_CHECK_IN_GRACE_MINUTES + ' minutes without check-in.');
+    setShowNoShowModal(true);
+  };
+
+  const closeNoShowModal = () => {
+    setShowNoShowModal(false);
+    setNoShowAppointment(null);
+    setNoShowReason('');
+  };
+
+  const handleConfirmNoShow = async () => {
+    if (!session || !noShowAppointment) return;
+    const trimmedReason = noShowReason.trim();
+    if (trimmedReason.length < 3) {
+      showError('Please enter a no-show reason (3+ characters).');
+      return;
+    }
+
+    try {
+      setNoShowActionId(noShowAppointment.id);
+      const result = await updateAppointmentStatus(
+        session.tenantId,
+        session.accessToken,
+        noShowAppointment.id,
+        'no_show',
+        { reason: trimmedReason }
+      );
+      const billId = result?.noShowFeeBillId as string | undefined;
+      if (billId) {
+        showSuccess('Marked as no-show. No-show fee posted (bill ' + billId.slice(0, 8) + '...).');
+      } else {
+        showSuccess('Marked as no-show.');
+      }
+      closeNoShowModal();
+      await loadData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to mark appointment as no-show');
+    } finally {
+      setNoShowActionId(null);
+    }
+  };
+
+const handleUndoNoShow = async (appt: Appointment) => {
+  if (!session) return;
+  if (appt.status !== 'no_show') {
+    showError('Only no-show appointments can be restored.');
+    return;
+  }
+
+  try {
+    setNoShowActionId(appt.id);
+    await updateAppointmentStatus(
+      session.tenantId,
+      session.accessToken,
+      appt.id,
+      'scheduled',
+      { reason: 'No-show reversed: patient arrived late.' }
+    );
+    showSuccess('No-show removed. You can check in the patient now.');
+    await loadData();
+  } catch (err: any) {
+    showError(err.message || 'Failed to undo no-show');
+  } finally {
+    setNoShowActionId(null);
+  }
+};
+
+  const handleCopayCollectAndCheckIn = async () => {
+    if (!copayCheckInAppointment) return;
+    const parsedAmount = Number.parseFloat(copayDecisionAmount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount < 0) {
+      showError('Enter a valid copay amount');
+      return;
+    }
+    const outstandingBalanceAmount = getAppointmentOutstandingBalance(copayCheckInAppointment);
+    const totalDue = getAppointmentCopayAmount(copayCheckInAppointment) + outstandingBalanceAmount;
+    if (parsedAmount <= 0) {
+      showError('Enter a payment amount greater than $0.00');
+      return;
+    }
+    if (totalDue > 0 && parsedAmount - totalDue > 0.009) {
+      showError('Amount cannot exceed the total due today.');
+      return;
+    }
+    const copayAmountCents = Math.min(
+      Math.round(parsedAmount * 100),
+      Math.round(getAppointmentCopayAmount(copayCheckInAppointment) * 100)
+    );
+    const outstandingBalanceAmountCents = Math.min(
+      Math.max(0, Math.round(parsedAmount * 100) - copayAmountCents),
+      Math.round(outstandingBalanceAmount * 100)
+    );
+    try {
+      await executeCheckIn(copayCheckInAppointment, {
+        collectCopay: copayAmountCents > 0,
+        collectOutstandingBalance: outstandingBalanceAmountCents > 0,
+        copayAmountCents,
+        outstandingBalanceAmountCents,
+        paymentMethod: copayDecisionPaymentMethod,
+        notes: copayDecisionNotes.trim() || undefined,
+      });
+      closeCopayDecisionModal();
+    } catch (err: any) {
+      showError(err.message);
+    }
+  };
+
+  const handleCopayDeferAndCheckIn = async () => {
+    if (!copayCheckInAppointment) return;
+    const bypassReasonLabel = COPAY_BYPASS_REASON_LABELS[copayBypassReason];
+    const mergedNotes = [`Bypass reason: ${bypassReasonLabel}`, copayDecisionNotes.trim()]
+      .filter(Boolean)
+      .join(' | ');
+    try {
+      await executeCheckIn(copayCheckInAppointment, {
+        deferCopay: true,
+        notes: mergedNotes || undefined,
+      });
+      closeCopayDecisionModal();
+    } catch (err: any) {
+      showError(err.message);
+    }
+  };
+
+  const handleCheckInWithoutCopay = async () => {
+    if (!copayCheckInAppointment) return;
+    try {
+      await executeCheckIn(copayCheckInAppointment);
+      closeCopayDecisionModal();
+    } catch (err: any) {
+      showError(err.message);
+    }
   };
 
   const handleCancelAppt = async (appt: Appointment) => {
@@ -621,6 +1384,17 @@ export function SchedulePage() {
     month: 'long',
     day: 'numeric'
   });
+  const modalCopayAmount = getAppointmentCopayAmount(copayCheckInAppointment);
+  const modalOutstandingBalance = getAppointmentOutstandingBalance(copayCheckInAppointment);
+  const modalTotalDue = modalCopayAmount + modalOutstandingBalance;
+  const modalHasCopay = modalCopayAmount > 0;
+  const modalHasOutstandingBalance = modalOutstandingBalance > 0;
+  const modalPriorAuth = getAppointmentPriorAuthSnapshot(copayCheckInAppointment);
+  const modalPriorAuthColors = priorAuthStatusColors(modalPriorAuth.status);
+  const modalPriorAuthNeedsAction = modalPriorAuth.required && modalPriorAuth.actionNeeded;
+  const selectedIsLaserVisit = isLaserAppointmentType(selectedAppt?.appointmentTypeName);
+  const selectedIsNoShow = selectedAppt?.status === 'no_show';
+  const selectedCanMarkNoShow = Boolean(selectedAppt && isAppointmentOverdueCheckIn(selectedAppt));
 
   return (
     <div className="schedule-page" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -683,30 +1457,74 @@ export function SchedulePage() {
           <span style={{ marginRight: '0.5rem' }}>✕</span>
           Cancel Appointment
         </button>
-        <button
-          type="button"
-          className="ema-action-btn"
-          disabled={!selectedAppt}
-          onClick={() => selectedAppt && handleCheckIn(selectedAppt)}
-          style={{
-            background: selectedAppt ? 'linear-gradient(to bottom, #8b5cf6 0%, #7c3aed 100%)' : '#e5e7eb',
-            color: selectedAppt ? '#ffffff' : '#9ca3af',
-            border: 'none',
-            padding: '0.5rem 1rem',
-            borderRadius: '6px',
-            cursor: selectedAppt ? 'pointer' : 'not-allowed',
-            fontWeight: 500,
-            boxShadow: selectedAppt ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
-          }}
-        >
-          <span style={{ marginRight: '0.5rem' }}>✓</span>
-          Check In
-        </button>
+<button
+  type="button"
+  className="ema-action-btn"
+  disabled={!selectedAppt || selectedAppt.status !== 'scheduled' || checkInActionId === selectedAppt?.id}
+  onClick={() => {
+    if (!selectedAppt) {
+      showError('Select an appointment first.');
+      return;
+    }
+    handleCheckIn(selectedAppt);
+  }}
+  style={{
+    background: selectedAppt?.status === 'scheduled' ? 'linear-gradient(to bottom, #8b5cf6 0%, #7c3aed 100%)' : '#e5e7eb',
+    color: selectedAppt?.status === 'scheduled' ? '#ffffff' : '#9ca3af',
+    border: 'none',
+    padding: '0.5rem 1rem',
+    borderRadius: '6px',
+    cursor: selectedAppt?.status === 'scheduled' ? 'pointer' : 'default',
+    fontWeight: 500,
+    boxShadow: selectedAppt?.status === 'scheduled' ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+    opacity: checkInActionId === selectedAppt?.id ? 0.7 : 1,
+  }}
+>
+  <span style={{ marginRight: '0.5rem' }}>✓</span>
+  {checkInActionId === selectedAppt?.id ? 'Checking In...' : 'Check In'}
+</button>
+<button
+  type="button"
+  className="ema-action-btn"
+  data-testid={selectedIsNoShow ? 'action-undo-no-show' : 'action-mark-no-show'}
+  disabled={
+    noShowActionId === selectedAppt?.id ||
+    (!selectedIsNoShow && !selectedCanMarkNoShow)
+  }
+  onClick={() => {
+    if (!selectedAppt) return;
+    if (selectedIsNoShow) {
+      handleUndoNoShow(selectedAppt);
+      return;
+    }
+    openNoShowModal(selectedAppt);
+  }}
+  style={{
+    background: selectedIsNoShow
+      ? 'linear-gradient(to bottom, #2563eb 0%, #1d4ed8 100%)'
+      : selectedCanMarkNoShow
+        ? 'linear-gradient(to bottom, #f97316 0%, #ea580c 100%)'
+        : '#e5e7eb',
+    color: selectedIsNoShow || selectedCanMarkNoShow ? '#ffffff' : '#9ca3af',
+    border: 'none',
+    padding: '0.5rem 1rem',
+    borderRadius: '6px',
+    cursor: (selectedIsNoShow || selectedCanMarkNoShow) ? 'pointer' : 'not-allowed',
+    fontWeight: 500,
+    boxShadow: (selectedIsNoShow || selectedCanMarkNoShow) ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+    opacity: noShowActionId === selectedAppt?.id ? 0.7 : 1,
+  }}
+>
+  <span style={{ marginRight: '0.5rem' }}>{selectedIsNoShow ? '↺' : '⚠'}</span>
+  {noShowActionId === selectedAppt?.id
+    ? (selectedIsNoShow ? 'Undoing...' : 'Marking...')
+    : (selectedIsNoShow ? 'Undo No-Show' : 'Mark No-Show')}
+</button>
         <button
           type="button"
           className="ema-action-btn"
           disabled={!selectedAppt || rowAction?.id === selectedAppt?.id}
-          onClick={() => selectedAppt && handleStartEncounterFromSchedule(selectedAppt, 'encounter')}
+          onClick={() => selectedAppt && handleStartEncounterFromSchedule(selectedAppt)}
           style={{
             background: selectedAppt ? 'linear-gradient(to bottom, #10b981 0%, #059669 100%)' : '#e5e7eb',
             color: selectedAppt ? '#ffffff' : '#9ca3af',
@@ -720,27 +1538,11 @@ export function SchedulePage() {
           }}
         >
           <span style={{ marginRight: '0.5rem' }}>🩺</span>
-          {rowAction?.id === selectedAppt?.id && rowAction?.action === 'encounter' ? 'Starting…' : 'Start Encounter'}
-        </button>
-        <button
-          type="button"
-          className="ema-action-btn"
-          disabled={!selectedAppt || rowAction?.id === selectedAppt?.id}
-          onClick={() => selectedAppt && handleStartEncounterFromSchedule(selectedAppt, 'scribe')}
-          style={{
-            background: selectedAppt ? 'linear-gradient(to bottom, #f59e0b 0%, #d97706 100%)' : '#e5e7eb',
-            color: selectedAppt ? '#ffffff' : '#9ca3af',
-            border: 'none',
-            padding: '0.5rem 1rem',
-            borderRadius: '6px',
-            cursor: selectedAppt ? 'pointer' : 'not-allowed',
-            fontWeight: 500,
-            boxShadow: selectedAppt ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
-            opacity: rowAction?.id === selectedAppt?.id ? 0.7 : 1
-          }}
-        >
-          <span style={{ marginRight: '0.5rem' }}>🎙️</span>
-          {rowAction?.id === selectedAppt?.id && rowAction?.action === 'scribe' ? 'Starting…' : 'Start Scribe'}
+          {rowAction?.id === selectedAppt?.id && rowAction?.action === 'encounter'
+            ? 'Starting…'
+            : selectedIsLaserVisit
+              ? 'Start Laser Visit'
+              : 'Start Encounter'}
         </button>
         <button
           type="button"
@@ -981,6 +1783,19 @@ export function SchedulePage() {
                 Month
               </button>
             </div>
+            <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                id="schedule-show-weekends"
+                name="scheduleShowWeekends"
+                type="checkbox"
+                checked={showWeekends}
+                onChange={(event) => setShowWeekends(event.target.checked)}
+                disabled={viewMode !== 'week'}
+              />
+              <label htmlFor="schedule-show-weekends" style={{ fontSize: '0.8rem', color: '#4b5563' }}>
+                Show weekends
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -1015,6 +1830,57 @@ export function SchedulePage() {
         </div>
       )}
 
+      {!loading && overdueCheckInAppointments.length > 0 && (
+        <div style={{
+          background: '#fff7ed',
+          borderLeft: '4px solid #f97316',
+          padding: '0.75rem 1rem',
+          display: 'flex',
+          gap: '0.5rem',
+          flexWrap: 'wrap',
+          alignItems: 'center'
+        }}>
+          <span style={{ fontWeight: 600, color: '#9a3412' }}>
+            {overdueCheckInAppointments.length} overdue check-in appointments need review
+          </span>
+          {overdueCheckInAppointments.slice(0, 3).map((appt) => (
+            <button
+              key={appt.id}
+              type="button"
+              onClick={() => openNoShowModal(appt)}
+              style={{
+                background: '#ffffff',
+                border: '1px solid #fed7aa',
+                borderRadius: '6px',
+                padding: '0.3rem 0.55rem',
+                fontSize: '0.75rem',
+                color: '#9a3412',
+                cursor: 'pointer',
+                fontWeight: 600
+              }}
+            >
+              Mark {appt.patientName} no-show
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!loading && providerFilter === 'all' && locationFilter !== 'all' && calendarProviders.length === 0 && (
+        <div
+          style={{
+            margin: '0.75rem 1rem',
+            padding: '0.75rem 1rem',
+            borderRadius: '6px',
+            border: '1px solid #bfdbfe',
+            background: '#eff6ff',
+            color: '#1e3a8a',
+            fontSize: '0.875rem',
+          }}
+        >
+          No providers have appointments for this location in the selected date range.
+        </div>
+      )}
+
       {/* Main Content with Sidebar */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Calendar Grid */}
@@ -1024,18 +1890,156 @@ export function SchedulePage() {
               <Skeleton variant="card" height={600} />
             </div>
           ) : (
-            <Calendar
-              currentDate={currentDate}
-              viewMode={viewMode}
-              appointments={calendarAppointments}
-              providers={providers.filter((p) => providerFilter === 'all' || p.id === providerFilter)}
-              availability={availability}
-              timeBlocks={timeBlocks.filter((tb) => providerFilter === 'all' || tb.providerId === providerFilter)}
-              selectedAppointment={selectedAppt}
-              onAppointmentClick={setSelectedAppt}
-              onSlotClick={handleSlotClick}
-              onTimeBlockClick={handleTimeBlockClick}
-            />
+            <>
+<Calendar
+  currentDate={currentDate}
+  viewMode={viewMode}
+  showWeekends={showWeekends}
+  appointments={calendarAppointments}
+  providers={calendarProviders}
+  availability={availability}
+  timeBlocks={calendarTimeBlocks}
+  selectedAppointment={selectedAppt}
+  onAppointmentClick={setSelectedAppt}
+  onSlotClick={handleSlotClick}
+  onTimeBlockClick={handleTimeBlockClick}
+  checkInActionId={checkInActionId}
+  noShowActionId={noShowActionId}
+  canMarkNoShowAppointment={isAppointmentOverdueCheckIn}
+  onAppointmentCheckIn={handleCheckIn}
+  onAppointmentNoShow={openNoShowModal}
+  onAppointmentUndoNoShow={handleUndoNoShow}
+  onAppointmentCancel={handleCancelAppt}
+  onAppointmentReschedule={openRescheduleModal}
+/>
+              {selectedAppt && (
+                <div
+                  data-testid="calendar-selected-actions"
+                  style={{
+                    position: 'sticky',
+                    bottom: 0,
+                    zIndex: 20,
+                    background: '#ffffff',
+                    borderTop: '1px solid #d1d5db',
+                    boxShadow: '0 -4px 10px rgba(0,0,0,0.08)',
+                    padding: '0.75rem 1rem',
+                    marginTop: '0.5rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <div style={{ color: '#1f2937', fontSize: '0.875rem' }}>
+                      <strong>Selected:</strong> {selectedAppt.patientName} · {new Date(selectedAppt.scheduledStart).toLocaleTimeString('en-US', {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })} · {selectedAppt.providerName}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        data-testid="calendar-action-check-in"
+                        className="ema-action-btn"
+                        disabled={selectedAppt.status !== 'scheduled' || checkInActionId === selectedAppt.id}
+                        onClick={() => handleCheckIn(selectedAppt)}
+                        style={{
+                          background: selectedAppt.status === 'scheduled' ? '#ede9fe' : '#f3f4f6',
+                          color: selectedAppt.status === 'scheduled' ? '#5b21b6' : '#9ca3af',
+                        }}
+                      >
+                        {checkInActionId === selectedAppt.id ? 'Checking In...' : 'Check In'}
+                      </button>
+<button
+  type="button"
+  data-testid={selectedAppt.status === 'no_show' ? 'calendar-action-undo-no-show' : 'calendar-action-no-show'}
+  className="ema-action-btn"
+  disabled={
+    noShowActionId === selectedAppt.id ||
+    (selectedAppt.status !== 'no_show' && !isAppointmentOverdueCheckIn(selectedAppt))
+  }
+  onClick={() => {
+    if (selectedAppt.status === 'no_show') {
+      handleUndoNoShow(selectedAppt);
+    } else {
+      openNoShowModal(selectedAppt);
+    }
+  }}
+  style={{
+    background: selectedAppt.status === 'no_show'
+      ? '#eff6ff'
+      : isAppointmentOverdueCheckIn(selectedAppt)
+        ? '#ffedd5'
+        : '#f3f4f6',
+    color: selectedAppt.status === 'no_show'
+      ? '#1d4ed8'
+      : isAppointmentOverdueCheckIn(selectedAppt)
+        ? '#9a3412'
+        : '#9ca3af',
+  }}
+>
+  {noShowActionId === selectedAppt.id
+    ? (selectedAppt.status === 'no_show' ? 'Undoing...' : 'Marking...')
+    : (selectedAppt.status === 'no_show' ? 'Undo No-Show' : 'Mark No-Show')}
+</button>
+                      <button
+                        type="button"
+                        data-testid="calendar-action-start-encounter"
+                        className="ema-action-btn"
+                        disabled={selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled' || rowAction?.id === selectedAppt.id}
+                        onClick={() => handleStartEncounterFromSchedule(selectedAppt)}
+                        style={{
+                          background: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                            ? '#f3f4f6'
+                            : '#ecfdf5',
+                          color: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                            ? '#9ca3af'
+                            : '#065f46',
+                          opacity: rowAction?.id === selectedAppt.id ? 0.7 : 1,
+                        }}
+                      >
+                        {rowAction?.id === selectedAppt.id && rowAction?.action === 'encounter'
+                          ? 'Starting...'
+                          : isLaserAppointmentType(selectedAppt.appointmentTypeName)
+                            ? 'Start Laser Visit'
+                            : 'Start Encounter'}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="calendar-action-reschedule"
+                        className="ema-action-btn"
+                        disabled={selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled'}
+                        onClick={() => openRescheduleModal(selectedAppt)}
+                        style={{
+                          background: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                            ? '#f3f4f6'
+                            : '#e0f2fe',
+                          color: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                            ? '#9ca3af'
+                            : '#075985',
+                        }}
+                      >
+                        Reschedule
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="calendar-action-cancel"
+                        className="ema-action-btn"
+                        disabled={selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled'}
+                        onClick={() => handleCancelAppt(selectedAppt)}
+                        style={{
+                          background: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                            ? '#f3f4f6'
+                            : '#fef2f2',
+                          color: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
+                            ? '#9ca3af'
+                            : '#991b1b',
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -1067,6 +2071,35 @@ export function SchedulePage() {
               >
                 Quick Filters
               </button>
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
+                Patient <span style={{ color: '#ef4444' }}>*</span>
+              </label>
+              <select
+                name="finderPatient"
+                value={finderData.patientId}
+                onChange={(e) => setFinderData({ ...finderData, patientId: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  border: '1px solid #bae6fd',
+                  borderRadius: '6px',
+                  fontSize: '0.875rem',
+                  background: '#ffffff',
+                }}
+              >
+                <option value="">Select patient...</option>
+                {patients
+                  .slice()
+                  .sort((a, b) => `${a.lastName ?? ''}, ${a.firstName ?? ''}`.localeCompare(`${b.lastName ?? ''}, ${b.firstName ?? ''}`))
+                  .map((patient) => (
+                    <option key={patient.id} value={patient.id}>
+                      {patient.lastName}, {patient.firstName}
+                    </option>
+                  ))}
+              </select>
             </div>
 
             <div style={{ marginBottom: '1rem' }}>
@@ -1259,6 +2292,7 @@ export function SchedulePage() {
               <button
                 onClick={() => {
                   setFinderData({
+                    patientId: '',
                     locations: '',
                     providers: '',
                     appointmentType: '',
@@ -1289,7 +2323,22 @@ export function SchedulePage() {
                     showError('Please select an appointment type');
                     return;
                   }
-                  showSuccess('Searching for available appointments...');
+                  if (!finderData.patientId) {
+                    showError('Please select a patient');
+                    return;
+                  }
+
+                  setNewAppt((prev) => ({
+                    ...prev,
+                    patientId: finderData.patientId,
+                    providerId: finderData.providers || prev.providerId,
+                    appointmentTypeId: finderData.appointmentType,
+                    locationId: finderData.locations || prev.locationId,
+                    duration: Number(finderData.duration) || prev.duration,
+                    date: prev.date || new Date().toISOString().split('T')[0],
+                  }));
+                  setShowNewApptModal(true);
+                  showSuccess('Loaded patient into New Appointment. Pick an available time.');
                 }}
                 style={{
                   flex: 1,
@@ -1341,138 +2390,689 @@ export function SchedulePage() {
               </td>
             </tr>
           ) : (
-            filteredAppointments.map((a) => (
-              <tr
-                key={a.id}
-                style={{
-                  background: selectedAppt?.id === a.id ? '#e0f2fe' : undefined,
-                  cursor: 'pointer'
-                }}
-                onClick={() => setSelectedAppt(a)}
-              >
-                <td>
-                  <input
-                    type="radio"
-                    name="selectedAppt"
-                    checked={selectedAppt?.id === a.id}
-                    onChange={() => setSelectedAppt(a)}
-                    aria-label={`Select appointment for ${a.patientName}`}
-                  />
-                </td>
-                <td>
-                  {new Date(a.scheduledStart).toLocaleString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
-                </td>
-                <td>
-                  <a
-                    href="#"
-                    className="ema-patient-link"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      navigate(`/patients/${a.patientId}`);
-                    }}
-                  >
-                    {a.patientName}
-                  </a>
-                </td>
-                <td>{a.providerName}</td>
-                <td>{a.appointmentTypeName}</td>
-                <td>{a.locationName}</td>
-                <td>
-                  <span className={`ema-status ${a.status === 'completed' ? 'established' : a.status === 'cancelled' ? 'inactive' : 'pending'}`}>
-                    {a.status}
-                  </span>
-                </td>
-                <td onClick={(e) => e.stopPropagation()}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/patients/${a.patientId}`)}
-                        title="Open patient chart"
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: '6px',
-                          border: '1px solid #cbd5f5',
-                          background: '#eef2ff',
-                          color: '#1e3a8a',
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Chart
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleStartEncounterFromSchedule(a, 'encounter')}
-                        disabled={rowAction?.id === a.id}
-                        title="Start or resume encounter"
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: '6px',
-                          border: '1px solid #d1fae5',
-                          background: '#ecfdf5',
-                          color: '#065f46',
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          cursor: rowAction?.id === a.id ? 'not-allowed' : 'pointer',
-                          opacity: rowAction?.id === a.id ? 0.6 : 1
-                        }}
-                      >
-                        {rowAction?.id === a.id && rowAction?.action === 'encounter' ? 'Starting…' : 'Encounter'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleStartEncounterFromSchedule(a, 'scribe')}
-                        disabled={rowAction?.id === a.id}
-                        title="Start AI scribe"
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: '6px',
-                          border: '1px solid #fde68a',
-                          background: '#fffbeb',
-                          color: '#92400e',
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          cursor: rowAction?.id === a.id ? 'not-allowed' : 'pointer',
-                          opacity: rowAction?.id === a.id ? 0.6 : 1
-                        }}
-                      >
-                        {rowAction?.id === a.id && rowAction?.action === 'scribe' ? 'Starting…' : 'Scribe'}
-                      </button>
-                    </div>
-                    <select
-                      name={`appointmentStatus-${a.id}`}
-                      style={{
-                        padding: '0.25rem 0.5rem',
-                        fontSize: '0.75rem',
-                        borderRadius: '4px',
-                        border: '1px solid #d1d5db'
+            filteredAppointments.map((a) => {
+              const isCompletedOrCancelled = a.status === 'completed' || a.status === 'cancelled';
+              const isNoShow = a.status === 'no_show';
+              const canCheckIn = a.status === 'scheduled';
+              const isOverdueCheckIn = isAppointmentOverdueCheckIn(a);
+              const canMarkNoShow = canCheckIn && isOverdueCheckIn;
+              const isEncounterActionPending = rowAction?.id === a.id && rowAction?.action === 'encounter';
+              const isEncounterDisabled = isCompletedOrCancelled || isEncounterActionPending;
+              return (
+                <tr
+                  key={a.id}
+                  style={{
+                    background: selectedAppt?.id === a.id ? '#e0f2fe' : undefined,
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => setSelectedAppt(a)}
+                >
+                  <td>
+                    <input
+                      type="radio"
+                      name="selectedAppt"
+                      checked={selectedAppt?.id === a.id}
+                      onChange={() => setSelectedAppt(a)}
+                      aria-label={`Select appointment for ${a.patientName}`}
+                    />
+                  </td>
+                  <td>
+                    {new Date(a.scheduledStart).toLocaleString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="ema-patient-link"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/patients/${a.patientId}`);
                       }}
-                      onChange={(e) => handleStatusChange(a.id, e.target.value)}
-                      defaultValue=""
-                      aria-label={`Change status for ${a.patientName}`}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        padding: 0,
+                        color: '#2563eb',
+                        textDecoration: 'underline',
+                        cursor: 'pointer',
+                        font: 'inherit',
+                      }}
                     >
-                      <option value="">Change Status</option>
-                      <option value="scheduled">Scheduled</option>
-                      <option value="checked_in">Checked In</option>
-                      <option value="in_progress">In Progress</option>
-                      <option value="completed">Completed</option>
-                      <option value="cancelled">Cancelled</option>
-                    </select>
-                  </div>
-                </td>
-              </tr>
-            ))
+                      {a.patientName}
+                    </button>
+                  </td>
+                  <td>{a.providerName}</td>
+                  <td>{a.appointmentTypeName}</td>
+                  <td>{a.locationName}</td>
+                  <td>
+                    <span className={`ema-status ${a.status === 'completed' ? 'established' : a.status === 'cancelled' ? 'inactive' : 'pending'}`}>
+                      {a.status}
+                    </span>
+                    {(() => {
+                      const priorAuth = getAppointmentPriorAuthSnapshot(a);
+                      if (!priorAuth.required) return null;
+                      const colors = priorAuthStatusColors(priorAuth.status);
+                      return (
+                        <div
+                          style={{
+                            marginTop: '0.25rem',
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            color: colors.text,
+                            background: colors.bg,
+                            border: '1px solid ' + colors.border,
+                            borderRadius: '999px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            padding: '0.1rem 0.45rem',
+                          }}
+                        >
+                          PA: {priorAuthStatusLabel(priorAuth.status)}
+                        </div>
+                      );
+                    })()}
+                    {isOverdueCheckIn && (
+                      <div style={{ marginTop: '0.25rem', fontSize: '0.7rem', fontWeight: 600, color: '#9a3412' }}>
+                        Overdue check-in
+                      </div>
+                    )}
+                  </td>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/patients/${a.patientId}`)}
+                          title="Open patient chart"
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: '1px solid #cbd5f5',
+                            background: '#eef2ff',
+                            color: '#1e3a8a',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Chart
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCheckIn(a)}
+                          disabled={!canCheckIn || checkInActionId === a.id}
+                          aria-label={`Check in ${a.patientName}`}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: canCheckIn ? '1px solid #ddd6fe' : '1px solid #e5e7eb',
+                            background: canCheckIn ? '#ede9fe' : '#f3f4f6',
+                            color: canCheckIn ? '#5b21b6' : '#9ca3af',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            cursor: canCheckIn ? 'pointer' : 'not-allowed'
+                          }}
+                        >
+                          {checkInActionId === a.id ? 'Checking...' : 'Check In'}
+                        </button>
+<button
+  type="button"
+  onClick={() => {
+    if (isNoShow) {
+      handleUndoNoShow(a);
+    } else {
+      openNoShowModal(a);
+    }
+  }}
+  disabled={(isNoShow ? false : !canMarkNoShow) || noShowActionId === a.id}
+  aria-label={isNoShow ? `Undo no-show for ${a.patientName}` : `Mark no-show for ${a.patientName}`}
+  style={{
+    padding: '4px 8px',
+    borderRadius: '6px',
+    border: isNoShow
+      ? '1px solid #93c5fd'
+      : canMarkNoShow
+        ? '1px solid #fdba74'
+        : '1px solid #e5e7eb',
+    background: isNoShow
+      ? '#eff6ff'
+      : canMarkNoShow
+        ? '#fff7ed'
+        : '#f3f4f6',
+    color: isNoShow
+      ? '#1d4ed8'
+      : canMarkNoShow
+        ? '#9a3412'
+        : '#9ca3af',
+    fontSize: '0.75rem',
+    fontWeight: 600,
+    cursor: (isNoShow || canMarkNoShow) ? 'pointer' : 'not-allowed'
+  }}
+>
+  {noShowActionId === a.id
+    ? (isNoShow ? 'Undoing...' : 'Marking...')
+    : (isNoShow ? 'Undo No-Show' : 'No-Show')}
+</button>
+                        <button
+                          type="button"
+                          onClick={() => openRescheduleModal(a)}
+                          disabled={isCompletedOrCancelled}
+                          aria-label={`Reschedule ${a.patientName}`}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: isCompletedOrCancelled ? '1px solid #e5e7eb' : '1px solid #bae6fd',
+                            background: isCompletedOrCancelled ? '#f3f4f6' : '#e0f2fe',
+                            color: isCompletedOrCancelled ? '#9ca3af' : '#075985',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            cursor: isCompletedOrCancelled ? 'not-allowed' : 'pointer'
+                          }}
+                        >
+                          Reschedule
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCancelAppt(a)}
+                          disabled={isCompletedOrCancelled}
+                          aria-label={`Cancel appointment for ${a.patientName}`}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: isCompletedOrCancelled ? '1px solid #e5e7eb' : '1px solid #fecaca',
+                            background: isCompletedOrCancelled ? '#f3f4f6' : '#fef2f2',
+                            color: isCompletedOrCancelled ? '#9ca3af' : '#991b1b',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            cursor: isCompletedOrCancelled ? 'not-allowed' : 'pointer'
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleStartEncounterFromSchedule(a)}
+                          disabled={isEncounterDisabled}
+                          title="Start or resume encounter"
+                          aria-label={`Start encounter for ${a.patientName}`}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: '1px solid #d1fae5',
+                            background: '#ecfdf5',
+                            color: '#065f46',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            cursor: isEncounterDisabled ? 'not-allowed' : 'pointer',
+                            opacity: isEncounterDisabled ? 0.6 : 1
+                          }}
+                        >
+                          {isEncounterActionPending
+                            ? 'Starting…'
+                            : isLaserAppointmentType(a.appointmentTypeName)
+                              ? 'Start Laser Visit'
+                              : 'Start Encounter'}
+                        </button>
+                      </div>
+                      <select
+                        name={`appointmentStatus-${a.id}`}
+                        style={{
+                          padding: '0.25rem 0.5rem',
+                          fontSize: '0.75rem',
+                          borderRadius: '4px',
+                          border: '1px solid #d1d5db'
+                        }}
+                        onChange={(e) => handleStatusChange(a.id, e.target.value)}
+                        defaultValue=""
+                        aria-label={`Change status for ${a.patientName}`}
+                      >
+                        <option value="">Change Status</option>
+                        <option value="scheduled">Scheduled</option>
+                        <option value="checked_in">Checked In</option>
+                        <option value="in_room">In Room</option>
+                        <option value="with_provider">With Provider</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                        <option value="no_show">No Show</option>
+                      </select>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })
           )}
         </tbody>
       </table>
+
+      <Modal
+        isOpen={showCopayCheckInModal}
+        title="Check-In Review"
+        onClose={closeCopayDecisionModal}
+      >
+        <div style={{ padding: '1rem', minWidth: '420px' }}>
+          <div style={{ marginBottom: '0.75rem', color: '#1f2937' }}>
+            <strong>Patient:</strong> {copayCheckInAppointment?.patientName || 'Selected patient'}
+          </div>
+          <div style={{ marginBottom: '1rem', color: '#1f2937' }}>
+            <strong>Expected copay:</strong> ${modalCopayAmount.toFixed(2)}
+          </div>
+          <div style={{ marginBottom: '1rem', color: '#1f2937' }}>
+            <strong>Past balance due:</strong> ${modalOutstandingBalance.toFixed(2)}
+          </div>
+          {modalTotalDue > 0 ? (
+            <div
+              style={{
+                marginBottom: '1rem',
+                border: '1px solid #dbeafe',
+                background: '#eff6ff',
+                color: '#1e3a8a',
+                borderRadius: '6px',
+                padding: '0.75rem',
+                fontSize: '0.875rem',
+              }}
+            >
+              <strong>Total due today:</strong> ${modalTotalDue.toFixed(2)}
+            </div>
+          ) : null}
+
+          <div
+            style={{
+              marginBottom: '1rem',
+              border: '1px solid ' + modalPriorAuthColors.border,
+              background: modalPriorAuthColors.bg,
+              color: modalPriorAuthColors.text,
+              borderRadius: '6px',
+              padding: '0.75rem',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <div>
+                <strong>Prior authorization:</strong>{' '}
+                {modalPriorAuth.required ? priorAuthStatusLabel(modalPriorAuth.status) : 'Not required for this visit type'}
+              </div>
+              {modalPriorAuth.authNumber ? (
+                <span style={{ fontSize: '0.78rem', fontWeight: 700 }}>
+                  Auth #: {modalPriorAuth.authNumber}
+                </span>
+              ) : null}
+            </div>
+
+            {modalPriorAuthNeedsAction ? (
+              <>
+                <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', lineHeight: 1.4 }}>
+                  This appointment appears to need prior authorization and it is not approved yet. Front desk can assist the patient before finalizing check-in.
+                </div>
+                <div style={{ marginTop: '0.6rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={handleCopyCheckInLink}
+                    style={{
+                      padding: '0.4rem 0.65rem',
+                      borderRadius: '6px',
+                      border: '1px solid #93c5fd',
+                      background: '#eff6ff',
+                      color: '#1d4ed8',
+                      fontWeight: 600,
+                      fontSize: '0.75rem',
+                    }}
+                  >
+                    Copy Patient Check-In Link
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenKioskFromCheckIn}
+                    style={{
+                      padding: '0.4rem 0.65rem',
+                      borderRadius: '6px',
+                      border: '1px solid #bae6fd',
+                      background: '#ecfeff',
+                      color: '#0e7490',
+                      fontWeight: 600,
+                      fontSize: '0.75rem',
+                    }}
+                  >
+                    Open iPad Kiosk
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenPriorAuthQueue}
+                    style={{
+                      padding: '0.4rem 0.65rem',
+                      borderRadius: '6px',
+                      border: '1px solid #fed7aa',
+                      background: '#fff7ed',
+                      color: '#c2410c',
+                      fontWeight: 600,
+                      fontSize: '0.75rem',
+                    }}
+                  >
+                    Open Prior Auth Queue
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
+
+          {modalHasCopay ? (
+            <>
+              <div style={{ marginBottom: '0.75rem' }}>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', marginBottom: '0.35rem' }}>
+                  Amount to collect now
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={copayDecisionAmount}
+                  onChange={(e) => setCopayDecisionAmount(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.625rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setCopayDecisionAmount(modalCopayAmount.toFixed(2))}
+                    style={{
+                      padding: '0.35rem 0.6rem',
+                      borderRadius: '999px',
+                      border: '1px solid #bfdbfe',
+                      background: '#eff6ff',
+                      color: '#1d4ed8',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Copay ${modalCopayAmount.toFixed(2)}
+                  </button>
+                  {modalHasOutstandingBalance ? (
+                    <button
+                      type="button"
+                      onClick={() => setCopayDecisionAmount(modalOutstandingBalance.toFixed(2))}
+                      style={{
+                        padding: '0.35rem 0.6rem',
+                        borderRadius: '999px',
+                        border: '1px solid #fcd34d',
+                        background: '#fffbeb',
+                        color: '#92400e',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                      }}
+                    >
+                      Past Balance ${modalOutstandingBalance.toFixed(2)}
+                    </button>
+                  ) : null}
+                  {modalTotalDue > modalCopayAmount ? (
+                    <button
+                      type="button"
+                      onClick={() => setCopayDecisionAmount(modalTotalDue.toFixed(2))}
+                      style={{
+                        padding: '0.35rem 0.6rem',
+                        borderRadius: '999px',
+                        border: '1px solid #86efac',
+                        background: '#f0fdf4',
+                        color: '#166534',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                      }}
+                    >
+                      Total Due ${modalTotalDue.toFixed(2)}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '0.75rem' }}>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', marginBottom: '0.35rem' }}>
+                  Payment method
+                </label>
+                <select
+                  value={copayDecisionPaymentMethod}
+                  onChange={(e) => setCopayDecisionPaymentMethod(e.target.value as 'cash' | 'credit' | 'debit' | 'check')}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.625rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <option value="cash">Cash</option>
+                  <option value="credit">Credit Card</option>
+                  <option value="debit">Debit Card</option>
+                  <option value="check">Check</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', marginBottom: '0.35rem' }}>
+                  Bypass reason (if not collecting now)
+                </label>
+                <select
+                  value={copayBypassReason}
+                  onChange={(e) => setCopayBypassReason(e.target.value as CopayBypassReason)}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.625rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    background: '#ffffff',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  {Object.entries(COPAY_BYPASS_REASON_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', marginBottom: '0.35rem' }}>
+                  Check-in notes (optional)
+                </label>
+                <textarea
+                  value={copayDecisionNotes}
+                  onChange={(e) => setCopayDecisionNotes(e.target.value)}
+                  rows={2}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.625rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '0.875rem',
+                    resize: 'vertical',
+                  }}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div
+                style={{
+                  marginBottom: '0.75rem',
+                  border: '1px solid #bbf7d0',
+                  background: '#f0fdf4',
+                  color: '#166534',
+                  borderRadius: '6px',
+                  padding: '0.75rem',
+                  fontSize: '0.875rem',
+                }}
+              >
+                No copay is due based on current insurance data. Proceed with check-in.
+              </div>
+              {modalHasOutstandingBalance ? (
+                <div
+                  style={{
+                    marginBottom: '1rem',
+                    border: '1px solid #fde68a',
+                    background: '#fffbeb',
+                    color: '#92400e',
+                    borderRadius: '6px',
+                    padding: '0.75rem',
+                    fontSize: '0.8125rem',
+                  }}
+                >
+                  Patient has a past balance due. Front desk can collect this now or at checkout.
+                </div>
+              ) : null}
+            </>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+            <button
+              type="button"
+              onClick={closeCopayDecisionModal}
+              style={{
+                padding: '0.5rem 0.875rem',
+                borderRadius: '6px',
+                border: '1px solid #d1d5db',
+                background: '#ffffff',
+                color: '#374151',
+                fontWeight: 500,
+              }}
+            >
+              Cancel
+            </button>
+            {modalHasCopay ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleCopayDeferAndCheckIn}
+                  style={{
+                    padding: '0.5rem 0.875rem',
+                    borderRadius: '6px',
+                    border: '1px solid #bfdbfe',
+                    background: '#eff6ff',
+                    color: '#1d4ed8',
+                    fontWeight: 600,
+                  }}
+                >
+                  Bypass Payment + Check In
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopayCollectAndCheckIn}
+                  style={{
+                    padding: '0.5rem 0.875rem',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: 'linear-gradient(to bottom, #16a34a 0%, #15803d 100%)',
+                    color: '#ffffff',
+                    fontWeight: 600,
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
+                  }}
+                >
+                  Collect + Check In
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={handleCheckInWithoutCopay}
+                style={{
+                  padding: '0.5rem 0.875rem',
+                  borderRadius: '6px',
+                  border: 'none',
+                  background: 'linear-gradient(to bottom, #16a34a 0%, #15803d 100%)',
+                  color: '#ffffff',
+                  fontWeight: 600,
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
+                }}
+              >
+                Check In Now
+              </button>
+            )}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showNoShowModal}
+        title="Confirm No-Show"
+        onClose={closeNoShowModal}
+      >
+        <div style={{ padding: '1rem', minWidth: '420px' }}>
+          <div style={{ marginBottom: '0.75rem', color: '#1f2937' }}>
+            <strong>Patient:</strong> {noShowAppointment?.patientName || 'Selected patient'}
+          </div>
+          <div style={{ marginBottom: '0.75rem', color: '#1f2937' }}>
+            <strong>Scheduled time:</strong>{' '}
+            {noShowAppointment
+              ? new Date(noShowAppointment.scheduledStart).toLocaleString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })
+              : 'N/A'}
+          </div>
+          <div style={{ marginBottom: '0.75rem', color: '#9a3412', fontSize: '0.875rem', fontWeight: 600 }}>
+            A no-show fee will be posted automatically when confirmed.
+          </div>
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', marginBottom: '0.35rem' }}>
+              Confirmation note
+            </label>
+            <textarea
+              value={noShowReason}
+              onChange={(e) => setNoShowReason(e.target.value)}
+              rows={3}
+              style={{
+                width: '100%',
+                padding: '0.5rem 0.625rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                fontSize: '0.875rem',
+                resize: 'vertical',
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+            <button
+              type="button"
+              onClick={closeNoShowModal}
+              style={{
+                padding: '0.5rem 0.875rem',
+                borderRadius: '6px',
+                border: '1px solid #d1d5db',
+                background: '#ffffff',
+                color: '#374151',
+                fontWeight: 500,
+              }}
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmNoShow}
+              disabled={!noShowAppointment || noShowActionId === noShowAppointment?.id}
+              style={{
+                padding: '0.5rem 0.875rem',
+                borderRadius: '6px',
+                border: 'none',
+                background: 'linear-gradient(to bottom, #f97316 0%, #ea580c 100%)',
+                color: '#ffffff',
+                fontWeight: 600,
+                boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
+                opacity: !noShowAppointment || noShowActionId === noShowAppointment?.id ? 0.7 : 1,
+              }}
+            >
+              {noShowActionId === noShowAppointment?.id ? 'Marking...' : 'Confirm No-Show'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* New Appointment Modal */}
       <AppointmentModal
@@ -1483,6 +3083,9 @@ export function SchedulePage() {
         providers={providers}
         locations={locations}
         appointmentTypes={appointmentTypes}
+        availability={availability}
+        appointments={appointments}
+        timeBlocks={timeBlocks}
         initialData={{
           patientId: newAppt.patientId,
           providerId: newAppt.providerId,

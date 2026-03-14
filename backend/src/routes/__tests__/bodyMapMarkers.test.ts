@@ -116,6 +116,21 @@ describe("Body map markers routes", () => {
     expect(auditLog).toHaveBeenCalled();
   });
 
+  it("POST /body-map-markers preserves zero coordinates", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "patient-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const res = await request(app).post("/body-map-markers").send({
+      ...baseMarker,
+      x_position: 0,
+      y_position: 0,
+    });
+    expect(res.status).toBe(201);
+    expect(queryMock.mock.calls[1]?.[0]).toContain("insert into body_map_markers");
+    expect(queryMock.mock.calls[1]?.[1]?.[7]).toBe(0);
+    expect(queryMock.mock.calls[1]?.[1]?.[8]).toBe(0);
+  });
+
   it("PUT /body-map-markers/:id rejects invalid payload", async () => {
     const res = await request(app).put("/body-map-markers/marker-1").send({ size_mm: -1 });
     expect(res.status).toBe(400);
@@ -265,6 +280,21 @@ describe("Procedure sites routes", () => {
     const res = await request(app).post("/body-map-markers/procedure-sites").send(baseProcedureSite);
     expect(res.status).toBe(201);
     expect(res.body.id).toBeTruthy();
+  });
+
+  it("POST /body-map-markers/procedure-sites preserves zero coordinates", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "patient-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const res = await request(app).post("/body-map-markers/procedure-sites").send({
+      ...baseProcedureSite,
+      x_position: 0,
+      y_position: 0,
+    });
+    expect(res.status).toBe(201);
+    expect(queryMock.mock.calls[1]?.[0]).toContain("insert into procedure_sites");
+    expect(queryMock.mock.calls[1]?.[1]?.[7]).toBe(0);
+    expect(queryMock.mock.calls[1]?.[1]?.[8]).toBe(0);
   });
 
   it("PUT /body-map-markers/procedure-sites/:id rejects invalid payload", async () => {

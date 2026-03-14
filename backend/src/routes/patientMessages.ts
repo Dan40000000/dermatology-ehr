@@ -8,6 +8,9 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { logger } from "../lib/logger";
+import {
+  notifyPatientOfNewMessage,
+} from "../services/messageNotificationService";
 
 const router = Router();
 
@@ -333,6 +336,8 @@ router.post("/threads", requireAuth, async (req: AuthedRequest, res) => {
       await auditLog(tenantId, userId, "patient_message_thread_create", "patient_message_thread", threadId);
       await auditLog(tenantId, userId, "patient_message_send", "patient_message", messageId);
 
+      await notifyPatientOfNewMessage(tenantId, patientId, threadId, subject);
+
       res.status(201).json({ threadId, messageId });
     } catch (error) {
       await client.query("ROLLBACK");
@@ -410,7 +415,11 @@ router.post("/threads/:id/messages", requireAuth, async (req: AuthedRequest, res
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
     const userName = req.user!.fullName;
-    const threadId = req.params.id;
+    const threadId = req.params.id || "";
+
+    if (!threadId) {
+      return res.status(400).json({ error: "Thread ID required" });
+    }
 
     const parsed = sendMessageSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -421,13 +430,14 @@ router.post("/threads/:id/messages", requireAuth, async (req: AuthedRequest, res
 
     // Verify thread exists
     const threadCheck = await pool.query(
-      "SELECT id FROM patient_message_threads WHERE id = $1 AND tenant_id = $2",
+      "SELECT id, patient_id, subject FROM patient_message_threads WHERE id = $1 AND tenant_id = $2",
       [threadId, tenantId]
     );
 
     if (threadCheck.rows.length === 0) {
       return res.status(404).json({ error: "Thread not found" });
     }
+    const threadRow = threadCheck.rows[0] as { patient_id?: string; subject?: string };
 
     const client = await pool.connect();
     try {
@@ -458,6 +468,19 @@ router.post("/threads/:id/messages", requireAuth, async (req: AuthedRequest, res
       await client.query("COMMIT");
 
       await auditLog(tenantId, userId, "patient_message_send", "patient_message", messageId);
+
+      if (!isInternalNote) {
+        if (threadRow.patient_id) {
+          await notifyPatientOfNewMessage(
+            tenantId,
+            threadRow.patient_id,
+            threadId,
+            threadRow.subject || "New patient message"
+          );
+        } else {
+          logger.warn("Skipping patient notification: patient_id missing on thread", { threadId, tenantId });
+        }
+      }
 
       res.status(201).json({ messageId });
     } catch (error) {

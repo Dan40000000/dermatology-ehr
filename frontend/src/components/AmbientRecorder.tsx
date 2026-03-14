@@ -14,6 +14,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { useWebSocketContext } from '../contexts/WebSocketContext';
 import { AudioVisualizer } from './AudioVisualizer';
+import { LiveScribeInsightsPanel, type AmbientLiveInsightsPayload } from './LiveScribeInsightsPanel';
 import { createSilenceMonitor, type SilenceMonitor } from '../utils/audioMonitor';
 import { ENABLE_LIVE_DRAFT } from '../utils/featureFlags';
 import {
@@ -30,6 +31,24 @@ interface AmbientRecorderProps {
   patientName: string;
   onRecordingComplete?: (recording: AmbientRecording) => void;
   compact?: boolean;
+}
+
+interface AmbientJoinedRecoveryChunk {
+  chunkIndex: number;
+  text: string;
+  confidence: number;
+  source: 'live' | 'mock';
+  receivedAt: string;
+}
+
+interface AmbientJoinedEvent {
+  recordingId: string;
+  joinedAt: string;
+  recovery?: {
+    lastChunkIndex: number;
+    savedChunksCount: number;
+    savedChunks: AmbientJoinedRecoveryChunk[];
+  };
 }
 
 export function AmbientRecorder({
@@ -51,6 +70,7 @@ export function AmbientRecorder({
   const [duration, setDuration] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [liveTranscript, setLiveTranscript] = useState<string[]>([]);
+  const [liveInsights, setLiveInsights] = useState<AmbientLiveInsightsPayload | null>(null);
   const [liveStatus, setLiveStatus] = useState<'idle' | 'connecting' | 'streaming' | 'error'>('idle');
   const [liveError, setLiveError] = useState<string | null>(null);
   const [showContinuePrompt, setShowContinuePrompt] = useState(false);
@@ -66,6 +86,12 @@ export function AmbientRecorder({
 
   const MAX_RECORDING_SECONDS = 30 * 60;
   const SILENCE_PROMPT_SECONDS = 5 * 60;
+  const scribeTips = [
+    'Say the chief complaint, body site, timing, and symptom severity out loud early in the visit.',
+    'Verbalize exam details clearly: lesion morphology, color, distribution, size, symptoms, and laterality.',
+    'State the assessment and plan explicitly, including medications, strengths, frequency, and follow-up timing.',
+    'For procedures, say the site, consent, anesthetic, technique, specimen handling, and aftercare instructions out loud.',
+  ];
 
   // Cleanup on unmount
   useEffect(() => {
@@ -107,6 +133,7 @@ export function AmbientRecorder({
       setRecordingId(result.recordingId);
       chunkIndexRef.current = 0;
       setLiveTranscript([]);
+      setLiveInsights(null);
       setLiveStatus(ENABLE_LIVE_DRAFT && isConnected ? 'connecting' : 'idle');
       setLiveError(null);
 
@@ -276,6 +303,7 @@ export function AmbientRecorder({
     setAudioBlob(null);
     audioChunksRef.current = [];
     setLiveTranscript([]);
+    setLiveInsights(null);
     setLiveStatus('idle');
     setLiveError(null);
     setShowContinuePrompt(false);
@@ -309,10 +337,21 @@ export function AmbientRecorder({
       });
     };
 
-    const handleJoined = (data: { recordingId: string }) => {
+    const handleJoined = (data: AmbientJoinedEvent) => {
       if (data.recordingId !== recordingId) return;
       setLiveStatus('streaming');
       setLiveError(null);
+      const savedLines = data.recovery?.savedChunks
+        ?.map((chunk) => chunk.text.trim())
+        .filter(Boolean) || [];
+      if (savedLines.length > 0) {
+        setLiveTranscript(savedLines.slice(-8));
+      }
+    };
+
+    const handleInsights = (data: AmbientLiveInsightsPayload) => {
+      if (data.recordingId !== recordingId) return;
+      setLiveInsights(data);
     };
 
     const handleError = (data: { recordingId?: string; message: string }) => {
@@ -323,11 +362,13 @@ export function AmbientRecorder({
 
     on('ambient:joined', handleJoined);
     on('ambient:transcript', handleTranscript);
+    on('ambient:insights', handleInsights);
     on('ambient:error', handleError);
 
     return () => {
       off('ambient:joined', handleJoined);
       off('ambient:transcript', handleTranscript);
+      off('ambient:insights', handleInsights);
       off('ambient:error', handleError);
     };
   }, [recordingId, recordingState, isConnected, emit, on, off]);
@@ -545,9 +586,10 @@ export function AmbientRecorder({
         )}
 
         {ENABLE_LIVE_DRAFT && (recordingState === 'recording' || liveTranscript.length > 0) && (
-          <div className="mb-4 border border-slate-200 rounded-lg p-4 bg-slate-50">
+          <div className="mb-4 space-y-4">
+            <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Live Draft</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">Live Transcript</div>
               <div className={`text-xs ${liveStatus === 'error' ? 'text-red-600' : 'text-slate-500'}`}>
                 {liveStatus === 'streaming' ? 'Streaming' : liveStatus === 'connecting' ? 'Connecting…' : liveStatus === 'error' ? 'Paused' : 'Idle'}
               </div>
@@ -563,6 +605,8 @@ export function AmbientRecorder({
                 ))}
               </div>
             )}
+            </div>
+            <LiveScribeInsightsPanel insights={liveInsights} />
           </div>
         )}
 
@@ -611,15 +655,27 @@ export function AmbientRecorder({
       </div>
 
       {/* Info Panel */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <h4 className="font-semibold text-blue-900 mb-2">How it works:</h4>
-        <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
-          <li>Obtain patient consent for audio recording</li>
-          <li>Start recording during the patient visit</li>
-          <li>AI automatically transcribes the conversation with speaker diarization</li>
-          <li>Clinical note is auto-generated from the transcript</li>
-          <li>Review and edit the AI-generated note before signing</li>
-        </ol>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <h4 className="font-semibold text-blue-900 mb-2">Workflow</h4>
+          <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
+            <li>Obtain patient consent for audio recording.</li>
+            <li>Record the visit conversation from history through plan.</li>
+            <li>Upload audio to transcribe and draft the note.</li>
+            <li>Review the draft before approving or signing.</li>
+          </ol>
+        </div>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+          <h4 className="font-semibold text-emerald-900 mb-2">Best Results</h4>
+          <ul className="text-sm text-emerald-800 space-y-2">
+            {scribeTips.map((tip) => (
+              <li key={tip} className="flex items-start gap-2">
+                <span aria-hidden="true" className="mt-0.5 text-emerald-600">•</span>
+                <span>{tip}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
 
       {/* Consent Modal */}

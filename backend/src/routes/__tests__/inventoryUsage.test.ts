@@ -89,6 +89,26 @@ describe("Inventory usage routes", () => {
     expect(auditMock).toHaveBeenCalled();
   });
 
+  it("POST /inventory-usage stores sample and sell price flags", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ unit_cost_cents: 100, quantity: 5 }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ id: "usage-2" }] });
+
+    const res = await request(app).post("/inventory-usage").send({
+      itemId: "00000000-0000-0000-0000-000000000000",
+      patientId: "p1",
+      providerId: "prov-1",
+      quantityUsed: 1,
+      givenAsSample: true,
+      sellPriceCents: 5000,
+    });
+
+    expect(res.status).toBe(201);
+    const insertParams = queryMock.mock.calls[1]?.[1];
+    expect(insertParams[8]).toBe(0);
+    expect(insertParams[9]).toBe(true);
+  });
+
   it("POST /inventory-usage returns 400 on trigger error", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ unit_cost_cents: 100, quantity: 5 }], rowCount: 1 })

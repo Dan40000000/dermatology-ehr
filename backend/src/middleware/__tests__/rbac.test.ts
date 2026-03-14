@@ -71,4 +71,24 @@ describe('requireRoles', () => {
 
     expect(next).toHaveBeenCalled();
   });
+
+  it('allows canonical alias roles through normalization', () => {
+    const req = { user: { role: 'medical_assistant' } } as any;
+    const res = makeRes();
+    const next = jest.fn();
+
+    requireRoles(['ma'])(req, res as any, next);
+
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('allows normalized front desk aliases for financial role gates', () => {
+    const req = { user: { role: 'receptionist' } } as any;
+    const res = makeRes();
+    const next = jest.fn();
+
+    requireRoles(FINANCIAL_ROLES)(req, res as any, next);
+
+    expect(next).toHaveBeenCalled();
+  });
 });

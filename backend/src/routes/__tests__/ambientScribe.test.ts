@@ -6,6 +6,7 @@ import ambientScribeRouter from '../ambientScribe';
 import { pool } from '../../db/pool';
 import { auditLog } from '../../services/audit';
 import * as ambientAI from '../../services/ambientAI';
+import { agentConfigService } from '../../services/agentConfigService';
 
 // Mock auth middleware
 jest.mock('../../middleware/auth', () => ({
@@ -43,6 +44,14 @@ jest.mock('../../services/ambientAI', () => ({
   transcribeAudio: jest.fn(),
   generateClinicalNote: jest.fn(),
   maskPHI: jest.fn((text: string) => text),
+}));
+
+jest.mock('../../services/agentConfigService', () => ({
+  agentConfigService: {
+    getConfiguration: jest.fn(),
+    getConfigurationForAppointmentType: jest.fn(),
+    getDefaultConfiguration: jest.fn(),
+  },
 }));
 
 // Mock multer
@@ -95,6 +104,9 @@ const auditMock = auditLog as jest.Mock;
 const transcribeAudioMock = ambientAI.transcribeAudio as jest.Mock;
 const generateClinicalNoteMock = ambientAI.generateClinicalNote as jest.Mock;
 const unlinkMock = fsPromises.unlink as jest.Mock;
+const getConfigurationMock = agentConfigService.getConfiguration as jest.Mock;
+const getConfigurationForAppointmentTypeMock = agentConfigService.getConfigurationForAppointmentType as jest.Mock;
+const getDefaultConfigurationMock = agentConfigService.getDefaultConfiguration as jest.Mock;
 
 const flushPromises = () => new Promise(resolve => setImmediate(resolve));
 
@@ -104,8 +116,14 @@ beforeEach(() => {
   transcribeAudioMock.mockReset();
   generateClinicalNoteMock.mockReset();
   unlinkMock.mockReset();
+  getConfigurationMock.mockReset();
+  getConfigurationForAppointmentTypeMock.mockReset();
+  getDefaultConfigurationMock.mockReset();
   unlinkMock.mockResolvedValue(undefined);
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+  getConfigurationMock.mockResolvedValue(null);
+  getConfigurationForAppointmentTypeMock.mockResolvedValue(null);
+  getDefaultConfigurationMock.mockResolvedValue(null);
 });
 
 describe('Ambient Scribe Routes - Recording Endpoints', () => {
@@ -828,6 +846,155 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('noteId');
       expect(res.body.status).toBe('processing');
+    });
+
+    it('should resolve the visit-specific agent config and patient context for note generation', async () => {
+      const agentConfig = {
+        id: 'config-med-1',
+        tenantId: 'tenant-1',
+        name: 'Medical Dermatology',
+        description: 'Derm visit config',
+        isDefault: true,
+        isActive: true,
+        appointmentTypeId: 'appt-type-1',
+        specialtyFocus: 'medical_derm',
+        aiModel: 'claude-3-5-sonnet-20241022',
+        temperature: 0.2,
+        maxTokens: 4000,
+        systemPrompt: 'You are a dermatology scribe.',
+        promptTemplate: 'Use {{appointmentTypeName}} for {{patientName}}. {{transcript}}',
+        noteSections: ['chiefComplaint', 'hpi', 'assessment', 'plan'],
+        sectionPrompts: {},
+        outputFormat: 'soap',
+        verbosityLevel: 'detailed',
+        includeCodes: true,
+        terminologySet: {},
+        focusAreas: ['rashes'],
+        defaultCptCodes: [],
+        defaultIcd10Codes: [],
+        taskTemplates: [],
+        createdAt: new Date('2026-03-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-03-01T00:00:00.000Z'),
+      };
+
+      getConfigurationForAppointmentTypeMock.mockResolvedValue(agentConfig);
+      generateClinicalNoteMock.mockResolvedValue({
+        chiefComplaint: 'Rash on arms',
+        hpi: 'Two week history of itchy rash on bilateral forearms.',
+        ros: 'Skin positive for rash. Otherwise not documented.',
+        physicalExam: 'Erythematous scaly plaques on bilateral forearms.',
+        assessment: 'Dermatitis flare.',
+        plan: 'Start triamcinolone and moisturizers.',
+        suggestedIcd10: [{ code: 'L30.9', description: 'Dermatitis, unspecified', confidence: 0.91 }],
+        suggestedCpt: [],
+        medications: [{ name: 'Triamcinolone', dosage: '0.1% cream', frequency: 'BID', confidence: 0.94 }],
+        allergies: [{ allergen: 'Penicillin', reaction: 'Hives', confidence: 0.98 }],
+        followUpTasks: [{ task: 'Return in 2 weeks', priority: 'medium', dueDate: '2026-03-15', confidence: 0.9 }],
+        overallConfidence: 0.92,
+        sectionConfidence: { chiefComplaint: 0.95, hpi: 0.9, ros: 0.84, physicalExam: 0.91, assessment: 0.89, plan: 0.9 },
+        differentialDiagnoses: [],
+        recommendedTests: [],
+        patientSummary: {
+          whatWeDiscussed: 'We discussed the rash.',
+          yourConcerns: ['Rash', 'Itching'],
+          diagnosis: 'Dermatitis',
+          treatmentPlan: 'Topical steroid',
+          followUp: '2 weeks',
+        },
+        generationMetadata: {
+          provider: 'anthropic',
+          model: 'claude-3-5-sonnet-20241022',
+          prompt: 'Resolved prompt',
+          systemPrompt: 'You are a dermatology scribe.',
+          agentConfigId: 'config-med-1',
+          appointmentTypeName: 'Rash Follow-up',
+          specialtyFocus: 'medical_derm',
+        },
+      });
+
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{
+            transcript_text: 'Patient says the rash is itchy and spreading.',
+            transcript_segments: [{ speaker: 'patient', text: 'Patient says the rash is itchy and spreading.' }],
+            encounter_id: 'enc-1',
+            recording_id: 'rec-1',
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{ recording_id: 'rec-1', encounter_id: 'enc-1' }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            recording_id: 'rec-1',
+            effective_encounter_id: 'enc-1',
+            recording_provider_id: 'provider-1',
+            recording_agent_config_id: null,
+            patient_first_name: 'Emily',
+            patient_last_name: 'Rodriguez',
+            patient_dob: '1989-04-11',
+            patient_allergies: 'Penicillin',
+            patient_medications: 'Cetirizine daily',
+            encounter_provider_id: 'provider-1',
+            encounter_chief_complaint: 'Itchy rash on arms',
+            encounter_hpi: 'Existing draft HPI',
+            encounter_ros: 'Skin positive for rash',
+            encounter_exam: 'Scaly plaques',
+            encounter_assessment_plan: 'Consider dermatitis flare',
+            provider_name: 'Dr. David Skin, MD, FAAD',
+            appointment_type_id: 'appt-type-1',
+            appointment_type_name: 'Rash Follow-up',
+            appointment_type_category: 'Medical Dermatology',
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+      const res = await request(app).post('/api/ambient/transcripts/transcript-1/generate-note');
+
+      expect(res.status).toBe(200);
+      await flushPromises();
+      await flushPromises();
+
+      expect(getConfigurationForAppointmentTypeMock).toHaveBeenCalledWith('tenant-1', 'appt-type-1');
+      expect(generateClinicalNoteMock).toHaveBeenCalledWith(
+        'Patient says the rash is itchy and spreading.',
+        [{ speaker: 'patient', text: 'Patient says the rash is itchy and spreading.' }],
+        agentConfig,
+        expect.objectContaining({
+          patientName: 'Emily Rodriguez',
+          chiefComplaint: 'Itchy rash on arms',
+          providerName: 'Dr. David Skin, MD, FAAD',
+          appointmentTypeName: 'Rash Follow-up',
+          appointmentTypeCategory: 'Medical Dermatology',
+          specialtyFocus: 'medical_derm',
+        })
+      );
+
+      const noteInsertCall = queryMock.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('INSERT INTO ambient_generated_notes')
+      );
+      expect(noteInsertCall?.[1]).toEqual(expect.arrayContaining([
+        'mock-uuid-1234',
+        'tenant-1',
+        'transcript-1',
+        'rec-1',
+        'enc-1',
+        'config-med-1',
+      ]));
+
+      const noteUpdateCall = queryMock.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('UPDATE ambient_generated_notes')
+      );
+      const noteUpdateParams = noteUpdateCall?.[1] as any[];
+      expect(noteUpdateParams[16]).toBe('config-med-1');
+      expect(noteUpdateParams[18]).toBe('claude-3-5-sonnet-20241022');
+      expect(noteUpdateParams[19]).toBe('ambient-scribe-contextual-v1');
+      expect(noteUpdateParams[20]).toBe('Resolved prompt');
     });
 
     it('should handle database errors', async () => {

@@ -311,7 +311,13 @@ describe("Inventory routes", () => {
   });
 
   it("POST /inventory/usage returns 404 when item missing", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // item check
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+    connectMock.mockResolvedValueOnce(client);
+
     const res = await request(app).post("/inventory/usage").send({
       itemId: "00000000-0000-0000-0000-000000000000",
       quantityUsed: 1,
@@ -322,10 +328,16 @@ describe("Inventory routes", () => {
   });
 
   it("POST /inventory/usage returns 400 on insufficient inventory", async () => {
-    queryMock.mockResolvedValueOnce({
-      rows: [{ id: "item-1", name: "Item", quantity: 1, unit_cost_cents: 100 }],
-      rowCount: 1,
-    });
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({
+        rows: [{ id: "item-1", name: "Item", quantity: 1, unit_cost_cents: 100 }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+    connectMock.mockResolvedValueOnce(client);
+
     const res = await request(app).post("/inventory/usage").send({
       itemId: "00000000-0000-0000-0000-000000000000",
       quantityUsed: 3,
@@ -336,12 +348,17 @@ describe("Inventory routes", () => {
   });
 
   it("POST /inventory/usage records usage", async () => {
-    queryMock
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({
         rows: [{ id: "item-1", name: "Item", quantity: 10, unit_cost_cents: 100 }],
         rowCount: 1,
       })
-      .mockResolvedValueOnce({ rows: [{ id: "usage-1", used_at: "2025-01-01" }] });
+      .mockResolvedValueOnce({ rows: [{ id: "usage-1", used_at: "2025-01-01" }] })
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    connectMock.mockResolvedValueOnce(client);
+
     const res = await request(app).post("/inventory/usage").send({
       itemId: "00000000-0000-0000-0000-000000000000",
       quantityUsed: 1,
@@ -351,6 +368,67 @@ describe("Inventory routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.id).toBe("usage-1");
     expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /inventory/usage stores sample and sell price flags", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({
+        rows: [{ id: "item-1", name: "Item", quantity: 10, unit_cost_cents: 100 }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "usage-2", used_at: "2025-01-01" }] })
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/inventory/usage").send({
+      itemId: "00000000-0000-0000-0000-000000000000",
+      quantityUsed: 2,
+      patientId: "p1",
+      providerId: "prov-1",
+      givenAsSample: true,
+      sellPriceCents: 4200,
+    });
+
+    expect(res.status).toBe(201);
+
+    const insertParams = client.query.mock.calls[2]?.[1];
+    expect(insertParams[4]).toBe(0);
+    expect(insertParams[5]).toBe(true);
+  });
+
+  it("POST /inventory/usage creates billing entries for billable usage", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({
+        rows: [{ id: "item-1", name: "Triamcinolone Cream", quantity: 20, unit_cost_cents: 500 }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "usage-billable", used_at: "2025-01-01" }] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // open bill lookup
+      .mockResolvedValueOnce({ rows: [] }) // insert bill
+      .mockResolvedValueOnce({ rows: [] }) // insert bill line item
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/inventory/usage").send({
+      itemId: "00000000-0000-0000-0000-000000000000",
+      quantityUsed: 2,
+      patientId: "p1",
+      providerId: "prov-1",
+      sellPriceCents: 2500,
+      givenAsSample: false,
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.patientChargeCents).toBe(5000);
+    expect(res.body.billId).toBeTruthy();
+
+    const queryTextList = client.query.mock.calls.map((call) => String(call[0]));
+    expect(queryTextList.some((sql) => sql.includes("INSERT INTO bills"))).toBe(true);
+    expect(queryTextList.some((sql) => sql.includes("INSERT INTO bill_line_items"))).toBe(true);
   });
 
   it("GET /inventory/usage returns list", async () => {

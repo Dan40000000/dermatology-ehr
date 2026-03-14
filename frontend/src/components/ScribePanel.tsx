@@ -13,6 +13,7 @@ import { useRecording } from '../contexts/RecordingContext';
 import { useWebSocketContext } from '../contexts/WebSocketContext';
 import { createSilenceMonitor, type SilenceMonitor } from '../utils/audioMonitor';
 import { ENABLE_LIVE_DRAFT } from '../utils/featureFlags';
+import { LiveScribeInsightsPanel, type AmbientLiveInsightsPayload } from './LiveScribeInsightsPanel';
 import {
   startAmbientRecording,
   stopAmbientRecording,
@@ -30,6 +31,24 @@ interface ScribePanelProps {
   highlighted?: boolean;
   showScheduleBadge?: boolean;
   onRecordingComplete?: (recordingId: string) => void;
+}
+
+interface AmbientJoinedRecoveryChunk {
+  chunkIndex: number;
+  text: string;
+  confidence: number;
+  source: 'live' | 'mock';
+  receivedAt: string;
+}
+
+interface AmbientJoinedEvent {
+  recordingId: string;
+  joinedAt: string;
+  recovery?: {
+    lastChunkIndex: number;
+    savedChunksCount: number;
+    savedChunks: AmbientJoinedRecoveryChunk[];
+  };
 }
 
 export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
@@ -62,6 +81,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
   const [isUploading, setIsUploading] = useState(false);
   const [defaultProviderId, setDefaultProviderId] = useState<string | null>(null);
   const [liveTranscript, setLiveTranscript] = useState<string[]>([]);
+  const [liveInsights, setLiveInsights] = useState<AmbientLiveInsightsPayload | null>(null);
   const [liveStatus, setLiveStatus] = useState<'idle' | 'connecting' | 'streaming' | 'error'>('idle');
   const [liveError, setLiveError] = useState<string | null>(null);
   const [showContinuePrompt, setShowContinuePrompt] = useState(false);
@@ -141,6 +161,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
       recordingIdRef.current = result.recordingId;
       chunkIndexRef.current = 0;
       setLiveTranscript([]);
+      setLiveInsights(null);
       setLiveStatus(ENABLE_LIVE_DRAFT && isConnected ? 'connecting' : 'idle');
       setLiveError(null);
 
@@ -253,6 +274,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
     if (ENABLE_LIVE_DRAFT && recordingId) {
       emit('ambient:leave', { recordingId });
     }
+    setLiveInsights(null);
     setLiveStatus('idle');
     setLiveError(null);
   };
@@ -301,6 +323,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
       recordingIdRef.current = null;
       audioChunksRef.current = [];
       setLiveTranscript([]);
+      setLiveInsights(null);
       setLiveStatus('idle');
       setLiveError(null);
       setShowContinuePrompt(false);
@@ -351,10 +374,21 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
       });
     };
 
-    const handleJoined = (data: { recordingId: string }) => {
+    const handleJoined = (data: AmbientJoinedEvent) => {
       if (data.recordingId !== recordingId) return;
       setLiveStatus('streaming');
       setLiveError(null);
+      const savedLines = data.recovery?.savedChunks
+        ?.map((chunk) => chunk.text.trim())
+        .filter(Boolean) || [];
+      if (savedLines.length > 0) {
+        setLiveTranscript(savedLines.slice(-8));
+      }
+    };
+
+    const handleInsights = (data: AmbientLiveInsightsPayload) => {
+      if (data.recordingId !== recordingId) return;
+      setLiveInsights(data);
     };
 
     const handleError = (data: { recordingId?: string; message: string }) => {
@@ -365,11 +399,13 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
 
     on('ambient:joined', handleJoined);
     on('ambient:transcript', handleTranscript);
+    on('ambient:insights', handleInsights);
     on('ambient:error', handleError);
 
     return () => {
       off('ambient:joined', handleJoined);
       off('ambient:transcript', handleTranscript);
+      off('ambient:insights', handleInsights);
       off('ambient:error', handleError);
     };
   }, [recordingId, isRecording, isConnected, emit, on, off]);
@@ -457,40 +493,43 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
 
           {/* Live Draft */}
           {ENABLE_LIVE_DRAFT && (isRecording || liveTranscript.length > 0) && (
-            <div className="scribe-panel__draft">
-              <div className="scribe-panel__draft-header">
-                <span className="scribe-panel__draft-title">Live Draft</span>
-                <span className={`scribe-panel__draft-status ${
-                  liveStatus === 'streaming'
-                    ? 'scribe-panel__draft-status--streaming'
-                    : liveStatus === 'error'
-                    ? 'scribe-panel__draft-status--error'
-                    : ''
-                }`}>
-                  {liveStatus === 'streaming'
-                    ? 'Streaming'
-                    : liveStatus === 'connecting'
-                    ? 'Connecting...'
-                    : liveStatus === 'error'
-                    ? 'Paused'
-                    : 'Idle'}
-                </span>
-              </div>
-              <div className="scribe-panel__draft-content">
-                {liveTranscript.length === 0 ? (
-                  <span className="scribe-panel__draft-placeholder">
-                    {liveStatus === 'error' && liveError
-                      ? liveError
-                      : 'Listening for speech... draft updates in real time.'}
+            <div className="scribe-panel__live-stack">
+              <div className="scribe-panel__draft">
+                <div className="scribe-panel__draft-header">
+                  <span className="scribe-panel__draft-title">Live Transcript</span>
+                  <span className={`scribe-panel__draft-status ${
+                    liveStatus === 'streaming'
+                      ? 'scribe-panel__draft-status--streaming'
+                      : liveStatus === 'error'
+                      ? 'scribe-panel__draft-status--error'
+                      : ''
+                  }`}>
+                    {liveStatus === 'streaming'
+                      ? 'Streaming'
+                      : liveStatus === 'connecting'
+                      ? 'Connecting...'
+                      : liveStatus === 'error'
+                      ? 'Paused'
+                      : 'Idle'}
                   </span>
-                ) : (
-                  liveTranscript.map((line, idx) => (
-                    <div key={`${idx}-${line.slice(0, 12)}`} className="scribe-panel__draft-line">
-                      {line}
-                    </div>
-                  ))
-                )}
+                </div>
+                <div className="scribe-panel__draft-content">
+                  {liveTranscript.length === 0 ? (
+                    <span className="scribe-panel__draft-placeholder">
+                      {liveStatus === 'error' && liveError
+                        ? liveError
+                        : 'Listening for speech... transcript updates in real time.'}
+                    </span>
+                  ) : (
+                    liveTranscript.map((line, idx) => (
+                      <div key={`${idx}-${line.slice(0, 12)}`} className="scribe-panel__draft-line">
+                        {line}
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
+              <LiveScribeInsightsPanel insights={liveInsights} compact />
             </div>
           )}
 

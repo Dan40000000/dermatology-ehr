@@ -27,6 +27,27 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../db/schema", () => ({
+  getTableColumns: jest.fn(async () => new Set([
+    "id",
+    "tenant_id",
+    "patient_id",
+    "encounter_id",
+    "lesion_id",
+    "filename",
+    "mime_type",
+    "file_size",
+    "body_region",
+    "body_location",
+    "photo_type",
+    "url",
+    "description",
+    "category",
+    "annotations",
+    "created_at",
+  ])),
+}));
+
 jest.mock("../../services/photoService", () => ({
   PhotoService: {
     validateImageFile: jest.fn(),

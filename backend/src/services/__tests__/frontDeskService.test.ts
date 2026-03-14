@@ -2,6 +2,7 @@ import { frontDeskService } from "../frontDeskService";
 import { pool } from "../../db/pool";
 import { logger } from "../../lib/logger";
 import { encounterService } from "../encounterService";
+import { sendPatientPaymentReceiptEmail } from "../paymentConfirmationService";
 
 jest.mock("../../db/pool", () => ({
   pool: {
@@ -23,9 +24,14 @@ jest.mock("../encounterService", () => ({
   },
 }));
 
+jest.mock("../paymentConfirmationService", () => ({
+  sendPatientPaymentReceiptEmail: jest.fn(),
+}));
+
 const queryMock = pool.query as jest.Mock;
 const connectMock = pool.connect as jest.Mock;
 const createEncounterMock = encounterService.createEncounterFromAppointment as jest.Mock;
+const sendPatientPaymentReceiptEmailMock = sendPatientPaymentReceiptEmail as jest.Mock;
 
 const makeClient = () => ({
   query: jest.fn().mockResolvedValue({ rows: [] }),
@@ -36,6 +42,8 @@ beforeEach(() => {
   queryMock.mockReset();
   connectMock.mockReset();
   createEncounterMock.mockReset();
+  sendPatientPaymentReceiptEmailMock.mockReset();
+  sendPatientPaymentReceiptEmailMock.mockResolvedValue({ attempted: false, sent: false });
   (logger.info as jest.Mock).mockReset();
   (logger.error as jest.Mock).mockReset();
 });
@@ -95,10 +103,39 @@ describe("frontDeskService", () => {
     jest.useRealTimers();
   });
 
+  it("getTodaySchedule uses schema-tolerant insurance and balance access", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    await frontDeskService.getTodaySchedule("tenant-1");
+
+    const scheduleQuery = queryMock.mock.calls[0][0] as string;
+
+    expect(scheduleQuery).toContain("to_jsonb(p)");
+    expect(scheduleQuery).toContain("to_jsonb(b)");
+    expect(scheduleQuery).not.toMatch(/\bp\.insurance_details\b/);
+    expect(scheduleQuery).not.toMatch(/\bb\.amount_cents\b/);
+  });
+
+  it("getTodaySchedule uses local-date helper for the day filter", async () => {
+    const localDateSpy = jest
+      .spyOn(frontDeskService as any, "toLocalIsoDate")
+      .mockReturnValueOnce("2026-02-21");
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    await frontDeskService.getTodaySchedule("tenant-1");
+
+    expect(localDateSpy).toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledWith(expect.any(String), ["tenant-1", "2026-02-21"]);
+    localDateSpy.mockRestore();
+  });
+
   it("getDailyStats calculates open slots and average wait", async () => {
     const providerSpy = jest
       .spyOn(frontDeskService as any, "getProviderCount")
       .mockResolvedValueOnce(2);
+    const localDateSpy = jest
+      .spyOn(frontDeskService as any, "toLocalIsoDate")
+      .mockReturnValueOnce("2026-02-21");
 
     queryMock
       .mockResolvedValueOnce({
@@ -118,6 +155,11 @@ describe("frontDeskService", () => {
 
     expect(result.openSlotsRemaining).toBe(67);
     expect(result.averageWaitTime).toBe(12);
+    expect(localDateSpy).toHaveBeenCalled();
+    expect(queryMock).toHaveBeenNthCalledWith(1, expect.any(String), ["tenant-1", "2026-02-21"]);
+    expect(queryMock).toHaveBeenNthCalledWith(2, expect.any(String), ["tenant-1", "2026-02-21"]);
+    expect(queryMock).toHaveBeenNthCalledWith(3, expect.any(String), ["tenant-1", "2026-02-21"]);
+    localDateSpy.mockRestore();
     providerSpy.mockRestore();
   });
 
@@ -150,7 +192,15 @@ describe("frontDeskService", () => {
       .mockResolvedValueOnce({}) // BEGIN
       .mockResolvedValueOnce({
         rowCount: 1,
-        rows: [{ patient_id: "patient-1", provider_id: "prov-1" }],
+        rows: [
+          {
+            patient_id: "patient-1",
+            provider_id: "prov-1",
+            insurance_copay_amount: "40",
+            insurance_eligibility_status: "Active",
+            insurance_verified_at: "2026-02-27T12:00:00.000Z",
+          },
+        ],
       })
       .mockResolvedValueOnce({}) // UPDATE
       .mockResolvedValueOnce({}); // COMMIT
@@ -159,6 +209,11 @@ describe("frontDeskService", () => {
     const result = await frontDeskService.checkInPatient("tenant-1", "appt-1");
 
     expect(result.encounterId).toBe("enc-1");
+    expect(result.copayAmount).toBe(40);
+    expect(result.copayAmountCents).toBe(4000);
+    expect(result.copaySource).toBe("insurance_profile");
+    expect(result.eligibilityStatus).toBe("Active");
+    expect(result.eligibilityVerifiedAt).toBe("2026-02-27T12:00:00.000Z");
     expect(createEncounterMock).toHaveBeenCalledWith(
       "tenant-1",
       "appt-1",
@@ -166,6 +221,150 @@ describe("frontDeskService", () => {
       "prov-1"
     );
     expect(client.release).toHaveBeenCalled();
+  });
+
+  it("checkInPatient still succeeds when encounter creation fails", async () => {
+    const client = makeClient();
+    connectMock.mockResolvedValueOnce(client);
+    client.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ patient_id: "patient-1", provider_id: "prov-1" }],
+      })
+      .mockResolvedValueOnce({}) // UPDATE
+      .mockResolvedValueOnce({}); // COMMIT
+    createEncounterMock.mockRejectedValueOnce(new Error("encounter failed"));
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // fallback lookup
+
+    const result = await frontDeskService.checkInPatient("tenant-1", "appt-1");
+
+    expect(result.encounterId).toBe("");
+    expect(client.release).toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("SELECT id FROM encounters"),
+      ["tenant-1", "appt-1"]
+    );
+  });
+
+  it("checkInPatient records copay payment when collect option is selected", async () => {
+    const client = makeClient();
+    connectMock.mockResolvedValueOnce(client);
+    client.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [
+          {
+            patient_id: "patient-1",
+            patient_first_name: "Ada",
+            patient_last_name: "Lovelace",
+            patient_email: "ada@example.com",
+            provider_id: "prov-1",
+            insurance_copay_amount: "45",
+            insurance_eligibility_status: "Active",
+            insurance_verified_at: "2026-02-27T12:00:00.000Z",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({}) // UPDATE
+      .mockResolvedValueOnce({ rows: [] }) // outstanding bills
+      .mockResolvedValueOnce({ rows: [{ count: "1" }] }) // receipt count
+      .mockResolvedValueOnce({}) // INSERT payment
+      .mockResolvedValueOnce({}); // COMMIT
+    createEncounterMock.mockResolvedValueOnce({ id: "enc-1" });
+    sendPatientPaymentReceiptEmailMock.mockResolvedValueOnce({
+      attempted: true,
+      sent: true,
+      emailAddress: "ada@example.com",
+    });
+
+    const result = await frontDeskService.checkInPatient("tenant-1", "appt-1", {
+      collectCopay: true,
+      copayAmountCents: 4200,
+      paymentMethod: "credit",
+      checkedInBy: "user-1",
+    });
+
+    const paymentInsertCall = client.query.mock.calls.find((call) =>
+      typeof call[0] === "string" && call[0].includes("INSERT INTO patient_payments")
+    );
+    expect(paymentInsertCall).toBeTruthy();
+    expect(paymentInsertCall?.[1]).toEqual(
+      expect.arrayContaining(["tenant-1", "patient-1", 4200, "credit", "user-1", "appt-1"])
+    );
+    expect(result.copayDisposition).toBe("collected");
+    expect(result.copayCollectedAmountCents).toBe(4200);
+    expect(result.totalCollectedAmountCents).toBe(4200);
+    expect(result.paymentReceiptNumber).toMatch(/^RCP-/);
+    expect(result.paymentConfirmationEmailSent).toBe(true);
+    expect(sendPatientPaymentReceiptEmailMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "tenant-1",
+        patientEmail: "ada@example.com",
+        amountCents: 4200,
+      })
+    );
+  });
+
+  it("checkInPatient applies past-due balance at check-in when included in the payment amount", async () => {
+    const client = makeClient();
+    connectMock.mockResolvedValueOnce(client);
+    client.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [
+          {
+            patient_id: "patient-1",
+            patient_first_name: "Ada",
+            patient_last_name: "Lovelace",
+            patient_email: "ada@example.com",
+            provider_id: "prov-1",
+            insurance_copay_amount: "60",
+            insurance_eligibility_status: "Active",
+            insurance_verified_at: "2026-02-27T12:00:00.000Z",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({}) // UPDATE appointment
+      .mockResolvedValueOnce({
+        rows: [{ id: "bill-1", balance_cents: 14500, paid_amount_cents: 0 }],
+      }) // outstanding bills
+      .mockResolvedValueOnce({ rows: [{ count: "7" }] }) // receipt count
+      .mockResolvedValueOnce({}) // INSERT payment
+      .mockResolvedValueOnce({}) // UPDATE bill
+      .mockResolvedValueOnce({}); // COMMIT
+    createEncounterMock.mockResolvedValueOnce({ id: "enc-1" });
+    sendPatientPaymentReceiptEmailMock.mockResolvedValueOnce({
+      attempted: true,
+      sent: true,
+      emailAddress: "ada@example.com",
+    });
+
+    const result = await frontDeskService.checkInPatient("tenant-1", "appt-1", {
+      collectCopay: true,
+      copayAmountCents: 6000,
+      collectOutstandingBalance: true,
+      outstandingBalanceAmountCents: 14500,
+      paymentMethod: "credit",
+      checkedInBy: "user-1",
+    });
+
+    expect(result.copayCollectedAmountCents).toBe(6000);
+    expect(result.outstandingBalanceCollectedAmountCents).toBe(14500);
+    expect(result.totalCollectedAmountCents).toBe(20500);
+    expect(sendPatientPaymentReceiptEmailMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 20500,
+        paymentTypeLabel: "Check-in Payment",
+      })
+    );
+
+    const billUpdateCall = client.query.mock.calls.find((call) =>
+      typeof call[0] === "string" && call[0].includes("UPDATE bills")
+    );
+    expect(billUpdateCall?.[1]).toEqual([14500, 0, "paid", "tenant-1", "bill-1"]);
   });
 
   it("checkInPatient throws when appointment missing", async () => {

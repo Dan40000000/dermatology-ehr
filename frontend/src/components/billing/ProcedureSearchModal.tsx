@@ -1,15 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Modal } from '../ui';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import {
-  searchCPTCodes,
+  fetchCosmeticProcedureCatalog,
+  fetchDefaultFeeSchedule,
   fetchFeeForCPT,
-  fetchSuggestedProcedures,
   fetchProceduresForDiagnosis,
-  type AdaptiveProcedureSuggestion
+  fetchSuggestedProcedures,
+  type AdaptiveProcedureSuggestion,
 } from '../../api';
 import type { CPTCode, EncounterDiagnosis } from '../../types';
+import { isCosmeticProcedure } from '../../utils/procedureCatalog';
 
 interface ProcedureSearchModalProps {
   isOpen: boolean;
@@ -25,21 +27,156 @@ interface ProcedureSearchModalProps {
   providerId?: string;
 }
 
+interface CatalogProcedure extends CPTCode {
+  source: 'medical' | 'cosmetic';
+  groupLabel: string;
+  feeScheduleId?: string;
+  scheduleName?: string;
+  subcategory?: string;
+  notes?: string;
+  packageSessions?: number;
+  typicalUnits?: number;
+  isCosmetic?: boolean;
+}
+
+interface ProcedureGroup {
+  key: string;
+  label: string;
+  source: 'medical' | 'cosmetic';
+  items: CatalogProcedure[];
+}
+
+const MEDICAL_GROUP_ORDER = [
+  'Evaluation & Management',
+  'Biopsies',
+  'Destruction',
+  'Shave Removals',
+  'Excisions - Benign',
+  'Excisions - Malignant',
+  'Repairs',
+  'Mohs Surgery',
+  'Flaps & Grafts',
+  'Injections',
+  'Phototherapy',
+  'Special Procedures',
+  'Other Medical Procedures',
+] as const;
+
+const COSMETIC_GROUP_ORDER = [
+  'Consultations',
+  'Neurotoxins',
+  'Dermal Fillers',
+  'Laser Hair Removal',
+  'Laser Skin Treatments',
+  'Chemical Peels',
+  'Microneedling & RF',
+  'Body Contouring',
+  'Packages',
+  'Other Cosmetic Services',
+] as const;
+
+function dedupeProceduresByCode(procedures: CatalogProcedure[]): CatalogProcedure[] {
+  const deduped = new Map<string, CatalogProcedure>();
+
+  for (const procedure of procedures) {
+    if (!procedure.code) continue;
+    if (!deduped.has(procedure.code)) {
+      deduped.set(procedure.code, procedure);
+    }
+  }
+
+  return Array.from(deduped.values());
+}
+
+function procedureMatchesQuery(procedure: CatalogProcedure, normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true;
+
+  return [
+    procedure.code,
+    procedure.description,
+    procedure.category,
+    procedure.groupLabel,
+    procedure.subcategory,
+    procedure.notes,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .some((value) => value.toLowerCase().includes(normalizedQuery));
+}
+
+function getProcedureGroupLabel(
+  procedure: { category?: string; groupLabel?: string },
+  source: 'medical' | 'cosmetic',
+): string {
+  if (procedure.groupLabel?.trim()) {
+    return procedure.groupLabel.trim();
+  }
+
+  if (procedure.category?.trim()) {
+    return procedure.category.trim();
+  }
+
+  return source === 'cosmetic' ? 'Other Cosmetic Services' : 'Other Medical Procedures';
+}
+
+function getGroupOrderIndex(source: 'medical' | 'cosmetic', label: string): number {
+  const order = source === 'medical' ? MEDICAL_GROUP_ORDER : COSMETIC_GROUP_ORDER;
+  const exactIndex = order.findIndex((item) => item.toLowerCase() === label.toLowerCase());
+  if (exactIndex >= 0) return exactIndex;
+  return order.length + 1;
+}
+
+function sortProcedures(a: CatalogProcedure, b: CatalogProcedure): number {
+  const categoryCompare = (a.subcategory || '').localeCompare(b.subcategory || '');
+  if (categoryCompare !== 0) return categoryCompare;
+  return a.description.localeCompare(b.description) || a.code.localeCompare(b.code);
+}
+
+function buildProcedureGroups(
+  procedures: CatalogProcedure[],
+  source: 'medical' | 'cosmetic',
+  normalizedQuery: string,
+): ProcedureGroup[] {
+  const filtered = procedures.filter((procedure) => procedureMatchesQuery(procedure, normalizedQuery));
+  const groups = new Map<string, CatalogProcedure[]>();
+
+  for (const procedure of filtered) {
+    const label = getProcedureGroupLabel(procedure, source);
+
+    const existing = groups.get(label) ?? [];
+    existing.push(procedure);
+    groups.set(label, existing);
+  }
+
+  return Array.from(groups.entries())
+    .map(([label, items]) => ({
+      key: `${source}:${label}`,
+      label,
+      source,
+      items: items.sort(sortProcedures),
+    }))
+    .sort((left, right) => {
+      const orderDelta = getGroupOrderIndex(source, left.label) - getGroupOrderIndex(source, right.label);
+      if (orderDelta !== 0) return orderDelta;
+      return left.label.localeCompare(right.label);
+    });
+}
+
 export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, providerId }: ProcedureSearchModalProps) {
   const { session } = useAuth();
   const { showError } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<CPTCode[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [selectedCode, setSelectedCode] = useState<CPTCode | null>(null);
+  const [selectedCode, setSelectedCode] = useState<CatalogProcedure | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [feeCents, setFeeCents] = useState<number>(0);
   const [linkedDiagnosisIds, setLinkedDiagnosisIds] = useState<string[]>([]);
   const [frequentlyUsed, setFrequentlyUsed] = useState<AdaptiveProcedureSuggestion[]>([]);
   const [pairedProcedures, setPairedProcedures] = useState<AdaptiveProcedureSuggestion[]>([]);
   const [loadingFrequent, setLoadingFrequent] = useState(false);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [medicalCatalog, setMedicalCatalog] = useState<CatalogProcedure[]>([]);
+  const [cosmeticCatalog, setCosmeticCatalog] = useState<CatalogProcedure[]>([]);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
-  // Load frequently used procedures when modal opens
   useEffect(() => {
     if (isOpen && session && providerId) {
       setLoadingFrequent(true);
@@ -53,11 +190,10 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
     }
   }, [isOpen, session, providerId]);
 
-  // Load procedures commonly paired with primary diagnosis
   useEffect(() => {
     if (isOpen && session && providerId && Array.isArray(diagnoses)) {
-      const primaryDx = diagnoses.find(d => d.isPrimary);
-      if (primaryDx && primaryDx.icd10Code) {
+      const primaryDx = diagnoses.find((diagnosis) => diagnosis.isPrimary);
+      if (primaryDx?.icd10Code) {
         fetchProceduresForDiagnosis(session.tenantId, session.accessToken, providerId, primaryDx.icd10Code, 10)
           .then((res) => setPairedProcedures(Array.isArray(res.suggestions) ? res.suggestions : []))
           .catch((err) => {
@@ -70,67 +206,190 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
     }
   }, [isOpen, session, providerId, diagnoses]);
 
-  const handleSearch = async () => {
-    if (!session || !searchQuery.trim()) return;
+  useEffect(() => {
+    if (!isOpen || !session) return;
 
-    setSearching(true);
-    try {
-      const res = await searchCPTCodes(session.tenantId, session.accessToken, searchQuery);
-      setSearchResults(Array.isArray(res.codes) ? res.codes : []);
-    } catch (err: any) {
-      showError(err.message || 'Failed to search procedures');
-    } finally {
-      setSearching(false);
+    let cancelled = false;
+    setCatalogLoading(true);
+
+    Promise.allSettled([
+      fetchDefaultFeeSchedule(session.tenantId, session.accessToken),
+      fetchCosmeticProcedureCatalog(session.tenantId, session.accessToken),
+    ])
+      .then(([medicalResult, cosmeticResult]) => {
+        if (cancelled) return;
+
+        if (medicalResult.status === 'fulfilled') {
+          const items = Array.isArray(medicalResult.value?.items) ? medicalResult.value.items : [];
+          const normalizedMedical = dedupeProceduresByCode(
+            items
+              .map((item: any): CatalogProcedure => ({
+                code: item.cptCode || item.cpt_code || '',
+                description: item.cptDescription || item.cpt_description || item.description || '',
+                category: item.category || 'Other Medical Procedures',
+                defaultFeeCents: Number(item.feeCents ?? item.fee_cents ?? 0),
+                isCommon: false,
+                source: 'medical',
+                groupLabel: getProcedureGroupLabel(item, 'medical'),
+                feeScheduleId: item.feeScheduleId || item.fee_schedule_id || '',
+                scheduleName: item.scheduleName || item.schedule_name || '',
+                subcategory: item.subcategory || '',
+                notes: item.notes || '',
+                isCosmetic: Boolean(item.isCosmetic ?? item.is_cosmetic ?? false),
+              }))
+              .filter((item) => item.code && !item.isCosmetic)
+          );
+          setMedicalCatalog(normalizedMedical);
+        } else {
+          console.error('Failed to load default fee schedule catalog:', medicalResult.reason);
+          setMedicalCatalog([]);
+        }
+
+        if (cosmeticResult.status === 'fulfilled') {
+          const normalizedCosmetic = dedupeProceduresByCode(
+            cosmeticResult.value
+              .map((item): CatalogProcedure => ({
+                code: item.cptCode,
+                description: item.cptDescription,
+                category: item.category || 'Other Cosmetic Services',
+                defaultFeeCents: item.feeCents,
+                isCommon: false,
+                source: 'cosmetic',
+                groupLabel: getProcedureGroupLabel(item, 'cosmetic'),
+                feeScheduleId: item.feeScheduleId || '',
+                scheduleName: item.scheduleName || '',
+                subcategory: item.subcategory || '',
+                notes: item.notes || '',
+                packageSessions: item.packageSessions,
+                typicalUnits: item.typicalUnits,
+                isCosmetic: true,
+              }))
+              .filter((item) => item.code)
+          );
+          setCosmeticCatalog(normalizedCosmetic);
+        } else {
+          console.error('Failed to load cosmetic catalog:', cosmeticResult.reason);
+          setCosmeticCatalog([]);
+        }
+
+        if (medicalResult.status === 'rejected' && cosmeticResult.status === 'rejected') {
+          showError('Failed to load procedure catalog');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCatalogLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, session, showError]);
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const showSmartSuggestions = normalizedQuery.length === 0;
+
+  const medicalGroups = useMemo(
+    () => buildProcedureGroups(medicalCatalog, 'medical', normalizedQuery),
+    [medicalCatalog, normalizedQuery]
+  );
+
+  const cosmeticGroups = useMemo(
+    () => buildProcedureGroups(cosmeticCatalog, 'cosmetic', normalizedQuery),
+    [cosmeticCatalog, normalizedQuery]
+  );
+
+  const catalogByCode = useMemo(() => {
+    const procedures = new Map<string, CatalogProcedure>();
+    for (const procedure of [...medicalCatalog, ...cosmeticCatalog]) {
+      if (!procedures.has(procedure.code)) {
+        procedures.set(procedure.code, procedure);
+      }
     }
-  };
+    return procedures;
+  }, [medicalCatalog, cosmeticCatalog]);
 
-  const handleCodeSelect = async (code: CPTCode) => {
-    setSelectedCode(code);
+  const visibleProcedureCount = useMemo(
+    () => [...medicalGroups, ...cosmeticGroups].reduce((total, group) => total + group.items.length, 0),
+    [medicalGroups, cosmeticGroups]
+  );
+
+  const selectedProcedureIsCosmetic = isCosmeticProcedure(selectedCode);
+  const canAddProcedure = Boolean(selectedCode) && (selectedProcedureIsCosmetic || linkedDiagnosisIds.length > 0);
+
+  const handleCodeSelect = async (code: CatalogProcedure | CPTCode) => {
+    const cosmetic = isCosmeticProcedure(code);
+    const feeScheduleId = 'feeScheduleId' in code ? code.feeScheduleId : undefined;
+    const normalizedCode: CatalogProcedure = {
+      code: code.code,
+      description: code.description,
+      category: code.category,
+      defaultFeeCents: code.defaultFeeCents || 0,
+      isCommon: code.isCommon,
+      source: cosmetic ? 'cosmetic' : 'medical',
+      groupLabel: getProcedureGroupLabel(code, cosmetic ? 'cosmetic' : 'medical'),
+      feeScheduleId,
+      scheduleName: 'scheduleName' in code ? code.scheduleName : undefined,
+      subcategory: '',
+      notes: '',
+      isCosmetic: cosmetic,
+    };
+
+    setSelectedCode(normalizedCode);
     setFeeCents(code.defaultFeeCents || 0);
 
-    // Try to fetch fee from fee schedule
-    if (session && code.code) {
+    if (session && code.code && !feeScheduleId) {
       try {
         const res = await fetchFeeForCPT(session.tenantId, session.accessToken, code.code);
         if (res.fee) {
           setFeeCents(res.fee);
         }
-      } catch (err) {
-        // Use default fee if no fee schedule entry
+      } catch {
+        // Fall back to the catalog/default fee when no schedule-specific price is available.
       }
     }
 
-    // Auto-link to primary diagnosis if available
+    if (cosmetic) {
+      setLinkedDiagnosisIds([]);
+      return;
+    }
+
     if (Array.isArray(diagnoses)) {
-      const primaryDx = diagnoses.find(d => d.isPrimary);
+      const primaryDx = diagnoses.find((diagnosis) => diagnosis.isPrimary);
       if (primaryDx) {
         setLinkedDiagnosisIds([primaryDx.id]);
+        return;
       }
     }
+
+    setLinkedDiagnosisIds([]);
   };
 
   const handleAdd = () => {
-    if (selectedCode) {
-      onSelect({
-        code: selectedCode.code,
-        description: selectedCode.description,
-        quantity,
-        feeCents,
-        linkedDiagnosisIds,
-      });
-      handleClose();
-    }
+    if (!selectedCode) return;
+
+    onSelect({
+      code: selectedCode.code,
+      description: selectedCode.description,
+      quantity,
+      feeCents,
+      linkedDiagnosisIds,
+    });
+    handleClose();
   };
 
   const handleClose = () => {
     setSearchQuery('');
-    setSearchResults([]);
     setSelectedCode(null);
     setQuantity(1);
     setFeeCents(0);
     setLinkedDiagnosisIds([]);
     setFrequentlyUsed([]);
     setPairedProcedures([]);
+    setMedicalCatalog([]);
+    setCosmeticCatalog([]);
+    setExpandedGroups({});
     onClose();
   };
 
@@ -139,413 +398,411 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
     const lastUsedDate = new Date(lastUsed);
     const daysSince = Math.floor((now.getTime() - lastUsedDate.getTime()) / (1000 * 60 * 60 * 24));
 
-    if (daysSince < 7) return { icon: '', color: '#10b981', label: 'Recent' };
-    if (daysSince < 30) return null;
+    if (daysSince < 7) return { color: '#10b981', label: 'Recent' };
+    if (daysSince < 30) return { color: '#0ea5e9', label: 'This month' };
     return null;
   };
 
   const handleSelectAdaptive = async (suggestion: AdaptiveProcedureSuggestion) => {
-    const code: CPTCode = {
+    const scheduleBoundMatch = catalogByCode.get(suggestion.cptCode);
+    if (scheduleBoundMatch) {
+      await handleCodeSelect(scheduleBoundMatch);
+      return;
+    }
+
+    const cosmetic = isCosmeticProcedure({
+      code: suggestion.cptCode,
+      description: suggestion.description,
+      category: suggestion.category,
+    });
+
+    const code: CatalogProcedure = {
       code: suggestion.cptCode,
       description: suggestion.description,
       category: suggestion.category,
       defaultFeeCents: suggestion.defaultFeeCents,
-      isCommon: false
+      isCommon: false,
+      source: cosmetic ? 'cosmetic' : 'medical',
+      groupLabel: getProcedureGroupLabel({ category: suggestion.category }, cosmetic ? 'cosmetic' : 'medical'),
+      subcategory: '',
+      notes: '',
+      isCosmetic: cosmetic,
     };
+
     await handleCodeSelect(code);
   };
 
   const toggleDiagnosis = (diagnosisId: string) => {
-    setLinkedDiagnosisIds(prev => {
+    setLinkedDiagnosisIds((prev) => {
       if (!Array.isArray(prev)) {
         return [diagnosisId];
       }
       return prev.includes(diagnosisId)
-        ? prev.filter(id => id !== diagnosisId)
+        ? prev.filter((id) => id !== diagnosisId)
         : [...prev, diagnosisId];
     });
   };
 
-  const commonProcedures: CPTCode[] = [
-    { code: '11100', description: 'Biopsy of skin, subcutaneous tissue and/or mucous membrane; single lesion', defaultFeeCents: 15000, isCommon: true },
-    { code: '11101', description: 'Biopsy of skin; each additional lesion', defaultFeeCents: 7500, isCommon: true },
-    { code: '11200', description: 'Removal of skin tags, multiple fibrocutaneous tags, any area; up to and including 15 lesions', defaultFeeCents: 12000, isCommon: true },
-    { code: '11400', description: 'Excision, benign lesion including margins, except skin tag; trunk, arms or legs; excised diameter 0.5 cm or less', defaultFeeCents: 18000, isCommon: true },
-    { code: '11600', description: 'Excision, malignant lesion including margins, trunk, arms, or legs; excised diameter 0.5 cm or less', defaultFeeCents: 25000, isCommon: true },
-    { code: '17000', description: 'Destruction (eg, laser surgery, electrosurgery, cryosurgery), premalignant lesions; first lesion', defaultFeeCents: 10000, isCommon: true },
-    { code: '17003', description: 'Destruction, premalignant lesions; second through 14 lesions, each', defaultFeeCents: 3000, isCommon: true },
-    { code: '17110', description: 'Destruction of benign lesions other than skin tags or cutaneous vascular lesions; up to 14 lesions', defaultFeeCents: 14000, isCommon: true },
-    { code: '99202', description: 'Office visit, new patient, low complexity', defaultFeeCents: 12000, isCommon: true },
-    { code: '99213', description: 'Office visit, established patient, low complexity', defaultFeeCents: 11000, isCommon: true },
-  ];
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((prev) => ({
+      ...prev,
+      [key]: !(prev[key] ?? false),
+    }));
+  };
+
+  const renderAdaptiveSuggestionList = (
+    title: string,
+    accent: string,
+    borderColor: string,
+    rows: AdaptiveProcedureSuggestion[],
+    countLabel: (procedure: AdaptiveProcedureSuggestion) => string,
+  ) => (
+    <div>
+      <h4 style={{
+        fontSize: '0.875rem',
+        fontWeight: 600,
+        color: accent,
+        marginBottom: '0.75rem'
+      }}>
+        {title}
+      </h4>
+      <div style={{
+        maxHeight: '220px',
+        overflowY: 'auto',
+        border: `1px solid ${borderColor}`,
+        borderRadius: '10px',
+        background: '#ffffff'
+      }}>
+        {rows.map((procedure) => {
+          const recencyBadge = getRecencyBadge(procedure.lastUsed);
+          return (
+            <button
+              key={procedure.cptCode}
+              type="button"
+              onClick={() => handleSelectAdaptive(procedure)}
+              style={{
+                width: '100%',
+                padding: '0.85rem 1rem',
+                background: selectedCode?.code === procedure.cptCode ? '#eff6ff' : '#ffffff',
+                border: 'none',
+                borderBottom: `1px solid ${borderColor}`,
+                textAlign: 'left',
+                cursor: 'pointer',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.8rem', color: accent }}>{procedure.cptCode}</span>
+                    {procedure.category && (
+                      <span style={{
+                        padding: '0.15rem 0.45rem',
+                        borderRadius: '999px',
+                        background: '#eff6ff',
+                        color: '#1d4ed8',
+                        fontSize: '0.65rem',
+                        fontWeight: 600,
+                      }}>
+                        {procedure.category}
+                      </span>
+                    )}
+                    {recencyBadge && (
+                      <span style={{ color: recencyBadge.color, fontSize: '0.7rem', fontWeight: 600 }}>
+                        {recencyBadge.label}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '0.84rem', color: '#374151', marginTop: '0.35rem' }}>
+                    {procedure.description}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  {procedure.defaultFeeCents ? (
+                    <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#047857' }}>
+                      ${(procedure.defaultFeeCents / 100).toFixed(2)}
+                    </div>
+                  ) : null}
+                  <div style={{ marginTop: '0.35rem', fontSize: '0.68rem', color: '#6b7280', fontWeight: 600 }}>
+                    {countLabel(procedure)}
+                  </div>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const renderCatalogSection = (
+    title: string,
+    subtitle: string,
+    source: 'medical' | 'cosmetic',
+    groups: ProcedureGroup[],
+    accent: string,
+    background: string,
+    borderColor: string,
+  ) => {
+    const totalItems = groups.reduce((sum, group) => sum + group.items.length, 0);
+
+    return (
+      <section style={{
+        border: `1px solid ${borderColor}`,
+        borderRadius: '12px',
+        background,
+        padding: '1rem',
+      }}>
+        <div style={{ marginBottom: '0.9rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+            <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: accent }}>{title}</h4>
+            <span style={{ fontSize: '0.72rem', color: '#475569', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              {totalItems} billable procedures
+            </span>
+          </div>
+          <div style={{ marginTop: '0.35rem', fontSize: '0.8rem', color: '#475569' }}>{subtitle}</div>
+        </div>
+
+        {groups.length === 0 ? (
+          <div style={{
+            padding: '1rem',
+            borderRadius: '10px',
+            background: '#ffffff',
+            border: `1px dashed ${borderColor}`,
+            color: '#64748b',
+            fontSize: '0.85rem'
+          }}>
+            {normalizedQuery ? 'No matching procedures in this catalog.' : 'No procedures loaded in this catalog.'}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {groups.map((group) => {
+              const expanded = normalizedQuery.length > 0
+                ? true
+                : (expandedGroups[group.key] ?? false);
+
+              return (
+                <div key={group.key} style={{ border: '1px solid rgba(148, 163, 184, 0.28)', borderRadius: '10px', overflow: 'hidden', background: '#ffffff' }}>
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.key)}
+                    style={{
+                      width: '100%',
+                      padding: '0.85rem 1rem',
+                      border: 'none',
+                      background: '#ffffff',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0f172a' }}>{group.label}</div>
+                      <div style={{ marginTop: '0.18rem', fontSize: '0.74rem', color: '#64748b' }}>
+                        {group.items.length} procedure{group.items.length === 1 ? '' : 's'}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: '1rem', color: accent, fontWeight: 700 }}>
+                      {expanded ? '−' : '+'}
+                    </span>
+                  </button>
+
+                  {expanded && (
+                    <div style={{ borderTop: '1px solid rgba(148, 163, 184, 0.2)' }}>
+                      {group.items.map((procedure) => {
+                        const selected = selectedCode?.code === procedure.code;
+                        return (
+                          <button
+                            key={procedure.code}
+                            type="button"
+                            onClick={() => handleCodeSelect(procedure)}
+                            style={{
+                              width: '100%',
+                              padding: '0.9rem 1rem',
+                              border: 'none',
+                              borderBottom: '1px solid rgba(226, 232, 240, 0.9)',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              background: selected ? '#e0f2fe' : '#ffffff',
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start' }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                  <span style={{ fontWeight: 700, fontSize: '0.78rem', color: accent }}>{procedure.code}</span>
+                                  {procedure.subcategory ? (
+                                    <span style={{
+                                      padding: '0.15rem 0.45rem',
+                                      borderRadius: '999px',
+                                      background: '#f8fafc',
+                                      border: '1px solid #cbd5e1',
+                                      color: '#475569',
+                                      fontSize: '0.65rem',
+                                      fontWeight: 600,
+                                    }}>
+                                      {procedure.subcategory}
+                                    </span>
+                                  ) : null}
+                                  {procedure.packageSessions ? (
+                                    <span style={{ fontSize: '0.68rem', color: '#7c2d12', fontWeight: 700 }}>
+                                      {procedure.packageSessions} sessions
+                                    </span>
+                                  ) : null}
+                                  {procedure.typicalUnits ? (
+                                    <span style={{ fontSize: '0.68rem', color: '#1d4ed8', fontWeight: 700 }}>
+                                      Typical units: {procedure.typicalUnits}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <div style={{ marginTop: '0.35rem', fontSize: '0.85rem', color: '#334155' }}>
+                                  {procedure.description}
+                                </div>
+                                {procedure.notes ? (
+                                  <div style={{ marginTop: '0.35rem', fontSize: '0.72rem', color: '#64748b' }}>
+                                    {procedure.notes}
+                                  </div>
+                                ) : null}
+                              </div>
+                              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                <div style={{ fontSize: '0.88rem', fontWeight: 800, color: '#047857' }}>
+                                  ${((procedure.defaultFeeCents || 0) / 100).toFixed(2)}
+                                </div>
+                                <div style={{ marginTop: '0.28rem', fontSize: '0.68rem', color: '#64748b' }}>
+                                  {source === 'cosmetic' ? 'Self-pay' : 'Medical billing'}
+                                </div>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    );
+  };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Add Procedure/Charge (CPT)" size="lg">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-        {/* Search */}
-        <div>
+    <Modal isOpen={isOpen} onClose={handleClose} title="Add Procedure / Charge" size="lg">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+        <div style={{
+          padding: '1rem',
+          borderRadius: '12px',
+          background: '#f8fafc',
+          border: '1px solid #dbeafe'
+        }}>
           <label style={{
             display: 'block',
-            fontSize: '0.875rem',
-            fontWeight: 500,
-            color: '#374151',
-            marginBottom: '0.5rem'
+            fontSize: '0.8rem',
+            fontWeight: 700,
+            color: '#0f172a',
+            marginBottom: '0.55rem'
           }}>
-            Search CPT Codes
+            Search Billable Procedures
           </label>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              placeholder="Enter code or description..."
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Type Botox, laser hair, biopsy, 99213, peel..."
               style={{
                 flex: 1,
-                padding: '0.75rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '4px',
-                fontSize: '0.875rem'
+                padding: '0.85rem 0.95rem',
+                border: '1px solid #cbd5e1',
+                borderRadius: '8px',
+                fontSize: '0.9rem'
               }}
             />
-            <button
-              type="button"
-              onClick={handleSearch}
-              disabled={searching || !searchQuery.trim()}
-              style={{
-                padding: '0.75rem 1.5rem',
-                background: '#0369a1',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '4px',
-                fontWeight: 500,
-                cursor: searching || !searchQuery.trim() ? 'not-allowed' : 'pointer',
-                opacity: searching || !searchQuery.trim() ? 0.6 : 1
-              }}
-            >
-              {searching ? 'Searching...' : 'Search'}
-            </button>
+            {searchQuery.trim() ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setSearchQuery('')}
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                Clear
+              </button>
+            ) : null}
+          </div>
+          <div style={{ marginTop: '0.55rem', fontSize: '0.76rem', color: '#475569' }}>
+            Browse organized medical and cosmetic billing catalogs below. {normalizedQuery ? `${visibleProcedureCount} matches shown.` : 'Open a group to find the exact code and price.'}
           </div>
         </div>
 
-        {/* Paired Procedures (Based on Primary Diagnosis) */}
-        {searchResults.length === 0 && pairedProcedures.length > 0 && (
-          <div>
-            <h4 style={{
-              fontSize: '0.875rem',
-              fontWeight: 600,
-              color: '#0369a1',
-              marginBottom: '0.75rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}>
-              <span></span>
-              <span>Often Paired with {Array.isArray(diagnoses) ? diagnoses.find(d => d.isPrimary)?.icd10Code : ''}</span>
-            </h4>
-            <div style={{
-              maxHeight: '200px',
-              overflowY: 'auto',
-              border: '1px solid #bfdbfe',
-              borderRadius: '8px',
-              marginBottom: '1.5rem',
-              background: '#eff6ff'
-            }}>
-              {pairedProcedures.map((proc) => {
-                const recencyBadge = getRecencyBadge(proc.lastUsed);
-                return (
-                  <button
-                    key={proc.cptCode}
-                    type="button"
-                    onClick={() => handleSelectAdaptive(proc)}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem 1rem',
-                      background: selectedCode?.code === proc.cptCode ? '#dbeafe' : '#ffffff',
-                      border: 'none',
-                      borderBottom: '1px solid #bfdbfe',
-                      textAlign: 'left',
-                      cursor: 'pointer',
-                      transition: 'background 0.2s'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#0369a1' }}>
-                            {proc.cptCode}
-                          </div>
-                          {recencyBadge && (
-                            <span style={{ fontSize: '0.75rem' }} title={recencyBadge.label}>
-                              {recencyBadge.icon}
-                            </span>
-                          )}
-                          <span style={{
-                            padding: '0.125rem 0.375rem',
-                            background: '#bfdbfe',
-                            color: '#1e40af',
-                            borderRadius: '4px',
-                            fontSize: '0.625rem',
-                            fontWeight: 600
-                          }}>
-                            {proc.pairCount}x paired
-                          </span>
-                        </div>
-                        <div style={{ fontSize: '0.875rem', color: '#374151', marginTop: '0.25rem' }}>
-                          {proc.description}
-                        </div>
-                      </div>
-                      <div style={{ textAlign: 'right', marginLeft: '1rem' }}>
-                        {proc.defaultFeeCents && (
-                          <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#047857' }}>
-                            ${((proc.defaultFeeCents || 0) / 100).toFixed(2)}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        {showSmartSuggestions && pairedProcedures.length > 0 && renderAdaptiveSuggestionList(
+          `Often Paired with ${Array.isArray(diagnoses) ? diagnoses.find((diagnosis) => diagnosis.isPrimary)?.icd10Code ?? 'Primary Diagnosis' : 'Primary Diagnosis'}`,
+          '#0369a1',
+          '#bfdbfe',
+          pairedProcedures,
+          (procedure) => `${procedure.pairCount}x paired`
         )}
 
-        {/* Frequently Used (Adaptive Learning) */}
-        {searchResults.length === 0 && frequentlyUsed.length > 0 && (
-          <div>
-            <h4 style={{
-              fontSize: '0.875rem',
-              fontWeight: 600,
-              color: '#7c3aed',
-              marginBottom: '0.75rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem'
-            }}>
-              <span></span>
-              <span>Frequently Used by You</span>
-            </h4>
-            <div style={{
-              maxHeight: '200px',
-              overflowY: 'auto',
-              border: '1px solid #e9d5ff',
-              borderRadius: '8px',
-              marginBottom: '1.5rem',
-              background: '#faf5ff'
-            }}>
-              {frequentlyUsed.map((proc) => {
-                const recencyBadge = getRecencyBadge(proc.lastUsed);
-                return (
-                  <button
-                    key={proc.cptCode}
-                    type="button"
-                    onClick={() => handleSelectAdaptive(proc)}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem 1rem',
-                      background: selectedCode?.code === proc.cptCode ? '#f3e8ff' : '#ffffff',
-                      border: 'none',
-                      borderBottom: '1px solid #e9d5ff',
-                      textAlign: 'left',
-                      cursor: 'pointer',
-                      transition: 'background 0.2s'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#7c3aed' }}>
-                            {proc.cptCode}
-                          </div>
-                          {recencyBadge && (
-                            <span style={{ fontSize: '0.75rem' }} title={recencyBadge.label}>
-                              {recencyBadge.icon}
-                            </span>
-                          )}
-                          <span style={{
-                            padding: '0.125rem 0.375rem',
-                            background: '#ddd6fe',
-                            color: '#5b21b6',
-                            borderRadius: '4px',
-                            fontSize: '0.625rem',
-                            fontWeight: 600
-                          }}>
-                            {proc.frequencyCount}x
-                          </span>
-                        </div>
-                        <div style={{ fontSize: '0.875rem', color: '#374151', marginTop: '0.25rem' }}>
-                          {proc.description}
-                        </div>
-                      </div>
-                      <div style={{ textAlign: 'right', marginLeft: '1rem' }}>
-                        {proc.defaultFeeCents && (
-                          <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#047857' }}>
-                            ${((proc.defaultFeeCents || 0) / 100).toFixed(2)}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        {showSmartSuggestions && frequentlyUsed.length > 0 && renderAdaptiveSuggestionList(
+          loadingFrequent ? 'Frequently Used by You (Loading...)' : 'Frequently Used by You',
+          '#7c3aed',
+          '#e9d5ff',
+          frequentlyUsed,
+          (procedure) => `${procedure.frequencyCount}x used`
         )}
 
-        {/* Common Procedures */}
-        {searchResults.length === 0 && (
-          <div>
-            <h4 style={{
-              fontSize: '0.875rem',
-              fontWeight: 600,
-              color: '#374151',
-              marginBottom: '0.75rem'
-            }}>
-              Common Dermatology Procedures
-            </h4>
-            <div style={{
-              maxHeight: '300px',
-              overflowY: 'auto',
-              border: '1px solid #e5e7eb',
-              borderRadius: '8px'
-            }}>
-              {commonProcedures.map((proc) => (
-                <button
-                  key={proc.code}
-                  type="button"
-                  onClick={() => handleCodeSelect(proc)}
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem 1rem',
-                    background: selectedCode?.code === proc.code ? '#e0f2fe' : '#ffffff',
-                    border: 'none',
-                    borderBottom: '1px solid #e5e7eb',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    transition: 'background 0.2s'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#0369a1' }}>
-                        {proc.code}
-                      </div>
-                      <div style={{ fontSize: '0.875rem', color: '#374151', marginTop: '0.25rem' }}>
-                        {proc.description}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right', marginLeft: '1rem' }}>
-                      <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#047857' }}>
-                        ${((proc.defaultFeeCents || 0) / 100).toFixed(2)}
-                      </div>
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
+        {catalogLoading && medicalCatalog.length === 0 && cosmeticCatalog.length === 0 ? (
+          <div style={{
+            padding: '1rem',
+            borderRadius: '10px',
+            border: '1px solid #cbd5e1',
+            background: '#ffffff',
+            fontSize: '0.85rem',
+            color: '#475569'
+          }}>
+            Loading procedure catalog...
           </div>
+        ) : (
+          <>
+            {renderCatalogSection(
+              'Medical Billing Catalog',
+              'Grouped by fee schedule category from the standard fee schedule. Diagnosis link required for insurance/CMS billing.',
+              'medical',
+              medicalGroups,
+              '#0369a1',
+              '#f8fafc',
+              '#bfdbfe',
+            )}
+
+            {renderCatalogSection(
+              'Cosmetic / Self-Pay Catalog',
+              'Grouped by fee schedule category from your cosmetic fee schedules. Diagnosis link is optional for cosmetic services.',
+              'cosmetic',
+              cosmeticGroups,
+              '#7c3aed',
+              '#faf5ff',
+              '#e9d5ff',
+            )}
+          </>
         )}
 
-        {/* Search Results */}
-        {searchResults.length > 0 && (
-          <div>
-            <h4 style={{
-              fontSize: '0.875rem',
-              fontWeight: 600,
-              color: '#374151',
-              marginBottom: '0.75rem'
-            }}>
-              Search Results ({searchResults.length})
-            </h4>
-            <div style={{
-              maxHeight: '300px',
-              overflowY: 'auto',
-              border: '1px solid #e5e7eb',
-              borderRadius: '8px'
-            }}>
-              {searchResults.map((code) => (
-                <button
-                  key={code.code}
-                  type="button"
-                  onClick={() => handleCodeSelect(code)}
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem 1rem',
-                    background: selectedCode?.code === code.code ? '#e0f2fe' : '#ffffff',
-                    border: 'none',
-                    borderBottom: '1px solid #e5e7eb',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    transition: 'background 0.2s'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#0369a1' }}>
-                        {code.code}
-                      </div>
-                      <div style={{ fontSize: '0.875rem', color: '#374151', marginTop: '0.25rem' }}>
-                        {code.description}
-                      </div>
-                      {code.category && (
-                        <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                          {code.category}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ textAlign: 'right', marginLeft: '1rem' }}>
-                      {code.defaultFeeCents && (
-                        <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#047857' }}>
-                          ${(code.defaultFeeCents / 100).toFixed(2)}
-                        </div>
-                      )}
-                      {code.isCommon && (
-                        <span style={{
-                          padding: '0.25rem 0.5rem',
-                          background: '#fef3c7',
-                          color: '#92400e',
-                          borderRadius: '4px',
-                          fontSize: '0.625rem',
-                          fontWeight: 600,
-                          textTransform: 'uppercase',
-                          marginTop: '0.25rem',
-                          display: 'inline-block'
-                        }}>
-                          Common
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Selected Code Configuration */}
         {selectedCode && (
           <div style={{
             padding: '1rem',
-            background: '#f0fdf4',
-            border: '1px solid #86efac',
-            borderRadius: '8px'
+            background: selectedProcedureIsCosmetic ? '#faf5ff' : '#f0fdf4',
+            border: `1px solid ${selectedProcedureIsCosmetic ? '#d8b4fe' : '#86efac'}`,
+            borderRadius: '10px'
           }}>
-            <div style={{ fontSize: '0.75rem', color: '#065f46', marginBottom: '0.25rem' }}>
-              Selected Procedure:
+            <div style={{ fontSize: '0.76rem', color: selectedProcedureIsCosmetic ? '#7e22ce' : '#065f46', marginBottom: '0.35rem', fontWeight: 700 }}>
+              Selected Procedure
             </div>
-            <div style={{ fontWeight: 600, color: '#047857', marginBottom: '1rem' }}>
+            <div style={{ fontWeight: 700, color: selectedProcedureIsCosmetic ? '#6b21a8' : '#047857', marginBottom: '1rem' }}>
               {selectedCode.code} - {selectedCode.description}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
               <div>
-                <label style={{
-                  display: 'block',
-                  fontSize: '0.75rem',
-                  fontWeight: 500,
-                  color: '#065f46',
-                  marginBottom: '0.25rem'
-                }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#475569', marginBottom: '0.25rem' }}>
                   Quantity
                 </label>
                 <input
@@ -553,24 +810,18 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
                   min="1"
                   max="100"
                   value={quantity}
-                  onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                  onChange={(event) => setQuantity(Math.max(1, parseInt(event.target.value, 10) || 1))}
                   style={{
                     width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #86efac',
-                    borderRadius: '4px',
+                    padding: '0.6rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
                     fontSize: '0.875rem'
                   }}
                 />
               </div>
               <div>
-                <label style={{
-                  display: 'block',
-                  fontSize: '0.75rem',
-                  fontWeight: 500,
-                  color: '#065f46',
-                  marginBottom: '0.25rem'
-                }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#475569', marginBottom: '0.25rem' }}>
                   Fee (USD)
                 </label>
                 <input
@@ -578,83 +829,83 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
                   min="0"
                   step="0.01"
                   value={(feeCents / 100).toFixed(2)}
-                  onChange={(e) => setFeeCents(Math.round(parseFloat(e.target.value) * 100) || 0)}
+                  onChange={(event) => setFeeCents(Math.round(parseFloat(event.target.value) * 100) || 0)}
                   style={{
                     width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #86efac',
-                    borderRadius: '4px',
+                    padding: '0.6rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
                     fontSize: '0.875rem'
                   }}
                 />
               </div>
             </div>
 
-            {/* Link to Diagnoses */}
             <div>
               <label style={{
                 display: 'block',
                 fontSize: '0.75rem',
-                fontWeight: 500,
-                color: '#065f46',
+                fontWeight: 700,
+                color: '#334155',
                 marginBottom: '0.5rem'
               }}>
-                Link to Diagnoses (Required for CMS Compliance)
+                {selectedProcedureIsCosmetic
+                  ? 'Diagnosis Links (Optional for cosmetic / self-pay)'
+                  : 'Link to Diagnoses (Required for insurance / CMS billing)'}
               </label>
+
               {!Array.isArray(diagnoses) || diagnoses.length === 0 ? (
                 <div style={{
-                  padding: '0.75rem',
-                  background: '#fef3c7',
-                  border: '1px solid #fbbf24',
-                  borderRadius: '4px',
-                  fontSize: '0.75rem',
-                  color: '#92400e'
+                  padding: '0.85rem',
+                  background: selectedProcedureIsCosmetic ? '#f5f3ff' : '#fef3c7',
+                  border: `1px solid ${selectedProcedureIsCosmetic ? '#d8b4fe' : '#fbbf24'}`,
+                  borderRadius: '6px',
+                  fontSize: '0.76rem',
+                  color: selectedProcedureIsCosmetic ? '#6b21a8' : '#92400e'
                 }}>
-                  No diagnoses added yet. Add diagnoses first to link them to this charge.
+                  {selectedProcedureIsCosmetic
+                    ? 'No diagnosis is required for cosmetic/self-pay procedures. You can add one later if you want a clinical reference.'
+                    : 'No diagnoses added yet. Add a diagnosis first so this medical charge is linked correctly.'}
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {diagnoses.map((dx) => (
+                  {diagnoses.map((diagnosis) => (
                     <label
-                      key={dx.id}
+                      key={diagnosis.id}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '0.5rem',
-                        padding: '0.5rem',
+                        gap: '0.6rem',
+                        padding: '0.65rem 0.75rem',
                         background: '#ffffff',
-                        border: '1px solid #86efac',
-                        borderRadius: '4px',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '6px',
                         cursor: 'pointer'
                       }}
                     >
                       <input
                         type="checkbox"
-                        checked={linkedDiagnosisIds.includes(dx.id)}
-                        onChange={() => toggleDiagnosis(dx.id)}
+                        checked={linkedDiagnosisIds.includes(diagnosis.id)}
+                        onChange={() => toggleDiagnosis(diagnosis.id)}
                         style={{ width: '16px', height: '16px', cursor: 'pointer' }}
                       />
                       <div style={{ flex: 1 }}>
-                        <span style={{ fontWeight: 600, fontSize: '0.75rem' }}>
-                          {dx.icd10Code}
-                        </span>
+                        <span style={{ fontWeight: 700, fontSize: '0.76rem' }}>{diagnosis.icd10Code}</span>
                         {' - '}
-                        <span style={{ fontSize: '0.75rem' }}>
-                          {dx.description}
-                        </span>
-                        {dx.isPrimary && (
+                        <span style={{ fontSize: '0.76rem' }}>{diagnosis.description}</span>
+                        {diagnosis.isPrimary ? (
                           <span style={{
                             marginLeft: '0.5rem',
-                            padding: '0.125rem 0.375rem',
+                            padding: '0.12rem 0.38rem',
                             background: '#0369a1',
                             color: '#ffffff',
-                            borderRadius: '4px',
-                            fontSize: '0.625rem',
-                            fontWeight: 600
+                            borderRadius: '999px',
+                            fontSize: '0.62rem',
+                            fontWeight: 700
                           }}>
                             PRIMARY
                           </span>
-                        )}
+                        ) : null}
                       </div>
                     </label>
                   ))}
@@ -673,10 +924,10 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
           type="button"
           className="btn-primary"
           onClick={handleAdd}
-          disabled={!selectedCode || !Array.isArray(linkedDiagnosisIds) || linkedDiagnosisIds.length === 0}
+          disabled={!canAddProcedure}
           style={{
-            opacity: !selectedCode || !Array.isArray(linkedDiagnosisIds) || linkedDiagnosisIds.length === 0 ? 0.5 : 1,
-            cursor: !selectedCode || !Array.isArray(linkedDiagnosisIds) || linkedDiagnosisIds.length === 0 ? 'not-allowed' : 'pointer'
+            opacity: canAddProcedure ? 1 : 0.5,
+            cursor: canAddProcedure ? 'pointer' : 'not-allowed'
           }}
         >
           Add Procedure

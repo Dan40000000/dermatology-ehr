@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
+import { getKioskHeaders } from '../../utils/kioskContext';
 import '../../styles/kiosk.css';
 
 interface PatientData {
@@ -59,11 +60,9 @@ export function KioskDemographicsReviewPage() {
 
   const fetchSessionData = async () => {
     try {
+      const headers = await getKioskHeaders();
       const response = await fetch(`/api/kiosk/checkin/${sessionId}`, {
-        headers: {
-          'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
-          'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
-        },
+        headers,
       });
 
       if (!response.ok) {
@@ -115,12 +114,12 @@ export function KioskDemographicsReviewPage() {
     setError('');
 
     try {
+      const headers = await getKioskHeaders();
       const response = await fetch(`/api/kiosk/checkin/${sessionId}/demographics`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
-          'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
+          ...headers,
         },
         body: JSON.stringify(editedData),
       });
@@ -140,12 +139,12 @@ export function KioskDemographicsReviewPage() {
 
   const handleContinue = async () => {
     try {
+      const headers = await getKioskHeaders();
       await fetch(`/api/kiosk/checkin/${sessionId}/demographics`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
-          'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
+          ...headers,
         },
         body: JSON.stringify({}),
       });
@@ -158,7 +157,7 @@ export function KioskDemographicsReviewPage() {
 
   if (loading) {
     return (
-      <KioskLayout currentStep={2} totalSteps={6} stepName="Loading..." onTimeout={handleTimeout}>
+      <KioskLayout currentStep={2} totalSteps={7} stepName="Loading..." onTimeout={handleTimeout}>
         <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem' }}>
           <div className="kiosk-spinner" style={{ margin: '0 auto 1rem' }} />
           <p style={{ fontSize: '1.5rem', color: '#4b5563' }}>Loading your information...</p>
@@ -172,7 +171,7 @@ export function KioskDemographicsReviewPage() {
   }
 
   return (
-    <KioskLayout currentStep={2} totalSteps={6} stepName="Review Information" onTimeout={handleTimeout}>
+    <KioskLayout currentStep={2} totalSteps={7} stepName="Review Information" onTimeout={handleTimeout}>
       <div style={cardStyle}>
         <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '1rem' }}>
           Review Your Information

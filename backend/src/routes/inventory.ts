@@ -1,5 +1,6 @@
 import { Router } from "express";
 import crypto from "crypto";
+import type { PoolClient } from "pg";
 import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
@@ -43,6 +44,9 @@ const adjustmentSchema = z.object({
 
 export const inventoryRouter = Router();
 
+const INVENTORY_BILL_LINE_CPT_CODE = "INV-ITEM";
+const INVENTORY_BILL_NOTES_TAG = "[INVENTORY_USAGE]";
+
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -59,6 +63,169 @@ function logInventoryError(message: string, error: unknown): void {
   logger.error(message, {
     error: toSafeErrorMessage(error),
   });
+}
+
+function formatDateOnly(value: Date): string {
+  const [dateOnly] = value.toISOString().split("T");
+  return dateOnly || value.toISOString().slice(0, 10);
+}
+
+function addDays(baseDate: string, days: number): string {
+  const date = new Date(`${baseDate}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return formatDateOnly(date);
+}
+
+async function resolveUsageServiceDate(
+  client: PoolClient,
+  tenantId: string,
+  appointmentId?: string
+): Promise<string> {
+  if (!appointmentId) {
+    return formatDateOnly(new Date());
+  }
+
+  const appointmentResult = await client.query(
+    `SELECT scheduled_start::date as "serviceDate"
+     FROM appointments
+     WHERE id = $1 AND tenant_id = $2`,
+    [appointmentId, tenantId]
+  );
+
+  if (appointmentResult.rowCount && appointmentResult.rows[0]?.serviceDate) {
+    return appointmentResult.rows[0].serviceDate;
+  }
+
+  return formatDateOnly(new Date());
+}
+
+async function appendInventoryChargeToBill(params: {
+  client: PoolClient;
+  tenantId: string;
+  userId: string;
+  patientId: string;
+  encounterId?: string;
+  appointmentId?: string;
+  itemName: string;
+  quantityUsed: number;
+  sellPriceCents: number;
+}): Promise<{ billId: string; billLineItemId: string }> {
+  const {
+    client,
+    tenantId,
+    userId,
+    patientId,
+    encounterId,
+    appointmentId,
+    itemName,
+    quantityUsed,
+    sellPriceCents,
+  } = params;
+
+  const lineTotalCents = sellPriceCents * quantityUsed;
+  const serviceDate = await resolveUsageServiceDate(client, tenantId, appointmentId);
+
+  let billId: string | null = null;
+
+  if (encounterId) {
+    const existingEncounterBill = await client.query(
+      `SELECT id
+       FROM bills
+       WHERE tenant_id = $1
+         AND patient_id = $2
+         AND encounter_id = $3
+         AND status IN ('new', 'in_progress', 'submitted', 'pending_payment', 'partial', 'overdue')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [tenantId, patientId, encounterId]
+    );
+
+    if (existingEncounterBill.rowCount) {
+      billId = existingEncounterBill.rows[0].id;
+    }
+  }
+
+  if (!billId) {
+    const existingOpenBill = await client.query(
+      `SELECT id
+       FROM bills
+       WHERE tenant_id = $1
+         AND patient_id = $2
+         AND status IN ('new', 'in_progress', 'submitted', 'pending_payment', 'partial', 'overdue')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [tenantId, patientId]
+    );
+
+    if (existingOpenBill.rowCount) {
+      billId = existingOpenBill.rows[0].id;
+    }
+  }
+
+  if (!billId) {
+    billId = crypto.randomUUID();
+    const billNumber = `BILL-${new Date().getUTCFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+
+    await client.query(
+      `INSERT INTO bills(
+        id, tenant_id, patient_id, encounter_id, bill_number, bill_date, due_date,
+        total_charges_cents, insurance_responsibility_cents, patient_responsibility_cents,
+        paid_amount_cents, adjustment_amount_cents, balance_cents, status,
+        service_date_start, service_date_end, notes, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $8, 0, 0, $8, 'new', $6, $6, $9, $10)`,
+      [
+        billId,
+        tenantId,
+        patientId,
+        encounterId || null,
+        billNumber,
+        serviceDate,
+        addDays(serviceDate, 30),
+        lineTotalCents,
+        INVENTORY_BILL_NOTES_TAG,
+        userId,
+      ]
+    );
+  } else {
+    await client.query(
+      `UPDATE bills
+       SET total_charges_cents = total_charges_cents + $1,
+           patient_responsibility_cents = patient_responsibility_cents + $1,
+           balance_cents = balance_cents + $1,
+           service_date_start = COALESCE(LEAST(service_date_start, $2::date), $2::date),
+           service_date_end = COALESCE(GREATEST(service_date_end, $2::date), $2::date),
+           notes = CASE
+             WHEN notes IS NULL OR notes = '' THEN $3
+             WHEN notes LIKE '%' || $3 || '%' THEN notes
+             ELSE notes || E'\n' || $3
+           END,
+           updated_at = NOW()
+       WHERE id = $4 AND tenant_id = $5`,
+      [lineTotalCents, serviceDate, INVENTORY_BILL_NOTES_TAG, billId, tenantId]
+    );
+  }
+
+  const billLineItemId = crypto.randomUUID();
+
+  await client.query(
+    `INSERT INTO bill_line_items(
+      id, tenant_id, bill_id, charge_id, service_date, cpt_code, description, quantity,
+      unit_price_cents, total_cents, icd_codes
+    ) VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8, $9, ARRAY[]::text[])`,
+    [
+      billLineItemId,
+      tenantId,
+      billId,
+      serviceDate,
+      INVENTORY_BILL_LINE_CPT_CODE,
+      `Inventory item: ${itemName}`,
+      quantityUsed,
+      sellPriceCents,
+      lineTotalCents,
+    ]
+  );
+
+  return { billId, billLineItemId };
 }
 
 // Get all inventory items
@@ -102,6 +269,8 @@ inventoryRouter.get("/usage", requireAuth, async (req: AuthedRequest, res) => {
       u.id,
       u.quantity_used as "quantityUsed",
       u.unit_cost_cents as "unitCostCents",
+      u.sell_price_cents as "sellPriceCents",
+      u.given_as_sample as "givenAsSample",
       u.notes,
       u.used_at as "usedAt",
       u.encounter_id as "encounterId",
@@ -364,6 +533,8 @@ inventoryRouter.get("/:id/usage", requireAuth, async (req: AuthedRequest, res) =
       u.id,
       u.quantity_used as "quantityUsed",
       u.unit_cost_cents as "unitCostCents",
+      u.sell_price_cents as "sellPriceCents",
+      u.given_as_sample as "givenAsSample",
       u.notes,
       u.used_at as "usedAt",
       u.encounter_id as "encounterId",
@@ -612,6 +783,8 @@ const createUsageSchema = z.object({
   providerId: z.string().min(1),
   encounterId: z.string().optional(),
   appointmentId: z.string().optional(),
+  sellPriceCents: z.number().int().min(0).optional(),
+  givenAsSample: z.boolean().optional(),
   notes: z.string().optional(),
 });
 
@@ -622,55 +795,95 @@ inventoryRouter.post("/usage", requireAuth, requireRoles(["admin", "provider", "
 
   const tenantId = req.user!.tenantId;
   const payload = parsed.data;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-  // Verify item exists and get current cost
-  const itemCheck = await pool.query(
-    `SELECT id, name, quantity, unit_cost_cents FROM inventory_items WHERE id = $1 AND tenant_id = $2`,
-    [payload.itemId, tenantId]
-  );
+    // Verify item exists and get current cost
+    const itemCheck = await client.query(
+      `SELECT id, name, quantity, unit_cost_cents FROM inventory_items WHERE id = $1 AND tenant_id = $2`,
+      [payload.itemId, tenantId]
+    );
 
-  if (!itemCheck.rowCount) {
-    return res.status(404).json({ error: "Inventory item not found" });
-  }
+    if (!itemCheck.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Inventory item not found" });
+    }
 
-  const item = itemCheck.rows[0];
+    const item = itemCheck.rows[0];
 
-  // Check if we have enough quantity
-  if (item.quantity < payload.quantityUsed) {
-    return res.status(400).json({
-      error: `Insufficient inventory: only ${item.quantity} units available`,
-      availableQuantity: item.quantity
+    // Check if we have enough quantity
+    if (item.quantity < payload.quantityUsed) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error: `Insufficient inventory: only ${item.quantity} units available`,
+        availableQuantity: item.quantity
+      });
+    }
+
+    const givenAsSample = payload.givenAsSample ?? false;
+    const sellPriceCents = givenAsSample ? 0 : payload.sellPriceCents ?? 0;
+    const lineTotalCents = sellPriceCents * payload.quantityUsed;
+
+    // Insert usage record (trigger will automatically decrease inventory)
+    const result = await client.query(
+      `INSERT INTO inventory_usage(
+        tenant_id, item_id, quantity_used, unit_cost_cents,
+        sell_price_cents, given_as_sample, patient_id, provider_id, encounter_id, appointment_id, notes, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      RETURNING id, used_at`,
+      [
+        tenantId,
+        payload.itemId,
+        payload.quantityUsed,
+        item.unit_cost_cents,
+        sellPriceCents,
+        givenAsSample,
+        payload.patientId,
+        payload.providerId,
+        payload.encounterId || null,
+        payload.appointmentId || null,
+        payload.notes || null,
+        req.user!.id,
+      ]
+    );
+
+    let billId: string | null = null;
+    if (!givenAsSample && lineTotalCents > 0) {
+      const billResult = await appendInventoryChargeToBill({
+        client,
+        tenantId,
+        userId: req.user!.id,
+        patientId: payload.patientId,
+        encounterId: payload.encounterId,
+        appointmentId: payload.appointmentId,
+        itemName: item.name,
+        quantityUsed: payload.quantityUsed,
+        sellPriceCents,
+      });
+      billId = billResult.billId;
+    }
+
+    await client.query("COMMIT");
+    await auditLog(tenantId, req.user!.id, "inventory_usage_create", "inventory_item", payload.itemId);
+
+    return res.status(201).json({
+      id: result.rows[0].id,
+      usedAt: result.rows[0].used_at,
+      billId,
+      patientChargeCents: lineTotalCents,
+      message: `${payload.quantityUsed} units of ${item.name} recorded`
     });
+  } catch (error: any) {
+    await client.query("ROLLBACK");
+    if (error.message?.includes("Insufficient inventory")) {
+      return res.status(400).json({ error: error.message });
+    }
+    logInventoryError("Error recording inventory usage", error);
+    return res.status(500).json({ error: "Failed to record inventory usage" });
+  } finally {
+    client.release();
   }
-
-  // Insert usage record (trigger will automatically decrease inventory)
-  const result = await pool.query(
-    `INSERT INTO inventory_usage(
-      tenant_id, item_id, quantity_used, unit_cost_cents,
-      patient_id, provider_id, encounter_id, appointment_id, notes, created_by
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-    RETURNING id, used_at`,
-    [
-      tenantId,
-      payload.itemId,
-      payload.quantityUsed,
-      item.unit_cost_cents,
-      payload.patientId,
-      payload.providerId,
-      payload.encounterId || null,
-      payload.appointmentId || null,
-      payload.notes || null,
-      req.user!.id,
-    ]
-  );
-
-  await auditLog(tenantId, req.user!.id, "inventory_usage_create", "inventory_item", payload.itemId);
-
-  res.status(201).json({
-    id: result.rows[0].id,
-    usedAt: result.rows[0].used_at,
-    message: `${payload.quantityUsed} units of ${item.name} recorded`
-  });
 });
 
 // Get usage record by ID
@@ -683,6 +896,8 @@ inventoryRouter.get("/usage/:id", requireAuth, async (req: AuthedRequest, res) =
       u.id,
       u.quantity_used as "quantityUsed",
       u.unit_cost_cents as "unitCostCents",
+      u.sell_price_cents as "sellPriceCents",
+      u.given_as_sample as "givenAsSample",
       u.notes,
       u.used_at as "usedAt",
       u.encounter_id as "encounterId",

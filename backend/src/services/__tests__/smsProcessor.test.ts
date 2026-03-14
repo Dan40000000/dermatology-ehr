@@ -37,8 +37,10 @@ const patient = { id: "patient-1", first_name: "Pat", last_name: "Lee" };
 type ClientConfig = {
   patientRows?: any[];
   prefsRows?: any[];
+  consentRows?: any[];
   autoResponseRows?: any[];
   threadRows?: any[];
+  tenantRows?: any[];
 };
 
 const buildClient = (config: ClientConfig) => {
@@ -52,11 +54,24 @@ const buildClient = (config: ClientConfig) => {
     }
 
     if (sql.includes("FROM patient_sms_preferences")) {
-      return { rows: config.prefsRows || [] };
+      const prefsRows = (config.prefsRows ?? [{ optedIn: true }]).map((row) => ({
+        ...row,
+        optedIn: row.optedIn ?? row.opted_in,
+        opted_in: row.opted_in ?? row.optedIn,
+      }));
+      return { rows: prefsRows };
+    }
+
+    if (sql.includes("FROM sms_consent")) {
+      return { rows: config.consentRows || [] };
     }
 
     if (sql.includes("FROM sms_auto_responses")) {
       return { rows: config.autoResponseRows || [] };
+    }
+
+    if (sql.includes("FROM tenants")) {
+      return { rows: config.tenantRows || [] };
     }
 
     if (sql.includes("FROM patient_message_threads")) {
@@ -158,7 +173,7 @@ describe("smsProcessor", () => {
   it("logs opted-out patient messages without replying", async () => {
     const client = buildClient({
       patientRows: [patient],
-      prefsRows: [{ opted_in: false }],
+      prefsRows: [{ optedIn: false }],
     });
     connectMock.mockResolvedValueOnce(client);
 
@@ -190,7 +205,7 @@ describe("smsProcessor", () => {
 
     expect(result.success).toBe(true);
     expect(result.autoResponseSent).toBe(true);
-    expect(result.autoResponseText).toBe("Auto reply");
+    expect(result.autoResponseText).toContain("opted out of text messages");
     expect(result.actionPerformed).toBe("opted_out");
     expect(touchedPrefs).toBe(true);
   });
@@ -289,6 +304,7 @@ describe("smsProcessor", () => {
       threadRows: [],
     });
     connectMock.mockResolvedValueOnce(client);
+    twilioService.sendSMS.mockResolvedValueOnce({ sid: "sid-route", status: "sent", numSegments: 1 });
 
     const result = await processIncomingSMS(baseParams, twilioService as any);
 
@@ -297,14 +313,37 @@ describe("smsProcessor", () => {
     );
 
     expect(result.success).toBe(true);
+    expect(result.actionPerformed).toBe("triage_requested");
     expect(createdThread).toBe(true);
+    expect(twilioService.sendSMS).toHaveBeenCalled();
+  });
+
+  it("requests consent before routing when no SMS consent is on file", async () => {
+    const client = buildClient({
+      patientRows: [patient],
+      prefsRows: [],
+      autoResponseRows: [],
+      threadRows: [],
+    });
+    connectMock.mockResolvedValueOnce(client);
+    twilioService.sendSMS.mockResolvedValueOnce({ sid: "sid-consent", status: "sent", numSegments: 1 });
+
+    const result = await processIncomingSMS(baseParams, twilioService as any);
+
+    const createdPendingConsent = client.query.mock.calls.some(
+      ([sql]) => typeof sql === "string" && sql.includes("INSERT INTO sms_consent")
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.actionPerformed).toBe("consent_requested");
+    expect(createdPendingConsent).toBe(true);
   });
 
   it("uses existing message thread when available", async () => {
     const client = buildClient({
       patientRows: [patient],
       autoResponseRows: [],
-      threadRows: [{ id: "thread-1" }],
+      threadRows: [{ id: "thread-1", category: "billing", status: "open" }],
     });
     connectMock.mockResolvedValueOnce(client);
 
@@ -316,6 +355,37 @@ describe("smsProcessor", () => {
 
     expect(result.success).toBe(true);
     expect(createdThread).toBe(false);
+  });
+
+  it("routes explicit billing texts to the billing group", async () => {
+    const client = buildClient({
+      patientRows: [patient],
+      autoResponseRows: [],
+      threadRows: [{ id: "thread-1", category: "general", status: "open" }],
+    });
+    connectMock.mockResolvedValueOnce(client);
+    twilioService.sendSMS.mockResolvedValueOnce({ sid: "sid-billing", status: "sent", numSegments: 1 });
+
+    const result = await processIncomingSMS(
+      {
+        ...baseParams,
+        body: "I have a billing question about my balance",
+      },
+      twilioService as any
+    );
+
+    const routedThread = client.query.mock.calls.some(
+      ([sql, params]) =>
+        typeof sql === "string" &&
+        sql.includes("UPDATE patient_message_threads") &&
+        Array.isArray(params) &&
+        params.includes("billing")
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.actionPerformed).toBe("routed_billing");
+    expect(result.autoResponseSent).toBe(true);
+    expect(routedThread).toBe(true);
   });
 
   it("logs messages from unknown patients", async () => {
@@ -356,9 +426,11 @@ describe("smsProcessor", () => {
     await updateSMSStatus("sid-2", "undelivered", "30007", "Carrier violation");
 
     const updateSql = queryMock.mock.calls[0][0] as string;
+    const updateParams = queryMock.mock.calls[0][1] as any[];
     expect(updateSql).toContain("failed_at");
-    expect(updateSql).toContain("error_code");
     expect(updateSql).toContain("error_message");
+    expect(updateParams[1]).toContain("Twilio error 30007");
+    expect(updateParams[1]).toContain("Carrier violation");
   });
 
   it("surfaces status update failures", async () => {

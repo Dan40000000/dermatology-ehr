@@ -23,6 +23,17 @@ describe('userStore', () => {
     expect(result).toEqual({ id: 'user-1', secondaryRoles: [], roles: [] });
   });
 
+  it('falls back to legacy users query when secondary_roles column is missing', async () => {
+    queryMock
+      .mockRejectedValueOnce({ code: '42703', message: 'column "secondary_roles" does not exist' })
+      .mockResolvedValueOnce({ rows: [{ id: 'legacy-user' }] });
+
+    const result = await userStore.findByEmailAndTenant('legacy@example.com', 'tenant-legacy');
+
+    expect(queryMock).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ id: 'legacy-user', secondaryRoles: [], roles: [] });
+  });
+
   it('finds users by id', async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ id: 'user-2' }] });
 

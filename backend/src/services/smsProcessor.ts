@@ -7,9 +7,23 @@ import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { formatPhoneE164 } from '../utils/phone';
 import { TwilioService } from './twilioService';
-import { auditLog } from './audit';
 import { processWaitlistSMSReply } from './waitlistNotificationService';
 import crypto from 'crypto';
+import {
+  buildSMSConsentRequestText,
+  buildSMSHelpText,
+  buildSMSOptInConfirmationText,
+  buildSMSOptOutConfirmationText,
+  getSMSPracticeBranding,
+} from './smsConsentText';
+import {
+  clearSMSOptOut,
+  createPendingSMSConsentRequest,
+  getSMSConsentState,
+  recordSMSConsent,
+  revokeSMSConsent,
+  upsertSMSOptOut,
+} from './smsConsentState';
 
 export interface IncomingSMSParams {
   messageSid: string;
@@ -28,6 +42,139 @@ export interface ProcessSMSResult {
   autoResponseText?: string;
   actionPerformed?: string;
   error?: string;
+}
+
+export type SMSRoutingCategory =
+  | 'general'
+  | 'appointment'
+  | 'billing'
+  | 'prescription'
+  | 'medical'
+  | 'other';
+
+type ThreadStatus = 'open' | 'in-progress' | 'waiting-patient' | 'waiting-provider' | 'closed';
+type QueryableClient = { query: (sql: string, params?: any[]) => Promise<any> };
+
+const ROUTING_KEYWORDS: Array<{
+  category: Exclude<SMSRoutingCategory, 'general'>;
+  patterns: RegExp[];
+}> = [
+  {
+    category: 'billing',
+    patterns: [
+      /\bbill(?:ing)?\b/i,
+      /\bbalance\b/i,
+      /\bcharge\b/i,
+      /\bpayment\b/i,
+      /\bcopay\b/i,
+      /\binvoice\b/i,
+      /\brefund\b/i,
+      /\boutstanding\b/i,
+    ],
+  },
+  {
+    category: 'appointment',
+    patterns: [
+      /\bschedul(?:e|ing)\b/i,
+      /\bappointment\b/i,
+      /\breschedule\b/i,
+      /\bbook\b/i,
+      /\bcancel\b/i,
+      /\bcheck[\s-]?in\b/i,
+      /\bvisit\b/i,
+    ],
+  },
+  {
+    category: 'prescription',
+    patterns: [
+      /\brx\b/i,
+      /\bprescription\b/i,
+      /\brefill\b/i,
+      /\bpharmacy\b/i,
+      /\bmed(?:ication|s)?\b/i,
+    ],
+  },
+  {
+    category: 'medical',
+    patterns: [
+      /\bresult(?:s)?\b/i,
+      /\blab(?:s)?\b/i,
+      /\bpath(?:ology)?\b/i,
+      /\bbiopsy\b/i,
+      /\bdoctor\b/i,
+      /\bprovider\b/i,
+      /\bnurse\b/i,
+      /\bmedical\b/i,
+      /\btest\b/i,
+    ],
+  },
+  {
+    category: 'other',
+    patterns: [/\bother\b/i, /\bgeneral\b/i],
+  },
+];
+
+export function inferSMSRoutingCategory(
+  messageBody: string
+): Exclude<SMSRoutingCategory, 'general'> | null {
+  const normalized = String(messageBody || '').trim();
+  if (!normalized) return null;
+
+  const directMatch = normalized.toUpperCase();
+  if (directMatch === 'SCHEDULING' || directMatch === 'SCHEDULE') {
+    return 'appointment';
+  }
+
+  for (const route of ROUTING_KEYWORDS) {
+    if (route.patterns.some((pattern) => pattern.test(normalized))) {
+      return route.category;
+    }
+  }
+
+  return null;
+}
+
+function getRoutingLabel(category: Exclude<SMSRoutingCategory, 'general'>): string {
+  switch (category) {
+    case 'appointment':
+      return 'Scheduling';
+    case 'billing':
+      return 'Billing';
+    case 'prescription':
+      return 'Prescription';
+    case 'medical':
+      return 'Medical';
+    case 'other':
+      return 'General Support';
+    default:
+      return 'Support';
+  }
+}
+
+export function buildSMSRoutingPrompt(): string {
+  return "Thanks for texting. What can we help with? Reply BILLING, SCHEDULING, PRESCRIPTION, MEDICAL, or OTHER and we'll route your message to the right team.";
+}
+
+export function buildSMSRoutingAcknowledgement(
+  category: Exclude<SMSRoutingCategory, 'general'>
+): string {
+  return `Thanks. We've routed your message to our ${getRoutingLabel(category)} team. Someone will text you back soon.`;
+}
+
+function normalizeKeyword(messageBody: string): string {
+  return extractKeyword(messageBody).toUpperCase();
+}
+
+function isHelpKeyword(keyword: string): boolean {
+  return keyword === 'HELP' || keyword === 'INFO';
+}
+
+function isOptInKeyword(keyword: string): boolean {
+  return ['START', 'UNSTOP', 'SUBSCRIBE', 'YES', 'Y'].includes(keyword);
+}
+
+function isOptOutKeyword(keyword: string): boolean {
+  return ['STOP', 'STOPALL', 'END', 'QUIT', 'CANCEL', 'UNSUBSCRIBE', 'NO', 'N'].includes(keyword);
 }
 
 /**
@@ -68,7 +215,9 @@ export async function processIncomingSMS(
       // Still log the message but mark as unmatched
     }
 
-    // 2. Check for waitlist confirmation (YES/NO replies)
+    const keyword = normalizeKeyword(params.body);
+
+    // 2. System keyword + consent workflow
     if (patient) {
       const waitlistReply = await processWaitlistSMSReply(
         params.tenantId,
@@ -77,7 +226,6 @@ export async function processIncomingSMS(
       );
 
       if (waitlistReply.matched) {
-        // Log the message
         const messageId = await logSMSMessage(
           {
             tenantId: params.tenantId,
@@ -94,7 +242,6 @@ export async function processIncomingSMS(
           client
         );
 
-        // Send confirmation message
         try {
           let confirmationMessage = '';
           if (waitlistReply.action === 'accepted') {
@@ -110,7 +257,6 @@ export async function processIncomingSMS(
               body: confirmationMessage,
             });
 
-            // Log outgoing confirmation
             await logSMSMessage(
               {
                 tenantId: params.tenantId,
@@ -135,7 +281,6 @@ export async function processIncomingSMS(
         }
 
         await client.query('COMMIT');
-
         return {
           success: true,
           messageId,
@@ -143,9 +288,436 @@ export async function processIncomingSMS(
           actionPerformed: `waitlist_${waitlistReply.action}`,
         };
       }
+
+      const consentState = await getSMSConsentState(params.tenantId, patient.id, client);
+      const branding = await getSMSPracticeBranding(params.tenantId, client);
+
+      if (isHelpKeyword(keyword)) {
+        const helpText = buildSMSHelpText(branding);
+        let helpSent = false;
+        const messageId = await logSMSMessage(
+          {
+            tenantId: params.tenantId,
+            twilioSid: params.messageSid,
+            direction: 'inbound',
+            from: fromPhone,
+            to: toPhone,
+            body: params.body,
+            status: 'received',
+            messageType: 'conversation',
+            patientId: patient.id,
+            mediaUrls: params.mediaUrls,
+          },
+          client
+        );
+
+        try {
+          const response = await twilioService.sendSMS({
+            to: fromPhone,
+            from: toPhone,
+            body: helpText,
+          });
+
+          await logSMSMessage(
+            {
+              tenantId: params.tenantId,
+              twilioSid: response.sid,
+              direction: 'outbound',
+              from: toPhone,
+              to: fromPhone,
+              body: helpText,
+              status: response.status,
+              messageType: 'auto_response',
+              patientId: patient.id,
+              inResponseTo: messageId,
+            },
+            client
+          );
+          helpSent = true;
+        } catch (error: any) {
+          logger.error('Failed to send SMS help response', {
+            error: error.message,
+            patientId: patient.id,
+          });
+        }
+
+        await client.query('COMMIT');
+        return {
+          success: true,
+          messageId,
+          autoResponseSent: helpSent,
+          autoResponseText: helpText,
+          actionPerformed: 'help_sent',
+        };
+      }
+
+      if (consentState.optedOut) {
+        const messageId = await logSMSMessage(
+          {
+            tenantId: params.tenantId,
+            twilioSid: params.messageSid,
+            direction: 'inbound',
+            from: fromPhone,
+            to: toPhone,
+            body: params.body,
+            status: 'received',
+            messageType: 'conversation',
+            patientId: patient.id,
+            mediaUrls: params.mediaUrls,
+          },
+          client
+        );
+
+        if (isOptInKeyword(keyword)) {
+          await recordSMSConsent(
+            params.tenantId,
+            patient.id,
+            {
+              consentMethod: 'electronic',
+              obtainedByUserId: null,
+              obtainedByName: 'Patient reply',
+              notes: 'Patient opted back in via SMS keyword reply.',
+            },
+            client
+          );
+          await clearSMSOptOut(params.tenantId, fromPhone, client);
+
+          const confirmationText = buildSMSOptInConfirmationText(branding);
+          try {
+            const response = await twilioService.sendSMS({
+              to: fromPhone,
+              from: toPhone,
+              body: confirmationText,
+            });
+
+            await logSMSMessage(
+              {
+                tenantId: params.tenantId,
+                twilioSid: response.sid,
+                direction: 'outbound',
+                from: toPhone,
+                to: fromPhone,
+                body: confirmationText,
+                status: response.status,
+                messageType: 'auto_response',
+                patientId: patient.id,
+                inResponseTo: messageId,
+              },
+              client
+            );
+          } catch (error: any) {
+            logger.error('Failed to send SMS opt-in confirmation', {
+              error: error.message,
+              patientId: patient.id,
+            });
+          }
+
+          await client.query('COMMIT');
+          return {
+            success: true,
+            messageId,
+            autoResponseSent: true,
+            autoResponseText: confirmationText,
+            actionPerformed: 'opted_in',
+          };
+        }
+
+        await client.query('COMMIT');
+        return {
+          success: true,
+          messageId,
+          actionPerformed: 'opted_out_ignored',
+        };
+      }
+
+      if (isOptOutKeyword(keyword)) {
+        const messageId = await logSMSMessage(
+          {
+            tenantId: params.tenantId,
+            twilioSid: params.messageSid,
+            direction: 'inbound',
+            from: fromPhone,
+            to: toPhone,
+            body: params.body,
+            status: 'received',
+            messageType: 'conversation',
+            patientId: patient.id,
+            mediaUrls: params.mediaUrls,
+          },
+          client
+        );
+
+        await revokeSMSConsent(
+          params.tenantId,
+          patient.id,
+          {
+            reason: 'Patient opted out via SMS keyword reply',
+            notes: 'Opt-out captured from inbound SMS keyword.',
+            optedOutVia: 'sms',
+          },
+          client
+        );
+        await upsertSMSOptOut(params.tenantId, fromPhone, 'Patient opted out via SMS keyword reply', client);
+
+        const optOutText = buildSMSOptOutConfirmationText(branding);
+        try {
+          const response = await twilioService.sendSMS({
+            to: fromPhone,
+            from: toPhone,
+            body: optOutText,
+          });
+
+          await logSMSMessage(
+            {
+              tenantId: params.tenantId,
+              twilioSid: response.sid,
+              direction: 'outbound',
+              from: toPhone,
+              to: fromPhone,
+              body: optOutText,
+              status: response.status,
+              messageType: 'auto_response',
+              patientId: patient.id,
+              inResponseTo: messageId,
+            },
+            client
+          );
+        } catch (error: any) {
+          logger.error('Failed to send SMS opt-out confirmation', {
+            error: error.message,
+            patientId: patient.id,
+          });
+        }
+
+        await client.query('COMMIT');
+        return {
+          success: true,
+          messageId,
+          autoResponseSent: true,
+          autoResponseText: optOutText,
+          actionPerformed: 'opted_out',
+        };
+      }
+
+      if (consentState.pendingRequest) {
+        const messageId = await logSMSMessage(
+          {
+            tenantId: params.tenantId,
+            twilioSid: params.messageSid,
+            direction: 'inbound',
+            from: fromPhone,
+            to: toPhone,
+            body: params.body,
+            status: 'received',
+            messageType: 'conversation',
+            patientId: patient.id,
+            mediaUrls: params.mediaUrls,
+          },
+          client
+        );
+
+        if (isOptInKeyword(keyword)) {
+          await recordSMSConsent(
+            params.tenantId,
+            patient.id,
+            {
+              consentMethod: 'electronic',
+              obtainedByUserId: null,
+              obtainedByName: 'Patient reply',
+              notes: 'Patient replied YES/START to pending SMS opt-in request.',
+            },
+            client
+          );
+          await clearSMSOptOut(params.tenantId, fromPhone, client);
+
+          const confirmationText = buildSMSOptInConfirmationText(branding);
+          try {
+            const response = await twilioService.sendSMS({
+              to: fromPhone,
+              from: toPhone,
+              body: confirmationText,
+            });
+
+            await logSMSMessage(
+              {
+                tenantId: params.tenantId,
+                twilioSid: response.sid,
+                direction: 'outbound',
+                from: toPhone,
+                to: fromPhone,
+                body: confirmationText,
+                status: response.status,
+                messageType: 'auto_response',
+                patientId: patient.id,
+                inResponseTo: messageId,
+              },
+              client
+            );
+          } catch (error: any) {
+            logger.error('Failed to send pending SMS opt-in confirmation', {
+              error: error.message,
+              patientId: patient.id,
+            });
+          }
+
+          await client.query('COMMIT');
+          return {
+            success: true,
+            messageId,
+            autoResponseSent: true,
+            autoResponseText: confirmationText,
+            actionPerformed: 'consent_obtained',
+          };
+        }
+
+        await client.query('COMMIT');
+        return {
+          success: true,
+          messageId,
+          actionPerformed: 'consent_pending',
+        };
+      }
+
+      if (!consentState.hasConsent) {
+        if (isOptInKeyword(keyword)) {
+          const messageId = await logSMSMessage(
+            {
+              tenantId: params.tenantId,
+              twilioSid: params.messageSid,
+              direction: 'inbound',
+              from: fromPhone,
+              to: toPhone,
+              body: params.body,
+              status: 'received',
+              messageType: 'conversation',
+              patientId: patient.id,
+              mediaUrls: params.mediaUrls,
+            },
+            client
+          );
+
+          await recordSMSConsent(
+            params.tenantId,
+            patient.id,
+            {
+              consentMethod: 'electronic',
+              obtainedByUserId: null,
+              obtainedByName: 'Patient reply',
+              notes: 'Patient opted in via START/YES without a pending request.',
+            },
+            client
+          );
+
+          const confirmationText = buildSMSOptInConfirmationText(branding);
+          try {
+            const response = await twilioService.sendSMS({
+              to: fromPhone,
+              from: toPhone,
+              body: confirmationText,
+            });
+
+            await logSMSMessage(
+              {
+                tenantId: params.tenantId,
+                twilioSid: response.sid,
+                direction: 'outbound',
+                from: toPhone,
+                to: fromPhone,
+                body: confirmationText,
+                status: response.status,
+                messageType: 'auto_response',
+                patientId: patient.id,
+                inResponseTo: messageId,
+              },
+              client
+            );
+          } catch (error: any) {
+            logger.error('Failed to send standalone SMS opt-in confirmation', {
+              error: error.message,
+              patientId: patient.id,
+            });
+          }
+
+          await client.query('COMMIT');
+          return {
+            success: true,
+            messageId,
+            autoResponseSent: true,
+            autoResponseText: confirmationText,
+            actionPerformed: 'consent_obtained',
+          };
+        }
+
+        const messageId = await logSMSMessage(
+          {
+            tenantId: params.tenantId,
+            twilioSid: params.messageSid,
+            direction: 'inbound',
+            from: fromPhone,
+            to: toPhone,
+            body: params.body,
+            status: 'received',
+            messageType: 'conversation',
+            patientId: patient.id,
+            mediaUrls: params.mediaUrls,
+          },
+          client
+        );
+
+        await createPendingSMSConsentRequest(
+          params.tenantId,
+          patient.id,
+          client,
+          {
+            obtainedByName: 'Patient texted office',
+            notes: 'Pending SMS opt-in request created from inbound message.',
+          }
+        );
+
+        const consentRequestText = buildSMSConsentRequestText(branding);
+
+        try {
+          const response = await twilioService.sendSMS({
+            to: fromPhone,
+            from: toPhone,
+            body: consentRequestText,
+          });
+
+          await logSMSMessage(
+            {
+              tenantId: params.tenantId,
+              twilioSid: response.sid,
+              direction: 'outbound',
+              from: toPhone,
+              to: fromPhone,
+              body: consentRequestText,
+              status: response.status,
+              messageType: 'consent_request',
+              patientId: patient.id,
+              inResponseTo: messageId,
+            },
+            client
+          );
+        } catch (error: any) {
+          logger.error('Failed to send SMS consent request', {
+            error: error.message,
+            patientId: patient.id,
+          });
+        }
+
+        await client.query('COMMIT');
+        return {
+          success: true,
+          messageId,
+          autoResponseSent: true,
+          autoResponseText: consentRequestText,
+          actionPerformed: 'consent_requested',
+        };
+      }
+
     }
 
-    // 3. Check if patient has opted out
+    // 4. Check if patient has opted out
     if (patient) {
       const optedOut = await isPatientOptedOut(params.tenantId, patient.id, client);
       if (optedOut) {
@@ -175,8 +747,7 @@ export async function processIncomingSMS(
       }
     }
 
-    // 4. Check for keyword auto-responses
-    const keyword = extractKeyword(params.body);
+    // 5. Check for keyword auto-responses
     const autoResponse = await findAutoResponse(params.tenantId, keyword, client);
 
     let autoResponseSent = false;
@@ -269,17 +840,16 @@ export async function processIncomingSMS(
       };
     }
 
-    // 5. No keyword match - create or update message thread
+    // 6. No keyword match - create or update message thread
     if (patient) {
-      // Find existing open thread or create new one
       const thread = await findOrCreateMessageThread(
         params.tenantId,
         patient.id,
         params.body,
         client
       );
+      const routedCategory = inferSMSRoutingCategory(params.body);
 
-      // Log incoming message
       const messageId = await logSMSMessage(
         {
           tenantId: params.tenantId,
@@ -297,20 +867,145 @@ export async function processIncomingSMS(
         client
       );
 
-      // Add message to thread
       await addMessageToThread(
-        thread.id,
-        'patient',
-        patient.id,
-        `${patient.first_name} ${patient.last_name}`,
-        params.body,
+        {
+          threadId: thread.id,
+          senderType: 'patient',
+          senderPatientId: patient.id,
+          senderName: `${patient.first_name} ${patient.last_name}`,
+          messageText: params.body,
+          deliveredToPatient: true,
+        },
         client
       );
 
-      // Mark thread as unread by staff
       await markThreadUnreadByStaff(thread.id, client);
 
-      // Notify staff (in a real system, this would trigger email/push notifications)
+      if (routedCategory) {
+        await updateMessageThreadRoute(thread.id, routedCategory, 'open', client);
+
+        let autoResponseText: string | undefined;
+        let autoResponseSent = false;
+
+        try {
+          autoResponseText = buildSMSRoutingAcknowledgement(routedCategory);
+          const response = await twilioService.sendSMS({
+            to: fromPhone,
+            from: toPhone,
+            body: autoResponseText,
+          });
+
+          await logSMSMessage(
+            {
+              tenantId: params.tenantId,
+              twilioSid: response.sid,
+              direction: 'outbound',
+              from: toPhone,
+              to: fromPhone,
+              body: autoResponseText,
+              status: response.status,
+              messageType: 'auto_response',
+              patientId: patient.id,
+              relatedThreadId: thread.id,
+              inResponseTo: messageId,
+            },
+            client
+          );
+
+          await addMessageToThread(
+            {
+              threadId: thread.id,
+              senderType: 'staff',
+              senderName: 'Text Routing Assistant',
+              messageText: autoResponseText,
+              deliveredToPatient: true,
+            },
+            client
+          );
+          await updateMessageThreadRoute(thread.id, routedCategory, 'waiting-provider', client);
+          autoResponseSent = true;
+        } catch (error: any) {
+          logger.error('Failed to send SMS routing acknowledgement', {
+            error: error.message,
+            patientId: patient.id,
+            threadId: thread.id,
+            category: routedCategory,
+          });
+        }
+
+        await notifyStaffOfIncomingSMS(params.tenantId, thread.id, patient.id, client);
+        await client.query('COMMIT');
+
+        return {
+          success: true,
+          messageId,
+          autoResponseSent,
+          autoResponseText,
+          actionPerformed: `routed_${routedCategory}`,
+        };
+      }
+
+      if ((thread.category || 'general') === 'general') {
+        let autoResponseText: string | undefined;
+        let autoResponseSent = false;
+
+        try {
+          autoResponseText = buildSMSRoutingPrompt();
+          const response = await twilioService.sendSMS({
+            to: fromPhone,
+            from: toPhone,
+            body: autoResponseText,
+          });
+
+          await logSMSMessage(
+            {
+              tenantId: params.tenantId,
+              twilioSid: response.sid,
+              direction: 'outbound',
+              from: toPhone,
+              to: fromPhone,
+              body: autoResponseText,
+              status: response.status,
+              messageType: 'auto_response',
+              patientId: patient.id,
+              relatedThreadId: thread.id,
+              inResponseTo: messageId,
+            },
+            client
+          );
+
+          await addMessageToThread(
+            {
+              threadId: thread.id,
+              senderType: 'staff',
+              senderName: 'Text Routing Assistant',
+              messageText: autoResponseText,
+              deliveredToPatient: true,
+            },
+            client
+          );
+          autoResponseSent = true;
+        } catch (error: any) {
+          logger.error('Failed to send SMS routing prompt', {
+            error: error.message,
+            patientId: patient.id,
+            threadId: thread.id,
+          });
+        }
+
+        await updateMessageThreadRoute(thread.id, 'general', 'waiting-patient', client);
+        await notifyStaffOfIncomingSMS(params.tenantId, thread.id, patient.id, client);
+        await client.query('COMMIT');
+
+        return {
+          success: true,
+          messageId,
+          autoResponseSent,
+          autoResponseText,
+          actionPerformed: 'triage_requested',
+        };
+      }
+
       await notifyStaffOfIncomingSMS(params.tenantId, thread.id, patient.id, client);
 
       await client.query('COMMIT');
@@ -327,7 +1022,7 @@ export async function processIncomingSMS(
       };
     }
 
-    // 6. Unknown patient - log message but no action
+    // 7. Unknown patient - log message but no action
     const messageId = await logSMSMessage(
       {
         tenantId: params.tenantId,
@@ -367,12 +1062,28 @@ export async function processIncomingSMS(
  * Find patient by phone number
  */
 async function findPatientByPhone(tenantId: string, phoneNumber: string, client: any): Promise<any> {
+  const digitsOnly = String(phoneNumber || '').replace(/\D/g, '');
+  const tenDigit = digitsOnly.length > 10 ? digitsOnly.slice(-10) : digitsOnly;
+
   const result = await client.query(
     `SELECT id, first_name, last_name, email, phone
      FROM patients
-     WHERE tenant_id = $1 AND phone = $2
+     WHERE tenant_id = $1
+       AND phone IS NOT NULL
+       AND (
+         regexp_replace(phone, '\D', '', 'g') = $2
+         OR regexp_replace(phone, '\D', '', 'g') = $3
+         OR right(regexp_replace(phone, '\D', '', 'g'), 10) = $3
+       )
+     ORDER BY
+       CASE
+         WHEN regexp_replace(phone, '\D', '', 'g') = $2 THEN 0
+         WHEN regexp_replace(phone, '\D', '', 'g') = $3 THEN 1
+         ELSE 2
+       END,
+       created_at DESC NULLS LAST
      LIMIT 1`,
-    [tenantId, phoneNumber]
+    [tenantId, digitsOnly, tenDigit]
   );
 
   return result.rows[0] || null;
@@ -506,15 +1217,15 @@ async function executeAutoResponseAction(
 /**
  * Find or create message thread for patient
  */
-async function findOrCreateMessageThread(
+export async function findOrCreateMessageThread(
   tenantId: string,
   patientId: string,
   messagePreview: string,
-  client: any
+  client: QueryableClient
 ): Promise<any> {
   // Look for open thread
   const existingThread = await client.query(
-    `SELECT id FROM patient_message_threads
+    `SELECT id, category, status FROM patient_message_threads
      WHERE tenant_id = $1 AND patient_id = $2 AND status != 'closed'
      ORDER BY last_message_at DESC
      LIMIT 1`,
@@ -536,35 +1247,49 @@ async function findOrCreateMessageThread(
     [threadId, tenantId, patientId, subject]
   );
 
-  return { id: threadId };
+  return { id: threadId, category: 'general', status: 'open' };
 }
 
 /**
  * Add message to thread
  */
-async function addMessageToThread(
-  threadId: string,
-  senderType: string,
-  senderId: string,
-  senderName: string,
-  messageText: string,
-  client: any
+export async function addMessageToThread(
+  params: {
+    threadId: string;
+    senderType: 'patient' | 'staff';
+    senderPatientId?: string;
+    senderUserId?: string;
+    senderName: string;
+    messageText: string;
+    deliveredToPatient?: boolean;
+    isInternalNote?: boolean;
+  },
+  client: QueryableClient
 ): Promise<string> {
   const messageId = crypto.randomUUID();
 
   await client.query(
     `INSERT INTO patient_messages
-     (id, thread_id, sender_type, sender_patient_id, sender_name, message_text, delivered_to_patient)
-     VALUES ($1, $2, $3, $4, $5, $6, true)`,
-    [messageId, threadId, senderType, senderId, senderName, messageText]
+     (id, thread_id, sender_type, sender_patient_id, sender_user_id, sender_name, message_text, is_internal_note, delivered_to_patient)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [
+      messageId,
+      params.threadId,
+      params.senderType,
+      params.senderPatientId || null,
+      params.senderUserId || null,
+      params.senderName,
+      params.messageText,
+      params.isInternalNote || false,
+      params.deliveredToPatient ?? !params.isInternalNote,
+    ]
   );
 
-  // Update thread last message time
   await client.query(
     `UPDATE patient_message_threads
      SET last_message_at = CURRENT_TIMESTAMP, last_message_by = $1, updated_at = CURRENT_TIMESTAMP
      WHERE id = $2`,
-    ['patient', threadId]
+    [params.senderType, params.threadId]
   );
 
   return messageId;
@@ -573,12 +1298,58 @@ async function addMessageToThread(
 /**
  * Mark thread as unread by staff
  */
-async function markThreadUnreadByStaff(threadId: string, client: any): Promise<void> {
+export async function markThreadUnreadByStaff(threadId: string, client: QueryableClient): Promise<void> {
   await client.query(
     `UPDATE patient_message_threads
-     SET is_read_by_staff = false
+     SET is_read_by_staff = false,
+         read_by_staff_at = NULL,
+         read_by_staff_user = NULL,
+         updated_at = CURRENT_TIMESTAMP
      WHERE id = $1`,
     [threadId]
+  );
+}
+
+export async function markThreadUnreadByPatient(threadId: string, client: QueryableClient): Promise<void> {
+  await client.query(
+    `UPDATE patient_message_threads
+     SET is_read_by_patient = false,
+         read_by_patient_at = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [threadId]
+  );
+}
+
+export async function markThreadReadByStaff(
+  threadId: string,
+  userId: string,
+  client: QueryableClient
+): Promise<void> {
+  await client.query(
+    `UPDATE patient_message_threads
+     SET is_read_by_staff = true,
+         read_by_staff_at = CURRENT_TIMESTAMP,
+         read_by_staff_user = $2,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [threadId, userId]
+  );
+}
+
+export async function updateMessageThreadRoute(
+  threadId: string,
+  category: SMSRoutingCategory,
+  status: ThreadStatus,
+  client: QueryableClient
+): Promise<void> {
+  await client.query(
+    `UPDATE patient_message_threads
+     SET category = $2,
+         status = $3,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [threadId, category, status]
   );
 }
 
@@ -673,15 +1444,18 @@ export async function updateSMSStatus(
       updateFields.push(`failed_at = CURRENT_TIMESTAMP`);
     }
 
-    if (errorCode) {
-      updateFields.push(`error_code = $${paramIndex}`);
-      params.push(errorCode);
-      paramIndex++;
-    }
+    // Some deployed schemas do not include sms_messages.error_code. Persist any code/details
+    // in error_message so webhook updates remain compatible across schema variants.
+    const combinedErrorMessage = [
+      errorCode ? `Twilio error ${errorCode}` : null,
+      errorMessage?.trim() || null,
+    ]
+      .filter(Boolean)
+      .join(': ');
 
-    if (errorMessage) {
+    if (combinedErrorMessage) {
       updateFields.push(`error_message = $${paramIndex}`);
-      params.push(errorMessage);
+      params.push(combinedErrorMessage);
       paramIndex++;
     }
 

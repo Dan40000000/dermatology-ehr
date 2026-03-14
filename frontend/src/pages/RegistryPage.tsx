@@ -11,13 +11,28 @@ import {
   fetchRegistryAlerts,
   fetchPasiHistory,
 } from '../api';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 type RegistryType = 'dashboard' | 'melanoma' | 'psoriasis' | 'acne' | 'chronic_therapy' | 'alerts';
+
+const REGISTRY_TAB_QUERY_MAP: Record<string, RegistryType> = {
+  dashboard: 'dashboard',
+  disease: 'dashboard',
+  registries: 'dashboard',
+  melanoma: 'melanoma',
+  psoriasis: 'psoriasis',
+  acne: 'acne',
+  isotretinoin: 'acne',
+  chronic_therapy: 'chronic_therapy',
+  'chronic-therapy': 'chronic_therapy',
+  chronictherapy: 'chronic_therapy',
+  alerts: 'alerts',
+};
 
 export function RegistryPage() {
   const { session } = useAuth();
   const { showError } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<RegistryType>('dashboard');
 
@@ -124,6 +139,32 @@ export function RegistryPage() {
   }, [session, showError]);
 
   useEffect(() => {
+    const requestedTab = searchParams.get('tab');
+    if (!requestedTab) return;
+
+    const normalized = requestedTab.toLowerCase();
+    const mappedTab = REGISTRY_TAB_QUERY_MAP[normalized];
+    if (!mappedTab) return;
+
+    if (mappedTab !== activeTab) {
+      setActiveTab(mappedTab);
+    }
+
+    if (mappedTab !== normalized) {
+      const params = new URLSearchParams(searchParams);
+      params.set('tab', mappedTab);
+      setSearchParams(params, { replace: true });
+    }
+  }, [activeTab, searchParams, setSearchParams]);
+
+  const setRegistryTab = useCallback((tab: RegistryType) => {
+    setActiveTab(tab);
+    const params = new URLSearchParams(searchParams);
+    params.set('tab', tab);
+    setSearchParams(params, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
     if (activeTab === 'dashboard') {
       loadDashboard();
     } else if (activeTab === 'melanoma') {
@@ -187,7 +228,7 @@ export function RegistryPage() {
           ].map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as RegistryType)}
+              onClick={() => setRegistryTab(tab.id as RegistryType)}
               style={{
                 padding: '1rem 0',
                 border: 'none',

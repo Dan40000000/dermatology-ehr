@@ -1,8 +1,19 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Modal, Skeleton } from '../components/ui';
 import { API_BASE_URL } from '../utils/apiBase';
+import { fetchAppointments, fetchPatients } from '../api';
+
+type InstructionType =
+  | 'all'
+  | 'general'
+  | 'aftercare'
+  | 'lab_results'
+  | 'prescription_instructions'
+  | 'rash_care'
+  | 'cleansing';
 
 interface Handout {
   id: string;
@@ -10,8 +21,44 @@ interface Handout {
   category: string;
   condition: string;
   content: string;
+  instruction_type: Exclude<InstructionType, 'all'>;
+  template_key?: string | null;
+  print_disclaimer?: string | null;
+  is_system_template: boolean;
   is_active: boolean;
   created_at: string;
+}
+
+interface HandoutFormState {
+  title: string;
+  category: string;
+  condition: string;
+  content: string;
+  instructionType: Exclude<InstructionType, 'all'>;
+  printDisclaimer: string;
+  isActive: boolean;
+}
+
+interface PersonalizationState {
+  patientName: string;
+  patientDob: string;
+  providerName: string;
+  medicationName: string;
+  dosageInstructions: string;
+  labSummary: string;
+  followUpDate: string;
+}
+
+interface PatientOption {
+  id: string;
+  firstName: string;
+  lastName: string;
+  dateOfBirth?: string;
+}
+
+interface PatientsResponseLike {
+  patients?: Array<Record<string, unknown>>;
+  data?: Array<Record<string, unknown>>;
 }
 
 const CATEGORIES = [
@@ -19,30 +66,381 @@ const CATEGORIES = [
   'Procedures',
   'Medications',
   'Post-Procedure Care',
+  'Lab Results',
+  'Pathology Reports',
   'Prevention',
   'General Information',
 ];
 
+const INSTRUCTION_TYPE_LABELS: Record<InstructionType, string> = {
+  all: 'All Templates',
+  general: 'General',
+  aftercare: 'Aftercare',
+  lab_results: 'Lab Results',
+  prescription_instructions: 'Prescription Instructions',
+  rash_care: 'Rash Care',
+  cleansing: 'Cleansing',
+};
+
+const PLACEHOLDER_GUIDE = [
+  '{{patient_name}}',
+  '{{patient_dob}}',
+  '{{provider_name}}',
+  '{{today_date}}',
+  '{{medication_name}}',
+  '{{dosage_instructions}}',
+  '{{lab_summary}}',
+  '{{follow_up_date}}',
+];
+
+const defaultFormState: HandoutFormState = {
+  title: '',
+  category: 'Skin Conditions',
+  condition: '',
+  content: '',
+  instructionType: 'general',
+  printDisclaimer:
+    'For educational use only. Follow your provider instructions and call with concerns.',
+  isActive: true,
+};
+
+function formatInstructionType(value: Exclude<InstructionType, 'all'>): string {
+  return INSTRUCTION_TYPE_LABELS[value] || 'General';
+}
+
+function getTodayDateLabel(): string {
+  return new Date().toLocaleDateString();
+}
+
+function formatDateLabel(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString();
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function renderTemplateContent(template: string, values: PersonalizationState): string {
+  const replacements: Record<string, string> = {
+    '{{patient_name}}': values.patientName || '________________',
+    '{{patient_dob}}': values.patientDob || '________________',
+    '{{provider_name}}': values.providerName || '________________',
+    '{{today_date}}': getTodayDateLabel(),
+    '{{medication_name}}': values.medicationName || '________________',
+    '{{dosage_instructions}}': values.dosageInstructions || '________________',
+    '{{lab_summary}}': values.labSummary || '________________',
+    '{{follow_up_date}}': values.followUpDate || '________________',
+  };
+
+  return Object.entries(replacements).reduce(
+    (acc, [token, value]) => acc.replaceAll(token, value),
+    template,
+  );
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatMultilineContentToHtml(value: string): string {
+  const sections = value
+    .split(/\n{2,}/)
+    .map((section) => section.trim())
+    .filter(Boolean);
+
+  if (sections.length === 0) {
+    return '<p>No instructions provided.</p>';
+  }
+
+  return sections
+    .map((section) => {
+      const lines = section
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      const isBulletList =
+        lines.length > 1 && lines.every((line) => /^[-*•]\s+/.test(line));
+
+      if (isBulletList) {
+        const items = lines
+          .map((line) => `<li>${escapeHtml(line.replace(/^[-*•]\s+/, ''))}</li>`)
+          .join('');
+        return `<ul>${items}</ul>`;
+      }
+
+      return `<p>${escapeHtml(section).replace(/\n/g, '<br/>')}</p>`;
+    })
+    .join('');
+}
+
+function printableField(value?: string): string {
+  const clean = (value || '').trim();
+  return clean ? escapeHtml(clean) : '&mdash;';
+}
+
+function toPrintableHtml(
+  title: string,
+  condition: string,
+  body: string,
+  options: {
+    disclaimer?: string | null;
+    instructionType: Exclude<InstructionType, 'all'>;
+    category: string;
+    patientName?: string;
+    patientDob?: string;
+    providerName?: string;
+    followUpDate?: string;
+    generatedOn?: string;
+  },
+): string {
+  const contentHtml = formatMultilineContentToHtml(body);
+  const generatedOn = escapeHtml(options.generatedOn || getTodayDateLabel());
+  const disclaimerHtml = options.disclaimer
+    ? `<div class="disclaimer">${escapeHtml(options.disclaimer)}</div>`
+    : '';
+  const patientName = printableField(options.patientName);
+  const patientDob = printableField(options.patientDob);
+  const providerName = printableField(options.providerName);
+  const followUpDate = printableField(options.followUpDate);
+  const categoryLabel = escapeHtml(options.category);
+  const typeLabel = escapeHtml(formatInstructionType(options.instructionType));
+  const titleLabel = escapeHtml(title);
+  const conditionLabel = escapeHtml(condition);
+
+  return `
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${titleLabel}</title>
+    <style>
+      @page {
+        margin: 0.55in;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #f5f7fb;
+        font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+        color: #111827;
+      }
+      .sheet {
+        background: #ffffff;
+        border: 1px solid #d6deea;
+        border-radius: 14px;
+        padding: 28px 30px;
+        max-width: 8.1in;
+        margin: 0 auto;
+        box-shadow: 0 6px 18px rgba(17, 24, 39, 0.08);
+      }
+      .header {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 14px;
+        border-bottom: 2px solid #d8e3f5;
+        padding-bottom: 14px;
+        margin-bottom: 16px;
+      }
+      .clinic-name {
+        font-size: 22px;
+        font-weight: 800;
+        color: #0b4f84;
+        letter-spacing: 0.2px;
+      }
+      .clinic-subtitle {
+        margin-top: 4px;
+        font-size: 12px;
+        color: #4b5563;
+      }
+      .document-badge {
+        align-self: start;
+        background: #e8f2ff;
+        color: #12406b;
+        border: 1px solid #bfd8f8;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 7px 12px;
+        border-radius: 999px;
+        letter-spacing: 0.3px;
+      }
+      .title {
+        margin: 4px 0 6px 0;
+        font-size: 25px;
+        font-weight: 800;
+        color: #0f172a;
+      }
+      .subtitle {
+        font-size: 13px;
+        color: #475569;
+        margin-bottom: 14px;
+      }
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px 12px;
+        background: #f8fbff;
+        border: 1px solid #d9e6f7;
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin-bottom: 16px;
+      }
+      .meta-row {
+        font-size: 12.5px;
+        line-height: 1.35;
+        color: #0f172a;
+      }
+      .meta-label {
+        font-weight: 700;
+        color: #334155;
+        margin-right: 6px;
+      }
+      .content {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 14px 16px;
+        font-size: 13.5px;
+        line-height: 1.55;
+        color: #111827;
+      }
+      .content p {
+        margin: 0 0 10px 0;
+      }
+      .content p:last-child {
+        margin-bottom: 0;
+      }
+      .content ul {
+        margin: 0 0 12px 18px;
+        padding: 0;
+      }
+      .content li {
+        margin-bottom: 6px;
+      }
+      .disclaimer {
+        margin-top: 16px;
+        padding: 10px 12px;
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+        border-radius: 8px;
+        color: #7c2d12;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .footer {
+        margin-top: 20px;
+        padding-top: 10px;
+        border-top: 1px solid #e2e8f0;
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 11px;
+        color: #64748b;
+      }
+      @media print {
+        body {
+          background: #ffffff;
+        }
+        .sheet {
+          box-shadow: none;
+          border: none;
+          border-radius: 0;
+          max-width: none;
+          margin: 0;
+          padding: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="sheet">
+      <header class="header">
+        <div>
+          <div class="clinic-name">Mountain Pine Dermatology PLLC</div>
+          <div class="clinic-subtitle">Clinical handout and patient instruction document</div>
+        </div>
+        <div class="document-badge">${typeLabel}</div>
+      </header>
+
+      <h1 class="title">${titleLabel}</h1>
+      <div class="subtitle">${conditionLabel}</div>
+
+      <section class="meta-grid">
+        <div class="meta-row"><span class="meta-label">Patient:</span> ${patientName}</div>
+        <div class="meta-row"><span class="meta-label">DOB:</span> ${patientDob}</div>
+        <div class="meta-row"><span class="meta-label">Provider:</span> ${providerName}</div>
+        <div class="meta-row"><span class="meta-label">Follow-Up:</span> ${followUpDate}</div>
+        <div class="meta-row"><span class="meta-label">Category:</span> ${categoryLabel}</div>
+        <div class="meta-row"><span class="meta-label">Generated:</span> ${generatedOn}</div>
+      </section>
+
+      <section class="content">${contentHtml}</section>
+      ${disclaimerHtml}
+
+      <footer class="footer">
+        <div>Please contact the clinic for urgent concerns or worsening symptoms.</div>
+        <div>Printed ${generatedOn}</div>
+      </footer>
+    </main>
+  </body>
+</html>
+`;
+}
+
 export function HandoutsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const queryInstructionType = searchParams.get('instructionType') as InstructionType | null;
 
   const [loading, setLoading] = useState(true);
   const [handouts, setHandouts] = useState<Handout[]>([]);
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [instructionTypeFilter, setInstructionTypeFilter] = useState<InstructionType>(
+    queryInstructionType && INSTRUCTION_TYPE_LABELS[queryInstructionType]
+      ? queryInstructionType
+      : 'all',
+  );
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedHandout, setSelectedHandout] = useState<Handout | null>(null);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [updating, setUpdating] = useState(false);
 
-  const [formData, setFormData] = useState({
-    title: '',
-    category: 'Skin Conditions',
-    condition: '',
-    content: '',
-    isActive: true,
+  const [createForm, setCreateForm] = useState<HandoutFormState>(defaultFormState);
+  const [editForm, setEditForm] = useState<HandoutFormState>(defaultFormState);
+  const [personalization, setPersonalization] = useState<PersonalizationState>({
+    patientName: '',
+    patientDob: '',
+    providerName: '',
+    medicationName: '',
+    dosageInstructions: '',
+    labSummary: '',
+    followUpDate: '',
   });
+  const [patientOptions, setPatientOptions] = useState<PatientOption[]>([]);
+  const [patientSearch, setPatientSearch] = useState('');
+  const [selectedPatientId, setSelectedPatientId] = useState('');
+  const [patientsLoading, setPatientsLoading] = useState(false);
+  const [followUpLoading, setFollowUpLoading] = useState(false);
+
+  useEffect(() => {
+    if (queryInstructionType && INSTRUCTION_TYPE_LABELS[queryInstructionType]) {
+      setInstructionTypeFilter(queryInstructionType);
+    }
+  }, [queryInstructionType]);
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -51,34 +449,142 @@ export function HandoutsPage() {
       const params = new URLSearchParams();
       if (categoryFilter !== 'all') params.append('category', categoryFilter);
       if (searchTerm) params.append('search', searchTerm);
+      if (instructionTypeFilter !== 'all') params.append('instructionType', instructionTypeFilter);
+      params.append('isActive', 'true');
 
-      const response = await fetch(
-        `${API_BASE_URL}/api/handouts?${params}`,
-        {
-          headers: {
-            Authorization: `Bearer ${session.accessToken}`,
-            'x-tenant-id': session.tenantId,
-          },
-        }
-      );
+      const response = await fetch(`${API_BASE_URL}/api/handouts?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+          'x-tenant-id': session.tenantId,
+        },
+      });
 
-      if (!response.ok) throw new Error('Failed to load handouts');
+      if (!response.ok) throw new Error('Failed to load handout templates');
       const data = await response.json();
       setHandouts(Array.isArray(data) ? data : []);
-    } catch (err: any) {
-      showError(err.message || 'Failed to load handouts');
+    } catch (err: unknown) {
+      showError(getErrorMessage(err, 'Failed to load handout templates'));
     } finally {
       setLoading(false);
     }
-  }, [session, categoryFilter, searchTerm, showError]);
+  }, [session, categoryFilter, searchTerm, instructionTypeFilter, showError]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
+  const resetCreateForm = () => {
+    setCreateForm(defaultFormState);
+  };
+
+  const openPreview = (handout: Handout) => {
+    setSelectedHandout(handout);
+    setSelectedPatientId('');
+    setPatientSearch('');
+    setPersonalization({
+      patientName: '',
+      patientDob: '',
+      providerName: session?.user?.fullName || '',
+      medicationName: '',
+      dosageInstructions: '',
+      labSummary: '',
+      followUpDate: '',
+    });
+    setShowPreviewModal(true);
+  };
+
+  const loadPatientOptions = useCallback(async () => {
+    if (!session) return;
+    setPatientsLoading(true);
+    try {
+      const response = (await fetchPatients(session.tenantId, session.accessToken, {
+        limit: 100,
+        fields: 'id,firstName,lastName,dateOfBirth',
+      })) as PatientsResponseLike;
+      const rows = response.patients || response.data || [];
+      const normalized = rows.map((row) => ({
+        id: String(row.id),
+        firstName: String(row.firstName || ''),
+        lastName: String(row.lastName || ''),
+        dateOfBirth: row.dateOfBirth || '',
+      }));
+      setPatientOptions(normalized);
+    } catch {
+      showError('Failed to load patients for handout personalization');
+    } finally {
+      setPatientsLoading(false);
+    }
+  }, [session, showError]);
+
+  useEffect(() => {
+    if (!showPreviewModal || !session) return;
+    if (patientOptions.length > 0) return;
+    void loadPatientOptions();
+  }, [showPreviewModal, session, patientOptions.length, loadPatientOptions]);
+
+  const handleSelectPatient = useCallback(
+    async (patientId: string) => {
+      setSelectedPatientId(patientId);
+      if (!patientId || !session) return;
+
+      const selected = patientOptions.find((p) => p.id === patientId);
+      if (!selected) return;
+
+      setPersonalization((prev) => ({
+        ...prev,
+        patientName: `${selected.firstName} ${selected.lastName}`.trim(),
+        patientDob: formatDateLabel(selected.dateOfBirth),
+      }));
+
+      setFollowUpLoading(true);
+      try {
+        const appointmentsPayload = await fetchAppointments(session.tenantId, session.accessToken, {
+          patientId,
+        });
+        const appointments = (appointmentsPayload?.appointments || []) as Array<{
+          appointmentTypeName?: string;
+          scheduledStart?: string;
+          status?: string;
+        }>;
+
+        const now = Date.now();
+        const upcoming = appointments
+          .filter((appointment) => {
+            if (!appointment?.scheduledStart) return false;
+            const scheduledMs = new Date(appointment.scheduledStart).getTime();
+            if (Number.isNaN(scheduledMs) || scheduledMs < now) return false;
+            return ['scheduled', 'checked_in', 'in_room', 'with_provider'].includes(
+              (appointment.status || '').toLowerCase()
+            );
+          })
+          .sort((a, b) => {
+            const aMs = new Date(a.scheduledStart || '').getTime();
+            const bMs = new Date(b.scheduledStart || '').getTime();
+            return aMs - bMs;
+          });
+
+        const followUpCandidate =
+          upcoming.find((appointment) => /follow[\s-]?up/i.test(appointment.appointmentTypeName || '')) ||
+          upcoming[0];
+
+        if (followUpCandidate?.scheduledStart) {
+          setPersonalization((prev) => ({
+            ...prev,
+            followUpDate: formatDateLabel(followUpCandidate.scheduledStart),
+          }));
+        }
+      } catch {
+        // Leave follow-up date manual when appointment lookup fails.
+      } finally {
+        setFollowUpLoading(false);
+      }
+    },
+    [patientOptions, session]
+  );
+
   const handleCreate = async () => {
     if (!session) return;
-    if (!formData.title || !formData.condition || !formData.content) {
+    if (!createForm.title || !createForm.condition || !createForm.content) {
       showError('Title, condition, and content are required');
       return;
     }
@@ -92,31 +598,73 @@ export function HandoutsPage() {
           Authorization: `Bearer ${session.accessToken}`,
           'x-tenant-id': session.tenantId,
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(createForm),
       });
 
-      if (!response.ok) throw new Error('Failed to create handout');
+      if (!response.ok) throw new Error('Failed to create handout template');
 
-      showSuccess('Handout created successfully');
+      showSuccess('Template created');
       setShowCreateModal(false);
-      setFormData({
-        title: '',
-        category: 'Skin Conditions',
-        condition: '',
-        content: '',
-        isActive: true,
-      });
+      resetCreateForm();
       loadData();
-    } catch (err: any) {
-      showError(err.message || 'Failed to create handout');
+    } catch (err: unknown) {
+      showError(getErrorMessage(err, 'Failed to create handout template'));
     } finally {
       setCreating(false);
     }
   };
 
+  const openEdit = (handout: Handout) => {
+    setSelectedHandout(handout);
+    setEditForm({
+      title: handout.title,
+      category: handout.category,
+      condition: handout.condition,
+      content: handout.content,
+      instructionType: handout.instruction_type,
+      printDisclaimer:
+        handout.print_disclaimer ||
+        'For educational use only. Follow your provider instructions and call with concerns.',
+      isActive: handout.is_active,
+    });
+    setShowEditModal(true);
+  };
+
+  const handleUpdate = async () => {
+    if (!session || !selectedHandout) return;
+    if (!editForm.title || !editForm.condition || !editForm.content) {
+      showError('Title, condition, and content are required');
+      return;
+    }
+
+    setUpdating(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/handouts/${selectedHandout.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.accessToken}`,
+          'x-tenant-id': session.tenantId,
+        },
+        body: JSON.stringify(editForm),
+      });
+
+      if (!response.ok) throw new Error('Failed to update handout template');
+
+      showSuccess('Template updated');
+      setShowEditModal(false);
+      setSelectedHandout(null);
+      loadData();
+    } catch (err: unknown) {
+      showError(getErrorMessage(err, 'Failed to update handout template'));
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   const handleDelete = async (id: string) => {
     if (!session) return;
-    if (!window.confirm('Delete this handout? This cannot be undone.')) return;
+    if (!window.confirm('Delete this template? This cannot be undone.')) return;
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/handouts/${id}`, {
@@ -127,21 +675,67 @@ export function HandoutsPage() {
         },
       });
 
-      if (!response.ok) throw new Error('Failed to delete handout');
+      if (!response.ok) throw new Error('Failed to delete template');
 
-      showSuccess('Handout deleted');
+      showSuccess('Template deleted');
       loadData();
-    } catch (err: any) {
-      showError(err.message || 'Failed to delete handout');
+    } catch (err: unknown) {
+      showError(getErrorMessage(err, 'Failed to delete template'));
     }
   };
 
+  const renderedContent = useMemo(() => {
+    if (!selectedHandout) return '';
+    return renderTemplateContent(selectedHandout.content, personalization);
+  }, [selectedHandout, personalization]);
+
   const handlePrint = () => {
-    window.print();
+    if (!selectedHandout) return;
+
+    const printWindow = window.open('', '_blank', 'width=900,height=900');
+    if (!printWindow) {
+      showError('Unable to open print preview');
+      return;
+    }
+
+    const html = toPrintableHtml(
+      selectedHandout.title,
+      selectedHandout.condition,
+      renderedContent,
+      {
+        disclaimer: selectedHandout.print_disclaimer,
+        instructionType: selectedHandout.instruction_type,
+        category: selectedHandout.category,
+        patientName: personalization.patientName,
+        patientDob: personalization.patientDob,
+        providerName: personalization.providerName,
+        followUpDate: personalization.followUpDate,
+        generatedOn: getTodayDateLabel(),
+      },
+    );
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.onload = () => {
+      setTimeout(() => {
+        try {
+          printWindow.focus();
+          printWindow.print();
+        } catch {
+          showError('Unable to open print dialog. Check popup/print permissions in your browser.');
+        }
+      }, 150);
+    };
+    printWindow.onafterprint = () => {
+      printWindow.close();
+    };
   };
 
   const filteredHandouts = handouts.filter((h) => {
     if (categoryFilter !== 'all' && h.category !== categoryFilter) return false;
+    if (instructionTypeFilter !== 'all' && h.instruction_type !== instructionTypeFilter) return false;
+
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       return (
@@ -153,21 +747,43 @@ export function HandoutsPage() {
     return true;
   });
 
-  const groupedHandouts = filteredHandouts.reduce((acc, handout) => {
-    if (!acc[handout.category]) {
-      acc[handout.category] = [];
+  const groupedByType = filteredHandouts.reduce(
+    (acc, handout) => {
+      const key = handout.instruction_type || 'general';
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(handout);
+      return acc;
+    },
+    {} as Record<string, Handout[]>,
+  );
+
+  const filteredPatients = useMemo(() => {
+    const term = patientSearch.trim().toLowerCase();
+    if (!term) return patientOptions;
+    return patientOptions.filter((patient) => {
+      const fullName = `${patient.firstName} ${patient.lastName}`.toLowerCase();
+      const dob = formatDateLabel(patient.dateOfBirth).toLowerCase();
+      return fullName.includes(term) || dob.includes(term);
+    });
+  }, [patientOptions, patientSearch]);
+
+  const setInstructionFilter = (next: InstructionType) => {
+    setInstructionTypeFilter(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === 'all') {
+      params.delete('instructionType');
+    } else {
+      params.set('instructionType', next);
     }
-    acc[handout.category].push(handout);
-    return acc;
-  }, {} as Record<string, Handout[]>);
+    setSearchParams(params);
+  };
 
   return (
     <div className="handouts-page">
-      {/* Action Bar */}
       <div className="ema-action-bar">
         <button type="button" className="ema-action-btn" onClick={() => setShowCreateModal(true)}>
           <span className="icon">+</span>
-          Create Handout
+          New Template
         </button>
         <button type="button" className="ema-action-btn" onClick={loadData}>
           <span className="icon"></span>
@@ -175,11 +791,25 @@ export function HandoutsPage() {
         </button>
       </div>
 
-      <div className="ema-section-header">Patient Education Handout Library</div>
+      <div className="ema-section-header">Clinical Print Templates</div>
 
-      {/* Filters */}
       <div className="ema-filter-panel">
         <div className="ema-filter-row">
+          <div className="ema-filter-group">
+            <label className="ema-filter-label">Template Type</label>
+            <select
+              className="ema-filter-select"
+              value={instructionTypeFilter}
+              onChange={(e) => setInstructionFilter(e.target.value as InstructionType)}
+            >
+              {(Object.keys(INSTRUCTION_TYPE_LABELS) as InstructionType[]).map((type) => (
+                <option key={type} value={type}>
+                  {INSTRUCTION_TYPE_LABELS[type]}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="ema-filter-group">
             <label className="ema-filter-label">Category</label>
             <select
@@ -201,7 +831,7 @@ export function HandoutsPage() {
             <input
               type="text"
               className="ema-filter-select"
-              placeholder="Search handouts..."
+              placeholder="Search templates..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -209,12 +839,25 @@ export function HandoutsPage() {
         </div>
       </div>
 
-      {/* Handouts Grid */}
+      <div
+        style={{
+          margin: '0 1rem 1rem 1rem',
+          background: '#eff6ff',
+          border: '1px solid #bfdbfe',
+          borderRadius: '8px',
+          padding: '0.75rem 1rem',
+          fontSize: '0.85rem',
+          color: '#1e3a8a',
+        }}
+      >
+        Placeholder tokens supported in templates: {PLACEHOLDER_GUIDE.join(' • ')}
+      </div>
+
       {loading ? (
         <Skeleton variant="card" height={400} />
       ) : (
         <div style={{ padding: '1rem' }}>
-          {Object.keys(groupedHandouts).length === 0 ? (
+          {Object.keys(groupedByType).length === 0 ? (
             <div
               style={{
                 textAlign: 'center',
@@ -224,40 +867,37 @@ export function HandoutsPage() {
                 borderRadius: '8px',
               }}
             >
-              <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
               <div style={{ fontSize: '1.125rem', fontWeight: 500, marginBottom: '0.5rem' }}>
-                No handouts found
+                No templates found
               </div>
               <div style={{ fontSize: '0.875rem' }}>
-                {searchTerm || categoryFilter !== 'all'
-                  ? 'Try adjusting your filters'
-                  : 'Create your first patient education handout'}
+                Try adjusting filters or create a new template.
               </div>
             </div>
           ) : (
-            Object.entries(groupedHandouts).map(([category, categoryHandouts]) => (
-              <div key={category} style={{ marginBottom: '2rem' }}>
+            Object.entries(groupedByType).map(([type, templates]) => (
+              <div key={type} style={{ marginBottom: '2rem' }}>
                 <h3
                   style={{
-                    fontSize: '1.125rem',
-                    fontWeight: 600,
+                    fontSize: '1.05rem',
+                    fontWeight: 700,
                     color: '#1f2937',
                     marginBottom: '1rem',
                     borderBottom: '2px solid #e5e7eb',
                     paddingBottom: '0.5rem',
                   }}
                 >
-                  {category} ({categoryHandouts.length})
+                  {formatInstructionType(type as Exclude<InstructionType, 'all'>)} ({templates.length})
                 </h3>
 
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
                     gap: '1rem',
                   }}
                 >
-                  {categoryHandouts.map((handout) => (
+                  {templates.map((handout) => (
                     <div
                       key={handout.id}
                       style={{
@@ -265,63 +905,62 @@ export function HandoutsPage() {
                         border: '1px solid #e5e7eb',
                         borderRadius: '8px',
                         padding: '1rem',
-                        cursor: 'pointer',
                         transition: 'all 0.2s',
-                      }}
-                      onClick={() => {
-                        setSelectedHandout(handout);
-                        setShowPreviewModal(true);
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.1)';
-                        e.currentTarget.style.borderColor = '#3b82f6';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.boxShadow = 'none';
-                        e.currentTarget.style.borderColor = '#e5e7eb';
                       }}
                     >
                       <div
                         style={{
-                          fontSize: '1rem',
-                          fontWeight: 600,
-                          color: '#1f2937',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'flex-start',
+                          gap: '0.5rem',
                           marginBottom: '0.5rem',
                         }}
                       >
-                        {handout.title}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '0.875rem',
-                          color: '#6b7280',
-                          marginBottom: '0.75rem',
-                        }}
-                      >
-                        {handout.condition}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '0.75rem',
-                          color: '#9ca3af',
-                          borderTop: '1px solid #f3f4f6',
-                          paddingTop: '0.5rem',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                        }}
-                      >
-                        <span>Click to preview</span>
-                        <button
-                          type="button"
-                          className="btn-sm btn-danger"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(handout.id);
+                        <div style={{ fontSize: '1rem', fontWeight: 700, color: '#1f2937' }}>
+                          {handout.title}
+                        </div>
+                        <span
+                          style={{
+                            background: handout.is_system_template ? '#ecfccb' : '#e0f2fe',
+                            color: handout.is_system_template ? '#3f6212' : '#075985',
+                            fontSize: '0.7rem',
+                            borderRadius: '999px',
+                            padding: '0.15rem 0.5rem',
+                            fontWeight: 600,
                           }}
                         >
-                          Delete
+                          {handout.is_system_template ? 'System' : 'Custom'}
+                        </span>
+                      </div>
+
+                      <div style={{ fontSize: '0.85rem', color: '#4b5563', marginBottom: '0.5rem' }}>
+                        {handout.condition}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.75rem' }}>
+                        Category: {handout.category}
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.75rem' }}>
+                        {handout.content.slice(0, 110)}
+                        {handout.content.length > 110 ? '...' : ''}
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <button type="button" className="btn-primary btn-sm" onClick={() => openPreview(handout)}>
+                          Preview / Print
                         </button>
+                        <button type="button" className="btn-secondary btn-sm" onClick={() => openEdit(handout)}>
+                          Edit
+                        </button>
+                        {!handout.is_system_template && (
+                          <button
+                            type="button"
+                            className="btn-sm btn-danger"
+                            onClick={() => handleDelete(handout.id)}
+                          >
+                            Delete
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -332,97 +971,233 @@ export function HandoutsPage() {
         </div>
       )}
 
-      {/* Preview Modal */}
       <Modal
         isOpen={showPreviewModal}
-        title={selectedHandout?.title || ''}
+        title={selectedHandout?.title || 'Template Preview'}
         onClose={() => setShowPreviewModal(false)}
         size="large"
       >
         {selectedHandout && (
           <>
-            <div style={{ padding: '1rem' }}>
+            <div style={{ padding: '1rem', display: 'grid', gap: '1rem' }}>
               <div
                 style={{
-                  background: '#f9fafb',
-                  padding: '1rem',
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
                   borderRadius: '8px',
-                  marginBottom: '1rem',
+                  padding: '0.75rem',
                 }}
               >
-                <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
-                  {selectedHandout.condition}
-                </div>
-                <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-                  Category: {selectedHandout.category}
+                <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>{selectedHandout.condition}</div>
+                <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                  {formatInstructionType(selectedHandout.instruction_type)} • {selectedHandout.category}
                 </div>
               </div>
 
               <div
                 style={{
-                  fontSize: '0.9375rem',
-                  lineHeight: 1.6,
-                  color: '#374151',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '8px',
+                  padding: '0.75rem',
+                  background: '#ffffff',
+                }}
+              >
+                <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Personalize before printing</div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr',
+                    gap: '0.5rem',
+                    marginBottom: '0.5rem',
+                  }}
+                >
+                  <input
+                    type="text"
+                    placeholder="Search patient by name or DOB"
+                    value={patientSearch}
+                    onChange={(e) => setPatientSearch(e.target.value)}
+                    disabled={patientsLoading}
+                  />
+                  <select
+                    value={selectedPatientId}
+                    onChange={(e) => void handleSelectPatient(e.target.value)}
+                    disabled={patientsLoading}
+                  >
+                    <option value="">
+                      {patientsLoading ? 'Loading patients...' : 'Select patient to auto-fill demographics'}
+                    </option>
+                    {filteredPatients.slice(0, 150).map((patient) => (
+                      <option key={patient.id} value={patient.id}>
+                        {patient.lastName}, {patient.firstName}
+                        {patient.dateOfBirth ? ` • DOB ${formatDateLabel(patient.dateOfBirth)}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                    Selecting a patient auto-fills DOB and next follow-up date (if an upcoming visit exists).
+                    {followUpLoading ? ' Looking up follow-up date...' : ''}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                    gap: '0.5rem',
+                  }}
+                >
+                  <input
+                    type="text"
+                    placeholder="Patient name"
+                    value={personalization.patientName}
+                    onChange={(e) =>
+                      setPersonalization((prev) => ({ ...prev, patientName: e.target.value }))
+                    }
+                  />
+                  <input
+                    type="text"
+                    placeholder="DOB"
+                    value={personalization.patientDob}
+                    onChange={(e) =>
+                      setPersonalization((prev) => ({ ...prev, patientDob: e.target.value }))
+                    }
+                  />
+                  <input
+                    type="text"
+                    placeholder="Provider name"
+                    value={personalization.providerName}
+                    onChange={(e) =>
+                      setPersonalization((prev) => ({ ...prev, providerName: e.target.value }))
+                    }
+                  />
+                  <input
+                    type="text"
+                    placeholder="Follow-up date"
+                    value={personalization.followUpDate}
+                    onChange={(e) =>
+                      setPersonalization((prev) => ({ ...prev, followUpDate: e.target.value }))
+                    }
+                  />
+                  <input
+                    type="text"
+                    placeholder="Medication name"
+                    value={personalization.medicationName}
+                    onChange={(e) =>
+                      setPersonalization((prev) => ({ ...prev, medicationName: e.target.value }))
+                    }
+                  />
+                  <input
+                    type="text"
+                    placeholder="Dose instructions"
+                    value={personalization.dosageInstructions}
+                    onChange={(e) =>
+                      setPersonalization((prev) => ({ ...prev, dosageInstructions: e.target.value }))
+                    }
+                  />
+                </div>
+                <textarea
+                  style={{ marginTop: '0.5rem', width: '100%' }}
+                  rows={3}
+                  placeholder="Lab summary / extra instructions"
+                  value={personalization.labSummary}
+                  onChange={(e) =>
+                    setPersonalization((prev) => ({ ...prev, labSummary: e.target.value }))
+                  }
+                />
+              </div>
+
+              <div
+                style={{
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '8px',
+                  background: '#fff',
+                  padding: '1rem',
                   whiteSpace: 'pre-wrap',
+                  lineHeight: 1.6,
+                  fontSize: '0.95rem',
                 }}
               >
-                {selectedHandout.content}
+                {renderedContent}
               </div>
 
-              <div
-                style={{
-                  marginTop: '2rem',
-                  paddingTop: '1rem',
-                  borderTop: '1px solid #e5e7eb',
-                  fontSize: '0.75rem',
-                  color: '#9ca3af',
-                  textAlign: 'center',
-                }}
-              >
-                This handout is for educational purposes only. Always consult with your healthcare
-                provider for medical advice.
-              </div>
+              {selectedHandout.print_disclaimer && (
+                <div style={{ fontSize: '0.8rem', color: '#6b7280', borderTop: '1px solid #e5e7eb', paddingTop: '0.5rem' }}>
+                  {selectedHandout.print_disclaimer}
+                </div>
+              )}
             </div>
 
             <div className="modal-footer">
+              <div style={{ fontSize: '0.78rem', color: '#6b7280', marginRight: 'auto' }}>
+                Printing uses your browser + system printer dialog. Choose printer after clicking Print.
+              </div>
+              <button type="button" className="btn-secondary" onClick={() => setShowPreviewModal(false)}>
+                Close
+              </button>
               <button
                 type="button"
                 className="btn-secondary"
-                onClick={() => setShowPreviewModal(false)}
+                onClick={() => {
+                  setShowPreviewModal(false);
+                  openEdit(selectedHandout);
+                }}
               >
-                Close
+                Edit Template
               </button>
               <button type="button" className="btn-primary" onClick={handlePrint}>
-                Print Handout
+                Print
               </button>
             </div>
           </>
         )}
       </Modal>
 
-      {/* Create Modal */}
       <Modal
         isOpen={showCreateModal}
-        title="Create Patient Handout"
-        onClose={() => setShowCreateModal(false)}
+        title="Create Template"
+        onClose={() => {
+          setShowCreateModal(false);
+          resetCreateForm();
+        }}
+        size="large"
       >
         <div className="modal-form">
           <div className="form-field">
             <label>Title *</label>
             <input
               type="text"
-              value={formData.title}
-              onChange={(e) => setFormData((prev) => ({ ...prev, title: e.target.value }))}
-              placeholder="e.g., Understanding Eczema"
+              value={createForm.title}
+              onChange={(e) => setCreateForm((prev) => ({ ...prev, title: e.target.value }))}
+              placeholder="Template title"
             />
           </div>
 
           <div className="form-row">
             <div className="form-field">
+              <label>Template Type *</label>
+              <select
+                value={createForm.instructionType}
+                onChange={(e) =>
+                  setCreateForm((prev) => ({
+                    ...prev,
+                    instructionType: e.target.value as Exclude<InstructionType, 'all'>,
+                  }))
+                }
+              >
+                {(Object.keys(INSTRUCTION_TYPE_LABELS) as InstructionType[])
+                  .filter((type) => type !== 'all')
+                  .map((type) => (
+                    <option key={type} value={type}>
+                      {INSTRUCTION_TYPE_LABELS[type]}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div className="form-field">
               <label>Category *</label>
               <select
-                value={formData.category}
-                onChange={(e) => setFormData((prev) => ({ ...prev, category: e.target.value }))}
+                value={createForm.category}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, category: e.target.value }))}
               >
                 {CATEGORIES.map((cat) => (
                   <option key={cat} value={cat}>
@@ -431,38 +1206,39 @@ export function HandoutsPage() {
                 ))}
               </select>
             </div>
+          </div>
 
-            <div className="form-field">
-              <label>Condition *</label>
-              <input
-                type="text"
-                value={formData.condition}
-                onChange={(e) => setFormData((prev) => ({ ...prev, condition: e.target.value }))}
-                placeholder="e.g., Atopic Dermatitis"
-              />
-            </div>
+          <div className="form-field">
+            <label>Condition *</label>
+            <input
+              type="text"
+              value={createForm.condition}
+              onChange={(e) => setCreateForm((prev) => ({ ...prev, condition: e.target.value }))}
+              placeholder="e.g., Rash flare, lab review, post biopsy care"
+            />
           </div>
 
           <div className="form-field">
             <label>Content *</label>
             <textarea
-              value={formData.content}
-              onChange={(e) => setFormData((prev) => ({ ...prev, content: e.target.value }))}
-              placeholder="Enter the full handout content here..."
-              rows={15}
-              style={{ fontFamily: 'monospace', fontSize: '0.875rem' }}
+              value={createForm.content}
+              onChange={(e) => setCreateForm((prev) => ({ ...prev, content: e.target.value }))}
+              placeholder="Use placeholder tokens like {{patient_name}} and {{dosage_instructions}}"
+              rows={14}
+              style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
             />
           </div>
 
           <div className="form-field">
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input
-                type="checkbox"
-                checked={formData.isActive}
-                onChange={(e) => setFormData((prev) => ({ ...prev, isActive: e.target.checked }))}
-              />
-              Active (visible to staff)
-            </label>
+            <label>Print Disclaimer</label>
+            <textarea
+              value={createForm.printDisclaimer}
+              onChange={(e) =>
+                setCreateForm((prev) => ({ ...prev, printDisclaimer: e.target.value }))
+              }
+              rows={2}
+              placeholder="Optional footer disclaimer"
+            />
           </div>
         </div>
 
@@ -471,7 +1247,111 @@ export function HandoutsPage() {
             Cancel
           </button>
           <button type="button" className="btn-primary" onClick={handleCreate} disabled={creating}>
-            {creating ? 'Creating...' : 'Create Handout'}
+            {creating ? 'Creating...' : 'Create Template'}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showEditModal}
+        title={`Edit Template${selectedHandout ? `: ${selectedHandout.title}` : ''}`}
+        onClose={() => setShowEditModal(false)}
+        size="large"
+      >
+        <div className="modal-form">
+          <div className="form-field">
+            <label>Title *</label>
+            <input
+              type="text"
+              value={editForm.title}
+              onChange={(e) => setEditForm((prev) => ({ ...prev, title: e.target.value }))}
+            />
+          </div>
+
+          <div className="form-row">
+            <div className="form-field">
+              <label>Template Type *</label>
+              <select
+                value={editForm.instructionType}
+                onChange={(e) =>
+                  setEditForm((prev) => ({
+                    ...prev,
+                    instructionType: e.target.value as Exclude<InstructionType, 'all'>,
+                  }))
+                }
+              >
+                {(Object.keys(INSTRUCTION_TYPE_LABELS) as InstructionType[])
+                  .filter((type) => type !== 'all')
+                  .map((type) => (
+                    <option key={type} value={type}>
+                      {INSTRUCTION_TYPE_LABELS[type]}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <div className="form-field">
+              <label>Category *</label>
+              <select
+                value={editForm.category}
+                onChange={(e) => setEditForm((prev) => ({ ...prev, category: e.target.value }))}
+              >
+                {CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="form-field">
+            <label>Condition *</label>
+            <input
+              type="text"
+              value={editForm.condition}
+              onChange={(e) => setEditForm((prev) => ({ ...prev, condition: e.target.value }))}
+            />
+          </div>
+
+          <div className="form-field">
+            <label>Content *</label>
+            <textarea
+              value={editForm.content}
+              onChange={(e) => setEditForm((prev) => ({ ...prev, content: e.target.value }))}
+              rows={14}
+              style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
+            />
+          </div>
+
+          <div className="form-field">
+            <label>Print Disclaimer</label>
+            <textarea
+              value={editForm.printDisclaimer}
+              onChange={(e) =>
+                setEditForm((prev) => ({ ...prev, printDisclaimer: e.target.value }))
+              }
+              rows={2}
+            />
+          </div>
+
+          <div className="form-field">
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={editForm.isActive}
+                onChange={(e) => setEditForm((prev) => ({ ...prev, isActive: e.target.checked }))}
+              />
+              Active
+            </label>
+          </div>
+        </div>
+
+        <div className="modal-footer">
+          <button type="button" className="btn-secondary" onClick={() => setShowEditModal(false)}>
+            Cancel
+          </button>
+          <button type="button" className="btn-primary" onClick={handleUpdate} disabled={updating}>
+            {updating ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
       </Modal>

@@ -315,6 +315,22 @@ export interface ExtractedData {
   followUpTasks: Array<{ task: string; priority: string; dueDate?: string; confidence: number }>;
 }
 
+export interface ClinicalNoteGenerationMetadata {
+  provider: 'openai' | 'anthropic' | 'mock';
+  model: string;
+  prompt: string;
+  systemPrompt?: string;
+  agentConfigId?: string | null;
+  appointmentTypeName?: string;
+  specialtyFocus?: string;
+}
+
+export type ClinicalNoteGenerationResult =
+  ClinicalNote &
+  ExtractedData & {
+    generationMetadata: ClinicalNoteGenerationMetadata;
+  };
+
 /**
  * Transcribe audio using OpenAI transcription API (or mock if not configured)
  */
@@ -1056,6 +1072,10 @@ export interface PatientContext {
   patientAge?: number;
   chiefComplaint?: string;
   relevantHistory?: string;
+  providerName?: string;
+  appointmentTypeName?: string;
+  appointmentTypeCategory?: string;
+  specialtyFocus?: string;
 }
 
 function resolveOpenAINoteModel(agentConfig?: AgentConfiguration | null): string {
@@ -1189,7 +1209,7 @@ export async function generateClinicalNote(
   segments: TranscriptionSegment[],
   agentConfig?: AgentConfiguration | null,
   patientContext?: PatientContext
-): Promise<ClinicalNote & ExtractedData> {
+): Promise<ClinicalNoteGenerationResult> {
   // Use real AI if available
   const anthropicKey = getAnthropicKey();
   const openAIKey = getOpenAIKey();
@@ -1233,7 +1253,7 @@ export async function generateClinicalNote(
   }
 
   // Fall back to mock implementation
-  return await mockGenerateClinicalNote(transcriptText, segments);
+  return await mockGenerateClinicalNote(transcriptText, segments, agentConfig, patientContext);
 }
 
 /**
@@ -1246,7 +1266,7 @@ async function generateNoteWithClaude(
   agentConfig: AgentConfiguration | null | undefined,
   patientContext: PatientContext | undefined,
   anthropicKey: string
-): Promise<ClinicalNote & ExtractedData> {
+): Promise<ClinicalNoteGenerationResult> {
   const model = resolveAnthropicModel(agentConfig);
   logger.info('Generating clinical note with Claude', {
     agentConfigId: agentConfig?.id,
@@ -1257,7 +1277,7 @@ async function generateNoteWithClaude(
   // Build prompt using agent config if available, otherwise use default
   const prompt = agentConfig
     ? buildConfigurablePrompt(transcriptText, segments, agentConfig, patientContext)
-    : buildClinicalNotePrompt(transcriptText, segments);
+    : buildClinicalNotePrompt(transcriptText, segments, patientContext);
 
   // Use model and settings from config if available
   const temperature = agentConfig?.temperature || 0.3;
@@ -1309,7 +1329,19 @@ async function generateNoteWithClaude(
 
   const noteText = result.content[0].text;
 
-  return parseAIGeneratedNote(noteText, segments, agentConfig);
+  const parsed = parseAIGeneratedNote(noteText, segments, agentConfig);
+  return {
+    ...parsed,
+    generationMetadata: {
+      provider: 'anthropic',
+      model,
+      prompt,
+      systemPrompt: agentConfig?.systemPrompt,
+      agentConfigId: agentConfig?.id || null,
+      appointmentTypeName: patientContext?.appointmentTypeName,
+      specialtyFocus: patientContext?.specialtyFocus,
+    }
+  };
 }
 
 /**
@@ -1322,7 +1354,7 @@ async function generateNoteWithGPT4(
   agentConfig: AgentConfiguration | null | undefined,
   patientContext: PatientContext | undefined,
   openAIKey: string
-): Promise<ClinicalNote & ExtractedData> {
+): Promise<ClinicalNoteGenerationResult> {
   const model = resolveOpenAINoteModel(agentConfig);
   logger.info('Generating clinical note with OpenAI', {
     agentConfigId: agentConfig?.id,
@@ -1333,7 +1365,7 @@ async function generateNoteWithGPT4(
   // Build prompt using agent config if available, otherwise use default
   const prompt = agentConfig
     ? buildConfigurablePrompt(transcriptText, segments, agentConfig, patientContext)
-    : buildClinicalNotePrompt(transcriptText, segments);
+    : buildClinicalNotePrompt(transcriptText, segments, patientContext);
 
   // Use settings from config if available
   const temperature = agentConfig?.temperature || 0.3;
@@ -1390,14 +1422,79 @@ async function generateNoteWithGPT4(
 
   const noteText = result.choices[0].message.content;
 
-  return parseAIGeneratedNote(noteText, segments, agentConfig);
+  const parsed = parseAIGeneratedNote(noteText, segments, agentConfig);
+  return {
+    ...parsed,
+    generationMetadata: {
+      provider: 'openai',
+      model,
+      prompt,
+      systemPrompt,
+      agentConfigId: agentConfig?.id || null,
+      appointmentTypeName: patientContext?.appointmentTypeName,
+      specialtyFocus: patientContext?.specialtyFocus,
+    }
+  };
 }
 
 /**
  * Build prompt for AI note generation
  */
-function buildClinicalNotePrompt(transcriptText: string, segments: TranscriptionSegment[]): string {
+function buildPromptContextBlock(patientContext?: PatientContext): string {
+  if (!patientContext) {
+    return '';
+  }
+
+  const contextLines = [
+    patientContext.patientName ? `- Patient Name: ${patientContext.patientName}` : null,
+    patientContext.patientAge !== undefined ? `- Patient Age: ${patientContext.patientAge}` : null,
+    patientContext.providerName ? `- Provider: ${patientContext.providerName}` : null,
+    patientContext.appointmentTypeName ? `- Visit Type: ${patientContext.appointmentTypeName}` : null,
+    patientContext.appointmentTypeCategory ? `- Visit Category: ${patientContext.appointmentTypeCategory}` : null,
+    patientContext.specialtyFocus ? `- Specialty Focus: ${patientContext.specialtyFocus}` : null,
+    patientContext.chiefComplaint ? `- Known Chief Complaint: ${patientContext.chiefComplaint}` : null,
+    patientContext.relevantHistory ? `- Relevant Existing History: ${patientContext.relevantHistory}` : null,
+  ].filter((line): line is string => Boolean(line));
+
+  if (contextLines.length === 0) {
+    return '';
+  }
+
+  return `PATIENT/VISIT CONTEXT:\n${contextLines.join('\n')}`;
+}
+
+function buildDocumentationRules(patientContext?: PatientContext): string {
+  const rules = [
+    '- Only document facts supported by the transcript or supplied visit context.',
+    '- If a section is missing material information, explicitly state "Not documented" instead of inventing content.',
+    '- Do not create a normal review of systems or normal physical exam for systems that were not actually discussed.',
+    '- Distinguish clearly between patient-reported symptoms, provider-observed findings, and diagnostic impression.',
+    '- For dermatology exam content, preserve lesion morphology, color, distribution, location, size, scale, crust, pigment change, and symptom descriptors when stated.',
+    '- For procedures, only document consent, site, preparation, anesthesia, specimen handling, wound care, and follow-up instructions if they are actually supported by the transcript/context.',
+    '- Keep the assessment and plan clinically specific and actionable, without padding or generic filler.',
+    '- Suggested ICD-10 and CPT codes must be grounded in the documented visit type and findings.',
+  ];
+
+  const specialty = `${patientContext?.specialtyFocus || ''} ${patientContext?.appointmentTypeCategory || ''}`.toLowerCase();
+  if (specialty.includes('cosmetic')) {
+    rules.push('- For cosmetic/self-pay visits, do not invent a medical diagnosis solely to satisfy billing. Focus on goals, counseling, candidacy, risks, consent, and treatment planning.');
+  }
+
+  if (specialty.includes('mohs')) {
+    rules.push('- For Mohs or surgical visits, prioritize stage-specific findings, measurements, reconstruction details, pathology correlation, and postoperative instructions.');
+  }
+
+  return `DOCUMENTATION RULES:\n${rules.join('\n')}`;
+}
+
+function buildClinicalNotePrompt(
+  transcriptText: string,
+  segments: TranscriptionSegment[],
+  patientContext?: PatientContext
+): string {
   const { patientStatements, doctorStatements } = splitStatementsByRole(segments);
+  const contextBlock = buildPromptContextBlock(patientContext);
+  const documentationRules = buildDocumentationRules(patientContext);
 
   return `You are an expert dermatology medical scribe. Generate a comprehensive SOAP clinical note from the following patient-provider conversation transcript.
 
@@ -1409,6 +1506,8 @@ ${patientStatements.join(' ')}
 
 PROVIDER STATEMENTS:
 ${doctorStatements.join(' ')}
+
+${contextBlock ? `${contextBlock}\n\n` : ''}${documentationRules}
 
 Please generate a structured clinical note in the following JSON format:
 
@@ -1466,6 +1565,8 @@ REQUIREMENTS:
 - Create follow-up tasks based on provider instructions
 - Provide confidence scores for each section
 - Be thorough but concise
+- Keep unsupported assumptions out of the note
+- If the transcript does not support a complete ROS, exam, diagnosis, or code suggestion, return "Not documented" or an empty list as appropriate
 
 DIFFERENTIAL_DIAGNOSES (array of 2-5 possible conditions):
 - Rank by confidence level based on clinical presentation
@@ -1551,6 +1652,10 @@ function buildConfigurablePrompt(
   prompt = prompt.replace(/\{\{patientAge\}\}/g, patientContext?.patientAge?.toString() || 'Unknown');
   prompt = prompt.replace(/\{\{chiefComplaint\}\}/g, patientContext?.chiefComplaint || 'See transcript');
   prompt = prompt.replace(/\{\{relevantHistory\}\}/g, patientContext?.relevantHistory || 'See transcript');
+  prompt = prompt.replace(/\{\{providerName\}\}/g, patientContext?.providerName || 'Treating clinician');
+  prompt = prompt.replace(/\{\{appointmentTypeName\}\}/g, patientContext?.appointmentTypeName || 'Unspecified visit');
+  prompt = prompt.replace(/\{\{appointmentTypeCategory\}\}/g, patientContext?.appointmentTypeCategory || 'Unspecified category');
+  prompt = prompt.replace(/\{\{specialtyFocus\}\}/g, patientContext?.specialtyFocus || agentConfig.specialtyFocus || 'general');
   prompt = prompt.replace(/\{\{sections\}\}/g, sections.join(', '));
 
   // Build expected output JSON schema based on configured sections
@@ -1581,12 +1686,21 @@ function buildConfigurablePrompt(
   };
 
   // Append additional context
+  const contextBlock = buildPromptContextBlock(patientContext);
+  const documentationRules = buildDocumentationRules({
+    ...patientContext,
+    specialtyFocus: patientContext?.specialtyFocus || agentConfig.specialtyFocus,
+  });
+
   prompt += `
+${contextBlock ? `\n${contextBlock}\n` : ''}
 ${terminologyGuidance}
 ${focusAreasGuidance}
 ${defaultCodesGuidance}
 
 SECTION REQUIREMENTS:${sectionInstructions}
+
+${documentationRules}
 
 OUTPUT FORMAT: ${agentConfig.outputFormat || 'soap'}
 VERBOSITY LEVEL: ${agentConfig.verbosityLevel || 'standard'}
@@ -2022,8 +2136,10 @@ function calculateDueDate(interval: string): string {
  */
 async function mockGenerateClinicalNote(
   transcriptText: string,
-  segments: TranscriptionSegment[]
-): Promise<ClinicalNote & ExtractedData> {
+  segments: TranscriptionSegment[],
+  agentConfig?: AgentConfiguration | null,
+  patientContext?: PatientContext
+): Promise<ClinicalNoteGenerationResult> {
   logger.info('Using mock note generation (no API key configured)');
 
   // Simulate AI processing delay
@@ -2032,13 +2148,17 @@ async function mockGenerateClinicalNote(
     await new Promise(resolve => setTimeout(resolve, delayMs));
   }
 
-  return mockGenerateClinicalNoteSync(segments);
+  return mockGenerateClinicalNoteSync(segments, agentConfig, patientContext);
 }
 
 /**
  * Synchronous mock note generation
  */
-function mockGenerateClinicalNoteSync(segments: TranscriptionSegment[]): ClinicalNote & ExtractedData {
+function mockGenerateClinicalNoteSync(
+  segments: TranscriptionSegment[],
+  agentConfig?: AgentConfiguration | null,
+  patientContext?: PatientContext
+): ClinicalNoteGenerationResult {
   // Extract patient statements vs doctor observations
   const { patientStatements, doctorStatements } = splitStatementsByRole(segments);
   const transcriptText = segments.map(s => toSafeString(s.text)).filter(Boolean).join(' ');
@@ -2074,7 +2194,21 @@ function mockGenerateClinicalNoteSync(segments: TranscriptionSegment[]): Clinica
     followUpTasks: extractFollowUpTasks(doctorStatements)
   };
 
-  return { ...note, ...extracted };
+  return {
+    ...note,
+    ...extracted,
+    generationMetadata: {
+      provider: 'mock',
+      model: agentConfig?.aiModel || 'mock-dermatology-scribe',
+      prompt: agentConfig
+        ? buildConfigurablePrompt(transcriptText, segments, agentConfig, patientContext)
+        : buildClinicalNotePrompt(transcriptText, segments, patientContext),
+      systemPrompt: agentConfig?.systemPrompt,
+      agentConfigId: agentConfig?.id || null,
+      appointmentTypeName: patientContext?.appointmentTypeName,
+      specialtyFocus: patientContext?.specialtyFocus,
+    }
+  };
 }
 
 function generateChiefComplaint(patientStatements: string[]): string {

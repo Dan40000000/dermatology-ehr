@@ -786,7 +786,12 @@ consentsRouter.get(
 const createTemplateSchema = z.object({
   name: z.string().min(1).max(255),
   formType: z.string().min(1).max(100),
-  contentHtml: z.string().min(1),
+  contentHtml: z
+    .string()
+    .min(1)
+    .refine((value) => !/<script[\s>]|javascript:|on\w+\s*=/i.test(value), {
+      message: "contentHtml contains unsupported scriptable markup",
+    }),
   requiredFields: z.array(z.string()).optional(),
   procedureCodes: z.array(z.string()).optional(),
   version: z.string().max(50).optional(),

@@ -1,5 +1,122 @@
 import { pool } from "./pool";
 
+const GENERAL_DERMATOLOGY_TREATMENT_CONSENT_HTML = `
+<div style="font-family: Arial, sans-serif; line-height: 1.65; color: #111827;">
+  <h2 style="margin-bottom: 0.5rem;">General Dermatology Consent for Evaluation and Treatment</h2>
+  <p>
+    I authorize the dermatology physicians, advanced practice clinicians, nurses, medical assistants, and other
+    clinical staff involved in my care to perform evaluation, diagnostic testing, treatment, and routine office
+    procedures that are medically indicated for my skin, hair, or nail condition during this visit and related follow-up care.
+  </p>
+
+  <h3 style="margin-top: 1.25rem;">1. Scope of Care</h3>
+  <p>This consent includes, when clinically appropriate:</p>
+  <ul>
+    <li>history, physical examination, dermoscopy, and review of photographs or outside records;</li>
+    <li>routine dermatology procedures such as lesion destruction, cryotherapy, injections, drainage, wound care, and dressing changes;</li>
+    <li>diagnostic skin procedures such as shave, punch, or excisional biopsy and specimen handling;</li>
+    <li>administration of local anesthetic and routine aftercare instructions.</li>
+  </ul>
+  <p>
+    I understand that some higher-risk, cosmetic, surgical, or device-based treatments may require an additional
+    procedure-specific consent before they are performed.
+  </p>
+
+  <h3 style="margin-top: 1.25rem;">2. Risks and Possible Complications</h3>
+  <p>
+    I understand that no treatment is completely risk-free. Depending on the condition being treated and the procedure
+    performed, potential risks may include pain, bleeding, bruising, swelling, infection, blistering, poor wound healing,
+    scarring, keloid formation, pigment change, temporary or permanent numbness, allergic reaction, incomplete removal,
+    recurrence of the condition, and the need for additional treatment.
+  </p>
+  <p>
+    When local anesthetic is used, I understand there may be temporary burning, numbness, swelling, bruising, or in rare
+    cases an allergic or other unexpected reaction.
+  </p>
+
+  <h3 style="margin-top: 1.25rem;">3. Alternatives and Right to Refuse</h3>
+  <p>
+    I understand that reasonable alternatives may include observation, medications, delaying treatment, referral, or no
+    treatment at all. I have had the opportunity to ask questions, receive answers I understand, and choose whether to
+    proceed. I may refuse treatment or withdraw consent before a procedure begins.
+  </p>
+
+  <h3 style="margin-top: 1.25rem;">4. Biopsy, Specimen Handling, and Pathology</h3>
+  <p>
+    If tissue or other specimens are obtained, I authorize the practice to submit them to a qualified pathology laboratory
+    for diagnostic review when medically necessary. I understand pathology services may be billed separately and that final
+    diagnosis may affect recommendations for further care.
+  </p>
+
+  <h3 style="margin-top: 1.25rem;">5. Financial Responsibility</h3>
+  <p>
+    I understand that insurance coverage is not guaranteed and that deductibles, copays, coinsurance, non-covered services,
+    cosmetic services, pathology charges, and balances not paid by my health plan are my responsibility unless prohibited by
+    contract or law.
+  </p>
+
+  <h3 style="margin-top: 1.25rem;">6. No Guarantee of Results</h3>
+  <p>
+    I understand that the practice of medicine is not an exact science and that no guarantees or warranties have been made
+    to me about diagnosis, outcome, healing time, or cosmetic result.
+  </p>
+
+  <h3 style="margin-top: 1.25rem;">7. Acknowledgment</h3>
+  <p>
+    By signing, I acknowledge that I have read this consent, understand the nature of the proposed dermatologic care,
+    understand the material risks, benefits, and alternatives that have been explained to me, and authorize the practice to
+    provide medically appropriate evaluation and treatment. If I am signing for a minor or another patient, I represent that
+    I am legally authorized to do so.
+  </p>
+
+  <p style="margin-top: 1.25rem; font-size: 0.95rem; color: #4b5563;">
+    Privacy practices and HIPAA acknowledgment are addressed in a separate notice and acknowledgment form.
+  </p>
+</div>
+`;
+
+const GENERAL_DERMATOLOGY_TREATMENT_CONSENT_SQL = GENERAL_DERMATOLOGY_TREATMENT_CONSENT_HTML.replace(/'/g, "''");
+
+const HIPAA_PRIVACY_ACKNOWLEDGMENT_HTML = `
+<div style="font-family: Arial, sans-serif; line-height: 1.65; color: #111827;">
+  <h2 style="margin-bottom: 0.5rem;">HIPAA Notice of Privacy Practices Acknowledgment</h2>
+  <p>
+    I acknowledge that this dermatology practice has made its Notice of Privacy Practices available to me for review.
+    The notice describes how my protected health information may be used and disclosed for treatment, payment,
+    health care operations, and other purposes permitted or required by law.
+  </p>
+
+  <h3 style="margin-top: 1.25rem;">1. What the Notice Covers</h3>
+  <p>The Notice of Privacy Practices explains, among other things:</p>
+  <ul>
+    <li>how the practice may use or disclose my information to coordinate care, bill for services, and operate the practice;</li>
+    <li>when disclosures may be required by law or permitted for public health, safety, or oversight purposes;</li>
+    <li>how to request confidential communications or ask for restrictions when available under applicable law;</li>
+    <li>how to request access to, amendments of, or an accounting of certain disclosures of my records;</li>
+    <li>how to obtain a paper copy of the privacy notice and how to ask privacy-related questions or file a concern.</li>
+  </ul>
+
+  <h3 style="margin-top: 1.25rem;">2. Patient Acknowledgment</h3>
+  <p>
+    By signing below, I confirm that I had the opportunity to review or request a copy of the Notice of Privacy Practices.
+    I understand that this acknowledgment documents that the notice was made available to me.
+  </p>
+
+  <h3 style="margin-top: 1.25rem;">3. Questions and Assistance</h3>
+  <p>
+    If I have questions about privacy practices, how my information is handled, or if I need another copy of the notice,
+    I may ask the front desk or the practice's privacy contact before completing check-in.
+  </p>
+
+  <p style="margin-top: 1.25rem; font-size: 0.95rem; color: #4b5563;">
+    This acknowledgment is separate from consent for medical treatment and does not replace any procedure-specific
+    consent that may be required for services performed today.
+  </p>
+</div>
+`;
+
+const HIPAA_PRIVACY_ACKNOWLEDGMENT_SQL = HIPAA_PRIVACY_ACKNOWLEDGMENT_HTML.replace(/'/g, "''");
+
 const migrations: { name: string; sql: string }[] = [
   {
     name: "001_init",
@@ -7949,6 +8066,987 @@ Consider age-appropriate treatments and include family counseling points.',
       ON visit_summaries(tenant_id, ambient_note_id);
     `,
   },
+  {
+    name: "125_appointment_lifecycle_timestamps",
+    sql: `
+    -- Front desk and office flow lifecycle fields for appointment progression.
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS arrived_at TIMESTAMPTZ;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS roomed_at TIMESTAMPTZ;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
+    CREATE INDEX IF NOT EXISTS idx_appointments_tenant_arrived_at
+      ON appointments(tenant_id, arrived_at);
+    CREATE INDEX IF NOT EXISTS idx_appointments_tenant_roomed_at
+      ON appointments(tenant_id, roomed_at);
+    CREATE INDEX IF NOT EXISTS idx_appointments_tenant_completed_at
+      ON appointments(tenant_id, completed_at);
+    `,
+  },
+  {
+    name: "126_handout_template_metadata",
+    sql: `
+    ALTER TABLE patient_handouts
+      ADD COLUMN IF NOT EXISTS instruction_type TEXT NOT NULL DEFAULT 'general';
+
+    ALTER TABLE patient_handouts
+      ADD COLUMN IF NOT EXISTS template_key TEXT;
+
+    ALTER TABLE patient_handouts
+      ADD COLUMN IF NOT EXISTS print_disclaimer TEXT;
+
+    ALTER TABLE patient_handouts
+      ADD COLUMN IF NOT EXISTS is_system_template BOOLEAN NOT NULL DEFAULT FALSE;
+
+    CREATE INDEX IF NOT EXISTS idx_handouts_instruction_type
+      ON patient_handouts(tenant_id, instruction_type);
+
+    CREATE INDEX IF NOT EXISTS idx_handouts_template_key
+      ON patient_handouts(tenant_id, template_key);
+    `,
+  },
+  {
+    name: "127_inventory_usage_pricing_and_derm_topicals",
+    sql: `
+    ALTER TABLE IF EXISTS inventory_usage
+      ADD COLUMN IF NOT EXISTS sell_price_cents INTEGER;
+
+    ALTER TABLE IF EXISTS inventory_usage
+      ADD COLUMN IF NOT EXISTS given_as_sample BOOLEAN NOT NULL DEFAULT FALSE;
+
+    DO $$
+    BEGIN
+      IF to_regclass('public.inventory_usage') IS NOT NULL THEN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'inventory_usage_sell_price_nonnegative'
+            AND conrelid = 'inventory_usage'::regclass
+        ) THEN
+          ALTER TABLE inventory_usage
+            ADD CONSTRAINT inventory_usage_sell_price_nonnegative
+            CHECK (sell_price_cents IS NULL OR sell_price_cents >= 0);
+        END IF;
+
+        CREATE INDEX IF NOT EXISTS idx_inventory_usage_tenant_sample
+          ON inventory_usage(tenant_id, given_as_sample);
+
+        CREATE INDEX IF NOT EXISTS idx_inventory_usage_tenant_encounter_used_at
+          ON inventory_usage(tenant_id, encounter_id, used_at DESC);
+      END IF;
+    END $$;
+
+    DO $$
+    DECLARE
+      v_tenant_id TEXT;
+      v_created_by TEXT;
+      seed_row RECORD;
+    BEGIN
+      IF to_regclass('public.inventory_items') IS NULL THEN
+        RETURN;
+      END IF;
+
+      FOR v_tenant_id IN SELECT id FROM tenants LOOP
+        SELECT id
+        INTO v_created_by
+        FROM users
+        WHERE tenant_id = v_tenant_id
+        ORDER BY CASE WHEN role = 'admin' THEN 0 ELSE 1 END, created_at
+        LIMIT 1;
+
+        IF v_created_by IS NULL THEN
+          CONTINUE;
+        END IF;
+
+        FOR seed_row IN
+          SELECT *
+          FROM (
+            VALUES
+              ('DERM-SMP-CLOB-005', 'Clobetasol 0.05% Cream (Sample)', 'medication', 'High-potency topical corticosteroid sample', 140, 40, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-TRIAM-01', 'Triamcinolone 0.1% Ointment (Sample)', 'medication', 'Mid-potency corticosteroid ointment sample', 160, 50, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-HC-025', 'Hydrocortisone 2.5% Cream (Sample)', 'medication', 'Low-potency corticosteroid for sensitive areas', 120, 35, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-DESON-005', 'Desonide 0.05% Cream (Sample)', 'medication', 'Low-potency steroid sample for face/folds', 120, 35, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-TACRO-01', 'Tacrolimus 0.1% Ointment (Sample)', 'medication', 'Topical calcineurin inhibitor sample', 110, 30, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-PIMEC-1', 'Pimecrolimus 1% Cream (Sample)', 'medication', 'Topical calcineurin inhibitor cream sample', 110, 30, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-TRET-025', 'Tretinoin 0.025% Cream (Sample)', 'medication', 'Topical retinoid acne/photodamage sample', 140, 40, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-TRET-05', 'Tretinoin 0.05% Cream (Sample)', 'medication', 'Topical retinoid higher-strength sample', 120, 35, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-ADAP-03', 'Adapalene 0.3% Gel (Sample)', 'medication', 'Topical retinoid gel sample', 120, 35, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-BPO-5W', 'Benzoyl Peroxide 5% Wash (Sample)', 'medication', 'Acne antibacterial wash sample', 150, 45, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-CLIND-1L', 'Clindamycin 1% Lotion (Sample)', 'medication', 'Topical antibiotic lotion sample', 130, 40, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-KETO-2C', 'Ketoconazole 2% Cream (Sample)', 'medication', 'Topical antifungal cream sample', 130, 40, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-CICLO-077', 'Ciclopirox 0.77% Gel (Sample)', 'medication', 'Topical antifungal gel sample', 110, 30, 0, 'Derm Rep Program', 'Sample Closet'),
+              ('DERM-SMP-CERAVE-CRM', 'CeraVe Moisturizing Cream (Sample)', 'supply', 'Barrier-repair moisturizer sample', 220, 60, 65, 'L''Oreal Dermatological', 'Sample Closet'),
+              ('DERM-SMP-VANI-LOTION', 'Vanicream Moisturizing Lotion (Sample)', 'supply', 'Fragrance-free emollient lotion sample', 200, 55, 60, 'Pharmaceutical Specialties', 'Sample Closet'),
+              ('DERM-SMP-ELTA-UV46', 'EltaMD UV Clear SPF 46 (Sample)', 'supply', 'Dermatology sunscreen sample', 180, 50, 80, 'EltaMD', 'Sample Closet'),
+              ('DERM-SMP-MIN-SPF50', 'Mineral Sunscreen SPF 50 (Sample)', 'supply', 'Broad-spectrum mineral sunscreen sample', 180, 50, 85, 'Derm Rep Program', 'Sample Closet')
+          ) AS seeded(
+            sku,
+            name,
+            category,
+            description,
+            quantity,
+            reorder_level,
+            unit_cost_cents,
+            supplier,
+            location
+          )
+        LOOP
+          UPDATE inventory_items
+          SET
+            name = seed_row.name,
+            category = seed_row.category,
+            sku = COALESCE(NULLIF(inventory_items.sku, ''), seed_row.sku),
+            description = seed_row.description,
+            quantity = GREATEST(inventory_items.quantity, seed_row.quantity),
+            reorder_level = GREATEST(inventory_items.reorder_level, seed_row.reorder_level),
+            unit_cost_cents = seed_row.unit_cost_cents,
+            supplier = COALESCE(NULLIF(inventory_items.supplier, ''), seed_row.supplier),
+            location = COALESCE(NULLIF(inventory_items.location, ''), seed_row.location),
+            updated_at = NOW()
+          WHERE inventory_items.tenant_id = v_tenant_id
+            AND (
+              inventory_items.sku = seed_row.sku OR
+              (LOWER(inventory_items.name) = LOWER(seed_row.name) AND inventory_items.category = seed_row.category)
+            );
+
+          IF NOT FOUND THEN
+            INSERT INTO inventory_items (
+              tenant_id,
+              name,
+              category,
+              sku,
+              description,
+              quantity,
+              reorder_level,
+              unit_cost_cents,
+              supplier,
+              location,
+              created_by
+            )
+            VALUES (
+              v_tenant_id,
+              seed_row.name,
+              seed_row.category,
+              seed_row.sku,
+              seed_row.description,
+              seed_row.quantity,
+              seed_row.reorder_level,
+              seed_row.unit_cost_cents,
+              seed_row.supplier,
+              seed_row.location,
+              v_created_by
+            );
+          END IF;
+        END LOOP;
+      END LOOP;
+    END $$;
+    `,
+  },
+  {
+    name: "128_kiosk_medical_history_intake",
+    sql: `
+    ALTER TABLE patients ADD COLUMN IF NOT EXISTS past_medical_history TEXT;
+    ALTER TABLE patients ADD COLUMN IF NOT EXISTS family_history TEXT;
+    ALTER TABLE patients ADD COLUMN IF NOT EXISTS surgical_history TEXT;
+    ALTER TABLE patients ADD COLUMN IF NOT EXISTS social_history TEXT;
+    ALTER TABLE patients ADD COLUMN IF NOT EXISTS current_symptoms TEXT;
+
+    ALTER TABLE IF EXISTS checkin_sessions
+      ADD COLUMN IF NOT EXISTS medical_history_updated BOOLEAN DEFAULT FALSE;
+    `,
+  },
+  {
+    name: "129_sms_reminder_channel_setting",
+    sql: `
+    ALTER TABLE IF EXISTS sms_settings
+      ADD COLUMN IF NOT EXISTS appointment_reminder_channel TEXT DEFAULT 'sms';
+
+    UPDATE sms_settings
+    SET appointment_reminder_channel = 'sms'
+    WHERE appointment_reminder_channel IS NULL
+       OR appointment_reminder_channel NOT IN ('sms', 'voice');
+    `,
+  },
+  {
+    name: "130_integrations_core_text_compat",
+    sql: `
+    -- Compatibility migration for integration + payment tables in text-id schemas.
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE TABLE IF NOT EXISTS integration_configs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      integration_type TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      config JSONB NOT NULL DEFAULT '{}'::jsonb,
+      credentials_encrypted TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      last_sync_at TIMESTAMPTZ,
+      sync_frequency_minutes INTEGER NOT NULL DEFAULT 60,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(tenant_id, integration_type, provider)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_integration_configs_tenant ON integration_configs(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_integration_configs_type ON integration_configs(integration_type);
+    CREATE INDEX IF NOT EXISTS idx_integration_configs_active ON integration_configs(tenant_id, is_active)
+      WHERE is_active = true;
+
+    CREATE TABLE IF NOT EXISTS integration_logs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      integration_type TEXT NOT NULL,
+      provider TEXT,
+      direction TEXT NOT NULL DEFAULT 'outbound',
+      endpoint TEXT,
+      method TEXT,
+      request JSONB,
+      response JSONB,
+      status TEXT NOT NULL,
+      status_code INTEGER,
+      error_message TEXT,
+      duration_ms INTEGER,
+      correlation_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_integration_logs_tenant ON integration_logs(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_integration_logs_type ON integration_logs(integration_type);
+    CREATE INDEX IF NOT EXISTS idx_integration_logs_status ON integration_logs(status);
+    CREATE INDEX IF NOT EXISTS idx_integration_logs_created_at ON integration_logs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_integration_logs_correlation_id ON integration_logs(correlation_id);
+
+    CREATE TABLE IF NOT EXISTS payment_intents (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      stripe_payment_intent_id TEXT NOT NULL UNIQUE,
+      amount_cents INTEGER NOT NULL CHECK (amount_cents >= 0),
+      currency TEXT NOT NULL DEFAULT 'usd',
+      status TEXT NOT NULL,
+      client_secret TEXT,
+      payment_method_id TEXT,
+      captured_at TIMESTAMPTZ,
+      refunded_amount_cents INTEGER NOT NULL DEFAULT 0 CHECK (refunded_amount_cents >= 0),
+      failure_code TEXT,
+      failure_message TEXT,
+      receipt_url TEXT,
+      metadata JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_payment_intents_tenant ON payment_intents(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_intents_patient ON payment_intents(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_intents_stripe_id ON payment_intents(stripe_payment_intent_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_intents_status ON payment_intents(status);
+    CREATE INDEX IF NOT EXISTS idx_payment_intents_created_at ON payment_intents(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS payment_methods (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      stripe_payment_method_id TEXT NOT NULL UNIQUE,
+      stripe_customer_id TEXT,
+      type TEXT NOT NULL,
+      card_brand TEXT,
+      card_last4 TEXT,
+      card_exp_month INTEGER,
+      card_exp_year INTEGER,
+      billing_name TEXT,
+      billing_zip TEXT,
+      is_default BOOLEAN NOT NULL DEFAULT false,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_payment_methods_tenant ON payment_methods(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_methods_patient ON payment_methods(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_methods_stripe_id ON payment_methods(stripe_payment_method_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_methods_active ON payment_methods(is_active)
+      WHERE is_active = true;
+
+    CREATE TABLE IF NOT EXISTS stripe_customers (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      stripe_customer_id TEXT NOT NULL,
+      email TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(tenant_id, patient_id),
+      UNIQUE(tenant_id, stripe_customer_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_stripe_customers_tenant ON stripe_customers(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_stripe_customers_patient ON stripe_customers(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_stripe_customers_stripe_id ON stripe_customers(stripe_customer_id);
+
+    CREATE OR REPLACE FUNCTION set_updated_at_timestamp()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DO $$
+    BEGIN
+      IF to_regclass('public.integration_configs') IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'integration_configs_updated_at') THEN
+        CREATE TRIGGER integration_configs_updated_at
+          BEFORE UPDATE ON integration_configs
+          FOR EACH ROW EXECUTE FUNCTION set_updated_at_timestamp();
+      END IF;
+
+      IF to_regclass('public.payment_intents') IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'payment_intents_updated_at') THEN
+        CREATE TRIGGER payment_intents_updated_at
+          BEFORE UPDATE ON payment_intents
+          FOR EACH ROW EXECUTE FUNCTION set_updated_at_timestamp();
+      END IF;
+
+      IF to_regclass('public.payment_methods') IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'payment_methods_updated_at') THEN
+        CREATE TRIGGER payment_methods_updated_at
+          BEFORE UPDATE ON payment_methods
+          FOR EACH ROW EXECUTE FUNCTION set_updated_at_timestamp();
+      END IF;
+
+      IF to_regclass('public.stripe_customers') IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'stripe_customers_updated_at') THEN
+        CREATE TRIGGER stripe_customers_updated_at
+          BEFORE UPDATE ON stripe_customers
+          FOR EACH ROW EXECUTE FUNCTION set_updated_at_timestamp();
+      END IF;
+    END $$;
+    `,
+  },
+  {
+    name: "131_move_cosmetic_fees_out_of_standard_schedule",
+    sql: `
+    -- Keep cosmetic pricing isolated in cosmetic schedules (master source of truth).
+    DO $$
+    DECLARE
+      v_tenant_id TEXT;
+      v_cosmetic_schedule_id TEXT;
+      v_source_schedule_id TEXT;
+    BEGIN
+      FOR v_tenant_id IN
+        SELECT DISTINCT tenant_id
+        FROM fee_schedules
+      LOOP
+        SELECT id
+        INTO v_cosmetic_schedule_id
+        FROM fee_schedules
+        WHERE tenant_id = v_tenant_id
+          AND (
+            name ILIKE '%cosmetic%'
+            OR COALESCE(description, '') ILIKE '%cosmetic%'
+          )
+        ORDER BY is_default ASC, created_at ASC
+        LIMIT 1;
+
+        IF v_cosmetic_schedule_id IS NULL THEN
+          v_cosmetic_schedule_id := gen_random_uuid()::text;
+          INSERT INTO fee_schedules (id, tenant_id, name, is_default, description)
+          VALUES (
+            v_cosmetic_schedule_id,
+            v_tenant_id,
+            'Cosmetic Services',
+            false,
+            'Cosmetic dermatology procedures'
+          )
+          ON CONFLICT (id) DO NOTHING;
+        END IF;
+
+        FOR v_source_schedule_id IN
+          SELECT id
+          FROM fee_schedules
+          WHERE tenant_id = v_tenant_id
+            AND id <> v_cosmetic_schedule_id
+            AND (
+              is_default = true
+              OR name ILIKE '%standard%'
+              OR name ILIKE '%medical%'
+            )
+        LOOP
+          INSERT INTO fee_schedule_items (
+            id,
+            fee_schedule_id,
+            cpt_code,
+            cpt_description,
+            category,
+            fee_cents
+          )
+          SELECT
+            gen_random_uuid()::text,
+            v_cosmetic_schedule_id,
+            fsi.cpt_code,
+            fsi.cpt_description,
+            COALESCE(NULLIF(fsi.category, ''), 'Cosmetic'),
+            fsi.fee_cents
+          FROM fee_schedule_items fsi
+          WHERE fsi.fee_schedule_id = v_source_schedule_id
+            AND (
+              fsi.category ILIKE 'Cosmetic -%'
+              OR fsi.cpt_code ILIKE 'COSM%'
+              OR fsi.cpt_code ILIKE 'BOTOX%'
+              OR fsi.cpt_code ILIKE 'FILLER%'
+              OR fsi.cpt_code ILIKE 'PEEL%'
+              OR fsi.cpt_code ILIKE 'LASER%'
+              OR fsi.cpt_code ILIKE 'MICRO-%'
+              OR fsi.cpt_code IN ('DERMAPLNE', 'HYDRAFACL', 'KYBELLA', 'SCLEROTHPY')
+            )
+          ON CONFLICT (fee_schedule_id, cpt_code)
+          DO UPDATE SET
+            cpt_description = COALESCE(
+              NULLIF(fee_schedule_items.cpt_description, ''),
+              EXCLUDED.cpt_description
+            ),
+            category = COALESCE(NULLIF(fee_schedule_items.category, ''), EXCLUDED.category),
+            fee_cents = CASE
+              WHEN fee_schedule_items.fee_cents IS NULL OR fee_schedule_items.fee_cents = 0
+                THEN EXCLUDED.fee_cents
+              ELSE fee_schedule_items.fee_cents
+            END;
+
+          DELETE FROM fee_schedule_items fsi
+          WHERE fsi.fee_schedule_id = v_source_schedule_id
+            AND (
+              fsi.category ILIKE 'Cosmetic -%'
+              OR fsi.cpt_code ILIKE 'COSM%'
+              OR fsi.cpt_code ILIKE 'BOTOX%'
+              OR fsi.cpt_code ILIKE 'FILLER%'
+              OR fsi.cpt_code ILIKE 'PEEL%'
+              OR fsi.cpt_code ILIKE 'LASER%'
+              OR fsi.cpt_code ILIKE 'MICRO-%'
+              OR fsi.cpt_code IN ('DERMAPLNE', 'HYDRAFACL', 'KYBELLA', 'SCLEROTHPY')
+            );
+        END LOOP;
+      END LOOP;
+    END $$;
+    `,
+  },
+  {
+    name: "132_set_default_cosmetic_followup_fee",
+    sql: `
+    UPDATE fee_schedule_items fsi
+    SET fee_cents = 7500
+    WHERE fsi.cpt_code = 'COSM-FU'
+      AND (fsi.fee_cents IS NULL OR fsi.fee_cents = 0)
+      AND EXISTS (
+        SELECT 1
+        FROM fee_schedules fs
+        WHERE fs.id = fsi.fee_schedule_id
+          AND (
+            fs.name ILIKE '%cosmetic%'
+            OR COALESCE(fs.description, '') ILIKE '%cosmetic%'
+          )
+      );
+    `,
+  },
+  {
+    name: "133_appointment_type_prior_auth_required",
+    sql: `
+    ALTER TABLE appointment_types
+      ADD COLUMN IF NOT EXISTS prior_auth_required BOOLEAN NOT NULL DEFAULT false;
+
+    UPDATE appointment_types
+    SET prior_auth_required = true
+    WHERE prior_auth_required = false
+      AND (
+        name ILIKE '%laser%'
+        OR name ILIKE '%mohs%'
+        OR name ILIKE '%surgery%'
+        OR name ILIKE '%biopsy%'
+        OR name ILIKE '%excision%'
+        OR name ILIKE '%graft%'
+        OR name ILIKE '%resurfacing%'
+        OR name ILIKE '%tattoo%'
+        OR name ILIKE '%hair removal%'
+        OR name ILIKE '%hydrafacial%'
+      );
+
+    CREATE INDEX IF NOT EXISTS idx_appointment_types_prior_auth_required
+      ON appointment_types(prior_auth_required);
+    `,
+  },
+  {
+    name: "134_patient_observation_portal_release_controls",
+    sql: `
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE TABLE IF NOT EXISTS patient_observation_portal_releases (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      observation_id TEXT NOT NULL,
+      patient_id TEXT NOT NULL,
+      release_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (release_status IN ('pending', 'released', 'held')),
+      released_at TIMESTAMPTZ,
+      released_by TEXT,
+      hold_reason TEXT,
+      portal_visible_from TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (tenant_id, observation_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_observation_portal_releases_tenant
+      ON patient_observation_portal_releases(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_observation_portal_releases_patient
+      ON patient_observation_portal_releases(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_observation_portal_releases_status
+      ON patient_observation_portal_releases(release_status);
+    CREATE INDEX IF NOT EXISTS idx_observation_portal_releases_visible_from
+      ON patient_observation_portal_releases(portal_visible_from)
+      WHERE portal_visible_from IS NOT NULL;
+    `,
+  },
+  {
+    name: "135_messaging_external_recipients",
+    sql: `
+    ALTER TABLE message_threads
+      ADD COLUMN IF NOT EXISTS external_recipients JSONB NOT NULL DEFAULT '[]'::jsonb;
+    `,
+  },
+  {
+    name: "136_insurance_integration_compat_tables",
+    sql: `
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE TABLE IF NOT EXISTS insurance_payers (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      payer_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      supports_realtime_eligibility BOOLEAN NOT NULL DEFAULT false,
+      phone TEXT,
+      provider_services_phone TEXT,
+      typical_prior_auth_services TEXT[],
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (tenant_id, payer_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_insurance_payers_tenant
+      ON insurance_payers(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_insurance_payers_payer_id
+      ON insurance_payers(payer_id);
+
+    CREATE TABLE IF NOT EXISTS eligibility_checks (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      payer_id TEXT,
+      payer_name TEXT,
+      member_id TEXT,
+      service_date DATE,
+      status TEXT NOT NULL DEFAULT 'unknown',
+      response JSONB,
+      coverage_details JSONB,
+      benefits JSONB,
+      in_network BOOLEAN,
+      requires_prior_auth BOOLEAN NOT NULL DEFAULT false,
+      request_id TEXT,
+      checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ,
+      source TEXT NOT NULL DEFAULT 'mock',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_eligibility_checks_tenant
+      ON eligibility_checks(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_eligibility_checks_patient
+      ON eligibility_checks(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_eligibility_checks_checked
+      ON eligibility_checks(checked_at DESC);
+
+    CREATE TABLE IF NOT EXISTS clearinghouse_submissions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      claim_id TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+      submission_number TEXT NOT NULL,
+      control_number TEXT,
+      submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      status TEXT NOT NULL,
+      clearinghouse_response JSONB,
+      error_message TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_clearinghouse_submissions_tenant_claim
+      ON clearinghouse_submissions(tenant_id, claim_id);
+    CREATE INDEX IF NOT EXISTS idx_clearinghouse_submissions_submitted_at
+      ON clearinghouse_submissions(submitted_at DESC);
+
+    CREATE TABLE IF NOT EXISTS clearinghouse_batch_submissions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      batch_id TEXT NOT NULL,
+      claim_count INTEGER NOT NULL DEFAULT 0,
+      accepted_count INTEGER NOT NULL DEFAULT 0,
+      rejected_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (tenant_id, batch_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_clearinghouse_batch_submissions_tenant
+      ON clearinghouse_batch_submissions(tenant_id);
+
+    CREATE TABLE IF NOT EXISTS era_files (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      payer_name TEXT,
+      payer_id TEXT,
+      check_number TEXT,
+      check_date DATE,
+      total_amount_cents INTEGER NOT NULL DEFAULT 0,
+      payment_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'received',
+      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      processed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_era_files_tenant
+      ON era_files(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_era_files_status
+      ON era_files(status);
+    CREATE INDEX IF NOT EXISTS idx_era_files_received
+      ON era_files(received_at DESC);
+
+    CREATE TABLE IF NOT EXISTS era_payments (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      era_file_id TEXT NOT NULL REFERENCES era_files(id) ON DELETE CASCADE,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      claim_id TEXT REFERENCES claims(id) ON DELETE SET NULL,
+      claim_number TEXT,
+      patient_name TEXT,
+      payer_name TEXT,
+      service_date DATE,
+      billed_amount_cents INTEGER NOT NULL DEFAULT 0,
+      allowed_amount_cents INTEGER NOT NULL DEFAULT 0,
+      paid_amount_cents INTEGER NOT NULL DEFAULT 0,
+      patient_responsibility_cents INTEGER NOT NULL DEFAULT 0,
+      adjustment_codes JSONB,
+      status TEXT NOT NULL DEFAULT 'unmatched',
+      posted_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_era_payments_file
+      ON era_payments(era_file_id);
+    CREATE INDEX IF NOT EXISTS idx_era_payments_tenant
+      ON era_payments(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_era_payments_claim
+      ON era_payments(claim_id);
+    `,
+  },
+  {
+    name: "137_kiosk_runtime_compat",
+    sql: `
+    CREATE TABLE IF NOT EXISTS kiosk_devices (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      location_id TEXT REFERENCES locations(id) ON DELETE SET NULL,
+      device_name TEXT NOT NULL,
+      device_code TEXT NOT NULL UNIQUE,
+      ip_address TEXT,
+      last_heartbeat TIMESTAMPTZ,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_kiosk_devices_tenant ON kiosk_devices(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_kiosk_devices_location ON kiosk_devices(location_id);
+    CREATE INDEX IF NOT EXISTS idx_kiosk_devices_code ON kiosk_devices(device_code);
+
+    CREATE TABLE IF NOT EXISTS checkin_sessions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      kiosk_device_id TEXT REFERENCES kiosk_devices(id) ON DELETE SET NULL,
+      patient_id TEXT REFERENCES patients(id) ON DELETE SET NULL,
+      appointment_id TEXT REFERENCES appointments(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'started',
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      verification_method TEXT,
+      verification_value TEXT,
+      verified_at TIMESTAMPTZ,
+      demographics_updated BOOLEAN NOT NULL DEFAULT false,
+      insurance_updated BOOLEAN NOT NULL DEFAULT false,
+      consent_signed BOOLEAN NOT NULL DEFAULT false,
+      medical_history_updated BOOLEAN NOT NULL DEFAULT false,
+      insurance_front_photo_url TEXT,
+      insurance_back_photo_url TEXT,
+      consent_signature_url TEXT,
+      consent_form_id TEXT,
+      ip_address TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_checkin_sessions_patient ON checkin_sessions(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_checkin_sessions_appointment ON checkin_sessions(appointment_id);
+    CREATE INDEX IF NOT EXISTS idx_checkin_sessions_kiosk ON checkin_sessions(kiosk_device_id);
+    CREATE INDEX IF NOT EXISTS idx_checkin_sessions_tenant ON checkin_sessions(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_checkin_sessions_status ON checkin_sessions(status);
+
+    CREATE TABLE IF NOT EXISTS consent_forms (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      form_name TEXT NOT NULL,
+      form_type TEXT,
+      form_content TEXT NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      requires_signature BOOLEAN NOT NULL DEFAULT true,
+      version TEXT DEFAULT '1.0',
+      effective_date DATE DEFAULT CURRENT_DATE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_consent_forms_tenant ON consent_forms(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_consent_forms_active ON consent_forms(tenant_id, is_active);
+    CREATE INDEX IF NOT EXISTS idx_consent_forms_type ON consent_forms(tenant_id, form_type);
+
+    CREATE TABLE IF NOT EXISTS kiosk_patient_consents (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      consent_form_id TEXT NOT NULL REFERENCES consent_forms(id) ON DELETE CASCADE,
+      checkin_session_id TEXT REFERENCES checkin_sessions(id) ON DELETE SET NULL,
+      signature_url TEXT NOT NULL,
+      signed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ip_address TEXT,
+      device_info TEXT,
+      form_version TEXT,
+      form_content TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_kiosk_patient_consents_patient ON kiosk_patient_consents(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_kiosk_patient_consents_form ON kiosk_patient_consents(consent_form_id);
+    CREATE INDEX IF NOT EXISTS idx_kiosk_patient_consents_tenant ON kiosk_patient_consents(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_kiosk_patient_consents_session ON kiosk_patient_consents(checkin_session_id);
+
+    INSERT INTO consent_forms (
+      id,
+      tenant_id,
+      form_name,
+      form_type,
+      form_content,
+      is_active,
+      requires_signature,
+      version,
+      effective_date
+    )
+    SELECT
+      CONCAT('consent-general-', t.id),
+      t.id,
+      'General Consent for Treatment',
+      'general-consent',
+      '<div style="font-family: Arial, sans-serif; line-height: 1.6;"><h2>Consent for Treatment</h2><p>I consent to treatment by this dermatology practice and understand the services, risks, and financial responsibility discussed with me.</p></div>',
+      true,
+      true,
+      '1.0',
+      CURRENT_DATE
+    FROM tenants t
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM consent_forms cf
+      WHERE cf.tenant_id = t.id
+        AND cf.form_type = 'general-consent'
+    );
+
+    INSERT INTO consent_forms (
+      id,
+      tenant_id,
+      form_name,
+      form_type,
+      form_content,
+      is_active,
+      requires_signature,
+      version,
+      effective_date
+    )
+    SELECT
+      CONCAT('consent-hipaa-', t.id),
+      t.id,
+      'HIPAA Privacy Notice Acknowledgment',
+      'hipaa',
+      '<div style="font-family: Arial, sans-serif; line-height: 1.6;"><h2>HIPAA Privacy Notice Acknowledgment</h2><p>I acknowledge receipt of this practice''s Notice of Privacy Practices.</p></div>',
+      true,
+      true,
+      '1.0',
+      CURRENT_DATE
+    FROM tenants t
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM consent_forms cf
+      WHERE cf.tenant_id = t.id
+        AND cf.form_type = 'hipaa'
+    );
+    `,
+  },
+  {
+    name: "138_professional_kiosk_treatment_consent",
+    sql: `
+    UPDATE consent_forms
+    SET form_name = 'General Consent for Treatment',
+        form_content = '${GENERAL_DERMATOLOGY_TREATMENT_CONSENT_SQL}',
+        version = '2.0',
+        requires_signature = true,
+        is_active = true,
+        effective_date = CURRENT_DATE,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE form_type = 'general-consent';
+
+    INSERT INTO consent_forms (
+      id,
+      tenant_id,
+      form_name,
+      form_type,
+      form_content,
+      is_active,
+      requires_signature,
+      version,
+      effective_date
+    )
+    SELECT
+      CONCAT('consent-general-', t.id),
+      t.id,
+      'General Consent for Treatment',
+      'general-consent',
+      '${GENERAL_DERMATOLOGY_TREATMENT_CONSENT_SQL}',
+      true,
+      true,
+      '2.0',
+      CURRENT_DATE
+    FROM tenants t
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM consent_forms cf
+      WHERE cf.tenant_id = t.id
+        AND cf.form_type = 'general-consent'
+    );
+    `,
+  },
+  {
+    name: "139_professional_kiosk_hipaa_acknowledgment",
+    sql: `
+    UPDATE consent_forms
+    SET form_name = 'HIPAA Notice of Privacy Practices Acknowledgment',
+        form_content = '${HIPAA_PRIVACY_ACKNOWLEDGMENT_SQL}',
+        version = '2.0',
+        requires_signature = true,
+        is_active = true,
+        effective_date = CURRENT_DATE,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE form_type = 'hipaa';
+
+    INSERT INTO consent_forms (
+      id,
+      tenant_id,
+      form_name,
+      form_type,
+      form_content,
+      is_active,
+      requires_signature,
+      version,
+      effective_date
+    )
+    SELECT
+      CONCAT('consent-hipaa-', t.id),
+      t.id,
+      'HIPAA Notice of Privacy Practices Acknowledgment',
+      'hipaa',
+      '${HIPAA_PRIVACY_ACKNOWLEDGMENT_SQL}',
+      true,
+      true,
+      '2.0',
+      CURRENT_DATE
+    FROM tenants t
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM consent_forms cf
+      WHERE cf.tenant_id = t.id
+        AND cf.form_type = 'hipaa'
+    );
+    `,
+  },
+  {
+    name: "140_patient_messaging_runtime_compat",
+    sql: `
+    CREATE TABLE IF NOT EXISTS patient_message_threads (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      subject TEXT NOT NULL,
+      category TEXT,
+      priority TEXT DEFAULT 'normal',
+      status TEXT DEFAULT 'open',
+      assigned_to TEXT,
+      assigned_at TIMESTAMPTZ,
+      created_by_patient BOOLEAN DEFAULT true,
+      last_message_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      last_message_by TEXT,
+      is_read_by_staff BOOLEAN DEFAULT false,
+      read_by_staff_at TIMESTAMPTZ,
+      read_by_staff_user TEXT,
+      is_read_by_patient BOOLEAN DEFAULT false,
+      read_by_patient_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_message_threads_tenant ON patient_message_threads(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_message_threads_patient ON patient_message_threads(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_message_threads_category ON patient_message_threads(category);
+    CREATE INDEX IF NOT EXISTS idx_patient_message_threads_status ON patient_message_threads(status);
+    CREATE INDEX IF NOT EXISTS idx_patient_message_threads_last_message ON patient_message_threads(last_message_at DESC);
+
+    CREATE TABLE IF NOT EXISTS patient_messages (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES patient_message_threads(id) ON DELETE CASCADE,
+      sender_type TEXT NOT NULL,
+      sender_patient_id TEXT,
+      sender_user_id TEXT,
+      sender_name TEXT,
+      message_text TEXT NOT NULL,
+      has_attachments BOOLEAN DEFAULT false,
+      attachment_count INTEGER DEFAULT 0,
+      is_internal_note BOOLEAN DEFAULT false,
+      sent_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      delivered_to_patient BOOLEAN DEFAULT false,
+      delivered_at TIMESTAMPTZ,
+      read_by_patient BOOLEAN DEFAULT false,
+      read_by_patient_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_messages_thread ON patient_messages(thread_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_messages_sent_at ON patient_messages(sent_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_patient_messages_sender_type ON patient_messages(sender_type);
+    CREATE INDEX IF NOT EXISTS idx_patient_messages_sender_patient ON patient_messages(sender_patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_messages_sender_user ON patient_messages(sender_user_id);
+    `,
+  },
+
 ];
 
 async function ensureMigrationsTable() {

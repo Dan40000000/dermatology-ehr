@@ -134,6 +134,22 @@ function respondWithReferralWorkflowError(
   return res.status(500).json({ error: message });
 }
 
+function isLegacyReferralSchemaError(error: any): boolean {
+  const code = String(error?.code ?? "");
+  if (code === "42P01" || code === "42703") {
+    return true;
+  }
+
+  const message = String(error?.message ?? "").toLowerCase();
+  return (
+    message.includes("referring_providers") ||
+    message.includes("referral_number") ||
+    message.includes("assigned_provider_id") ||
+    message.includes("insurance_auth_status") ||
+    message.includes("clinical_notes")
+  );
+}
+
 // =====================================================
 // REFERRING PROVIDER ENDPOINTS (must come before /:id routes)
 // =====================================================
@@ -452,6 +468,10 @@ referralsRouter.get("/", async (req: AuthedRequest, res) => {
       limit = "50",
       offset = "0",
     } = req.query;
+    const parsedLimit = Number.parseInt(String(limit), 10);
+    const parsedOffset = Number.parseInt(String(offset), 10);
+    const safeLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 50;
+    const safeOffset = Number.isFinite(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0;
 
     let query = `
       SELECT
@@ -527,41 +547,171 @@ referralsRouter.get("/", async (req: AuthedRequest, res) => {
       r.created_at DESC
     `;
     query += ` LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-    params.push(parseInt(limit as string), parseInt(offset as string));
+    params.push(safeLimit, safeOffset);
 
-    const result = await pool.query(query, params);
+    const runLegacyQuery = async () => {
+      let legacyQuery = `
+        SELECT
+          r.id,
+          r.patient_id as "patientId",
+          p.first_name as "patientFirstName",
+          p.last_name as "patientLastName",
+          r.direction,
+          r.status,
+          r.priority,
+          r.referring_provider as "referringProvider",
+          r.referring_organization as "referringOrganization",
+          r.referred_to_provider as "referredToProvider",
+          r.referred_to_organization as "referredToOrganization",
+          r.appointment_id as "appointmentId",
+          r.reason,
+          r.notes,
+          r.created_at as "createdAt",
+          r.updated_at as "updatedAt"
+        FROM referrals r
+        JOIN patients p ON r.patient_id = p.id
+        WHERE r.tenant_id = $1
+      `;
 
-    // Get total count for pagination
-    let countQuery = `SELECT COUNT(*) FROM referrals r WHERE r.tenant_id = $1`;
-    const countParams: any[] = [tenantId];
-    let countIndex = 2;
+      const legacyParams: any[] = [tenantId];
+      let legacyIndex = 2;
 
-    if (status) {
-      countQuery += ` AND r.status = $${countIndex++}`;
-      countParams.push(status);
-    }
-    if (priority) {
-      countQuery += ` AND r.priority = $${countIndex++}`;
-      countParams.push(priority);
-    }
-    if (patientId) {
-      countQuery += ` AND r.patient_id = $${countIndex++}`;
-      countParams.push(patientId);
-    }
-    if (stalled === "true") {
-      countQuery += ` AND r.status IN ('received', 'verified') AND r.created_at < NOW() - INTERVAL '5 days'`;
-    }
+      if (status) {
+        legacyQuery += ` AND r.status = $${legacyIndex++}`;
+        legacyParams.push(status);
+      }
+      if (priority) {
+        legacyQuery += ` AND r.priority = $${legacyIndex++}`;
+        legacyParams.push(priority);
+      }
+      if (patientId) {
+        legacyQuery += ` AND r.patient_id = $${legacyIndex++}`;
+        legacyParams.push(patientId);
+      }
+      if (referringProviderId) {
+        // Legacy schema does not store referring_provider_id.
+        legacyQuery += ` AND 1 = 0`;
+      }
+      if (direction) {
+        legacyQuery += ` AND r.direction = $${legacyIndex++}`;
+        legacyParams.push(direction);
+      }
+      if (startDate) {
+        legacyQuery += ` AND r.created_at >= $${legacyIndex++}::date`;
+        legacyParams.push(startDate);
+      }
+      if (endDate) {
+        legacyQuery += ` AND r.created_at <= $${legacyIndex++}::date + INTERVAL '1 day'`;
+        legacyParams.push(endDate);
+      }
+      if (stalled === "true") {
+        legacyQuery += ` AND r.status IN ('new', 'received', 'verified') AND r.created_at < NOW() - INTERVAL '5 days'`;
+      }
 
-    const countResult = await pool.query(countQuery, countParams);
-    const total = parseInt(String(countResult.rows[0]?.count ?? "0"), 10);
+      legacyQuery += ` ORDER BY
+        CASE WHEN r.priority = 'stat' THEN 1 WHEN r.priority = 'urgent' THEN 2 ELSE 3 END,
+        r.created_at DESC
+      `;
+      legacyQuery += ` LIMIT $${legacyIndex++} OFFSET $${legacyIndex++}`;
+      legacyParams.push(safeLimit, safeOffset);
+
+      let legacyCountQuery = `SELECT COUNT(*) FROM referrals r WHERE r.tenant_id = $1`;
+      const legacyCountParams: any[] = [tenantId];
+      let legacyCountIndex = 2;
+
+      if (status) {
+        legacyCountQuery += ` AND r.status = $${legacyCountIndex++}`;
+        legacyCountParams.push(status);
+      }
+      if (priority) {
+        legacyCountQuery += ` AND r.priority = $${legacyCountIndex++}`;
+        legacyCountParams.push(priority);
+      }
+      if (patientId) {
+        legacyCountQuery += ` AND r.patient_id = $${legacyCountIndex++}`;
+        legacyCountParams.push(patientId);
+      }
+      if (referringProviderId) {
+        legacyCountQuery += ` AND 1 = 0`;
+      }
+      if (direction) {
+        legacyCountQuery += ` AND r.direction = $${legacyCountIndex++}`;
+        legacyCountParams.push(direction);
+      }
+      if (startDate) {
+        legacyCountQuery += ` AND r.created_at >= $${legacyCountIndex++}::date`;
+        legacyCountParams.push(startDate);
+      }
+      if (endDate) {
+        legacyCountQuery += ` AND r.created_at <= $${legacyCountIndex++}::date + INTERVAL '1 day'`;
+        legacyCountParams.push(endDate);
+      }
+      if (stalled === "true") {
+        legacyCountQuery += ` AND r.status IN ('new', 'received', 'verified') AND r.created_at < NOW() - INTERVAL '5 days'`;
+      }
+
+      const [legacyResult, legacyCountResult] = await Promise.all([
+        pool.query(legacyQuery, legacyParams),
+        pool.query(legacyCountQuery, legacyCountParams),
+      ]);
+
+      return {
+        rows: legacyResult.rows,
+        total: parseInt(String(legacyCountResult.rows[0]?.count ?? "0"), 10),
+      };
+    };
+
+    let rows: any[] = [];
+    let total = 0;
+
+    try {
+      const result = await pool.query(query, params);
+      rows = result.rows;
+
+      // Get total count for pagination
+      let countQuery = `SELECT COUNT(*) FROM referrals r WHERE r.tenant_id = $1`;
+      const countParams: any[] = [tenantId];
+      let countIndex = 2;
+
+      if (status) {
+        countQuery += ` AND r.status = $${countIndex++}`;
+        countParams.push(status);
+      }
+      if (priority) {
+        countQuery += ` AND r.priority = $${countIndex++}`;
+        countParams.push(priority);
+      }
+      if (patientId) {
+        countQuery += ` AND r.patient_id = $${countIndex++}`;
+        countParams.push(patientId);
+      }
+      if (stalled === "true") {
+        countQuery += ` AND r.status IN ('received', 'verified') AND r.created_at < NOW() - INTERVAL '5 days'`;
+      }
+
+      const countResult = await pool.query(countQuery, countParams);
+      total = parseInt(String(countResult.rows[0]?.count ?? "0"), 10);
+    } catch (error: any) {
+      if (!isLegacyReferralSchemaError(error)) {
+        throw error;
+      }
+
+      logger.warn("Referrals advanced schema unavailable; using legacy query", {
+        error: error.message,
+      });
+
+      const legacy = await runLegacyQuery();
+      rows = legacy.rows;
+      total = legacy.total;
+    }
 
     res.json({
-      referrals: result.rows,
+      referrals: rows,
       pagination: {
         total,
-        limit: parseInt(limit as string),
-        offset: parseInt(offset as string),
-        hasMore: parseInt(offset as string) + result.rows.length < total,
+        limit: safeLimit,
+        offset: safeOffset,
+        hasMore: safeOffset + rows.length < total,
       },
     });
   } catch (error: any) {

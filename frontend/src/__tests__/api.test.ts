@@ -22,9 +22,12 @@ import {
   fetchAvailability,
   fetchCharges,
   fetchDocuments,
+  fetchPracticeConsentForms,
   fetchPhotos,
   fetchPhotoTimeline,
+  createPracticeConsentForm,
   createComparisonGroup,
+  deactivatePracticeConsentForm,
   fetchComparisonGroup,
   fetchVitals,
   fetchAudit,
@@ -63,6 +66,7 @@ import {
   fetchDefaultFeeSchedule,
   fetchFeeForCPT,
   createFeeSchedule,
+  updatePracticeConsentForm,
   updateFeeSchedule,
   updateFeeScheduleItem,
   importFeeScheduleItems,
@@ -162,6 +166,83 @@ describe('api.ts', () => {
     expect(url).toBe(`${API_BASE_URL}/api/tasks?status=open&priority=high&search=rash`);
   });
 
+  it('loads active practice consent forms with query params', async () => {
+    fetchMock.mockResolvedValueOnce(okResponse({ forms: [] }));
+
+    await fetchPracticeConsentForms(tenantId, token, { activeOnly: true });
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${API_BASE_URL}/api/consent-forms?activeOnly=true`);
+    expect(options?.headers).toMatchObject({
+      Authorization: `Bearer ${token}`,
+      'x-tenant-id': tenantId,
+    });
+  });
+
+  it('creates, updates, and deactivates practice consent forms', async () => {
+    fetchMock
+      .mockResolvedValueOnce(okResponse({ id: 'consent-1' }))
+      .mockResolvedValueOnce(okResponse({ success: true, id: 'consent-1' }))
+      .mockResolvedValueOnce(okResponse({ success: true }));
+
+    await createPracticeConsentForm(tenantId, token, {
+      formName: 'HIPAA Notice',
+      formType: 'hipaa',
+      formContent: '<p>Notice</p>',
+      requiresSignature: true,
+      version: '2.0',
+    });
+
+    await updatePracticeConsentForm(tenantId, token, 'consent-1', {
+      formName: 'HIPAA Notice',
+      formType: 'hipaa',
+      formContent: '<p>Updated</p>',
+      requiresSignature: true,
+      version: '2.1',
+      isActive: true,
+    });
+
+    await deactivatePracticeConsentForm(tenantId, token, 'consent-1');
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      `${API_BASE_URL}/api/consent-forms`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'x-tenant-id': tenantId,
+        }),
+      }),
+    );
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      `${API_BASE_URL}/api/consent-forms/consent-1`,
+      expect.objectContaining({
+        method: 'PUT',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'x-tenant-id': tenantId,
+        }),
+      }),
+    );
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      `${API_BASE_URL}/api/consent-forms/consent-1`,
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${token}`,
+          'x-tenant-id': tenantId,
+        }),
+      }),
+    );
+  });
+
   it.each([
     {
       label: 'appointments',
@@ -217,6 +298,11 @@ describe('api.ts', () => {
       label: 'documents',
       call: () => fetchDocuments(tenantId, token),
       path: '/api/documents',
+    },
+    {
+      label: 'practice consent forms',
+      call: () => fetchPracticeConsentForms(tenantId, token),
+      path: '/api/consent-forms',
     },
     {
       label: 'orders',
@@ -511,6 +597,51 @@ describe('api.ts', () => {
 
     fetchMock.mockResolvedValueOnce({ ok: false } as Response);
     await expect(exportFeeSchedule(tenantId, token, 'schedule-1')).rejects.toThrow('Failed to export fee schedule');
+  });
+
+  it('normalizes fee schedule payloads from snake_case', async () => {
+    fetchMock.mockResolvedValueOnce(okResponse({
+      id: 'schedule-1',
+      tenant_id: tenantId,
+      name: 'Standard Fee Schedule',
+      is_default: true,
+      created_at: '2026-03-01T00:00:00.000Z',
+      updated_at: '2026-03-01T00:00:00.000Z',
+      items: [
+        {
+          id: 'item-1',
+          fee_schedule_id: 'schedule-1',
+          cpt_code: '11102',
+          cpt_description: 'Tangential biopsy',
+          category: 'Biopsies',
+          fee_cents: 17500,
+          created_at: '2026-03-01T00:00:00.000Z',
+          updated_at: '2026-03-01T00:00:00.000Z',
+        },
+      ],
+    }));
+
+    const schedule = await fetchFeeSchedule(tenantId, token, 'schedule-1');
+    expect(schedule.tenantId).toBe(tenantId);
+    expect(schedule.isDefault).toBe(true);
+    expect(schedule.items?.[0]).toMatchObject({
+      feeScheduleId: 'schedule-1',
+      cptCode: '11102',
+      cptDescription: 'Tangential biopsy',
+      feeCents: 17500,
+    });
+
+    fetchMock.mockResolvedValueOnce(okResponse({
+      cpt_code: '11102',
+      fee_cents: 17500,
+    }));
+
+    const fee = await fetchFeeForCPT(tenantId, token, '11102');
+    expect(fee).toMatchObject({
+      cptCode: '11102',
+      feeCents: 17500,
+      fee: 17500,
+    });
   });
 
   it('handles order actions and report exports', async () => {

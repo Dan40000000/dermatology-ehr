@@ -37,18 +37,36 @@ export interface AppointmentReminderParams {
   template: string;
 }
 
+export interface PlaceVoiceCallParams {
+  to: string;
+  from: string;
+  message: string;
+  statusCallback?: string;
+}
+
+export interface PlaceVoiceCallResult {
+  sid: string;
+  status: string;
+  to: string;
+  from: string;
+  direction?: string;
+  price?: string;
+}
+
 export class TwilioService {
   private client: Twilio;
   private accountSid: string;
   private authToken: string;
+  private messagingServiceSid?: string;
 
-  constructor(accountSid: string, authToken: string) {
+  constructor(accountSid: string, authToken: string, messagingServiceSid?: string) {
     if (!accountSid || !authToken) {
       throw new Error('Twilio credentials are required');
     }
 
     this.accountSid = accountSid;
     this.authToken = authToken;
+    this.messagingServiceSid = messagingServiceSid || process.env.TWILIO_MESSAGING_SERVICE_SID || undefined;
     this.client = twilio(accountSid, authToken);
   }
 
@@ -59,23 +77,37 @@ export class TwilioService {
     try {
       // Validate and format phone numbers
       const toPhone = validateAndFormatPhone(params.to);
-      const fromPhone = validateAndFormatPhone(params.from);
+      const fromPhone = this.messagingServiceSid ? undefined : validateAndFormatPhone(params.from);
 
       logger.info('Sending SMS', {
         to: toPhone,
-        from: fromPhone,
+        from: fromPhone || params.from,
+        messagingServiceSid: this.messagingServiceSid || null,
         bodyLength: params.body.length,
         hasMedia: !!params.mediaUrls,
       });
 
-      // Send via Twilio
-      const message = await this.client.messages.create({
+      const createPayload: Record<string, any> = {
         to: toPhone,
-        from: fromPhone,
         body: params.body,
         mediaUrl: params.mediaUrls,
-        statusCallback: params.statusCallback,
-      });
+      };
+
+      const statusCallback = this.resolveStatusCallback(
+        params.statusCallback || process.env.TWILIO_STATUS_CALLBACK_URL
+      );
+      if (statusCallback) {
+        createPayload.statusCallback = statusCallback;
+      }
+
+      if (this.messagingServiceSid) {
+        createPayload.messagingServiceSid = this.messagingServiceSid;
+      } else {
+        createPayload.from = fromPhone;
+      }
+
+      // Send via Twilio
+      const message = await this.client.messages.create(createPayload as any);
 
       logger.info('SMS sent successfully', {
         sid: message.sid,
@@ -87,7 +119,7 @@ export class TwilioService {
         sid: message.sid,
         status: message.status,
         to: toPhone,
-        from: fromPhone,
+        from: message.from || fromPhone || params.from,
         body: params.body,
         numSegments: parseInt(message.numSegments || '1'),
         price: message.price || undefined,
@@ -132,6 +164,55 @@ export class TwilioService {
   }
 
   /**
+   * Place an automated appointment reminder call
+   */
+  async placeVoiceCall(params: PlaceVoiceCallParams): Promise<PlaceVoiceCallResult> {
+    try {
+      const toPhone = validateAndFormatPhone(params.to);
+      const fromPhone = validateAndFormatPhone(params.from);
+      const safeMessage = escapeForTwiml(params.message);
+      const twiml = `<Response><Pause length="1"/><Say voice="alice">${safeMessage}</Say></Response>`;
+      const statusCallback = this.resolveStatusCallback(params.statusCallback);
+
+      logger.info('Placing appointment reminder call', {
+        to: toPhone,
+        from: fromPhone,
+        messageLength: params.message.length,
+      });
+
+      const call = await this.client.calls.create({
+        to: toPhone,
+        from: fromPhone,
+        twiml,
+        statusCallback,
+      });
+
+      logger.info('Appointment reminder call created', {
+        sid: call.sid,
+        status: call.status,
+        to: toPhone,
+      });
+
+      return {
+        sid: call.sid,
+        status: call.status ?? 'queued',
+        to: toPhone,
+        from: fromPhone,
+        direction: call.direction ?? undefined,
+        price: call.price ?? undefined,
+      };
+    } catch (error: any) {
+      logger.error('Failed to place reminder call', {
+        error: error.message,
+        code: error.code,
+        status: error.status,
+        to: params.to,
+      });
+      throw new Error(`Failed to place reminder call: ${error.message}`);
+    }
+  }
+
+  /**
    * Replace template variables in message text
    * Variables: {patientName}, {providerName}, {appointmentDate}, {appointmentTime}, {clinicPhone}
    */
@@ -144,6 +225,37 @@ export class TwilioService {
     });
 
     return result;
+  }
+
+  private resolveStatusCallback(statusCallback?: string): string | undefined {
+    if (!statusCallback) {
+      return undefined;
+    }
+
+    try {
+      const parsed = new URL(statusCallback);
+      const hostname = parsed.hostname.toLowerCase();
+      const isLocalHost =
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === '0.0.0.0' ||
+        hostname === '::1' ||
+        hostname.endsWith('.local');
+
+      if (!['http:', 'https:'].includes(parsed.protocol) || isLocalHost) {
+        logger.warn('Skipping invalid Twilio status callback URL', {
+          statusCallback,
+        });
+        return undefined;
+      }
+
+      return parsed.toString();
+    } catch {
+      logger.warn('Skipping invalid Twilio status callback URL', {
+        statusCallback,
+      });
+      return undefined;
+    }
   }
 
   /**
@@ -289,7 +401,11 @@ export class TwilioService {
  * Create a Twilio service instance
  */
 export function createTwilioService(accountSid: string, authToken: string): TwilioService {
-  return new TwilioService(accountSid, authToken);
+  return new TwilioService(
+    accountSid,
+    authToken,
+    process.env.TWILIO_MESSAGING_SERVICE_SID || undefined
+  );
 }
 
 /**
@@ -304,4 +420,13 @@ export function getTwilioServiceFromEnv(): TwilioService {
   }
 
   return createTwilioService(accountSid, authToken);
+}
+
+function escapeForTwiml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

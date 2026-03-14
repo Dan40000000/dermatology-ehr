@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
 import { SignaturePad } from '../../components/kiosk/SignaturePad';
+import { getKioskHeaders } from '../../utils/kioskContext';
 import '../../styles/kiosk.css';
 
 interface ConsentForm {
@@ -12,6 +13,11 @@ interface ConsentForm {
   formContent: string;
   requiresSignature: boolean;
   version: string;
+}
+
+interface PatientIdentity {
+  fullName: string;
+  dob: string;
 }
 
 const cardStyle: React.CSSProperties = {
@@ -26,11 +32,13 @@ export function KioskConsentFormsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [consentForms, setConsentForms] = useState<ConsentForm[]>([]);
+  const [patientIdentity, setPatientIdentity] = useState<PatientIdentity | null>(null);
   const [currentFormIndex, setCurrentFormIndex] = useState(0);
   const [showSignature, setShowSignature] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [hasScrolledToBottom, setHasScrolledToBottom] = useState(false);
   const [signing, setSigning] = useState(false);
+  const consentBodyRef = useRef<HTMLDivElement | null>(null);
 
   const sessionId = sessionStorage.getItem('kioskSessionId');
 
@@ -40,30 +48,54 @@ export function KioskConsentFormsPage() {
       return;
     }
 
-    fetchConsentForms();
-  }, [sessionId]);
+    void loadPageData();
+  }, [navigate, sessionId]);
 
-  const fetchConsentForms = async () => {
+  const loadPageData = async () => {
     try {
-      const response = await fetch('/api/consent-forms/active', {
-        headers: {
-          'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
-          'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
-        },
-      });
+      const headers = await getKioskHeaders();
+      const [formsResponse, sessionResponse] = await Promise.all([
+        fetch('/api/kiosk/consent-forms/active', {
+          headers,
+        }),
+        fetch(`/api/kiosk/checkin/${sessionId}`, {
+          headers,
+        }),
+      ]);
 
-      if (!response.ok) {
+      if (!formsResponse.ok) {
         throw new Error('Failed to fetch consent forms');
       }
 
-      const data = await response.json();
+      const data = await formsResponse.json();
       setConsentForms(data.forms || []);
+
+      if (sessionResponse.ok) {
+        const sessionData = await sessionResponse.json();
+        const firstName = sessionData?.session?.patientFirstName || '';
+        const lastName = sessionData?.session?.patientLastName || '';
+        const dob = sessionData?.session?.dob || '';
+        const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+
+        if (fullName && dob) {
+          setPatientIdentity({ fullName, dob });
+        }
+      }
     } catch (err) {
       setError('Unable to load consent forms.');
       console.error('Error fetching consent forms:', err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const formatDisplayDate = (value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+
+    return date.toLocaleDateString();
   };
 
   const handleTimeout = () => {
@@ -80,17 +112,53 @@ export function KioskConsentFormsPage() {
       setHasScrolledToBottom(false);
       setAgreed(false);
     } else {
-      navigate('/kiosk/insurance');
+      navigate('/kiosk/medical-history');
     }
   };
 
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const element = e.currentTarget;
-    const isAtBottom = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
-    if (isAtBottom) {
-      setHasScrolledToBottom(true);
-    }
+  const updateScrollState = useCallback(() => {
+    const element = consentBodyRef.current;
+    if (!element) return;
+
+    const isAtBottom =
+      element.scrollHeight <= element.clientHeight + 8
+      || element.scrollHeight - element.scrollTop - element.clientHeight <= 32;
+
+    setHasScrolledToBottom((current) => current || isAtBottom);
+  }, []);
+
+  const handleScroll = () => {
+    updateScrollState();
   };
+
+  useEffect(() => {
+    if (loading || showSignature || consentForms.length === 0) {
+      return;
+    }
+
+    setHasScrolledToBottom(false);
+    setAgreed(false);
+
+    const frameId = window.requestAnimationFrame(() => {
+      updateScrollState();
+      window.setTimeout(updateScrollState, 75);
+    });
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && consentBodyRef.current) {
+      observer = new ResizeObserver(() => updateScrollState());
+      observer.observe(consentBodyRef.current);
+      const contentElement = consentBodyRef.current.firstElementChild;
+      if (contentElement) {
+        observer.observe(contentElement);
+      }
+    }
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      observer?.disconnect();
+    };
+  }, [consentForms.length, currentFormIndex, loading, showSignature, updateScrollState]);
 
   const handleContinue = () => {
     if (!agreed) {
@@ -110,12 +178,12 @@ export function KioskConsentFormsPage() {
     setError('');
 
     try {
+      const headers = await getKioskHeaders();
       const response = await fetch(`/api/kiosk/checkin/${sessionId}/signature`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
-          'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
+          ...headers,
         },
         body: JSON.stringify({
           signatureData,
@@ -149,12 +217,12 @@ export function KioskConsentFormsPage() {
 
   const completeCheckIn = async () => {
     try {
+      const headers = await getKioskHeaders();
       const response = await fetch(`/api/kiosk/checkin/${sessionId}/complete`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Kiosk-Code': localStorage.getItem('kioskCode') || 'KIOSK-001',
-          'X-Tenant-Id': localStorage.getItem('tenantId') || 'modmed-demo',
+          ...headers,
         },
       });
 
@@ -171,7 +239,7 @@ export function KioskConsentFormsPage() {
 
   if (loading) {
     return (
-      <KioskLayout currentStep={4} totalSteps={6} stepName="Loading..." onTimeout={handleTimeout}>
+      <KioskLayout currentStep={5} totalSteps={7} stepName="Loading..." onTimeout={handleTimeout}>
         <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem' }}>
           <div className="kiosk-spinner" style={{ margin: '0 auto 1rem' }} />
           <p style={{ fontSize: '1.5rem', color: '#4b5563' }}>Loading consent forms...</p>
@@ -190,7 +258,7 @@ export function KioskConsentFormsPage() {
 
   if (showSignature) {
     return (
-      <KioskLayout currentStep={5} totalSteps={6} stepName="Sign Consent" onTimeout={handleTimeout}>
+      <KioskLayout currentStep={6} totalSteps={7} stepName="Sign Consent" onTimeout={handleTimeout}>
         <div style={cardStyle}>
           <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '1rem' }}>
             Sign: {currentForm.formName}
@@ -198,6 +266,44 @@ export function KioskConsentFormsPage() {
           <p style={{ fontSize: '1.25rem', color: '#4b5563', marginBottom: '2rem' }}>
             Please sign below to acknowledge your consent.
           </p>
+
+          {patientIdentity && (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+              gap: '0.75rem',
+              marginBottom: '1.5rem',
+              padding: '1rem 1.25rem',
+              borderRadius: '0.75rem',
+              background: '#eff6ff',
+              border: '1px solid #bfdbfe',
+            }}>
+              <div>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1d4ed8', textTransform: 'uppercase' }}>
+                  Patient
+                </div>
+                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: '#111827' }}>
+                  {patientIdentity.fullName}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1d4ed8', textTransform: 'uppercase' }}>
+                  Date of Birth
+                </div>
+                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: '#111827' }}>
+                  {formatDisplayDate(patientIdentity.dob)}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1d4ed8', textTransform: 'uppercase' }}>
+                  Signature Date
+                </div>
+                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: '#111827' }}>
+                  {new Date().toLocaleDateString()}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div style={{ marginBottom: '2rem' }}>
             <p style={{ fontSize: '1.125rem', color: '#374151', marginBottom: '1rem' }}>
@@ -224,7 +330,7 @@ export function KioskConsentFormsPage() {
   }
 
   return (
-    <KioskLayout currentStep={4} totalSteps={6} stepName="Review & Sign Consent" onTimeout={handleTimeout}>
+    <KioskLayout currentStep={5} totalSteps={7} stepName="Review & Sign Consent" onTimeout={handleTimeout}>
       <div style={cardStyle}>
         <div style={{ marginBottom: '1.5rem' }}>
           <h2 style={{ fontSize: '1.875rem', fontWeight: 700, color: '#111827', marginBottom: '0.5rem' }}>
@@ -236,6 +342,7 @@ export function KioskConsentFormsPage() {
         </div>
 
         <div
+          ref={consentBodyRef}
           onScroll={handleScroll}
           style={{
             background: '#f9fafb',

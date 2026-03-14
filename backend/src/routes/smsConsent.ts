@@ -10,8 +10,30 @@ import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { auditLog } from '../services/audit';
 import { logger } from '../lib/logger';
 import * as crypto from 'crypto';
+import { formatPhoneE164 } from '../utils/phone';
+import { createTwilioService } from '../services/twilioService';
+import {
+  createPendingSMSConsentRequest,
+  getSMSConsentState,
+  recordSMSConsent,
+  revokeSMSConsent,
+} from '../services/smsConsentState';
+import {
+  buildSMSConsentRequestText,
+  getSMSPracticeBranding,
+} from '../services/smsConsentText';
 
 const router = Router();
+
+function buildMockSmsResult(body: string) {
+  const hasUnicode = /[^\x00-\x7F]/.test(body);
+  const segmentLength = hasUnicode ? 70 : 160;
+  return {
+    sid: `mock_sms_${crypto.randomUUID()}`,
+    status: 'sent',
+    numSegments: Math.max(1, Math.ceil(body.length / segmentLength)),
+  };
+}
 
 /**
  * GET /api/sms-consent/:patientId
@@ -20,50 +42,19 @@ const router = Router();
 router.get('/:patientId', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
     const tenantId = req.user!.tenantId;
-    const patientId = req.params.patientId;
-
-    const result = await pool.query(
-      `SELECT
-        id,
-        patient_id as "patientId",
-        consent_given as "consentGiven",
-        consent_date as "consentDate",
-        consent_method as "consentMethod",
-        obtained_by_user_id as "obtainedByUserId",
-        obtained_by_name as "obtainedByName",
-        expiration_date as "expirationDate",
-        consent_revoked as "consentRevoked",
-        revoked_date as "revokedDate",
-        revoked_reason as "revokedReason",
-        created_at as "createdAt",
-        updated_at as "updatedAt"
-       FROM sms_consent
-       WHERE tenant_id = $1 AND patient_id = $2
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [tenantId, patientId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.json({ hasConsent: false });
+    const patientId = req.params.patientId || '';
+    if (!patientId) {
+      return res.status(400).json({ error: 'Patient ID is required' });
     }
-
-    const consent = result.rows[0];
-    const hasConsent = consent.consentGiven && !consent.consentRevoked;
-
-    // Calculate days until expiration
-    let daysUntilExpiration = null;
-    if (hasConsent && consent.expirationDate) {
-      const expDate = new Date(consent.expirationDate);
-      const today = new Date();
-      const diffTime = expDate.getTime() - today.getTime();
-      daysUntilExpiration = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    }
+    const consentState = await getSMSConsentState(tenantId, patientId, pool);
 
     res.json({
-      hasConsent,
-      consent,
-      daysUntilExpiration,
+      hasConsent: consentState.hasConsent,
+      pendingRequest: consentState.pendingRequest,
+      requestedAt: consentState.requestedAt,
+      optedOut: consentState.optedOut,
+      consent: consentState.consent,
+      daysUntilExpiration: consentState.daysUntilExpiration,
     });
   } catch (error: any) {
     logger.error('Error fetching SMS consent', { error: error.message });
@@ -86,7 +77,10 @@ router.post('/:patientId', requireAuth, async (req: AuthedRequest, res: Response
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
-    const patientId = req.params.patientId;
+    const patientId = req.params.patientId || '';
+    if (!patientId) {
+      return res.status(400).json({ error: 'Patient ID is required' });
+    }
 
     const parsed = createConsentSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -105,28 +99,17 @@ router.post('/:patientId', requireAuth, async (req: AuthedRequest, res: Response
       return res.status(404).json({ error: 'Patient not found' });
     }
 
-    // Create consent record
-    const consentId = crypto.randomUUID();
-    await pool.query(
-      `INSERT INTO sms_consent
-       (id, tenant_id, patient_id, consent_given, consent_date, consent_method,
-        obtained_by_user_id, obtained_by_name, expiration_date, notes)
-       VALUES ($1, $2, $3, true, CURRENT_TIMESTAMP, $4, $5, $6, $7, $8)`,
-      [consentId, tenantId, patientId, consentMethod, userId, obtainedByName, expirationDate || null, notes || null]
-    );
-
-    // Also update patient_sms_preferences
-    await pool.query(
-      `INSERT INTO patient_sms_preferences
-       (tenant_id, patient_id, opted_in, consent_date, consent_method)
-       VALUES ($1, $2, true, CURRENT_TIMESTAMP, $3)
-       ON CONFLICT (tenant_id, patient_id)
-       DO UPDATE SET
-         opted_in = true,
-         consent_date = CURRENT_TIMESTAMP,
-         consent_method = $3,
-         updated_at = CURRENT_TIMESTAMP`,
-      [tenantId, patientId, consentMethod]
+    const consentId = await recordSMSConsent(
+      tenantId,
+      patientId,
+      {
+        consentMethod,
+        obtainedByUserId: userId,
+        obtainedByName,
+        expirationDate: expirationDate || null,
+        notes: notes || null,
+      },
+      pool
     );
 
     await auditLog(tenantId, userId, 'sms_consent_obtained', 'sms_consent', consentId);
@@ -150,7 +133,10 @@ router.post('/:patientId/revoke', requireAuth, async (req: AuthedRequest, res: R
   try {
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
-    const patientId = req.params.patientId;
+    const patientId = req.params.patientId || '';
+    if (!patientId) {
+      return res.status(400).json({ error: 'Patient ID is required' });
+    }
 
     const parsed = revokeConsentSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -158,45 +144,142 @@ router.post('/:patientId/revoke', requireAuth, async (req: AuthedRequest, res: R
     }
 
     const { reason } = parsed.data;
-
-    // Update most recent consent record
-    const result = await pool.query(
-      `UPDATE sms_consent
-       SET consent_revoked = true,
-           revoked_date = CURRENT_TIMESTAMP,
-           revoked_reason = $1,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = (
-         SELECT id FROM sms_consent
-         WHERE tenant_id = $2 AND patient_id = $3
-         ORDER BY created_at DESC
-         LIMIT 1
-       )
-       RETURNING id`,
-      [reason || null, tenantId, patientId]
+    const consentId = await revokeSMSConsent(
+      tenantId,
+      patientId,
+      {
+        reason: reason || null,
+        notes: 'Consent revoked from SMS consent route',
+        optedOutVia: 'staff',
+      },
+      pool
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'No consent record found' });
-    }
-
-    // Update patient_sms_preferences
-    await pool.query(
-      `UPDATE patient_sms_preferences
-       SET opted_in = false,
-           opted_out_at = CURRENT_TIMESTAMP,
-           opted_out_via = 'staff',
-           updated_at = CURRENT_TIMESTAMP
-       WHERE tenant_id = $1 AND patient_id = $2`,
-      [tenantId, patientId]
-    );
-
-    await auditLog(tenantId, userId, 'sms_consent_revoked', 'sms_consent', result.rows[0].id);
+    await auditLog(tenantId, userId, 'sms_consent_revoked', 'sms_consent', consentId);
 
     res.json({ success: true });
   } catch (error: any) {
     logger.error('Error revoking SMS consent', { error: error.message });
     res.status(500).json({ error: 'Failed to revoke SMS consent' });
+  }
+});
+
+/**
+ * POST /api/sms-consent/:patientId/request
+ * Send an opt-in request text and create a pending consent record
+ */
+router.post('/:patientId/request', requireAuth, async (req: AuthedRequest, res: Response) => {
+  const client = await pool.connect();
+
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const userName = req.user!.fullName || 'Staff Member';
+    const patientId = req.params.patientId || '';
+    if (!patientId) {
+      return res.status(400).json({ error: 'Patient ID is required' });
+    }
+
+    const patientResult = await client.query(
+      `SELECT phone, first_name, last_name
+       FROM patients
+       WHERE id = $1 AND tenant_id = $2`,
+      [patientId, tenantId]
+    );
+
+    if (patientResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    const patient = patientResult.rows[0];
+    if (!patient.phone) {
+      return res.status(400).json({ error: 'Patient has no phone number' });
+    }
+
+    const consentState = await getSMSConsentState(tenantId, patientId, client);
+    if (consentState.hasConsent) {
+      return res.status(400).json({ error: 'SMS consent is already on file', code: 'consent_already_granted' });
+    }
+
+    const settingsResult = await client.query(
+      `SELECT twilio_account_sid, twilio_auth_token, twilio_phone_number, is_active, is_test_mode
+       FROM sms_settings
+       WHERE tenant_id = $1`,
+      [tenantId]
+    );
+
+    if (settingsResult.rows.length === 0 || !settingsResult.rows[0].is_active) {
+      return res.status(400).json({ error: 'SMS not configured or not active' });
+    }
+
+    const settings = settingsResult.rows[0];
+    const branding = await getSMSPracticeBranding(tenantId, client);
+    const messageBody = buildSMSConsentRequestText(branding);
+    const fromNumber = settings.twilio_phone_number || '+15555550100';
+    const sendResult = settings.is_test_mode
+      ? buildMockSmsResult(messageBody)
+      : await createTwilioService(
+          settings.twilio_account_sid,
+          settings.twilio_auth_token
+        ).sendSMS({
+          to: patient.phone,
+          from: fromNumber,
+          body: messageBody,
+        });
+
+    await client.query('BEGIN');
+
+    const consentId = await createPendingSMSConsentRequest(
+      tenantId,
+      patientId,
+      client,
+      {
+        obtainedByUserId: userId,
+        obtainedByName: userName,
+        notes: `Opt-in request sent to ${patient.first_name} ${patient.last_name}`,
+      }
+    );
+
+    const messageId = crypto.randomUUID();
+    await client.query(
+      `INSERT INTO sms_messages
+       (id, tenant_id, twilio_message_sid, direction, from_number, to_number,
+        patient_id, content, message_body, status, message_type, sent_at, segment_count)
+       VALUES ($1, $2, $3, 'outbound', $4, $5, $6, $7, $8, $9, 'consent_request', CURRENT_TIMESTAMP, $10)`,
+      [
+        messageId,
+        tenantId,
+        sendResult.sid,
+        fromNumber,
+        formatPhoneE164(patient.phone),
+        patientId,
+        messageBody,
+        messageBody,
+        sendResult.status,
+        sendResult.numSegments,
+      ]
+    );
+
+    await auditLog(tenantId, userId, 'sms_consent_request_sent', 'sms_consent', consentId);
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      consentId,
+      messageId,
+      status: sendResult.status,
+      pendingRequest: true,
+    });
+  } catch (error: any) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // ignore rollback failure
+    }
+    logger.error('Error sending SMS consent request', { error: error.message });
+    res.status(500).json({ error: 'Failed to send SMS consent request' });
+  } finally {
+    client.release();
   }
 });
 

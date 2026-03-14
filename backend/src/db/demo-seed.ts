@@ -441,7 +441,7 @@ async function demoSeed() {
         first_name: "Daniel",
         last_name: "Perry",
         dob: "1976-05-03", // 48 years old
-        phone: "555-0223",
+        phone: "541-231-8693",
         email: "daniel.perry@email.com",
         address: "2580 Lakeview Terrace",
         city: "Evergreen",

@@ -12,7 +12,7 @@ import { userHasRole } from '../../lib/roles';
 
 jest.mock('../../middleware/auth', () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.user = { id: 'user-1', tenantId: 'tenant-1' };
+    req.user = { id: 'user-1', tenantId: 'tenant-1', fullName: 'Test User', role: 'admin' };
     return next();
   },
 }));
@@ -20,6 +20,7 @@ jest.mock('../../middleware/auth', () => ({
 jest.mock('../../db/pool', () => ({
   pool: {
     query: jest.fn(),
+    connect: jest.fn(),
   },
 }));
 
@@ -31,10 +32,14 @@ jest.mock('../../services/twilioService', () => ({
   createTwilioService: jest.fn(),
 }));
 
-jest.mock('../../services/smsProcessor', () => ({
-  processIncomingSMS: jest.fn(),
-  updateSMSStatus: jest.fn(),
-}));
+jest.mock('../../services/smsProcessor', () => {
+  const actual = jest.requireActual('../../services/smsProcessor');
+  return {
+    ...actual,
+    processIncomingSMS: jest.fn(),
+    updateSMSStatus: jest.fn(),
+  };
+});
 
 jest.mock('../../services/smsReminderScheduler', () => ({
   sendImmediateReminder: jest.fn(),
@@ -69,6 +74,7 @@ app.use(express.json());
 app.use('/sms', smsRouter);
 
 const queryMock = pool.query as jest.Mock;
+const connectMock = pool.connect as jest.Mock;
 const auditLogMock = auditLog as jest.Mock;
 const createTwilioServiceMock = createTwilioService as jest.Mock;
 const processIncomingMock = processIncomingSMS as jest.Mock;
@@ -78,6 +84,8 @@ const processScheduledRemindersMock = processScheduledReminders as jest.Mock;
 const processFollowUpRemindersMock = processFollowUpReminders as jest.Mock;
 const formatPhoneMock = formatPhoneE164 as jest.Mock;
 const userHasRoleMock = userHasRole as jest.Mock;
+const transactionalQueryMock = jest.fn();
+const transactionalReleaseMock = jest.fn();
 
 const twilioServiceMock = {
   sendSMS: jest.fn(),
@@ -87,6 +95,7 @@ const twilioServiceMock = {
 
 beforeEach(() => {
   queryMock.mockReset();
+  connectMock.mockReset();
   auditLogMock.mockReset();
   createTwilioServiceMock.mockReset();
   processIncomingMock.mockReset();
@@ -96,11 +105,28 @@ beforeEach(() => {
   processFollowUpRemindersMock.mockReset();
   formatPhoneMock.mockReset();
   userHasRoleMock.mockReset();
+  transactionalQueryMock.mockReset();
+  transactionalReleaseMock.mockReset();
   twilioServiceMock.sendSMS.mockReset();
   twilioServiceMock.testConnection.mockReset();
   twilioServiceMock.validateWebhookSignature.mockReset();
 
   queryMock.mockResolvedValue({ rows: [] });
+  transactionalQueryMock.mockImplementation(async (sql: string) => {
+    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+      return { rows: [], rowCount: 0 };
+    }
+
+    if (sql.includes('FROM patient_message_threads')) {
+      return { rows: [], rowCount: 0 };
+    }
+
+    return { rows: [], rowCount: 1 };
+  });
+  connectMock.mockResolvedValue({
+    query: transactionalQueryMock,
+    release: transactionalReleaseMock,
+  });
   createTwilioServiceMock.mockReturnValue(twilioServiceMock);
   formatPhoneMock.mockImplementation((value: string) => value ? '+15550100' : null);
   twilioServiceMock.sendSMS.mockResolvedValue({ sid: 'sid-1', status: 'sent', numSegments: 1 });
@@ -222,6 +248,9 @@ describe('SMS routes', () => {
         rows: [{ phone: '5550100', first_name: 'Pat', last_name: 'Lee' }],
       })
       .mockResolvedValueOnce({
+        rows: [],
+      })
+      .mockResolvedValueOnce({
         rows: [{ opted_in: false }],
       });
 
@@ -237,6 +266,9 @@ describe('SMS routes', () => {
     queryMock
       .mockResolvedValueOnce({
         rows: [{ phone: '5550100', first_name: 'Pat', last_name: 'Lee' }],
+      })
+      .mockResolvedValueOnce({
+        rows: [],
       })
       .mockResolvedValueOnce({
         rows: [{ opted_in: true }],
@@ -259,6 +291,9 @@ describe('SMS routes', () => {
         rows: [{ phone: '5550100', first_name: 'Pat', last_name: 'Lee' }],
       })
       .mockResolvedValueOnce({
+        rows: [],
+      })
+      .mockResolvedValueOnce({
         rows: [{ opted_in: true }],
       })
       .mockResolvedValueOnce({
@@ -274,6 +309,32 @@ describe('SMS routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(auditLogMock).toHaveBeenCalled();
+  });
+
+  it('POST /sms/send uses test mode without Twilio credentials', async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ phone: '5550100', first_name: 'Pat', last_name: 'Lee' }],
+      })
+      .mockResolvedValueOnce({
+        rows: [],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ opted_in: true }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ twilio_account_sid: null, twilio_auth_token: null, twilio_phone_number: null, is_active: true, is_test_mode: true }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post('/sms/send').send({
+      patientId: '00000000-0000-4000-8000-000000000001',
+      messageBody: 'Hello from test mode',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(createTwilioServiceMock).not.toHaveBeenCalled();
   });
 
   it('GET /sms/messages returns paginated results', async () => {
@@ -306,6 +367,23 @@ describe('SMS routes', () => {
     expect(res.body.conversations).toHaveLength(1);
   });
 
+  it('GET /sms/conversations stays compatible with legacy sms_conversations schema', async () => {
+    queryMock.mockImplementationOnce(async (sql: string) => {
+      expect(sql).toContain(`COALESCE(NULLIF(BTRIM(p.phone), ''), NULLIF(BTRIM(c.phone_number), ''))`);
+      expect(sql).toContain('c.consent_status');
+      expect(sql).not.toContain('c.status');
+      expect(sql).not.toContain('c.last_message_direction');
+      expect(sql).not.toContain('c.last_message_preview');
+      return { rows: [{ patientId: 'p1', phone: '5550100' }] };
+    });
+
+    const res = await request(app).get('/sms/conversations');
+
+    expect(res.status).toBe(200);
+    expect(res.body.conversations).toHaveLength(1);
+    expect(res.body.conversations[0].phone).toBe('5550100');
+  });
+
   it('GET /sms/conversations/:patientId returns 404 when missing', async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -333,6 +411,9 @@ describe('SMS routes', () => {
         rows: [{ phone: '5550100', first_name: 'Pat', last_name: 'Lee' }],
       })
       .mockResolvedValueOnce({
+        rows: [],
+      })
+      .mockResolvedValueOnce({
         rows: [{ opted_in: true }],
       })
       .mockResolvedValueOnce({
@@ -344,6 +425,30 @@ describe('SMS routes', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+    expect(transactionalQueryMock.mock.calls.some(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO patient_messages')
+    )).toBe(true);
+  });
+
+  it('PUT /sms/conversations/:patientId/routing updates queue routing', async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: 'p1' }] });
+    transactionalQueryMock.mockImplementation(async (sql: string) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('FROM patient_message_threads')) {
+        return { rows: [{ id: 'thread-1', category: 'general', status: 'waiting-patient' }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+
+    const res = await request(app)
+      .put('/sms/conversations/p1/routing')
+      .send({ category: 'billing' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.category).toBe('billing');
+    expect(res.body.threadStatus).toBe('open');
   });
 
   it('POST /sms/conversations/:patientId/send rejects invalid payload', async () => {
@@ -360,7 +465,9 @@ describe('SMS routes', () => {
   });
 
   it('GET /sms/auto-responses returns list', async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ id: 'a1' }] });
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ practiceName: 'Test Medical', practicePhone: '5412318693' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'a1' }] });
 
     const res = await request(app).get('/sms/auto-responses');
 
@@ -450,6 +557,24 @@ describe('SMS routes', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+    expect(res.body.channel).toBe('sms');
+    expect(sendReminderMock).toHaveBeenCalledWith('tenant-1', 'a1', 'sms');
+  });
+
+  it('POST /sms/send-reminder supports voice channel', async () => {
+    const res = await request(app).post('/sms/send-reminder/a1').send({ channel: 'voice' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.channel).toBe('voice');
+    expect(sendReminderMock).toHaveBeenCalledWith('tenant-1', 'a1', 'voice');
+  });
+
+  it('POST /sms/send-call-reminder sends voice reminder', async () => {
+    const res = await request(app).post('/sms/send-call-reminder/a1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.channel).toBe('voice');
+    expect(sendReminderMock).toHaveBeenCalledWith('tenant-1', 'a1', 'voice');
   });
 
   it('POST /sms/workflow/process-reminders returns 403 for non-admin', async () => {
@@ -840,6 +965,9 @@ describe('SMS routes', () => {
         rows: [{ phone: '5550100', first_name: 'Pat', last_name: 'Lee' }],
       })
       .mockResolvedValueOnce({
+        rows: [],
+      })
+      .mockResolvedValueOnce({
         rows: [{ opted_in: true }],
       })
       .mockResolvedValueOnce({
@@ -931,6 +1059,9 @@ describe('SMS routes', () => {
         rows: [{ phone: '5550100', first_name: 'Pat', last_name: 'Lee' }],
       })
       .mockResolvedValueOnce({
+        rows: [],
+      })
+      .mockResolvedValueOnce({
         rows: [{ opted_in: false }],
       });
 
@@ -943,6 +1074,9 @@ describe('SMS routes', () => {
     queryMock
       .mockResolvedValueOnce({
         rows: [{ phone: '5550100', first_name: 'Pat', last_name: 'Lee' }],
+      })
+      .mockResolvedValueOnce({
+        rows: [],
       })
       .mockResolvedValueOnce({
         rows: [{ opted_in: true }],
@@ -962,6 +1096,9 @@ describe('SMS routes', () => {
         rows: [{ phone: '5550100', first_name: 'Pat', last_name: 'Lee' }],
       })
       .mockResolvedValueOnce({
+        rows: [],
+      })
+      .mockResolvedValueOnce({
         rows: [{ opted_in: true }],
       })
       .mockResolvedValueOnce({
@@ -974,8 +1111,57 @@ describe('SMS routes', () => {
     expect(res.status).toBe(500);
   });
 
+  it('POST /sms/conversations/:patientId/send uses test mode without Twilio credentials', async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ phone: '5550100', first_name: 'Pat', last_name: 'Lee' }],
+      })
+      .mockResolvedValueOnce({
+        rows: [],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ opted_in: true }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ twilio_account_sid: null, twilio_auth_token: null, twilio_phone_number: null, is_active: true, is_test_mode: true }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post('/sms/conversations/p1/send').send({ message: 'Test mode hi' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(createTwilioServiceMock).not.toHaveBeenCalled();
+  });
+
+  it('POST /sms/test/inbound simulates inbound messages in test mode', async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ twilio_phone_number: '+15550001111', is_active: true, is_test_mode: true }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ phone: '5550100' }],
+      });
+    processIncomingMock.mockResolvedValueOnce({
+      success: true,
+      messageId: 'msg-in-1',
+      autoResponseSent: true,
+      actionPerformed: 'confirmed',
+    });
+
+    const res = await request(app).post('/sms/test/inbound').send({
+      patientId: '00000000-0000-4000-8000-000000000001',
+      messageBody: 'C',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.autoResponseSent).toBe(true);
+    expect(processIncomingMock).toHaveBeenCalled();
+  });
+
   it('PUT /sms/conversations/:patientId/mark-read returns 500 on error', async () => {
-    queryMock.mockRejectedValueOnce(new Error('boom'));
+    connectMock.mockRejectedValueOnce(new Error('boom'));
 
     const res = await request(app).put('/sms/conversations/p1/mark-read');
 

@@ -1,18 +1,23 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AnatomicalBodyDiagram } from './AnatomicalBodyDiagram';
 import type { BodyMarker, BodyView } from './AnatomicalBodyDiagram';
 import { BodyMarkerModal } from './BodyMarkerModal';
+import api from '../../api';
 import toast from 'react-hot-toast';
 
 interface PatientBodyDiagramProps {
   patientId: string;
+  encounterId?: string;
   editable?: boolean;
+  onMarkersChange?: (markers: BodyMarker[]) => void;
   className?: string;
 }
 
 export function PatientBodyDiagram({
   patientId,
+  encounterId,
   editable = true,
+  onMarkersChange,
   className = '',
 }: PatientBodyDiagramProps) {
   const [markers, setMarkers] = useState<BodyMarker[]>([]);
@@ -26,55 +31,8 @@ export function PatientBodyDiagram({
     view: BodyView;
   } | null>(null);
   const [markerHistory, setMarkerHistory] = useState<BodyMarker[][]>([]);
+  const latestRequestRef = useRef(0);
 
-  // Fetch markers from API
-  const fetchMarkers = useCallback(async () => {
-    if (!patientId) return;
-
-    try {
-      setIsLoading(true);
-      setError(null);
-
-      const response = await fetch(`/api/body-diagram/patient/${patientId}/markings`, {
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          // No markers yet - not an error
-          setMarkers([]);
-          return;
-        }
-        throw new Error('Failed to fetch body markers');
-      }
-
-      const responseData = await response.json();
-      const data = responseData?.markings || responseData || [];
-
-      // Transform API response to BodyMarker format
-      // Backend uses: locationX, locationY, viewType, markingType, description
-      const transformedMarkers: BodyMarker[] = data.map((m: any) => ({
-        id: m.id,
-        x: m.locationX ?? m.location_x ?? m.x ?? 0,
-        y: m.locationY ?? m.location_y ?? m.y ?? 0,
-        view: mapViewType(m.viewType || m.view_type || m.view || 'front'),
-        note: m.description || m.note || m.diagnosisDescription || '',
-        type: mapMarkingType(m.markingType || m.marking_type || m.type || 'lesion'),
-        date: m.createdAt || m.created_at || m.date || new Date().toISOString(),
-        severity: m.status === 'active' ? 'high' : m.status === 'monitored' ? 'medium' : 'low',
-      }));
-
-      setMarkers(transformedMarkers);
-    } catch (err: any) {
-      console.error('Failed to fetch body markers:', err);
-      setError('Failed to load body markers');
-      setMarkers([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [patientId]);
-
-  // Map backend viewType to our BodyView
   function mapViewType(viewType: string): BodyView {
     if (viewType === 'back') return 'back';
     if (viewType === 'left' || viewType === 'left-side') return 'left';
@@ -82,18 +40,147 @@ export function PatientBodyDiagram({
     return 'front';
   }
 
-  // Map backend markingType to our marker type
-  function mapMarkingType(markingType: string): BodyMarker['type'] {
-    if (markingType === 'lesion') return 'lesion';
-    if (markingType === 'biopsy' || markingType === 'excision') return 'procedure';
-    if (markingType === 'injection') return 'cosmetic';
-    if (markingType === 'examined') return 'note';
-    return 'lesion';
+  function inferViewTypeFromBodyRegion(bodyRegion: string | null | undefined): BodyView {
+    if (!bodyRegion) return 'front';
+    const normalized = bodyRegion.toLowerCase();
+    if (normalized.includes('back')) return 'back';
+    if (normalized.includes('left')) return 'left';
+    if (normalized.includes('right')) return 'right';
+    return 'front';
   }
+
+  function mapBodyMapMarkerType(markerType: string): BodyMarker['type'] {
+    switch (markerType) {
+      case 'procedure':
+        return 'procedure';
+      case 'condition':
+        return 'condition';
+      case 'cosmetic':
+        return 'cosmetic';
+      case 'wound':
+        return 'wound';
+      case 'note':
+        return 'note';
+      case 'lesion':
+      default:
+        return 'lesion';
+    }
+  }
+
+  function mapMarkerTypeToBodyMapMarkerType(type: BodyMarker['type']): 'lesion' | 'procedure' | 'condition' | 'cosmetic' | 'wound' {
+    switch (type) {
+      case 'procedure':
+        return 'procedure';
+      case 'condition':
+        return 'condition';
+      case 'cosmetic':
+        return 'cosmetic';
+      case 'wound':
+        return 'wound';
+      case 'lesion':
+      case 'note':
+      default:
+        return 'lesion';
+    }
+  }
+
+  function mapBodyMapStatusToSeverity(status: string | null | undefined): BodyMarker['severity'] {
+    switch (status) {
+      case 'active':
+        return 'high';
+      case 'resolved':
+      case 'healed':
+      case 'removed':
+      default:
+        return 'low';
+    }
+  }
+
+  function mapSeverityToBodyMapStatus(severity: BodyMarker['severity']): 'active' | 'resolved' | 'healed' | 'removed' {
+    switch (severity) {
+      case 'high':
+        return 'active';
+      case 'medium':
+        return 'resolved';
+      case 'low':
+      default:
+        return 'resolved';
+    }
+  }
+
+  function mapSeverityToBodyMapSeverity(severity: BodyMarker['severity']): 'mild' | 'moderate' | 'severe' {
+    switch (severity) {
+      case 'high':
+        return 'severe';
+      case 'medium':
+        return 'moderate';
+      case 'low':
+      default:
+        return 'mild';
+    }
+  }
+
+  // Fetch markers from API
+  const fetchMarkers = useCallback(async () => {
+    if (!patientId) return;
+    const requestId = ++latestRequestRef.current;
+
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      const response = await api.get(`/api/body-map-markers`, {
+        params: { patient_id: patientId },
+      });
+      if (requestId !== latestRequestRef.current) {
+        return;
+      }
+
+      const responseData = response.data;
+      const data = responseData?.markers || responseData?.markings || [];
+      const transformedMarkers: BodyMarker[] = data.map((m: any) => ({
+        id: m.id,
+        x: Number(m.x_position ?? m.locationX ?? m.location_x ?? m.x ?? 50),
+        y: Number(m.y_position ?? m.locationY ?? m.location_y ?? m.y ?? 50),
+        view: mapViewType(m.viewType || m.view_type || m.view || inferViewTypeFromBodyRegion(m.body_region)),
+        note: m.description || m.clinical_notes || m.note || m.diagnosisDescription || '',
+        type: mapBodyMapMarkerType(m.marker_type || m.markingType || m.marking_type || m.type || 'lesion'),
+        date: m.createdAt || m.created_at || m.date || new Date().toISOString(),
+        severity: mapBodyMapStatusToSeverity(m.status),
+      }));
+
+      setMarkers(transformedMarkers);
+    } catch (err: any) {
+      if (requestId !== latestRequestRef.current) {
+        return;
+      }
+
+      if (err?.response?.status === 404 || err?.response?.status === 401 || err?.response?.status === 403) {
+        setMarkers([]);
+        setError(null);
+        return;
+      }
+
+      console.warn('Body marker load failed', err);
+      setMarkers([]);
+      setError(null);
+    } finally {
+      if (requestId === latestRequestRef.current) {
+        setIsLoading(false);
+      }
+    }
+  }, [patientId]);
 
   useEffect(() => {
     fetchMarkers();
+    return () => {
+      latestRequestRef.current += 1;
+    };
   }, [fetchMarkers]);
+
+  useEffect(() => {
+    onMarkersChange?.(markers);
+  }, [markers, onMarkersChange]);
 
   // Handle adding a new marker
   const handleAddMarker = useCallback(
@@ -112,52 +199,26 @@ export function PatientBodyDiagram({
     setIsModalOpen(true);
   }, []);
 
-  // Map our marker type to backend markingType
-  function reverseMapMarkingType(type: BodyMarker['type']): string {
-    if (type === 'lesion') return 'lesion';
-    if (type === 'procedure') return 'biopsy';
-    if (type === 'cosmetic') return 'injection';
-    if (type === 'wound') return 'lesion';
-    if (type === 'condition') return 'lesion';
-    return 'examined';
-  }
-
-  // Map our severity to backend status
-  function mapSeverityToStatus(severity: BodyMarker['severity']): string {
-    if (severity === 'high') return 'active';
-    if (severity === 'medium') return 'monitored';
-    return 'resolved';
-  }
-
   // Save marker (create or update)
   const handleSaveMarker = useCallback(
     async (markerData: Omit<BodyMarker, 'id'>) => {
       // Save current state for undo
       setMarkerHistory((prev) => [...prev, markers]);
 
-      // Prepare backend-compatible payload
-      const backendPayload = {
-        patientId: patientId,
-        locationCode: 'custom',
-        locationX: markerData.x,
-        locationY: markerData.y,
-        viewType: markerData.view === 'left' ? 'front' : markerData.view === 'right' ? 'front' : markerData.view,
-        markingType: reverseMapMarkingType(markerData.type),
+      const basePayload = {
+        marker_type: mapMarkerTypeToBodyMapMarkerType(markerData.type),
+        body_region: `${markerData.view}-custom`,
+        x_position: markerData.x,
+        y_position: markerData.y,
         description: markerData.note,
-        status: mapSeverityToStatus(markerData.severity),
+        clinical_notes: markerData.note,
+        status: mapSeverityToBodyMapStatus(markerData.severity),
+        severity: mapSeverityToBodyMapSeverity(markerData.severity),
       };
 
       try {
         if (selectedMarker) {
-          // Update existing marker
-          const response = await fetch(`/api/body-diagram/markings/${selectedMarker.id}`, {
-            method: 'PUT',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(backendPayload),
-          });
-
-          if (!response.ok) throw new Error('Failed to update marker');
+          await api.put(`/api/body-map-markers/${selectedMarker.id}`, basePayload);
 
           setMarkers((prev) =>
             prev.map((m) =>
@@ -168,17 +229,13 @@ export function PatientBodyDiagram({
           );
           toast.success('Marker updated');
         } else {
-          // Create new marker
-          const response = await fetch(`/api/body-diagram/patient/${patientId}/markings`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(backendPayload),
+          const response = await api.post(`/api/body-map-markers`, {
+            patient_id: patientId,
+            encounter_id: encounterId,
+            ...basePayload,
           });
 
-          if (!response.ok) throw new Error('Failed to create marker');
-
-          const responseData = await response.json();
+          const responseData = response.data;
           const newMarker: BodyMarker = {
             id: responseData?.id || responseData?.marking?.id || `temp-${Date.now()}`,
             ...markerData,
@@ -204,7 +261,7 @@ export function PatientBodyDiagram({
       setSelectedMarker(null);
       setPendingPosition(null);
     },
-    [patientId, selectedMarker, markers]
+    [patientId, encounterId, selectedMarker, markers]
   );
 
   // Delete marker
@@ -215,12 +272,7 @@ export function PatientBodyDiagram({
     setMarkerHistory((prev) => [...prev, markers]);
 
     try {
-      const response = await fetch(`/api/body-diagram/markings/${selectedMarker.id}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      });
-
-      if (!response.ok) throw new Error('Failed to delete marker');
+      await api.delete(`/api/body-map-markers/${selectedMarker.id}`);
 
       setMarkers((prev) => prev.filter((m) => m.id !== selectedMarker.id));
       toast.success('Marker deleted');

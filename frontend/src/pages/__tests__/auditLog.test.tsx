@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import { AuditLogPage } from '../AuditLogPage';
 
 const authMocks = vi.hoisted(() => ({
@@ -83,7 +84,11 @@ describe('AuditLogPage', () => {
       });
     });
 
-    render(<AuditLogPage />);
+    render(
+      <MemoryRouter>
+        <AuditLogPage />
+      </MemoryRouter>
+    );
 
     expect(await screen.findByText('Audit Log Viewer')).toBeInTheDocument();
     expect(screen.getByText('Total Events (Today)')).toBeInTheDocument();
@@ -117,7 +122,11 @@ describe('AuditLogPage', () => {
       return buildResponse({ logs: [], total: 0 });
     });
 
-    render(<AuditLogPage />);
+    render(
+      <MemoryRouter>
+        <AuditLogPage />
+      </MemoryRouter>
+    );
 
     await screen.findByText('Audit Log Viewer');
     fireEvent.change(screen.getByPlaceholderText('Search all fields...'), { target: { value: 'token' } });

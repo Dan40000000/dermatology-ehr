@@ -664,6 +664,9 @@ export interface MessageThreadPreview {
   subject: string;
   patientId?: string;
   createdBy: string;
+  createdByName?: string;
+  createdByEmail?: string;
+  externalRecipients?: string[];
   createdAt: string;
   updatedAt: string;
   isArchived: boolean;
@@ -685,6 +688,9 @@ export interface MessageThread {
   subject: string;
   patientId?: string;
   createdBy: string;
+  createdByName?: string;
+  createdByEmail?: string;
+  externalRecipients?: string[];
   createdAt: string;
   isArchived: boolean;
   participants: MessageThreadParticipant[];
@@ -696,6 +702,7 @@ export interface CreateThreadData {
   subject: string;
   patientId?: string;
   participantIds: string[];
+  externalEmails?: string[];
   message: string;
 }
 

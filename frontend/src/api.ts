@@ -163,6 +163,61 @@ export async function fetchFrontDeskSchedule(
   return res.json();
 }
 
+export interface FrontDeskCheckInResponse {
+  success: boolean;
+  message: string;
+  encounterId?: string;
+  copayAmount?: number;
+  copayAmountCents?: number;
+  copaySource?: 'insurance_profile' | 'none';
+  copayDisposition?: 'none' | 'collected' | 'deferred';
+  copayCollectedAmountCents?: number;
+  outstandingBalanceCollectedAmountCents?: number;
+  totalCollectedAmountCents?: number;
+  priorAuthOverrideUsed?: boolean;
+  priorAuthStatus?: string;
+  eligibilityStatus?: string;
+  eligibilityVerifiedAt?: string;
+  paymentId?: string;
+  paymentReceiptNumber?: string;
+  paymentConfirmationEmailSent?: boolean;
+  paymentConfirmationEmailAddress?: string;
+}
+
+export interface FrontDeskCheckInOptions {
+  collectCopay?: boolean;
+  collectOutstandingBalance?: boolean;
+  deferCopay?: boolean;
+  copayAmountCents?: number;
+  outstandingBalanceAmountCents?: number;
+  paymentMethod?: 'cash' | 'credit' | 'debit' | 'check';
+  notes?: string;
+  priorAuthOverrideReason?: string;
+}
+
+export async function checkInFrontDeskAppointment(
+  tenantId: string,
+  accessToken: string,
+  appointmentId: string,
+  options?: FrontDeskCheckInOptions
+): Promise<FrontDeskCheckInResponse> {
+  const hasBody = Boolean(options);
+  const res = await fetch(`${API_BASE}/api/front-desk/check-in/${appointmentId}`, {
+    method: 'POST',
+    headers: {
+      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    ...(hasBody ? { body: JSON.stringify(options) } : {}),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to check in patient' }));
+    throw new Error(error.error || 'Failed to check in patient');
+  }
+  return res.json();
+}
+
 export async function updateFrontDeskStatus(
   tenantId: string,
   accessToken: string,
@@ -200,6 +255,87 @@ export async function checkOutFrontDeskAppointment(
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: 'Failed to check out patient' }));
     throw new Error(error.error || 'Failed to check out patient');
+  }
+  return res.json();
+}
+
+export type PatientFlowStatus =
+  | 'checked_in'
+  | 'rooming'
+  | 'vitals_complete'
+  | 'ready_for_provider'
+  | 'with_provider'
+  | 'checkout'
+  | 'completed';
+
+export async function fetchPatientFlowActive(
+  tenantId: string,
+  accessToken: string,
+  locationId?: string
+) {
+  const params = new URLSearchParams();
+  if (locationId) params.append('locationId', locationId);
+  const queryString = params.toString();
+  const url = queryString ? `${API_BASE}/api/patient-flow/active?${queryString}` : `${API_BASE}/api/patient-flow/active`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to load active patient flow' }));
+    throw new Error(error.error || 'Failed to load active patient flow');
+  }
+  return res.json();
+}
+
+export async function fetchExamRooms(
+  tenantId: string,
+  accessToken: string,
+  locationId?: string
+) {
+  const params = new URLSearchParams();
+  if (locationId) params.append('locationId', locationId);
+  const queryString = params.toString();
+  const url = queryString ? `${API_BASE}/api/rooms?${queryString}` : `${API_BASE}/api/rooms`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to load rooms' }));
+    throw new Error(error.error || 'Failed to load rooms');
+  }
+  return res.json();
+}
+
+export async function updatePatientFlowStatus(
+  tenantId: string,
+  accessToken: string,
+  appointmentId: string,
+  status: PatientFlowStatus,
+  roomId?: string
+) {
+  const payload: { status: PatientFlowStatus; roomId?: string } = { status };
+  if (roomId) payload.roomId = roomId;
+
+  const res = await fetch(`${API_BASE}/api/patient-flow/${appointmentId}/status`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to update patient flow status' }));
+    throw new Error(error.error || 'Failed to update patient flow status');
   }
   return res.json();
 }
@@ -254,6 +390,34 @@ export async function fetchMessages(tenantId: string, accessToken: string) {
 }
 
 // Messaging Thread APIs
+export interface ExternalEmailDeliveryStatus {
+  requested: string[];
+  accepted: string[];
+  rejected: string[];
+  messageId?: string;
+  error?: string;
+}
+
+export interface CreateMessageThreadResponse {
+  id: string;
+  externalEmail?: ExternalEmailDeliveryStatus;
+}
+
+export interface MessagingRecipient {
+  id: string;
+  fullName: string;
+  email: string;
+  role: string;
+}
+
+export async function fetchMessagingRecipients(tenantId: string, accessToken: string): Promise<{ recipients: MessagingRecipient[] }> {
+  const res = await fetch(`${API_BASE}/api/messaging/recipients`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load recipients");
+  return res.json();
+}
+
 export async function fetchMessageThreads(tenantId: string, accessToken: string, filter?: string) {
   const url = filter ? `${API_BASE}/api/messaging/threads?filter=${filter}` : `${API_BASE}/api/messaging/threads`;
   const res = await fetch(url, {
@@ -271,7 +435,11 @@ export async function fetchMessageThread(tenantId: string, accessToken: string, 
   return res.json();
 }
 
-export async function createMessageThread(tenantId: string, accessToken: string, data: any) {
+export async function createMessageThread(
+  tenantId: string,
+  accessToken: string,
+  data: unknown
+): Promise<CreateMessageThreadResponse> {
   const res = await fetch(`${API_BASE}/api/messaging/threads`, {
     method: "POST",
     headers: {
@@ -385,6 +553,105 @@ export async function fetchDocuments(tenantId: string, accessToken: string) {
   });
   if (!res.ok) throw new Error("Failed to load documents");
   return res.json();
+}
+
+export interface PracticeConsentFormRecord {
+  id: string;
+  formName: string;
+  formType: string;
+  formContent: string;
+  isActive: boolean;
+  requiresSignature: boolean;
+  version: string;
+  effectiveDate?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PracticeConsentFormPayload {
+  formName: string;
+  formType: string;
+  formContent: string;
+  requiresSignature: boolean;
+  version?: string;
+  effectiveDate?: string;
+  isActive?: boolean;
+}
+
+export async function fetchPracticeConsentForms(
+  tenantId: string,
+  accessToken: string,
+  options?: { activeOnly?: boolean }
+) {
+  const params = new URLSearchParams();
+  if (options?.activeOnly) {
+    params.set("activeOnly", "true");
+  }
+
+  const query = params.toString();
+  const res = await fetch(`${API_BASE}/api/consent-forms${query ? `?${query}` : ""}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load consent forms");
+  return res.json() as Promise<{ forms: PracticeConsentFormRecord[] }>;
+}
+
+export async function createPracticeConsentForm(
+  tenantId: string,
+  accessToken: string,
+  payload: PracticeConsentFormPayload
+) {
+  const res = await fetch(`${API_BASE}/api/consent-forms`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to create consent form");
+  }
+  return res.json() as Promise<{ id: string }>;
+}
+
+export async function updatePracticeConsentForm(
+  tenantId: string,
+  accessToken: string,
+  formId: string,
+  payload: PracticeConsentFormPayload
+) {
+  const res = await fetch(`${API_BASE}/api/consent-forms/${formId}`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update consent form");
+  }
+  return res.json() as Promise<{ success: boolean; id: string }>;
+}
+
+export async function deactivatePracticeConsentForm(tenantId: string, accessToken: string, formId: string) {
+  const res = await fetch(`${API_BASE}/api/consent-forms/${formId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to deactivate consent form");
+  }
+  return res.json() as Promise<{ success: boolean }>;
 }
 
 export async function fetchPhotos(
@@ -537,7 +804,10 @@ export const uploadDocumentFile = async (tenantId: string, accessToken: string, 
     headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
     body: form,
   });
-  if (!res.ok) throw new Error("Upload failed");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Upload failed");
+  }
   return res.json();
 };
 
@@ -549,7 +819,10 @@ export const uploadPhotoFile = async (tenantId: string, accessToken: string, fil
     headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
     body: form,
   });
-  if (!res.ok) throw new Error("Upload failed");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Upload failed");
+  }
   return res.json();
 };
 
@@ -832,6 +1105,23 @@ export async function getPresignedAccess(tenantId: string, accessToken: string, 
   return res.json() as Promise<{ url: string }>;
 }
 
+export async function signUploadKey(tenantId: string, accessToken: string, key: string) {
+  const res = await fetch(`${API_BASE}/api/uploads/sign`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify({ key }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to sign upload URL");
+  }
+  return res.json() as Promise<{ url: string; token: string }>;
+}
+
 const authedGet = async (tenantId: string, accessToken: string, path: string) => {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "GET",
@@ -890,8 +1180,27 @@ export const updatePatient = (tenantId: string, accessToken: string, id: string,
 export const createAppointment = (tenantId: string, accessToken: string, data: any) =>
   authedPost(tenantId, accessToken, "/api/appointments", data);
 
-export const updateAppointmentStatus = (tenantId: string, accessToken: string, id: string, status: string) =>
-  authedPost(tenantId, accessToken, `/api/appointments/${id}/status`, { status });
+export const updateAppointmentStatus = (
+  tenantId: string,
+  accessToken: string,
+  id: string,
+  status: string,
+  options?: { reason?: string }
+) =>
+  authedPost(tenantId, accessToken, `/api/appointments/${id}/status`, {
+    status,
+    ...(options?.reason ? { reason: options.reason } : {}),
+  });
+
+export const waiveAppointmentLateFee = (
+  tenantId: string,
+  accessToken: string,
+  billId: string,
+  reason?: string,
+) =>
+  authedPost(tenantId, accessToken, `/api/appointments/late-fees/${billId}/waive`, {
+    reason,
+  });
 
 export const createEncounter = (tenantId: string, accessToken: string, data: any) =>
   authedPost(tenantId, accessToken, "/api/encounters", data);
@@ -1032,17 +1341,62 @@ export const createVitals = (tenantId: string, accessToken: string, data: any) =
   authedPost(tenantId, accessToken, "/api/vitals/write", data);
 
 // Fee Schedules
-export const fetchFeeSchedules = (tenantId: string, accessToken: string) =>
-  authedGet(tenantId, accessToken, "/api/fee-schedules");
+const toFiniteNumber = (value: unknown, fallback = 0): number => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+};
 
-export const fetchFeeSchedule = (tenantId: string, accessToken: string, id: string) =>
-  authedGet(tenantId, accessToken, `/api/fee-schedules/${id}`);
+const normalizeFeeScheduleItem = (item: any) => {
+  if (!item || typeof item !== "object") return item;
+  const feeCents = toFiniteNumber(item.feeCents ?? item.fee_cents, 0);
+  return {
+    ...item,
+    feeScheduleId: item.feeScheduleId ?? item.fee_schedule_id ?? "",
+    cptCode: item.cptCode ?? item.cpt_code ?? "",
+    cptDescription: item.cptDescription ?? item.cpt_description ?? item.description ?? "",
+    feeCents,
+    createdAt: item.createdAt ?? item.created_at ?? "",
+    updatedAt: item.updatedAt ?? item.updated_at ?? "",
+  };
+};
 
-export const createFeeSchedule = (tenantId: string, accessToken: string, data: any) =>
-  authedPost(tenantId, accessToken, "/api/fee-schedules", data);
+const normalizeFeeSchedule = (schedule: any) => {
+  if (!schedule || typeof schedule !== "object") return schedule;
+  return {
+    ...schedule,
+    tenantId: schedule.tenantId ?? schedule.tenant_id ?? "",
+    isDefault: schedule.isDefault ?? schedule.is_default ?? false,
+    createdAt: schedule.createdAt ?? schedule.created_at ?? "",
+    updatedAt: schedule.updatedAt ?? schedule.updated_at ?? "",
+    items: Array.isArray(schedule.items)
+      ? schedule.items.map((item: any) => normalizeFeeScheduleItem(item))
+      : schedule.items,
+  };
+};
 
-export const updateFeeSchedule = (tenantId: string, accessToken: string, id: string, data: any) =>
-  authedPut(tenantId, accessToken, `/api/fee-schedules/${id}`, data);
+export const fetchFeeSchedules = async (tenantId: string, accessToken: string) => {
+  const data = await authedGet(tenantId, accessToken, "/api/fee-schedules");
+  return Array.isArray(data) ? data.map((schedule: any) => normalizeFeeSchedule(schedule)) : [];
+};
+
+export const fetchFeeSchedule = async (tenantId: string, accessToken: string, id: string) => {
+  const data = await authedGet(tenantId, accessToken, `/api/fee-schedules/${id}`);
+  return normalizeFeeSchedule(data);
+};
+
+export const createFeeSchedule = async (tenantId: string, accessToken: string, data: any) => {
+  const result = await authedPost(tenantId, accessToken, "/api/fee-schedules", data);
+  return normalizeFeeSchedule(result);
+};
+
+export const updateFeeSchedule = async (tenantId: string, accessToken: string, id: string, data: any) => {
+  const result = await authedPut(tenantId, accessToken, `/api/fee-schedules/${id}`, data);
+  return normalizeFeeSchedule(result);
+};
 
 export const deleteFeeSchedule = async (tenantId: string, accessToken: string, id: string) => {
   const res = await fetch(`${API_BASE}/api/fee-schedules/${id}`, {
@@ -1059,11 +1413,21 @@ export const deleteFeeSchedule = async (tenantId: string, accessToken: string, i
   return;
 };
 
-export const fetchFeeScheduleItems = (tenantId: string, accessToken: string, scheduleId: string) =>
-  authedGet(tenantId, accessToken, `/api/fee-schedules/${scheduleId}/items`);
+export const fetchFeeScheduleItems = async (tenantId: string, accessToken: string, scheduleId: string) => {
+  const data = await authedGet(tenantId, accessToken, `/api/fee-schedules/${scheduleId}/items`);
+  return Array.isArray(data) ? data.map((item: any) => normalizeFeeScheduleItem(item)) : [];
+};
 
-export const updateFeeScheduleItem = (tenantId: string, accessToken: string, scheduleId: string, cptCode: string, data: any) =>
-  authedPut(tenantId, accessToken, `/api/fee-schedules/${scheduleId}/items/${cptCode}`, data);
+export const updateFeeScheduleItem = async (
+  tenantId: string,
+  accessToken: string,
+  scheduleId: string,
+  cptCode: string,
+  data: any
+) => {
+  const result = await authedPut(tenantId, accessToken, `/api/fee-schedules/${scheduleId}/items/${cptCode}`, data);
+  return normalizeFeeScheduleItem(result);
+};
 
 export const deleteFeeScheduleItem = async (tenantId: string, accessToken: string, scheduleId: string, cptCode: string) => {
   const res = await fetch(`${API_BASE}/api/fee-schedules/${scheduleId}/items/${cptCode}`, {
@@ -1097,11 +1461,83 @@ export const exportFeeSchedule = async (tenantId: string, accessToken: string, s
   return blob;
 };
 
-export const fetchDefaultFeeSchedule = (tenantId: string, accessToken: string) =>
-  authedGet(tenantId, accessToken, "/api/fee-schedules/default/schedule");
+export const fetchDefaultFeeSchedule = async (tenantId: string, accessToken: string) => {
+  const data = await authedGet(tenantId, accessToken, "/api/fee-schedules/default/schedule");
+  return normalizeFeeSchedule(data);
+};
 
-export const fetchFeeForCPT = (tenantId: string, accessToken: string, cptCode: string) =>
-  authedGet(tenantId, accessToken, `/api/fee-schedules/default/fee/${cptCode}`);
+export const fetchFeeForCPT = async (tenantId: string, accessToken: string, cptCode: string) => {
+  const data = await authedGet(tenantId, accessToken, `/api/fee-schedules/default/fee/${cptCode}`);
+  const normalized = normalizeFeeScheduleItem(data);
+  return {
+    ...normalized,
+    // Some callers expect `fee` (in cents). Preserve that compatibility.
+    fee: toFiniteNumber(normalized?.fee, normalized?.feeCents ?? 0),
+  };
+};
+
+export interface CosmeticProcedureCatalogItem {
+  id: string;
+  feeScheduleId: string;
+  cptCode: string;
+  cptDescription: string;
+  category?: string;
+  subcategory?: string;
+  units?: number;
+  feeCents: number;
+  minPriceCents?: number;
+  maxPriceCents?: number;
+  typicalUnits?: number;
+  packageSessions?: number;
+  notes?: string;
+  isCosmetic: boolean;
+  scheduleName?: string;
+  isDefault?: boolean;
+}
+
+const toOptionalFiniteNumber = (value: unknown): number | undefined => {
+  if (value === null || value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const normalizeCosmeticProcedureCatalogItem = (item: any): CosmeticProcedureCatalogItem => {
+  const normalizedFeeItem = normalizeFeeScheduleItem(item);
+  return {
+    id: item?.id ?? "",
+    feeScheduleId: normalizedFeeItem.feeScheduleId,
+    cptCode: normalizedFeeItem.cptCode,
+    cptDescription: normalizedFeeItem.cptDescription,
+    category: item?.category ?? "",
+    subcategory: item?.subcategory ?? "",
+    units: toOptionalFiniteNumber(item?.units),
+    feeCents: normalizedFeeItem.feeCents,
+    minPriceCents: toOptionalFiniteNumber(item?.minPriceCents ?? item?.min_price_cents),
+    maxPriceCents: toOptionalFiniteNumber(item?.maxPriceCents ?? item?.max_price_cents),
+    typicalUnits: toOptionalFiniteNumber(item?.typicalUnits ?? item?.typical_units),
+    packageSessions: toOptionalFiniteNumber(item?.packageSessions ?? item?.package_sessions),
+    notes: item?.notes ?? "",
+    isCosmetic: Boolean(item?.isCosmetic ?? item?.is_cosmetic ?? true),
+    scheduleName: item?.scheduleName ?? item?.schedule_name ?? "",
+    isDefault: Boolean(item?.isDefault ?? item?.is_default ?? false),
+  };
+};
+
+export const fetchCosmeticProcedureCatalog = async (
+  tenantId: string,
+  accessToken: string,
+  params?: { category?: string; feeScheduleId?: string }
+): Promise<CosmeticProcedureCatalogItem[]> => {
+  const query = new URLSearchParams();
+  if (params?.category) query.append("category", params.category);
+  if (params?.feeScheduleId) query.append("feeScheduleId", params.feeScheduleId);
+
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const data = await authedGet(tenantId, accessToken, `/api/fee-schedules/cosmetic/procedures${suffix}`);
+  return Array.isArray(data?.procedures)
+    ? data.procedures.map((item: any) => normalizeCosmeticProcedureCatalogItem(item))
+    : [];
+};
 
 // Diagnoses API
 export async function fetchDiagnosesByEncounter(tenantId: string, accessToken: string, encounterId: string) {
@@ -3601,6 +4037,7 @@ export interface SMSSettings {
   tenantId: string;
   twilioPhoneNumber?: string;
   appointmentRemindersEnabled: boolean;
+  appointmentReminderChannel: 'sms' | 'voice';
   reminderHoursBefore: number;
   allowPatientReplies: boolean;
   reminderTemplate?: string;
@@ -3622,6 +4059,31 @@ export interface SMSAutoResponse {
   isSystemKeyword: boolean;
   priority: number;
   createdAt: string;
+}
+
+export async function sendSMSAppointmentReminder(
+  tenantId: string,
+  accessToken: string,
+  appointmentId: string,
+  channel: 'sms' | 'voice' = 'sms'
+): Promise<{ success: boolean; channel: 'sms' | 'voice' }> {
+  const res = await fetch(`${API_BASE}/api/sms/send-reminder/${appointmentId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify({ channel }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to send appointment reminder');
+  }
+
+  return res.json();
 }
 
 /**
@@ -3678,6 +4140,7 @@ export async function updateSMSSettings(
   data: Partial<{
     twilioPhoneNumber: string;
     appointmentRemindersEnabled: boolean;
+    appointmentReminderChannel: 'sms' | 'voice';
     reminderHoursBefore: number;
     allowPatientReplies: boolean;
     reminderTemplate: string;
@@ -4045,6 +4508,9 @@ export interface SMSConversation {
   lastMessage?: string;
   lastMessageTime?: string;
   unreadCount: number;
+  category?: 'general' | 'appointment' | 'billing' | 'prescription' | 'medical' | 'other';
+  threadStatus?: 'open' | 'in-progress' | 'waiting-patient' | 'waiting-provider' | 'closed';
+  threadId?: string;
 }
 
 export interface SMSMessage {
@@ -4061,6 +4527,9 @@ export interface SMSConversationDetail {
   patientId: string;
   patientName: string;
   patientPhone: string;
+  category?: 'general' | 'appointment' | 'billing' | 'prescription' | 'medical' | 'other';
+  threadStatus?: 'open' | 'in-progress' | 'waiting-patient' | 'waiting-provider' | 'closed';
+  threadId?: string;
   messages: SMSMessage[];
 }
 
@@ -4122,7 +4591,66 @@ export async function sendSMSConversationMessage(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to send message');
+    const error = new Error(err.error || 'Failed to send message') as Error & { code?: string };
+    if (err.code) {
+      error.code = err.code;
+    }
+    throw error;
+  }
+  return res.json();
+}
+
+export async function updateSMSConversationRouting(
+  tenantId: string,
+  accessToken: string,
+  patientId: string,
+  category: 'general' | 'appointment' | 'billing' | 'prescription' | 'medical' | 'other'
+): Promise<{
+  success: boolean;
+  patientId: string;
+  threadId: string;
+  category: 'general' | 'appointment' | 'billing' | 'prescription' | 'medical' | 'other';
+  threadStatus: 'open' | 'in-progress' | 'waiting-patient' | 'waiting-provider' | 'closed';
+}> {
+  const res = await fetch(`${API_BASE}/api/sms/conversations/${patientId}/routing`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify({ category }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update conversation routing');
+  }
+  return res.json();
+}
+
+/**
+ * Simulate an inbound patient SMS (test mode only)
+ */
+export async function simulateInboundSMSConversationMessage(
+  tenantId: string,
+  accessToken: string,
+  patientId: string,
+  messageBody: string
+): Promise<{ success: boolean; messageId: string; autoResponseSent?: boolean }> {
+  const res = await fetch(`${API_BASE}/api/sms/test/inbound`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify({ patientId, messageBody }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to simulate inbound message');
   }
   return res.json();
 }
@@ -4171,7 +4699,14 @@ export async function getSMSConsent(
   tenantId: string,
   accessToken: string,
   patientId: string
-): Promise<{ hasConsent: boolean; consent?: SMSConsent; daysUntilExpiration?: number | null }> {
+): Promise<{
+  hasConsent: boolean;
+  pendingRequest?: boolean;
+  requestedAt?: string | null;
+  optedOut?: boolean;
+  consent?: SMSConsent;
+  daysUntilExpiration?: number | null;
+}> {
   const res = await fetch(`${API_BASE}/api/sms-consent/${patientId}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -4207,6 +4742,30 @@ export async function recordSMSConsent(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to record SMS consent');
+  }
+  return res.json();
+}
+
+export async function requestSMSConsent(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+): Promise<{ success: boolean; consentId: string; messageId: string; status: string; pendingRequest: boolean }> {
+  const res = await fetch(`${API_BASE}/api/sms-consent/${patientId}/request`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const error = new Error(err.error || 'Failed to send SMS consent request') as Error & { code?: string };
+    if (err.code) {
+      error.code = err.code;
+    }
+    throw error;
   }
   return res.json();
 }
@@ -6228,6 +6787,8 @@ export interface InventoryUsage {
   providerName?: string;
   quantityUsed: number;
   unitCostCents: number;
+  sellPriceCents?: number | null;
+  givenAsSample?: boolean;
   notes?: string;
   usedAt: string;
 }
@@ -6428,6 +6989,8 @@ export async function recordInventoryUsage(
     patientId: string;
     providerId: string;
     quantityUsed: number;
+    sellPriceCents?: number;
+    givenAsSample?: boolean;
     notes?: string;
   }
 ): Promise<{ id: string; usedAt: string; message: string }> {

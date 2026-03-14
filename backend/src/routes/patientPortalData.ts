@@ -510,37 +510,49 @@ patientPortalDataRouter.get("/vitals", async (req: PatientPortalRequest, res) =>
 
 /**
  * GET /api/patient-portal-data/lab-results
- * Get lab results from patient_observations
+ * Get released lab/pathology results from patient_observations
  */
 patientPortalDataRouter.get("/lab-results", async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
 
-    // Check if patient_observations table exists
+    // Fail closed unless both source observations and release controls are present.
     const tableExists = await pool.query(
-      `SELECT EXISTS (
-        SELECT FROM information_schema.tables
-        WHERE table_name = 'patient_observations'
-      )`
+      `SELECT
+          to_regclass('public.patient_observations') IS NOT NULL as observations_exists,
+          to_regclass('public.patient_observation_portal_releases') IS NOT NULL as release_controls_exists`
     );
 
-    if (!tableExists.rows[0].exists) {
+    if (!tableExists.rows[0]?.observations_exists) {
+      return res.json({ labResults: [] });
+    }
+
+    if (!tableExists.rows[0]?.release_controls_exists) {
+      logger.warn("Patient portal lab result release controls are missing; returning no results");
       return res.json({ labResults: [] });
     }
 
     const result = await pool.query(
-      `SELECT id, observation_date as "observationDate",
-              observation_type as "observationType",
-              test_name as "testName",
-              value, unit, reference_range as "referenceRange",
-              abnormal_flag as "abnormalFlag",
-              status, notes
-       FROM patient_observations
-       WHERE patient_id = $1
-       AND tenant_id = $2
-       AND observation_type IN ('lab', 'pathology')
-       ORDER BY observation_date DESC
+      `SELECT
+         po.id::text as id,
+         po.observation_date as "observationDate",
+         COALESCE(NULLIF(po.observation_name, ''), po.observation_code) as "testName",
+         po.observation_value as value,
+         po.units as unit,
+         po.reference_range as "referenceRange",
+         po.abnormal_flag as "abnormalFlag",
+         po.status
+       FROM patient_observations po
+       JOIN patient_observation_portal_releases pr
+         ON pr.tenant_id = po.tenant_id
+        AND pr.observation_id = po.id::text
+       WHERE po.patient_id::text = $1
+         AND po.tenant_id = $2
+         AND pr.release_status = 'released'
+         AND (pr.portal_visible_from IS NULL OR pr.portal_visible_from <= NOW())
+         AND COALESCE(po.status, 'final') IN ('final', 'corrected', 'amended')
+       ORDER BY po.observation_date DESC
        LIMIT 100`,
       [patientId, tenantId]
     );

@@ -4,7 +4,9 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
+import { CLINICAL_ROLES } from "../lib/roles";
 import { auditLog } from "../services/audit";
+import { logger } from "../lib/logger";
 
 const orderSchema = z.object({
   encounterId: z.string().optional(),
@@ -29,6 +31,59 @@ const erxSchema = z.object({
 });
 
 export const ordersRouter = Router();
+ordersRouter.use(requireAuth, requireRoles([...CLINICAL_ROLES]));
+
+async function resolveOrderProvider(
+  tenantId: string,
+  providerId: string | undefined,
+  encounterId: string | undefined
+): Promise<{ providerId: string; providerName: string | null } | null> {
+  if (providerId) {
+    const providerResult = await pool.query(
+      `select id, full_name from providers where id = $1 and tenant_id = $2`,
+      [providerId, tenantId]
+    );
+    const provider = providerResult.rows[0];
+    if (provider) {
+      return {
+        providerId: provider.id as string,
+        providerName: (provider.full_name as string | null) || null,
+      };
+    }
+  }
+
+  if (encounterId) {
+    const encounterProviderResult = await pool.query(
+      `select p.id, p.full_name
+         from encounters e
+         join providers p on p.id = e.provider_id and p.tenant_id = e.tenant_id
+        where e.id = $1 and e.tenant_id = $2`,
+      [encounterId, tenantId]
+    );
+    const encounterProvider = encounterProviderResult.rows[0];
+    if (encounterProvider) {
+      return {
+        providerId: encounterProvider.id as string,
+        providerName: (encounterProvider.full_name as string | null) || null,
+      };
+    }
+  }
+
+  const defaultProviderResult = await pool.query(
+    `select id, full_name from providers where tenant_id = $1 order by
+     case when id = 'prov-demo' then 0 else 1 end, created_at limit 1`,
+    [tenantId]
+  );
+  const defaultProvider = defaultProviderResult.rows[0];
+  if (!defaultProvider) {
+    return null;
+  }
+
+  return {
+    providerId: defaultProvider.id as string,
+    providerName: (defaultProvider.full_name as string | null) || null,
+  };
+}
 
 ordersRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
@@ -118,51 +173,41 @@ ordersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]), a
   const id = crypto.randomUUID();
   const o = parsed.data;
 
-  // Get provider ID - use provided one or default to first available provider
-  let providerId = o.providerId;
-  let providerName: string | null = null;
-
-  if (providerId) {
-    // Get provider name for denormalization
-    const providerResult = await pool.query(
-      `select full_name from providers where id = $1 and tenant_id = $2`,
-      [providerId, tenantId]
-    );
-    providerName = providerResult.rows[0]?.full_name || null;
-  } else {
-    // Default to first available provider (prefer Dr. David Skin for derm orders)
-    const defaultProviderResult = await pool.query(
-      `select id, full_name from providers where tenant_id = $1 order by
-       case when id = 'prov-demo' then 0 else 1 end, created_at limit 1`,
-      [tenantId]
-    );
-    if (defaultProviderResult.rows[0]) {
-      providerId = defaultProviderResult.rows[0].id;
-      providerName = defaultProviderResult.rows[0].full_name;
-    } else {
+  try {
+    const resolvedProvider = await resolveOrderProvider(tenantId, o.providerId, o.encounterId);
+    if (!resolvedProvider) {
       return res.status(400).json({ error: "No providers available" });
     }
-  }
 
-  await pool.query(
-    `insert into orders(id, tenant_id, encounter_id, patient_id, provider_id, provider_name, type, status, priority, details, notes)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-    [
-      id,
+    await pool.query(
+      `insert into orders(id, tenant_id, encounter_id, patient_id, provider_id, provider_name, type, status, priority, details, notes)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        id,
+        tenantId,
+        o.encounterId || null,
+        o.patientId,
+        resolvedProvider.providerId,
+        resolvedProvider.providerName,
+        o.type,
+        o.status || "draft",
+        o.priority || "normal",
+        o.details || null,
+        o.notes || null
+      ],
+    );
+    await auditLog(tenantId, req.user!.id, "order_create", "order", id);
+    res.status(201).json({ id });
+  } catch (error: any) {
+    logger.error("Create order error", {
       tenantId,
-      o.encounterId || null,
-      o.patientId,
-      providerId,
-      providerName,
-      o.type,
-      o.status || "draft",
-      o.priority || "normal",
-      o.details || null,
-      o.notes || null
-    ],
-  );
-  await auditLog(tenantId, req.user!.id, "order_create", "order", id);
-  res.status(201).json({ id });
+      encounterId: o.encounterId,
+      patientId: o.patientId,
+      providerId: o.providerId,
+      error: error?.message || "Unknown error",
+    });
+    res.status(500).json({ error: "Failed to create order" });
+  }
 });
 
 ordersRouter.post("/:id/status", requireAuth, requireRoles(["provider", "ma", "admin"]), async (req: AuthedRequest, res) => {

@@ -26,7 +26,6 @@ const navItems: NavItem[] = [
     module: 'home',
     dropdown: [
       { label: 'Dashboard', path: '/home' },
-      { label: 'Quick Actions', path: '/home?section=actions' },
     ]
   },
   {
@@ -156,16 +155,6 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Direct',
-    path: '/direct',
-    module: 'direct',
-    dropdown: [
-      { label: 'Inbox', path: '/direct' },
-      { label: 'Sent', path: '/direct?tab=sent' },
-      { label: 'Compose', path: '/direct?action=compose' },
-    ]
-  },
-  {
     label: 'Fax',
     path: '/fax',
     module: 'fax',
@@ -182,6 +171,7 @@ const navItems: NavItem[] = [
     dropdown: [
       { label: 'All Documents', path: '/documents' },
       { label: 'Upload', path: '/documents?action=upload' },
+      { label: 'Forms & Consents', path: '/documents?section=forms' },
       { label: 'Recent', path: '/documents?filter=recent' },
     ]
   },
@@ -206,24 +196,14 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Reminders',
+    label: 'Reminders & Recalls',
     path: '/reminders',
     module: 'reminders',
     dropdown: [
-      { label: 'All Reminders', path: '/reminders' },
-      { label: 'Create Reminder', path: '/reminders?action=new' },
-      { label: 'Upcoming', path: '/reminders?filter=upcoming' },
-    ]
-  },
-  {
-    label: 'Recalls',
-    path: '/recalls',
-    module: 'recalls',
-    dropdown: [
-      { label: 'All Recalls', path: '/recalls' },
-      { label: 'Due Today', path: '/recalls?filter=today' },
-      { label: 'Overdue', path: '/recalls?filter=overdue' },
-      { label: 'Completed', path: '/recalls?filter=completed' },
+      { label: 'Campaigns', path: '/reminders?tab=campaigns' },
+      { label: 'Due for Recall', path: '/reminders?tab=due' },
+      { label: 'Contact History', path: '/reminders?tab=history' },
+      { label: 'Statistics', path: '/reminders?tab=stats' },
     ]
   },
   {
@@ -231,33 +211,18 @@ const navItems: NavItem[] = [
     path: '/analytics',
     module: 'analytics',
     dropdown: [
-      { label: 'Dashboard', path: '/analytics' },
-      { label: 'Financial', path: '/analytics?tab=financial' },
-      { label: 'Revenue', path: '/analytics?tab=revenue' },
-      { label: 'Productivity', path: '/analytics?tab=productivity' },
-      { label: 'Operational', path: '/analytics?tab=operational' },
-    ]
-  },
-  {
-    label: 'Patient Reports',
-    path: '/reports',
-    module: 'reports',
-    dropdown: [
-      { label: 'All Reports', path: '/reports' },
-      { label: 'Visit Summaries', path: '/reports?type=visits' },
-      { label: 'Clinical Notes', path: '/reports?type=clinical' },
-      { label: 'Lab Results', path: '/reports?type=labs' },
-      { label: 'Treatment History', path: '/reports?type=treatments' },
-    ]
-  },
-  {
-    label: 'Quality',
-    path: '/quality',
-    module: 'quality',
-    dropdown: [
-      { label: 'Quality Dashboard', path: '/quality' },
-      { label: 'MIPS Measures', path: '/quality?tab=mips' },
-      { label: 'Performance', path: '/quality?tab=performance' },
+      { label: 'Dashboard', path: '/analytics', section: 'Analytics' },
+      { label: 'Financials', path: '/analytics?tab=financials', section: 'Analytics' },
+      { label: 'Clinical & Operational', path: '/analytics?tab=clinical', section: 'Analytics' },
+      { label: 'Compliance', path: '/analytics?tab=compliance', section: 'Analytics' },
+      { label: 'Inventory', path: '/analytics?tab=inventory', section: 'Analytics' },
+      { label: 'Dermatology', path: '/analytics?tab=dermatology', section: 'Analytics' },
+      { label: 'All Reports', path: '/reports', section: 'Patient Reports' },
+      { label: 'Appointments', path: '/reports?type=appointments', section: 'Patient Reports' },
+      { label: 'Financial', path: '/reports?type=financial', section: 'Patient Reports' },
+      { label: 'Clinical', path: '/reports?type=clinical', section: 'Patient Reports' },
+      { label: 'Patients', path: '/reports?type=patients', section: 'Patient Reports' },
+      { label: 'No-Shows', path: '/reports?type=no-shows', section: 'Patient Reports' },
     ]
   },
   {
@@ -265,9 +230,12 @@ const navItems: NavItem[] = [
     path: '/registry',
     module: 'registry',
     dropdown: [
-      { label: 'Patient Registry', path: '/registry' },
-      { label: 'Disease Registries', path: '/registry?tab=disease' },
-      { label: 'Add Entry', path: '/registry?action=add' },
+      { label: 'Dashboard', path: '/registry' },
+      { label: 'Melanoma', path: '/registry?tab=melanoma' },
+      { label: 'Psoriasis', path: '/registry?tab=psoriasis' },
+      { label: 'Acne/Isotretinoin', path: '/registry?tab=acne' },
+      { label: 'Chronic Therapy', path: '/registry?tab=chronic_therapy' },
+      { label: 'Alerts', path: '/registry?tab=alerts' },
     ]
   },
   {
@@ -278,17 +246,10 @@ const navItems: NavItem[] = [
       { label: 'All Referrals', path: '/referrals' },
       { label: 'Incoming', path: '/referrals?tab=incoming' },
       { label: 'Outgoing', path: '/referrals?tab=outgoing' },
+      { label: 'Urgent', path: '/referrals?priority=urgent' },
+      { label: 'In Progress', path: '/referrals?status=in_progress' },
+      { label: 'Completed', path: '/referrals?status=completed' },
       { label: 'New Referral', path: '/referrals?action=new' },
-    ]
-  },
-  {
-    label: 'Forms',
-    path: '/forms',
-    module: 'forms',
-    dropdown: [
-      { label: 'All Forms', path: '/forms' },
-      { label: 'Consent Forms', path: '/forms?type=consent' },
-      { label: 'Intake Forms', path: '/forms?type=intake' },
     ]
   },
   {
@@ -313,27 +274,6 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Preferences',
-    path: '/preferences',
-    module: 'preferences',
-    dropdown: [
-      { label: 'User Settings', path: '/preferences' },
-      { label: 'Notifications', path: '/preferences?tab=notifications' },
-      { label: 'Display', path: '/preferences?tab=display' },
-    ]
-  },
-  {
-    label: 'Help',
-    path: '/help',
-    module: 'help',
-    dropdown: [
-      { label: 'Help Center', path: '/help' },
-      { label: 'Keyboard Shortcuts', path: '/help?section=shortcuts' },
-      { label: 'Documentation', path: '/help?section=docs' },
-      { label: 'Contact Support', path: '/help?section=support' },
-    ]
-  },
-  {
     label: 'Telehealth',
     path: '/telehealth',
     module: 'telehealth',
@@ -350,6 +290,8 @@ const navItems: NavItem[] = [
     dropdown: [
       { label: 'All Items', path: '/inventory' },
       { label: 'Low Stock', path: '/inventory?filter=low-stock' },
+      { label: 'Order This Week', path: '/inventory?filter=order-week' },
+      { label: 'Order This Month', path: '/inventory?filter=order-month' },
       { label: 'Add Item', path: '/inventory?action=add' },
       { label: 'Usage Report', path: '/inventory?tab=usage' },
     ]
@@ -412,8 +354,9 @@ const navItems: NavItem[] = [
     module: 'admin',
     dropdown: [
       { label: 'All Activity', path: '/admin/audit-log' },
-      { label: 'Recent', path: '/admin/audit-log?filter=recent' },
-      { label: 'By User', path: '/admin/audit-log?filter=user' },
+      { label: 'Recent', path: '/admin/audit-log?preset=recent' },
+      { label: 'By User', path: '/admin/audit-log?preset=by-user' },
+      { label: 'Failed Logins', path: '/admin/audit-log?preset=failed-logins' },
     ]
   },
   {
@@ -422,8 +365,12 @@ const navItems: NavItem[] = [
     module: 'admin',
     dropdown: [
       { label: 'Admin Dashboard', path: '/admin' },
+      { label: 'Facilities', path: '/admin?tab=facilities' },
+      { label: 'Rooms', path: '/admin?tab=rooms' },
+      { label: 'Providers', path: '/admin?tab=providers' },
       { label: 'Users', path: '/admin?tab=users' },
       { label: 'Settings', path: '/admin?tab=settings' },
+      { label: 'Integrations', path: '/admin/integrations' },
       { label: 'Fee Schedules', path: '/admin/fee-schedules' },
       { label: 'AI Agents', path: '/admin/ai-agents' },
       { label: 'Audit Log', path: '/admin/audit-log' },
@@ -616,13 +563,6 @@ export function MainNav() {
           document.body
         );
       })()}
-
-      {/* Recalls Secondary Nav */}
-      <nav className="ema-subnav" role="navigation" aria-label="Secondary navigation">
-        <NavLink to="/recalls" className="ema-subnav-link">
-          Recalls
-        </NavLink>
-      </nav>
 
       {/* Accent line under nav */}
       <div className="ema-nav-accent" aria-hidden="true" />

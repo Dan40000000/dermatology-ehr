@@ -21,6 +21,8 @@ interface InventoryUsageModalProps {
 interface UsageItem {
   itemId: string;
   quantityUsed: number;
+  sellPriceCents: number;
+  givenAsSample: boolean;
   notes: string;
 }
 
@@ -37,10 +39,19 @@ export function InventoryUsageModal({
   const { showSuccess, showError } = useToast();
 
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [selectedItems, setSelectedItems] = useState<Map<string, UsageItem>>(new Map());
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+
+  const parseDollarInputToCents = (value: string) => {
+    const parsed = Number.parseFloat(value);
+    if (Number.isNaN(parsed) || parsed < 0) {
+      return 0;
+    }
+    return Math.round(parsed * 100);
+  };
 
   useEffect(() => {
     if (isOpen && session) {
@@ -83,6 +94,8 @@ export function InventoryUsageModal({
       newSelected.set(item.id, {
         itemId: item.id,
         quantityUsed: 1,
+        sellPriceCents: item.unitCostCents,
+        givenAsSample: false,
         notes: '',
       });
     }
@@ -91,20 +104,49 @@ export function InventoryUsageModal({
 
   const updateQuantity = (itemId: string, quantity: number) => {
     const newSelected = new Map(selectedItems);
-    const item = newSelected.get(itemId);
-    if (item) {
-      item.quantityUsed = Math.max(1, quantity);
-      newSelected.set(itemId, item);
+    const usageItem = newSelected.get(itemId);
+    if (usageItem) {
+      newSelected.set(itemId, {
+        ...usageItem,
+        quantityUsed: Math.max(1, quantity),
+      });
       setSelectedItems(newSelected);
     }
   };
 
   const updateNotes = (itemId: string, notes: string) => {
     const newSelected = new Map(selectedItems);
-    const item = newSelected.get(itemId);
-    if (item) {
-      item.notes = notes;
-      newSelected.set(itemId, item);
+    const usageItem = newSelected.get(itemId);
+    if (usageItem) {
+      newSelected.set(itemId, {
+        ...usageItem,
+        notes,
+      });
+      setSelectedItems(newSelected);
+    }
+  };
+
+  const updateSellPrice = (itemId: string, sellPriceCents: number) => {
+    const newSelected = new Map(selectedItems);
+    const usageItem = newSelected.get(itemId);
+    if (usageItem) {
+      newSelected.set(itemId, {
+        ...usageItem,
+        sellPriceCents: Math.max(0, sellPriceCents),
+      });
+      setSelectedItems(newSelected);
+    }
+  };
+
+  const updateGivenAsSample = (itemId: string, givenAsSample: boolean) => {
+    const newSelected = new Map(selectedItems);
+    const usageItem = newSelected.get(itemId);
+    if (usageItem) {
+      newSelected.set(itemId, {
+        ...usageItem,
+        givenAsSample,
+        sellPriceCents: givenAsSample ? 0 : usageItem.sellPriceCents,
+      });
       setSelectedItems(newSelected);
     }
   };
@@ -113,7 +155,7 @@ export function InventoryUsageModal({
     if (!session || selectedItems.size === 0) return;
 
     try {
-      setLoading(true);
+      setSaving(true);
       const items = Array.from(selectedItems.values());
 
       // Record each item individually
@@ -126,6 +168,8 @@ export function InventoryUsageModal({
             providerId,
             encounterId,
             appointmentId,
+            sellPriceCents: item.givenAsSample ? 0 : item.sellPriceCents,
+            givenAsSample: item.givenAsSample,
             notes: item.notes || undefined,
           })
         )
@@ -151,7 +195,7 @@ export function InventoryUsageModal({
     } catch (error: any) {
       showError(error.message || 'Failed to record inventory usage');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
@@ -164,6 +208,11 @@ export function InventoryUsageModal({
     };
     return classes[category] || 'bg-gray-100 text-gray-800';
   };
+
+  const selectedEstimatedRevenue = Array.from(selectedItems.values()).reduce((sum, usageItem) => {
+    if (usageItem.givenAsSample) return sum;
+    return sum + usageItem.sellPriceCents * usageItem.quantityUsed;
+  }, 0);
 
   return (
     <Modal
@@ -200,6 +249,9 @@ export function InventoryUsageModal({
           <div className="p-3 bg-purple-50 border border-purple-200 rounded-lg">
             <p className="text-sm font-medium text-purple-900">
               {selectedItems.size} item(s) selected
+            </p>
+            <p className="text-xs text-purple-700 mt-1">
+              Estimated charge: ${(selectedEstimatedRevenue / 100).toFixed(2)}
             </p>
           </div>
         )}
@@ -274,6 +326,44 @@ export function InventoryUsageModal({
                                 className="w-24 px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-500"
                               />
                             </div>
+                            <div className="flex items-center gap-3">
+                              <label className="text-sm font-medium text-gray-700 w-20">
+                                Type:
+                              </label>
+                              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input
+                                  type="checkbox"
+                                  checked={usageItem.givenAsSample}
+                                  onChange={(e) => updateGivenAsSample(item.id, e.target.checked)}
+                                  className="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                                />
+                                Given as sample (no charge)
+                              </label>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <label className="text-sm font-medium text-gray-700 w-20">
+                                Sell price:
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={(usageItem.sellPriceCents / 100).toFixed(2)}
+                                disabled={usageItem.givenAsSample}
+                                onChange={(e) =>
+                                  updateSellPrice(item.id, parseDollarInputToCents(e.target.value))
+                                }
+                                className="w-32 px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-gray-100 disabled:text-gray-500"
+                              />
+                              <span className="text-xs text-gray-500">
+                                Total: $
+                                {(
+                                  (usageItem.givenAsSample ? 0 : usageItem.sellPriceCents) *
+                                  usageItem.quantityUsed /
+                                  100
+                                ).toFixed(2)}
+                              </span>
+                            </div>
                             <div className="flex items-start gap-3">
                               <label className="text-sm font-medium text-gray-700 w-20 pt-1">
                                 Notes:
@@ -309,10 +399,10 @@ export function InventoryUsageModal({
           <button
             type="button"
             onClick={handleSave}
-            disabled={loading || selectedItems.size === 0}
+            disabled={saving || selectedItems.size === 0}
             className="px-4 py-2 text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading ? 'Recording...' : `Record Usage (${selectedItems.size})`}
+            {saving ? 'Recording...' : `Record Usage (${selectedItems.size})`}
           </button>
         </div>
       </div>

@@ -213,12 +213,56 @@ describe("Patient portal data routes", () => {
   });
 
   it("GET /patient-portal-data/lab-results returns empty when table missing", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ exists: false }] });
+    queryMock.mockResolvedValueOnce({
+      rows: [{ observations_exists: false, release_controls_exists: false }],
+    });
 
     const res = await request(app).get("/patient-portal-data/lab-results");
 
     expect(res.status).toBe(200);
     expect(res.body.labResults).toHaveLength(0);
+  });
+
+  it("GET /patient-portal-data/lab-results returns empty when release controls missing", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ observations_exists: true, release_controls_exists: false }],
+    });
+
+    const res = await request(app).get("/patient-portal-data/lab-results");
+
+    expect(res.status).toBe(200);
+    expect(res.body.labResults).toHaveLength(0);
+  });
+
+  it("GET /patient-portal-data/lab-results returns released results", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ observations_exists: true, release_controls_exists: true }],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "obs-1",
+            observationDate: "2026-02-28T00:00:00Z",
+            testName: "CBC",
+            value: "4.8",
+            unit: "x10^3/uL",
+            referenceRange: "4.0-10.0",
+            abnormalFlag: "N",
+            status: "final",
+          },
+        ],
+      });
+
+    const res = await request(app).get("/patient-portal-data/lab-results");
+
+    expect(res.status).toBe(200);
+    expect(res.body.labResults).toHaveLength(1);
+    expect(res.body.labResults[0]).toMatchObject({
+      id: "obs-1",
+      testName: "CBC",
+      status: "final",
+    });
   });
 
   it("GET /patient-portal-data/allergies parses allergies", async () => {

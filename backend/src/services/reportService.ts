@@ -414,19 +414,16 @@ export async function generateNoShowReport(
       p.first_name || ' ' || p.last_name as "patientName",
       pr.full_name as "providerName",
       at.name as "appointmentType",
-      coalesce(ash.notes, 'No reason provided') as reason,
+      case
+        when a.status = 'no_show' then 'No-show'
+        when a.status = 'cancelled' then 'Cancelled'
+        else 'No reason provided'
+      end as reason,
       a.status
     from appointments a
     join patients p on p.id = a.patient_id
     join providers pr on pr.id = a.provider_id
     join appointment_types at on at.id = a.appointment_type_id
-    left join lateral (
-      select notes
-      from appointment_status_history
-      where appointment_id = a.id and status in ('cancelled', 'no_show')
-      order by changed_at desc
-      limit 1
-    ) ash on true
     where a.tenant_id = $1
       and a.status in ('cancelled', 'no_show')
   `;

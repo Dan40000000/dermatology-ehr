@@ -602,6 +602,85 @@ describe('AmbientAI Service', () => {
       );
     });
 
+    it('should include visit context and anti-hallucination instructions in the outbound prompt', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.OPENAI_NOTE_MODEL = 'gpt-4o';
+
+      const mockOpenAIResponse = {
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  chiefComplaint: 'Itchy rash',
+                  hpi: 'Rash for two weeks',
+                  ros: 'Not documented',
+                  physicalExam: 'Not documented',
+                  assessment: 'Dermatitis',
+                  plan: 'Triamcinolone cream',
+                  sectionConfidence: {
+                    chiefComplaint: 0.9,
+                    hpi: 0.88,
+                    ros: 0.8,
+                    physicalExam: 0.78,
+                    assessment: 0.85,
+                    plan: 0.86,
+                  },
+                  suggestedIcd10: [],
+                  suggestedCpt: [],
+                  medications: [],
+                  allergies: [],
+                  followUpTasks: [],
+                  differentialDiagnoses: [],
+                  recommendedTests: [],
+                  patientSummary: {
+                    whatWeDiscussed: 'Rash evaluation',
+                    yourConcerns: ['itchy rash'],
+                    treatmentPlan: 'Use cream',
+                    followUp: '2 weeks',
+                  },
+                }),
+              },
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockOpenAIResponse);
+
+      await ambientAI.generateClinicalNote(
+        transcriptText,
+        doctorPatientSegments,
+        null,
+        {
+          patientName: 'Emily Rodriguez',
+          patientAge: 36,
+          chiefComplaint: 'Itchy forearm rash',
+          relevantHistory: 'Known allergies: Penicillin\nActive medications: Cetirizine daily',
+          providerName: 'Dr. David Skin, MD, FAAD',
+          appointmentTypeName: 'Rash Follow-up',
+          appointmentTypeCategory: 'Medical Dermatology',
+          specialtyFocus: 'medical_derm',
+        }
+      );
+
+      const requestBody = JSON.parse(
+        ((global.fetch as jest.Mock).mock.calls[0]?.[1] as { body?: string }).body || '{}'
+      );
+      const prompt = String(requestBody?.messages?.[1]?.content || '');
+
+      expect(prompt).toContain('Emily Rodriguez');
+      expect(prompt).toContain('36');
+      expect(prompt).toContain('Dr. David Skin, MD, FAAD');
+      expect(prompt).toContain('Rash Follow-up');
+      expect(prompt).toContain('Medical Dermatology');
+      expect(prompt).toContain('Known allergies: Penicillin');
+      expect(prompt).toContain('Only document facts supported by the transcript or supplied visit context.');
+      expect(prompt).toContain('If the transcript does not support a complete ROS, exam, diagnosis, or code suggestion, return "Not documented" or an empty list as appropriate');
+      expect(prompt).toContain('Do not create a normal review of systems or normal physical exam for systems that were not actually discussed.');
+    });
+
     it('should handle API errors and fallback to mock', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
 

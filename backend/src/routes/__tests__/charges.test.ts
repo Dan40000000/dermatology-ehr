@@ -62,6 +62,18 @@ describe("Charges routes", () => {
     expect(res.body.id).toBeTruthy();
   });
 
+  it("POST /charges accepts self_pay status for cosmetic work", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    const res = await request(app).post("/charges").send({
+      cptCode: "COSLHR",
+      amountCents: 32000,
+      description: "Laser hair removal - Full Face",
+      status: "self_pay",
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBeTruthy();
+  });
+
   it("PUT /charges/:id rejects empty updates", async () => {
     const res = await request(app).put("/charges/charge-1").send({});
     expect(res.status).toBe(400);

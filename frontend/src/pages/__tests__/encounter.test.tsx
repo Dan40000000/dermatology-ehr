@@ -230,6 +230,22 @@ vi.mock('../../components/billing', () => ({
       </div>
     );
   },
+  PerformedWorkModal: ({
+    isOpen,
+    onClose,
+  }: {
+    isOpen: boolean;
+    onClose: () => void;
+  }) => {
+    if (!isOpen) return null;
+    return (
+      <div data-testid="performed-work-modal">
+        <button type="button" onClick={onClose}>
+          Close Performed Work
+        </button>
+      </div>
+    );
+  },
 }));
 
 vi.mock('../../components/ScribePanel', () => ({
@@ -430,7 +446,6 @@ describe('EncounterPage', () => {
       expect(apiMocks.createOrder).toHaveBeenCalledWith('tenant-1', 'token-1', {
         encounterId: 'enc-1',
         patientId: 'patient-1',
-        providerId: 'user-1',
         type: 'lab',
         details: 'CBC and CMP',
       }),

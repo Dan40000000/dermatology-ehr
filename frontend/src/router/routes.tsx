@@ -48,7 +48,7 @@ const AnalyticsDashboard = lazy(() => import('../pages/admin/AnalyticsDashboard'
 const PrescriptionsPage = lazy(() => import('../pages/PrescriptionsPage').then(m => ({ default: m.PrescriptionsPage })));
 const LabsPage = lazy(() => import('../pages/LabsPage').then(m => ({ default: m.LabsPage })));
 const RadiologyPage = lazy(() => import('../pages/RadiologyPage').then(m => ({ default: m.RadiologyPage })));
-const MailPage = lazy(() => import('../pages/MailPage').then(m => ({ default: m.MailPage })));
+const MessagingPage = lazy(() => import('../pages/MessagingPage').then(m => ({ default: m.MessagingPage })));
 const TasksPage = lazy(() => import('../pages/TasksPage').then(m => ({ default: m.TasksPage })));
 const RemindersPage = lazy(() => import('../pages/RemindersPage').then(m => ({ default: m.RemindersPage })));
 const TextMessagesPage = lazy(() =>

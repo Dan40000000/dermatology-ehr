@@ -35,6 +35,7 @@ import {
 } from '../api';
 import type { Patient, Encounter, Vitals, Order, EncounterDiagnosis, Charge, ICD10Code, CPTCode } from '../types';
 import type { NoteTemplate, AINoteDraft, AmbientGeneratedNote } from '../api';
+import type { PerformedWorkSubmission } from '../components/billing/PerformedWorkModal';
 import { useAutosave } from '../hooks/useAutosave';
 import { ScribeSummaryCard } from '../components/ScribeSummaryCard';
 import { clearActiveEncounter, setActiveEncounter } from '../utils/activeEncounter';
@@ -471,13 +472,26 @@ export function EncounterPage() {
     if (!session || !encounterId || isNew) return;
 
     try {
-      await createOrder(session.tenantId, session.accessToken, {
+      const orderPayload: {
+        encounterId: string;
+        patientId: string;
+        type: string;
+        details: string;
+        providerId?: string;
+      } = {
         encounterId,
         patientId: patientId!,
         providerId: (encounter.providerId as string | undefined) || undefined,
         type: orderForm.type,
         details: orderForm.details,
-      });
+      };
+
+      const encounterProviderId = (encounter.providerId as string | undefined)?.trim();
+      if (encounterProviderId) {
+        orderPayload.providerId = encounterProviderId;
+      }
+
+      await createOrder(session.tenantId, session.accessToken, orderPayload);
       showSuccess('Order added');
       setShowOrderModal(false);
       setOrderForm({ type: 'lab', details: '' });
@@ -555,6 +569,45 @@ export function EncounterPage() {
       loadData();
     } catch (err: any) {
       showError(err.message || 'Failed to add charge');
+    }
+  };
+
+  const handleRecordPerformedWork = async (submission: PerformedWorkSubmission) => {
+    if (!session || !encounterId || isNew) return;
+
+    const linkedDiagnosisIds = submission.billingRoute === 'insurance' ? submission.linkedDiagnosisIds : [];
+    const icdCodes = linkedDiagnosisIds
+      .map((diagnosisId) => diagnoses.find((dx) => dx.id === diagnosisId)?.icd10Code)
+      .filter((code): code is string => Boolean(code));
+
+    if (submission.billingRoute === 'insurance' && icdCodes.length === 0) {
+      showError('Select at least one diagnosis for insurance-routed procedures.');
+      return;
+    }
+
+    try {
+      for (const lineItem of submission.lineItems) {
+        await createCharge(session.tenantId, session.accessToken, {
+          encounterId,
+          cptCode: lineItem.cptCode,
+          description: lineItem.description,
+          quantity: lineItem.quantity,
+          feeCents: lineItem.feeCents,
+          amountCents: lineItem.feeCents * lineItem.quantity,
+          linkedDiagnosisIds,
+          icdCodes,
+          status: submission.billingRoute === 'insurance' ? 'pending' : 'self_pay',
+        });
+      }
+
+      const lineItemCount = submission.lineItems.length;
+      showSuccess(
+        `${submission.templateName} recorded (${lineItemCount} ${lineItemCount === 1 ? 'line' : 'lines'})`,
+      );
+      setShowPerformedWorkModal(false);
+      loadData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to record performed work');
     }
   };
 
@@ -1818,7 +1871,7 @@ export function EncounterPage() {
                   textAlign: 'center',
                   color: '#6b7280'
                 }}>
-                  No procedures added yet. Click "Add Procedure" to start.
+                  No procedures added yet. Click "Performed Work" for quick procedure capture or "Add Procedure" for manual CPT search.
                 </div>
               ) : (
                 <table className="ema-table">
@@ -1829,6 +1882,7 @@ export function EncounterPage() {
                       <th style={{ width: '80px' }}>Qty</th>
                       <th style={{ width: '100px' }}>Fee</th>
                       <th style={{ width: '100px' }}>Total</th>
+                      <th style={{ width: '120px' }}>Billing</th>
                       <th style={{ width: '200px' }}>Linked DX</th>
                       <th style={{ width: '100px' }}>Actions</th>
                     </tr>
@@ -1846,7 +1900,24 @@ export function EncounterPage() {
                           ${(((charge.feeCents || 0) * (charge.quantity || 1)) / 100).toFixed(2)}
                         </td>
                         <td>
-                          {charge.linkedDiagnosisIds && charge.linkedDiagnosisIds.length > 0 ? (
+                          <span
+                            style={{
+                              padding: '0.2rem 0.5rem',
+                              borderRadius: '999px',
+                              fontSize: '0.7rem',
+                              fontWeight: 700,
+                              background: charge.status === 'self_pay' ? '#ede9fe' : '#dbeafe',
+                              color: charge.status === 'self_pay' ? '#5b21b6' : '#1e40af',
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            {charge.status === 'self_pay' ? 'Self-Pay' : 'Insurance'}
+                          </span>
+                        </td>
+                        <td>
+                          {charge.status === 'self_pay' ? (
+                            <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Not required</span>
+                          ) : charge.linkedDiagnosisIds && charge.linkedDiagnosisIds.length > 0 ? (
                             <div style={{ fontSize: '0.75rem' }}>
                               {charge.linkedDiagnosisIds.map(dxId => {
                                 const dx = diagnoses.find(d => d.id === dxId);
@@ -1912,7 +1983,7 @@ export function EncounterPage() {
                 }}>
                   Charge Summary
                 </h4>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem' }}>
                   <div>
                     <div style={{ fontSize: '0.75rem', color: '#047857', marginBottom: '0.25rem' }}>
                       Total Procedures
@@ -1927,6 +1998,22 @@ export function EncounterPage() {
                     </div>
                     <div style={{ fontSize: '1.5rem', fontWeight: 600, color: '#065f46' }}>
                       ${(charges.reduce((sum, c) => sum + ((c.feeCents || 0) * (c.quantity || 1)), 0) / 100).toFixed(2)}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: '#047857', marginBottom: '0.25rem' }}>
+                      Insurance Total
+                    </div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 600, color: '#0c4a6e' }}>
+                      ${(insuranceChargesTotalCents / 100).toFixed(2)}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: '#047857', marginBottom: '0.25rem' }}>
+                      Self-Pay Total
+                    </div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 600, color: '#6d28d9' }}>
+                      ${(selfPayChargesTotalCents / 100).toFixed(2)}
                     </div>
                   </div>
                 </div>

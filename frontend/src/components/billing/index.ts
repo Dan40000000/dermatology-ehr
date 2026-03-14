@@ -1,5 +1,6 @@
 export { DiagnosisSearchModal } from './DiagnosisSearchModal';
 export { ProcedureSearchModal } from './ProcedureSearchModal';
+export { PerformedWorkModal } from './PerformedWorkModal';
 export { SuperbillPanel } from './SuperbillPanel';
 export { ChargeCapture } from './ChargeCapture';
 export { FeeScheduleDisplay } from './FeeScheduleDisplay';

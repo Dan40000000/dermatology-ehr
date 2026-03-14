@@ -108,6 +108,8 @@ export function MonthView({
         return '#8b5cf6'; // purple
       case 'with_provider':
         return '#f59e0b'; // amber
+      case 'checkout':
+        return '#f97316'; // orange
       default:
         return '#6b7280';
     }

@@ -15,6 +15,15 @@ type InstructionType =
   | 'rash_care'
   | 'cleansing';
 
+type InstructionType =
+  | 'all'
+  | 'general'
+  | 'aftercare'
+  | 'lab_results'
+  | 'prescription_instructions'
+  | 'rash_care'
+  | 'cleansing';
+
 interface Handout {
   id: string;
   title: string;
@@ -435,6 +444,12 @@ export function HandoutsPage() {
   const [selectedPatientId, setSelectedPatientId] = useState('');
   const [patientsLoading, setPatientsLoading] = useState(false);
   const [followUpLoading, setFollowUpLoading] = useState(false);
+
+  useEffect(() => {
+    if (queryInstructionType && INSTRUCTION_TYPE_LABELS[queryInstructionType]) {
+      setInstructionTypeFilter(queryInstructionType);
+    }
+  }, [queryInstructionType]);
 
   useEffect(() => {
     if (queryInstructionType && INSTRUCTION_TYPE_LABELS[queryInstructionType]) {

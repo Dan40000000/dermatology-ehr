@@ -80,6 +80,36 @@ const PHOTO_TYPE_OPTIONS: Array<{ value: PhotoType; label: string }> = [
   { value: 'baseline', label: 'Baseline' },
 ];
 
+const PHOTO_BODY_LOCATIONS = [
+  'Face',
+  'Scalp',
+  'Neck',
+  'Chest',
+  'Back',
+  'Abdomen',
+  'Upper Arm (L)',
+  'Upper Arm (R)',
+  'Forearm (L)',
+  'Forearm (R)',
+  'Hand (L)',
+  'Hand (R)',
+  'Upper Leg (L)',
+  'Upper Leg (R)',
+  'Lower Leg (L)',
+  'Lower Leg (R)',
+  'Foot (L)',
+  'Foot (R)',
+  'Other',
+];
+
+const PHOTO_TYPE_OPTIONS: Array<{ value: PhotoType; label: string }> = [
+  { value: 'clinical', label: 'Clinical' },
+  { value: 'before', label: 'Before Treatment' },
+  { value: 'after', label: 'After Treatment' },
+  { value: 'dermoscopy', label: 'Dermoscopy' },
+  { value: 'baseline', label: 'Baseline' },
+];
+
 export function PatientDetailPage() {
   const { patientId } = useParams<{ patientId: string }>();
   const navigate = useNavigate();

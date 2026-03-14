@@ -1202,6 +1202,16 @@ export const waiveAppointmentLateFee = (
     reason,
   });
 
+export const waiveAppointmentLateFee = (
+  tenantId: string,
+  accessToken: string,
+  billId: string,
+  reason?: string,
+) =>
+  authedPost(tenantId, accessToken, `/api/appointments/late-fees/${billId}/waive`, {
+    reason,
+  });
+
 export const createEncounter = (tenantId: string, accessToken: string, data: any) =>
   authedPost(tenantId, accessToken, "/api/encounters", data);
 

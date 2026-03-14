@@ -343,7 +343,7 @@ export interface Appointment {
   appointmentTypeName?: string;
   scheduledStart: string;
   scheduledEnd: string;
-  status: 'scheduled' | 'checked_in' | 'in_room' | 'with_provider' | 'completed' | 'cancelled' | 'no_show';
+  status: 'scheduled' | 'checked_in' | 'in_room' | 'with_provider' | 'checkout' | 'completed' | 'cancelled' | 'no_show';
   createdAt: string;
 }
 
@@ -722,7 +722,7 @@ export interface Charge {
   quantity?: number;
   feeCents?: number;
   amountCents: number;
-  status: 'pending' | 'submitted' | 'paid' | 'denied';
+  status: 'draft' | 'pending' | 'ready' | 'submitted' | 'claimed' | 'self_pay' | 'paid' | 'denied';
   createdAt: string;
 }
 
@@ -743,7 +743,7 @@ export interface UpdateChargeData {
   linkedDiagnosisIds?: string[];
   quantity?: number;
   feeCents?: number;
-  status?: 'pending' | 'submitted' | 'paid' | 'denied';
+  status?: 'draft' | 'pending' | 'ready' | 'submitted' | 'claimed' | 'self_pay' | 'paid' | 'denied';
 }
 
 // Diagnosis Types

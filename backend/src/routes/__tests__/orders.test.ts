@@ -120,6 +120,28 @@ describe("Orders routes", () => {
     expect(res.body.id).toBe("order-1");
   });
 
+  it("POST /orders falls back to default provider when provided providerId is invalid", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] }) // invalid provided providerId
+      .mockResolvedValueOnce({ rows: [{ id: "prov-2", full_name: "Dr. Fallback" }] }) // default provider
+      .mockResolvedValueOnce({ rows: [] }); // insert
+
+    const res = await request(app).post("/orders").send({
+      patientId: "p1",
+      providerId: "user-1",
+      type: "lab",
+      details: "Shave biopsy",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe("order-1");
+    expect(queryMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("select id, full_name from providers where tenant_id = $1"),
+      ["tenant-1"]
+    );
+  });
+
   it("POST /orders returns 400 when no providers available", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
 

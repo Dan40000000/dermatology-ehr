@@ -23,6 +23,14 @@ const AUTO_REFRESH_INTERVAL_MS = 15000;
 type RoomStatus = 'available' | 'occupied' | 'cleaning' | 'blocked';
 type RoomType = 'exam' | 'procedure' | 'cosmetic' | 'waiting' | 'consult' | 'triage';
 type PatientFlowStatus = Appointment['status'];
+type ActivePatientFlowStatus =
+  | 'checked_in'
+  | 'rooming'
+  | 'vitals_complete'
+  | 'ready_for_provider'
+  | 'with_provider'
+  | 'checkout'
+  | 'completed';
 
 interface Room {
   id: string;
@@ -67,7 +75,39 @@ const getMinutesBetween = (startIso?: string, endIso?: string): number | null =>
   return diffMinutes;
 };
 
+const formatCurrency = (amountCents: number): string =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+  }).format((amountCents || 0) / 100);
+
 const isLaserAppointmentType = (appointmentType?: string): boolean => /laser/i.test(appointmentType || '');
+
+const normalizeOfficeFlowStatus = (
+  appointmentStatus?: string,
+  patientFlowStatus?: ActivePatientFlowStatus
+): PatientFlowStatus => {
+  if (appointmentStatus === 'checkout' || appointmentStatus === 'completed') {
+    return appointmentStatus;
+  }
+
+  switch (patientFlowStatus) {
+    case 'checked_in':
+      return 'checked_in';
+    case 'rooming':
+    case 'vitals_complete':
+    case 'ready_for_provider':
+      return 'in_room';
+    case 'with_provider':
+      return 'with_provider';
+    case 'checkout':
+      return 'checkout';
+    case 'completed':
+      return 'completed';
+    default:
+      return (appointmentStatus as PatientFlowStatus) || 'scheduled';
+  }
+};
 
 const INITIAL_ROOMS: Room[] = [
   { id: 'room-1', name: 'Exam 1', type: 'exam', status: 'available' },
@@ -133,17 +173,23 @@ export function OfficeFlowPage() {
 
       const assignmentMap: Record<string, string> = {};
       const activeFlows = Array.isArray(activeFlowsRes.flows) ? activeFlowsRes.flows : [];
+      const activeFlowByAppointment = new Map<string, any>();
       activeFlows.forEach((flow: any) => {
+        if (flow.appointmentId) {
+          activeFlowByAppointment.set(flow.appointmentId, flow);
+        }
         if (flow.appointmentId && flow.roomId) {
           assignmentMap[flow.appointmentId] = flow.roomId;
         }
       });
       setRoomAssignments(assignmentMap);
 
-      const activeStatuses: PatientFlowStatus[] = ['checked_in', 'in_room', 'with_provider', 'completed'];
+      const activeStatuses: PatientFlowStatus[] = ['checked_in', 'in_room', 'with_provider', 'checkout', 'completed'];
       const flows: PatientFlow[] = (scheduleRes.appointments || [])
         .filter((appt: any) => activeStatuses.includes(appt.status))
         .map((appt: any) => {
+          const activeFlow = activeFlowByAppointment.get(appt.id);
+          const effectiveStatus = normalizeOfficeFlowStatus(appt.status, activeFlow?.status);
           const patientName = appt.patientLastName && appt.patientFirstName
             ? `${appt.patientLastName}, ${appt.patientFirstName}`
             : (appt.patientName || 'Patient');
@@ -151,6 +197,7 @@ export function OfficeFlowPage() {
           const waitTime = appt.status === 'checked_in'
             ? Math.floor(appt.waitTimeMinutes ?? liveWaitMinutes ?? 0)
             : undefined;
+          const paymentDueCents = Number(appt.paymentDueCents ?? 0);
 
           return {
             id: appt.id,

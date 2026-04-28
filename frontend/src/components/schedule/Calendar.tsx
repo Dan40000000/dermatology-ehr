@@ -38,11 +38,91 @@ interface CalendarProps {
   onAppointmentReschedule?: (appointment: Appointment) => void;
 }
 
+interface AppointmentLayout {
+  columnIndex: number;
+  columnCount: number;
+}
+
 function toDateKey(date: Date): string {
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, '0');
   const day = `${date.getDate()}`.padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function isTelehealthAppointment(appointment: Appointment | null | undefined): boolean {
+  if (!appointment) return false;
+  const combined = `${appointment.appointmentTypeName || ''} ${appointment.locationName || ''}`.toLowerCase();
+  return /telehealth|virtual|video/.test(combined);
+}
+
+function buildAppointmentLayoutIndex(bucketMap: Map<string, Appointment[]>): Map<string, AppointmentLayout> {
+  const layoutIndex = new Map<string, AppointmentLayout>();
+
+  for (const appointments of bucketMap.values()) {
+    const sortedAppointments = [...appointments]
+      .filter((appointment) => {
+        if (!appointment?.scheduledStart || !appointment?.scheduledEnd) return false;
+        const startMs = new Date(appointment.scheduledStart).getTime();
+        const endMs = new Date(appointment.scheduledEnd).getTime();
+        return !Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs > startMs;
+      })
+      .sort((left, right) => {
+        const startDiff =
+          new Date(left.scheduledStart).getTime() - new Date(right.scheduledStart).getTime();
+        if (startDiff !== 0) return startDiff;
+        return new Date(left.scheduledEnd).getTime() - new Date(right.scheduledEnd).getTime();
+      });
+
+    let active: Array<{ id: string; endMs: number; columnIndex: number }> = [];
+    let currentGroupIds: string[] = [];
+    let currentGroupColumnCount = 0;
+
+    const flushGroup = () => {
+      if (currentGroupIds.length === 0) return;
+      currentGroupIds.forEach((appointmentId) => {
+        const existing = layoutIndex.get(appointmentId);
+        if (!existing) return;
+        existing.columnCount = Math.max(existing.columnCount, currentGroupColumnCount);
+      });
+      currentGroupIds = [];
+      currentGroupColumnCount = 0;
+    };
+
+    sortedAppointments.forEach((appointment) => {
+      const startMs = new Date(appointment.scheduledStart).getTime();
+      const endMs = new Date(appointment.scheduledEnd).getTime();
+
+      active = active.filter((item) => item.endMs > startMs);
+      if (active.length === 0) {
+        flushGroup();
+      }
+
+      const usedColumns = new Set(active.map((item) => item.columnIndex));
+      let columnIndex = 0;
+      while (usedColumns.has(columnIndex)) {
+        columnIndex += 1;
+      }
+
+      layoutIndex.set(appointment.id, { columnIndex, columnCount: 1 });
+      currentGroupIds.push(appointment.id);
+      active.push({ id: appointment.id, endMs, columnIndex });
+      currentGroupColumnCount = Math.max(currentGroupColumnCount, active.length, columnIndex + 1);
+    });
+
+    flushGroup();
+  }
+
+  return layoutIndex;
+}
+
+function VideoCameraIcon({ color = 'currentColor' }: { color?: string }) {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="7" width="14" height="10" rx="2" ry="2" />
+      <path d="M16 10l6-3v10l-6-3z" />
+    </svg>
+  );
 }
 
 export function Calendar({
@@ -81,17 +161,19 @@ export function Calendar({
   // Business hours: 8am to 5pm (8:00 - 17:00)
   const BUSINESS_START_HOUR = 8;
   const BUSINESS_END_HOUR = 17; // 5pm
+  const CALENDAR_START_HOUR = 8;
+  const CALENDAR_END_HOUR = 18;
 
-  // Time slots from 7am to 7pm in 5-minute increments (show full day, grey out non-business hours)
+  // Time slots from 8am to 6pm in 5-minute increments.
   const timeSlots = useMemo(() => {
     const slots = [];
-    for (let hour = 7; hour < 19; hour++) {
+    for (let hour = CALENDAR_START_HOUR; hour < CALENDAR_END_HOUR; hour++) {
       for (let minute = 0; minute < 60; minute += 5) {
         slots.push({ hour, minute });
       }
     }
     return slots;
-  }, []);
+  }, [CALENDAR_END_HOUR, CALENDAR_START_HOUR]);
 
   // Generate days to display based on view mode
   const days = useMemo(() => {
@@ -155,6 +237,40 @@ export function Calendar({
     }
     return index;
   }, [appointments]);
+
+  const appointmentsByDay = useMemo(() => {
+    const index = new Map<string, Appointment[]>();
+    if (!Array.isArray(appointments)) {
+      return index;
+    }
+    for (const appt of appointments) {
+      if (!appt || appt.status === 'cancelled') {
+        continue;
+      }
+      const apptStart = new Date(appt.scheduledStart);
+      if (Number.isNaN(apptStart.getTime())) {
+        continue;
+      }
+      const key = toDateKey(apptStart);
+      const existing = index.get(key);
+      if (existing) {
+        existing.push(appt);
+      } else {
+        index.set(key, [appt]);
+      }
+    }
+    return index;
+  }, [appointments]);
+
+  const dayViewAppointmentLayouts = useMemo(
+    () => buildAppointmentLayoutIndex(appointmentsByProviderDay),
+    [appointmentsByProviderDay]
+  );
+
+  const weekViewAppointmentLayouts = useMemo(
+    () => buildAppointmentLayoutIndex(appointmentsByDay),
+    [appointmentsByDay]
+  );
 
   const timeBlocksByProviderDay = useMemo(() => {
     const index = new Map<string, TimeBlock[]>();
@@ -537,15 +653,34 @@ export function Calendar({
     );
   }, [days]);
 
+  const todayStartMs = useMemo(() => {
+    const today = new Date(currentTime);
+    today.setHours(0, 0, 0, 0);
+    return today.getTime();
+  }, [currentTime]);
+
+  const isHistoricalScheduledAppointment = (appointment: Appointment) => {
+    if (appointment.status !== 'scheduled') return false;
+    const appointmentDate = new Date(appointment.scheduledStart);
+    if (Number.isNaN(appointmentDate.getTime())) return false;
+    appointmentDate.setHours(0, 0, 0, 0);
+    return appointmentDate.getTime() < todayStartMs;
+  };
+
+  const getAppointmentDisplayColor = (appointment: Appointment) => (
+    isHistoricalScheduledAppointment(appointment)
+      ? '#94a3b8'
+      : getStatusColor(appointment.status)
+  );
+
   // Helper: Calculate current time line position as percentage
   const getCurrentTimePosition = () => {
     const hour = currentTime.getHours();
     const minute = currentTime.getMinutes();
-    const totalMinutesFromStart = (hour - 7) * 60 + minute; // 7am is start
-    const totalCalendarMinutes = 12 * 60; // 7am to 7pm = 12 hours
+    const totalMinutesFromStart = (hour - CALENDAR_START_HOUR) * 60 + minute;
+    const totalCalendarMinutes = (CALENDAR_END_HOUR - CALENDAR_START_HOUR) * 60;
 
-    // Only show if within calendar range (7am - 7pm)
-    if (hour < 7 || hour >= 19) return null;
+    if (hour < CALENDAR_START_HOUR || hour >= CALENDAR_END_HOUR) return null;
 
     return (totalMinutesFromStart / totalCalendarMinutes) * 100;
   };
@@ -662,24 +797,22 @@ export function Calendar({
               {timeSlots.map(({ hour, minute }) => {
                 const day = days[0]; // Single day in day view
                 const slotAppointments = getAppointmentsForSlot(provider.id, day, hour, minute);
+                const startingAppointments = slotAppointments.filter((appt) => isFirstSlot(appt, hour, minute));
                 const slotTimeBlocks = getTimeBlocksForSlot(provider.id, day, hour, minute);
                 const isAvailable = isProviderAvailable(provider.id, day, hour, minute);
-                const appointment = slotAppointments[0];
                 const timeBlock = slotTimeBlocks[0];
-                const isFirst = appointment && isFirstSlot(appointment, hour, minute);
                 const isFirstBlock = timeBlock && isFirstTimeBlockSlot(timeBlock, hour, minute);
-                const slots = appointment ? getAppointmentSlots(appointment) : 0;
                 const blockSlots = timeBlock ? getTimeBlockSlots(timeBlock) : 0;
 
                 return (
                   <div
                     key={`${hour}-${minute}`}
                     className={`calendar-slot ${isAvailable ? 'available' : 'unavailable'} ${
-                      appointment || timeBlock ? 'has-appointment' : ''
+                      slotAppointments.length > 0 || timeBlock ? 'has-appointment' : ''
                     } ${minute === 0 ? 'hour-mark' : ''}`}
                     onClick={() => {
-                      if (appointment) {
-                        onAppointmentClick(appointment);
+                      if (slotAppointments.length > 0) {
+                        onAppointmentClick(slotAppointments[0]!);
                       } else if (timeBlock) {
                         if (onTimeBlockClick) {
                           onTimeBlockClick(timeBlock.id);
@@ -689,10 +822,10 @@ export function Calendar({
                       }
                     }}
                     style={{
-                      cursor: appointment || timeBlock || isAvailable ? 'pointer' : 'default',
+                      cursor: slotAppointments.length > 0 || timeBlock || isAvailable ? 'pointer' : 'default',
                     }}
                   >
-                    {isFirstBlock && timeBlock && !appointment && (
+                    {isFirstBlock && timeBlock && slotAppointments.length === 0 && (
                       <div
                         className="calendar-time-block"
                         onMouseEnter={(e) => handleTimeBlockMouseEnter(timeBlock, e)}
@@ -732,35 +865,77 @@ export function Calendar({
                         )}
                       </div>
                     )}
-                    {isFirst && appointment && (
-                      <div
-                        className={`calendar-appointment ${
-                          selectedAppointment?.id === appointment.id ? 'selected' : ''
-                        }`}
-                        style={{
-                          backgroundColor: getStatusColor(appointment.status),
-                          height: `${slots * 100}%`,
-                          borderLeft: `4px solid ${getStatusColor(appointment.status)}`,
-                          filter:
-                            selectedAppointment?.id === appointment.id
-                              ? 'brightness(0.9)'
-                              : 'none',
-                        }}
-                      >
-                        <div className="appointment-time">
-                          {new Date(appointment.scheduledStart).toLocaleTimeString('en-US', {
-                            hour: 'numeric',
-                            minute: '2-digit',
-                          })}
+                    {startingAppointments.map((appointment) => {
+                      const slots = getAppointmentSlots(appointment);
+                      const layout = dayViewAppointmentLayouts.get(appointment.id) || { columnIndex: 0, columnCount: 1 };
+                      const widthPercent = 100 / layout.columnCount;
+                      const leftPercent = layout.columnIndex * widthPercent;
+
+                      return (
+                        <div
+                          key={appointment.id}
+                          className={`calendar-appointment ${
+                            selectedAppointment?.id === appointment.id ? 'selected' : ''
+                          }`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onAppointmentClick(appointment);
+                          }}
+                          style={{
+                            backgroundColor: getAppointmentDisplayColor(appointment),
+                            height: `${slots * 100}%`,
+                            borderLeft: `4px solid ${getAppointmentDisplayColor(appointment)}`,
+                            filter:
+                              selectedAppointment?.id === appointment.id
+                                ? 'brightness(0.9)'
+                                : 'none',
+                            left: `calc(${leftPercent}% + 1px)`,
+                            width: `calc(${widthPercent}% - 2px)`,
+                            right: 'auto',
+                            zIndex: selectedAppointment?.id === appointment.id ? 140 : 10 + layout.columnIndex,
+                            opacity: isHistoricalScheduledAppointment(appointment) ? 0.85 : 1,
+                          }}
+                        >
+                          {isTelehealthAppointment(appointment) && (
+                            <div style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.25rem',
+                              marginBottom: '0.2rem',
+                              padding: '0.1rem 0.35rem',
+                              borderRadius: '999px',
+                              background: 'rgba(255,255,255,0.72)',
+                              color: '#1d4ed8',
+                              fontSize: '0.58rem',
+                              fontWeight: 700,
+                              width: 'fit-content',
+                            }}>
+                              <VideoCameraIcon color="#1d4ed8" />
+                              Video
+                            </div>
+                          )}
+                          <div className="appointment-time">
+                            {new Date(appointment.scheduledStart).toLocaleTimeString('en-US', {
+                              hour: 'numeric',
+                              minute: '2-digit',
+                            })}
+                          </div>
+                          <div className="appointment-patient">{appointment.patientName}</div>
+                          <div className="appointment-type" style={isTelehealthAppointment(appointment) ? { color: '#1e3a8a', fontWeight: 600 } : undefined}>
+                            {appointment.appointmentTypeName}
+                          </div>
+                          {isHistoricalScheduledAppointment(appointment) && (
+                            <div className="appointment-conflict" style={{ background: 'rgba(255,255,255,0.78)', color: '#475569' }}>
+                              Past day
+                            </div>
+                          )}
+                          {layout.columnCount > 1 && (
+                            <div className="appointment-conflict">Overlap</div>
+                          )}
+                          {renderInlineActions(appointment, providerIndex === providers.length - 1)}
                         </div>
-                        <div className="appointment-patient">{appointment.patientName}</div>
-                        <div className="appointment-type">{appointment.appointmentTypeName}</div>
-                        {slotAppointments.length > 1 && (
-                          <div className="appointment-conflict">+{slotAppointments.length - 1} conflict</div>
-                        )}
-                        {renderInlineActions(appointment, providerIndex === providers.length - 1)}
-                      </div>
-                    )}
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -775,9 +950,9 @@ export function Calendar({
                 const allSlotAppointments = Array.isArray(providers) ? providers.flatMap((provider) =>
                   getAppointmentsForSlot(provider.id, day, hour, minute)
                 ) : [];
-                const appointment = allSlotAppointments[0];
-                const isFirst = appointment && isFirstSlot(appointment, hour, minute);
-                const slots = appointment ? getAppointmentSlots(appointment) : 0;
+                const startingAppointments = allSlotAppointments.filter((appointment) =>
+                  isFirstSlot(appointment, hour, minute)
+                );
 
                 // Check if any provider is available
                 const anyProviderAvailable = Array.isArray(providers) && providers.some((provider) =>
@@ -788,11 +963,11 @@ export function Calendar({
                   <div
                     key={`${hour}-${minute}`}
                     className={`calendar-slot ${anyProviderAvailable ? 'available' : 'unavailable'} ${
-                      appointment ? 'has-appointment' : ''
+                      allSlotAppointments.length > 0 ? 'has-appointment' : ''
                     } ${minute === 0 ? 'hour-mark' : ''}`}
                     onClick={() => {
-                      if (appointment) {
-                        onAppointmentClick(appointment);
+                      if (allSlotAppointments.length > 0) {
+                        onAppointmentClick(allSlotAppointments[0]!);
                       } else if (anyProviderAvailable && Array.isArray(providers)) {
                         // Default to first available provider
                         const availableProvider = providers.find((p) =>
@@ -807,35 +982,77 @@ export function Calendar({
                       cursor: appointment || anyProviderAvailable ? 'pointer' : 'default',
                     }}
                   >
-                    {isFirst && appointment && (
-                      <div
-                        className={`calendar-appointment ${
-                          selectedAppointment?.id === appointment.id ? 'selected' : ''
-                        }`}
-                        style={{
-                          backgroundColor: getStatusColor(appointment.status),
-                          height: `${slots * 100}%`,
-                          borderLeft: `4px solid ${getStatusColor(appointment.status)}`,
-                          filter:
-                            selectedAppointment?.id === appointment.id
-                              ? 'brightness(0.9)'
-                              : 'none',
-                        }}
-                      >
-                        <div className="appointment-time">
-                          {new Date(appointment.scheduledStart).toLocaleTimeString('en-US', {
-                            hour: 'numeric',
-                            minute: '2-digit',
-                          })}
+                    {startingAppointments.map((appointment) => {
+                      const slots = getAppointmentSlots(appointment);
+                      const layout = weekViewAppointmentLayouts.get(appointment.id) || { columnIndex: 0, columnCount: 1 };
+                      const widthPercent = 100 / layout.columnCount;
+                      const leftPercent = layout.columnIndex * widthPercent;
+
+                      return (
+                        <div
+                          key={appointment.id}
+                          className={`calendar-appointment ${
+                            selectedAppointment?.id === appointment.id ? 'selected' : ''
+                          }`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onAppointmentClick(appointment);
+                          }}
+                          style={{
+                            backgroundColor: getAppointmentDisplayColor(appointment),
+                            height: `${slots * 100}%`,
+                            borderLeft: `4px solid ${getAppointmentDisplayColor(appointment)}`,
+                            filter:
+                              selectedAppointment?.id === appointment.id
+                                ? 'brightness(0.9)'
+                                : 'none',
+                            left: `calc(${leftPercent}% + 1px)`,
+                            width: `calc(${widthPercent}% - 2px)`,
+                            right: 'auto',
+                            zIndex: selectedAppointment?.id === appointment.id ? 140 : 10 + layout.columnIndex,
+                            opacity: isHistoricalScheduledAppointment(appointment) ? 0.85 : 1,
+                          }}
+                        >
+                          {isTelehealthAppointment(appointment) && (
+                            <div style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.25rem',
+                              marginBottom: '0.2rem',
+                              padding: '0.1rem 0.35rem',
+                              borderRadius: '999px',
+                              background: 'rgba(255,255,255,0.72)',
+                              color: '#1d4ed8',
+                              fontSize: '0.58rem',
+                              fontWeight: 700,
+                              width: 'fit-content',
+                            }}>
+                              <VideoCameraIcon color="#1d4ed8" />
+                              Video
+                            </div>
+                          )}
+                          <div className="appointment-time">
+                            {new Date(appointment.scheduledStart).toLocaleTimeString('en-US', {
+                              hour: 'numeric',
+                              minute: '2-digit',
+                            })}
+                          </div>
+                          <div className="appointment-patient">{appointment.patientName}</div>
+                          <div className="appointment-type" style={isTelehealthAppointment(appointment) ? { color: '#1e3a8a', fontWeight: 600 } : undefined}>
+                            {appointment.appointmentTypeName}
+                          </div>
+                          {isHistoricalScheduledAppointment(appointment) && (
+                            <div className="appointment-conflict" style={{ background: 'rgba(255,255,255,0.78)', color: '#475569' }}>
+                              Past day
+                            </div>
+                          )}
+                          {layout.columnCount > 1 && (
+                            <div className="appointment-conflict">Overlap</div>
+                          )}
+                          {renderInlineActions(appointment, dayIndex === days.length - 1)}
                         </div>
-                        <div className="appointment-patient">{appointment.patientName}</div>
-                        <div className="appointment-type">{appointment.appointmentTypeName}</div>
-                        {allSlotAppointments.length > 1 && (
-                          <div className="appointment-conflict">+{allSlotAppointments.length - 1} conflict</div>
-                        )}
-                        {renderInlineActions(appointment, dayIndex === days.length - 1)}
-                      </div>
-                    )}
+                      );
+                    })}
                   </div>
                 );
               })}

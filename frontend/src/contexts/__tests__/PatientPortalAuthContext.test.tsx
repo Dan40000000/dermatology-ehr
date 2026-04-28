@@ -19,6 +19,7 @@ describe('PatientPortalAuthContext', () => {
 
   afterEach(() => {
     localStorage.clear();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -101,6 +102,67 @@ describe('PatientPortalAuthContext', () => {
     expect(localStorage.getItem('patientPortalToken')).toBe('new-token');
     expect(localStorage.getItem('patientPortalTenantId')).toBe('tenant-1');
     expect(localStorage.getItem('patientPortalPatient')).toBe(JSON.stringify(mockPatient));
+  });
+
+  it('should prefer backend session for demo portal credentials when backend is available', async () => {
+    const alexPatient = {
+      id: 'demo-patient-1',
+      firstName: 'Alex',
+      lastName: 'Johnson',
+      email: 'patient@demo.portal',
+    };
+
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        sessionToken: 'real-backend-token',
+        patient: alexPatient,
+      }),
+    });
+
+    const { result } = renderHook(() => usePatientPortalAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <PatientPortalAuthProvider>{children}</PatientPortalAuthProvider>
+      ),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.login('tenant-demo', 'patient@demo.portal', 'Portal123!');
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/patient-portal/login'),
+      expect.any(Object)
+    );
+    expect(result.current.sessionToken).toBe('real-backend-token');
+    expect(localStorage.getItem('patientPortalToken')).toBe('real-backend-token');
+  });
+
+  it('should fall back to local demo portal session only when backend is unavailable', async () => {
+    vi.stubEnv('VITE_ENABLE_LOCAL_DEMO', 'true');
+    (global.fetch as any).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    const { result } = renderHook(() => usePatientPortalAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <PatientPortalAuthProvider>{children}</PatientPortalAuthProvider>
+      ),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.login('tenant-demo', 'patient@demo.portal', 'Portal123!');
+    });
+
+    expect(result.current.patient?.id).toBe('demo-patient-1');
+    expect(result.current.sessionToken).toBe('demo-portal-token');
+    expect(localStorage.getItem('patientPortalToken')).toBe('demo-portal-token');
   });
 
   it('should handle login errors', async () => {

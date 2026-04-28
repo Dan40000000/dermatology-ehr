@@ -73,6 +73,12 @@ export interface CheckInCopayOptions {
   checkedInBy?: string;
 }
 
+export interface CheckOutResult {
+  status: 'checkout' | 'completed';
+  requiresPayment: boolean;
+  paymentDueCents: number;
+}
+
 export interface CheckInPatientResult {
   encounterId: string;
   copayAmount: number;

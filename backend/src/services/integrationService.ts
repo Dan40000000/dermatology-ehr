@@ -22,6 +22,10 @@ import { EPrescribeAdapter, createEPrescribeAdapter } from '../integrations/ePre
 import { LabAdapter, createLabAdapter } from '../integrations/labAdapter';
 import { PaymentAdapter, createPaymentAdapter } from '../integrations/paymentAdapter';
 import { FaxAdapter, createFaxAdapter } from '../integrations/faxAdapter';
+import {
+  AmbientTranscriptionAdapter,
+  createAmbientTranscriptionAdapter,
+} from '../integrations/ambientTranscriptionAdapter';
 
 // ============================================================================
 // Types
@@ -33,7 +37,8 @@ export type IntegrationType =
   | 'eprescribe'
   | 'lab'
   | 'payment'
-  | 'fax';
+  | 'fax'
+  | 'ambient_transcription';
 
 export interface IntegrationStatus {
   type: IntegrationType;
@@ -53,6 +58,7 @@ export interface AllIntegrationStatuses {
   lab: IntegrationStatus;
   payment: IntegrationStatus;
   fax: IntegrationStatus;
+  ambient_transcription: IntegrationStatus;
 }
 
 export interface IntegrationConfigInput {
@@ -89,7 +95,7 @@ export class IntegrationService {
    */
   async getIntegrationStatus(): Promise<AllIntegrationStatuses> {
     const integrationTypes: IntegrationType[] = [
-      'clearinghouse', 'eligibility', 'eprescribe', 'lab', 'payment', 'fax',
+      'clearinghouse', 'eligibility', 'eprescribe', 'lab', 'payment', 'fax', 'ambient_transcription',
     ];
 
     const statuses: Record<string, IntegrationStatus> = {};
@@ -455,13 +461,14 @@ export class IntegrationService {
   async getClearinghouseAdapter(): Promise<ClearinghouseAdapter> {
     if (!this.adapters.has('clearinghouse')) {
       const config = await getIntegrationConfig(this.tenantId, 'clearinghouse');
+      const adapterUseMock = this.resolveAdapterMockMode(config);
       const adapter = createClearinghouseAdapter(
         this.tenantId,
         config?.provider || 'change_healthcare',
-        this.useMock
+        adapterUseMock
       );
       if (config) {
-        adapter.loadConfig();
+        await adapter.loadConfig();
       }
       this.adapters.set('clearinghouse', adapter);
     }
@@ -471,13 +478,14 @@ export class IntegrationService {
   async getEligibilityAdapter(): Promise<EligibilityAdapter> {
     if (!this.adapters.has('eligibility')) {
       const config = await getIntegrationConfig(this.tenantId, 'eligibility');
+      const adapterUseMock = this.resolveAdapterMockMode(config);
       const adapter = createEligibilityAdapter(
         this.tenantId,
         config?.provider || 'availity',
-        this.useMock
+        adapterUseMock
       );
       if (config) {
-        adapter.loadConfig();
+        await adapter.loadConfig();
       }
       this.adapters.set('eligibility', adapter);
     }
@@ -487,9 +495,10 @@ export class IntegrationService {
   async getEPrescribeAdapter(): Promise<EPrescribeAdapter> {
     if (!this.adapters.has('eprescribe')) {
       const config = await getIntegrationConfig(this.tenantId, 'eprescribe');
-      const adapter = createEPrescribeAdapter(this.tenantId, this.useMock);
+      const adapterUseMock = this.resolveAdapterMockMode(config);
+      const adapter = createEPrescribeAdapter(this.tenantId, adapterUseMock);
       if (config) {
-        adapter.loadConfig();
+        await adapter.loadConfig();
       }
       this.adapters.set('eprescribe', adapter);
     }
@@ -544,6 +553,32 @@ export class IntegrationService {
     return this.adapters.get('fax') as FaxAdapter;
   }
 
+  async getAmbientTranscriptionAdapter(): Promise<AmbientTranscriptionAdapter> {
+    if (!this.adapters.has('ambient_transcription')) {
+      const config = await getIntegrationConfig(this.tenantId, 'ambient_transcription');
+      const envApiKey = process.env.WISPR_FLOW_API_KEY || process.env.WISPR_API_KEY;
+      const configuredEnvironment = String(config?.config?.environment || config?.config?.mode || '')
+        .trim()
+        .toLowerCase();
+      const isExplicitDemoMode = configuredEnvironment === 'mock' ||
+        configuredEnvironment === 'demo' ||
+        configuredEnvironment === 'test';
+      const adapterUseMock = envApiKey && !isExplicitDemoMode
+        ? false
+        : this.resolveAdapterMockMode(config);
+      const adapter = createAmbientTranscriptionAdapter(
+        this.tenantId,
+        config?.provider || 'wispr_flow',
+        adapterUseMock
+      );
+      if (config) {
+        await adapter.loadConfig();
+      }
+      this.adapters.set('ambient_transcription', adapter);
+    }
+    return this.adapters.get('ambient_transcription') as AmbientTranscriptionAdapter;
+  }
+
   // ============================================================================
   // Private Methods
   // ============================================================================
@@ -562,6 +597,8 @@ export class IntegrationService {
         return this.getPaymentAdapter();
       case 'fax':
         return this.getFaxAdapter();
+      case 'ambient_transcription':
+        return this.getAmbientTranscriptionAdapter();
       default:
         throw new Error(`Unknown integration type: ${type}`);
     }
@@ -575,8 +612,31 @@ export class IntegrationService {
       lab: 'labcorp',
       payment: 'stripe',
       fax: 'phaxio',
+      ambient_transcription: 'wispr_flow',
     };
     return defaults[type];
+  }
+
+  private resolveAdapterMockMode(config: IntegrationConfig | null): boolean {
+    if (this.useMock) {
+      return true;
+    }
+
+    if (!config) {
+      return true;
+    }
+
+    const configuredEnvironment = String(
+      config.config?.environment || config.config?.mode || ''
+    )
+      .trim()
+      .toLowerCase();
+
+    if (configuredEnvironment === 'mock' || configuredEnvironment === 'demo' || configuredEnvironment === 'test') {
+      return true;
+    }
+
+    return false;
   }
 
   private async getPatientsNeedingVerification(): Promise<Array<{

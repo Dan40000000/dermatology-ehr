@@ -4,6 +4,7 @@ import type { Request } from "express";
 import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
+import { requireModuleAccess } from "../middleware/moduleAccess";
 import { auditLog } from "../services/audit";
 import { logger } from "../lib/logger";
 import { getEmailService } from "../lib/container";
@@ -270,6 +271,8 @@ messagingRouter.post("/webhook/email", async (req, res) => {
 });
 
 // GET /api/messaging/recipients - List internal recipients for compose
+messagingRouter.use(requireAuth, requireModuleAccess("mail"));
+
 messagingRouter.get("/recipients", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const currentUserId = req.user!.id;

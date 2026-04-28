@@ -296,4 +296,53 @@ describe('OfficeFlowPage', () => {
     );
     expect(screen.queryByRole('button', { name: 'Move to Waiting' })).not.toBeInTheDocument();
   });
+
+  it('shows ended visits in checkout when appointment status advanced past stale patient flow', async () => {
+    const now = new Date().toISOString();
+    apiMocks.fetchFrontDeskSchedule.mockResolvedValue({
+      appointments: [{
+        id: 'appt-checkout',
+        tenantId: 'tenant-1',
+        patientId: 'pat-checkout',
+        patientFirstName: 'Checkout',
+        patientLastName: 'Patient',
+        providerId: 'prov-1',
+        providerName: 'Dr. House',
+        locationId: 'loc-1',
+        locationName: 'Mountain Pine Dermatology PLLC',
+        appointmentTypeId: 'type-1',
+        appointmentTypeName: 'Visit',
+        scheduledStart: now,
+        scheduledEnd: now,
+        status: 'checkout',
+        arrivedAt: now,
+        roomedAt: now,
+        paymentDueCents: 5000,
+        createdAt: now,
+      }],
+    });
+    apiMocks.fetchPatientFlowActive.mockResolvedValue({
+      flows: [{
+        appointmentId: 'appt-checkout',
+        roomId: 'room-1',
+        status: 'with_provider',
+      }],
+    });
+    apiMocks.fetchPatients.mockResolvedValue({
+      patients: [{
+        id: 'pat-checkout',
+        tenantId: 'tenant-1',
+        firstName: 'Checkout',
+        lastName: 'Patient',
+        createdAt: now,
+      }],
+    });
+
+    render(<OfficeFlowPage />);
+
+    await screen.findByText('Office Flow');
+    expect(await screen.findByText('Patient, Checkout')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Collect Payment' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Check Out' })).not.toBeInTheDocument();
+  });
 });

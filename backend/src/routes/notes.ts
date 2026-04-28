@@ -70,7 +70,7 @@ notesRouter.get("/", requireAuth, requireRoles([...CLINICAL_ROLES]), async (req:
       e.ros,
       e.exam,
       e.assessment_plan as "assessmentPlan",
-      e.visit_code as "visitCode",
+      to_jsonb(e)->>'visit_code' as "visitCode",
       e.signed_at as "signedAt",
       e.signed_by as "signedBy",
       e.created_at as "createdAt",

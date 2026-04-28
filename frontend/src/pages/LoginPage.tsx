@@ -13,6 +13,7 @@ export function LoginPage() {
   const [tenantId, setTenantId] = useState('tenant-demo');
   const [email, setEmail] = useState('admin@demo.practice');
   const [password, setPassword] = useState('Password123!');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (isAuthenticated) {
@@ -168,31 +169,54 @@ export function LoginPage() {
             <span style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', color: '#374151' }}>
               {t('auth:login.password')}
             </span>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              autoComplete="current-password"
-              placeholder="••••••••••"
-              style={{
-                width: '100%',
-                padding: '0.875rem 1rem',
-                borderRadius: '12px',
-                border: '2px solid #e5e7eb',
-                fontSize: '1rem',
-                transition: 'all 0.3s ease',
-                outline: 'none'
-              }}
-              onFocus={(e) => {
-                e.currentTarget.style.borderColor = '#8b5cf6';
-                e.currentTarget.style.boxShadow = '0 0 0 3px rgba(139, 92, 246, 0.1)';
-              }}
-              onBlur={(e) => {
-                e.currentTarget.style.borderColor = '#e5e7eb';
-                e.currentTarget.style.boxShadow = 'none';
-              }}
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                placeholder="••••••••••"
+                style={{
+                  width: '100%',
+                  padding: '0.875rem 4.75rem 0.875rem 1rem',
+                  borderRadius: '12px',
+                  border: '2px solid #e5e7eb',
+                  fontSize: '1rem',
+                  transition: 'all 0.3s ease',
+                  outline: 'none'
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = '#8b5cf6';
+                  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(139, 92, 246, 0.1)';
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = '#e5e7eb';
+                  e.currentTarget.style.boxShadow = 'none';
+                }}
+              />
+              <button
+                type="button"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                onClick={() => setShowPassword((current) => !current)}
+                style={{
+                  position: 'absolute',
+                  right: '0.55rem',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  border: 'none',
+                  background: 'rgba(139, 92, 246, 0.1)',
+                  color: '#6b21a8',
+                  borderRadius: '999px',
+                  padding: '0.4rem 0.75rem',
+                  fontSize: '0.78rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                {showPassword ? 'Hide' : 'Show'}
+              </button>
+            </div>
           </label>
 
           <button type="submit" disabled={isLoading} className="login-btn" style={{
@@ -227,25 +251,55 @@ export function LoginPage() {
           </button>
         </form>
 
-        <div className="login-demo" style={{
+        <div style={{
           marginTop: '2rem',
-          padding: '1rem',
-          background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(167, 139, 250, 0.1))',
           borderRadius: '12px',
           border: '1px solid rgba(139, 92, 246, 0.2)',
-          textAlign: 'center'
+          overflow: 'hidden',
         }}>
-          <p className="demo-label" style={{
-            fontSize: '0.75rem',
-            fontWeight: '600',
-            color: '#6b21a8',
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            marginBottom: '0.5rem'
-          }}>{t('auth:login.demoCredentials')}</p>
-          <p className="demo-creds" style={{ color: '#374151', fontSize: '0.875rem' }}>
-            <strong style={{ color: '#6b21a8' }}>admin@demo.practice</strong> / <strong style={{ color: '#6b21a8' }}>Password123!</strong>
-          </p>
+          <div style={{
+            padding: '0.6rem 1rem',
+            background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(167, 139, 250, 0.1))',
+            borderBottom: '1px solid rgba(139, 92, 246, 0.15)',
+          }}>
+            <p style={{ fontSize: '0.7rem', fontWeight: '700', color: '#6b21a8', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
+              Beta test credentials — click to fill
+            </p>
+          </div>
+          {[
+            { label: 'Owner / Admin',   email: 'admin@demo.practice',     password: 'Password123!' },
+            { label: 'Physician',       email: 'provider@demo.practice',  password: 'Password123!' },
+            { label: 'RN / Nurse',      email: 'nurse@demo.practice',     password: 'Password123!' },
+            { label: 'Office Manager',  email: 'manager@demo.practice',   password: 'Password123!' },
+            { label: 'Front Desk',      email: 'frontdesk@demo.practice', password: 'Password123!' },
+            { label: 'Med. Assistant',  email: 'ma@demo.practice',        password: 'Password123!' },
+            { label: 'Billing',         email: 'billing@demo.practice',   password: 'Password123!' },
+          ].map((cred, i) => (
+            <button
+              key={cred.email}
+              type="button"
+              onClick={() => { setEmail(cred.email); setPassword(cred.password); }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                width: '100%',
+                padding: '0.55rem 1rem',
+                background: 'transparent',
+                border: 'none',
+                borderTop: i > 0 ? '1px solid rgba(139, 92, 246, 0.08)' : 'none',
+                cursor: 'pointer',
+                textAlign: 'left',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(139, 92, 246, 0.07)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={{ fontSize: '0.68rem', fontWeight: '700', color: '#7c3aed', width: '88px', flexShrink: 0 }}>{cred.label}</span>
+              <code style={{ fontSize: '0.75rem', color: '#374151', flex: 1, fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{cred.email}</code>
+              <code style={{ fontSize: '0.75rem', color: '#6b7280', fontFamily: "'SF Mono', 'Fira Code', monospace" }}>Password123!</code>
+            </button>
+          ))}
         </div>
 
         {error && <div className="login-error" style={{

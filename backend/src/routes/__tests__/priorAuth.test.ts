@@ -7,7 +7,11 @@ import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.user = { id: "f1111111-1111-4111-8111-111111111111", tenantId: "99999999-9999-4999-8999-999999999999" };
+    req.user = {
+      id: "f1111111-1111-4111-8111-111111111111",
+      tenantId: "99999999-9999-4999-8999-999999999999",
+      role: "provider",
+    };
     return next();
   },
 }));

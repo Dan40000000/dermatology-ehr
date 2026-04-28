@@ -171,21 +171,36 @@ describe('PatientsPage', () => {
     fireEvent.click(screen.getByLabelText('Active'));
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
 
-    const searchSelect = screen.getByRole('combobox');
-    const searchInput = screen.getByPlaceholderText('Enter search term...');
+    const searchSelect = screen.getByLabelText('Search patients by');
+    const firstNameInput = screen.getByPlaceholderText('First name');
+    const lastNameInput = screen.getByPlaceholderText('Last name');
+
+    fireEvent.change(firstNameInput, { target: { value: 'Zack' } });
+    await waitFor(() => expect(screen.queryByText('Last05')).not.toBeInTheDocument());
+    expect(screen.getByText('Alpha')).toBeInTheDocument();
+
+    fireEvent.change(firstNameInput, { target: { value: '' } });
+    fireEvent.change(lastNameInput, { target: { value: 'Zulu' } });
+    await waitFor(() => expect(screen.getByText('Zulu')).toBeInTheDocument());
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+
+    fireEvent.change(firstNameInput, { target: { value: 'Aaron' } });
+    await waitFor(() => expect(screen.getByText('Zulu')).toBeInTheDocument());
 
     fireEvent.change(searchSelect, { target: { value: 'mrn' } });
-    fireEvent.change(searchInput, { target: { value: 'MRN-5' } });
+    const mrnInput = screen.getByPlaceholderText('Enter MRN...');
+    fireEvent.change(mrnInput, { target: { value: 'MRN-5' } });
     await waitFor(() => expect(screen.queryByText('Alpha')).not.toBeInTheDocument());
     expect(screen.getByText('Last05')).toBeInTheDocument();
 
     fireEvent.change(searchSelect, { target: { value: 'phone' } });
-    fireEvent.change(searchInput, { target: { value: '0005' } });
+    const phoneInput = screen.getByPlaceholderText('Enter phone number...');
+    fireEvent.change(phoneInput, { target: { value: '0005' } });
     await waitFor(() => expect(screen.queryByText('Last06')).not.toBeInTheDocument());
     expect(screen.getByText('Last05')).toBeInTheDocument();
 
     fireEvent.change(searchSelect, { target: { value: 'name' } });
-    fireEvent.change(searchInput, { target: { value: 'notfound' } });
+    fireEvent.change(screen.getByPlaceholderText('First name'), { target: { value: 'notfound' } });
     await waitFor(() => expect(screen.getByText('No patients found')).toBeInTheDocument());
   }, 15000);
 
@@ -307,15 +322,14 @@ describe('PatientsPage', () => {
       expect(within(screen.getAllByRole('row')[1]).getByRole('link', { name: 'Alpha' })).toBeInTheDocument()
     );
 
-    const searchSelect = screen.getByRole('combobox');
-    const searchInput = screen.getByPlaceholderText('Enter search term...');
+    const searchSelect = screen.getByLabelText('Search patients by');
 
     fireEvent.change(searchSelect, { target: { value: 'other' } });
-    fireEvent.change(searchInput, { target: { value: 'Beta' } });
+    fireEvent.change(screen.getByPlaceholderText('Enter phone number...'), { target: { value: 'Beta' } });
     await waitFor(() => expect(screen.getByRole('link', { name: 'Beta' })).toBeInTheDocument());
 
     fireEvent.change(searchSelect, { target: { value: 'phone' } });
-    fireEvent.change(searchInput, { target: { value: 'abc' } });
+    fireEvent.change(screen.getByPlaceholderText('Enter phone number...'), { target: { value: 'abc' } });
     await waitFor(() => expect(screen.getByText('No patients found')).toBeInTheDocument());
   });
 
@@ -332,7 +346,7 @@ describe('PatientsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '3' }));
     await waitFor(() => expect(screen.getByText(/Page 3 of 6/)).toBeInTheDocument());
 
-    fireEvent.change(screen.getByPlaceholderText('Enter search term...'), { target: { value: 'First' } });
+    fireEvent.change(screen.getByPlaceholderText('First name'), { target: { value: 'First' } });
     await waitFor(() => expect(screen.getByText(/Page 1 of 6/)).toBeInTheDocument());
   });
 

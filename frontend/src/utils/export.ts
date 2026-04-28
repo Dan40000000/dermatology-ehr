@@ -30,6 +30,11 @@ export interface PDFOptions extends ExportOptions {
   practiceAddress?: string;
 }
 
+type PDFBuildResult = {
+  doc: jsPDF;
+  filename: string;
+};
+
 /**
  * Format currency value as $1,234.56
  */
@@ -56,7 +61,18 @@ export function formatDate(
 ): string {
   if (!date) return '';
 
-  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  let dateObj: Date;
+  if (typeof date === 'string') {
+    const dateOnlyMatch = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnlyMatch) {
+      const [, year, month, day] = dateOnlyMatch;
+      dateObj = new Date(Number(year), Number(month) - 1, Number(day));
+    } else {
+      dateObj = new Date(date);
+    }
+  } else {
+    dateObj = date;
+  }
 
   if (isNaN(dateObj.getTime())) return '';
 
@@ -242,139 +258,181 @@ export function exportToCSV(
 /**
  * Export data to PDF with professional formatting
  */
+function buildPDFDocument(
+  data: any[],
+  filename: string,
+  options: PDFOptions = {}
+): PDFBuildResult {
+  if (!data || data.length === 0) {
+    throw new Error('No data to export');
+  }
+
+  const {
+    title = 'Report',
+    columns,
+    headers,
+    orientation = 'portrait',
+    fontSize = 10,
+    includeTimestamp = true,
+    includeHeader = true,
+    includeFooter = true,
+    practiceName = 'Dermatology Practice',
+    practiceAddress,
+  } = options;
+
+  const doc = new jsPDF({
+    orientation,
+    unit: 'mm',
+    format: 'letter',
+  });
+
+  let yPosition = 15;
+
+  if (includeHeader) {
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(practiceName, 15, yPosition);
+    yPosition += 7;
+
+    if (practiceAddress) {
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(practiceAddress, 15, yPosition);
+      yPosition += 5;
+    }
+
+    yPosition += 5;
+  }
+
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text(title, 15, yPosition);
+  yPosition += 7;
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Generated: ${formatDate(new Date(), 'datetime')}`, 15, yPosition);
+  yPosition += 10;
+
+  let tableHeaders: string[];
+  let tableData: any[][];
+
+  if (columns) {
+    tableHeaders = columns.map(col => col.label);
+    tableData = data.map(row =>
+      columns.map(col => {
+        let value = getNestedValue(row, col.key);
+        return col.format ? col.format(value) : value;
+      })
+    );
+  } else if (headers) {
+    tableHeaders = headers;
+    tableData = data.map(row => headers.map(key => getNestedValue(row, key)));
+  } else {
+    const keys = Object.keys(data[0]);
+    tableHeaders = keys;
+    tableData = data.map(row => keys.map(key => row[key]));
+  }
+
+  autoTable(doc, {
+    head: [tableHeaders],
+    body: tableData,
+    startY: yPosition,
+    styles: {
+      fontSize: fontSize,
+      cellPadding: 3,
+      overflow: 'linebreak',
+    },
+    headStyles: {
+      fillColor: [107, 70, 193],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      halign: 'left',
+    },
+    alternateRowStyles: {
+      fillColor: [245, 245, 245],
+    },
+    margin: { left: 15, right: 15 },
+    didDrawPage: () => {
+      if (includeFooter) {
+        const pageCount = doc.getNumberOfPages();
+        const currentPage = (doc as any).internal.getCurrentPageInfo().pageNumber;
+
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.text(
+          `Page ${currentPage} of ${pageCount}`,
+          doc.internal.pageSize.width / 2,
+          doc.internal.pageSize.height - 10,
+          { align: 'center' }
+        );
+      }
+    },
+  });
+
+  const timestamp = includeTimestamp ? `_${getTimestamp()}` : '';
+  const finalFilename = `${sanitizeFilename(filename)}${timestamp}.pdf`;
+
+  return { doc, filename: finalFilename };
+}
+
 export function exportToPDF(
   data: any[],
   filename: string,
   options: PDFOptions = {}
 ): void {
   try {
-    if (!data || data.length === 0) {
-      throw new Error('No data to export');
-    }
-
-    const {
-      title = 'Report',
-      columns,
-      headers,
-      orientation = 'portrait',
-      fontSize = 10,
-      includeTimestamp = true,
-      includeHeader = true,
-      includeFooter = true,
-      practiceName = 'Dermatology Practice',
-      practiceAddress,
-    } = options;
-
-    // Create PDF document
-    const doc = new jsPDF({
-      orientation,
-      unit: 'mm',
-      format: 'letter',
-    });
-
-    let yPosition = 15;
-
-    // Add practice header
-    if (includeHeader) {
-      doc.setFontSize(16);
-      doc.setFont('helvetica', 'bold');
-      doc.text(practiceName, 15, yPosition);
-      yPosition += 7;
-
-      if (practiceAddress) {
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'normal');
-        doc.text(practiceAddress, 15, yPosition);
-        yPosition += 5;
-      }
-
-      yPosition += 5;
-    }
-
-    // Add title
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text(title, 15, yPosition);
-    yPosition += 7;
-
-    // Add generation timestamp
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`Generated: ${formatDate(new Date(), 'datetime')}`, 15, yPosition);
-    yPosition += 10;
-
-    // Prepare table data
-    let tableHeaders: string[];
-    let tableData: any[][];
-
-    if (columns) {
-      tableHeaders = columns.map(col => col.label);
-      tableData = data.map(row =>
-        columns.map(col => {
-          let value = getNestedValue(row, col.key);
-          return col.format ? col.format(value) : value;
-        })
-      );
-    } else if (headers) {
-      tableHeaders = headers;
-      tableData = data.map(row =>
-        headers.map(key => getNestedValue(row, key))
-      );
-    } else {
-      // Auto-detect from first object
-      const keys = Object.keys(data[0]);
-      tableHeaders = keys;
-      tableData = data.map(row => keys.map(key => row[key]));
-    }
-
-    // Add table
-    autoTable(doc, {
-      head: [tableHeaders],
-      body: tableData,
-      startY: yPosition,
-      styles: {
-        fontSize: fontSize,
-        cellPadding: 3,
-        overflow: 'linebreak',
-      },
-      headStyles: {
-        fillColor: [107, 70, 193], // Brand purple
-        textColor: [255, 255, 255],
-        fontStyle: 'bold',
-        halign: 'left',
-      },
-      alternateRowStyles: {
-        fillColor: [245, 245, 245],
-      },
-      margin: { left: 15, right: 15 },
-      didDrawPage: (data) => {
-        // Add footer with page numbers
-        if (includeFooter) {
-          const pageCount = doc.getNumberOfPages();
-          const currentPage = (doc as any).internal.getCurrentPageInfo().pageNumber;
-
-          doc.setFontSize(8);
-          doc.setFont('helvetica', 'normal');
-          doc.text(
-            `Page ${currentPage} of ${pageCount}`,
-            doc.internal.pageSize.width / 2,
-            doc.internal.pageSize.height - 10,
-            { align: 'center' }
-          );
-        }
-      },
-    });
-
-    // Generate filename
-    const timestamp = includeTimestamp ? `_${getTimestamp()}` : '';
-    const finalFilename = `${sanitizeFilename(filename)}${timestamp}.pdf`;
-
-    // Save PDF
-    doc.save(finalFilename);
+    const pdf = buildPDFDocument(data, filename, options);
+    pdf.doc.save(pdf.filename);
   } catch (error) {
     console.error('Error exporting to PDF:', error);
     throw error;
   }
+}
+
+export function createPDFBlob(
+  data: any[],
+  filename: string,
+  options: PDFOptions = {}
+): { blob: Blob; filename: string } {
+  try {
+    const pdf = buildPDFDocument(data, filename, options);
+    return { blob: pdf.doc.output('blob'), filename: pdf.filename };
+  } catch (error) {
+    console.error('Error creating PDF blob:', error);
+    throw error;
+  }
+}
+
+export function deliverBlob(
+  blob: Blob,
+  filename: string,
+  mode: 'download' | 'preview' = 'download'
+): string {
+  const url = URL.createObjectURL(blob);
+  if (mode === 'preview') {
+    const previewWindow = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!previewWindow) {
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    return filename;
+  }
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  return filename;
 }
 
 /**

@@ -34,47 +34,134 @@ diseaseRegistryRouter.get("/dashboard", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
 
   try {
-    // Get counts by registry type
+    // Get counts by registry type from the same disease tables the tabs use.
     const registryCounts = await pool.query(
-      `SELECT
-        rc.registry_type,
-        rc.name,
-        COUNT(DISTINCT rm.patient_id) as patient_count
-       FROM registry_cohorts rc
-       LEFT JOIN registry_members rm ON rm.registry_id = rc.id AND rm.status = 'active'
-       WHERE rc.tenant_id = $1 AND rc.status = 'active' AND rc.registry_type IS NOT NULL
-       GROUP BY rc.registry_type, rc.name
-       ORDER BY rc.name`,
+      `SELECT registry_type, name, patient_count
+       FROM (
+         SELECT 'melanoma'::text AS registry_type, 'Melanoma'::text AS name, COUNT(*)::int AS patient_count
+         FROM melanoma_registry
+         WHERE tenant_id = $1
+
+         UNION ALL
+
+         SELECT 'psoriasis'::text AS registry_type, 'Psoriasis'::text AS name, COUNT(*)::int AS patient_count
+         FROM psoriasis_registry
+         WHERE tenant_id = $1
+
+         UNION ALL
+
+         SELECT 'acne'::text AS registry_type, 'Acne / Isotretinoin'::text AS name, COUNT(*)::int AS patient_count
+         FROM acne_registry
+         WHERE tenant_id = $1 AND on_isotretinoin = true
+
+         UNION ALL
+
+         SELECT 'chronic_therapy'::text AS registry_type, 'Chronic Therapy'::text AS name, COUNT(*)::int AS patient_count
+         FROM chronic_therapy_registry
+         WHERE tenant_id = $1
+       ) registry_counts
+       ORDER BY CASE registry_type
+         WHEN 'melanoma' THEN 1
+         WHEN 'psoriasis' THEN 2
+         WHEN 'acne' THEN 3
+         WHEN 'chronic_therapy' THEN 4
+         ELSE 99
+       END`,
       [tenantId]
     );
 
-    // Get patients due for follow-up (melanoma)
-    const melanomaDue = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM melanoma_registry
-       WHERE tenant_id = $1
-         AND next_scheduled_exam <= CURRENT_DATE + INTERVAL '7 days'
-         AND next_scheduled_exam >= CURRENT_DATE
-         AND recurrence_status = 'no_recurrence'`,
-      [tenantId]
-    );
-
-    // Get patients overdue for labs
-    const labsOverdue = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM chronic_therapy_registry
-       WHERE tenant_id = $1 AND next_lab_due < CURRENT_DATE`,
-      [tenantId]
-    );
-
-    // Get isotretinoin patients needing pregnancy tests
-    const pregnancyTestsDue = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM acne_registry
-       WHERE tenant_id = $1
-         AND on_isotretinoin = true
-         AND pregnancy_category = 'can_get_pregnant'
-         AND next_pregnancy_test_due <= CURRENT_DATE + INTERVAL '7 days'`,
+    const dashboardSummary = await pool.query(
+      `WITH melanoma_summary AS (
+         SELECT
+           COUNT(*)::int AS total_patients,
+           COUNT(*) FILTER (
+             WHERE next_scheduled_exam >= CURRENT_DATE
+               AND next_scheduled_exam <= CURRENT_DATE + INTERVAL '7 days'
+               AND recurrence_status = 'no_recurrence'
+           )::int AS followups_due,
+           COUNT(*) FILTER (
+             WHERE next_scheduled_exam < CURRENT_DATE
+               AND recurrence_status = 'no_recurrence'
+           )::int AS overdue_followups,
+           COUNT(*) FILTER (
+             WHERE coalesce(initial_staging_documented, false) = false
+               OR ajcc_stage IS NULL
+           )::int AS unstaged_patients
+         FROM melanoma_registry
+         WHERE tenant_id = $1
+       ),
+       psoriasis_summary AS (
+         SELECT
+           COUNT(*)::int AS total_patients,
+           COUNT(*) FILTER (
+             WHERE coalesce(biologic_name, '') <> ''
+           )::int AS biologic_patients,
+           COUNT(*) FILTER (
+             WHERE next_lab_due < CURRENT_DATE
+           )::int AS labs_overdue,
+           COUNT(*) FILTER (
+             WHERE coalesce(baseline_pasi_documented, false) = false
+           )::int AS missing_baseline_pasi,
+           COUNT(*) FILTER (
+             WHERE coalesce(current_pasi_score, 0) >= 10
+           )::int AS moderate_to_severe
+         FROM psoriasis_registry
+         WHERE tenant_id = $1
+       ),
+       acne_summary AS (
+         SELECT
+           COUNT(*) FILTER (WHERE on_isotretinoin = true)::int AS total_patients,
+           COUNT(*) FILTER (
+             WHERE on_isotretinoin = true
+               AND coalesce(ipledge_id, '') <> ''
+           )::int AS ipledge_enrolled,
+           COUNT(*) FILTER (
+             WHERE on_isotretinoin = true
+               AND pregnancy_category = 'can_get_pregnant'
+               AND next_pregnancy_test_due <= CURRENT_DATE + INTERVAL '7 days'
+           )::int AS pregnancy_tests_due,
+           COUNT(*) FILTER (
+             WHERE on_isotretinoin = true
+               AND next_lab_due < CURRENT_DATE
+           )::int AS labs_overdue
+         FROM acne_registry
+         WHERE tenant_id = $1
+       ),
+       chronic_summary AS (
+         SELECT
+           COUNT(*)::int AS total_patients,
+           COUNT(*) FILTER (
+             WHERE next_lab_due < CURRENT_DATE
+           )::int AS labs_overdue,
+           COUNT(*) FILTER (
+             WHERE next_lab_due >= CURRENT_DATE
+               AND next_lab_due <= CURRENT_DATE + INTERVAL '14 days'
+           )::int AS labs_due_soon,
+           COUNT(*) FILTER (
+             WHERE medication_class ILIKE '%biologic%'
+           )::int AS biologic_therapies
+         FROM chronic_therapy_registry
+         WHERE tenant_id = $1
+       )
+       SELECT
+         melanoma_summary.total_patients AS melanoma_total_patients,
+         melanoma_summary.followups_due AS melanoma_followups_due,
+         melanoma_summary.overdue_followups AS melanoma_overdue_followups,
+         melanoma_summary.unstaged_patients AS melanoma_unstaged_patients,
+         psoriasis_summary.total_patients AS psoriasis_total_patients,
+         psoriasis_summary.biologic_patients AS psoriasis_biologic_patients,
+         psoriasis_summary.labs_overdue AS psoriasis_labs_overdue,
+         psoriasis_summary.missing_baseline_pasi AS psoriasis_missing_baseline_pasi,
+         psoriasis_summary.moderate_to_severe AS psoriasis_moderate_to_severe,
+         acne_summary.total_patients AS acne_total_patients,
+         acne_summary.ipledge_enrolled AS acne_ipledge_enrolled,
+         acne_summary.pregnancy_tests_due AS acne_pregnancy_tests_due,
+         acne_summary.labs_overdue AS acne_labs_overdue,
+         chronic_summary.total_patients AS chronic_total_patients,
+         chronic_summary.labs_overdue AS chronic_labs_overdue,
+         chronic_summary.labs_due_soon AS chronic_labs_due_soon,
+         chronic_summary.biologic_therapies AS chronic_biologic_therapies
+       FROM melanoma_summary, psoriasis_summary, acne_summary, chronic_summary`,
       [tenantId]
     );
 
@@ -86,16 +173,62 @@ diseaseRegistryRouter.get("/dashboard", async (req: AuthedRequest, res) => {
         (SELECT COUNT(*) FROM psoriasis_registry WHERE tenant_id = $1 AND baseline_pasi_documented = true)::numeric /
         NULLIF((SELECT COUNT(*) FROM psoriasis_registry WHERE tenant_id = $1)::numeric, 0) * 100 as psoriasis_pasi_rate,
         (SELECT COUNT(*) FROM chronic_therapy_registry WHERE tenant_id = $1 AND labs_up_to_date = true)::numeric /
-        NULLIF((SELECT COUNT(*) FROM chronic_therapy_registry WHERE tenant_id = $1)::numeric, 0) * 100 as labs_compliance_rate`,
+        NULLIF((SELECT COUNT(*) FROM chronic_therapy_registry WHERE tenant_id = $1)::numeric, 0) * 100 as labs_compliance_rate,
+        (SELECT COUNT(*)
+         FROM acne_registry
+         WHERE tenant_id = $1
+           AND on_isotretinoin = true
+           AND (pregnancy_category <> 'can_get_pregnant' OR next_pregnancy_test_due >= CURRENT_DATE)
+           AND (next_lab_due IS NULL OR next_lab_due >= CURRENT_DATE)
+        )::numeric /
+        NULLIF((SELECT COUNT(*) FROM acne_registry WHERE tenant_id = $1 AND on_isotretinoin = true)::numeric, 0) * 100 as isotretinoin_monitoring_rate`,
       [tenantId]
     );
+
+    const summary = dashboardSummary.rows[0] || {};
+    const melanomaDue = parseInt(summary.melanoma_followups_due || "0", 10);
+    const melanomaOverdue = parseInt(summary.melanoma_overdue_followups || "0", 10);
+    const psoriasisLabsOverdue = parseInt(summary.psoriasis_labs_overdue || "0", 10);
+    const acneLabsOverdue = parseInt(summary.acne_labs_overdue || "0", 10);
+    const chronicLabsOverdue = parseInt(summary.chronic_labs_overdue || "0", 10);
+    const pregnancyTestsDue = parseInt(summary.acne_pregnancy_tests_due || "0", 10);
+    const labsOverdue = psoriasisLabsOverdue + acneLabsOverdue + chronicLabsOverdue;
 
     res.json({
       registryCounts: registryCounts.rows,
       alerts: {
-        melanomaDue: parseInt(melanomaDue.rows[0]?.count || "0"),
-        labsOverdue: parseInt(labsOverdue.rows[0]?.count || "0"),
-        pregnancyTestsDue: parseInt(pregnancyTestsDue.rows[0]?.count || "0"),
+        melanomaDue,
+        melanomaOverdue,
+        labsOverdue,
+        pregnancyTestsDue,
+        totalActionItems: melanomaDue + melanomaOverdue + labsOverdue + pregnancyTestsDue,
+      },
+      registrySummaries: {
+        melanoma: {
+          totalPatients: parseInt(summary.melanoma_total_patients || "0", 10),
+          followupsDue: melanomaDue,
+          overdueFollowups: melanomaOverdue,
+          unstagedPatients: parseInt(summary.melanoma_unstaged_patients || "0", 10),
+        },
+        psoriasis: {
+          totalPatients: parseInt(summary.psoriasis_total_patients || "0", 10),
+          biologicPatients: parseInt(summary.psoriasis_biologic_patients || "0", 10),
+          labsOverdue: psoriasisLabsOverdue,
+          missingBaselinePasi: parseInt(summary.psoriasis_missing_baseline_pasi || "0", 10),
+          moderateToSevere: parseInt(summary.psoriasis_moderate_to_severe || "0", 10),
+        },
+        acne: {
+          totalPatients: parseInt(summary.acne_total_patients || "0", 10),
+          ipledgeEnrolled: parseInt(summary.acne_ipledge_enrolled || "0", 10),
+          pregnancyTestsDue,
+          labsOverdue: acneLabsOverdue,
+        },
+        chronicTherapy: {
+          totalPatients: parseInt(summary.chronic_total_patients || "0", 10),
+          labsOverdue: chronicLabsOverdue,
+          labsDueSoon: parseInt(summary.chronic_labs_due_soon || "0", 10),
+          biologicTherapies: parseInt(summary.chronic_biologic_therapies || "0", 10),
+        },
       },
       qualityMetrics: qualityMetrics.rows[0] || {},
     });
@@ -116,9 +249,62 @@ diseaseRegistryRouter.get("/melanoma", async (req: AuthedRequest, res) => {
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
         p.dob,
-        EXTRACT(YEAR FROM AGE(p.dob::date)) as age
+        p.phone,
+        p.email,
+        EXTRACT(YEAR FROM AGE(p.dob::date)) as age,
+        recall.id as recall_id,
+        recall.recall_status,
+        recall.recall_due_date,
+        recall.last_reminder_type,
+        recall.last_reminder_sent_at,
+        recall.last_reminder_delivery_status,
+        recall.contact_attempts,
+        recall.text_thread_id,
+        recall.text_thread_status
        FROM melanoma_registry mr
        JOIN patients p ON p.id = mr.patient_id
+       LEFT JOIN LATERAL (
+         SELECT
+           pr.id,
+           pr.status as recall_status,
+           COALESCE(pr.due_date, pr.recall_date) as recall_due_date,
+           latest_log.reminder_type as last_reminder_type,
+           latest_log.sent_at as last_reminder_sent_at,
+           latest_log.delivery_status as last_reminder_delivery_status,
+           (
+             SELECT COUNT(*)::int
+             FROM reminder_log rl_count
+             WHERE rl_count.recall_id = pr.id
+           ) as contact_attempts,
+           latest_thread.id as text_thread_id,
+           latest_thread.status as text_thread_status
+         FROM patient_recalls pr
+         LEFT JOIN recall_campaigns rc ON rc.id = pr.campaign_id AND rc.tenant_id = pr.tenant_id
+         LEFT JOIN LATERAL (
+           SELECT rl.reminder_type, rl.sent_at, rl.delivery_status
+           FROM reminder_log rl
+           WHERE rl.recall_id = pr.id
+           ORDER BY rl.sent_at DESC
+           LIMIT 1
+         ) latest_log ON true
+         LEFT JOIN LATERAL (
+           SELECT t.id, t.status
+           FROM patient_message_threads t
+           WHERE t.patient_id = pr.patient_id
+             AND t.tenant_id = pr.tenant_id
+           ORDER BY t.last_message_at DESC NULLS LAST, t.created_at DESC
+           LIMIT 1
+         ) latest_thread ON true
+         WHERE pr.patient_id = mr.patient_id
+           AND pr.tenant_id = mr.tenant_id
+           AND (
+             COALESCE(pr.recall_type, '') ILIKE 'Melanoma Surveillance'
+             OR COALESCE(rc.recall_type, '') ILIKE 'Melanoma Surveillance'
+             OR COALESCE(rc.name, '') ILIKE 'Melanoma Surveillance'
+           )
+         ORDER BY COALESCE(pr.due_date, pr.recall_date) ASC NULLS LAST, pr.updated_at DESC
+         LIMIT 1
+       ) recall ON true
        WHERE mr.tenant_id = $1
        ORDER BY mr.next_scheduled_exam ASC NULLS LAST, mr.diagnosis_date DESC`,
       [tenantId]
@@ -549,41 +735,86 @@ diseaseRegistryRouter.get("/alerts", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
 
   try {
-    // Melanoma follow-ups due
-    const melanomaDue = await pool.query(
+    // Melanoma follow-ups due or overdue
+    const melanomaAlerts = await pool.query(
       `SELECT
         mr.id,
         mr.patient_id,
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
+        mr.next_scheduled_exam as due_date,
         mr.next_scheduled_exam,
-        'melanoma_followup' as alert_type,
-        'Melanoma follow-up due' as alert_message
+        CASE
+          WHEN mr.next_scheduled_exam < CURRENT_DATE THEN 'melanoma_followup_overdue'
+          ELSE 'melanoma_followup_due'
+        END as alert_type,
+        CASE
+          WHEN mr.next_scheduled_exam < CURRENT_DATE THEN 'Melanoma follow-up overdue'
+          ELSE 'Melanoma follow-up due'
+        END as alert_message
        FROM melanoma_registry mr
        JOIN patients p ON p.id = mr.patient_id
        WHERE mr.tenant_id = $1
          AND mr.next_scheduled_exam <= CURRENT_DATE + INTERVAL '7 days'
-         AND mr.next_scheduled_exam >= CURRENT_DATE
          AND mr.recurrence_status = 'no_recurrence'
        ORDER BY mr.next_scheduled_exam`,
       [tenantId]
     );
 
-    // Labs overdue
-    const labsOverdue = await pool.query(
+    const psoriasisLabsOverdue = await pool.query(
+      `SELECT
+        pr.id,
+        pr.patient_id,
+        p.first_name || ' ' || p.last_name as patient_name,
+        p.mrn,
+        pr.biologic_name as medication_name,
+        pr.next_lab_due as due_date,
+        pr.next_lab_due,
+        'psoriasis_labs_overdue' as alert_type,
+        'Psoriasis monitoring labs overdue' as alert_message
+       FROM psoriasis_registry pr
+       JOIN patients p ON p.id = pr.patient_id
+       WHERE pr.tenant_id = $1
+         AND pr.next_lab_due < CURRENT_DATE
+       ORDER BY pr.next_lab_due`,
+      [tenantId]
+    );
+
+    const chronicLabsOverdue = await pool.query(
       `SELECT
         ct.id,
         ct.patient_id,
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
         ct.medication_name,
+        ct.next_lab_due as due_date,
         ct.next_lab_due,
-        'labs_overdue' as alert_type,
+        'chronic_therapy_labs_overdue' as alert_type,
         'Labs overdue for ' || ct.medication_name as alert_message
        FROM chronic_therapy_registry ct
        JOIN patients p ON p.id = ct.patient_id
        WHERE ct.tenant_id = $1 AND ct.next_lab_due < CURRENT_DATE
        ORDER BY ct.next_lab_due`,
+      [tenantId]
+    );
+
+    const acneLabsOverdue = await pool.query(
+      `SELECT
+        ar.id,
+        ar.patient_id,
+        p.first_name || ' ' || p.last_name as patient_name,
+        p.mrn,
+        'Isotretinoin'::text as medication_name,
+        ar.next_lab_due as due_date,
+        ar.next_lab_due,
+        'isotretinoin_labs_overdue' as alert_type,
+        'Isotretinoin monitoring labs overdue' as alert_message
+       FROM acne_registry ar
+       JOIN patients p ON p.id = ar.patient_id
+       WHERE ar.tenant_id = $1
+         AND ar.on_isotretinoin = true
+         AND ar.next_lab_due < CURRENT_DATE
+       ORDER BY ar.next_lab_due`,
       [tenantId]
     );
 
@@ -594,6 +825,7 @@ diseaseRegistryRouter.get("/alerts", async (req: AuthedRequest, res) => {
         ar.patient_id,
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
+        ar.next_pregnancy_test_due as due_date,
         ar.next_pregnancy_test_due,
         'pregnancy_test_due' as alert_type,
         'iPLEDGE pregnancy test due' as alert_message
@@ -607,12 +839,20 @@ diseaseRegistryRouter.get("/alerts", async (req: AuthedRequest, res) => {
       [tenantId]
     );
 
+    const alerts = [
+      ...melanomaAlerts.rows,
+      ...psoriasisLabsOverdue.rows,
+      ...chronicLabsOverdue.rows,
+      ...acneLabsOverdue.rows,
+      ...pregnancyTestsDue.rows,
+    ].sort((a: any, b: any) => {
+      const aTime = a?.due_date ? new Date(a.due_date).getTime() : Number.MAX_SAFE_INTEGER;
+      const bTime = b?.due_date ? new Date(b.due_date).getTime() : Number.MAX_SAFE_INTEGER;
+      return aTime - bTime;
+    });
+
     res.json({
-      alerts: [
-        ...melanomaDue.rows,
-        ...labsOverdue.rows,
-        ...pregnancyTestsDue.rows,
-      ],
+      alerts,
     });
   } catch (err) {
     logDiseaseRegistryError("Error fetching registry alerts:", err);

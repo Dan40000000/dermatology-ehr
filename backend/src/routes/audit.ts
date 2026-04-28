@@ -27,6 +27,41 @@ function logAuditRoutesError(message: string, error: unknown): void {
   });
 }
 
+function hasFilterValue(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== "";
+}
+
+function collectUnsupportedAuditFilters(columnMap: Awaited<ReturnType<typeof getAuditSchemaInfo>>["columnMap"], filters: Record<string, unknown>): string[] {
+  const unsupported: string[] = [];
+  const columnRequirements: Array<[string, keyof typeof columnMap]> = [
+    ["userId", "userId"],
+    ["resourceType", "resourceType"],
+    ["resourceId", "resourceId"],
+    ["ipAddress", "ipAddress"],
+    ["severity", "severity"],
+    ["status", "status"],
+  ];
+
+  for (const [filterName, columnName] of columnRequirements) {
+    if (hasFilterValue(filters[filterName]) && !columnMap[columnName]) {
+      unsupported.push(filterName);
+    }
+  }
+
+  return unsupported;
+}
+
+function rejectUnsupportedAuditFilters(res: any, columnMap: Awaited<ReturnType<typeof getAuditSchemaInfo>>["columnMap"], filters: Record<string, unknown>): boolean {
+  const unsupported = collectUnsupportedAuditFilters(columnMap, filters);
+  if (unsupported.length === 0) return false;
+
+  res.status(400).json({
+    error: `Unsupported audit filter${unsupported.length === 1 ? "" : "s"} for current audit schema`,
+    unsupportedFilters: unsupported,
+  });
+  return true;
+}
+
 /**
  * @swagger
  * /api/audit/appointments:
@@ -276,6 +311,15 @@ auditRouter.get("/", requireAuth, requireRoles(["admin", "compliance_officer"]),
       search,
     } = req.query;
     const { columnMap } = await getAuditSchemaInfo();
+
+    if (rejectUnsupportedAuditFilters(res, columnMap, {
+      userId,
+      resourceType,
+      resourceId,
+      ipAddress,
+      severity,
+      status,
+    })) return;
 
     // Build dynamic query against either enhanced or legacy audit schema
     const conditions: string[] = ["al.tenant_id = $1"];
@@ -592,40 +636,67 @@ auditRouter.post("/export", requireAuth, requireRoles(["admin"]), async (req: Au
     const ipAddress = req.ip || req.headers["x-forwarded-for"] as string || "unknown";
     const { filters } = req.body;
     const { columnMap } = await getAuditSchemaInfo();
+    const normalizedFilters = filters || {};
+
+    if (rejectUnsupportedAuditFilters(res, columnMap, normalizedFilters)) return;
 
     // Build query based on filters
     const conditions: string[] = ["al.tenant_id = $1"];
     const params: any[] = [tenantId];
     let paramCount = 1;
 
-    if (filters?.userId && columnMap.userId) {
+    if (normalizedFilters.userId && columnMap.userId) {
       paramCount++;
       conditions.push(`al.${columnMap.userId} = $${paramCount}`);
-      params.push(filters.userId);
+      params.push(normalizedFilters.userId);
     }
 
-    if (filters?.action) {
+    if (normalizedFilters.action) {
       paramCount++;
       conditions.push(`al.action = $${paramCount}`);
-      params.push(filters.action);
+      params.push(normalizedFilters.action);
     }
 
-    if (filters?.resourceType && columnMap.resourceType) {
+    if (normalizedFilters.resourceType && columnMap.resourceType) {
       paramCount++;
       conditions.push(`al.${columnMap.resourceType} = $${paramCount}`);
-      params.push(filters.resourceType);
+      params.push(normalizedFilters.resourceType);
     }
 
-    if (filters?.startDate) {
+    if (normalizedFilters.resourceId && columnMap.resourceId) {
+      paramCount++;
+      conditions.push(`al.${columnMap.resourceId} = $${paramCount}`);
+      params.push(normalizedFilters.resourceId);
+    }
+
+    if (normalizedFilters.ipAddress && columnMap.ipAddress) {
+      paramCount++;
+      conditions.push(`al.${columnMap.ipAddress}::text = $${paramCount}`);
+      params.push(normalizedFilters.ipAddress);
+    }
+
+    if (normalizedFilters.severity && columnMap.severity) {
+      paramCount++;
+      conditions.push(`al.${columnMap.severity} = $${paramCount}`);
+      params.push(normalizedFilters.severity);
+    }
+
+    if (normalizedFilters.status && columnMap.status) {
+      paramCount++;
+      conditions.push(`al.${columnMap.status} = $${paramCount}`);
+      params.push(normalizedFilters.status);
+    }
+
+    if (normalizedFilters.startDate) {
       paramCount++;
       conditions.push(`al.created_at >= $${paramCount}`);
-      params.push(filters.startDate);
+      params.push(normalizedFilters.startDate);
     }
 
-    if (filters?.endDate) {
+    if (normalizedFilters.endDate) {
       paramCount++;
       conditions.push(`al.created_at <= $${paramCount}`);
-      params.push(filters.endDate);
+      params.push(normalizedFilters.endDate);
     }
 
     const whereClause = conditions.join(" AND ");
@@ -684,7 +755,7 @@ auditRouter.post("/export", requireAuth, requireRoles(["admin"]), async (req: Au
       resourceType: "audit_log",
       resourceId: "full_export",
       ipAddress,
-      metadata: { recordCount: rows.length, filters },
+      metadata: { recordCount: rows.length, filters: normalizedFilters },
       severity: "warning",
       status: "success",
     });

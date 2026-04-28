@@ -221,9 +221,10 @@ describe('Ambient Scribe Routes - Recording Endpoints', () => {
           providerId: 'provider-1',
           consentObtained: true,
           consentMethod: 'verbal',
-        });
+      });
       expect(res.status).toBe(201);
       expect(res.body).toHaveProperty('recordingId');
+      expect(res.body.id).toBe(res.body.recordingId);
       expect(res.body.status).toBe('recording');
       expect(auditMock).toHaveBeenCalledWith('tenant-1', 'user-1', 'ambient_recording_start', 'ambient_recording', expect.any(String));
     });
@@ -491,6 +492,7 @@ describe('Ambient Scribe Routes - Transcription Endpoints', () => {
       const res = await request(app).post('/api/ambient/recordings/recording-1/transcribe');
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('transcriptId');
+      expect(res.body.id).toBe(res.body.transcriptId);
       expect(res.body.status).toBe('processing');
     });
 

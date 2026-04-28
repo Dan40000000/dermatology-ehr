@@ -201,7 +201,7 @@ clearinghouseRouter.get("/era", requireAuth, async (req: AuthedRequest, res) => 
       posted_at as "postedAt", status, claims_paid as "claimsPaid",
       total_adjustments_cents as "totalAdjustmentsCents", notes,
       created_at as "createdAt"
-    from remittance_advice
+    from remittance_advices
     where tenant_id = $1
   `;
 
@@ -249,7 +249,7 @@ clearinghouseRouter.post("/era", requireAuth, requireRoles(["admin", "billing", 
 
   // Create ERA record
   await pool.query(
-    `insert into remittance_advice(
+    `insert into remittance_advices(
       id, tenant_id, era_number, payer, payer_id, payment_amount_cents,
       check_number, check_date, eft_trace_number, claims_paid
     ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
@@ -316,7 +316,7 @@ clearinghouseRouter.get("/era/:id", requireAuth, async (req: AuthedRequest, res)
       posted_at as "postedAt", posted_by as "postedBy", status,
       claims_paid as "claimsPaid", total_adjustments_cents as "totalAdjustmentsCents",
       notes, created_at as "createdAt"
-    from remittance_advice
+    from remittance_advices
     where id = $1 and tenant_id = $2`,
     [eraId, tenantId]
   );
@@ -354,7 +354,7 @@ clearinghouseRouter.post("/era/:id/post", requireAuth, requireRoles(["admin", "b
 
   // Check if ERA exists and is not already posted
   const eraResult = await pool.query(
-    `select id, status, payment_amount_cents as "paymentAmountCents" from remittance_advice where id = $1 and tenant_id = $2`,
+    `select id, status, payment_amount_cents as "paymentAmountCents" from remittance_advices where id = $1 and tenant_id = $2`,
     [eraId, tenantId]
   );
 
@@ -382,7 +382,7 @@ clearinghouseRouter.post("/era/:id/post", requireAuth, requireRoles(["admin", "b
 
     await pool.query(
       `insert into claim_payments(id, tenant_id, claim_id, amount_cents, payment_date, payment_method, payer)
-       values ($1, $2, $3, $4, current_date, 'ERA', (select payer from remittance_advice where id = $5))`,
+       values ($1, $2, $3, $4, current_date, 'ERA', (select payer from remittance_advices where id = $5))`,
       [paymentId, tenantId, claimDetail.claimId, claimDetail.paidAmountCents, eraId]
     );
 
@@ -418,7 +418,7 @@ clearinghouseRouter.post("/era/:id/post", requireAuth, requireRoles(["admin", "b
 
   // Update ERA status
   await pool.query(
-    `update remittance_advice set status = 'posted', posted_at = now(), posted_by = $1, updated_at = now()
+    `update remittance_advices set status = 'posted', posted_at = now(), posted_by = $1, updated_at = now()
      where id = $2 and tenant_id = $3`,
     [req.user!.id, eraId, tenantId]
   );
@@ -527,7 +527,7 @@ clearinghouseRouter.post("/reconcile", requireAuth, requireRoles(["admin", "bill
 
   // Get ERA details
   const eraResult = await pool.query(
-    `select payment_amount_cents as "paymentAmountCents", payer from remittance_advice where id = $1 and tenant_id = $2`,
+    `select payment_amount_cents as "paymentAmountCents", payer from remittance_advices where id = $1 and tenant_id = $2`,
     [eraId, tenantId]
   );
 
@@ -584,7 +584,7 @@ clearinghouseRouter.post("/reconcile", requireAuth, requireRoles(["admin", "bill
 
   // Update ERA status
   await pool.query(
-    `update remittance_advice set status = 'reconciled', updated_at = now() where id = $1 and tenant_id = $2`,
+    `update remittance_advices set status = 'reconciled', updated_at = now() where id = $1 and tenant_id = $2`,
     [eraId, tenantId]
   );
 
@@ -615,14 +615,14 @@ clearinghouseRouter.get("/reports/closing", requireAuth, async (req: AuthedReque
 
   // Get payments received
   const paymentsResult = await pool.query(
-    `select sum(payment_amount_cents) as total from remittance_advice
+    `select sum(payment_amount_cents) as total from remittance_advices
      where tenant_id = $1 and received_at between $2 and $3`,
     [tenantId, startDate, endDate]
   );
 
   // Get adjustments
   const adjustmentsResult = await pool.query(
-    `select sum(total_adjustments_cents) as total from remittance_advice
+    `select sum(total_adjustments_cents) as total from remittance_advices
      where tenant_id = $1 and received_at between $2 and $3`,
     [tenantId, startDate, endDate]
   );
@@ -648,7 +648,7 @@ clearinghouseRouter.get("/reports/closing", requireAuth, async (req: AuthedReque
 
   // Get ERA/EFT counts
   const erasReceived = await pool.query(
-    `select count(*) as count from remittance_advice
+    `select count(*) as count from remittance_advices
      where tenant_id = $1 and received_at between $2 and $3`,
     [tenantId, startDate, endDate]
   );

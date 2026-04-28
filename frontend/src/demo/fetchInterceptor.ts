@@ -1,0 +1,2980 @@
+// Demo Fetch Interceptor
+// Patches window.fetch to return demo data when running in demo mode.
+
+import {
+  ALL_PATIENTS,
+  ALL_APPOINTMENTS,
+  ALL_ENCOUNTERS,
+  ALL_VITALS,
+  ALL_PRESCRIPTIONS,
+  ALL_ORDERS,
+  ALL_DOCUMENTS,
+  getDemoDataForPortalUser,
+} from './demoData';
+import {
+  createDemoFeeSchedule,
+  deleteDemoFeeSchedule,
+  deleteDemoFeeScheduleItem,
+  exportDemoFeeScheduleCsv,
+  getDemoARAging,
+  getDemoAutoVerifyStats,
+  getDemoBenefits,
+  getDemoBillsSummary,
+  getDemoClaimDetail,
+  getDemoClaimMetrics,
+  getDemoClaimStatus,
+  getDemoClosingReport,
+  getDemoCollectionsTrend,
+  getDemoCosmeticCategories,
+  getDemoCosmeticPricing,
+  getDemoDefaultFeeSchedule,
+  getDemoERAs,
+  getDemoEraDetails,
+  getDemoEfts,
+  getDemoFeeForCpt,
+  getDemoFeeSchedule,
+  getDemoFeeScheduleItems,
+  getDemoFeeSchedules,
+  getDemoFinancialDashboard,
+  getDemoPaymentsSummary,
+  getDemoPriorAuthRequirement,
+  getDemoEligibilityIssues,
+  getDemoEligibilityPending,
+  importDemoFeeScheduleItems,
+  postDemoEra,
+  queryDemoBatches,
+  queryDemoBills,
+  queryDemoClaims,
+  queryDemoPatientPayments,
+  queryDemoPayerPayments,
+  queryDemoStatements,
+  reconcileDemoPayments,
+  submitDemoClaim,
+  toggleDemoAutoVerify,
+  updateDemoFeeSchedule,
+  updateDemoFeeScheduleItem,
+} from './demoRevenueCycle';
+
+const DEMO_BOOKED_APPOINTMENTS_KEY = 'demoBookedAppointments';
+const DEMO_TELEHEALTH_SESSIONS_KEY = 'demoTelehealthSessions.v1';
+const DEMO_TELEHEALTH_NOTES_KEY = 'demoTelehealthNotes.v1';
+const DEMO_TIME_BLOCKS_KEY = 'demoTimeBlocks.v1';
+const DEMO_BODY_MARKERS_KEY = 'demoBodyMapMarkers.v1';
+const DEMO_APPOINTMENT_OVERRIDES_KEY = 'demoAppointmentOverrides.v1';
+const DEMO_RECALL_CAMPAIGNS_KEY = 'demoRecallCampaigns.v1';
+const DEMO_RECALLS_KEY = 'demoRecalls.v1';
+const DEMO_RECALL_HISTORY_KEY = 'demoRecallHistory.v1';
+
+function isLocalDemoEnabled(): boolean {
+  return import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
+}
+
+const DEMO_SCHEDULING_SETTINGS = {
+  isEnabled: true,
+  minAdvanceHours: 24,
+  maxAdvanceDays: 90,
+  bookingWindowDays: 60,
+  customMessage: 'Demo scheduling is connected to the provider-side schedule.',
+  requireReason: false,
+};
+
+const DEMO_SCHEDULING_PROVIDERS = [
+  {
+    id: 'demo-provider-1',
+    fullName: 'Dr. David Skin, MD, FAAD',
+    specialty: 'Dermatology - General',
+    bio: 'General dermatology, rashes, psoriasis, and longitudinal skin care.',
+    profileImageUrl: null,
+  },
+  {
+    id: 'demo-provider-2',
+    fullName: 'Riley Johnson, PA-C',
+    specialty: 'Dermatology - General',
+    bio: 'Acne, eczema, rosacea, and routine follow-up care.',
+    profileImageUrl: null,
+  },
+  {
+    id: 'demo-provider-3',
+    fullName: 'Dr. Maria Martinez, MD, FAAD',
+    specialty: 'Dermatology - General & Medical',
+    bio: 'Skin checks, lesion surveillance, biopsies, and complex medical dermatology.',
+    profileImageUrl: null,
+  },
+  {
+    id: 'demo-provider-4',
+    fullName: 'Sarah Mitchell, PA-C',
+    specialty: 'Cosmetic Dermatology',
+    bio: 'Injectables, peels, microneedling, and other superficial cosmetic treatments.',
+    profileImageUrl: null,
+  },
+  {
+    id: 'demo-provider-5',
+    fullName: 'Dr. Phil Jackson - PA',
+    specialty: 'Dermatology',
+    bio: 'Established-patient follow-ups, skin checks, and common office procedures.',
+    profileImageUrl: null,
+  },
+];
+
+const DEMO_SCHEDULING_APPOINTMENT_TYPES = [
+  { id: 'type-fu', name: 'Follow-Up Visit', durationMinutes: 30, description: 'Established patient follow-up.' },
+  { id: 'type-acne', name: 'Acne Follow-Up', durationMinutes: 30, description: 'Acne treatment management.' },
+  { id: 'type-eczema', name: 'Eczema Follow-Up', durationMinutes: 30, description: 'Eczema and dermatitis review.' },
+  { id: 'type-psoriasis', name: 'Psoriasis Follow-Up', durationMinutes: 30, description: 'Psoriasis monitoring and treatment review.' },
+  { id: 'type-telehealth-fu', name: 'Telehealth Follow-Up', durationMinutes: 20, description: 'Virtual established patient follow-up.' },
+  { id: 'type-video-acne', name: 'Video Acne Follow-Up', durationMinutes: 20, description: 'Virtual acne medication check.' },
+  { id: 'type-skin-check', name: 'Skin Check', durationMinutes: 30, description: 'Routine skin surveillance visit.' },
+  { id: 'type-botox-consult', name: 'Botox Consultation', durationMinutes: 30, description: 'Cosmetic neurotoxin consultation.' },
+  { id: 'type-botox-treatment', name: 'Botox Treatment', durationMinutes: 30, description: 'Botox or dysport treatment session.' },
+  { id: 'type-filler-consult', name: 'Dermal Filler Consultation', durationMinutes: 30, description: 'Consultation for dermal filler planning.' },
+  { id: 'type-filler-treatment', name: 'Dermal Filler Treatment', durationMinutes: 45, description: 'Cosmetic filler treatment appointment.' },
+  { id: 'type-chemical-peel', name: 'Chemical Peel', durationMinutes: 45, description: 'Superficial or medium depth peel visit.' },
+  { id: 'type-hydrafacial', name: 'Hydrafacial', durationMinutes: 45, description: 'Aesthetic skin refresh treatment.' },
+  { id: 'type-microneedling', name: 'Microneedling', durationMinutes: 60, description: 'Collagen induction cosmetic treatment.' },
+  { id: 'type-cosmetic-fu', name: 'Cosmetic Follow-Up', durationMinutes: 30, description: 'Post-procedure cosmetic follow-up.' },
+];
+
+const PORTAL_EMAILS = [
+  'patient@demo.portal',
+  'jane@demo.portal',
+  'marcus@demo.portal',
+  'sofia@demo.portal',
+];
+
+type DemoItem = Record<string, any>;
+
+function isOfficeDemoMode(headers: Record<string, string>): boolean {
+  const auth = headers.Authorization || headers.authorization || '';
+  return auth.includes('.demo');
+}
+
+function isPortalDemoMode(): boolean {
+  return localStorage.getItem('patientPortalToken') === 'demo-portal-token';
+}
+
+function getPortalPatientEmail(): string {
+  const stored = localStorage.getItem('patientPortalPatient');
+  if (!stored) return '';
+  try {
+    return JSON.parse(stored).email || '';
+  } catch {
+    return '';
+  }
+}
+
+function transformPortalAppointment(apt: DemoItem) {
+  const start = String(apt.scheduledStart || '');
+  return {
+    ...apt,
+    appointmentDate: start.split('T')[0] || '',
+    appointmentTime: start.split('T')[1]?.slice(0, 5) || '',
+    appointmentType: String(apt.appointmentTypeName || ''),
+  };
+}
+
+function transformVital(v: DemoItem) {
+  const heightCm = Number(v.heightCm || 0);
+  const weightKg = Number(v.weightKg || 0);
+  const tempC = v.tempC == null ? null : Number(v.tempC);
+  const heightIn = Math.round(heightCm / 2.54);
+  const weightLbs = Math.round(weightKg * 2.205 * 10) / 10;
+  const heightM = heightCm / 100;
+  const bmi = heightM > 0 ? Math.round((weightKg / (heightM * heightM)) * 10) / 10 : undefined;
+
+  return {
+    ...v,
+    date: v.recordedAt,
+    provider: 'Dr. David Skin, MD, FAAD',
+    bloodPressure:
+      v.bpSystolic && v.bpDiastolic ? `${v.bpSystolic}/${v.bpDiastolic}` : undefined,
+    heartRate: v.pulse,
+    temperature:
+      tempC == null ? undefined : Math.round((tempC * 9 / 5 + 32) * 10) / 10,
+    weight: weightLbs || undefined,
+    height: heightIn || undefined,
+    bmi,
+    oxygenSaturation: v.o2Saturation,
+  };
+}
+
+function flattenLabResults(labs: Array<DemoItem>) {
+  const flat: DemoItem[] = [];
+  for (const lab of labs || []) {
+    const values = Array.isArray(lab.values) ? lab.values : [];
+    for (const value of values) {
+      flat.push({
+        id: `${lab.id}-${String(value.name).replace(/\s+/g, '-').toLowerCase()}`,
+        observationDate: lab.resultDate,
+        testName: value.name,
+        value: value.value,
+        unit: value.unit,
+        referenceRange: value.referenceRange,
+        abnormalFlag: value.flag === 'normal' ? '' : (value.flag || ''),
+        status: lab.status,
+      });
+    }
+  }
+  return flat;
+}
+
+function flattenProfile(profile: DemoItem) {
+  if (!profile) return profile;
+  const emergencyContact = profile.emergencyContact || {};
+  const pharmacy = profile.pharmacy || {};
+
+  return {
+    ...profile,
+    emergencyContactName: emergencyContact.name || '',
+    emergencyContactRelationship: emergencyContact.relationship || '',
+    emergencyContactPhone: emergencyContact.phone || '',
+    preferredPharmacy: pharmacy.name || '',
+    dob: profile.dateOfBirth,
+    gender: profile.sex === 'M' ? 'Male' : profile.sex === 'F' ? 'Female' : '',
+    portalEmail: profile.email,
+    emailVerified: true,
+    lastLogin: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    passwordUpdatedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
+function mockResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function getParams(url: string): URLSearchParams {
+  try {
+    return new URL(url, window.location.origin).searchParams;
+  } catch {
+    return new URLSearchParams();
+  }
+}
+
+function parseRequestBody(init?: RequestInit): DemoItem | null {
+  if (!init?.body || typeof init.body !== 'string') return null;
+  try {
+    return JSON.parse(init.body);
+  } catch {
+    return null;
+  }
+}
+
+function getPatientById(patientId: string) {
+  return ALL_PATIENTS.find((patient) => patient.id === patientId) || null;
+}
+
+function getPortalDataByPatientId(patientId: string) {
+  for (const email of PORTAL_EMAILS) {
+    const data = getDemoDataForPortalUser(email);
+    if (data?.patient?.id === patientId) return data;
+  }
+  return null;
+}
+
+function readBookedAppointments(): DemoItem[] {
+  try {
+    const raw = localStorage.getItem(DEMO_BOOKED_APPOINTMENTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeBookedAppointments(appointments: DemoItem[]) {
+  localStorage.setItem(DEMO_BOOKED_APPOINTMENTS_KEY, JSON.stringify(appointments));
+}
+
+function readStorageJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed == null ? fallback : parsed;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStorageJson(key: string, value: unknown) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function readDemoAppointmentOverrides(): Record<string, DemoItem> {
+  return readStorageJson<Record<string, DemoItem>>(DEMO_APPOINTMENT_OVERRIDES_KEY, {});
+}
+
+function writeDemoAppointmentOverrides(overrides: Record<string, DemoItem>) {
+  writeStorageJson(DEMO_APPOINTMENT_OVERRIDES_KEY, overrides);
+}
+
+function readDemoTimeBlocks(): DemoItem[] {
+  return readStorageJson<DemoItem[]>(DEMO_TIME_BLOCKS_KEY, []);
+}
+
+function writeDemoTimeBlocks(blocks: DemoItem[]) {
+  writeStorageJson(DEMO_TIME_BLOCKS_KEY, blocks);
+}
+
+function startOfToday(): Date {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function offsetDate(days = 0, hour = 9, minute = 0): Date {
+  const date = startOfToday();
+  date.setDate(date.getDate() + days);
+  date.setHours(hour, minute, 0, 0);
+  return date;
+}
+
+function toDateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function toIso(date: Date): string {
+  return date.toISOString();
+}
+
+function getSeedRecallPatients(): DemoItem[] {
+  const preferredIds = [
+    'demo-patient-1',
+    'demo-patient-2',
+    'demo-patient-3',
+    'demo-patient-4',
+    'demo-extra-1',
+    'demo-extra-2',
+    'demo-extra-3',
+    'demo-extra-4',
+  ];
+  const patients = preferredIds
+    .map((id) => getPatientById(id))
+    .filter((patient): patient is DemoItem => Boolean(patient));
+
+  if (patients.length >= 12) return patients.slice(0, 12);
+
+  const seen = new Set(patients.map((patient) => String(patient.id)));
+  for (const patient of ALL_PATIENTS) {
+    if (seen.has(String(patient.id))) continue;
+    patients.push(patient);
+    seen.add(String(patient.id));
+    if (patients.length >= 12) break;
+  }
+  return patients;
+}
+
+function seedDemoRecallCampaigns(): DemoItem[] {
+  return [
+    {
+      id: 'rec-camp-annual',
+      tenantId: 'tenant-demo',
+      name: 'Annual Skin Check',
+      description: 'Routine annual total body skin exam recall outreach.',
+      recallType: 'Annual Skin Check',
+      intervalMonths: 12,
+      isActive: true,
+      createdAt: '2026-01-05T09:00:00Z',
+      updatedAt: '2026-04-01T09:00:00Z',
+    },
+    {
+      id: 'rec-camp-melanoma',
+      tenantId: 'tenant-demo',
+      name: 'Melanoma Surveillance',
+      description: 'Close interval follow-up for melanoma surveillance and skin cancer monitoring.',
+      recallType: 'Melanoma Surveillance',
+      intervalMonths: 6,
+      isActive: true,
+      createdAt: '2026-01-12T10:00:00Z',
+      updatedAt: '2026-04-08T11:15:00Z',
+    },
+    {
+      id: 'rec-camp-biologic',
+      tenantId: 'tenant-demo',
+      name: 'Biologic / Lab Follow-Up',
+      description: 'Medication monitoring follow-up for biologics, methotrexate, and chronic therapy.',
+      recallType: 'Lab Result Follow-up',
+      intervalMonths: 3,
+      isActive: true,
+      createdAt: '2026-02-01T08:30:00Z',
+      updatedAt: '2026-04-11T08:30:00Z',
+    },
+    {
+      id: 'rec-camp-acne',
+      tenantId: 'tenant-demo',
+      name: 'Isotretinoin Monthly Check-In',
+      description: 'Monthly isotretinoin follow-up and lab/pregnancy test tracking.',
+      recallType: 'Medication Refill',
+      intervalMonths: 1,
+      isActive: true,
+      createdAt: '2026-02-14T12:00:00Z',
+      updatedAt: '2026-04-10T12:00:00Z',
+    },
+    {
+      id: 'rec-camp-procedure',
+      tenantId: 'tenant-demo',
+      name: 'Post-Procedure Follow-Up',
+      description: 'Short interval wound check and cosmetic follow-up visits.',
+      recallType: 'Post-Procedure Follow-up',
+      intervalMonths: 1,
+      isActive: false,
+      createdAt: '2026-01-22T14:00:00Z',
+      updatedAt: '2026-03-15T14:00:00Z',
+    },
+  ];
+}
+
+function normalizeDemoRecall(recall: DemoItem, campaigns: DemoItem[]): DemoItem {
+  const patient = getPatientById(String(recall.patientId || ''));
+  const campaign = campaigns.find((candidate) => String(candidate.id) === String(recall.campaignId || ''));
+  const contactAttempts = Number(recall.contactAttempts ?? recall.notificationCount ?? 0) || 0;
+  return {
+    tenantId: 'tenant-demo',
+    status: 'pending',
+    preferredContactMethod: 'sms',
+    createdAt: recall.createdAt || new Date().toISOString(),
+    updatedAt: recall.updatedAt || recall.createdAt || new Date().toISOString(),
+    ...recall,
+    campaignName: recall.campaignName || campaign?.name || 'Manual Recall',
+    recallType: recall.recallType || campaign?.recallType || 'Follow-Up Recall',
+    firstName: recall.firstName || patient?.firstName || '',
+    lastName: recall.lastName || patient?.lastName || '',
+    email: recall.email || patient?.email || '',
+    phone: recall.phone || patient?.phone || '',
+    contactAttempts,
+    notificationCount: Number(recall.notificationCount ?? contactAttempts) || 0,
+    notifiedOn: recall.notifiedOn || recall.lastReminderSentAt || recall.lastContactDate || undefined,
+  };
+}
+
+function seedDemoRecalls(campaigns: DemoItem[]): DemoItem[] {
+  const seedPatients = getSeedRecallPatients();
+  const patient = (index: number) => seedPatients[index] || ALL_PATIENTS[index] || ALL_PATIENTS[0];
+  const seeded = [
+    {
+      id: 'recall-demo-1',
+      patientId: patient(0)?.id,
+      campaignId: 'rec-camp-biologic',
+      dueDate: toDateKey(offsetDate(-5)),
+      status: 'pending',
+      notes: 'CBC/CMP follow-up and psoriasis treatment monitoring.',
+      doctorNotes: 'Call if not scheduled within 1 week.',
+      preferredContactMethod: 'sms',
+      contactAttempts: 1,
+      lastReminderType: 'sms',
+      lastReminderSentAt: toIso(offsetDate(-7, 11, 30)),
+      lastReminderDeliveryStatus: 'delivered',
+      textThreadId: 'thread-recall-1',
+      textThreadStatus: 'waiting-patient',
+      createdAt: toIso(offsetDate(-25, 9, 0)),
+      updatedAt: toIso(offsetDate(-7, 11, 30)),
+    },
+    {
+      id: 'recall-demo-2',
+      patientId: patient(1)?.id,
+      campaignId: 'rec-camp-annual',
+      dueDate: toDateKey(offsetDate(0)),
+      status: 'contacted',
+      notes: 'Annual TBSE due this week.',
+      doctorNotes: 'Offer next available with any medical derm provider.',
+      preferredContactMethod: 'phone',
+      contactAttempts: 2,
+      lastContactDate: toIso(offsetDate(-1, 15, 15)),
+      lastReminderType: 'phone',
+      lastReminderSentAt: toIso(offsetDate(-1, 15, 15)),
+      lastReminderDeliveryStatus: 'delivered',
+      createdAt: toIso(offsetDate(-40, 10, 0)),
+      updatedAt: toIso(offsetDate(-1, 15, 15)),
+    },
+    {
+      id: 'recall-demo-3',
+      patientId: patient(2)?.id,
+      campaignId: 'rec-camp-acne',
+      dueDate: toDateKey(offsetDate(1)),
+      status: 'scheduled',
+      notes: 'Monthly isotretinoin follow-up needed.',
+      doctorNotes: 'Needs monthly iPledge check-in and refill review.',
+      preferredContactMethod: 'portal',
+      appointmentId: 'appt-portal-marcus-upcoming',
+      contactAttempts: 1,
+      lastContactDate: toIso(offsetDate(-1, 9, 45)),
+      lastReminderType: 'portal',
+      lastReminderSentAt: toIso(offsetDate(-1, 9, 45)),
+      lastReminderDeliveryStatus: 'sent',
+      createdAt: toIso(offsetDate(-18, 8, 0)),
+      updatedAt: toIso(offsetDate(-1, 9, 45)),
+    },
+    {
+      id: 'recall-demo-4',
+      patientId: patient(3)?.id,
+      campaignId: 'rec-camp-procedure',
+      dueDate: toDateKey(offsetDate(2)),
+      status: 'pending',
+      notes: 'Post-procedure cosmetic follow-up.',
+      preferredContactMethod: 'email',
+      contactAttempts: 0,
+      createdAt: toIso(offsetDate(-8, 13, 0)),
+      updatedAt: toIso(offsetDate(-8, 13, 0)),
+    },
+    {
+      id: 'recall-demo-5',
+      patientId: patient(4)?.id,
+      campaignId: 'rec-camp-melanoma',
+      dueDate: toDateKey(offsetDate(-14)),
+      status: 'pending',
+      notes: '6-month melanoma surveillance exam overdue.',
+      doctorNotes: 'Do not dismiss without provider review.',
+      preferredContactMethod: 'phone',
+      contactAttempts: 3,
+      lastContactDate: toIso(offsetDate(-3, 16, 5)),
+      lastReminderType: 'phone',
+      lastReminderSentAt: toIso(offsetDate(-3, 16, 5)),
+      lastReminderDeliveryStatus: 'delivered',
+      createdAt: toIso(offsetDate(-50, 8, 30)),
+      updatedAt: toIso(offsetDate(-3, 16, 5)),
+    },
+    {
+      id: 'recall-demo-6',
+      patientId: patient(5)?.id,
+      campaignId: 'rec-camp-annual',
+      dueDate: toDateKey(offsetDate(3)),
+      status: 'scheduled',
+      notes: 'Annual skin exam already booked after outreach.',
+      preferredContactMethod: 'sms',
+      contactAttempts: 1,
+      lastContactDate: toIso(offsetDate(-2, 10, 15)),
+      lastReminderType: 'sms',
+      lastReminderSentAt: toIso(offsetDate(-2, 10, 15)),
+      lastReminderDeliveryStatus: 'delivered',
+      createdAt: toIso(offsetDate(-32, 9, 0)),
+      updatedAt: toIso(offsetDate(-2, 10, 15)),
+    },
+    {
+      id: 'recall-demo-7',
+      patientId: patient(6)?.id,
+      campaignId: 'rec-camp-biologic',
+      dueDate: toDateKey(offsetDate(-1)),
+      status: 'completed',
+      notes: 'Lab follow-up completed and chart updated.',
+      preferredContactMethod: 'portal',
+      contactAttempts: 1,
+      lastContactDate: toIso(offsetDate(-4, 11, 0)),
+      lastReminderType: 'portal',
+      lastReminderSentAt: toIso(offsetDate(-4, 11, 0)),
+      lastReminderDeliveryStatus: 'delivered',
+      createdAt: toIso(offsetDate(-20, 11, 0)),
+      updatedAt: toIso(offsetDate(-1, 17, 0)),
+    },
+    {
+      id: 'recall-demo-8',
+      patientId: patient(7)?.id,
+      campaignId: 'rec-camp-annual',
+      dueDate: toDateKey(offsetDate(-9)),
+      status: 'dismissed',
+      notes: 'Transferred care; no further outreach needed.',
+      preferredContactMethod: 'mail',
+      contactAttempts: 1,
+      lastContactDate: toIso(offsetDate(-10, 14, 0)),
+      lastReminderType: 'mail',
+      lastReminderSentAt: toIso(offsetDate(-10, 14, 0)),
+      lastReminderDeliveryStatus: 'sent',
+      createdAt: toIso(offsetDate(-60, 9, 0)),
+      updatedAt: toIso(offsetDate(-9, 8, 0)),
+    },
+    {
+      id: 'recall-demo-9',
+      patientId: patient(8)?.id,
+      campaignId: 'rec-camp-melanoma',
+      dueDate: toDateKey(offsetDate(0)),
+      status: 'pending',
+      notes: 'Melanoma surveillance due today.',
+      preferredContactMethod: 'sms',
+      contactAttempts: 1,
+      lastReminderType: 'sms',
+      lastReminderSentAt: toIso(offsetDate(-2, 12, 0)),
+      lastReminderDeliveryStatus: 'delivered',
+      createdAt: toIso(offsetDate(-45, 13, 0)),
+      updatedAt: toIso(offsetDate(-2, 12, 0)),
+    },
+    {
+      id: 'recall-demo-10',
+      patientId: patient(9)?.id,
+      campaignId: 'rec-camp-biologic',
+      dueDate: toDateKey(offsetDate(5)),
+      status: 'contacted',
+      notes: 'Biologic refill and lab review due next week.',
+      preferredContactMethod: 'email',
+      contactAttempts: 1,
+      lastContactDate: toIso(offsetDate(-1, 8, 20)),
+      lastReminderType: 'email',
+      lastReminderSentAt: toIso(offsetDate(-1, 8, 20)),
+      lastReminderDeliveryStatus: 'sent',
+      createdAt: toIso(offsetDate(-12, 8, 0)),
+      updatedAt: toIso(offsetDate(-1, 8, 20)),
+    },
+  ];
+  return seeded
+    .filter((recall) => recall.patientId)
+    .map((recall) => normalizeDemoRecall(recall, campaigns));
+}
+
+function seedDemoRecallHistory(campaigns: DemoItem[], recalls: DemoItem[]): DemoItem[] {
+  return recalls
+    .filter((recall) => recall.lastReminderType && recall.lastReminderSentAt)
+    .map((recall, index) => ({
+      id: `recall-history-${index + 1}`,
+      tenantId: 'tenant-demo',
+      patientId: recall.patientId,
+      recallId: recall.id,
+      reminderType: recall.lastReminderType,
+      sentAt: recall.lastReminderSentAt,
+      deliveryStatus: recall.lastReminderDeliveryStatus || 'delivered',
+      messageContent:
+        recall.lastReminderType === 'sms'
+          ? 'Dermatology DEMO Office: You are due for follow-up. Reply to schedule.'
+          : recall.lastReminderType === 'phone'
+            ? 'Front desk outreach call placed regarding follow-up scheduling.'
+            : 'Recall reminder sent from demo workflow.',
+      firstName: recall.firstName,
+      lastName: recall.lastName,
+      campaignName: recall.campaignName || campaigns.find((campaign) => campaign.id === recall.campaignId)?.name || 'Manual Recall',
+      sentBy: 'staff-demo',
+    }));
+}
+
+function readDemoRecallCampaigns(): DemoItem[] {
+  return readStorageJson<DemoItem[]>(DEMO_RECALL_CAMPAIGNS_KEY, seedDemoRecallCampaigns());
+}
+
+function writeDemoRecallCampaigns(campaigns: DemoItem[]) {
+  writeStorageJson(DEMO_RECALL_CAMPAIGNS_KEY, campaigns);
+}
+
+function readDemoRecalls(): DemoItem[] {
+  const campaigns = readDemoRecallCampaigns();
+  return readStorageJson<DemoItem[]>(DEMO_RECALLS_KEY, seedDemoRecalls(campaigns))
+    .map((recall) => normalizeDemoRecall(recall, campaigns));
+}
+
+function writeDemoRecalls(recalls: DemoItem[]) {
+  const campaigns = readDemoRecallCampaigns();
+  writeStorageJson(DEMO_RECALLS_KEY, recalls.map((recall) => normalizeDemoRecall(recall, campaigns)));
+}
+
+function readDemoRecallHistory(): DemoItem[] {
+  const campaigns = readDemoRecallCampaigns();
+  const recalls = readDemoRecalls();
+  return readStorageJson<DemoItem[]>(DEMO_RECALL_HISTORY_KEY, seedDemoRecallHistory(campaigns, recalls));
+}
+
+function writeDemoRecallHistory(history: DemoItem[]) {
+  writeStorageJson(DEMO_RECALL_HISTORY_KEY, history);
+}
+
+function appendDemoRecallHistory(entry: DemoItem) {
+  writeDemoRecallHistory([entry, ...readDemoRecallHistory()]);
+}
+
+function createDemoRecallHistoryEntry(recall: DemoItem, overrides: DemoItem = {}): DemoItem {
+  return {
+    id: `recall-history-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Date.now()}`,
+    tenantId: 'tenant-demo',
+    patientId: recall.patientId,
+    recallId: recall.id,
+    reminderType: 'sms',
+    sentAt: new Date().toISOString(),
+    deliveryStatus: 'delivered',
+    messageContent: 'Recall reminder sent from demo workflow.',
+    firstName: recall.firstName,
+    lastName: recall.lastName,
+    campaignName: recall.campaignName,
+    sentBy: 'staff-demo',
+    ...overrides,
+  };
+}
+
+function getSeedBodyMarkers(patientId: string): DemoItem[] {
+  switch (patientId) {
+    case 'demo-patient-1':
+      return [
+        {
+          id: 'seed-marker-a1',
+          patient_id: patientId,
+          encounter_id: 'enc-a3',
+          marker_type: 'condition',
+          body_region: 'left-elbow',
+          view_type: 'front',
+          x_position: 35,
+          y_position: 34,
+          description: 'Psoriasis plaque - improving on Methotrexate',
+          clinical_notes: 'Residual plaque on left elbow.',
+          status: 'active',
+          severity: 'moderate',
+          created_at: '2026-03-08T10:20:00Z',
+        },
+        {
+          id: 'seed-marker-a2',
+          patient_id: patientId,
+          encounter_id: 'enc-a3',
+          marker_type: 'lesion',
+          body_region: 'right-forearm',
+          view_type: 'front',
+          x_position: 70,
+          y_position: 42,
+          description: 'Biopsied nevus - benign intradermal nevus',
+          clinical_notes: 'Shave biopsy healed without complication.',
+          status: 'resolved',
+          severity: 'mild',
+          created_at: '2026-03-08T10:28:00Z',
+        },
+      ];
+    case 'demo-patient-2':
+      return [
+        {
+          id: 'seed-marker-j1',
+          patient_id: patientId,
+          encounter_id: 'enc-j2',
+          marker_type: 'procedure',
+          body_region: 'right-cheek',
+          view_type: 'front',
+          x_position: 63,
+          y_position: 22,
+          description: 'Mohs surgery site - right cheek',
+          clinical_notes: 'Site healed well after Mohs excision.',
+          status: 'healed',
+          severity: 'mild',
+          created_at: '2026-02-20T09:40:00Z',
+        },
+      ];
+    case 'demo-patient-3':
+      return [
+        {
+          id: 'seed-marker-m1',
+          patient_id: patientId,
+          encounter_id: 'enc-m2',
+          marker_type: 'condition',
+          body_region: 'face',
+          view_type: 'front',
+          x_position: 50,
+          y_position: 16,
+          description: 'Inflammatory acne with improving papules on cheeks/jawline',
+          clinical_notes: 'Virtual acne follow-up target area.',
+          status: 'active',
+          severity: 'moderate',
+          created_at: '2026-03-21T15:10:00Z',
+        },
+      ];
+    case 'demo-patient-4':
+      return [
+        {
+          id: 'seed-marker-s1',
+          patient_id: patientId,
+          encounter_id: 'enc-s2',
+          marker_type: 'cosmetic',
+          body_region: 'face',
+          view_type: 'front',
+          x_position: 51,
+          y_position: 18,
+          description: 'Melasma and post-inflammatory hyperpigmentation',
+          clinical_notes: 'Facial pigment follow-up.',
+          status: 'active',
+          severity: 'mild',
+          created_at: '2026-02-11T11:10:00Z',
+        },
+      ];
+    default:
+      return [];
+  }
+}
+
+function readDemoBodyMarkersStore(): Record<string, DemoItem[]> {
+  return readStorageJson<Record<string, DemoItem[]>>(DEMO_BODY_MARKERS_KEY, {});
+}
+
+function writeDemoBodyMarkersStore(store: Record<string, DemoItem[]>) {
+  writeStorageJson(DEMO_BODY_MARKERS_KEY, store);
+}
+
+function readDemoBodyMarkers(patientId: string): DemoItem[] {
+  const seeded = getSeedBodyMarkers(patientId);
+  const stored = readDemoBodyMarkersStore();
+  const overrides = Array.isArray(stored[patientId]) ? stored[patientId] : [];
+  const merged = new Map<string, DemoItem>();
+
+  for (const marker of seeded) {
+    merged.set(String(marker.id), marker);
+  }
+  for (const marker of overrides) {
+    const markerId = String(marker.id || '');
+    if (!markerId) continue;
+    if (marker._deleted) {
+      merged.delete(markerId);
+      continue;
+    }
+    merged.set(markerId, marker);
+  }
+
+  return [...merged.values()];
+}
+
+function writePatientBodyMarkerOverrides(patientId: string, markers: DemoItem[]) {
+  const store = readDemoBodyMarkersStore();
+  store[patientId] = markers;
+  writeDemoBodyMarkersStore(store);
+}
+
+function findDemoBodyMarker(markerId: string): { patientId: string; marker: DemoItem } | null {
+  for (const patient of ALL_PATIENTS) {
+    const marker = readDemoBodyMarkers(String(patient.id)).find((candidate) => String(candidate.id) === String(markerId));
+    if (marker) {
+      return { patientId: String(patient.id), marker };
+    }
+  }
+  return null;
+}
+
+function buildDemoPatientSummaries(patientId: string) {
+  const portalData = getPortalDataByPatientId(patientId);
+  if (portalData?.visitSummaries?.length) {
+    return [...portalData.visitSummaries]
+      .map((summary: DemoItem) => ({
+        id: `ps-${summary.id}`,
+        encounterId: summary.encounterId || null,
+        ambientNoteId: null,
+        visitDate: summary.visitDate,
+        providerName: summary.providerName || 'Provider',
+        summaryText: [
+          summary.chiefComplaint ? `Visit reason: ${summary.chiefComplaint}` : '',
+          Array.isArray(summary.diagnoses) && summary.diagnoses.length > 0
+            ? `Diagnoses: ${summary.diagnoses.join('; ')}`
+            : '',
+          summary.followUpInstructions ? `Plan: ${summary.followUpInstructions}` : '',
+        ].filter(Boolean).join(' '),
+        symptomsDiscussed: summary.chiefComplaint ? [summary.chiefComplaint] : [],
+        diagnosisShared: Array.isArray(summary.diagnoses) ? summary.diagnoses[0] || null : null,
+        treatmentPlan: summary.followUpInstructions || null,
+        nextSteps: summary.followUpInstructions || null,
+        followUpDate: summary.followUpDate || null,
+        sharedAt: summary.createdAt || null,
+        createdAt: summary.createdAt || new Date(`${summary.visitDate}T12:00:00Z`).toISOString(),
+        generatedByName: summary.providerName || 'Provider',
+      }))
+      .sort((left, right) => String(right.visitDate).localeCompare(String(left.visitDate)));
+  }
+
+  return ALL_ENCOUNTERS
+    .filter((encounter) => encounter.patientId === patientId)
+    .map((encounter) => ({
+      id: `ps-${encounter.id}`,
+      encounterId: encounter.id,
+      ambientNoteId: null,
+      visitDate: String(encounter.createdAt || encounter.updatedAt || '').split('T')[0],
+      providerName: encounter.providerName || 'Provider',
+      summaryText: [encounter.chiefComplaint, encounter.assessmentPlan || encounter.plan]
+        .filter(Boolean)
+        .join(' '),
+      symptomsDiscussed: encounter.chiefComplaint ? [encounter.chiefComplaint] : [],
+      diagnosisShared: encounter.assessmentPlan?.split('\n')[0] || null,
+      treatmentPlan: encounter.assessmentPlan || null,
+      nextSteps: encounter.assessmentPlan || null,
+      followUpDate: null,
+      sharedAt: encounter.updatedAt || encounter.createdAt || null,
+      createdAt: encounter.createdAt || encounter.updatedAt || new Date().toISOString(),
+      generatedByName: encounter.providerName || 'Provider',
+    }))
+    .sort((left, right) => String(right.visitDate).localeCompare(String(left.visitDate)))
+    .slice(0, 6);
+}
+
+function buildDemoAmbientNote(noteId: string) {
+  const encounterId = noteId.replace(/^note-/, '');
+  const encounter = ALL_ENCOUNTERS.find((item) => item.id === encounterId);
+  if (!encounter) return null;
+
+  return {
+    id: noteId,
+    transcriptId: `transcript-${encounterId}`,
+    encounterId,
+    patientId: encounter.patientId,
+    providerId: encounter.providerId,
+    chiefComplaint: encounter.chiefComplaint || '',
+    hpi: encounter.hpi || '',
+    ros: encounter.ros || '',
+    physicalExam: encounter.exam || '',
+    assessment: encounter.assessmentPlan || '',
+    plan: encounter.assessmentPlan || '',
+    suggestedIcd10Codes: [],
+    suggestedCptCodes: [],
+    mentionedMedications: [],
+    mentionedAllergies: [],
+    followUpTasks: [],
+    overallConfidence: 0.92,
+    sectionConfidence: {},
+    reviewStatus: 'approved',
+    generationStatus: 'completed',
+    createdAt: encounter.createdAt || new Date().toISOString(),
+    completedAt: encounter.updatedAt || encounter.createdAt || new Date().toISOString(),
+    transcriptText: '',
+  };
+}
+
+function getDemoPriorAuthList() {
+  const requiredPattern = /(laser|mohs|surgery|biopsy|excision|graft|procedure|resurfacing|tattoo|hair\s*removal|hydrafacial)/i;
+
+  return getAllAppointments()
+    .filter((appointment) => requiredPattern.test(String(appointment.appointmentTypeName || '')))
+    .map((appointment, index) => ({
+      id: `pa-${appointment.id}`,
+      patient_id: appointment.patientId,
+      appointment_id: appointment.id,
+      status: appointment.status === 'scheduled' ? 'pending' : 'approved',
+      auth_number: `AUTH-${1000 + index}`,
+      insurance_auth_number: `INS-${2000 + index}`,
+      created_at: appointment.createdAt || appointment.scheduledStart,
+      updated_at: appointment.createdAt || appointment.scheduledStart,
+      procedure_name: appointment.appointmentTypeName,
+      provider_name: appointment.providerName,
+    }));
+}
+
+function getAllAppointments(): DemoItem[] {
+  const overrides = readDemoAppointmentOverrides();
+  return [...ALL_APPOINTMENTS, ...readBookedAppointments()]
+    .map((appointment) => ({
+      ...appointment,
+      ...(overrides[String(appointment.id)] || {}),
+    }))
+    .sort((a, b) => {
+    const left = new Date(a.scheduledStart || 0).getTime();
+    const right = new Date(b.scheduledStart || 0).getTime();
+    return left - right;
+  });
+}
+
+function findAppointmentById(appointmentId: string) {
+  return getAllAppointments().find((appointment) => String(appointment.id) === String(appointmentId)) || null;
+}
+
+function updateDemoAppointmentRecord(appointmentId: string, patch: DemoItem) {
+  const bookedAppointments = readBookedAppointments();
+  const bookedIndex = bookedAppointments.findIndex((appointment) => String(appointment.id) === String(appointmentId));
+  if (bookedIndex >= 0) {
+    const updated = {
+      ...bookedAppointments[bookedIndex],
+      ...patch,
+      id: bookedAppointments[bookedIndex].id,
+    };
+    const nextBooked = [...bookedAppointments];
+    nextBooked[bookedIndex] = updated;
+    writeBookedAppointments(nextBooked);
+    return updated;
+  }
+
+  const seeded = ALL_APPOINTMENTS.find((appointment) => String(appointment.id) === String(appointmentId));
+  if (!seeded) return null;
+
+  const overrides = readDemoAppointmentOverrides();
+  const updated = {
+    ...seeded,
+    ...(overrides[String(appointmentId)] || {}),
+    ...patch,
+    id: seeded.id,
+  };
+  overrides[String(appointmentId)] = updated;
+  writeDemoAppointmentOverrides(overrides);
+  return updated;
+}
+
+function getDemoCopayAmountForAppointment(appointment: DemoItem): number {
+  return 25 + (String(appointment.patientId).length % 5) * 5;
+}
+
+function getDemoOutstandingBalanceForAppointment(appointment: DemoItem): number {
+  return String(appointment.patientId).startsWith('demo-patient-') ? 0 : ((String(appointment.patientId).length % 4) * 20);
+}
+
+function getDemoProviders() {
+  const fallback = {
+    'demo-provider-1': { fullName: 'Dr. David Skin, MD, FAAD', specialty: 'Dermatology - General' },
+    'demo-provider-2': { fullName: 'Riley Johnson, PA-C', specialty: 'Dermatology - General' },
+    'demo-provider-3': { fullName: 'Dr. Maria Martinez, MD, FAAD', specialty: 'Dermatology - General & Medical' },
+    'demo-provider-4': { fullName: 'Sarah Mitchell, PA-C', specialty: 'Cosmetic Dermatology' },
+    'demo-provider-5': { fullName: 'Dr. Phil Jackson - PA', specialty: 'Dermatology' },
+  } as Record<string, { fullName: string; specialty: string }>;
+
+  const seen = new Map<string, DemoItem>();
+  for (const appointment of getAllAppointments()) {
+    if (!appointment.providerId) continue;
+    const fallbackProvider = fallback[String(appointment.providerId)] || { fullName: appointment.providerName || 'Provider', specialty: 'Dermatology' };
+    if (!seen.has(appointment.providerId)) {
+      seen.set(appointment.providerId, {
+        id: appointment.providerId,
+        tenantId: 'tenant-demo',
+        fullName: appointment.providerName || fallbackProvider.fullName,
+        name: appointment.providerName || fallbackProvider.fullName,
+        specialty: fallbackProvider.specialty,
+        createdAt: '2025-01-01T08:00:00Z',
+      });
+    }
+  }
+  return [...seen.values()].sort((a, b) => String(a.fullName).localeCompare(String(b.fullName)));
+}
+
+function filterDemoRecalls(
+  recalls: DemoItem[],
+  filters: { startDate?: string; endDate?: string; campaignId?: string; status?: string },
+) {
+  return recalls.filter((recall) => {
+    const dueDate = String(recall.dueDate || recall.recallDate || '').slice(0, 10);
+    if (filters.campaignId && String(recall.campaignId) !== String(filters.campaignId)) return false;
+    if (filters.status && String(recall.status) !== String(filters.status)) return false;
+    if (filters.startDate && dueDate && dueDate < filters.startDate) return false;
+    if (filters.endDate && dueDate && dueDate > filters.endDate) return false;
+    return true;
+  });
+}
+
+function buildDemoRecallStats(filters: { campaignId?: string; startDate?: string; endDate?: string } = {}) {
+  const campaigns = readDemoRecallCampaigns();
+  const recalls = filterDemoRecalls(readDemoRecalls(), filters);
+  const statusCount = (status: string) => recalls.filter((recall) => recall.status === status).length;
+  const total = recalls.length;
+  const contactedLike = recalls.filter((recall) => ['contacted', 'scheduled', 'completed'].includes(String(recall.status))).length;
+  const scheduledLike = recalls.filter((recall) => ['scheduled', 'completed'].includes(String(recall.status))).length;
+
+  return {
+    overall: {
+      total_pending: statusCount('pending'),
+      total_contacted: statusCount('contacted'),
+      total_scheduled: statusCount('scheduled'),
+      total_completed: statusCount('completed'),
+      total_dismissed: statusCount('dismissed'),
+      total_recalls: total,
+      contactRate: total > 0 ? Number(((contactedLike / total) * 100).toFixed(1)) : 0,
+      conversionRate: total > 0 ? Number(((scheduledLike / total) * 100).toFixed(1)) : 0,
+    },
+    byCampaign: campaigns.map((campaign) => {
+      const campaignRecalls = recalls.filter((recall) => String(recall.campaignId) === String(campaign.id));
+      return {
+        id: campaign.id,
+        name: campaign.name,
+        recallType: campaign.recallType,
+        total_recalls: campaignRecalls.length,
+        pending: campaignRecalls.filter((recall) => recall.status === 'pending').length,
+        contacted: campaignRecalls.filter((recall) => recall.status === 'contacted').length,
+        scheduled: campaignRecalls.filter((recall) => recall.status === 'scheduled').length,
+        completed: campaignRecalls.filter((recall) => recall.status === 'completed').length,
+      };
+    }),
+  };
+}
+
+function createDemoRecallForCampaign(campaign: DemoItem, patient: DemoItem, index = 0): DemoItem {
+  const dueDate = toDateKey(offsetDate(7 + index));
+  return normalizeDemoRecall({
+    id: `recall-${campaign.id}-${patient.id}`,
+    tenantId: 'tenant-demo',
+    patientId: patient.id,
+    campaignId: campaign.id,
+    dueDate,
+    recallDate: dueDate,
+    status: 'pending',
+    notes: `${campaign.name} outreach generated in demo mode.`,
+    doctorNotes: `Schedule ${campaign.recallType.toLowerCase()} within the next 2-4 weeks.`,
+    preferredContactMethod: 'sms',
+    contactAttempts: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }, [campaign]);
+}
+
+function generateDemoRecallsForCampaign(campaignId: string, count = 3) {
+  const campaigns = readDemoRecallCampaigns();
+  const campaign = campaigns.find((candidate) => String(candidate.id) === String(campaignId));
+  if (!campaign) {
+    return { created: 0, skipped: 0, errors: ['Campaign not found'] };
+  }
+
+  const existing = readDemoRecalls();
+  const usedPatientIds = new Set(
+    existing
+      .filter((recall) => String(recall.campaignId) === String(campaignId))
+      .map((recall) => String(recall.patientId)),
+  );
+
+  const newRecalls: DemoItem[] = [];
+  for (const patient of ALL_PATIENTS) {
+    if (usedPatientIds.has(String(patient.id))) continue;
+    newRecalls.push(createDemoRecallForCampaign(campaign, patient, newRecalls.length));
+    if (newRecalls.length >= count) break;
+  }
+
+  if (newRecalls.length > 0) {
+    writeDemoRecalls([...existing, ...newRecalls]);
+  }
+
+  return {
+    created: newRecalls.length,
+    skipped: Math.max(0, count - newRecalls.length),
+    errors: [],
+  };
+}
+
+function getDemoLocations() {
+  const fallbackNames = {
+    'loc-1': 'Mountain Pine Dermatology - Main Office',
+    'loc-2': 'Mountain Pine Dermatology - East Office',
+    'loc-3': 'Mountain Pine Dermatology - South Campus',
+    'loc-virtual': 'Mountain Pine Dermatology - Virtual Care',
+  } as Record<string, string>;
+
+  const seen = new Map<string, DemoItem>();
+  for (const appointment of getAllAppointments()) {
+    if (!appointment.locationId) continue;
+    if (!seen.has(appointment.locationId)) {
+      const name = appointment.locationName || fallbackNames[String(appointment.locationId)] || 'Dermatology Clinic';
+      seen.set(appointment.locationId, {
+        id: appointment.locationId,
+        tenantId: 'tenant-demo',
+        name,
+        address: name.includes('East')
+          ? '456 Aurora Ave, Aurora, CO 80010'
+          : name.includes('South')
+            ? '789 Littleton Blvd, Littleton, CO 80123'
+            : name.includes('Virtual')
+              ? 'Virtual visit link delivered through patient portal'
+            : '123 Skin St, Denver, CO 80202',
+        phone: '(303) 555-0100',
+        isActive: true,
+        downtimeSettings: {
+          enabled: true,
+          packetTime: '12:00',
+          deviceProfile: 'auto',
+          includeDob: true,
+          includePhone: true,
+          includeInsurance: true,
+        },
+        createdAt: '2025-01-01T08:00:00Z',
+      });
+    }
+  }
+  return [...seen.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+}
+
+function getDemoAppointmentTypes() {
+  const durations = new Map<string, number>();
+  const names = new Map<string, string>();
+  for (const appointment of getAllAppointments()) {
+    if (!appointment.appointmentTypeId) continue;
+    const start = new Date(appointment.scheduledStart || '').getTime();
+    const end = new Date(appointment.scheduledEnd || '').getTime();
+    const durationMinutes = Number.isFinite(start) && Number.isFinite(end) && end > start
+      ? Math.round((end - start) / 60000)
+      : 30;
+    durations.set(appointment.appointmentTypeId, durationMinutes);
+    names.set(appointment.appointmentTypeId, appointment.appointmentTypeName || 'Appointment');
+  }
+
+  return [...names.entries()]
+    .map(([id, name]) => ({
+      id,
+      tenantId: 'tenant-demo',
+      name,
+      durationMinutes: durations.get(id) || 30,
+      color: '#3b82f6',
+      category: /telehealth|virtual|video/i.test(name)
+        ? 'telehealth'
+        : /cosmetic/i.test(name)
+          ? 'cosmetic'
+          : /procedure|biopsy|mohs/i.test(name)
+            ? 'procedure'
+            : 'follow-up',
+      description: name,
+      isActive: true,
+      createdAt: '2025-01-01T08:00:00Z',
+    }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+}
+
+function getDemoAvailability() {
+  const hoursByProvider = {
+    'demo-provider-1': { startTime: '08:00', endTime: '17:00' },
+    'demo-provider-2': { startTime: '08:00', endTime: '17:00' },
+    'demo-provider-3': { startTime: '08:00', endTime: '16:00' },
+    'demo-provider-4': { startTime: '09:00', endTime: '17:00' },
+    'demo-provider-5': { startTime: '08:00', endTime: '17:00' },
+  } as Record<string, { startTime: string; endTime: string }>;
+
+  return getDemoProviders().flatMap((provider) =>
+    [1, 2, 3, 4, 5].map((dayOfWeek) => ({
+      id: `avail-${provider.id}-${dayOfWeek}`,
+      tenantId: 'tenant-demo',
+      providerId: provider.id,
+      dayOfWeek,
+      startTime: hoursByProvider[provider.id]?.startTime || '08:00',
+      endTime: hoursByProvider[provider.id]?.endTime || '17:00',
+      createdAt: '2025-01-01T08:00:00Z',
+    })),
+  );
+}
+
+function getAppointmentsForPatient(patientId: string): DemoItem[] {
+  return getAllAppointments().filter((appointment) => appointment.patientId === patientId);
+}
+
+function isTelehealthAppointment(appointment: DemoItem) {
+  return /telehealth|virtual|video/i.test(
+    `${appointment?.appointmentTypeName || ''} ${appointment?.locationName || ''}`,
+  );
+}
+
+function extractNumericId(value: unknown, fallback: number) {
+  const match = String(value || '').match(/(\d+)/);
+  return match ? Number(match[1]) : fallback;
+}
+
+function buildBaseTelehealthSessions(): DemoItem[] {
+  return getAllAppointments()
+    .filter(isTelehealthAppointment)
+    .map((appointment, index) => {
+      const patient = getPatientById(String(appointment.patientId || ''));
+      const patientName = String(
+        appointment.patientName
+        || [patient?.firstName, patient?.lastName].filter(Boolean).join(' ')
+        || 'Patient',
+      );
+      const [patientFirstName = 'Patient', ...patientLastNameParts] = patientName.split(' ');
+      const patientLastName = patientLastNameParts.join(' ') || 'Demo';
+      const providerId = extractNumericId(appointment.providerId, index + 1);
+      const patientId = extractNumericId(appointment.patientId, index + 1);
+      const scheduledStartMs = new Date(String(appointment.scheduledStart || '')).getTime();
+      const isToday = !Number.isNaN(scheduledStartMs)
+        && new Date(scheduledStartMs).toDateString() === new Date().toDateString();
+      const seededStatus = isToday && String(appointment.status || 'scheduled') === 'scheduled'
+        ? 'waiting'
+        : String(appointment.status || 'scheduled');
+      const createdAt = String(appointment.createdAt || appointment.scheduledStart || new Date().toISOString());
+
+      return {
+        id: 7000 + index,
+        tenant_id: 'tenant-demo',
+        appointment_id: 9000 + index,
+        patient_id: patientId,
+        provider_id: providerId,
+        session_token: `demo-session-token-${appointment.id}`,
+        room_name: `demo-room-${appointment.id}`,
+        status: seededStatus,
+        recording_consent: true,
+        recording_consent_timestamp: createdAt,
+        patient_state: 'CO',
+        provider_licensed_states: ['CO', 'UT', 'AZ'],
+        state_licensing_verified: true,
+        virtual_background_enabled: true,
+        beauty_filter_enabled: false,
+        screen_sharing_enabled: true,
+        connection_quality: 'excellent',
+        reconnection_count: 0,
+        reason: appointment.appointmentTypeName || appointment.chiefComplaint || 'Telehealth follow-up',
+        assigned_to: providerId,
+        created_at: createdAt,
+        updated_at: createdAt,
+        patient_first_name: patient?.firstName || patientFirstName,
+        patient_last_name: patient?.lastName || patientLastName,
+        provider_name: appointment.providerName || 'Provider',
+        assigned_to_name: appointment.providerName || 'Provider',
+        physician_name: appointment.providerName || 'Provider',
+        scheduled_start: appointment.scheduledStart,
+        scheduled_end: appointment.scheduledEnd,
+        source_appointment_id: appointment.id,
+        source_provider_id: appointment.providerId,
+        source_patient_id: appointment.patientId,
+      };
+    })
+    .sort((a, b) => new Date(a.scheduled_start || a.created_at).getTime() - new Date(b.scheduled_start || b.created_at).getTime());
+}
+
+function readDemoTelehealthSessions(): DemoItem[] {
+  const base = buildBaseTelehealthSessions();
+  const stored = readStorageJson<DemoItem[]>(DEMO_TELEHEALTH_SESSIONS_KEY, []);
+  const merged = new Map<string, DemoItem>();
+
+  for (const session of base) {
+    merged.set(String(session.id), session);
+  }
+  for (const session of stored) {
+    merged.set(String(session.id), session);
+  }
+
+  return [...merged.values()].sort(
+    (a, b) => new Date(a.scheduled_start || a.created_at || 0).getTime() - new Date(b.scheduled_start || b.created_at || 0).getTime(),
+  );
+}
+
+function writeDemoTelehealthSessions(sessions: DemoItem[]) {
+  writeStorageJson(DEMO_TELEHEALTH_SESSIONS_KEY, sessions);
+}
+
+function getDemoTelehealthSession(sessionId: string | number) {
+  return readDemoTelehealthSessions().find((session) => String(session.id) === String(sessionId)) || null;
+}
+
+function updateDemoTelehealthSession(sessionId: string | number, patch: DemoItem) {
+  const sessions = readDemoTelehealthSessions();
+  const next = sessions.map((session) =>
+    String(session.id) === String(sessionId)
+      ? { ...session, ...patch, updated_at: new Date().toISOString() }
+      : session,
+  );
+  writeDemoTelehealthSessions(next);
+  return next.find((session) => String(session.id) === String(sessionId)) || null;
+}
+
+function filterDemoTelehealthSessions(params: URLSearchParams) {
+  let sessions = [...readDemoTelehealthSessions()];
+  const status = params.get('status');
+  const providerId = params.get('providerId') || params.get('physicianId');
+  const patientId = params.get('patientId');
+  const assignedTo = params.get('assignedTo');
+  const reason = params.get('reason');
+  const patientSearch = params.get('patientSearch');
+  const startDate = params.get('startDate');
+  const endDate = params.get('endDate');
+  const myUnreadOnly = params.get('myUnreadOnly');
+
+  if (status) sessions = sessions.filter((session) => String(session.status) === status);
+  if (providerId) {
+    sessions = sessions.filter((session) =>
+      String(session.provider_id) === String(providerId) || String(session.source_provider_id) === String(providerId),
+    );
+  }
+  if (patientId) {
+    sessions = sessions.filter((session) =>
+      String(session.patient_id) === String(patientId) || String(session.source_patient_id) === String(patientId),
+    );
+  }
+  if (assignedTo) sessions = sessions.filter((session) => String(session.assigned_to) === String(assignedTo));
+  if (reason) sessions = sessions.filter((session) => String(session.reason || '').toLowerCase().includes(reason.toLowerCase()));
+  if (patientSearch) {
+    const needle = patientSearch.toLowerCase();
+    sessions = sessions.filter((session) =>
+      `${session.patient_first_name || ''} ${session.patient_last_name || ''}`.toLowerCase().includes(needle),
+    );
+  }
+  if (startDate) sessions = sessions.filter((session) => String(session.scheduled_start || session.created_at || '') >= startDate);
+  if (endDate) sessions = sessions.filter((session) => String(session.scheduled_start || session.created_at || '') <= `${endDate}T23:59:59`);
+  if (myUnreadOnly === 'true') sessions = sessions.filter((session) => Number(session.unread_messages || 0) > 0);
+
+  return sessions;
+}
+
+function getTelehealthSessionAnchor(session: DemoItem) {
+  const value = session.scheduled_start || session.started_at || session.created_at;
+  const date = value ? new Date(String(value)) : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+}
+
+function isSameLocalDay(left: Date, right: Date) {
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
+}
+
+function getDemoTelehealthStats(params: URLSearchParams) {
+  const sessions = filterDemoTelehealthSessions(params);
+  const waitingRoom = getDemoWaitingRoom();
+  const today = new Date();
+  const startOfToday = new Date(today);
+  startOfToday.setHours(0, 0, 0, 0);
+  const nextWeek = new Date(startOfToday);
+  nextWeek.setDate(nextWeek.getDate() + 7);
+
+  const completedDurations = sessions
+    .filter((session) => session.status === 'completed' && Number(session.duration_minutes) > 0)
+    .map((session) => Number(session.duration_minutes));
+
+  return {
+    todayVisits: sessions.filter((session) => {
+      const anchor = getTelehealthSessionAnchor(session);
+      return anchor && isSameLocalDay(anchor, today) && !['cancelled', 'error', 'no_show'].includes(String(session.status));
+    }).length,
+    waitingNow: waitingRoom.filter((entry) => entry.status === 'waiting').length,
+    liveNow: sessions.filter((session) => session.status === 'in_progress').length,
+    upcomingWeek: sessions.filter((session) => {
+      const anchor = getTelehealthSessionAnchor(session);
+      return anchor
+        && anchor >= startOfToday
+        && anchor < nextWeek
+        && !['completed', 'cancelled', 'error', 'no_show'].includes(String(session.status));
+    }).length,
+    completedToday: sessions.filter((session) => {
+      const anchor = getTelehealthSessionAnchor(session);
+      return anchor && session.status === 'completed' && isSameLocalDay(anchor, today);
+    }).length,
+    cancelledThisWeek: sessions.filter((session) => {
+      const anchor = getTelehealthSessionAnchor(session);
+      return anchor
+        && anchor >= startOfToday
+        && anchor < nextWeek
+        && ['cancelled', 'error', 'no_show'].includes(String(session.status));
+    }).length,
+    averageCompletedDurationMinutes: completedDurations.length > 0
+      ? Math.round(completedDurations.reduce((sum, duration) => sum + duration, 0) / completedDurations.length)
+      : 0,
+    uniquePatientsInRange: new Set(sessions.map((session) => String(session.patient_id || ''))).size,
+    providersWithTelehealth: new Set(sessions.map((session) => String(session.provider_id || ''))).size,
+  };
+}
+
+function getDemoWaitingRoom() {
+  return readDemoTelehealthSessions()
+    .filter((session) => ['waiting', 'called'].includes(String(session.status)))
+    .map((session, index) => ({
+      id: 8000 + index,
+      tenant_id: 'tenant-demo',
+      session_id: session.id,
+      patient_id: session.patient_id,
+      joined_at: session.updated_at || session.created_at,
+      queue_position: index + 1,
+      estimated_wait_minutes: 5 + index * 3,
+      camera_working: true,
+      microphone_working: true,
+      speaker_working: true,
+      bandwidth_adequate: true,
+      browser_compatible: true,
+      equipment_check_completed: true,
+      chat_messages: [],
+      front_desk_notified: true,
+      status: session.status === 'called' ? 'called' : 'waiting',
+      called_at: session.status === 'called' ? session.updated_at : undefined,
+      created_at: session.created_at,
+      updated_at: session.updated_at,
+    }));
+}
+
+function readDemoTelehealthNotesStore() {
+  return readStorageJson<Record<string, DemoItem>>(DEMO_TELEHEALTH_NOTES_KEY, {});
+}
+
+function writeDemoTelehealthNotesStore(store: Record<string, DemoItem>) {
+  writeStorageJson(DEMO_TELEHEALTH_NOTES_KEY, store);
+}
+
+function getDemoTelehealthNotes(sessionId: string | number) {
+  const key = String(sessionId);
+  const store = readDemoTelehealthNotesStore();
+  if (store[key]) return store[key];
+
+  const session = getDemoTelehealthSession(sessionId);
+  return {
+    id: 9000 + extractNumericId(sessionId, 1),
+    tenant_id: 'tenant-demo',
+    session_id: Number(sessionId),
+    chief_complaint: session?.reason || '',
+    hpi: '',
+    examination_findings: '',
+    assessment: '',
+    plan: '',
+    photos_captured: [],
+    annotations: [],
+    suggested_cpt_codes: [],
+    suggested_icd10_codes: [],
+    complexity_level: '',
+    finalized: false,
+    created_at: session?.created_at || new Date().toISOString(),
+    updated_at: session?.updated_at || new Date().toISOString(),
+  };
+}
+
+function saveDemoTelehealthNotes(sessionId: string | number, payload: DemoItem, finalized = false) {
+  const key = String(sessionId);
+  const store = readDemoTelehealthNotesStore();
+  const current = getDemoTelehealthNotes(sessionId);
+  const next = {
+    ...current,
+    ...payload,
+    finalized: finalized || Boolean(current.finalized),
+    updated_at: new Date().toISOString(),
+  };
+  store[key] = next;
+  writeDemoTelehealthNotesStore(store);
+  return next;
+}
+
+function overlaps(startA: string, endA: string, startB: string, endB: string) {
+  return new Date(startA).getTime() < new Date(endB).getTime()
+    && new Date(endA).getTime() > new Date(startB).getTime();
+}
+
+function getProviderSlots(dateString: string, providerId: string, appointmentTypeId: string) {
+  const appointmentType = DEMO_SCHEDULING_APPOINTMENT_TYPES.find((type) => type.id === appointmentTypeId);
+  const durationMinutes = appointmentType?.durationMinutes || 30;
+  const slotStarts = ['09:00', '09:30', '10:30', '11:00', '13:00', '14:00', '15:00', '15:30'];
+  const providerAppointments = getAllAppointments().filter((appointment) => {
+    if (appointment.providerId !== providerId) return false;
+    if (appointment.status === 'cancelled') return false;
+    return String(appointment.scheduledStart || '').startsWith(dateString);
+  });
+
+  return slotStarts.map((time) => {
+    const startTime = new Date(`${dateString}T${time}:00Z`);
+    const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+    const startIso = startTime.toISOString();
+    const endIso = endTime.toISOString();
+    const conflict = providerAppointments.some((appointment) =>
+      overlaps(startIso, endIso, appointment.scheduledStart, appointment.scheduledEnd),
+    );
+
+    return {
+      startTime: startIso,
+      endTime: endIso,
+      isAvailable: !conflict,
+      providerId,
+      providerName: DEMO_SCHEDULING_PROVIDERS.find((provider) => provider.id === providerId)?.fullName,
+    };
+  });
+}
+
+function getAvailableDates(providerId: string, appointmentTypeId: string) {
+  const dates: string[] = [];
+  const now = new Date();
+  for (let offset = 1; offset <= 35 && dates.length < 14; offset += 1) {
+    const date = new Date(now);
+    date.setUTCDate(date.getUTCDate() + offset);
+    const day = date.getUTCDay();
+    if (day === 0 || day === 6) continue;
+    const dateString = date.toISOString().split('T')[0];
+    const hasAvailability = getProviderSlots(dateString, providerId, appointmentTypeId)
+      .some((slot) => slot.isAvailable);
+    if (hasAvailability) dates.push(dateString);
+  }
+  return dates;
+}
+
+function buildPatientDetail(patient: DemoItem) {
+  const allergies = Array.isArray(patient.allergies)
+    ? patient.allergies
+    : String(patient.allergies || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+  const medications = Array.isArray(patient.medications)
+    ? patient.medications
+    : String(patient.medications || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+  const detail = {
+    ...patient,
+    firstName: patient.firstName,
+    lastName: patient.lastName,
+    dob: patient.dateOfBirth || patient.dob,
+    allergiesList: allergies.map((allergen: string, index: number) => ({
+      id: `${patient.id}-allergy-${index + 1}`,
+      allergen,
+    })),
+    medicationsList: medications.map((medication: string, index: number) => ({
+      id: `${patient.id}-med-${index + 1}`,
+      medication,
+    })),
+  };
+
+  return { ...detail, patient: detail };
+}
+
+function buildBalanceResponse(patientId: string) {
+  const portalData = getPortalDataByPatientId(patientId);
+  const currentBalance = Number(portalData?.billing?.balance?.currentBalance || 0);
+  return {
+    summary: {
+      totalChargesCents: Math.round(Number(portalData?.billing?.balance?.totalCharges || 0) * 100),
+      totalPaymentsCents: Math.round(Number(portalData?.billing?.balance?.totalPayments || 0) * 100),
+      outstandingBalanceCents: Math.round(currentBalance * 100),
+      overdueBalanceCents: Math.round(currentBalance * 100),
+      invoiceCount: currentBalance > 0 ? 1 : 0,
+    },
+    invoices: portalData?.billing?.statements || [],
+  };
+}
+
+function filterPatients(params: URLSearchParams) {
+  const search = (params.get('search') || '').trim().toLowerCase();
+  const limit = Math.max(1, Number(params.get('limit') || ALL_PATIENTS.length) || ALL_PATIENTS.length);
+  const page = Math.max(1, Number(params.get('page') || 1) || 1);
+
+  let filtered = [...ALL_PATIENTS];
+  if (search) {
+    const digits = search.replace(/\D/g, '');
+    filtered = filtered.filter((patient) => {
+      const fullName = `${patient.firstName || ''} ${patient.lastName || ''}`.toLowerCase();
+      const email = String(patient.email || '').toLowerCase();
+      const mrn = String(patient.mrn || '').toLowerCase();
+      const phone = String(patient.phone || '').replace(/\D/g, '');
+      return fullName.includes(search)
+        || email.includes(search)
+        || mrn.includes(search)
+        || (digits.length > 0 && phone.includes(digits));
+    });
+  }
+
+  filtered.sort((left, right) => {
+    const byLast = String(left.lastName || '').localeCompare(String(right.lastName || ''));
+    if (byLast !== 0) return byLast;
+    return String(left.firstName || '').localeCompare(String(right.firstName || ''));
+  });
+
+  const start = (page - 1) * limit;
+  const paged = filtered.slice(start, start + limit);
+
+  return {
+    patients: paged,
+    total: filtered.length,
+    page,
+    limit,
+    totalPages: Math.max(1, Math.ceil(filtered.length / limit)),
+  };
+}
+
+function filterAppointments(items: DemoItem[], params: URLSearchParams) {
+  let filtered = [...items];
+  const patientId = params.get('patientId');
+  const providerId = params.get('providerId');
+  const date = params.get('date');
+  const startDate = params.get('startDate');
+  const endDate = params.get('endDate');
+
+  if (patientId) filtered = filtered.filter((item) => item.patientId === patientId);
+  if (providerId) filtered = filtered.filter((item) => item.providerId === providerId);
+  if (date) filtered = filtered.filter((item) => String(item.scheduledStart || '').startsWith(date));
+  if (startDate) filtered = filtered.filter((item) => String(item.scheduledStart || '') >= startDate);
+  if (endDate) filtered = filtered.filter((item) => String(item.scheduledStart || '') <= `${endDate}T23:59:59`);
+
+  return filtered;
+}
+
+function handleProviderRoute(
+  path: string,
+  params: URLSearchParams,
+  method: string,
+  body: DemoItem | null,
+): Response | null {
+  const patientMatch = path.match(/^\/api\/patients\/([^/]+)$/);
+  const patientAppointmentsMatch = path.match(/^\/api\/patients\/([^/]+)\/appointments$/);
+  const patientEncountersMatch = path.match(/^\/api\/patients\/([^/]+)\/encounters$/);
+  const patientPrescriptionsMatch = path.match(/^\/api\/patients\/([^/]+)\/prescriptions$/);
+  const patientBalanceMatch = path.match(/^\/api\/patients\/([^/]+)\/balance$/);
+  const patientClinicalSummaryMatch = path.match(/^\/api\/patients\/([^/]+)\/clinical-summary$/);
+  const patientInsuranceMatch = path.match(/^\/api\/patients\/([^/]+)\/insurance$/);
+  const patientPriorAuthsMatch = path.match(/^\/api\/patients\/([^/]+)\/prior-auths$/);
+  const patientBiopsiesMatch = path.match(/^\/api\/patients\/([^/]+)\/biopsies$/);
+  const patientPhotosMatch = path.match(/^\/api\/patients\/([^/]+)\/photos(?:\/.*)?$/);
+  const patientBodyMapMatch = path.match(/^\/api\/patients\/([^/]+)\/body-map$/);
+  const eligibilityMatch = path.match(/^\/api\/eligibility\/history\/([^/]+)$/);
+
+  if (path === '/api/patients') {
+    const result = filterPatients(params);
+    return mockResponse({
+      data: result.patients,
+      patients: result.patients,
+      meta: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+        hasNext: result.page < result.totalPages,
+        hasPrev: result.page > 1,
+      },
+    });
+  }
+
+  if (path === '/api/providers') {
+    return mockResponse({ providers: getDemoProviders() });
+  }
+
+  if (path === '/api/locations') {
+    return mockResponse({ locations: getDemoLocations() });
+  }
+
+  if (path === '/api/appointment-types') {
+    return mockResponse({ appointmentTypes: getDemoAppointmentTypes() });
+  }
+
+  if (path === '/api/availability') {
+    return mockResponse({ availability: getDemoAvailability() });
+  }
+
+  if (patientMatch) {
+    const patient = getPatientById(patientMatch[1] || '');
+    return patient ? mockResponse(buildPatientDetail(patient)) : mockResponse({ error: 'Patient not found' }, 404);
+  }
+
+  if (patientAppointmentsMatch) {
+    const patientId = patientAppointmentsMatch[1] || '';
+    return mockResponse({ appointments: getAppointmentsForPatient(patientId) });
+  }
+
+  if (patientEncountersMatch) {
+    const patientId = patientEncountersMatch[1] || '';
+    return mockResponse({ encounters: ALL_ENCOUNTERS.filter((encounter) => encounter.patientId === patientId) });
+  }
+
+  if (patientPrescriptionsMatch) {
+    const patientId = patientPrescriptionsMatch[1] || '';
+    const prescriptions = ALL_PRESCRIPTIONS.filter((prescription) => prescription.patientId === patientId);
+    return mockResponse({
+      prescriptions,
+      summary: {
+        total: prescriptions.length,
+        active: prescriptions.filter((prescription) => prescription.status === 'transmitted').length,
+        inactive: prescriptions.filter((prescription) => prescription.status !== 'transmitted').length,
+        controlled: 0,
+      },
+    });
+  }
+
+  if (patientBalanceMatch) {
+    return mockResponse(buildBalanceResponse(patientBalanceMatch[1] || ''));
+  }
+
+  if (patientClinicalSummaryMatch) {
+    const patientId = patientClinicalSummaryMatch[1] || '';
+    const portalData = getPortalDataByPatientId(patientId);
+    const diagnoses = (portalData?.visitSummaries || []).flatMap((summary: DemoItem) =>
+      (summary.diagnoses || []).map((description: string, index: number) => ({
+        id: `${summary.id}-dx-${index + 1}`,
+        encounterId: summary.encounterId,
+        description,
+        icd10Code: '',
+        encounterDate: summary.visitDate,
+        providerName: summary.providerName,
+      })),
+    );
+    const recalls = readDemoRecalls()
+      .filter((recall) => String(recall.patientId) === String(patientId))
+      .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
+    return mockResponse({ diagnoses, recalls });
+  }
+
+  if (patientInsuranceMatch) {
+    const patient = getPatientById(patientInsuranceMatch[1] || '');
+    return mockResponse({ insurance: patient?.insuranceDetails || null });
+  }
+
+  if (patientPriorAuthsMatch) return mockResponse({ priorAuths: [] });
+
+  if (patientBiopsiesMatch) {
+    const patientId = patientBiopsiesMatch[1] || '';
+    return mockResponse({
+      biopsies: ALL_ORDERS.filter((order) => order.patientId === patientId && order.type === 'biopsy'),
+    });
+  }
+
+  if (patientPhotosMatch) return mockResponse({ data: [], photos: [] });
+  if (patientBodyMapMatch) return mockResponse({ bodyMap: null, lesions: [] });
+
+  if (path === '/api/appointments' && method.toUpperCase() === 'GET') {
+    const appointments = filterAppointments(getAllAppointments(), params);
+    return mockResponse({ appointments, data: appointments });
+  }
+
+  if (path === '/api/appointments' && method.toUpperCase() === 'POST') {
+    const provider = getDemoProviders().find((candidate) => String(candidate.id) === String(body?.providerId));
+    const location = getDemoLocations().find((candidate) => String(candidate.id) === String(body?.locationId));
+    const appointmentType = getDemoAppointmentTypes().find((candidate) => String(candidate.id) === String(body?.appointmentTypeId));
+    const patient = getPatientById(String(body?.patientId || ''));
+    if (!body?.patientId || !body?.providerId || !body?.appointmentTypeId || !body?.locationId || !body?.scheduledStart || !body?.scheduledEnd) {
+      return mockResponse({ error: 'Missing appointment details' }, 400);
+    }
+
+    const newAppointment = {
+      id: `appt-office-booked-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Date.now()}`,
+      tenantId: 'tenant-demo',
+      patientId: String(body.patientId),
+      patientName: patient ? `${patient.firstName} ${patient.lastName}` : 'Patient',
+      providerId: String(body.providerId),
+      providerName: provider?.fullName || provider?.name || 'Provider',
+      locationId: String(body.locationId),
+      locationName: location?.name || 'Dermatology Clinic',
+      appointmentTypeId: String(body.appointmentTypeId),
+      appointmentTypeName: appointmentType?.name || 'Appointment',
+      scheduledStart: String(body.scheduledStart),
+      scheduledEnd: String(body.scheduledEnd),
+      status: 'scheduled',
+      chiefComplaint: body?.notes ? String(body.notes) : 'Office scheduled visit',
+      createdAt: new Date().toISOString(),
+    };
+    writeBookedAppointments([...readBookedAppointments(), newAppointment]);
+    return mockResponse(newAppointment, 201);
+  }
+
+  if (path.startsWith('/api/appointments/') && path.endsWith('/status') && method.toUpperCase() === 'POST') {
+    const segments = path.split('/');
+    const appointmentId = segments[segments.length - 2] || '';
+    const appointment = findAppointmentById(appointmentId);
+    if (!appointment) return mockResponse({ error: 'Appointment not found' }, 404);
+
+    const nextStatus = String(body?.status || '');
+    const updated = updateDemoAppointmentRecord(appointmentId, {
+      status: nextStatus,
+      updatedAt: new Date().toISOString(),
+      statusReason: body?.reason ? String(body.reason) : undefined,
+    });
+    if (!updated) return mockResponse({ error: 'Appointment not found' }, 404);
+
+    return mockResponse({
+      success: true,
+      appointment: updated,
+      noShowFeeBillId: nextStatus === 'no_show' ? `bill-noshow-${appointmentId}` : undefined,
+    });
+  }
+
+  if (path.startsWith('/api/appointments/') && path.endsWith('/reschedule') && method.toUpperCase() === 'POST') {
+    const segments = path.split('/');
+    const appointmentId = segments[segments.length - 2] || '';
+    const appointment = findAppointmentById(appointmentId);
+    if (!appointment) return mockResponse({ error: 'Appointment not found' }, 404);
+
+    const nextProviderId = body?.providerId ? String(body.providerId) : String(appointment.providerId);
+    const provider = getDemoProviders().find((candidate) => String(candidate.id) === nextProviderId);
+    const updated = updateDemoAppointmentRecord(appointmentId, {
+      scheduledStart: String(body?.scheduledStart || appointment.scheduledStart),
+      scheduledEnd: String(body?.scheduledEnd || appointment.scheduledEnd),
+      providerId: nextProviderId,
+      providerName: provider?.fullName || provider?.name || appointment.providerName,
+      updatedAt: new Date().toISOString(),
+    });
+    return mockResponse({ success: true, appointment: updated });
+  }
+
+  if (path === '/api/front-desk/today') {
+    const today = new Date();
+    const dateKey = today.toISOString().split('T')[0];
+    const frontDeskParams = new URLSearchParams({ date: dateKey });
+    const providerId = params.get('providerId');
+    const status = params.get('status');
+    if (providerId) frontDeskParams.set('providerId', providerId);
+    const appointments = filterAppointments(getAllAppointments(), frontDeskParams)
+      .filter((appointment) => appointment.status !== 'cancelled')
+      .filter((appointment) => !status || String(appointment.status) === status)
+      .map((appointment) => ({
+        ...appointment,
+        copayAmount: getDemoCopayAmountForAppointment(appointment),
+        outstandingBalance: getDemoOutstandingBalanceForAppointment(appointment),
+      }));
+    return mockResponse({ appointments });
+  }
+
+  if (path.startsWith('/api/front-desk/check-in/') && method.toUpperCase() === 'POST') {
+    const appointmentId = path.split('/').pop() || '';
+    const appointment = findAppointmentById(appointmentId);
+    if (!appointment) return mockResponse({ error: 'Appointment not found' }, 404);
+
+    const updated = updateDemoAppointmentRecord(appointmentId, {
+      status: 'checked_in',
+      checkedInAt: new Date().toISOString(),
+      checkInNotes: body?.notes ? String(body.notes) : undefined,
+    });
+    if (!updated) return mockResponse({ error: 'Appointment not found' }, 404);
+
+    const baseCopayAmount = getDemoCopayAmountForAppointment(updated);
+    const requestedCopayCents = Math.max(0, Number(body?.copayAmountCents || 0));
+    const requestedOutstandingCents = Math.max(0, Number(body?.outstandingBalanceAmountCents || 0));
+    const totalCollectedAmountCents = requestedCopayCents + requestedOutstandingCents;
+    const paymentCollected = totalCollectedAmountCents > 0;
+    const deferCopay = Boolean(body?.deferCopay) && !paymentCollected;
+
+    return mockResponse({
+      success: true,
+      message: 'Patient checked in',
+      copayAmount: baseCopayAmount,
+      copayAmountCents: Math.round(baseCopayAmount * 100),
+      copayDisposition: paymentCollected ? 'collected' : deferCopay ? 'deferred' : 'none',
+      copayCollectedAmountCents: requestedCopayCents,
+      outstandingBalanceCollectedAmountCents: requestedOutstandingCents,
+      totalCollectedAmountCents,
+      priorAuthStatus: 'demo',
+      eligibilityStatus: 'active',
+      eligibilityVerifiedAt: new Date().toISOString(),
+      paymentId: paymentCollected ? `demo-payment-${appointmentId}` : undefined,
+      paymentReceiptNumber: paymentCollected ? `RCPT-${appointmentId.slice(-6).toUpperCase()}` : undefined,
+      paymentConfirmationEmailSent: paymentCollected,
+      paymentConfirmationEmailAddress: paymentCollected ? `${String(updated.patientName || '').replace(/\s+/g, '.').toLowerCase()}@demo.mail` : undefined,
+    });
+  }
+
+  if (path.startsWith('/api/front-desk/status/') && method.toUpperCase() === 'PUT') {
+    const appointmentId = path.split('/').pop() || '';
+    const status = String(body?.status || '');
+    const appointment = findAppointmentById(appointmentId);
+    if (!appointment) return mockResponse({ error: 'Appointment not found' }, 404);
+    const updated = updateDemoAppointmentRecord(appointmentId, { status });
+    return mockResponse({ success: true, appointment: updated });
+  }
+
+  if (path.startsWith('/api/front-desk/check-out/') && method.toUpperCase() === 'POST') {
+    const appointmentId = path.split('/').pop() || '';
+    const appointment = findAppointmentById(appointmentId);
+    if (!appointment) return mockResponse({ error: 'Appointment not found' }, 404);
+    const updated = updateDemoAppointmentRecord(appointmentId, {
+      status: 'completed',
+      checkedOutAt: new Date().toISOString(),
+    });
+    return mockResponse({ success: true, appointment: updated });
+  }
+
+  if (path.startsWith('/api/patient-flow/') && path.endsWith('/status') && method.toUpperCase() === 'PUT') {
+    const segments = path.split('/');
+    const appointmentId = segments[segments.length - 2] || '';
+    const nextStatus = String(body?.status || '');
+    const appointment = findAppointmentById(appointmentId);
+    if (!appointment) return mockResponse({ error: 'Appointment not found' }, 404);
+    const allowedStatuses = new Set(['checked_in', 'in_room', 'with_provider', 'checkout', 'completed']);
+    const updated = allowedStatuses.has(nextStatus)
+      ? updateDemoAppointmentRecord(appointmentId, { status: nextStatus })
+      : appointment;
+    return mockResponse({ success: true, appointment: updated, status: nextStatus });
+  }
+
+  if (path === '/api/encounters') {
+    const patientId = params.get('patientId');
+    const encounters = patientId
+      ? ALL_ENCOUNTERS.filter((encounter) => encounter.patientId === patientId)
+      : ALL_ENCOUNTERS;
+    return mockResponse({ data: encounters });
+  }
+
+  if (path === '/api/vitals') {
+    const patientId = params.get('patientId');
+    const vitals = patientId
+      ? ALL_VITALS.filter((vital) => vital.patientId === patientId)
+      : ALL_VITALS;
+    return mockResponse({ data: vitals, vitals });
+  }
+
+  if (path === '/api/prescriptions') {
+    const patientId = params.get('patientId');
+    const prescriptions = patientId
+      ? ALL_PRESCRIPTIONS.filter((prescription) => prescription.patientId === patientId)
+      : ALL_PRESCRIPTIONS;
+    return mockResponse({ prescriptions, data: prescriptions });
+  }
+
+  if (path === '/api/orders') {
+    const patientId = params.get('patientId');
+    const orders = patientId
+      ? ALL_ORDERS.filter((order) => order.patientId === patientId)
+      : ALL_ORDERS;
+    return mockResponse({ data: orders });
+  }
+
+  if (path === '/api/documents') {
+    const patientId = params.get('patientId');
+    const documents = patientId
+      ? ALL_DOCUMENTS.filter((document) => document.patientId === patientId)
+      : ALL_DOCUMENTS;
+    return mockResponse({ data: documents, documents });
+  }
+
+  if (path === '/api/telehealth/stats') {
+    return mockResponse(getDemoTelehealthStats(params));
+  }
+
+  if (path === '/api/telehealth/sessions' && method.toUpperCase() === 'GET') {
+    return mockResponse(filterDemoTelehealthSessions(params));
+  }
+
+  if (path === '/api/telehealth/sessions' && method.toUpperCase() === 'POST') {
+    const sessions = readDemoTelehealthSessions();
+    const nextId = Math.max(7000, ...sessions.map((session) => Number(session.id) || 0)) + 1;
+    const patientId = body?.patientId == null ? null : Number(body.patientId);
+    const providerId = body?.providerId == null ? null : Number(body.providerId);
+    if (patientId == null || providerId == null || Number.isNaN(patientId) || Number.isNaN(providerId)) {
+      return mockResponse({ error: 'Demo telehealth session creation requires a valid patient and provider.' }, 400);
+    }
+
+    const patient = ALL_PATIENTS.find((candidate) => extractNumericId(candidate.id, -1) === patientId);
+    const provider = getDemoProviders().find((candidate) => extractNumericId(candidate.id, -1) === providerId);
+    const now = new Date().toISOString();
+    const newSession = {
+      id: nextId,
+      tenant_id: 'tenant-demo',
+      appointment_id: undefined,
+      patient_id: patientId,
+      provider_id: providerId,
+      session_token: `demo-session-token-${nextId}`,
+      room_name: `demo-room-${nextId}`,
+      status: 'scheduled',
+      recording_consent: Boolean(body?.recordingConsent),
+      recording_consent_timestamp: body?.recordingConsent ? now : undefined,
+      patient_state: String(body?.patientState || 'CO'),
+      provider_licensed_states: ['CO', 'UT', 'AZ'],
+      state_licensing_verified: true,
+      virtual_background_enabled: true,
+      beauty_filter_enabled: false,
+      screen_sharing_enabled: true,
+      connection_quality: 'excellent',
+      reconnection_count: 0,
+      reason: String(body?.reason || 'Telehealth follow-up'),
+      assigned_to: providerId,
+      created_at: now,
+      updated_at: now,
+      patient_first_name: patient?.firstName || 'Demo',
+      patient_last_name: patient?.lastName || 'Patient',
+      provider_name: provider?.fullName || provider?.name || 'Provider',
+      assigned_to_name: provider?.fullName || provider?.name || 'Provider',
+      physician_name: provider?.fullName || provider?.name || 'Provider',
+    };
+
+    writeDemoTelehealthSessions([...sessions.filter((session) => Number(session.id) < 7000 || Number(session.id) >= 7000), newSession]);
+    return mockResponse(newSession, 201);
+  }
+
+  if (path.startsWith('/api/telehealth/sessions/') && path.endsWith('/status') && method.toUpperCase() === 'PATCH') {
+    const segments = path.split('/');
+    const sessionId = segments[segments.length - 2] || '';
+    const updated = updateDemoTelehealthSession(sessionId, { status: body?.status || 'scheduled' });
+    return updated ? mockResponse(updated) : mockResponse({ error: 'Telehealth session not found' }, 404);
+  }
+
+  if (path.startsWith('/api/telehealth/sessions/') && path.endsWith('/notes/finalize') && method.toUpperCase() === 'POST') {
+    const segments = path.split('/');
+    const sessionId = segments[segments.length - 3] || '';
+    return mockResponse(saveDemoTelehealthNotes(sessionId, {}, true));
+  }
+
+  if (path.startsWith('/api/telehealth/sessions/') && path.endsWith('/notes') && method.toUpperCase() === 'GET') {
+    const segments = path.split('/');
+    const sessionId = segments[segments.length - 2] || '';
+    return mockResponse(getDemoTelehealthNotes(sessionId));
+  }
+
+  if (path.startsWith('/api/telehealth/sessions/') && path.endsWith('/notes') && method.toUpperCase() === 'POST') {
+    const segments = path.split('/');
+    const sessionId = segments[segments.length - 2] || '';
+    return mockResponse(saveDemoTelehealthNotes(sessionId, {
+      chief_complaint: body?.chiefComplaint,
+      hpi: body?.hpi,
+      examination_findings: body?.examinationFindings,
+      assessment: body?.assessment,
+      plan: body?.plan,
+      suggested_cpt_codes: body?.suggestedCptCodes || [],
+      suggested_icd10_codes: body?.suggestedIcd10Codes || [],
+      complexity_level: body?.complexityLevel || '',
+    }));
+  }
+
+  if (path.startsWith('/api/telehealth/sessions/') && path.endsWith('/photos') && method.toUpperCase() === 'GET') {
+    return mockResponse([]);
+  }
+
+  if (path.startsWith('/api/telehealth/sessions/') && path.endsWith('/metrics') && method.toUpperCase() === 'GET') {
+    return mockResponse([]);
+  }
+
+  if (path.startsWith('/api/telehealth/sessions/') && path.endsWith('/metrics') && method.toUpperCase() === 'POST') {
+    return mockResponse({ id: Date.now(), ...body, created_at: new Date().toISOString() }, 201);
+  }
+
+  if (path.startsWith('/api/telehealth/sessions/') && path.endsWith('/events') && method.toUpperCase() === 'GET') {
+    return mockResponse([]);
+  }
+
+  if (path.startsWith('/api/telehealth/sessions/') && path.endsWith('/events') && method.toUpperCase() === 'POST') {
+    return mockResponse({ id: Date.now(), ...body, created_at: new Date().toISOString() }, 201);
+  }
+
+  if (path === '/api/telehealth/waiting-room') {
+    return mockResponse(getDemoWaitingRoom());
+  }
+
+  if (path.startsWith('/api/telehealth/waiting-room/') && path.endsWith('/call') && method.toUpperCase() === 'POST') {
+    const segments = path.split('/');
+    const waitingRoomId = segments[segments.length - 2] || '';
+    const entry = getDemoWaitingRoom().find((candidate) => String(candidate.id) === String(waitingRoomId));
+    if (!entry) return mockResponse({ error: 'Waiting room entry not found' }, 404);
+    const updatedSession = updateDemoTelehealthSession(entry.session_id, { status: 'in_progress', started_at: new Date().toISOString() });
+    return mockResponse({
+      ...entry,
+      status: 'called',
+      called_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      session_status: updatedSession?.status || 'in_progress',
+    });
+  }
+
+  if (path.startsWith('/api/telehealth/sessions/') && method.toUpperCase() === 'GET') {
+    const sessionId = path.split('/').pop() || '';
+    const session = getDemoTelehealthSession(sessionId);
+    return session ? mockResponse(session) : mockResponse({ error: 'Telehealth session not found' }, 404);
+  }
+
+  if (eligibilityMatch) {
+    const portalData = getPortalDataByPatientId(eligibilityMatch[1] || '');
+    return mockResponse(portalData?.eligibility || []);
+  }
+
+  if (path === '/api/eligibility/issues') {
+    return mockResponse(getDemoEligibilityIssues());
+  }
+
+  if (path === '/api/eligibility/pending') {
+    return mockResponse(getDemoEligibilityPending(Number(params.get('daysThreshold') || 30)));
+  }
+
+  if (path === '/api/eligibility/auto-verify/stats') {
+    return mockResponse(getDemoAutoVerifyStats());
+  }
+
+  if (path === '/api/eligibility/auto-verify/toggle' && method.toUpperCase() === 'POST') {
+    return mockResponse(toggleDemoAutoVerify(Boolean(body?.enabled)));
+  }
+
+  if (path.startsWith('/api/eligibility/benefits/')) {
+    const patientId = path.split('/').pop() || '';
+    const result = getDemoBenefits(patientId);
+    return result ? mockResponse(result) : mockResponse({ success: false, error: 'Patient not found' }, 404);
+  }
+
+  if (path.startsWith('/api/eligibility/prior-auth/')) {
+    const cptCode = path.split('/').pop() || '';
+    return mockResponse(getDemoPriorAuthRequirement(cptCode));
+  }
+
+  if (path.startsWith('/api/eligibility/verify/')) {
+    return mockResponse({ status: 'Active', message: 'Demo eligibility verified' });
+  }
+
+  if (path === '/api/photos' || path.includes('/api/photos/')) {
+    return mockResponse({ data: [] });
+  }
+
+  if (path === '/api/schedule' || path.startsWith('/api/schedule')) {
+    return mockResponse({ data: filterAppointments(getAllAppointments(), params) });
+  }
+
+  if (path === '/api/financial-metrics/dashboard') {
+    return mockResponse(getDemoFinancialDashboard(params.get('date') || undefined));
+  }
+
+  if (path === '/api/financial-metrics/collections-trend') {
+    return mockResponse(getDemoCollectionsTrend(
+      params.get('startDate'),
+      params.get('endDate'),
+      (params.get('granularity') as 'day' | 'week' | 'month' | null) || 'day',
+    ));
+  }
+
+  if (path === '/api/financial-metrics/payments-summary') {
+    return mockResponse(getDemoPaymentsSummary(params.get('startDate'), params.get('endDate')));
+  }
+
+  if (path === '/api/financial-metrics/ar-aging') {
+    return mockResponse(getDemoARAging(params.get('asOfDate')));
+  }
+
+  if (path === '/api/financial-metrics/bills-summary') {
+    return mockResponse(getDemoBillsSummary(params.get('startDate'), params.get('endDate')));
+  }
+
+  if (path === '/api/bills') return mockResponse(queryDemoBills(params));
+  if (path === '/api/payer-payments') return mockResponse(queryDemoPayerPayments(params));
+  if (path === '/api/patient-payments') return mockResponse(queryDemoPatientPayments(params));
+  if (path === '/api/statements') return mockResponse(queryDemoStatements(params));
+  if (path === '/api/batches') return mockResponse(queryDemoBatches());
+
+  if (path === '/api/claims/metrics') return mockResponse(getDemoClaimMetrics());
+
+  if (path === '/api/claims' && method.toUpperCase() === 'GET') {
+    return mockResponse(queryDemoClaims(params));
+  }
+
+  if (path.startsWith('/api/claims/') && path.endsWith('/status') && method.toUpperCase() === 'PUT') {
+    const segments = path.split('/');
+    const claimId = segments[segments.length - 2] || '';
+    return mockResponse({ success: true, claimId, status: body?.status || 'updated' });
+  }
+
+  if (path.startsWith('/api/claims/') && path.endsWith('/payments') && method.toUpperCase() === 'POST') {
+    const segments = path.split('/');
+    const claimId = segments[segments.length - 2] || '';
+    return mockResponse({ success: true, claimId, paymentId: `${claimId}-manual-payment` });
+  }
+
+  if (path.startsWith('/api/claims/') && method.toUpperCase() === 'GET') {
+    const claimId = path.split('/').pop() || '';
+    const detail = getDemoClaimDetail(claimId);
+    return detail ? mockResponse(detail) : mockResponse({ error: 'Claim not found' }, 404);
+  }
+
+  if (path === '/api/clearinghouse/submit-claim' && method.toUpperCase() === 'POST') {
+    if (!body?.claimId) return mockResponse({ error: 'Missing claimId' }, 400);
+    return mockResponse(submitDemoClaim(String(body.claimId)));
+  }
+
+  if (path.startsWith('/api/clearinghouse/claim-status/')) {
+    const claimId = path.split('/').pop() || '';
+    return mockResponse(getDemoClaimStatus(claimId));
+  }
+
+  if (path === '/api/clearinghouse/era') {
+    return mockResponse(getDemoERAs(params));
+  }
+
+  if (path.startsWith('/api/clearinghouse/era/') && path.endsWith('/post') && method.toUpperCase() === 'POST') {
+    const segments = path.split('/');
+    const eraId = segments[segments.length - 2] || '';
+    return mockResponse(postDemoEra(eraId));
+  }
+
+  if (path.startsWith('/api/clearinghouse/era/') && method.toUpperCase() === 'GET') {
+    const eraId = path.split('/').pop() || '';
+    return mockResponse(getDemoEraDetails(eraId));
+  }
+
+  if (path === '/api/clearinghouse/eft') {
+    return mockResponse(getDemoEfts(params));
+  }
+
+  if (path === '/api/clearinghouse/reconcile' && method.toUpperCase() === 'POST') {
+    if (!body?.eraId && !body?.eftId) return mockResponse({ error: 'Missing reconciliation target' }, 400);
+    return mockResponse(reconcileDemoPayments(String(body?.eraId || ''), body?.eftId ? String(body.eftId) : undefined, body?.notes ? String(body.notes) : undefined));
+  }
+
+  if (path === '/api/clearinghouse/reports/closing') {
+    const startDate = params.get('startDate') || new Date().toISOString().slice(0, 10);
+    const endDate = params.get('endDate') || startDate;
+    return mockResponse(getDemoClosingReport(startDate, endDate, params.get('reportType') || 'daily'));
+  }
+
+  if (path === '/api/fee-schedules' && method.toUpperCase() === 'GET') return mockResponse(getDemoFeeSchedules());
+  if (path === '/api/fee-schedules' && method.toUpperCase() === 'POST') return mockResponse(createDemoFeeSchedule(body || {}), 201);
+
+  if (path === '/api/fee-schedules/default/schedule') {
+    const schedule = getDemoDefaultFeeSchedule();
+    return schedule ? mockResponse(schedule) : mockResponse({ error: 'No default schedule' }, 404);
+  }
+
+  if (path.startsWith('/api/fee-schedules/default/fee/')) {
+    const cptCode = path.split('/').pop() || '';
+    const item = getDemoFeeForCpt(cptCode);
+    return item ? mockResponse(item) : mockResponse({ error: 'CPT not found' }, 404);
+  }
+
+  if (path === '/api/fee-schedules/cosmetic/categories') return mockResponse(getDemoCosmeticCategories());
+  if (path === '/api/fee-schedules/cosmetic/pricing' || path === '/api/fee-schedules/cosmetic/procedures') return mockResponse(getDemoCosmeticPricing(params));
+
+  if (path.startsWith('/api/fee-schedules/') && path.endsWith('/items/import') && method.toUpperCase() === 'POST') {
+    const segments = path.split('/');
+    const scheduleId = segments[segments.length - 3] || '';
+    return mockResponse(importDemoFeeScheduleItems(scheduleId, Array.isArray(body?.items) ? body.items : []));
+  }
+
+  if (path.startsWith('/api/fee-schedules/') && path.endsWith('/export')) {
+    const scheduleId = path.split('/')[3] || '';
+    return new Response(exportDemoFeeScheduleCsv(scheduleId), {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/csv',
+        'Content-Disposition': `attachment; filename=\"${scheduleId}.csv\"`,
+      },
+    });
+  }
+
+  if (path.startsWith('/api/fee-schedules/') && path.includes('/items/') && method.toUpperCase() === 'PUT') {
+    const segments = path.split('/');
+    const scheduleId = segments[3] || '';
+    const cptCode = segments[5] || '';
+    return mockResponse(updateDemoFeeScheduleItem(scheduleId, cptCode, body || {}));
+  }
+
+  if (path.startsWith('/api/fee-schedules/') && path.includes('/items/') && method.toUpperCase() === 'DELETE') {
+    const segments = path.split('/');
+    const scheduleId = segments[3] || '';
+    const cptCode = segments[5] || '';
+    return mockResponse(deleteDemoFeeScheduleItem(scheduleId, cptCode));
+  }
+
+  if (path.startsWith('/api/fee-schedules/') && path.endsWith('/items') && method.toUpperCase() === 'GET') {
+    const scheduleId = path.split('/')[3] || '';
+    return mockResponse(getDemoFeeScheduleItems(scheduleId));
+  }
+
+  if (path.startsWith('/api/fee-schedules/') && method.toUpperCase() === 'PUT') {
+    const scheduleId = path.split('/').pop() || '';
+    return mockResponse(updateDemoFeeSchedule(scheduleId, body || {}));
+  }
+
+  if (path.startsWith('/api/fee-schedules/') && method.toUpperCase() === 'DELETE') {
+    const scheduleId = path.split('/').pop() || '';
+    return mockResponse(deleteDemoFeeSchedule(scheduleId));
+  }
+
+  if (path.startsWith('/api/fee-schedules/') && method.toUpperCase() === 'GET') {
+    const scheduleId = path.split('/').pop() || '';
+    const schedule = getDemoFeeSchedule(scheduleId);
+    return schedule ? mockResponse(schedule) : mockResponse({ error: 'Fee schedule not found' }, 404);
+  }
+
+  if (path === '/api/tasks') return mockResponse({ data: [] });
+
+  if (path === '/api/recalls/campaigns' && method.toUpperCase() === 'GET') {
+    return mockResponse({ campaigns: readDemoRecallCampaigns() });
+  }
+
+  if (path === '/api/recalls/campaigns' && method.toUpperCase() === 'POST') {
+    const now = new Date().toISOString();
+    const newCampaign = {
+      id: `rec-camp-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Date.now()}`,
+      tenantId: 'tenant-demo',
+      name: String(body?.name || 'New Recall Campaign'),
+      description: body?.description ? String(body.description) : '',
+      recallType: String(body?.recallType || 'Annual Skin Check'),
+      intervalMonths: Math.max(1, Number(body?.intervalMonths || 12)),
+      isActive: body?.isActive !== false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    writeDemoRecallCampaigns([newCampaign, ...readDemoRecallCampaigns()]);
+    return mockResponse(newCampaign, 201);
+  }
+
+  if (path.startsWith('/api/recalls/campaigns/') && path.endsWith('/generate') && method.toUpperCase() === 'POST') {
+    const campaignId = path.split('/')[4] || '';
+    const result = generateDemoRecallsForCampaign(campaignId, 3);
+    return mockResponse(result);
+  }
+
+  if (path.startsWith('/api/recalls/campaigns/') && method.toUpperCase() === 'PUT') {
+    const campaignId = path.split('/')[4] || '';
+    const campaigns = readDemoRecallCampaigns();
+    const existing = campaigns.find((campaign) => String(campaign.id) === String(campaignId));
+    if (!existing) return mockResponse({ error: 'Campaign not found' }, 404);
+    const updated = {
+      ...existing,
+      ...(body || {}),
+      id: existing.id,
+      updatedAt: new Date().toISOString(),
+    };
+    writeDemoRecallCampaigns(campaigns.map((campaign) => (String(campaign.id) === String(campaignId) ? updated : campaign)));
+    return mockResponse(updated);
+  }
+
+  if (path.startsWith('/api/recalls/campaigns/') && method.toUpperCase() === 'DELETE') {
+    const campaignId = path.split('/')[4] || '';
+    const campaigns = readDemoRecallCampaigns();
+    const exists = campaigns.some((campaign) => String(campaign.id) === String(campaignId));
+    if (!exists) return mockResponse({ error: 'Campaign not found' }, 404);
+    writeDemoRecallCampaigns(campaigns.filter((campaign) => String(campaign.id) !== String(campaignId)));
+    return mockResponse({ success: true });
+  }
+
+  if (path === '/api/recalls/generate-all' && method.toUpperCase() === 'POST') {
+    const activeCampaigns = readDemoRecallCampaigns().filter((campaign) => campaign.isActive);
+    let totalCreated = 0;
+    let totalSkipped = 0;
+    const errors: string[] = [];
+    for (const campaign of activeCampaigns) {
+      const result = generateDemoRecallsForCampaign(String(campaign.id), 2);
+      totalCreated += result.created;
+      totalSkipped += result.skipped;
+      errors.push(...result.errors);
+    }
+    return mockResponse({
+      campaigns: activeCampaigns.length,
+      totalCreated,
+      totalSkipped,
+      errors,
+    });
+  }
+
+  if (path === '/api/recalls/due' && method.toUpperCase() === 'GET') {
+    const recalls = filterDemoRecalls(readDemoRecalls(), {
+      startDate: params.get('startDate') || undefined,
+      endDate: params.get('endDate') || undefined,
+      campaignId: params.get('campaignId') || undefined,
+      status: params.get('status') || undefined,
+    }).sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
+    return mockResponse({ recalls });
+  }
+
+  if (path === '/api/recalls/patient' && method.toUpperCase() === 'POST') {
+    if (!body?.patientId || !body?.dueDate) {
+      return mockResponse({ error: 'patientId and dueDate are required' }, 400);
+    }
+    const campaigns = readDemoRecallCampaigns();
+    const selectedCampaign = campaigns.find((campaign) => String(campaign.id) === String(body.campaignId || ''));
+    const recall = normalizeDemoRecall({
+      id: `recall-manual-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Date.now()}`,
+      tenantId: 'tenant-demo',
+      patientId: String(body.patientId),
+      campaignId: body.campaignId ? String(body.campaignId) : undefined,
+      dueDate: String(body.dueDate),
+      recallDate: String(body.dueDate),
+      status: 'pending',
+      notes: body?.notes ? String(body.notes) : '',
+      recallType: selectedCampaign?.recallType,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }, campaigns);
+    writeDemoRecalls([recall, ...readDemoRecalls()]);
+    return mockResponse(recall, 201);
+  }
+
+  if (path.startsWith('/api/recalls/') && path.endsWith('/status') && method.toUpperCase() === 'PUT') {
+    const recallId = path.split('/')[3] || '';
+    const recalls = readDemoRecalls();
+    const existing = recalls.find((recall) => String(recall.id) === String(recallId));
+    if (!existing) return mockResponse({ error: 'Recall not found' }, 404);
+    const updated = normalizeDemoRecall({
+      ...existing,
+      status: String(body?.status || existing.status),
+      notes: body?.notes !== undefined ? String(body.notes) : existing.notes,
+      appointmentId: body?.appointmentId ? String(body.appointmentId) : existing.appointmentId,
+      updatedAt: new Date().toISOString(),
+      lastContactDate: body?.status === 'contacted' ? new Date().toISOString() : existing.lastContactDate,
+    }, readDemoRecallCampaigns());
+    writeDemoRecalls(recalls.map((recall) => (String(recall.id) === String(recallId) ? updated : recall)));
+    return mockResponse(updated);
+  }
+
+  if (path.startsWith('/api/recalls/') && path.endsWith('/contact') && method.toUpperCase() === 'POST') {
+    const recallId = path.split('/')[3] || '';
+    const recalls = readDemoRecalls();
+    const existing = recalls.find((recall) => String(recall.id) === String(recallId));
+    if (!existing) return mockResponse({ error: 'Recall not found' }, 404);
+
+    const sentAt = new Date().toISOString();
+    const contactMethod = String(body?.contactMethod || 'phone');
+    const nextAttempts = Number(existing.contactAttempts || 0) + 1;
+    const updated = normalizeDemoRecall({
+      ...existing,
+      status: existing.status === 'completed' ? 'completed' : 'contacted',
+      contactMethod,
+      lastContactDate: sentAt,
+      notes: body?.notes ? String(body.notes) : existing.notes,
+      messageContent: body?.messageContent ? String(body.messageContent) : undefined,
+      contactAttempts: nextAttempts,
+      notificationCount: nextAttempts,
+      lastReminderType: contactMethod,
+      lastReminderSentAt: sentAt,
+      lastReminderDeliveryStatus: 'delivered',
+      notifiedOn: sentAt,
+      updatedAt: sentAt,
+      textThreadId: contactMethod === 'sms' ? (existing.textThreadId || `thread-${recallId}`) : existing.textThreadId,
+      textThreadStatus: contactMethod === 'sms' ? 'waiting-patient' : existing.textThreadStatus,
+    }, readDemoRecallCampaigns());
+    writeDemoRecalls(recalls.map((recall) => (String(recall.id) === String(recallId) ? updated : recall)));
+    appendDemoRecallHistory(createDemoRecallHistoryEntry(updated, {
+      reminderType: contactMethod,
+      sentAt,
+      deliveryStatus: 'delivered',
+      messageContent: body?.messageContent ? String(body.messageContent) : 'Recall contact logged from demo workflow.',
+    }));
+    return mockResponse({ message: 'Recall contact recorded' });
+  }
+
+  if (path === '/api/recalls/history' && method.toUpperCase() === 'GET') {
+    const history = readDemoRecallHistory().filter((entry) => {
+      if (params.get('patientId') && String(entry.patientId) !== String(params.get('patientId'))) return false;
+      if (params.get('campaignId')) {
+        const recall = readDemoRecalls().find((item) => String(item.id) === String(entry.recallId || ''));
+        if (!recall || String(recall.campaignId) !== String(params.get('campaignId'))) return false;
+      }
+      const sentDate = String(entry.sentAt || '').slice(0, 10);
+      if (params.get('startDate') && sentDate < String(params.get('startDate'))) return false;
+      if (params.get('endDate') && sentDate > String(params.get('endDate'))) return false;
+      return true;
+    });
+    const limit = Number(params.get('limit') || 0);
+    return mockResponse({ history: limit > 0 ? history.slice(0, limit) : history });
+  }
+
+  if (path === '/api/recalls/stats' && method.toUpperCase() === 'GET') {
+    return mockResponse(buildDemoRecallStats({
+      campaignId: params.get('campaignId') || undefined,
+      startDate: params.get('startDate') || undefined,
+      endDate: params.get('endDate') || undefined,
+    }));
+  }
+
+  if (path === '/api/recalls/bulk-notify' && method.toUpperCase() === 'POST') {
+    const recallIds = Array.isArray(body?.recallIds) ? body?.recallIds.map(String) : [];
+    const notificationType = String(body?.notificationType || 'sms');
+    const messageTemplate = body?.messageTemplate ? String(body.messageTemplate) : 'Recall reminder sent from demo workflow.';
+    const recalls = readDemoRecalls();
+    const errors: Array<{ recallId: string; error: string }> = [];
+    let successful = 0;
+
+    const updatedRecalls = recalls.map((recall) => {
+      if (!recallIds.includes(String(recall.id))) return recall;
+      if (notificationType === 'sms' && !recall.phone) {
+        errors.push({ recallId: String(recall.id), error: 'No phone number on file' });
+        return recall;
+      }
+      if (notificationType === 'email' && !recall.email) {
+        errors.push({ recallId: String(recall.id), error: 'No email on file' });
+        return recall;
+      }
+      successful += 1;
+      const sentAt = new Date().toISOString();
+      const nextAttempts = Number(recall.contactAttempts || 0) + 1;
+      const updated = normalizeDemoRecall({
+        ...recall,
+        status: recall.status === 'completed' ? 'completed' : 'contacted',
+        contactMethod: notificationType,
+        lastContactDate: sentAt,
+        contactAttempts: nextAttempts,
+        notificationCount: nextAttempts,
+        lastReminderType: notificationType,
+        lastReminderSentAt: sentAt,
+        lastReminderDeliveryStatus: 'delivered',
+        notifiedOn: sentAt,
+        updatedAt: sentAt,
+        textThreadId: notificationType === 'sms' ? (recall.textThreadId || `thread-${recall.id}`) : recall.textThreadId,
+        textThreadStatus: notificationType === 'sms' ? 'waiting-patient' : recall.textThreadStatus,
+      }, readDemoRecallCampaigns());
+      appendDemoRecallHistory(createDemoRecallHistoryEntry(updated, {
+        reminderType: notificationType,
+        sentAt,
+        messageContent: messageTemplate,
+      }));
+      return updated;
+    });
+
+    writeDemoRecalls(updatedRecalls);
+    return mockResponse({
+      total: recallIds.length,
+      successful,
+      failed: errors.length,
+      errors,
+    });
+  }
+
+  if (path.startsWith('/api/recalls/') && path.endsWith('/notification-history') && method.toUpperCase() === 'GET') {
+    const recallId = path.split('/')[3] || '';
+    const history = readDemoRecallHistory().filter((entry) => String(entry.recallId) === String(recallId));
+    return mockResponse({ history });
+  }
+
+  if (path === '/api/recalls/export' && method.toUpperCase() === 'GET') {
+    const recalls = filterDemoRecalls(readDemoRecalls(), {
+      campaignId: params.get('campaignId') || undefined,
+      status: params.get('status') || undefined,
+    });
+    const csvLines = [
+      ['Patient', 'Campaign', 'Recall Type', 'Due Date', 'Status', 'Phone', 'Email', 'Notes'].join(','),
+      ...recalls.map((recall) => ([
+        `"${String(`${recall.lastName || ''}, ${recall.firstName || ''}`).trim()}"`,
+        `"${String(recall.campaignName || '')}"`,
+        `"${String(recall.recallType || '')}"`,
+        `"${String(recall.dueDate || '')}"`,
+        `"${String(recall.status || '')}"`,
+        `"${String(recall.phone || '')}"`,
+        `"${String(recall.email || '')}"`,
+        `"${String(recall.notes || '').replace(/"/g, '""')}"`,
+      ].join(','))),
+    ];
+    return new Response(csvLines.join('\n'), {
+      status: 200,
+      headers: { 'Content-Type': 'text/csv' },
+    });
+  }
+
+  if (path === '/api/reminders') {
+    return mockResponse({
+      data: readDemoRecalls(),
+      campaigns: readDemoRecallCampaigns(),
+      stats: buildDemoRecallStats(),
+    });
+  }
+
+  if (path === '/api/messaging/unread-count') return mockResponse({ count: 0 });
+
+  if (path === '/api/time-blocks' && method.toUpperCase() === 'GET') {
+    return mockResponse(readDemoTimeBlocks());
+  }
+
+  if (path === '/api/time-blocks' && method.toUpperCase() === 'POST') {
+    const now = new Date().toISOString();
+    const newBlock = {
+      id: `tb-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Date.now()}`,
+      tenantId: 'tenant-demo',
+      providerId: String(body?.providerId || ''),
+      locationId: body?.locationId ? String(body.locationId) : undefined,
+      title: String(body?.title || 'Blocked time'),
+      blockType: String(body?.blockType || 'break'),
+      description: body?.description ? String(body.description) : undefined,
+      startTime: String(body?.startTime || now),
+      endTime: String(body?.endTime || now),
+      isRecurring: Boolean(body?.isRecurring),
+      recurrencePattern: body?.recurrencePattern,
+      recurrenceEndDate: body?.recurrenceEndDate || body?.recurrencePattern?.until,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+    writeDemoTimeBlocks([...readDemoTimeBlocks(), newBlock]);
+    return mockResponse({ timeBlock: newBlock }, 201);
+  }
+
+  if (path.startsWith('/api/time-blocks/') && method.toUpperCase() === 'PUT') {
+    const timeBlockId = path.split('/').pop() || '';
+    const updatedBlocks = readDemoTimeBlocks().map((block) =>
+      String(block.id) === timeBlockId
+        ? {
+            ...block,
+            ...body,
+            recurrenceEndDate: body?.recurrenceEndDate || body?.recurrencePattern?.until || block.recurrenceEndDate,
+            updatedAt: new Date().toISOString(),
+          }
+        : block,
+    );
+    writeDemoTimeBlocks(updatedBlocks);
+    const updated = updatedBlocks.find((block) => String(block.id) === timeBlockId);
+    return updated ? mockResponse({ timeBlock: updated }) : mockResponse({ error: 'Time block not found' }, 404);
+  }
+
+  if (path.startsWith('/api/time-blocks/') && method.toUpperCase() === 'DELETE') {
+    const timeBlockId = path.split('/').pop() || '';
+    writeDemoTimeBlocks(readDemoTimeBlocks().filter((block) => String(block.id) !== timeBlockId));
+    return mockResponse({ success: true });
+  }
+
+  if (path === '/api/prior-auth' && method.toUpperCase() === 'GET') {
+    const status = params.get('status');
+    const patientId = params.get('patientId');
+    let priorAuths = getDemoPriorAuthList();
+    if (status) {
+      priorAuths = priorAuths.filter((item) => String(item.status) === status);
+    }
+    if (patientId) {
+      priorAuths = priorAuths.filter((item) => String(item.patient_id) === patientId);
+    }
+    return mockResponse(priorAuths);
+  }
+
+  if (path.startsWith('/api/prior-auth/') && method.toUpperCase() === 'GET') {
+    const priorAuthId = path.split('/').pop() || '';
+    const priorAuth = getDemoPriorAuthList().find((item) => String(item.id) === priorAuthId);
+    return priorAuth ? mockResponse(priorAuth) : mockResponse({ error: 'Prior authorization not found' }, 404);
+  }
+
+  if (path === '/api/body-map-markers' && method.toUpperCase() === 'GET') {
+    const patientId = params.get('patient_id') || '';
+    return mockResponse({ markers: patientId ? readDemoBodyMarkers(patientId) : [] });
+  }
+
+  if (path === '/api/body-map-markers' && method.toUpperCase() === 'POST') {
+    const patientId = String(body?.patient_id || '');
+    if (!patientId) return mockResponse({ error: 'patient_id is required' }, 400);
+    const newMarker = {
+      id: `marker-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Date.now()}`,
+      patient_id: patientId,
+      encounter_id: body?.encounter_id ? String(body.encounter_id) : undefined,
+      marker_type: String(body?.marker_type || 'lesion'),
+      body_region: String(body?.body_region || 'front-custom'),
+      view_type: String(body?.view_type || 'front'),
+      x_position: Number(body?.x_position ?? 50),
+      y_position: Number(body?.y_position ?? 50),
+      description: String(body?.description || ''),
+      clinical_notes: String(body?.clinical_notes || body?.description || ''),
+      status: String(body?.status || 'active'),
+      severity: String(body?.severity || 'mild'),
+      created_at: new Date().toISOString(),
+    };
+    const overrides = readDemoBodyMarkersStore();
+    const currentOverrides = Array.isArray(overrides[patientId]) ? overrides[patientId].filter((item) => String(item.id) !== newMarker.id) : [];
+    writePatientBodyMarkerOverrides(patientId, [...currentOverrides, newMarker]);
+    return mockResponse(newMarker, 201);
+  }
+
+  if (path.startsWith('/api/body-map-markers/') && method.toUpperCase() === 'PUT') {
+    const markerId = path.split('/').pop() || '';
+    const located = findDemoBodyMarker(markerId);
+    if (!located) return mockResponse({ error: 'Marker not found' }, 404);
+    const updatedMarker = {
+      ...located.marker,
+      ...body,
+      id: markerId,
+      updated_at: new Date().toISOString(),
+    };
+    const overrides = readDemoBodyMarkersStore();
+    const currentOverrides = Array.isArray(overrides[located.patientId]) ? overrides[located.patientId].filter((item) => String(item.id) !== markerId) : [];
+    writePatientBodyMarkerOverrides(located.patientId, [...currentOverrides, updatedMarker]);
+    return mockResponse(updatedMarker);
+  }
+
+  if (path.startsWith('/api/body-map-markers/') && method.toUpperCase() === 'DELETE') {
+    const markerId = path.split('/').pop() || '';
+    const located = findDemoBodyMarker(markerId);
+    if (!located) return mockResponse({ success: true });
+    const overrides = readDemoBodyMarkersStore();
+    const currentOverrides = Array.isArray(overrides[located.patientId]) ? overrides[located.patientId].filter((item) => String(item.id) !== markerId) : [];
+    writePatientBodyMarkerOverrides(located.patientId, [...currentOverrides, { id: markerId, _deleted: true }]);
+    return mockResponse({ success: true });
+  }
+
+  if (path.startsWith('/api/ambient/patient-summaries/') && method.toUpperCase() === 'GET') {
+    const patientId = path.split('/').pop() || '';
+    return mockResponse({ summaries: buildDemoPatientSummaries(patientId) });
+  }
+
+  if (path.startsWith('/api/ambient/notes/') && method.toUpperCase() === 'GET') {
+    const noteId = path.split('/').pop() || '';
+    const note = buildDemoAmbientNote(noteId);
+    return note ? mockResponse({ note }) : mockResponse({ error: 'Note not found' }, 404);
+  }
+
+  if (path.startsWith('/api/ambient/encounters/') && path.endsWith('/notes') && method.toUpperCase() === 'GET') {
+    return mockResponse({ notes: [] });
+  }
+
+  return null;
+}
+
+function handlePortalRoute(
+  path: string,
+  params: URLSearchParams,
+  email: string,
+  method: string,
+  body: DemoItem | null,
+): Response | null {
+  const data = getDemoDataForPortalUser(email);
+  if (!data) return null;
+
+  const portalAppointments = getAppointmentsForPatient(data.patient.id);
+  const unreadMessages = data.profile.email?.includes('jane') ? 1 : 0;
+  const currentBalance = Number(data.billing.balance?.currentBalance || 0);
+  const upcomingAppointments = portalAppointments.filter((appointment) => appointment.status === 'scheduled');
+
+  if (path === '/api/patient-portal/scheduling/settings') {
+    return mockResponse(DEMO_SCHEDULING_SETTINGS);
+  }
+
+  if (path === '/api/patient-portal/scheduling/providers') {
+    return mockResponse({ providers: DEMO_SCHEDULING_PROVIDERS });
+  }
+
+  if (path === '/api/patient-portal/scheduling/appointment-types') {
+    return mockResponse({ appointmentTypes: DEMO_SCHEDULING_APPOINTMENT_TYPES });
+  }
+
+  if (path === '/api/patient-portal/scheduling/available-dates') {
+    const providerId = params.get('providerId') || DEMO_SCHEDULING_PROVIDERS[0].id;
+    const appointmentTypeId = params.get('appointmentTypeId') || DEMO_SCHEDULING_APPOINTMENT_TYPES[0].id;
+    return mockResponse({ dates: getAvailableDates(providerId, appointmentTypeId) });
+  }
+
+  if (path === '/api/patient-portal/scheduling/availability') {
+    const date = params.get('date') || '';
+    const providerId = params.get('providerId') || DEMO_SCHEDULING_PROVIDERS[0].id;
+    const appointmentTypeId = params.get('appointmentTypeId') || DEMO_SCHEDULING_APPOINTMENT_TYPES[0].id;
+    return mockResponse({ slots: getProviderSlots(date, providerId, appointmentTypeId) });
+  }
+
+  if (path === '/api/patient-portal/scheduling/book' && method.toUpperCase() === 'POST') {
+    if (!body?.providerId || !body?.appointmentTypeId || !body?.scheduledStart || !body?.scheduledEnd) {
+      return mockResponse({ error: 'Missing booking details' }, 400);
+    }
+
+    const requestedDate = String(body.scheduledStart).split('T')[0];
+    const slot = getProviderSlots(requestedDate, body.providerId, body.appointmentTypeId).find(
+      (candidate) => candidate.startTime === body.scheduledStart,
+    );
+
+    if (!slot || !slot.isAvailable) {
+      return mockResponse({ error: 'Time slot is no longer available' }, 409);
+    }
+
+    const patient = data.patient;
+    const provider = DEMO_SCHEDULING_PROVIDERS.find((item) => item.id === body.providerId);
+    const appointmentType = DEMO_SCHEDULING_APPOINTMENT_TYPES.find((item) => item.id === body.appointmentTypeId);
+    const newAppointment = {
+      id: `appt-demo-booked-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Date.now()}`,
+      tenantId: 'tenant-demo',
+      patientId: patient.id,
+      patientName: `${patient.firstName} ${patient.lastName}`,
+      providerId: body.providerId,
+      providerName: provider?.fullName || 'Dr. David Skin, MD, FAAD',
+      locationId: 'loc-1',
+      locationName: 'Mountain Pine Dermatology - Main Office',
+      appointmentTypeId: body.appointmentTypeId,
+      appointmentTypeName: appointmentType?.name || 'Follow-Up Visit',
+      scheduledStart: body.scheduledStart,
+      scheduledEnd: body.scheduledEnd,
+      status: 'scheduled',
+      chiefComplaint: body.reason || body.notes || 'Online self-scheduled visit',
+      createdAt: new Date().toISOString(),
+    };
+
+    writeBookedAppointments([...readBookedAppointments(), newAppointment]);
+    return mockResponse({
+      appointmentId: newAppointment.id,
+      message: 'Appointment booked successfully',
+    }, 201);
+  }
+
+  if (path === '/api/patient-portal-data/dashboard') {
+    const nextAppointment = upcomingAppointments[0] || null;
+    return mockResponse({
+      dashboard: {
+        upcomingAppointments: upcomingAppointments.length,
+        nextAppointment: nextAppointment ? {
+          appointmentId: nextAppointment.id,
+          appointmentDate: String(nextAppointment.scheduledStart).split('T')[0],
+          appointmentTime: String(nextAppointment.scheduledStart).split('T')[1]?.slice(0, 5),
+          providerName: nextAppointment.providerName,
+          appointmentType: nextAppointment.appointmentTypeName,
+        } : null,
+        newDocuments: data.documents.length,
+        newVisits: data.visitSummaries.length,
+        activePrescriptions: data.prescriptions.filter((prescription) => prescription.status === 'transmitted').length,
+        unreadMessages,
+        currentBalance,
+        preCheckinAvailable: upcomingAppointments.length > 0,
+        nextCheckinAppointment: nextAppointment ? {
+          appointmentId: nextAppointment.id,
+          appointmentDate: String(nextAppointment.scheduledStart).split('T')[0],
+          appointmentTime: String(nextAppointment.scheduledStart).split('T')[1]?.slice(0, 5),
+          providerName: nextAppointment.providerName,
+          appointmentType: nextAppointment.appointmentTypeName,
+        } : null,
+        actionNeededCount:
+          data.documents.length
+          + data.visitSummaries.length
+          + unreadMessages
+          + (currentBalance > 0 ? 1 : 0)
+          + (upcomingAppointments.length > 0 ? 1 : 0),
+      },
+    });
+  }
+
+  if (path.startsWith('/api/patient-portal-data/appointments')) {
+    const status = params.get('status') || 'all';
+    let appointments = portalAppointments;
+    if (status === 'upcoming') appointments = portalAppointments.filter((appointment) => appointment.status === 'scheduled');
+    if (status === 'past') appointments = portalAppointments.filter((appointment) => appointment.status === 'completed');
+    return mockResponse({ appointments: appointments.map(transformPortalAppointment) });
+  }
+
+  if (path === '/api/patient-portal-data/visit-summaries') {
+    return mockResponse({ summaries: data.visitSummaries });
+  }
+
+  if (path === '/api/patient-portal-data/documents') {
+    return mockResponse({ documents: data.documents });
+  }
+
+  if (path === '/api/patient-portal-data/allergies') {
+    return mockResponse({ allergies: data.healthRecord.allergies });
+  }
+
+  if (path === '/api/patient-portal-data/medications') {
+    return mockResponse({ medications: data.healthRecord.medications });
+  }
+
+  if (path === '/api/patient-portal-data/vitals') {
+    return mockResponse({ vitals: data.healthRecord.vitals.map(transformVital) });
+  }
+
+  if (path === '/api/patient-portal-data/lab-results') {
+    return mockResponse({ labResults: flattenLabResults(data.healthRecord.labResults || []) });
+  }
+
+  if (path === '/api/patient-portal-data/refill-requests') {
+    return mockResponse({ success: true });
+  }
+
+  if (path === '/api/patient-portal/billing/balance') return mockResponse(data.billing.balance);
+  if (path === '/api/patient-portal/billing/charges') return mockResponse({ charges: data.billing.charges });
+  if (path === '/api/patient-portal/billing/statements') return mockResponse({ statements: data.billing.statements });
+  if (path.startsWith('/api/patient-portal/billing/statements/')) return mockResponse({ statement: data.billing.statements[0] || {} });
+  if (path === '/api/patient-portal/billing/payment-methods') return mockResponse({ paymentMethods: data.billing.paymentMethods });
+  if (path === '/api/patient-portal/billing/payment-history') return mockResponse({ payments: data.billing.paymentHistory });
+  if (path === '/api/patient-portal/billing/payments') return mockResponse({ success: true, paymentId: 'demo-pay-001' });
+  if (path === '/api/patient-portal/billing/payment-plans') return mockResponse({ paymentPlans: [] });
+  if (path === '/api/patient-portal/billing/autopay') return mockResponse({ enrolled: false });
+
+  if (path === '/api/patient-portal/me') {
+    return mockResponse({ patient: flattenProfile(data.profile) });
+  }
+
+  if (path === '/api/patient-portal/security/change-password') {
+    return mockResponse({ message: 'Password changed successfully' });
+  }
+
+  if (path === '/api/patient-portal/visit-summaries') {
+    return mockResponse({ visitSummaries: data.visitSummaries });
+  }
+
+  if (path.includes('/api/patient-portal/intake')) {
+    return mockResponse({ forms: [], consents: [], history: [], required: [] });
+  }
+
+  if (path.includes('/api/patient-portal/checkin')) {
+    return mockResponse({ session: null });
+  }
+
+  return null;
+}
+
+export function installDemoFetchInterceptor() {
+  if (!isLocalDemoEnabled() || typeof window === 'undefined') return;
+
+  const originalFetch = window.fetch.bind(window);
+
+  window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : input.toString();
+
+    if (!url.includes('/api/')) {
+      return originalFetch(input, init);
+    }
+
+    let path: string;
+    try {
+      path = new URL(url, window.location.origin).pathname;
+    } catch {
+      path = url.split('?')[0];
+    }
+
+    const params = getParams(url);
+    const headers: Record<string, string> = {};
+
+    if (init?.headers) {
+      if (init.headers instanceof Headers) {
+        init.headers.forEach((value, key) => { headers[key] = value; });
+      } else if (Array.isArray(init.headers)) {
+        init.headers.forEach(([key, value]) => { headers[key] = value; });
+      } else {
+        Object.assign(headers, init.headers);
+      }
+    }
+
+    if (input instanceof Request) {
+      input.headers.forEach((value, key) => { headers[key] = value; });
+    }
+
+    const method = init?.method || (input instanceof Request ? input.method : 'GET');
+    const body = parseRequestBody(init);
+
+    if (isPortalDemoMode()) {
+      const email = getPortalPatientEmail();
+      const response = handlePortalRoute(path, params, email, method, body);
+      if (response) return response;
+    }
+
+    if (isOfficeDemoMode(headers)) {
+      const response = handleProviderRoute(path, params, method, body);
+      if (response) return response;
+    }
+
+    return originalFetch(input, init);
+  };
+}

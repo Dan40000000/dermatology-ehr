@@ -15,6 +15,11 @@ import './App.css';
 import './styles/print.css';
 import './styles/animations.css';
 import './utils/authFetch';
+import { installDemoFetchInterceptor } from './demo/fetchInterceptor';
+
+if (import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true') {
+  installDemoFetchInterceptor();
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

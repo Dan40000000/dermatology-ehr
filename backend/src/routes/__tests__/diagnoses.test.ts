@@ -2,6 +2,7 @@ import request from "supertest";
 import express from "express";
 import { diagnosesRouter } from "../diagnoses";
 import { pool } from "../../db/pool";
+import { ensureMelanomaRecallForDiagnosis } from "../../services/melanomaRecallService";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -20,15 +21,22 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../../services/melanomaRecallService", () => ({
+  ensureMelanomaRecallForDiagnosis: jest.fn(),
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/diagnoses", diagnosesRouter);
 
 const queryMock = pool.query as jest.Mock;
+const recallMock = ensureMelanomaRecallForDiagnosis as jest.Mock;
 
 beforeEach(() => {
   queryMock.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+  recallMock.mockReset();
+  recallMock.mockResolvedValue({ triggered: false });
 });
 
 describe("Diagnoses routes", () => {
@@ -53,6 +61,33 @@ describe("Diagnoses routes", () => {
     });
     expect(res.status).toBe(201);
     expect(res.body.id).toBeTruthy();
+  });
+
+  it("POST /diagnoses triggers melanoma recall setup for melanoma diagnosis", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    recallMock.mockResolvedValueOnce({
+      triggered: true,
+      patientId: "patient-1",
+      recallId: "recall-1",
+      dueDate: "2026-07-18",
+      createdRecall: true,
+    });
+
+    const res = await request(app).post("/diagnoses").send({
+      encounterId: "enc-1",
+      icd10Code: "C43.9",
+      description: "Malignant melanoma of skin, unspecified",
+    });
+
+    expect(res.status).toBe(201);
+    expect(recallMock).toHaveBeenCalledWith({
+      tenantId: "tenant-1",
+      encounterId: "enc-1",
+      icd10Code: "C43.9",
+      description: "Malignant melanoma of skin, unspecified",
+      userId: "user-1",
+    });
+    expect(res.body.recall).toEqual(expect.objectContaining({ recallId: "recall-1" }));
   });
 
   it("POST /diagnoses marks primary and clears existing", async () => {

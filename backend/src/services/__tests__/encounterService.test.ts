@@ -1,6 +1,7 @@
 import { encounterService } from "../encounterService";
 import { pool } from "../../db/pool";
 import { logger } from "../../lib/logger";
+import { ensureMelanomaRecallForDiagnosis } from "../melanomaRecallService";
 
 jest.mock("../../db/pool", () => ({
   pool: {
@@ -16,6 +17,10 @@ jest.mock("../../lib/logger", () => ({
   },
 }));
 
+jest.mock("../melanomaRecallService", () => ({
+  ensureMelanomaRecallForDiagnosis: jest.fn(),
+}));
+
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
   randomUUID: jest.fn(() => "uuid-1"),
@@ -23,6 +28,7 @@ jest.mock("crypto", () => ({
 
 const queryMock = pool.query as jest.Mock;
 const connectMock = pool.connect as jest.Mock;
+const recallMock = ensureMelanomaRecallForDiagnosis as jest.Mock;
 
 const makeClient = () => ({
   query: jest.fn().mockResolvedValue({ rows: [] }),
@@ -32,6 +38,8 @@ const makeClient = () => ({
 beforeEach(() => {
   queryMock.mockReset();
   connectMock.mockReset();
+  recallMock.mockReset();
+  recallMock.mockResolvedValue({ triggered: false });
   (logger.info as jest.Mock).mockReset();
   (logger.error as jest.Mock).mockReset();
 });
@@ -239,6 +247,13 @@ describe("encounterService", () => {
       expect.stringContaining("UPDATE encounter_diagnoses"),
       ["enc-1", "tenant-1"]
     );
+    expect(recallMock).toHaveBeenCalledWith({
+      tenantId: "tenant-1",
+      encounterId: "enc-1",
+      icd10Code: "L20",
+      description: "Dermatitis",
+      userId: undefined,
+    });
   });
 
   it("completeEncounter updates status and generates charges", async () => {

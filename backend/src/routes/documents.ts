@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
+import { requireModuleAccess } from "../middleware/moduleAccess";
 import { requireRoles } from "../middleware/rbac";
 
 // Document categories
@@ -47,6 +48,7 @@ const categoryUpdateSchema = z.object({
 });
 
 export const documentsRouter = Router();
+documentsRouter.use(requireAuth, requireModuleAccess("documents"));
 
 // Helper function to log document access
 async function logDocumentAccess(

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
@@ -36,6 +36,10 @@ const STATUS_OPTIONS = ['pending', 'contacted', 'scheduled', 'completed', 'dismi
 const CONTACT_METHODS = ['email', 'sms', 'phone', 'mail', 'portal'];
 const TAB_OPTIONS = ['campaigns', 'due', 'history', 'stats'] as const;
 type ReminderTab = (typeof TAB_OPTIONS)[number];
+
+function isInteractiveCampaignTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest('button, a, input, select, textarea, label'));
+}
 
 export function RemindersPage() {
   const { session } = useAuth();
@@ -155,10 +159,19 @@ export function RemindersPage() {
   useEffect(() => {
     const tabParam = searchParams.get('tab');
     const statusParam = searchParams.get('status');
+    const campaignParam = searchParams.get('campaignId') || '';
     const filterParam = searchParams.get('filter');
 
     if (tabParam && TAB_OPTIONS.includes(tabParam as ReminderTab) && tabParam !== activeTab) {
       setActiveTab(tabParam as ReminderTab);
+    }
+
+    if (!tabParam && campaignParam && activeTab !== 'due') {
+      setActiveTab('due');
+    }
+
+    if (campaignParam !== recallFilters.campaignId) {
+      setRecallFilters((prev) => ({ ...prev, campaignId: campaignParam }));
     }
 
     if (statusParam && STATUS_OPTIONS.includes(statusParam) && statusParam !== recallFilters.status) {
@@ -171,7 +184,7 @@ export function RemindersPage() {
         setActiveTab('due');
       }
     }
-  }, [activeTab, recallFilters.status, searchParams]);
+  }, [activeTab, recallFilters.campaignId, recallFilters.status, searchParams]);
 
   useEffect(() => {
     if (activeTab === 'due') {
@@ -187,6 +200,23 @@ export function RemindersPage() {
     setActiveTab(tab);
     const params = new URLSearchParams(searchParams);
     params.set('tab', tab);
+    setSearchParams(params, { replace: true });
+  };
+
+  const handleViewCampaignPatients = (campaign: RecallCampaign) => {
+    setRecallFilters({
+      campaignId: campaign.id,
+      status: '',
+      startDate: '',
+      endDate: '',
+    });
+    setActiveTab('due');
+
+    const params = new URLSearchParams(searchParams);
+    params.set('tab', 'due');
+    params.set('campaignId', campaign.id);
+    params.delete('status');
+    params.delete('filter');
     setSearchParams(params, { replace: true });
   };
 
@@ -364,6 +394,13 @@ export function RemindersPage() {
     );
   }
 
+  const selectedDueCampaign = recallFilters.campaignId
+    ? campaigns.find((campaign) => campaign.id === recallFilters.campaignId) || null
+    : null;
+  const selectedDueCampaignStats = selectedDueCampaign
+    ? stats?.byCampaign.find((campaign) => campaign.id === selectedDueCampaign.id) || null
+    : null;
+
   return (
     <div className="reminders-page">
       <div className="page-header">
@@ -486,7 +523,16 @@ export function RemindersPage() {
               {campaigns.map((campaign) => {
                 const campaignStats = stats?.byCampaign.find((s) => s.id === campaign.id);
                 return (
-                  <div key={campaign.id} className="campaign-card">
+                  <div
+                    key={campaign.id}
+                    className="campaign-card"
+                    onClick={(event) => {
+                      if (!isInteractiveCampaignTarget(event.target)) {
+                        handleViewCampaignPatients(campaign);
+                      }
+                    }}
+                    title={`View patients in ${campaign.name}`}
+                  >
                     <div className="campaign-header">
                       <div>
                         <h3>{campaign.name}</h3>
@@ -535,6 +581,13 @@ export function RemindersPage() {
                     )}
 
                     <div className="campaign-actions">
+                      <button
+                        type="button"
+                        className="btn-sm btn-primary"
+                        onClick={() => handleViewCampaignPatients(campaign)}
+                      >
+                        View Patients ({campaignStats?.total_recalls || 0})
+                      </button>
                       <button
                         type="button"
                         className="btn-sm btn-secondary"
@@ -633,7 +686,42 @@ export function RemindersPage() {
           </Panel>
 
           {/* Recalls Table */}
-          <Panel title={`Due Recalls (${dueRecalls.length})`}>
+          <Panel title={selectedDueCampaign ? `${selectedDueCampaign.name} Patients (${dueRecalls.length})` : `Due Recalls (${dueRecalls.length})`}>
+            {selectedDueCampaign && (
+              <div style={{ marginBottom: '1rem', display: 'grid', gap: '0.75rem' }}>
+                <div className="muted">
+                  Showing the patient list for <strong>{selectedDueCampaign.name}</strong>. Status, last contact, attempts, and actions are shown below.
+                </div>
+                {selectedDueCampaignStats && (
+                  <div className="campaign-stats-mini" style={{ marginBottom: 0 }}>
+                    <div className="stat-mini">
+                      <span className="stat-mini-value">{selectedDueCampaignStats.total_recalls}</span>
+                      <span className="stat-mini-label">Total</span>
+                    </div>
+                    <div className="stat-mini">
+                      <span className="stat-mini-value">{selectedDueCampaignStats.pending}</span>
+                      <span className="stat-mini-label">Pending</span>
+                    </div>
+                    <div className="stat-mini">
+                      <span className="stat-mini-value">{selectedDueCampaignStats.contacted}</span>
+                      <span className="stat-mini-label">Contacted</span>
+                    </div>
+                    <div className="stat-mini">
+                      <span className="stat-mini-value">{selectedDueCampaignStats.scheduled}</span>
+                      <span className="stat-mini-label">Scheduled</span>
+                    </div>
+                    <div className="stat-mini">
+                      <span className="stat-mini-value">{selectedDueCampaignStats.completed}</span>
+                      <span className="stat-mini-label">Completed</span>
+                    </div>
+                    <div className="stat-mini">
+                      <span className="stat-mini-value">{selectedDueCampaignStats.dismissed || 0}</span>
+                      <span className="stat-mini-label">Dismissed</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             {dueRecalls.length === 0 ? (
               <div className="empty-state">
                 <div className="empty-icon"></div>
@@ -659,9 +747,17 @@ export function RemindersPage() {
                       <tr key={recall.id}>
                         <td>
                           <div>
-                            <strong>
-                              {recall.lastName}, {recall.firstName}
-                            </strong>
+                            {recall.patientId ? (
+                              <Link to={`/patients/${recall.patientId}?tab=clinical-summary`}>
+                                <strong>
+                                  {recall.lastName}, {recall.firstName}
+                                </strong>
+                              </Link>
+                            ) : (
+                              <strong>
+                                {recall.lastName}, {recall.firstName}
+                              </strong>
+                            )}
                           </div>
                           <div className="muted tiny">
                             {recall.phone || recall.email || 'No contact'}
@@ -1189,6 +1285,7 @@ export function RemindersPage() {
           box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
           transition: all 0.3s ease;
           animation: fadeIn 0.4s ease-out;
+          cursor: pointer;
         }
 
         .campaign-card:hover {

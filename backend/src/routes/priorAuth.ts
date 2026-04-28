@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, AuthedRequest } from '../middleware/auth';
+import { requireModuleAccess } from '../middleware/moduleAccess';
 import { pool } from '../db/pool';
 import { randomUUID } from 'crypto';
 import { notificationService } from '../services/integrations/notificationService';
@@ -13,7 +14,7 @@ import { logger } from '../lib/logger';
 import { loadEnv } from '../config/validate';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireModuleAccess("epa"));
 
 const createLegacySchema = z.object({
   patientId: z.string().uuid(),

@@ -49,6 +49,21 @@ describe("Patients routes", () => {
     expect(res.body.data).toHaveLength(1);
   });
 
+  it("GET /patients allows larger page sizes for the roster view", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ count: "825" }], rowCount: 1 });
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }], rowCount: 1 });
+
+    const res = await request(app).get("/patients?limit=1000");
+
+    expect(res.status).toBe(200);
+    expect(queryMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("limit $2 offset $3"),
+      ["tenant-1", 1000, 0],
+    );
+    expect(res.body.meta.limit).toBe(1000);
+  });
+
   it("POST /patients rejects invalid payload", async () => {
     const res = await request(app).post("/patients").send({ lastName: "Doe" });
 
@@ -265,6 +280,24 @@ describe("Patients routes", () => {
     expect(res.body.encounters).toHaveLength(1);
   });
 
+  it("GET /patients/:id/clinical-summary returns diagnoses and recalls", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ id: "dx-1", icd10Code: "C43.9", description: "Malignant melanoma" }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ id: "recall-1", recallType: "Melanoma Surveillance", status: "pending" }],
+      });
+
+    const res = await request(app).get("/patients/patient-1/clinical-summary");
+
+    expect(res.status).toBe(200);
+    expect(res.body.diagnoses).toHaveLength(1);
+    expect(res.body.recalls).toHaveLength(1);
+    expect(queryMock.mock.calls[0][0]).toContain("FROM encounter_diagnoses ed");
+    expect(queryMock.mock.calls[1][0]).toContain("FROM patient_recalls pr");
+  });
+
   it("GET /patients/:id/prescriptions returns 404 when patient missing", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -331,6 +364,8 @@ describe("Patients routes", () => {
     expect(res.body.pastDueBalance).toBe(20);
     expect(res.body.recentPayments).toHaveLength(1);
     expect(res.body.recentCharges).toHaveLength(1);
+    expect(queryMock.mock.calls[1][0]).toContain("LEFT JOIN encounters e");
+    expect(queryMock.mock.calls[1][0]).toContain("COALESCE(e.patient_id, NULLIF(to_jsonb(c)->>'patient_id', '')) = $1");
   });
 
   it("GET /patients/:id/photos returns list", async () => {

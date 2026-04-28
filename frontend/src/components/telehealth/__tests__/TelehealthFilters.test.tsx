@@ -58,8 +58,8 @@ describe('TelehealthFilters', () => {
       />
     );
 
-    expect(screen.getByLabelText('Date Created (From)')).toBeInTheDocument();
-    expect(screen.getByLabelText('Date Created (To)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Appointment Date (From)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Appointment Date (To)')).toBeInTheDocument();
   });
 
   it('calls onChange when date preset changes', () => {

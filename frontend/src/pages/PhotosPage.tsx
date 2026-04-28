@@ -60,11 +60,7 @@ const getLocalUploadKey = (photo: Photo) => {
     // Fall through to basic parsing below.
   }
 
-  const fallback = photo.url.split('/').pop();
-  if (!fallback) {
-    return null;
-  }
-  return decodeURIComponent(fallback.split('?')[0]?.split('#')[0] || fallback);
+  return null;
 };
 
 export function PhotosPage() {

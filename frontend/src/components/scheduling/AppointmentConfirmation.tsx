@@ -1,3 +1,8 @@
+import {
+  formatDateInPracticeTimeZone,
+  formatTimeInPracticeTimeZone,
+} from '../../utils/practiceDateTime';
+
 interface TimeSlot {
   startTime: string;
   endTime: string;
@@ -27,6 +32,7 @@ interface AppointmentConfirmationProps {
   onConfirm: () => void;
   onBack: () => void;
   loading?: boolean;
+  timeZone?: string | null;
 }
 
 export function AppointmentConfirmation({
@@ -38,24 +44,14 @@ export function AppointmentConfirmation({
   onConfirm,
   onBack,
   loading = false,
+  timeZone,
 }: AppointmentConfirmationProps) {
   const formatDate = (isoString: string): string => {
-    const date = new Date(isoString);
-    return date.toLocaleDateString('en-US', {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
-    });
+    return formatDateInPracticeTimeZone(isoString, timeZone);
   };
 
   const formatTime = (isoString: string): string => {
-    const date = new Date(isoString);
-    return date.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
+    return formatTimeInPracticeTimeZone(isoString, timeZone);
   };
 
   const appointmentDate = new Date(selectedSlot.startTime);

@@ -56,19 +56,43 @@ describe("Disease registry routes", () => {
       .mockResolvedValueOnce({
         rows: [{ registry_type: "melanoma", name: "Melanoma", patient_count: "3" }],
       })
-      .mockResolvedValueOnce({ rows: [{ count: "2" }] })
-      .mockResolvedValueOnce({ rows: [{ count: "5" }] })
-      .mockResolvedValueOnce({ rows: [{ count: "1" }] })
-      .mockResolvedValueOnce({ rows: [{ melanoma_staging_rate: 50 }] });
+      .mockResolvedValueOnce({
+        rows: [{
+          melanoma_total_patients: "3",
+          melanoma_followups_due: "2",
+          melanoma_overdue_followups: "1",
+          melanoma_unstaged_patients: "1",
+          psoriasis_total_patients: "4",
+          psoriasis_biologic_patients: "2",
+          psoriasis_labs_overdue: "3",
+          psoriasis_missing_baseline_pasi: "1",
+          psoriasis_moderate_to_severe: "2",
+          acne_total_patients: "5",
+          acne_ipledge_enrolled: "4",
+          acne_pregnancy_tests_due: "1",
+          acne_labs_overdue: "2",
+          chronic_total_patients: "6",
+          chronic_labs_overdue: "5",
+          chronic_labs_due_soon: "2",
+          chronic_biologic_therapies: "1",
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ melanoma_staging_rate: 50, isotretinoin_monitoring_rate: 80 }] });
 
     const res = await request(app).get("/disease-registry/dashboard");
 
     expect(res.status).toBe(200);
     expect(res.body.registryCounts).toHaveLength(1);
     expect(res.body.alerts.melanomaDue).toBe(2);
-    expect(res.body.alerts.labsOverdue).toBe(5);
+    expect(res.body.alerts.melanomaOverdue).toBe(1);
+    expect(res.body.alerts.labsOverdue).toBe(10);
     expect(res.body.alerts.pregnancyTestsDue).toBe(1);
+    expect(res.body.registrySummaries.melanoma.totalPatients).toBe(3);
+    expect(res.body.registrySummaries.psoriasis.labsOverdue).toBe(3);
+    expect(res.body.registrySummaries.acne.totalPatients).toBe(5);
+    expect(res.body.registrySummaries.chronicTherapy.labsDueSoon).toBe(2);
     expect(res.body.qualityMetrics.melanoma_staging_rate).toBe(50);
+    expect(res.body.qualityMetrics.isotretinoin_monitoring_rate).toBe(80);
   });
 
   it("GET /disease-registry/dashboard returns 500 on error", async () => {
@@ -232,12 +256,14 @@ describe("Disease registry routes", () => {
   it("GET /disease-registry/alerts returns merged alerts", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ id: "mel-alert" }] })
+      .mockResolvedValueOnce({ rows: [{ id: "psor-alert" }] })
       .mockResolvedValueOnce({ rows: [{ id: "lab-alert" }] })
+      .mockResolvedValueOnce({ rows: [{ id: "iso-lab-alert" }] })
       .mockResolvedValueOnce({ rows: [{ id: "preg-alert" }] });
 
     const res = await request(app).get("/disease-registry/alerts");
 
     expect(res.status).toBe(200);
-    expect(res.body.alerts).toHaveLength(3);
+    expect(res.body.alerts).toHaveLength(5);
   });
 });

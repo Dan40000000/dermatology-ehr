@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { auditRouter } from "../audit";
 import { pool } from "../../db/pool";
 import { createAuditLog } from "../../services/audit";
+import { getAuditSchemaInfo } from "../../services/auditSchema";
 import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
@@ -27,6 +28,10 @@ jest.mock("../../services/audit", () => ({
   createAuditLog: jest.fn(),
 }));
 
+jest.mock("../../services/auditSchema", () => ({
+  getAuditSchemaInfo: jest.fn(),
+}));
+
 jest.mock("../../lib/logger", () => ({
   logger: {
     error: jest.fn(),
@@ -41,6 +46,7 @@ app.use(express.json());
 app.use("/audit", auditRouter);
 
 const queryMock = pool.query as jest.Mock;
+const auditSchemaMock = getAuditSchemaInfo as jest.Mock;
 const loggerMock = logger as jest.Mocked<typeof logger>;
 const authToken = jwt.sign(
   { id: "user-1", tenantId: "tenant-1", role: "admin" },
@@ -52,10 +58,40 @@ const authHeaders = {
 };
 const authGet = (path: string) => request(app).get(path).set(authHeaders);
 const authPost = (path: string) => request(app).post(path).set(authHeaders);
+const defaultAuditSchemaInfo = {
+  columns: new Set([
+    "id",
+    "tenant_id",
+    "action",
+    "created_at",
+    "user_id",
+    "resource_type",
+    "resource_id",
+    "ip_address",
+    "user_agent",
+    "changes",
+    "metadata",
+    "severity",
+    "status",
+  ]),
+  columnMap: {
+    userId: "user_id",
+    resourceType: "resource_type",
+    resourceId: "resource_id",
+    ipAddress: "ip_address",
+    userAgent: "user_agent",
+    changes: "changes",
+    metadata: "metadata",
+    severity: "severity",
+    status: "status",
+  },
+};
 
 beforeEach(() => {
   jest.clearAllMocks();
   queryMock.mockReset();
+  auditSchemaMock.mockReset();
+  auditSchemaMock.mockResolvedValue(defaultAuditSchemaInfo);
   loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
@@ -201,6 +237,25 @@ describe("Audit Routes", () => {
       expect(loggerMock.error).toHaveBeenCalledWith("Error fetching audit logs:", {
         error: "Unknown error",
       });
+    });
+
+    it("should reject filters that require unavailable audit columns", async () => {
+      auditSchemaMock.mockResolvedValueOnce({
+        ...defaultAuditSchemaInfo,
+        columnMap: {
+          ...defaultAuditSchemaInfo.columnMap,
+          userId: null,
+        },
+      });
+
+      const res = await authGet("/audit?userId=user-2");
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({
+        error: "Unsupported audit filter for current audit schema",
+        unsupportedFilters: ["userId"],
+      });
+      expect(queryMock).not.toHaveBeenCalled();
     });
   });
 
@@ -351,6 +406,25 @@ describe("Audit Routes", () => {
         severity: "warning",
         status: "success",
       });
+    });
+
+    it("should reject export filters that require unavailable audit columns", async () => {
+      auditSchemaMock.mockResolvedValueOnce({
+        ...defaultAuditSchemaInfo,
+        columnMap: {
+          ...defaultAuditSchemaInfo.columnMap,
+          resourceId: null,
+        },
+      });
+
+      const res = await authPost("/audit/export").send({ filters: { resourceId: "patient-1" } });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({
+        error: "Unsupported audit filter for current audit schema",
+        unsupportedFilters: ["resourceId"],
+      });
+      expect(queryMock).not.toHaveBeenCalled();
     });
 
     it("should filter exports", async () => {

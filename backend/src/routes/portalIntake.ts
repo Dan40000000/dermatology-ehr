@@ -865,6 +865,7 @@ portalIntakeRouter.get(
           insurance_card_front_url as "insuranceCardFrontUrl",
           insurance_card_back_url as "insuranceCardBackUrl",
           insurance_verification_status as "insuranceVerificationStatus",
+          visit_details as "visitDetails",
           staff_notified as "staffNotified",
           started_at as "startedAt",
           completed_at as "completedAt"
@@ -896,6 +897,7 @@ const updateCheckinSchema = z.object({
   copayCollected: z.boolean().optional(),
   insuranceCardFrontUrl: z.string().optional(),
   insuranceCardBackUrl: z.string().optional(),
+  visitDetails: z.record(z.string(), z.unknown()).optional(),
   complete: z.boolean().default(false),
 });
 
@@ -915,7 +917,8 @@ portalIntakeRouter.put(
         data.formsCompleted !== undefined ||
         data.copayCollected !== undefined ||
         !!data.insuranceCardFrontUrl ||
-        !!data.insuranceCardBackUrl;
+        !!data.insuranceCardBackUrl ||
+        data.visitDetails !== undefined;
 
       if (!hasAnyUpdate) {
         return res.status(400).json({ error: "No updates provided" });
@@ -1012,6 +1015,10 @@ portalIntakeRouter.put(
       if (data.insuranceCardBackUrl) {
         updates.push(`insurance_card_back_url = $${paramCount++}`);
         values.push(data.insuranceCardBackUrl);
+      }
+      if (data.visitDetails !== undefined) {
+        updates.push(`visit_details = $${paramCount++}`);
+        values.push(JSON.stringify(data.visitDetails));
       }
 
       if (data.complete) {

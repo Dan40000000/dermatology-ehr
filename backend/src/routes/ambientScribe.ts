@@ -187,6 +187,7 @@ router.post('/recordings/start', requireAuth, requireRoles([...AMBIENT_CLINICAL_
     await auditLog(tenantId, req.user?.id || null, 'ambient_recording_start', 'ambient_recording', recordingId);
 
     res.status(201).json({
+      id: recordingId,
       recordingId,
       status: 'recording',
       startedAt: new Date().toISOString()
@@ -475,6 +476,7 @@ router.post('/recordings/:id/transcribe', requireAuth, requireRoles([...AMBIENT_
     const transcriptId = await startTranscription(recordingId, tenantId, file_path!, duration_seconds!);
 
     res.json({
+      id: transcriptId,
       transcriptId,
       status: 'processing',
       message: 'Transcription started'
@@ -1540,7 +1542,7 @@ async function processTranscription(
 ): Promise<void> {
   try {
     // Call mock AI service
-    const result: TranscriptionResult = await transcribeAudio(filePath, durationSeconds);
+    const result: TranscriptionResult = await transcribeAudio(filePath, durationSeconds, { tenantId });
 
     // Mask PHI
     const maskedText = maskPHI(result.text, result.phiEntities);

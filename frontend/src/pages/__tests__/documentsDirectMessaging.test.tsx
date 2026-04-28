@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 
 const authMocks = vi.hoisted(() => ({
   session: null as null | {
@@ -95,6 +95,11 @@ const adminSession = {
   accessToken: 'token-1',
   user: { id: 'user-1', email: 'admin@example.com', role: 'admin', fullName: 'Admin User' },
 };
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-probe">{`${location.pathname}${location.search}`}</div>;
+}
 
 describe('DocumentsPage', () => {
   beforeEach(() => {
@@ -247,6 +252,25 @@ describe('DocumentsPage', () => {
           formName: 'Updated Treatment Consent',
           formType: 'general-consent',
         }),
+      ),
+    );
+  });
+
+  it('passes the selected patient into the handout library route', async () => {
+    render(
+      <MemoryRouter initialEntries={['/documents']}>
+        <LocationProbe />
+        <DocumentsPage />
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Document Management');
+    fireEvent.change(screen.getByDisplayValue('All Patients'), { target: { value: 'patient-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Lab Result Templates' }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location-probe')).toHaveTextContent(
+        '/handouts?instructionType=lab_results&patientId=patient-1',
       ),
     );
   });

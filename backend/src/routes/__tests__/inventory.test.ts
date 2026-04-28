@@ -105,6 +105,30 @@ describe("Inventory routes", () => {
     expect(res.body.items).toHaveLength(1);
   });
 
+
+  it("GET /inventory/dashboard resolves the dashboard route before item detail", async () => {
+    const dashboardSpy = jest
+      .spyOn(inventoryService, "getInventoryDashboard")
+      .mockResolvedValueOnce({ totalItems: 5, lowStock: [], expiringSoon: [], recentTransactions: [] } as any);
+
+    const res = await request(app).get("/inventory/dashboard");
+
+    expect(res.status).toBe(200);
+    expect(dashboardSpy).toHaveBeenCalledWith("tenant-1");
+    expect(queryMock).not.toHaveBeenCalledWith(expect.stringContaining("WHERE id = $1 AND tenant_id = $2"), expect.anything());
+
+    dashboardSpy.mockRestore();
+  });
+
+  it("GET /inventory/vendors resolves the vendors route before item detail", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "vendor-1", name: "Vendor" }], rowCount: 1 });
+
+    const res = await request(app).get("/inventory/vendors");
+
+    expect(res.status).toBe(200);
+    expect(res.body.vendors).toHaveLength(1);
+    expect(queryMock.mock.calls[0][0]).toContain("FROM vendors");
+  });
   it("GET /inventory/:id returns 404", async () => {
     queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
     const res = await request(app).get("/inventory/item-1");

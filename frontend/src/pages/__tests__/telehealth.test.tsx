@@ -185,10 +185,15 @@ describe('TelehealthPage', () => {
       },
     ]);
     apiMocks.fetchTelehealthStats.mockResolvedValue({
-      myInProgress: 1,
-      myCompleted: 1,
-      myUnreadMessages: 0,
-      unassignedCases: 0,
+      todayVisits: 1,
+      waitingNow: 1,
+      liveNow: 1,
+      upcomingWeek: 2,
+      completedToday: 0,
+      cancelledThisWeek: 0,
+      averageCompletedDurationMinutes: 20,
+      uniquePatientsInRange: 2,
+      providersWithTelehealth: 1,
     });
     apiMocks.fetchProviders.mockResolvedValue({ providers: [{ id: 1, fullName: 'Dr Demo' }] });
     apiMocks.fetchPatients.mockResolvedValue({ patients: [{ id: 10, firstName: 'Ana', lastName: 'Derm' }] });
@@ -258,11 +263,14 @@ describe('TelehealthPage', () => {
     render(<TelehealthPage />);
 
     await screen.findByText('Telehealth Video Consultations');
+    const statsSection = screen.getByText('Telehealth Overview').parentElement as HTMLElement;
 
-    expect(screen.getByText(/My cases in progress/i)).toBeInTheDocument();
-    expect(screen.getByText(/My completed cases/i)).toBeInTheDocument();
-    expect(screen.getByText(/My unread messages/i)).toBeInTheDocument();
-    expect(screen.getByText(/Unassigned Cases/i)).toBeInTheDocument();
+    expect(within(statsSection).getByText(/Today's Visits/i)).toBeInTheDocument();
+    expect(within(statsSection).getByText(/^Waiting Room$/i)).toBeInTheDocument();
+    expect(within(statsSection).getByText(/Live Now/i)).toBeInTheDocument();
+    expect(within(statsSection).getByText(/Upcoming 7 Days/i)).toBeInTheDocument();
+    expect(within(statsSection).getByText(/Completed Today/i)).toBeInTheDocument();
+    expect(within(statsSection).getByText(/Cancelled \/ No-show/i)).toBeInTheDocument();
 
     expect(apiMocks.fetchTelehealthStats).toHaveBeenCalledWith(
       'tenant-1',

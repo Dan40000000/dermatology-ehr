@@ -21,7 +21,11 @@ export function PatientsPage() {
   const [loading, setLoading] = useState(true);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [firstNameQuery, setFirstNameQuery] = useState('');
+  const [lastNameQuery, setLastNameQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [debouncedFirstName, setDebouncedFirstName] = useState('');
+  const [debouncedLastName, setDebouncedLastName] = useState('');
   const [searchBy, setSearchBy] = useState<'name' | 'mrn' | 'phone'>('name');
   const [patientStatus, setPatientStatus] = useState<'active' | 'inactive'>('active');
   const [sortField, setSortField] = useState<SortField>('lastName');
@@ -33,11 +37,13 @@ export function PatientsPage() {
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchQuery);
+      setDebouncedFirstName(firstNameQuery);
+      setDebouncedLastName(lastNameQuery);
       setCurrentPage(1); // Reset to first page on search
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [searchQuery, firstNameQuery, lastNameQuery]);
 
   useEffect(() => {
     if (!session) return;
@@ -69,19 +75,31 @@ export function PatientsPage() {
     // if the backend adds it in the future
 
     // Search filter with debounce
-    if (debouncedSearch.trim()) {
+    if (searchBy === 'name') {
+      const firstName = debouncedFirstName.trim().toLowerCase();
+      const lastName = debouncedLastName.trim().toLowerCase();
+
+      if (firstName || lastName) {
+        result = result.filter((p) => {
+          if (!p) return false;
+          const patientFirstName = (p.firstName || '').toLowerCase();
+          const patientLastName = (p.lastName || '').toLowerCase();
+
+          const matchesFirstName = !firstName || patientFirstName.includes(firstName);
+          const matchesLastName = !lastName || patientLastName.includes(lastName);
+
+          return matchesFirstName && matchesLastName;
+        });
+      }
+    } else if (debouncedSearch.trim()) {
       const query = debouncedSearch.toLowerCase();
       result = result.filter((p) => {
         if (!p) return false;
-        const fullName = `${p.firstName || ''} ${p.lastName || ''}`.toLowerCase();
-        const reverseName = `${p.lastName || ''} ${p.firstName || ''}`.toLowerCase();
         const mrn = (p.mrn || '').toLowerCase();
         const phone = (p.phone || '').replace(/\D/g, '');
         const searchPhone = debouncedSearch.replace(/\D/g, '');
 
-        if (searchBy === 'name') {
-          return fullName.includes(query) || reverseName.includes(query);
-        } else if (searchBy === 'mrn') {
+        if (searchBy === 'mrn') {
           return mrn.includes(query);
         } else if (searchBy === 'phone') {
           return searchPhone && phone.includes(searchPhone);
@@ -139,7 +157,7 @@ export function PatientsPage() {
     });
 
     return result;
-  }, [patients, debouncedSearch, searchBy, sortField, sortOrder]);
+  }, [patients, debouncedFirstName, debouncedLastName, debouncedSearch, searchBy, sortField, sortOrder]);
 
   // Pagination
   const totalPages = Math.ceil(filteredPatients.length / ITEMS_PER_PAGE);
@@ -340,16 +358,40 @@ export function PatientsPage() {
                 <option value="mrn">MRN</option>
                 <option value="phone">Phone</option>
               </select>
-              <input
-                type="text"
-                className="ema-filter-input"
-                placeholder="Enter search term..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                ref={searchInputRef}
-                aria-label="Search patients"
-                style={{ minWidth: '250px' }}
-              />
+              {searchBy === 'name' ? (
+                <>
+                  <input
+                    type="text"
+                    className="ema-filter-input"
+                    placeholder="First name"
+                    value={firstNameQuery}
+                    onChange={(e) => setFirstNameQuery(e.target.value)}
+                    ref={searchInputRef}
+                    aria-label="Search patients by first name"
+                    style={{ minWidth: '180px' }}
+                  />
+                  <input
+                    type="text"
+                    className="ema-filter-input"
+                    placeholder="Last name"
+                    value={lastNameQuery}
+                    onChange={(e) => setLastNameQuery(e.target.value)}
+                    aria-label="Search patients by last name"
+                    style={{ minWidth: '180px' }}
+                  />
+                </>
+              ) : (
+                <input
+                  type="text"
+                  className="ema-filter-input"
+                  placeholder={searchBy === 'mrn' ? 'Enter MRN...' : 'Enter phone number...'}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  ref={searchInputRef}
+                  aria-label={searchBy === 'mrn' ? 'Search patients by MRN' : 'Search patients by phone'}
+                  style={{ minWidth: '250px' }}
+                />
+              )}
             </div>
           </div>
 

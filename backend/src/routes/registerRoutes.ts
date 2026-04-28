@@ -145,6 +145,8 @@ import { referralTrackingRouter } from "./referralTracking";
 import waitTimeRouter from "./waitTime";
 import { remindersRouter } from "./reminders";
 import { publicPagesRouter } from "./publicPages";
+import { downtimePacketsRouter } from "./downtimePackets";
+import { professionalFeedbackRouter } from "./professionalFeedback";
 
 export function registerRoutes(app: Express) {
   const requireRevenueCycleAccess = [requireAuth, requireRoles(REVENUE_CYCLE_ROLES)];
@@ -153,6 +155,8 @@ export function registerRoutes(app: Express) {
   app.use("/health", healthRouter);
   app.use("/public", publicPagesRouter);
   app.use("/api/auth", authRouter);
+  app.use("/api/professional-feedback", professionalFeedbackRouter);
+  app.use("/api/downtime-packets", downtimePacketsRouter);
   app.use("/api/patients", patientsRouter);
   app.use("/api/appointments", appointmentsRouter);
   app.use("/api/providers", providersRouter);

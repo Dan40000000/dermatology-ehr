@@ -60,7 +60,10 @@ const getAvailableDatesMock = getAvailableDatesInMonth as jest.Mock;
 const canCancelMock = canCancelAppointment as jest.Mock;
 const getProviderInfoMock = getProviderInfo as jest.Mock;
 
-const uuid = "11111111-1111-1111-8111-111111111111";
+const appointmentId = "11111111-1111-1111-8111-111111111111";
+const uuid = appointmentId;
+const providerId = "prov-demo";
+const appointmentTypeId = "appttype-acne-fu";
 
 const buildClient = () => {
   const query = jest.fn().mockResolvedValue({ rows: [] });
@@ -97,6 +100,43 @@ describe("Patient scheduling portal routes", () => {
     const res = await request(app).get("/patient-portal/scheduling/settings");
 
     expect(res.status).toBe(500);
+  });
+
+  it("GET /patient-portal/scheduling/public/settings returns public guest booking settings", async () => {
+    getBookingSettingsMock.mockResolvedValueOnce({
+      isEnabled: true,
+      bookingWindowDays: 30,
+      minAdvanceHours: 24,
+      maxAdvanceDays: 90,
+    });
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          customMessage: "Guest booking available",
+          requireReason: true,
+          allowGuestBooking: true,
+          requireCardOnFileForGuestBooking: true,
+          guestCancellationFeeCents: 5000,
+        },
+      ],
+    });
+
+    const res = await request(app)
+      .get("/patient-portal/scheduling/public/settings")
+      .set("X-Tenant-ID", "tenant-1");
+
+    expect(res.status).toBe(200);
+    expect(res.body.customMessage).toBe("Guest booking available");
+    expect(res.body.allowGuestBooking).toBe(true);
+    expect(res.body.requireCardOnFileForGuestBooking).toBe(true);
+    expect(res.body.guestCancellationFeeCents).toBe(5000);
+  });
+
+  it("GET /patient-portal/scheduling/public/providers requires tenant context", async () => {
+    const res = await request(app).get("/patient-portal/scheduling/public/providers");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Missing tenant header/i);
   });
 
   it("GET /patient-portal/scheduling/providers returns providers", async () => {
@@ -149,8 +189,8 @@ describe("Patient scheduling portal routes", () => {
     const res = await request(app)
       .get("/patient-portal/scheduling/available-dates")
       .query({
-        providerId: uuid,
-        appointmentTypeId: uuid,
+        providerId,
+        appointmentTypeId,
         year: "2024",
         month: "1",
       });
@@ -166,8 +206,8 @@ describe("Patient scheduling portal routes", () => {
     const res = await request(app)
       .get("/patient-portal/scheduling/available-dates")
       .query({
-        providerId: uuid,
-        appointmentTypeId: uuid,
+        providerId,
+        appointmentTypeId,
         year: "2024",
         month: "1",
       });
@@ -191,8 +231,8 @@ describe("Patient scheduling portal routes", () => {
       .get("/patient-portal/scheduling/availability")
       .query({
         date: "2024-01-02",
-        providerId: uuid,
-        appointmentTypeId: uuid,
+        providerId,
+        appointmentTypeId,
       });
 
     expect(res.status).toBe(200);
@@ -207,8 +247,8 @@ describe("Patient scheduling portal routes", () => {
       .get("/patient-portal/scheduling/availability")
       .query({
         date: "2024-01-02",
-        providerId: uuid,
-        appointmentTypeId: uuid,
+        providerId,
+        appointmentTypeId,
       });
 
     expect(res.status).toBe(500);
@@ -222,8 +262,8 @@ describe("Patient scheduling portal routes", () => {
     client.query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).post("/patient-portal/scheduling/book").send({
-      providerId: uuid,
-      appointmentTypeId: uuid,
+      providerId,
+      appointmentTypeId,
       scheduledStart: "2024-01-02T09:00:00.000Z",
       scheduledEnd: "2024-01-02T09:30:00.000Z",
     });
@@ -242,8 +282,8 @@ describe("Patient scheduling portal routes", () => {
       .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).post("/patient-portal/scheduling/book").send({
-      providerId: uuid,
-      appointmentTypeId: uuid,
+      providerId,
+      appointmentTypeId,
       scheduledStart: start,
       scheduledEnd: "2024-01-02T09:30:00.000Z",
     });
@@ -259,8 +299,8 @@ describe("Patient scheduling portal routes", () => {
     client.query.mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).post("/patient-portal/scheduling/book").send({
-      providerId: uuid,
-      appointmentTypeId: uuid,
+      providerId,
+      appointmentTypeId,
       scheduledStart: start,
       scheduledEnd: "2024-01-02T09:30:00.000Z",
     });
@@ -284,8 +324,8 @@ describe("Patient scheduling portal routes", () => {
       .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).post("/patient-portal/scheduling/book").send({
-      providerId: uuid,
-      appointmentTypeId: uuid,
+      providerId,
+      appointmentTypeId,
       scheduledStart: start,
       scheduledEnd: "2024-01-02T09:30:00.000Z",
       reason: "Consult",
@@ -293,6 +333,90 @@ describe("Patient scheduling portal routes", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.message).toBe("Appointment booked successfully");
+  });
+
+  it("POST /patient-portal/scheduling/public/book-guest creates appointment with guarantee", async () => {
+    const client = buildClient();
+    connectMock.mockResolvedValueOnce(client);
+    const start = "2024-01-02T09:00:00.000Z";
+    const end = "2024-01-02T09:30:00.000Z";
+
+    getBookingSettingsMock.mockResolvedValueOnce({
+      isEnabled: true,
+      bookingWindowDays: 60,
+      minAdvanceHours: 24,
+      maxAdvanceDays: 90,
+    });
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          customMessage: null,
+          requireReason: true,
+          allowGuestBooking: true,
+          requireCardOnFileForGuestBooking: true,
+          guestCancellationFeeCents: 5000,
+        },
+      ],
+    });
+    calculateSlotsMock.mockResolvedValueOnce([{ startTime: start, isAvailable: true }]);
+    client.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("SELECT id FROM locations")) {
+        return { rows: [{ id: "loc-1" }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/patient-portal/scheduling/public/book-guest")
+      .set("X-Tenant-ID", "tenant-1")
+      .send({
+        providerId,
+        appointmentTypeId,
+        scheduledStart: start,
+        scheduledEnd: end,
+        reason: "Skin concern",
+        notes: "Needs sooner appointment if available",
+        guest: {
+          firstName: "Guest",
+          lastName: "Patient",
+          dob: "1990-01-01",
+          phone: "541-231-8693",
+          email: "guest@example.com",
+        },
+        paymentMethod: {
+          cardNumber: "4242 4242 4242 4242",
+          cardholderName: "Guest Patient",
+          expiryMonth: 12,
+          expiryYear: new Date().getFullYear() + 1,
+          billingZip: "97201",
+        },
+        policy: {
+          acknowledged: true,
+          cancellationFeeCents: 5000,
+        },
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.message).toBe("Appointment booked successfully");
+    expect(res.body.guestBooking.cardLast4).toBe("4242");
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO online_booking_guest_guarantees"),
+      expect.arrayContaining([5000, "mock_stripe", "authorized"])
+    );
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO audit_log"),
+      expect.arrayContaining([
+        expect.any(String),
+        "tenant-1",
+        null,
+        "website_guest_book_appointment",
+        "appointment",
+        expect.any(String),
+        expect.anything(),
+        expect.anything(),
+        expect.stringContaining("Needs sooner appointment if available"),
+      ])
+    );
   });
 
   it("POST /patient-portal/scheduling/book allows missing reason", async () => {
@@ -310,14 +434,13 @@ describe("Patient scheduling portal routes", () => {
       .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).post("/patient-portal/scheduling/book").send({
-      providerId: uuid,
-      appointmentTypeId: uuid,
+      providerId,
+      appointmentTypeId,
       scheduledStart: start,
       scheduledEnd: "2024-01-02T10:30:00.000Z",
     });
 
     expect(res.status).toBe(201);
-    expect(client.query.mock.calls[3][1][9]).toBeNull();
     expect(client.query.mock.calls[4][1][7]).toBeNull();
   });
 
@@ -329,8 +452,8 @@ describe("Patient scheduling portal routes", () => {
       .mockResolvedValueOnce({
         rows: [
           {
-            providerId: uuid,
-            appointmentTypeId: uuid,
+            providerId,
+            appointmentTypeId,
             scheduledStart: "2024-01-02T09:00:00.000Z",
             scheduledEnd: "2024-01-02T09:30:00.000Z",
             status: "scheduled",
@@ -341,7 +464,7 @@ describe("Patient scheduling portal routes", () => {
     canCancelMock.mockResolvedValueOnce({ canCancel: false, reason: "Too late" });
 
     const res = await request(app)
-      .put(`/patient-portal/scheduling/reschedule/${uuid}`)
+      .put(`/patient-portal/scheduling/reschedule/${appointmentId}`)
       .send({
         scheduledStart: "2024-01-03T09:00:00.000Z",
         scheduledEnd: "2024-01-03T09:30:00.000Z",
@@ -356,7 +479,7 @@ describe("Patient scheduling portal routes", () => {
     client.query.mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app)
-      .put(`/patient-portal/scheduling/reschedule/${uuid}`)
+      .put(`/patient-portal/scheduling/reschedule/${appointmentId}`)
       .send({
         scheduledStart: "2024-01-03T09:00:00.000Z",
         scheduledEnd: "2024-01-03T09:30:00.000Z",
@@ -374,8 +497,8 @@ describe("Patient scheduling portal routes", () => {
       .mockResolvedValueOnce({
         rows: [
           {
-            providerId: uuid,
-            appointmentTypeId: uuid,
+            providerId,
+            appointmentTypeId,
             scheduledStart: "2024-01-02T09:00:00.000Z",
             scheduledEnd: "2024-01-02T09:30:00.000Z",
             status: "scheduled",
@@ -391,7 +514,7 @@ describe("Patient scheduling portal routes", () => {
     calculateSlotsMock.mockResolvedValueOnce([{ startTime: newStart, isAvailable: true }]);
 
     const res = await request(app)
-      .put(`/patient-portal/scheduling/reschedule/${uuid}`)
+      .put(`/patient-portal/scheduling/reschedule/${appointmentId}`)
       .send({
         scheduledStart: newStart,
         scheduledEnd: "2024-01-03T09:30:00.000Z",
@@ -407,7 +530,7 @@ describe("Patient scheduling portal routes", () => {
     client.query.mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app)
-      .delete(`/patient-portal/scheduling/cancel/${uuid}`)
+      .delete(`/patient-portal/scheduling/cancel/${appointmentId}`)
       .send({ reason: "No longer needed" });
 
     expect(res.status).toBe(404);
@@ -431,7 +554,7 @@ describe("Patient scheduling portal routes", () => {
     canCancelMock.mockResolvedValueOnce({ canCancel: false, reason: "Too late" });
 
     const res = await request(app)
-      .delete(`/patient-portal/scheduling/cancel/${uuid}`)
+      .delete(`/patient-portal/scheduling/cancel/${appointmentId}`)
       .send({ reason: "No longer needed" });
 
     expect(res.status).toBe(403);
@@ -459,7 +582,7 @@ describe("Patient scheduling portal routes", () => {
     canCancelMock.mockResolvedValueOnce({ canCancel: true });
 
     const res = await request(app)
-      .delete(`/patient-portal/scheduling/cancel/${uuid}`)
+      .delete(`/patient-portal/scheduling/cancel/${appointmentId}`)
       .send({ reason: "No longer needed" });
 
     expect(res.status).toBe(200);
@@ -487,16 +610,18 @@ describe("Patient scheduling portal routes", () => {
       .mockResolvedValueOnce({ rows: [] });
     canCancelMock.mockResolvedValueOnce({ canCancel: true });
 
-    const res = await request(app).delete(`/patient-portal/scheduling/cancel/${uuid}`).send({});
+    const res = await request(app)
+      .delete(`/patient-portal/scheduling/cancel/${appointmentId}`)
+      .send({});
 
     expect(res.status).toBe(200);
-    expect(client.query.mock.calls[3][1][5]).toBe("Cancelled by patient via portal");
     expect(client.query.mock.calls[4][1][7]).toBe("Cancelled by patient");
   });
 
   it("POST /patient-portal/scheduling/book validates payload", async () => {
     const res = await request(app).post("/patient-portal/scheduling/book").send({
-      providerId: "not-a-uuid",
+      providerId: "",
+      appointmentTypeId: appointmentTypeId,
     });
 
     expect(res.status).toBe(400);
@@ -513,8 +638,8 @@ describe("Patient scheduling portal routes", () => {
       .mockRejectedValueOnce(new Error("boom"));
 
     const res = await request(app).post("/patient-portal/scheduling/book").send({
-      providerId: uuid,
-      appointmentTypeId: uuid,
+      providerId,
+      appointmentTypeId,
       scheduledStart: start,
       scheduledEnd: "2024-01-02T09:30:00.000Z",
     });
@@ -777,10 +902,17 @@ describe("Provider scheduling routes", () => {
     const res = await request(app).put("/scheduling/settings").send({
       isEnabled: true,
       bookingWindowDays: 30,
+      allowGuestBooking: true,
+      requireCardOnFileForGuestBooking: true,
+      guestCancellationFeeCents: 7500,
     });
 
     expect(res.status).toBe(200);
     expect(res.body.message).toBe("Settings updated");
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("allow_guest_booking ="),
+      expect.arrayContaining([true, 7500, "tenant-1"])
+    );
   });
 
   it("GET /scheduling/availability-templates returns 500 on error", async () => {

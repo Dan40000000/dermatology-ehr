@@ -67,6 +67,7 @@ describe('export utilities', () => {
 
     expect(formatDate(null)).toBe('');
     expect(formatDate('2024-01-02T00:00:00Z')).toContain('/');
+    expect(formatDate('2026-04-28', 'long')).toBe('April 28, 2026');
 
     expect(getTimestamp()).toMatch(/^\d{4}-\d{2}-\d{2}_\d{6}$/);
     expect(sanitizeFilename('My Report.pdf')).toBe('my_report_pdf');

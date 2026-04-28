@@ -4,6 +4,7 @@ import { formatDistanceToNow } from 'date-fns';
 import '../../styles/patient-portal.css';
 import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
 import { API_BASE_URL } from '../../utils/apiBase';
+import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 
 const API_URL = API_BASE_URL;
 
@@ -86,6 +87,7 @@ export function PatientPortalMessagesPage() {
   };
 
   return (
+    <PatientPortalLayout>
     <div className="portal-page">
       <div className="portal-container">
         {/* Header */}
@@ -206,6 +208,7 @@ export function PatientPortalMessagesPage() {
       {showComposer && <MessageComposer onClose={() => setShowComposer(false)} onSuccess={fetchThreads} />}
       {selectedThread && <MessageThreadView thread={selectedThread} onClose={() => setSelectedThread(null)} />}
     </div>
+    </PatientPortalLayout>
   );
 }
 

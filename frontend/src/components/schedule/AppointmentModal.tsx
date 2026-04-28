@@ -26,8 +26,10 @@ interface AppointmentModalProps {
     patientId?: string;
     providerId?: string;
     locationId?: string;
+    appointmentTypeId?: string;
     date?: string;
     time?: string;
+    duration?: number;
   };
 }
 
@@ -67,6 +69,17 @@ function minutesToDisplay(totalMinutes: number): string {
 
 function rangesOverlap(startA: number, endA: number, startB: number, endB: number): boolean {
   return startA < endB && endA > startB;
+}
+
+function formatPatientDob(value?: string | null): string {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
 }
 
 export interface AppointmentFormData {
@@ -134,11 +147,13 @@ export function AppointmentModal({
         // Create mode with initial data
         setFormData((prev) => ({
           ...prev,
-          patientId: initialData.patientId || prev.patientId,
-          providerId: initialData.providerId || prev.providerId,
-          date: initialData.date || prev.date,
-          time: initialData.time || prev.time,
-          locationId: initialData.locationId || locations[0]?.id || prev.locationId,
+          patientId: initialData.patientId ?? prev.patientId,
+          providerId: initialData.providerId ?? prev.providerId,
+          appointmentTypeId: initialData.appointmentTypeId ?? prev.appointmentTypeId,
+          date: initialData.date ?? prev.date,
+          time: initialData.time ?? prev.time,
+          locationId: initialData.locationId ?? locations[0]?.id ?? prev.locationId,
+          duration: initialData.duration ?? prev.duration,
         }));
       } else {
         // Create mode from scratch
@@ -285,7 +300,7 @@ export function AppointmentModal({
     const now = new Date();
     const isToday = toLocalDateKey(now) === formData.date;
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
-    const options: Array<{ value: string; label: string }> = [];
+    const optionMap = new Map<string, string>();
 
     for (const window of availabilityWindows) {
       const latestStart = window.end - formData.duration;
@@ -300,14 +315,14 @@ export function AppointmentModal({
           rangesOverlap(slotStart, slotEnd, range.start, range.end)
         );
         if (isBlocked) continue;
-        options.push({
-          value: minutesToTimeValue(slotStart),
-          label: minutesToDisplay(slotStart),
-        });
+        const value = minutesToTimeValue(slotStart);
+        if (!optionMap.has(value)) {
+          optionMap.set(value, minutesToDisplay(slotStart));
+        }
       }
     }
 
-    return options;
+    return Array.from(optionMap, ([value, label]) => ({ value, label }));
   }, [
     formData.providerId,
     formData.date,
@@ -357,7 +372,7 @@ export function AppointmentModal({
             <option value="">Select patient...</option>
             {patients.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.lastName}, {p.firstName} - DOB: {p.dob || p.dateOfBirth || 'N/A'}
+                {p.lastName}, {p.firstName} - DOB: {formatPatientDob(p.dob || p.dateOfBirth)}
               </option>
             ))}
           </select>

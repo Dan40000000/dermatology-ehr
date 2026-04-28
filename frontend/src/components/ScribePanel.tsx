@@ -39,6 +39,7 @@ interface AmbientJoinedRecoveryChunk {
   confidence: number;
   source: 'live' | 'mock';
   receivedAt: string;
+  speakerRole?: 'provider' | 'patient' | 'unknown';
 }
 
 interface AmbientJoinedEvent {
@@ -50,6 +51,17 @@ interface AmbientJoinedEvent {
     savedChunks: AmbientJoinedRecoveryChunk[];
   };
 }
+
+interface LiveTranscriptLine {
+  chunkIndex: number;
+  text: string;
+  confidence?: number;
+  source?: 'live' | 'mock';
+  receivedAt?: string;
+  speakerRole?: 'provider' | 'patient' | 'unknown';
+}
+
+type ConsentMethod = 'verbal' | 'written' | 'electronic';
 
 export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
   patientId,
@@ -80,10 +92,12 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
 
   const [isUploading, setIsUploading] = useState(false);
   const [defaultProviderId, setDefaultProviderId] = useState<string | null>(null);
-  const [liveTranscript, setLiveTranscript] = useState<string[]>([]);
+  const [liveTranscript, setLiveTranscript] = useState<LiveTranscriptLine[]>([]);
   const [liveInsights, setLiveInsights] = useState<AmbientLiveInsightsPayload | null>(null);
   const [liveStatus, setLiveStatus] = useState<'idle' | 'connecting' | 'streaming' | 'error'>('idle');
   const [liveError, setLiveError] = useState<string | null>(null);
+  const [showConsentPrompt, setShowConsentPrompt] = useState(false);
+  const [consentMethod, setConsentMethod] = useState<ConsentMethod>('verbal');
   const [showContinuePrompt, setShowContinuePrompt] = useState(false);
   const [promptReason, setPromptReason] = useState<'duration' | 'silence' | null>(null);
   const [durationPrompted, setDurationPrompted] = useState(false);
@@ -135,7 +149,24 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const startRecording = async () => {
+  const getSpeakerLabel = (role?: LiveTranscriptLine['speakerRole']) => {
+    if (role === 'provider') return 'Provider';
+    if (role === 'patient') return 'Patient';
+    return 'Live';
+  };
+
+  const getSpeakerClass = (role?: LiveTranscriptLine['speakerRole']) => {
+    if (role === 'provider') return 'scribe-panel__speaker-badge--provider';
+    if (role === 'patient') return 'scribe-panel__speaker-badge--patient';
+    return 'scribe-panel__speaker-badge--unknown';
+  };
+
+  const startRecording = async (confirmedConsentMethod: ConsentMethod = consentMethod) => {
+    if (!session) {
+      showError('Session expired. Please sign in again.');
+      return;
+    }
+
     if (!effectiveProviderId) {
       showError('No provider available. Please try again in a moment.');
       return;
@@ -153,7 +184,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
           patientId,
           providerId: effectiveProviderId,
           consentObtained: true,
-          consentMethod: 'verbal'
+          consentMethod: confirmedConsentMethod
         }
       );
 
@@ -236,7 +267,7 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
     if (!session || !effectiveProviderId) return;
     if (isRecording || isUploading) return;
     autoStartTriggeredRef.current = true;
-    startRecording();
+    setShowConsentPrompt(true);
   }, [autoStart, session, effectiveProviderId, isRecording, isUploading]);
 
   const stopRecording = () => {
@@ -340,8 +371,14 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
     if (isRecording) {
       stopRecording();
     } else {
-      startRecording();
+      setShowConsentPrompt(true);
     }
+  };
+
+  const handleConsentConfirmed = () => {
+    const method = consentMethod;
+    setShowConsentPrompt(false);
+    void startRecording(method);
   };
 
   useEffect(() => {
@@ -362,15 +399,29 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
 
     const handleTranscript = (data: {
       recordingId: string;
+      chunkIndex: number;
       text: string;
+      confidence?: number;
+      source?: 'live' | 'mock';
       receivedAt: string;
+      speakerRole?: 'provider' | 'patient' | 'unknown';
     }) => {
       if (data.recordingId !== recordingId || !data.text) return;
       setLiveStatus('streaming');
       setLiveError(null);
       setLiveTranscript((prev) => {
-        const next = [...prev, data.text.trim()].filter(Boolean);
-        return next.slice(-8);
+        const next = [
+          ...prev.filter((item) => item.chunkIndex !== data.chunkIndex),
+          {
+            chunkIndex: data.chunkIndex,
+            text: data.text.trim(),
+            confidence: data.confidence,
+            source: data.source,
+            receivedAt: data.receivedAt,
+            speakerRole: data.speakerRole || 'unknown',
+          },
+        ].filter((item) => item.text);
+        return next.sort((a, b) => a.chunkIndex - b.chunkIndex).slice(-12);
       });
     };
 
@@ -379,10 +430,17 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
       setLiveStatus('streaming');
       setLiveError(null);
       const savedLines = data.recovery?.savedChunks
-        ?.map((chunk) => chunk.text.trim())
-        .filter(Boolean) || [];
+        ?.map((chunk) => ({
+          chunkIndex: chunk.chunkIndex,
+          text: chunk.text.trim(),
+          confidence: chunk.confidence,
+          source: chunk.source,
+          receivedAt: chunk.receivedAt,
+          speakerRole: chunk.speakerRole || 'unknown',
+        }))
+        .filter((chunk) => chunk.text) || [];
       if (savedLines.length > 0) {
-        setLiveTranscript(savedLines.slice(-8));
+        setLiveTranscript(savedLines.slice(-12));
       }
     };
 
@@ -521,9 +579,19 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
                         : 'Listening for speech... transcript updates in real time.'}
                     </span>
                   ) : (
-                    liveTranscript.map((line, idx) => (
-                      <div key={`${idx}-${line.slice(0, 12)}`} className="scribe-panel__draft-line">
-                        {line}
+                    liveTranscript.map((line) => (
+                      <div key={`${line.chunkIndex}-${line.text.slice(0, 12)}`} className="scribe-panel__draft-line">
+                        <div className="scribe-panel__draft-line-meta">
+                          <span className={`scribe-panel__speaker-badge ${getSpeakerClass(line.speakerRole)}`}>
+                            {getSpeakerLabel(line.speakerRole)}
+                          </span>
+                          {typeof line.confidence === 'number' && (
+                            <span className="scribe-panel__confidence">
+                              {Math.round(line.confidence * 100)}%
+                            </span>
+                          )}
+                        </div>
+                        <div>{line.text}</div>
                       </div>
                     ))
                   )}
@@ -547,6 +615,47 @@ export const ScribePanel = forwardRef<HTMLDivElement, ScribePanelProps>(({
           )}
         </div>
       </div>
+
+      {/* Consent Prompt Modal */}
+      {showConsentPrompt && (
+        <div className="scribe-panel__modal-overlay">
+          <div className="scribe-panel__modal">
+            <h3 className="scribe-panel__modal-title">Confirm patient consent</h3>
+            <p className="scribe-panel__modal-text">
+              Confirm consent has been obtained before starting the AI scribe recording.
+            </p>
+            <label className="scribe-panel__consent-label" htmlFor="scribe-consent-method">
+              Consent method
+            </label>
+            <select
+              id="scribe-consent-method"
+              className="scribe-panel__consent-select"
+              value={consentMethod}
+              onChange={(event) => setConsentMethod(event.target.value as ConsentMethod)}
+            >
+              <option value="verbal">Verbal</option>
+              <option value="written">Written</option>
+              <option value="electronic">Electronic</option>
+            </select>
+            <div className="scribe-panel__modal-actions">
+              <button
+                type="button"
+                onClick={() => setShowConsentPrompt(false)}
+                className="scribe-panel__modal-btn scribe-panel__modal-btn--secondary"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConsentConfirmed}
+                className="scribe-panel__modal-btn scribe-panel__modal-btn--primary"
+              >
+                Start Recording
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Continue Prompt Modal */}
       {showContinuePrompt && (

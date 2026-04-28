@@ -3,6 +3,7 @@ import express from "express";
 import { auditRouter } from "../audit";
 import { pool } from "../../db/pool";
 import { createAuditLog } from "../../services/audit";
+import { getAuditSchemaInfo } from "../../services/auditSchema";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -19,6 +20,10 @@ jest.mock("../../services/audit", () => ({
   createAuditLog: jest.fn(),
 }));
 
+jest.mock("../../services/auditSchema", () => ({
+  getAuditSchemaInfo: jest.fn(),
+}));
+
 jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),
@@ -31,10 +36,41 @@ app.use("/audit", auditRouter);
 
 const queryMock = pool.query as jest.Mock;
 const auditLogMock = createAuditLog as jest.Mock;
+const auditSchemaMock = getAuditSchemaInfo as jest.Mock;
+const defaultAuditSchemaInfo = {
+  columns: new Set([
+    "id",
+    "tenant_id",
+    "action",
+    "created_at",
+    "user_id",
+    "resource_type",
+    "resource_id",
+    "ip_address",
+    "user_agent",
+    "changes",
+    "metadata",
+    "severity",
+    "status",
+  ]),
+  columnMap: {
+    userId: "user_id",
+    resourceType: "resource_type",
+    resourceId: "resource_id",
+    ipAddress: "ip_address",
+    userAgent: "user_agent",
+    changes: "changes",
+    metadata: "metadata",
+    severity: "severity",
+    status: "status",
+  },
+};
 
 beforeEach(() => {
   queryMock.mockReset();
   auditLogMock.mockReset();
+  auditSchemaMock.mockReset();
+  auditSchemaMock.mockResolvedValue(defaultAuditSchemaInfo);
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 

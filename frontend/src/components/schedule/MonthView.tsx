@@ -115,6 +115,22 @@ export function MonthView({
     }
   };
 
+  const isTelehealthAppointment = (appointment: Appointment | null | undefined) => {
+    if (!appointment) return false;
+    const combined = `${appointment.appointmentTypeName || ''} ${appointment.locationName || ''}`.toLowerCase();
+    return /telehealth|virtual|video/.test(combined);
+  };
+
+  const isHistoricalScheduledAppointment = (appointment: Appointment) => {
+    if (appointment.status !== 'scheduled') return false;
+    const appointmentDate = new Date(appointment.scheduledStart);
+    if (Number.isNaN(appointmentDate.getTime())) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    appointmentDate.setHours(0, 0, 0, 0);
+    return appointmentDate.getTime() < today.getTime();
+  };
+
   // Format date key for hover state
   const getDateKey = (date: Date) => {
     return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
@@ -174,8 +190,9 @@ export function MonthView({
                       selectedAppointment?.id === appt.id ? 'selected' : ''
                     }`}
                     style={{
-                      backgroundColor: getStatusColor(appt.status),
-                      borderLeft: `3px solid ${getStatusColor(appt.status)}`,
+                      backgroundColor: isHistoricalScheduledAppointment(appt) ? '#cbd5e1' : getStatusColor(appt.status),
+                      borderLeft: `3px solid ${isHistoricalScheduledAppointment(appt) ? '#94a3b8' : getStatusColor(appt.status)}`,
+                      opacity: isHistoricalScheduledAppointment(appt) ? 0.85 : 1,
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -184,7 +201,7 @@ export function MonthView({
                     title={`${new Date(appt.scheduledStart).toLocaleTimeString('en-US', {
                       hour: 'numeric',
                       minute: '2-digit',
-                    })} - ${appt.patientName}`}
+                    })} - ${isTelehealthAppointment(appt) ? 'Video • ' : ''}${appt.patientName}`}
                   >
                     <span className="appointment-time">
                       {new Date(appt.scheduledStart).toLocaleTimeString('en-US', {
@@ -193,6 +210,7 @@ export function MonthView({
                       })}
                     </span>
                     <span className="appointment-patient">
+                      {isTelehealthAppointment(appt) ? 'Video ' : ''}
                       {appt.patientName}
                     </span>
                   </div>

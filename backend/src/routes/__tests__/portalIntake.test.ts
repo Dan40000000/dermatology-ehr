@@ -302,6 +302,28 @@ describe("Patient portal intake routes", () => {
     expect(res.status).toBe(400);
   });
 
+  it("PUT /intake/checkin/:sessionId stores follow-up visit details", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "session-1", appointmentId: "appt-1" }] })
+      .mockResolvedValueOnce({ rows: [{ id: "session-1", status: "in_progress" }] });
+
+    const visitDetails = {
+      intakeKind: "follow_up",
+      chiefComplaint: "Worsening rash",
+      affectedAreas: ["Arms / hands"],
+      skinSymptoms: ["Itching"],
+    };
+
+    const res = await request(app)
+      .put("/intake/checkin/session-1")
+      .send({ visitDetails });
+
+    expect(res.status).toBe(200);
+    const updateCall = queryMock.mock.calls.find(([sql]) => String(sql).includes("UPDATE portal_checkin_sessions"));
+    expect(updateCall?.[0]).toContain("visit_details");
+    expect(updateCall?.[1][0]).toBe(JSON.stringify(visitDetails));
+  });
+
   it("PUT /intake/checkin/:sessionId completes session", async () => {
     queryMock.mockImplementation((sql: string) => {
       if (sql.includes("FROM portal_checkin_sessions") && sql.includes("appointment_id as")) {

@@ -52,6 +52,7 @@ jest.mock('../../services/smsWorkflowService', () => ({
 
 jest.mock('../../lib/roles', () => ({
   userHasRole: jest.fn(),
+  buildEffectiveRoles: jest.fn(() => ['admin']),
 }));
 
 jest.mock('../../utils/phone', () => ({
@@ -384,6 +385,60 @@ describe('SMS routes', () => {
     expect(res.body.conversations[0].phone).toBe('5550100');
   });
 
+  it('GET /sms/conversations dedupes obvious same-person duplicate records', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          patientId: 'canonical',
+          firstName: 'Daniel',
+          lastName: 'Perry',
+          phone: '541-231-8693',
+          smsOptIn: true,
+          category: 'billing',
+          threadStatus: 'waiting-provider',
+          threadId: 'thread-1',
+          unreadCount: 1,
+          lastMessageAt: '2026-04-14T14:21:55.130Z',
+          lastMessageTime: '2026-04-14T14:21:55.130Z',
+        },
+        {
+          patientId: 'duplicate',
+          firstName: 'Perry',
+          lastName: 'Daniel ',
+          phone: '5412318693',
+          smsOptIn: true,
+          category: 'general',
+          threadStatus: 'open',
+          threadId: null,
+          unreadCount: 7,
+          lastMessageAt: '2026-04-14T14:20:34.971Z',
+          lastMessageTime: '2026-04-14T14:20:34.971Z',
+        },
+        {
+          patientId: 'shared-family',
+          firstName: 'Jamie',
+          lastName: 'Perry',
+          phone: '5412318693',
+          smsOptIn: true,
+          category: 'general',
+          threadStatus: 'open',
+          threadId: null,
+          unreadCount: 0,
+          lastMessageAt: '2026-04-14T13:00:00.000Z',
+          lastMessageTime: '2026-04-14T13:00:00.000Z',
+        },
+      ],
+    });
+
+    const res = await request(app).get('/sms/conversations');
+
+    expect(res.status).toBe(200);
+    expect(res.body.conversations).toHaveLength(2);
+    expect(res.body.conversations[0].patientId).toBe('canonical');
+    expect(res.body.conversations.some((conversation: any) => conversation.patientId === 'duplicate')).toBe(false);
+    expect(res.body.conversations.some((conversation: any) => conversation.patientId === 'shared-family')).toBe(true);
+  });
+
   it('GET /sms/conversations/:patientId returns 404 when missing', async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -703,9 +758,12 @@ describe('SMS routes', () => {
   });
 
   it('POST /sms/send-bulk schedules messages', async () => {
-    queryMock.mockResolvedValueOnce({
-      rows: [{ twilio_account_sid: 'sid', twilio_auth_token: 'token', twilio_phone_number: '+1555', is_active: true }],
-    });
+    queryMock
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ twilio_account_sid: 'sid', twilio_auth_token: 'token', twilio_phone_number: '+1555', is_active: true }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).post('/sms/send-bulk').send({
       patientIds: ['00000000-0000-4000-8000-000000000001'],
@@ -717,8 +775,25 @@ describe('SMS routes', () => {
     expect(res.body.scheduled).toBe(true);
   });
 
+  it('POST /sms/send-bulk rejects scheduling opted-out patients', async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ patientId: '00000000-0000-4000-8000-000000000001' }],
+      });
+
+    const res = await request(app).post('/sms/send-bulk').send({
+      patientIds: ['00000000-0000-4000-8000-000000000001'],
+      messageBody: 'Hello',
+      scheduleTime: '2024-01-01T10:00:00Z',
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('opted_out');
+  });
+
   it('POST /sms/send-bulk sends messages immediately', async () => {
     queryMock
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [{ twilio_account_sid: 'sid', twilio_auth_token: 'token', twilio_phone_number: '+1555', is_active: true }],
       })
@@ -726,9 +801,6 @@ describe('SMS routes', () => {
         rows: [
           { id: 'p1', phone: '5550100', first_name: 'Pat', last_name: 'Lee' },
         ],
-      })
-      .mockResolvedValueOnce({
-        rows: [{ opted_in: true }],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -762,7 +834,7 @@ describe('SMS routes', () => {
   });
 
   it('POST /sms/scheduled creates scheduled message', async () => {
-    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).post('/sms/scheduled').send({
       patientId: '00000000-0000-4000-8000-000000000001',
@@ -772,6 +844,21 @@ describe('SMS routes', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+  });
+
+  it('POST /sms/scheduled rejects opted-out patients', async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{ patientId: '00000000-0000-4000-8000-000000000001' }],
+    });
+
+    const res = await request(app).post('/sms/scheduled').send({
+      patientId: '00000000-0000-4000-8000-000000000001',
+      messageBody: 'Hello',
+      scheduledSendTime: '2024-01-01T10:00:00Z',
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('opted_out');
   });
 
   it('DELETE /sms/scheduled/:id cancels message', async () => {
@@ -1160,6 +1247,31 @@ describe('SMS routes', () => {
     expect(processIncomingMock).toHaveBeenCalled();
   });
 
+  it('POST /sms/test/inbound simulates inbound messages in non-production environments even when live mode is enabled', async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ twilio_phone_number: '+15550001111', is_active: true, is_test_mode: false }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ phone: '5550100' }],
+      });
+    processIncomingMock.mockResolvedValueOnce({
+      success: true,
+      messageId: 'msg-in-live-1',
+      autoResponseSent: false,
+      actionPerformed: 'message_logged',
+    });
+
+    const res = await request(app).post('/sms/test/inbound').send({
+      patientId: '00000000-0000-4000-8000-000000000001',
+      messageBody: 'Need billing help',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(processIncomingMock).toHaveBeenCalled();
+  });
+
   it('PUT /sms/conversations/:patientId/mark-read returns 500 on error', async () => {
     connectMock.mockRejectedValueOnce(new Error('boom'));
 
@@ -1365,6 +1477,9 @@ describe('SMS routes', () => {
   it('POST /sms/send-bulk counts failures for no phone and opted out', async () => {
     queryMock
       .mockResolvedValueOnce({
+        rows: [{ patientId: 'p2' }],
+      })
+      .mockResolvedValueOnce({
         rows: [{ twilio_account_sid: 'sid', twilio_auth_token: 'token', twilio_phone_number: '+1555', is_active: true }],
       })
       .mockResolvedValueOnce({
@@ -1372,9 +1487,6 @@ describe('SMS routes', () => {
           { id: 'p1', phone: null, first_name: 'Pat', last_name: 'Lee' },
           { id: 'p2', phone: '5550100', first_name: 'Sam', last_name: 'Lee' },
         ],
-      })
-      .mockResolvedValueOnce({
-        rows: [{ opted_in: false }],
       });
 
     const res = await request(app).post('/sms/send-bulk').send({
@@ -1388,6 +1500,7 @@ describe('SMS routes', () => {
 
   it('POST /sms/send-bulk handles send errors', async () => {
     queryMock
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [{ twilio_account_sid: 'sid', twilio_auth_token: 'token', twilio_phone_number: '+1555', is_active: true }],
       })
@@ -1395,9 +1508,6 @@ describe('SMS routes', () => {
         rows: [
           { id: 'p1', phone: '5550100', first_name: 'Pat', last_name: 'Lee' },
         ],
-      })
-      .mockResolvedValueOnce({
-        rows: [{ opted_in: true }],
       });
     twilioServiceMock.sendSMS.mockRejectedValueOnce(new Error('boom'));
 

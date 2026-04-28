@@ -71,6 +71,7 @@ function App() {
   const [tenantId, setTenantId] = useState("tenant-demo");
   const [email, setEmail] = useState("admin@demo.practice");
   const [password, setPassword] = useState("Password123!");
+  const [showPassword, setShowPassword] = useState(false);
   const [session, setSession] = useState<Session>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -443,7 +444,7 @@ function App() {
           <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
             <div style={{ fontSize: '3rem', marginBottom: '1rem' }}></div>
             <h1 style={{ margin: '0 0 0.5rem 0', color: '#1e1147', fontSize: '1.5rem', fontWeight: 700 }}>
-              Mountain Pine Dermatology
+              Dermatology DEMO Office
             </h1>
             <p style={{ margin: 0, color: '#6b7280', fontSize: '0.9375rem' }}>
               Sign in to access your practice dashboard
@@ -474,15 +475,38 @@ function App() {
             </label>
             <label style={{ color: '#374151', fontSize: '0.875rem', fontWeight: 600 }}>
               Password
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="current-password"
-                placeholder="••••••••••"
-                style={{ marginTop: '0.375rem', padding: '0.75rem 1rem', fontSize: '1rem' }}
-              />
+              <div style={{ position: 'relative', marginTop: '0.375rem' }}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                  placeholder="••••••••••"
+                  style={{ padding: '0.75rem 4.75rem 0.75rem 1rem', fontSize: '1rem', width: '100%' }}
+                />
+                <button
+                  type="button"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  onClick={() => setShowPassword((current) => !current)}
+                  style={{
+                    position: 'absolute',
+                    right: '0.5rem',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    border: 'none',
+                    background: '#ede9fe',
+                    color: '#5b21b6',
+                    borderRadius: '999px',
+                    padding: '0.35rem 0.7rem',
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
             </label>
             <button type="submit" style={{ marginTop: '0.5rem', padding: '1rem', fontSize: '1rem' }}>
               Sign In
@@ -522,7 +546,7 @@ function App() {
     <div className="page">
       <div className="layout">
         <div className="topbar">
-          <div className="brand">Mountain Pine Dermatology PLLC</div>
+          <div className="brand">Dermatology DEMO Office</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1, justifyContent: 'center', maxWidth: '500px', margin: '0 2rem' }}>
             <select
               style={{

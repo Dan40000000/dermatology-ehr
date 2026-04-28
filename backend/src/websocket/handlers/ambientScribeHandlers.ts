@@ -4,7 +4,11 @@ import { AuthenticatedSocket } from "../auth";
 import { logger } from "../../lib/logger";
 import { pool } from "../../db/pool";
 import { transcribeLiveAudioChunk } from "../../services/ambientAI";
-import { generateAmbientLiveInsights } from "../../services/ambientLiveInsights";
+import {
+  generateAmbientLiveInsights,
+  inferLiveSpeakerRole,
+  type LiveSpeakerRole,
+} from "../../services/ambientLiveInsights";
 
 interface AmbientJoinPayload {
   recordingId: string;
@@ -24,6 +28,7 @@ interface AmbientTranscriptEvent {
   confidence: number;
   receivedAt: string;
   source: "live" | "mock";
+  speakerRole: LiveSpeakerRole;
 }
 
 interface SavedChunk {
@@ -32,15 +37,20 @@ interface SavedChunk {
   confidence: number;
   source: "live" | "mock";
   receivedAt: string;
+  speakerRole: LiveSpeakerRole;
 }
 
 interface AmbientInsightsEvent {
   recordingId: string;
   source: "heuristic";
   updatedAt: string;
+  visitSummary: ReturnType<typeof generateAmbientLiveInsights>["visitSummary"];
   symptoms: Array<{ label: string; confidence: number; evidence?: string }>;
   workingDiagnoses: Array<{ condition: string; confidence: number; reasoning: string; icd10Code?: string }>;
   suggestedTests: Array<{ testName: string; urgency: "routine" | "soon" | "urgent"; rationale: string; cptCode?: string }>;
+  medications: ReturnType<typeof generateAmbientLiveInsights>["medications"];
+  clinicalActions: ReturnType<typeof generateAmbientLiveInsights>["clinicalActions"];
+  safetyFlags: ReturnType<typeof generateAmbientLiveInsights>["safetyFlags"];
 }
 
 const LIVE_TRANSCRIBE_ENABLED = process.env.AMBIENT_LIVE_TRANSCRIBE_ENABLED !== "false";
@@ -109,6 +119,7 @@ async function getSavedChunks(
       confidence: parseFloat(row.confidence),
       source: row.source as "live" | "mock",
       receivedAt: row.receivedAt.toISOString(),
+      speakerRole: inferLiveSpeakerRole(row.text),
     }));
   } catch (error: any) {
     logger.error("Failed to retrieve saved chunks", {
@@ -208,9 +219,13 @@ function buildAmbientInsightsPayload(recordingId: string, history: SavedChunk[])
     recordingId,
     source: insights.source,
     updatedAt: insights.updatedAt,
+    visitSummary: insights.visitSummary,
     symptoms: insights.symptoms,
     workingDiagnoses: insights.workingDiagnoses,
     suggestedTests: insights.suggestedTests,
+    medications: insights.medications,
+    clinicalActions: insights.clinicalActions,
+    safetyFlags: insights.safetyFlags,
   };
 }
 
@@ -219,6 +234,10 @@ function buildInsightsSignature(payload: AmbientInsightsEvent): string {
     symptoms: payload.symptoms.map((item) => item.label),
     diagnoses: payload.workingDiagnoses.map((item) => item.condition),
     tests: payload.suggestedTests.map((item) => item.testName),
+    summary: payload.visitSummary.oneLiner,
+    meds: payload.medications.map((item) => item.name),
+    actions: payload.clinicalActions.map((item) => item.label),
+    flags: payload.safetyFlags.map((item) => item.label),
   });
 }
 
@@ -295,6 +314,7 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
             confidence: chunk.confidence,
             source: chunk.source,
             receivedAt: chunk.receivedAt,
+            speakerRole: chunk.speakerRole,
           })),
         },
       });
@@ -412,7 +432,8 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
       const result = await transcribeLiveAudioChunk(
         audioBuffer,
         payload.mimeType || "audio/webm",
-        payload.chunkIndex
+        payload.chunkIndex,
+        { tenantId: socket.tenantId }
       );
 
       sessionState.lastTranscriptAt = now;
@@ -429,6 +450,7 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
         confidence: result.confidence,
         source: result.source,
         receivedAt,
+        speakerRole: inferLiveSpeakerRole(result.text),
       };
 
       sessionState.transcriptHistory = upsertTranscriptHistory(sessionState.transcriptHistory, savedChunk);
@@ -455,6 +477,7 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
         confidence: result.confidence,
         receivedAt,
         source: result.source,
+        speakerRole: savedChunk.speakerRole,
       };
 
       io.to(getAmbientRoom(recordingId)).emit("ambient:transcript", eventPayload);

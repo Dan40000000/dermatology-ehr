@@ -2,8 +2,23 @@ import { Router } from "express";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { redisCache, CacheKeys, CacheTTL } from "../services/redisCache";
+import { mapDowntimeSettings } from "../lib/downtimeSettings";
+import { mapDowntimePrimaryDevice } from "../lib/downtimePrimaryDevice";
 
 export const locationsRouter = Router();
+
+function mapLocationRow(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    address: row.address,
+    phone: row.phone,
+    isActive: row.isActive,
+    createdAt: row.createdAt,
+    downtimeSettings: mapDowntimeSettings(row),
+    downtimePrimaryDevice: mapDowntimePrimaryDevice(row),
+  };
+}
 
 /**
  * @swagger
@@ -60,14 +75,33 @@ locationsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
 
   // If not in cache, query database
   const result = await pool.query(
-    `select id, name, address, created_at as "createdAt"
+    `select id,
+            name,
+            address,
+            phone,
+            is_active as "isActive",
+            created_at as "createdAt",
+            downtime_packets_enabled as "downtimePacketsEnabled",
+            downtime_packet_time as "downtimePacketTime",
+            downtime_device_profile as "downtimeDeviceProfile",
+            downtime_include_dob as "downtimeIncludeDob",
+            downtime_include_phone as "downtimeIncludePhone",
+            downtime_include_insurance as "downtimeIncludeInsurance",
+            downtime_primary_device_id as "downtimePrimaryDeviceId",
+            downtime_primary_device_label as "downtimePrimaryDeviceLabel",
+            downtime_primary_device_registered_at as "downtimePrimaryDeviceRegisteredAt",
+            downtime_primary_device_registered_by as "downtimePrimaryDeviceRegisteredBy",
+            downtime_primary_device_last_seen_at as "downtimePrimaryDeviceLastSeenAt",
+            downtime_primary_device_last_packet_saved_at as "downtimePrimaryDeviceLastPacketSavedAt",
+            downtime_primary_device_last_packet_date as "downtimePrimaryDeviceLastPacketDate"
      from locations where tenant_id = $1 order by name`,
     [tenantId],
   );
+  const locations = result.rows.map(mapLocationRow);
 
   // Store in cache for 1 hour (locations rarely change)
-  await redisCache.set(cacheKey, result.rows, CacheTTL.LONG);
+  await redisCache.set(cacheKey, locations, CacheTTL.LONG);
 
   res.setHeader('X-Cache', 'MISS');
-  res.json({ locations: result.rows });
+  res.json({ locations });
 });

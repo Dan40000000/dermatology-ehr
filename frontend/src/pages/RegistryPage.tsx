@@ -10,10 +10,41 @@ import {
   fetchChronicTherapyRegistry,
   fetchRegistryAlerts,
   fetchPasiHistory,
+  recordRecallContact,
 } from '../api';
 import { Link, useSearchParams } from 'react-router-dom';
+import { formatPhoneDisplay } from '../utils/phone';
 
 type RegistryType = 'dashboard' | 'melanoma' | 'psoriasis' | 'acne' | 'chronic_therapy' | 'alerts';
+
+type MelanomaRegistryPatient = {
+  id: string;
+  patient_id: string;
+  patient_name: string;
+  mrn?: string | null;
+  dob?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  diagnosis_date?: string | null;
+  ajcc_stage?: string | null;
+  breslow_depth_mm?: number | null;
+  sentinel_node_biopsy_performed?: boolean | null;
+  sentinel_node_status?: string | null;
+  next_scheduled_exam?: string | null;
+  recurrence_status?: string | null;
+  recall_id?: string | null;
+  recall_status?: string | null;
+  recall_due_date?: string | null;
+  last_reminder_type?: string | null;
+  last_reminder_sent_at?: string | null;
+  last_reminder_delivery_status?: string | null;
+  contact_attempts?: number | null;
+  text_thread_id?: string | null;
+  text_thread_status?: string | null;
+};
+
+const defaultMelanomaRecallSms =
+  'Dermatology DEMO Office: You are overdue for your melanoma follow-up skin exam. Please call us or reply to schedule. Reply STOP to opt out.';
 
 const REGISTRY_TAB_QUERY_MAP: Record<string, RegistryType> = {
   dashboard: 'dashboard',
@@ -31,7 +62,7 @@ const REGISTRY_TAB_QUERY_MAP: Record<string, RegistryType> = {
 
 export function RegistryPage() {
   const { session } = useAuth();
-  const { showError } = useToast();
+  const { showError, showSuccess } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<RegistryType>('dashboard');
@@ -40,7 +71,7 @@ export function RegistryPage() {
   const [dashboard, setDashboard] = useState<any>(null);
 
   // Registry data
-  const [melanomaPatients, setMelanomaPatients] = useState<any[]>([]);
+  const [melanomaPatients, setMelanomaPatients] = useState<MelanomaRegistryPatient[]>([]);
   const [psoriasisPatients, setPsoriasisPatients] = useState<any[]>([]);
   const [acnePatients, setAcnePatients] = useState<any[]>([]);
   const [chronicTherapyPatients, setChronicTherapyPatients] = useState<any[]>([]);
@@ -49,6 +80,7 @@ export function RegistryPage() {
   // Selected patient for details
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
   const [pasiHistory, setPasiHistory] = useState<any[]>([]);
+  const [melanomaActionPatientId, setMelanomaActionPatientId] = useState<string | null>(null);
 
   const loadDashboard = useCallback(async () => {
     if (!session) return;
@@ -185,6 +217,54 @@ export function RegistryPage() {
     return new Date(dateStr).toLocaleDateString();
   };
 
+  const formatDateTime = (dateStr: string | null | undefined) => {
+    if (!dateStr) return '--';
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return dateStr;
+    return date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  };
+
+  const formatReminderType = (value: string | null | undefined) => {
+    switch ((value || '').toLowerCase()) {
+      case 'sms':
+        return 'Text';
+      case 'phone':
+        return 'Call';
+      case 'mail':
+        return 'Mail';
+      case 'portal':
+        return 'Portal';
+      case 'email':
+        return 'Email';
+      default:
+        return 'Outreach';
+    }
+  };
+
+  const formatDeliveryStatus = (value: string | null | undefined) => {
+    switch ((value || '').toLowerCase()) {
+      case 'delivered':
+        return 'Delivered';
+      case 'sent':
+        return 'Sent';
+      case 'pending':
+        return 'Pending';
+      case 'failed':
+        return 'Failed';
+      case 'bounced':
+        return 'Bounced';
+      case 'opted_out':
+        return 'Opted out';
+      default:
+        return value || '';
+    }
+  };
+
+  const buildTelHref = (phone: string | null | undefined) => {
+    const normalized = String(phone || '').replace(/[^\d+]/g, '');
+    return normalized ? `tel:${normalized}` : undefined;
+  };
+
   const getDaysUntil = (dateStr: string | null | undefined) => {
     if (!dateStr) return null;
     const date = new Date(dateStr);
@@ -202,6 +282,167 @@ export function RegistryPage() {
     if (percent < 75) return 'bg-orange-100 text-orange-800';
     return 'bg-red-100 text-red-800';
   };
+
+  const toNumber = (value: unknown) => {
+    const num = Number(value ?? 0);
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  const getRegistryCount = (registryType: RegistryType | 'acne') =>
+    toNumber(dashboard?.registryCounts?.find((reg: any) => reg.registry_type === registryType)?.patient_count);
+
+  const registrySummaryCards = dashboard ? [
+    {
+      id: 'melanoma' as RegistryType,
+      title: 'Melanoma',
+      count: toNumber(dashboard.registrySummaries?.melanoma?.totalPatients) || getRegistryCount('melanoma'),
+      accent: '#0f766e',
+      bg: '#f0fdfa',
+      metrics: [
+        { label: 'Due this week', value: toNumber(dashboard.registrySummaries?.melanoma?.followupsDue) },
+        { label: 'Overdue', value: toNumber(dashboard.registrySummaries?.melanoma?.overdueFollowups) },
+        { label: 'Need staging', value: toNumber(dashboard.registrySummaries?.melanoma?.unstagedPatients) },
+      ],
+    },
+    {
+      id: 'psoriasis' as RegistryType,
+      title: 'Psoriasis',
+      count: toNumber(dashboard.registrySummaries?.psoriasis?.totalPatients) || getRegistryCount('psoriasis'),
+      accent: '#4338ca',
+      bg: '#eef2ff',
+      metrics: [
+        { label: 'On biologic', value: toNumber(dashboard.registrySummaries?.psoriasis?.biologicPatients) },
+        { label: 'Labs overdue', value: toNumber(dashboard.registrySummaries?.psoriasis?.labsOverdue) },
+        { label: 'Missing PASI baseline', value: toNumber(dashboard.registrySummaries?.psoriasis?.missingBaselinePasi) },
+      ],
+    },
+    {
+      id: 'acne' as RegistryType,
+      title: 'Acne / Isotretinoin',
+      count: toNumber(dashboard.registrySummaries?.acne?.totalPatients) || getRegistryCount('acne'),
+      accent: '#b45309',
+      bg: '#fffbeb',
+      metrics: [
+        { label: 'iPLEDGE enrolled', value: toNumber(dashboard.registrySummaries?.acne?.ipledgeEnrolled) },
+        { label: 'Pregnancy tests due', value: toNumber(dashboard.registrySummaries?.acne?.pregnancyTestsDue) },
+        { label: 'Labs overdue', value: toNumber(dashboard.registrySummaries?.acne?.labsOverdue) },
+      ],
+    },
+    {
+      id: 'chronic_therapy' as RegistryType,
+      title: 'Chronic Therapy',
+      count: toNumber(dashboard.registrySummaries?.chronicTherapy?.totalPatients) || getRegistryCount('chronic_therapy'),
+      accent: '#7c3aed',
+      bg: '#faf5ff',
+      metrics: [
+        { label: 'Labs overdue', value: toNumber(dashboard.registrySummaries?.chronicTherapy?.labsOverdue) },
+        { label: 'Labs due soon', value: toNumber(dashboard.registrySummaries?.chronicTherapy?.labsDueSoon) },
+        { label: 'Biologic therapies', value: toNumber(dashboard.registrySummaries?.chronicTherapy?.biologicTherapies) },
+      ],
+    },
+  ] : [];
+
+  const actionCards = dashboard ? [
+    {
+      label: 'Melanoma follow-ups due',
+      value: toNumber(dashboard.alerts?.melanomaDue),
+      bg: '#fffbeb',
+      border: '#fef3c7',
+      color: '#92400e',
+    },
+    {
+      label: 'Melanoma follow-ups overdue',
+      value: toNumber(dashboard.alerts?.melanomaOverdue),
+      bg: '#fef2f2',
+      border: '#fecaca',
+      color: '#991b1b',
+    },
+    {
+      label: 'Registry labs overdue',
+      value: toNumber(dashboard.alerts?.labsOverdue),
+      bg: '#eef2ff',
+      border: '#c7d2fe',
+      color: '#3730a3',
+    },
+    {
+      label: 'Pregnancy tests due',
+      value: toNumber(dashboard.alerts?.pregnancyTestsDue),
+      bg: '#faf5ff',
+      border: '#ddd6fe',
+      color: '#5b21b6',
+    },
+  ] : [];
+
+  const qualityCards = dashboard ? [
+    {
+      label: 'Melanoma Staging Rate (MIPS 137)',
+      value: `${toNumber(dashboard.qualityMetrics?.melanoma_staging_rate).toFixed(1)}%`,
+    },
+    {
+      label: 'Psoriasis PASI Documentation (MIPS 485)',
+      value: `${toNumber(dashboard.qualityMetrics?.psoriasis_pasi_rate).toFixed(1)}%`,
+    },
+    {
+      label: 'Systemic Therapy Labs Compliance',
+      value: `${toNumber(dashboard.qualityMetrics?.labs_compliance_rate).toFixed(1)}%`,
+    },
+    {
+      label: 'Isotretinoin Monitoring Up to Date',
+      value: `${toNumber(dashboard.qualityMetrics?.isotretinoin_monitoring_rate).toFixed(1)}%`,
+    },
+  ] : [];
+
+  const getAlertAppearance = (alertType: string | null | undefined) => {
+    switch (alertType) {
+      case 'melanoma_followup_overdue':
+      case 'psoriasis_labs_overdue':
+      case 'chronic_therapy_labs_overdue':
+      case 'isotretinoin_labs_overdue':
+        return {
+          borderLeft: '4px solid #dc2626',
+          background: '#fef2f2',
+          label: 'Overdue',
+          color: '#991b1b',
+        };
+      case 'pregnancy_test_due':
+        return {
+          borderLeft: '4px solid #7c3aed',
+          background: '#faf5ff',
+          label: 'Due soon',
+          color: '#5b21b6',
+        };
+      default:
+        return {
+          borderLeft: '4px solid #f59e0b',
+          background: '#fffbeb',
+          label: 'Needs review',
+          color: '#92400e',
+        };
+    }
+  };
+
+  const handleSendMelanomaRecallSms = useCallback(async (patient: MelanomaRegistryPatient) => {
+    if (!session) return;
+    if (!patient.recall_id) {
+      showError('No melanoma recall is linked for this patient yet');
+      return;
+    }
+
+    setMelanomaActionPatientId(patient.patient_id);
+    try {
+      await recordRecallContact(session.tenantId, session.accessToken, patient.recall_id, {
+        contactMethod: 'sms',
+        notes: 'Melanoma registry SMS sent from disease registry',
+        messageContent: defaultMelanomaRecallSms,
+      });
+      showSuccess(`Recall SMS sent to ${patient.patient_name}`);
+      await loadMelanoma();
+    } catch (err: any) {
+      showError(err.message || 'Failed to send melanoma recall SMS');
+    } finally {
+      setMelanomaActionPatientId(null);
+    }
+  }, [loadMelanoma, session, showError, showSuccess]);
 
   return (
     <div className="content-card">
@@ -253,95 +494,163 @@ export function RegistryPage() {
             <p className="muted">Loading dashboard...</p>
           ) : dashboard ? (
             <>
-              {/* Registry Counts */}
               <div style={{ marginBottom: '2rem' }}>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '1rem' }}>
                   Registry Overview
                 </h2>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-                  {dashboard.registryCounts?.map((reg: any) => (
-                    <div
-                      key={reg.registry_type}
+                <p className="muted" style={{ marginBottom: '1rem' }}>
+                  These counts are pulled from the live disease registry tables, so they match the registry tabs below.
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem' }}>
+                  {registrySummaryCards.map((card) => (
+                    <button
+                      key={card.id}
+                      onClick={() => setRegistryTab(card.id)}
                       style={{
-                        padding: '1.5rem',
+                        padding: '1.25rem',
                         border: '1px solid #e5e7eb',
-                        borderRadius: '8px',
+                        borderRadius: '10px',
                         background: '#fff',
+                        textAlign: 'left',
+                        cursor: 'pointer',
                       }}
                     >
-                      <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>
-                        {reg.name}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
+                        <div>
+                          <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.35rem' }}>
+                            {card.title}
+                          </div>
+                          <div style={{ fontSize: '2rem', fontWeight: '700', color: '#111827' }}>
+                            {card.count}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>active patients</div>
+                        </div>
+                        <div
+                          style={{
+                            alignSelf: 'flex-start',
+                            padding: '0.3rem 0.65rem',
+                            borderRadius: '999px',
+                            background: card.bg,
+                            color: card.accent,
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                          }}
+                        >
+                          Open
+                        </div>
                       </div>
-                      <div style={{ fontSize: '2rem', fontWeight: '700', color: '#111827' }}>
-                        {reg.patient_count}
+                      <div style={{ display: 'grid', gap: '0.55rem' }}>
+                        {card.metrics.map((metric) => (
+                          <div
+                            key={metric.label}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              gap: '1rem',
+                              fontSize: '0.875rem',
+                            }}
+                          >
+                            <span style={{ color: '#6b7280' }}>{metric.label}</span>
+                            <span style={{ color: '#111827', fontWeight: 600 }}>{metric.value}</span>
+                          </div>
+                        ))}
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>patients</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '2rem' }}>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '1rem' }}>
+                  Registry Dashboards
+                </h2>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem' }}>
+                  {registrySummaryCards.map((card) => (
+                    <div
+                      key={`${card.id}-dashboard`}
+                      style={{
+                        border: `1px solid ${card.bg === '#fff' ? '#e5e7eb' : card.bg}`,
+                        borderRadius: '10px',
+                        background: card.bg,
+                        padding: '1.25rem',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.75rem' }}>
+                        <div style={{ fontSize: '1rem', fontWeight: 600, color: '#111827' }}>{card.title}</div>
+                        <button
+                          onClick={() => setRegistryTab(card.id)}
+                          className="ghost"
+                          style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
+                        >
+                          Open
+                        </button>
+                      </div>
+                      <div style={{ display: 'grid', gap: '0.6rem' }}>
+                        {card.metrics.map((metric) => (
+                          <div
+                            key={`${card.id}-${metric.label}`}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              gap: '1rem',
+                              padding: '0.55rem 0.7rem',
+                              borderRadius: '8px',
+                              background: '#fff',
+                            }}
+                          >
+                            <span style={{ color: '#4b5563', fontSize: '0.875rem' }}>{metric.label}</span>
+                            <span style={{ color: card.accent, fontWeight: 700 }}>{metric.value}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Alerts Summary */}
               <div style={{ marginBottom: '2rem' }}>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '1rem' }}>Action Items</h2>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
-                  <div style={{ padding: '1rem', border: '1px solid #fef3c7', borderRadius: '8px', background: '#fffbeb' }}>
-                    <div style={{ fontSize: '0.875rem', color: '#92400e', marginBottom: '0.5rem' }}>
-                      Melanoma Follow-ups Due
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+                  {actionCards.map((card) => (
+                    <div
+                      key={card.label}
+                      style={{ padding: '1rem', border: `1px solid ${card.border}`, borderRadius: '8px', background: card.bg }}
+                    >
+                      <div style={{ fontSize: '0.875rem', color: card.color, marginBottom: '0.5rem' }}>
+                        {card.label}
+                      </div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: '700', color: card.color }}>
+                        {card.value}
+                      </div>
                     </div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#92400e' }}>
-                      {dashboard.alerts?.melanomaDue || 0}
-                    </div>
-                  </div>
-                  <div style={{ padding: '1rem', border: '1px solid #fecaca', borderRadius: '8px', background: '#fef2f2' }}>
-                    <div style={{ fontSize: '0.875rem', color: '#991b1b', marginBottom: '0.5rem' }}>
-                      Labs Overdue
-                    </div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#991b1b' }}>
-                      {dashboard.alerts?.labsOverdue || 0}
-                    </div>
-                  </div>
-                  <div style={{ padding: '1rem', border: '1px solid #ddd6fe', borderRadius: '8px', background: '#faf5ff' }}>
-                    <div style={{ fontSize: '0.875rem', color: '#5b21b6', marginBottom: '0.5rem' }}>
-                      Pregnancy Tests Due
-                    </div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#5b21b6' }}>
-                      {dashboard.alerts?.pregnancyTestsDue || 0}
-                    </div>
-                  </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: '1rem' }}>
+                  <button
+                    onClick={() => setRegistryTab('alerts')}
+                    className="ghost"
+                    style={{ padding: '0.5rem 0.9rem', fontSize: '0.875rem' }}
+                  >
+                    Open Alerts
+                  </button>
                 </div>
               </div>
 
-              {/* Quality Metrics */}
               <div>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '1rem' }}>
                   Quality Metrics (MIPS)
                 </h2>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
-                  <div style={{ padding: '1rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
-                    <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>
-                      Melanoma Staging Rate (MIPS 137)
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+                  {qualityCards.map((metric) => (
+                    <div key={metric.label} style={{ padding: '1rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+                      <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>
+                        {metric.label}
+                      </div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#10b981' }}>
+                        {metric.value}
+                      </div>
                     </div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#10b981' }}>
-                      {parseFloat(dashboard.qualityMetrics?.melanoma_staging_rate || 0).toFixed(1)}%
-                    </div>
-                  </div>
-                  <div style={{ padding: '1rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
-                    <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>
-                      Psoriasis PASI Documentation (MIPS 485)
-                    </div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#10b981' }}>
-                      {parseFloat(dashboard.qualityMetrics?.psoriasis_pasi_rate || 0).toFixed(1)}%
-                    </div>
-                  </div>
-                  <div style={{ padding: '1rem', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
-                    <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>
-                      Systemic Therapy Labs Compliance
-                    </div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#10b981' }}>
-                      {parseFloat(dashboard.qualityMetrics?.labs_compliance_rate || 0).toFixed(1)}%
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             </>
@@ -374,6 +683,7 @@ export function RegistryPage() {
                     <th>Sentinel Node</th>
                     <th>Next Exam</th>
                     <th>Status</th>
+                    <th>Outreach</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -382,6 +692,9 @@ export function RegistryPage() {
                     const daysUntil = getDaysUntil(patient.next_scheduled_exam);
                     const isOverdue = daysUntil !== null && daysUntil < 0;
                     const isDueSoon = daysUntil !== null && daysUntil >= 0 && daysUntil <= 7;
+                    const telHref = buildTelHref(patient.phone);
+                    const hasTextThread = Boolean(patient.text_thread_id);
+                    const isSendingSms = melanomaActionPatientId === patient.patient_id;
 
                     return (
                       <tr key={patient.id}>
@@ -389,6 +702,7 @@ export function RegistryPage() {
                           <Link to={`/patients/${patient.patient_id}`} style={{ color: '#2563eb', textDecoration: 'none' }}>
                             {patient.patient_name}
                           </Link>
+                          <div className="muted tiny">{patient.email || formatPhoneDisplay(patient.phone) || 'No contact on file'}</div>
                         </td>
                         <td>{patient.mrn}</td>
                         <td>{formatDate(patient.diagnosis_date)}</td>
@@ -437,9 +751,65 @@ export function RegistryPage() {
                           </span>
                         </td>
                         <td>
-                          <Link to={`/patients/${patient.patient_id}`} className="ghost" style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem' }}>
-                            View
-                          </Link>
+                          {patient.last_reminder_type ? (
+                            <>
+                              <span
+                                className="pill"
+                                style={{
+                                  background:
+                                    patient.last_reminder_delivery_status === 'failed' || patient.last_reminder_delivery_status === 'bounced'
+                                      ? '#fee2e2'
+                                      : patient.last_reminder_type === 'sms'
+                                        ? '#dbeafe'
+                                        : '#f3f4f6',
+                                  color:
+                                    patient.last_reminder_delivery_status === 'failed' || patient.last_reminder_delivery_status === 'bounced'
+                                      ? '#991b1b'
+                                      : patient.last_reminder_type === 'sms'
+                                        ? '#1d4ed8'
+                                        : '#4b5563',
+                                }}
+                              >
+                                {formatReminderType(patient.last_reminder_type)}
+                              </span>
+                              <div className="muted tiny" style={{ marginTop: '0.35rem' }}>
+                                {formatDateTime(patient.last_reminder_sent_at)}
+                                {patient.last_reminder_delivery_status ? ` • ${formatDeliveryStatus(patient.last_reminder_delivery_status)}` : ''}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="muted tiny">No outreach sent yet</div>
+                          )}
+                          <div className="muted tiny" style={{ marginTop: '0.35rem' }}>
+                            {patient.contact_attempts || 0} attempt(s)
+                            {patient.recall_status ? ` • Recall ${patient.recall_status}` : ''}
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                            <Link className="btn-sm" to={`/text-messages?patientId=${patient.patient_id}`}>
+                              {hasTextThread ? 'Open Text' : 'Text Patient'}
+                            </Link>
+                            {patient.recall_id && (
+                              <button
+                                type="button"
+                                className="btn-sm btn-primary"
+                                onClick={() => handleSendMelanomaRecallSms(patient)}
+                                disabled={isSendingSms || !patient.phone}
+                                title={!patient.phone ? 'Patient has no phone number' : undefined}
+                              >
+                                {isSendingSms ? 'Sending...' : 'Send Recall SMS'}
+                              </button>
+                            )}
+                            {telHref && (
+                              <a className="btn-sm btn-secondary" href={telHref}>
+                                Call
+                              </a>
+                            )}
+                            <Link to={`/patients/${patient.patient_id}`} className="btn-sm btn-secondary">
+                              Chart
+                            </Link>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -735,12 +1105,27 @@ export function RegistryPage() {
                     padding: '1rem',
                     border: '1px solid #e5e7eb',
                     borderRadius: '8px',
-                    borderLeft: alert.alert_type === 'labs_overdue' ? '4px solid #dc2626' : '4px solid #f59e0b',
+                    borderLeft: getAlertAppearance(alert.alert_type).borderLeft,
+                    background: getAlertAppearance(alert.alert_type).background,
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
                     <div>
-                      <div style={{ fontWeight: '600', marginBottom: '0.25rem' }}>{alert.patient_name}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
+                        <div style={{ fontWeight: '600' }}>{alert.patient_name}</div>
+                        <span
+                          style={{
+                            padding: '0.15rem 0.45rem',
+                            borderRadius: '999px',
+                            fontSize: '0.7rem',
+                            fontWeight: 600,
+                            color: getAlertAppearance(alert.alert_type).color,
+                            background: '#fff',
+                          }}
+                        >
+                          {getAlertAppearance(alert.alert_type).label}
+                        </span>
+                      </div>
                       <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.5rem' }}>
                         MRN: {alert.mrn}
                       </div>

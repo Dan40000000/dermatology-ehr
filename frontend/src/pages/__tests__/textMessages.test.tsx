@@ -11,6 +11,10 @@ const toastMocks = vi.hoisted(() => ({
   showError: vi.fn(),
 }));
 
+const routerMocks = vi.hoisted(() => ({
+  searchParams: new URLSearchParams(),
+}));
+
 const apiMocks = vi.hoisted(() => ({
   fetchPatients: vi.fn(),
   fetchSMSTemplates: vi.fn(),
@@ -52,6 +56,14 @@ vi.mock('../../contexts/ToastContext', () => ({
 }));
 
 vi.mock('../../api', () => apiMocks);
+
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return {
+    ...actual,
+    useSearchParams: () => [routerMocks.searchParams, vi.fn()] as const,
+  };
+});
 
 vi.mock('../../components/ui', () => ({
   Panel: ({ children, title }: { children: React.ReactNode; title?: string }) => (
@@ -151,6 +163,7 @@ describe('TextMessagesPage', () => {
   beforeEach(() => {
     authMocks.session = { tenantId: 'tenant-1', accessToken: 'token-1' };
     authMocks.user = { role: 'admin' };
+    routerMocks.searchParams = new URLSearchParams();
     const fixtures = buildFixtures();
     apiMocks.fetchSMSConversations.mockResolvedValue({ conversations: fixtures.conversations });
     apiMocks.fetchSMSTemplates.mockResolvedValue({ templates: fixtures.templates });
@@ -258,7 +271,9 @@ describe('TextMessagesPage', () => {
 
     fireEvent.click(screen.getByText('Ana Derm'));
     await waitFor(() => expect(apiMocks.fetchSMSConversation).toHaveBeenCalledWith('tenant-1', 'token-1', 'patient-1'));
-    expect(screen.getByText('Hello from patient')).toBeInTheDocument();
+    const chatArea = document.querySelector('.sms-chat-area');
+    expect(chatArea).not.toBeNull();
+    expect(within(chatArea as HTMLElement).getByText('Hello from patient')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'T' }));
     expect(screen.getByText('Insert Template')).toBeInTheDocument();
@@ -352,6 +367,31 @@ describe('TextMessagesPage', () => {
       expect(apiMocks.requestSMSConsent).toHaveBeenCalledWith('tenant-1', 'token-1', 'patient-1'),
     );
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('Opt-in text sent');
+  });
+
+  it('disables outbound texting for opted-out patients', async () => {
+    apiMocks.getSMSConsent.mockResolvedValueOnce({
+      hasConsent: false,
+      pendingRequest: false,
+      optedOut: true,
+      daysUntilExpiration: null,
+    });
+
+    render(<TextMessagesPage />);
+
+    await screen.findByRole('heading', { name: 'Text Messages' });
+    fireEvent.click(screen.getByText('Ana Derm'));
+    await waitFor(() => expect(apiMocks.fetchSMSConversation).toHaveBeenCalledWith('tenant-1', 'token-1', 'patient-1'));
+
+    const messageBox = screen.getByPlaceholderText(
+      'Patient opted out of SMS. They must reply START or YES before staff can text again.'
+    ) as HTMLTextAreaElement;
+    fireEvent.change(messageBox, { target: { value: 'Hello there' } });
+
+    const sendButton = screen.getByRole('button', { name: 'Send' });
+    expect(sendButton).toBeDisabled();
+    fireEvent.click(sendButton);
+    expect(apiMocks.sendSMSConversationMessage).not.toHaveBeenCalled();
   });
 
   it('manages templates, bulk send, scheduled cancel, and opt-in settings', async () => {
@@ -598,7 +638,9 @@ describe('TextMessagesPage', () => {
     await screen.findByRole('heading', { name: 'Text Messages' });
 
     fireEvent.click(screen.getByText('Ana Derm'));
-    await screen.findByText('Hello from patient');
+    const chatArea = document.querySelector('.sms-chat-area');
+    expect(chatArea).not.toBeNull();
+    await within(chatArea as HTMLElement).findByText('Hello from patient');
 
     fireEvent.change(screen.getByPlaceholderText('Type a message...'), { target: { value: 'Test send' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -860,7 +902,9 @@ describe('TextMessagesPage', () => {
 
     await screen.findByRole('heading', { name: 'Text Messages' });
     fireEvent.click(screen.getByText('Ana Derm'));
-    await screen.findByText('Hello from patient');
+    const chatArea = document.querySelector('.sms-chat-area');
+    expect(chatArea).not.toBeNull();
+    await within(chatArea as HTMLElement).findByText('Hello from patient');
 
     fireEvent.change(screen.getByPlaceholderText('Type a message...'), { target: { value: 'Ping' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -935,6 +979,20 @@ describe('TextMessagesPage', () => {
           createdAt: now,
         },
         {
+          id: 'msg-3b',
+          direction: 'outbound',
+          messageBody: 'Accepted',
+          status: 'accepted',
+          createdAt: now,
+        },
+        {
+          id: 'msg-3c',
+          direction: 'outbound',
+          messageBody: 'Undelivered',
+          status: 'undelivered',
+          createdAt: now,
+        },
+        {
           id: 'msg-4',
           direction: 'inbound',
           messageBody: 'Inbound',
@@ -968,6 +1026,8 @@ describe('TextMessagesPage', () => {
     await screen.findByText('Delivered');
     expect(screen.getByText('(Delivered)')).toBeInTheDocument();
     expect(screen.getByText('(Sent)')).toBeInTheDocument();
+    expect(screen.getByText('(Accepted)')).toBeInTheDocument();
+    expect(screen.getByText('(Undelivered)')).toBeInTheDocument();
     expect(screen.getByText('(Failed)')).toBeInTheDocument();
 
     const messageBox = screen.getByPlaceholderText('Type a message...') as HTMLTextAreaElement;

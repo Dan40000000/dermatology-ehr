@@ -56,9 +56,9 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText('auth:login.demoCredentials')).toBeInTheDocument();
+    expect(screen.getByText(/Beta test credentials/i)).toBeInTheDocument();
     expect(screen.getByText(/admin@demo.practice/)).toBeInTheDocument();
-    expect(screen.getByText(/Password123!/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Password123!/).length).toBeGreaterThan(0);
   });
 
   it('should have pre-filled default values', () => {
@@ -109,6 +109,21 @@ describe('LoginPage', () => {
 
     await waitFor(() => {
       expect(mockLogin).toHaveBeenCalledWith('tenant-demo', 'admin@demo.practice', 'Password123!');
+    });
+  });
+
+  it('should fill and submit the physician demo credentials', async () => {
+    render(
+      <BrowserRouter>
+        <LoginPage />
+      </BrowserRouter>
+    );
+
+    fireEvent.click(screen.getByText('provider@demo.practice').closest('button')!);
+    fireEvent.click(screen.getByRole('button', { name: /auth:login.signInButton/i }));
+
+    await waitFor(() => {
+      expect(mockLogin).toHaveBeenCalledWith('tenant-demo', 'provider@demo.practice', 'Password123!');
     });
   });
 
@@ -222,6 +237,21 @@ describe('LoginPage', () => {
     const passwordInput = screen.getByPlaceholderText(/•/);
 
     expect(emailInput).toHaveAttribute('type', 'email');
+    expect(passwordInput).toHaveAttribute('type', 'password');
+  });
+
+  it('should allow staff to show and hide the password', () => {
+    render(
+      <BrowserRouter>
+        <LoginPage />
+      </BrowserRouter>
+    );
+
+    const passwordInput = screen.getByPlaceholderText(/•/);
+    fireEvent.click(screen.getByRole('button', { name: /Show password/i }));
+    expect(passwordInput).toHaveAttribute('type', 'text');
+
+    fireEvent.click(screen.getByRole('button', { name: /Hide password/i }));
     expect(passwordInput).toHaveAttribute('type', 'password');
   });
 

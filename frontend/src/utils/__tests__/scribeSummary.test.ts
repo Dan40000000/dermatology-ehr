@@ -3,7 +3,8 @@ import {
   buildSymptoms,
   buildDiagnoses,
   buildTests,
-  buildSummaryText
+  buildSummaryText,
+  coerceSummaryList
 } from '../scribeSummary';
 
 const baseNote: AmbientGeneratedNote = {
@@ -99,5 +100,21 @@ describe('scribeSummary helpers', () => {
     });
 
     expect(summaryText).toBe('We reviewed your rash symptoms and treatment options.');
+  });
+
+  it('coerces legacy patient summary symptom strings without crashing patient charts', () => {
+    expect(coerceSummaryList('["Rash","Itching"]')).toEqual(['Rash', 'Itching']);
+    expect(coerceSummaryList('Rash; Itching\nRedness')).toEqual(['Rash', 'Itching', 'Redness']);
+
+    const symptoms = buildSymptoms(null, {
+      id: 'summary-1',
+      visitDate: '2026-02-14T00:00:00.000Z',
+      providerName: 'Derm Provider',
+      summaryText: 'Reviewed rash.',
+      symptomsDiscussed: 'Rash; Itching' as any,
+      createdAt: '2026-02-14T00:00:00.000Z',
+    });
+
+    expect(symptoms).toEqual(['Rash', 'Itching']);
   });
 });

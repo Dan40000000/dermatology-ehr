@@ -7,6 +7,35 @@ async function seed() {
   await pool.query("begin");
   try {
     const tenantId = "tenant-demo";
+    const tableColumnsCache = new Map<string, Set<string>>();
+    const tableExists = async (tableName: string) => {
+      const result = await pool.query(
+        `select exists (
+          select 1
+          from information_schema.tables
+          where table_schema = 'public' and table_name = $1
+        ) as exists`,
+        [tableName],
+      );
+      return Boolean(result.rows[0]?.exists);
+    };
+    const getTableColumns = async (tableName: string) => {
+      if (tableColumnsCache.has(tableName)) {
+        return tableColumnsCache.get(tableName)!;
+      }
+      const result = await pool.query(
+        `select column_name
+         from information_schema.columns
+         where table_schema = 'public' and table_name = $1`,
+        [tableName],
+      );
+      const columns = new Set<string>(result.rows.map((row) => String(row.column_name)));
+      tableColumnsCache.set(tableName, columns);
+      return columns;
+    };
+    const columnExists = async (tableName: string, columnName: string) => {
+      return (await getTableColumns(tableName)).has(columnName);
+    };
     await pool.query(
       `insert into tenants(id, name) values ($1, $2) on conflict (id) do nothing`,
       [tenantId, "Demo Dermatology"],
@@ -37,6 +66,102 @@ async function seed() {
       );
     }
 
+    const rosterTarget = 800;
+    const syntheticFirstNamesMale = [
+      "Liam", "Noah", "Oliver", "James", "Benjamin", "Elijah", "Lucas", "Mason", "Ethan", "Henry",
+      "Owen", "Levi", "Wyatt", "Jack", "Julian", "Caleb", "Ezra", "Dominic", "Isaac", "Parker",
+    ];
+    const syntheticFirstNamesFemale = [
+      "Olivia", "Emma", "Charlotte", "Amelia", "Sophia", "Ava", "Mia", "Isabella", "Evelyn", "Harper",
+      "Nora", "Lily", "Hannah", "Natalie", "Leah", "Claire", "Maya", "Grace", "Stella", "Zoey",
+    ];
+    const syntheticLastNames = [
+      "Adams", "Anderson", "Bennett", "Brooks", "Carter", "Collins", "Diaz", "Edwards", "Foster", "Garcia",
+      "Gomez", "Gray", "Harris", "Jackson", "Kelly", "Lee", "Lopez", "Mitchell", "Morgan", "Nelson",
+      "Nguyen", "Ortiz", "Patel", "Perez", "Ramirez", "Reed", "Rivera", "Ross", "Sanders", "Scott",
+      "Simmons", "Stewart", "Taylor", "Thomas", "Turner", "Walker", "Ward", "Watson", "White", "Young",
+    ];
+    const syntheticCities = [
+      { city: "Denver", zip: "80202" },
+      { city: "Boulder", zip: "80301" },
+      { city: "Aurora", zip: "80012" },
+      { city: "Lakewood", zip: "80226" },
+      { city: "Littleton", zip: "80120" },
+      { city: "Arvada", zip: "80003" },
+      { city: "Westminster", zip: "80031" },
+      { city: "Centennial", zip: "80112" },
+      { city: "Parker", zip: "80134" },
+      { city: "Thornton", zip: "80241" },
+    ];
+    const syntheticStreets = [
+      "Maple", "Oak", "Pine", "Aspen", "Cedar", "Willow", "Cherry", "Juniper", "Sunset", "Highland",
+      "Canyon", "Grant", "Pearl", "Lincoln", "Spruce", "Birch", "Madison", "Broadway", "Elm", "Meadow",
+    ];
+    const syntheticInsurances = [
+      "Blue Cross Blue Shield of Colorado",
+      "Aetna",
+      "Cigna",
+      "United Healthcare",
+      "Kaiser Permanente",
+      "Anthem Blue Cross",
+      "Medicare",
+    ];
+    const syntheticAllergies = [
+      "None",
+      "Penicillin",
+      "Sulfa drugs",
+      "Latex",
+      "Adhesive tape",
+      "Doxycycline",
+      "Nickel",
+    ];
+    const syntheticMedications = [
+      "None",
+      "Tretinoin cream",
+      "Spironolactone 50mg daily",
+      "Dupixent every 2 weeks",
+      "Methotrexate 15mg weekly",
+      "Benzoyl peroxide wash",
+      "Clobetasol ointment",
+      "Metronidazole cream",
+      "Doxycycline 100mg BID",
+      "Azelaic acid gel",
+    ];
+    const syntheticSeededRandom = (seed: number) => {
+      let state = seed >>> 0;
+      return () => {
+        state = (state * 1664525 + 1013904223) >>> 0;
+        return state / 0x100000000;
+      };
+    };
+    const createSyntheticPatient = (index: number) => {
+      const random = syntheticSeededRandom(20260427 + index);
+      const sex = random() > 0.55 ? "F" : "M";
+      const firstNames = sex === "F" ? syntheticFirstNamesFemale : syntheticFirstNamesMale;
+      const firstName = firstNames[Math.floor(random() * firstNames.length)]!;
+      const lastName = syntheticLastNames[index % syntheticLastNames.length]!;
+      const cityInfo = syntheticCities[index % syntheticCities.length]!;
+      const street = syntheticStreets[Math.floor(random() * syntheticStreets.length)]!;
+      const birthYear = 1945 + Math.floor(random() * 60);
+      const birthMonth = 1 + Math.floor(random() * 12);
+      const birthDay = 1 + Math.floor(random() * 28);
+      return {
+        id: `p-synth-${String(index + 1).padStart(4, "0")}`,
+        first_name: firstName,
+        last_name: lastName,
+        dob: `${birthYear}-${String(birthMonth).padStart(2, "0")}-${String(birthDay).padStart(2, "0")}`,
+        phone: `(303) 555-${String(2000 + index).padStart(4, "0")}`,
+        email: `${firstName}.${lastName}.${index + 1}@example.test`.toLowerCase(),
+        address: `${200 + ((index * 19) % 9600)} ${street} ${random() > 0.5 ? "St" : "Ave"}`,
+        city: cityInfo.city,
+        state: "CO",
+        zip: cityInfo.zip,
+        insurance: syntheticInsurances[index % syntheticInsurances.length]!,
+        allergies: syntheticAllergies[index % syntheticAllergies.length]!,
+        medications: syntheticMedications[index % syntheticMedications.length]!,
+      };
+    };
+
     const patients = [
       // Original demo patients
       {
@@ -53,6 +178,66 @@ async function seed() {
         insurance: "Acme Health",
         allergies: "Penicillin",
         medications: "Topical cream",
+      },
+      {
+        id: "demo-patient-1",
+        first_name: "Alex",
+        last_name: "Johnson",
+        dob: "1985-03-15",
+        phone: "(720) 555-0142",
+        email: "patient@demo.portal",
+        address: "4821 Pinecrest Drive",
+        city: "Denver",
+        state: "CO",
+        zip: "80202",
+        insurance: "Blue Cross Blue Shield of Colorado",
+        allergies: "Penicillin (Hives), Sulfonamides (Rash)",
+        medications: "Methotrexate 15mg weekly, Tretinoin 0.025% cream",
+      },
+      {
+        id: "demo-patient-2",
+        first_name: "Jane",
+        last_name: "Doe",
+        dob: "1992-07-22",
+        phone: "(303) 555-0287",
+        email: "jane@demo.portal",
+        address: "1103 Maple Street",
+        city: "Boulder",
+        state: "CO",
+        zip: "80301",
+        insurance: "Aetna HMO Silver Plan",
+        allergies: "Latex (Anaphylaxis), Nickel (Contact Dermatitis)",
+        medications: "Dupilumab 300mg SC q2w, Hydrocortisone 2.5% cream, Cetirizine 10mg daily",
+      },
+      {
+        id: "demo-patient-3",
+        first_name: "Marcus",
+        last_name: "Williams",
+        dob: "2002-07-22",
+        phone: "(720) 555-0319",
+        email: "marcus@demo.portal",
+        address: "88 Larimer Street",
+        city: "Denver",
+        state: "CO",
+        zip: "80202",
+        insurance: "United Healthcare",
+        allergies: "Sulfa drugs (Rash)",
+        medications: "Isotretinoin 40mg daily, Benzoyl peroxide 5% wash",
+      },
+      {
+        id: "demo-patient-4",
+        first_name: "Sofia",
+        last_name: "Chen",
+        dob: "1995-12-01",
+        phone: "(303) 555-0441",
+        email: "sofia@demo.portal",
+        address: "302 Pearl Street",
+        city: "Boulder",
+        state: "CO",
+        zip: "80302",
+        insurance: "Cigna PPO",
+        allergies: "No known allergies",
+        medications: "Spironolactone 50mg daily, Tretinoin 0.05% cream",
       },
       {
         id: "p-demo-2",
@@ -531,6 +716,11 @@ async function seed() {
       },
     ];
 
+    const syntheticPatientCount = Math.max(rosterTarget - patients.length, 0);
+    for (let index = 0; index < syntheticPatientCount; index += 1) {
+      patients.push(createSyntheticPatient(index));
+    }
+
     for (const p of patients) {
       await pool.query(
         `insert into patients(id, tenant_id, first_name, last_name, dob, phone, email, address, city, state, zip, insurance, allergies, medications)
@@ -555,26 +745,641 @@ async function seed() {
       );
     }
 
+    const enrichedPortalPatientProfiles = [
+      {
+        id: "demo-patient-1",
+        emergencyContactName: "Lisa Johnson",
+        emergencyContactRelationship: "Spouse",
+        emergencyContactPhone: "(720) 555-0143",
+        pharmacyName: "Walgreens",
+        pharmacyPhone: "(720) 555-9200",
+        pharmacyAddress: "1560 Blake St, Denver, CO 80202",
+      },
+      {
+        id: "demo-patient-2",
+        emergencyContactName: "Mark Doe",
+        emergencyContactRelationship: "Spouse",
+        emergencyContactPhone: "(303) 555-0288",
+        pharmacyName: "CVS Pharmacy",
+        pharmacyPhone: "(303) 555-8800",
+        pharmacyAddress: "1600 28th St, Boulder, CO 80301",
+      },
+      {
+        id: "demo-patient-3",
+        emergencyContactName: "Alicia Williams",
+        emergencyContactRelationship: "Mother",
+        emergencyContactPhone: "(720) 555-0320",
+        pharmacyName: "King Soopers Pharmacy",
+        pharmacyPhone: "(720) 555-7711",
+        pharmacyAddress: "1950 Chestnut Pl, Denver, CO 80202",
+      },
+      {
+        id: "demo-patient-4",
+        emergencyContactName: "Daniel Chen",
+        emergencyContactRelationship: "Brother",
+        emergencyContactPhone: "(303) 555-0442",
+        pharmacyName: "CVS Pharmacy",
+        pharmacyPhone: "(303) 555-8800",
+        pharmacyAddress: "1600 28th St, Boulder, CO 80301",
+      },
+    ];
+
+    for (const profile of enrichedPortalPatientProfiles) {
+      await pool.query(
+        `update patients
+         set emergency_contact_name = $3,
+             emergency_contact_relationship = $4,
+             emergency_contact_phone = $5,
+             pharmacy_name = $6,
+             pharmacy_phone = $7,
+             pharmacy_address = $8,
+             updated_at = current_timestamp
+         where id = $1 and tenant_id = $2`,
+        [
+          profile.id,
+          tenantId,
+          profile.emergencyContactName,
+          profile.emergencyContactRelationship,
+          profile.emergencyContactPhone,
+          profile.pharmacyName,
+          profile.pharmacyPhone,
+          profile.pharmacyAddress,
+        ],
+      );
+    }
+
+    const dateOffset = (days: number) => {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() + days);
+      return date.toISOString().slice(0, 10);
+    };
+    const hasPatientSmsPreferences = Boolean(
+      (await pool.query("select to_regclass('patient_sms_preferences') as table_name")).rows[0]?.table_name,
+    );
+    const ensureRecallCommunicationPreferences = async (patientId: string, preferredMethod: string) => {
+      await pool.query(
+        `update patient_communication_preferences
+         set allow_email = true,
+             allow_sms = true,
+             allow_phone = true,
+             allow_mail = true,
+             preferred_method = $3,
+             opted_out = false,
+             updated_at = now()
+         where tenant_id = $1 and patient_id = $2`,
+        [tenantId, patientId, preferredMethod],
+      );
+
+      await pool.query(
+        `insert into patient_communication_preferences(
+          id,
+          tenant_id,
+          patient_id,
+          allow_email,
+          allow_sms,
+          allow_phone,
+          allow_mail,
+          preferred_method,
+          opted_out,
+          created_at,
+          updated_at
+        )
+        select $1,$2,$3,true,true,true,true,$4,false,now(),now()
+        where not exists (
+          select 1 from patient_communication_preferences where tenant_id = $2 and patient_id = $3
+        )`,
+        [`recall-comm-pref-${patientId}`, tenantId, patientId, preferredMethod],
+      );
+
+      if (hasPatientSmsPreferences) {
+        await pool.query(
+          `insert into patient_sms_preferences(
+            id,
+            tenant_id,
+            patient_id,
+            opted_in,
+            appointment_reminders,
+            transactional_messages,
+            marketing_messages,
+            consent_date,
+            consent_method,
+            updated_at
+          )
+          values ($1,$2,$3,true,true,true,false,now(),'demo_recall_seed',now())
+          on conflict (tenant_id, patient_id) do update set
+            opted_in = true,
+            appointment_reminders = true,
+            transactional_messages = true,
+            updated_at = now()`,
+          [`sms-pref-recall-${patientId}`, tenantId, patientId],
+        );
+      }
+    };
+
+    const melanomaPatientIds = [
+      "p-demo",
+      "p-demo-2",
+      "demo-patient-1",
+      "demo-patient-2",
+      "demo-patient-3",
+      "demo-patient-4",
+      ...Array.from({ length: 24 }, (_, index) => `p-${String(index + 1).padStart(3, "0")}`),
+    ];
+    const annualSkinCheckPatientIds = [
+      ...Array.from({ length: 6 }, (_, index) => `p-${String(index + 25).padStart(3, "0")}`),
+      ...Array.from({ length: 24 }, (_, index) => `p-synth-${String(index + 1).padStart(4, "0")}`),
+    ];
+    const melanomaStages = ["IA", "IB", "IIA", "IIB", "IIIA"];
+    const melanomaSites = [
+      "upper back",
+      "right arm",
+      "left shoulder",
+      "scalp",
+      "right thigh",
+      "nose",
+      "left calf",
+      "chest",
+      "right forearm",
+      "left cheek",
+      "mid back",
+      "abdomen",
+      "left ear",
+      "right lower leg",
+      "posterior neck",
+      "left upper arm",
+      "right temple",
+      "left dorsal hand",
+      "right shoulder",
+      "left shin",
+      "mid scalp",
+      "left flank",
+      "right chest",
+      "left jawline",
+      "upper sternum",
+      "right calf",
+      "left posterior thigh",
+      "right lateral neck",
+      "left collarbone",
+      "mid upper back",
+    ];
+
+    const seedRecallCohorts = async (defaultProviderId: string) => {
+      const melanomaRecallIds = melanomaPatientIds.map((_, index) => `melanoma-recall-${String(index + 1).padStart(2, "0")}`);
+      const annualRecallIds = annualSkinCheckPatientIds.map((_, index) => `annual-skin-check-recall-${String(index + 1).padStart(2, "0")}`);
+
+      await pool.query(
+        `insert into recall_campaigns(
+          id,
+          tenant_id,
+          name,
+          description,
+          recall_type,
+          interval_months,
+          criteria,
+          message_template,
+          is_active,
+          created_at,
+          updated_at
+        )
+        values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,true,now(),now())
+        on conflict (id) do update set
+          name = excluded.name,
+          description = excluded.description,
+          recall_type = excluded.recall_type,
+          interval_months = excluded.interval_months,
+          criteria = excluded.criteria,
+          message_template = excluded.message_template,
+          is_active = true,
+          updated_at = now()`,
+        [
+          "recall-campaign-melanoma-surveillance",
+          tenantId,
+          "Melanoma Surveillance",
+          "Patients with melanoma history who need recurring total body skin exams and staff outreach.",
+          "Melanoma Surveillance",
+          3,
+          JSON.stringify({ diagnoses: ["C43.%", "D03.%", "Z85.820"], intervalsMonths: [3, 6], riskLevel: ["high"] }),
+          "Dermatology DEMO Office: You are due for a dermatology follow-up visit. Please call us or reply to schedule. Reply STOP to opt out.",
+        ],
+      );
+
+      await pool.query(
+        `insert into recall_campaigns(
+          id,
+          tenant_id,
+          name,
+          description,
+          recall_type,
+          interval_months,
+          criteria,
+          message_template,
+          is_active,
+          created_at,
+          updated_at
+        )
+        values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,true,now(),now())
+        on conflict (id) do update set
+          name = excluded.name,
+          description = excluded.description,
+          recall_type = excluded.recall_type,
+          interval_months = excluded.interval_months,
+          criteria = excluded.criteria,
+          message_template = excluded.message_template,
+          is_active = true,
+          updated_at = now()`,
+        [
+          "recall-campaign-annual-skin-check",
+          tenantId,
+          "Annual Skin Check",
+          "Patients due for annual total body skin exams and proactive outreach.",
+          "Annual Skin Check",
+          12,
+          JSON.stringify({ appointmentType: ["Derm Consult", "Skin Check"], intervalMonths: [12], riskLevel: ["routine", "elevated"] }),
+          "Dermatology DEMO Office: It is time to schedule your annual skin check. Please call us or reply to schedule. Reply STOP to opt out.",
+        ],
+      );
+
+      await pool.query(
+        `update recall_campaigns
+         set is_active = false,
+             updated_at = now()
+         where tenant_id = $1
+           and id <> 'recall-campaign-annual-skin-check'
+           and (
+             lower(coalesce(name, '')) like 'annual skin check%' or
+             lower(coalesce(recall_type, '')) = 'annual skin check'
+           )`,
+        [tenantId],
+      );
+
+      await pool.query(
+        `delete from patient_recalls
+         where tenant_id = $1
+           and campaign_id = 'recall-campaign-melanoma-surveillance'
+           and not (id = any($2::text[]))`,
+        [tenantId, melanomaRecallIds],
+      );
+
+      await pool.query(
+        `delete from patient_recalls
+         where tenant_id = $1
+           and campaign_id = 'recall-campaign-annual-skin-check'
+           and not (id = any($2::text[]))`,
+        [tenantId, annualRecallIds],
+      );
+
+      for (let index = 0; index < melanomaPatientIds.length; index++) {
+        const patientId = melanomaPatientIds[index]!;
+        const dueOffset = -21 + index * 3;
+        const intervalMonths = index % 2 === 0 ? 3 : 6;
+        const stage = melanomaStages[index % melanomaStages.length]!;
+        const site = melanomaSites[index % melanomaSites.length]!;
+        const dueDate = dateOffset(dueOffset);
+        const diagnosisDate = dateOffset(-365 - index * 21);
+        const lastExamDate = dateOffset(dueOffset - intervalMonths * 30);
+        const intervalText = `${intervalMonths}-month`;
+        const diagnosisCode = index % 3 === 0 ? "C43.9" : index % 3 === 1 ? "D03.9" : "Z85.820";
+        const diagnosisDescription =
+          diagnosisCode === "C43.9"
+            ? "Malignant melanoma of skin, unspecified"
+            : diagnosisCode === "D03.9"
+              ? "Melanoma in situ, unspecified"
+              : "Personal history of malignant melanoma of skin";
+        const clinicalNote = `Melanoma surveillance recall: Stage ${stage} melanoma history at ${site}; ${intervalText} total body skin exam due ${dueDate}.`;
+
+        await pool.query(
+          `update patients
+           set past_medical_history = case
+               when coalesce(past_medical_history, '') ilike '%melanoma%' then past_medical_history
+               else concat_ws(E'\\n', nullif(past_medical_history, ''), $3::text)
+             end,
+             updated_at = now()
+           where id = $1 and tenant_id = $2`,
+          [patientId, tenantId, `History of malignant melanoma (${stage}), ${site}.`],
+        );
+
+        await pool.query(
+          `update melanoma_registry
+           set diagnosis_date = $3,
+               primary_site = $4,
+               ajcc_stage = $5,
+               surveillance_schedule = $6,
+               last_full_body_exam = $7,
+               next_scheduled_exam = $8,
+               recurrence_status = 'no_recurrence',
+               surveillance_adherent = $9,
+               notes = $10,
+               updated_at = now()
+           where tenant_id = $1 and patient_id = $2`,
+          [
+            tenantId,
+            patientId,
+            diagnosisDate,
+            site,
+            stage,
+            `every_${intervalMonths}_months`,
+            lastExamDate,
+            dueDate,
+            dueOffset >= 0,
+            clinicalNote,
+          ],
+        );
+
+        await pool.query(
+          `insert into melanoma_registry(
+            id,
+            tenant_id,
+            patient_id,
+            diagnosis_date,
+            primary_site,
+            ajcc_stage,
+            sentinel_node_biopsy_performed,
+            sentinel_node_status,
+            surveillance_schedule,
+            last_full_body_exam,
+            next_scheduled_exam,
+            recurrence_status,
+            initial_staging_documented,
+            surveillance_adherent,
+            notes,
+            created_by
+          )
+          select $1,$2,$3,$4,$5,$6,true,'negative',$7,$8,$9,'no_recurrence',true,$10,$11,'u-admin'
+          where not exists (
+            select 1 from melanoma_registry where tenant_id = $2 and patient_id = $3
+          )`,
+          [
+            `melanoma-registry-${patientId}`,
+            tenantId,
+            patientId,
+            diagnosisDate,
+            site,
+            stage,
+            `every_${intervalMonths}_months`,
+            lastExamDate,
+            dueDate,
+            dueOffset >= 0,
+            clinicalNote,
+          ],
+        );
+
+        await pool.query(
+          `insert into encounters(id, tenant_id, patient_id, provider_id, status, chief_complaint, hpi, ros, exam, assessment_plan)
+           values ($1,$2,$3,$4,'locked',$5,$6,$7,$8,$9)
+           on conflict (id) do update set
+             patient_id = excluded.patient_id,
+             provider_id = excluded.provider_id,
+             status = excluded.status,
+             chief_complaint = excluded.chief_complaint,
+             hpi = excluded.hpi,
+             ros = excluded.ros,
+             exam = excluded.exam,
+             assessment_plan = excluded.assessment_plan,
+             updated_at = current_timestamp`,
+          [
+            `enc-melanoma-recall-${String(index + 1).padStart(2, "0")}`,
+            tenantId,
+            patientId,
+            defaultProviderId,
+            'Melanoma surveillance follow-up',
+            `History of ${stage} melanoma at ${site}. Patient is due for ${intervalText} total body skin exam surveillance.`,
+            'Denies new bleeding, pain, or rapidly enlarging lesions. Surveillance visit planned per melanoma protocol.',
+            `Total body skin exam completed. Prior melanoma site at ${site} without obvious recurrence.`,
+            `Continue ${intervalText} melanoma surveillance. Reinforced ABCDE warning signs and sun protection guidance.`,
+          ],
+        );
+
+        await pool.query(
+          `insert into encounter_diagnoses(id, tenant_id, encounter_id, icd10_code, description, is_primary, created_at)
+           values ($1,$2,$3,$4,$5,true,now())
+           on conflict (id) do update set
+             icd10_code = excluded.icd10_code,
+             description = excluded.description,
+             is_primary = excluded.is_primary`,
+          [
+            `dx-melanoma-recall-${String(index + 1).padStart(2, "0")}`,
+            tenantId,
+            `enc-melanoma-recall-${String(index + 1).padStart(2, "0")}`,
+            diagnosisCode,
+            diagnosisDescription,
+          ],
+        );
+
+        await pool.query(
+          `insert into patient_recalls(
+            id,
+            tenant_id,
+            patient_id,
+            campaign_id,
+            recall_type,
+            recall_date,
+            due_date,
+            status,
+            notes,
+            doctor_notes,
+            preferred_contact_method,
+            notification_count,
+            created_by,
+            created_at,
+            updated_at
+          )
+          values ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,'sms',0,'u-admin',now(),now())
+          on conflict (id) do update set
+            campaign_id = excluded.campaign_id,
+            recall_type = excluded.recall_type,
+            recall_date = excluded.recall_date,
+            due_date = excluded.due_date,
+            status = excluded.status,
+            notes = excluded.notes,
+            doctor_notes = excluded.doctor_notes,
+            preferred_contact_method = excluded.preferred_contact_method,
+            updated_at = now()`,
+          [
+            `melanoma-recall-${String(index + 1).padStart(2, "0")}`,
+            tenantId,
+            patientId,
+            "recall-campaign-melanoma-surveillance",
+            "Melanoma Surveillance",
+            dueDate,
+            dueOffset < -7 ? "pending" : dueOffset <= 0 ? "contacted" : "pending",
+            clinicalNote,
+            `Recommended ${intervalText} melanoma surveillance. Staff should contact patient and schedule a total body skin exam.`,
+          ],
+        );
+
+        await ensureRecallCommunicationPreferences(patientId, "sms");
+
+        await pool.query(
+          `insert into tasks(
+            id,
+            tenant_id,
+            patient_id,
+            title,
+            description,
+            category,
+            priority,
+            status,
+            due_date,
+            due_at,
+            assigned_to,
+            created_by
+          )
+          values ($1,$2,$3,$4,$5,'recall',$6,'todo',$7,$7,'u-ma','u-admin')
+          on conflict (id) do update set
+            title = excluded.title,
+            description = excluded.description,
+            priority = excluded.priority,
+            status = case when tasks.status = 'completed' then tasks.status else excluded.status end,
+            due_date = excluded.due_date,
+            due_at = excluded.due_at,
+            assigned_to = excluded.assigned_to`,
+          [
+            `task-melanoma-recall-${String(index + 1).padStart(2, "0")}`,
+            tenantId,
+            patientId,
+            `Schedule melanoma surveillance recall due ${dueDate}`,
+            clinicalNote,
+            dueOffset <= 0 ? "high" : "normal",
+            dueDate,
+          ],
+        );
+      }
+
+      for (let index = 0; index < annualSkinCheckPatientIds.length; index++) {
+        const patientId = annualSkinCheckPatientIds[index]!;
+        const dueOffset = -18 + index * 4;
+        const dueDate = dateOffset(dueOffset);
+        const lastExamDate = dateOffset(-365 - index * 11);
+        const annualNote = `Annual skin check recall due ${dueDate}. Last routine total body skin exam documented ${lastExamDate}.`;
+
+        await pool.query(
+          `update patients
+           set past_medical_history = case
+               when coalesce(past_medical_history, '') ilike '%annual skin check recall%' then past_medical_history
+               else concat_ws(E'\\n', nullif(past_medical_history, ''), $3::text)
+             end,
+             updated_at = now()
+           where id = $1 and tenant_id = $2`,
+          [patientId, tenantId, 'Annual skin check recall program enrolled for preventive dermatology follow-up.'],
+        );
+
+        await pool.query(
+          `insert into patient_recalls(
+            id,
+            tenant_id,
+            patient_id,
+            campaign_id,
+            recall_type,
+            recall_date,
+            due_date,
+            status,
+            notes,
+            doctor_notes,
+            preferred_contact_method,
+            notification_count,
+            created_by,
+            created_at,
+            updated_at
+          )
+          values ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,'email',0,'u-admin',now(),now())
+          on conflict (id) do update set
+            campaign_id = excluded.campaign_id,
+            recall_type = excluded.recall_type,
+            recall_date = excluded.recall_date,
+            due_date = excluded.due_date,
+            status = excluded.status,
+            notes = excluded.notes,
+            doctor_notes = excluded.doctor_notes,
+            preferred_contact_method = excluded.preferred_contact_method,
+            updated_at = now()`,
+          [
+            `annual-skin-check-recall-${String(index + 1).padStart(2, "0")}`,
+            tenantId,
+            patientId,
+            "recall-campaign-annual-skin-check",
+            "Annual Skin Check",
+            dueDate,
+            dueOffset < 0 ? "pending" : "contacted",
+            annualNote,
+            "Schedule annual total body skin exam with routine preventive recall outreach.",
+          ],
+        );
+
+        await ensureRecallCommunicationPreferences(patientId, "email");
+
+        await pool.query(
+          `insert into tasks(
+            id,
+            tenant_id,
+            patient_id,
+            title,
+            description,
+            category,
+            priority,
+            status,
+            due_date,
+            due_at,
+            assigned_to,
+            created_by
+          )
+          values ($1,$2,$3,$4,$5,'recall','normal','todo',$6,$6,'u-front','u-admin')
+          on conflict (id) do update set
+            title = excluded.title,
+            description = excluded.description,
+            status = case when tasks.status = 'completed' then tasks.status else excluded.status end,
+            due_date = excluded.due_date,
+            due_at = excluded.due_at,
+            assigned_to = excluded.assigned_to`,
+          [
+            `task-annual-skin-check-${String(index + 1).padStart(2, "0")}`,
+            tenantId,
+            patientId,
+            `Schedule annual skin check due ${dueDate}`,
+            annualNote,
+            dueDate,
+          ],
+        );
+      }
+    };
+
+    const legacyPhilProvider = await pool.query(
+      `select id
+         from providers
+        where tenant_id = $1
+          and lower(full_name) like '%phil jackson%'
+        order by id
+        limit 1`,
+      [tenantId],
+    );
+    const philProviderId = legacyPhilProvider.rows[0]?.id || "prov-demo-4";
+
     const providers = [
-      { id: "prov-demo", name: "Dr. Skin", specialty: "Dermatology" },
-      { id: "prov-demo-2", name: "PA Riley", specialty: "Dermatology" },
-      { id: "prov-demo-3", name: "Dr. Martinez", specialty: "Dermatology" },
-      { id: "prov-cosmetic-pa", name: "Sarah Mitchell PA-C", specialty: "Cosmetic Dermatology" },
+      { id: "prov-demo", name: "Dr. David Skin, MD, FAAD", specialty: "Dermatology - General" },
+      { id: "prov-demo-2", name: "Riley Johnson, PA-C", specialty: "Dermatology - General" },
+      { id: "prov-demo-3", name: "Dr. Maria Martinez, MD, FAAD", specialty: "Dermatology - General & Medical" },
+      { id: philProviderId, name: "Dr. Phil Jackson - PA", specialty: "Dermatology" },
+      { id: "prov-cosmetic-pa", name: "Sarah Mitchell, PA-C", specialty: "Cosmetic Dermatology" },
     ];
 
     for (const pr of providers) {
       await pool.query(
         `insert into providers(id, tenant_id, full_name, specialty)
-         values ($1,$2,$3,$4) on conflict (id) do nothing`,
+         values ($1,$2,$3,$4)
+         on conflict (id) do update set
+           full_name = excluded.full_name,
+           specialty = excluded.specialty`,
         [pr.id, tenantId, pr.name, pr.specialty],
       );
     }
+
+    await seedRecallCohorts("prov-demo-3");
 
     // Facilities (Locations)
     const locations = [
       { id: "loc-demo", name: "Main Clinic", address: "123 Skin St, Denver, CO 80202", phone: "(303) 555-0100" },
       { id: "loc-east", name: "East Office", address: "456 Aurora Ave, Aurora, CO 80010", phone: "(303) 555-0101" },
       { id: "loc-south", name: "South Campus", address: "789 Littleton Blvd, Littleton, CO 80123", phone: "(303) 555-0102" },
+      { id: "loc-virtual", name: "Virtual Care", address: "Video visit delivered through the portal", phone: "(303) 555-0199" },
     ];
 
     for (const loc of locations) {
@@ -755,6 +1560,22 @@ async function seed() {
         color: "#EC4899",
         category: "follow-up",
         description: "Follow-up visit for acne treatment and management"
+      },
+      {
+        id: "appttype-telehealth-fu",
+        name: "Telehealth Follow-up",
+        duration: 20,
+        color: "#2563EB",
+        category: "telehealth",
+        description: "Virtual follow-up visit through secure video"
+      },
+      {
+        id: "appttype-video-acne",
+        name: "Video Acne Follow-Up",
+        duration: 20,
+        color: "#1D4ED8",
+        category: "telehealth",
+        description: "Virtual acne medication check and treatment follow-up"
       },
 
       // Specialized Evaluations
@@ -985,6 +1806,12 @@ async function seed() {
       { provider: "prov-demo-3", day_of_week: 3, start_time: "08:00", end_time: "17:00" },
       { provider: "prov-demo-3", day_of_week: 4, start_time: "08:00", end_time: "17:00" },
       { provider: "prov-demo-3", day_of_week: 5, start_time: "08:00", end_time: "17:00" },
+      // Dr. Phil Jackson - PA: Monday-Friday, 8am-5pm
+      { provider: philProviderId, day_of_week: 1, start_time: "08:00", end_time: "17:00" },
+      { provider: philProviderId, day_of_week: 2, start_time: "08:00", end_time: "17:00" },
+      { provider: philProviderId, day_of_week: 3, start_time: "08:00", end_time: "17:00" },
+      { provider: philProviderId, day_of_week: 4, start_time: "08:00", end_time: "17:00" },
+      { provider: philProviderId, day_of_week: 5, start_time: "08:00", end_time: "17:00" },
       // Sarah Mitchell PA-C (prov-cosmetic-pa): Monday-Friday, 8am-5pm
       { provider: "prov-cosmetic-pa", day_of_week: 1, start_time: "08:00", end_time: "17:00" },
       { provider: "prov-cosmetic-pa", day_of_week: 2, start_time: "08:00", end_time: "17:00" },
@@ -999,14 +1826,91 @@ async function seed() {
          values ($1,$2,$3,$4,$5,$6) on conflict (id) do nothing`,
         [randomUUID(), tenantId, slot.provider, slot.day_of_week, slot.start_time, slot.end_time],
       );
+
+      await pool.query(
+        `insert into provider_availability_templates(
+          id, tenant_id, provider_id, day_of_week, start_time, end_time,
+          slot_duration_minutes, allow_online_booking, is_active
+        )
+         select $1,$2,$3,$4,$5,$6,$7,true,true
+         where not exists (
+           select 1 from provider_availability_templates
+           where tenant_id = $2
+             and provider_id = $3
+             and day_of_week = $4
+             and start_time = $5::time
+             and end_time = $6::time
+         )`,
+        [
+          randomUUID(),
+          tenantId,
+          slot.provider,
+          slot.day_of_week,
+          slot.start_time,
+          slot.end_time,
+          15,
+        ],
+      );
     }
 
-    // Clear existing appointments to regenerate with fresh dates
-    // First clear dependent tables
+    await pool.query(
+      `insert into online_booking_settings(
+        id, tenant_id, is_enabled, booking_window_days, min_advance_hours, max_advance_days,
+        allow_cancellation, cancellation_cutoff_hours, require_reason,
+        confirmation_email, reminder_email, reminder_hours_before, custom_message
+      )
+       values ($1,$2,true,60,24,90,true,24,false,true,true,24,$3)
+       on conflict (tenant_id) do update set
+         is_enabled = excluded.is_enabled,
+         booking_window_days = excluded.booking_window_days,
+         min_advance_hours = excluded.min_advance_hours,
+         max_advance_days = excluded.max_advance_days,
+         allow_cancellation = excluded.allow_cancellation,
+         cancellation_cutoff_hours = excluded.cancellation_cutoff_hours,
+         require_reason = excluded.require_reason,
+         confirmation_email = excluded.confirmation_email,
+         reminder_email = excluded.reminder_email,
+         reminder_hours_before = excluded.reminder_hours_before,
+         custom_message = excluded.custom_message,
+         updated_at = current_timestamp`,
+      [
+        randomUUID(),
+        tenantId,
+        "Demo online scheduling is enabled for the linked portal patients.",
+      ],
+    );
+
+    // Clear existing appointments to regenerate with fresh dates.
+    // A used local DB can have multiple appointment-linked tables, so break those links first.
     await pool.query(`DELETE FROM appointment_status_history WHERE tenant_id = $1`, [tenantId]);
+    if (await tableExists("portal_checkin_sessions")) {
+      await pool.query(`DELETE FROM portal_checkin_sessions WHERE tenant_id = $1`, [tenantId]);
+    }
+    if (await tableExists("checkin_sessions")) {
+      await pool.query(`DELETE FROM checkin_sessions WHERE tenant_id = $1`, [tenantId]);
+    }
+    if (await columnExists("encounters", "appointment_id")) {
+      await pool.query(`UPDATE encounters SET appointment_id = null WHERE tenant_id = $1`, [tenantId]);
+    }
+    if (await columnExists("time_blocks", "scheduled_appointment_id")) {
+      await pool.query(`UPDATE time_blocks SET scheduled_appointment_id = null WHERE tenant_id = $1`, [tenantId]);
+    }
+    if (await columnExists("referrals", "appointment_id")) {
+      await pool.query(`UPDATE referrals SET appointment_id = null WHERE tenant_id = $1`, [tenantId]);
+    }
     await pool.query(`DELETE FROM appointments WHERE tenant_id = $1`, [tenantId]);
 
     const now = new Date();
+    const scheduleHorizonDays = 180;
+    const generalPatientIds = patients
+      .filter((patient) => !String(patient.id).startsWith("demo-patient-"))
+      .map((patient) => patient.id);
+    const sarahPatients = generalPatientIds.filter((_, index) => index % 5 === 0);
+    const medicalPatients = generalPatientIds.filter((_, index) => index % 5 !== 0);
+    const skinPatients = medicalPatients.filter((_, index) => index % 4 === 0);
+    const rileyPatients = medicalPatients.filter((_, index) => index % 4 === 1);
+    const martinezPatients = medicalPatients.filter((_, index) => index % 4 === 2);
+    const philPatients = medicalPatients.filter((_, index) => index % 4 === 3);
     const start = new Date(now.getTime() + 60 * 60 * 1000);
     const end = new Date(start.getTime() + 30 * 60 * 1000);
     await pool.query(
@@ -1044,13 +1948,9 @@ async function seed() {
     );
 
     // Generate appointments for Dr. Skin (prov-demo) and PA Riley (prov-demo-2)
-    // Using similar logic to Dr. Martinez to ensure they have appointments on the schedule
-    const otherProviderPatients = [
-      "p-001", "p-002", "p-003", "p-004", "p-005", "p-006", "p-007", "p-008", "p-009", "p-010",
-      "p-demo", "p-demo-2",
-    ];
+    // using the broader patient roster so no single chart gets unrealistically hammered.
 
-    // Dr. Skin appointments - spread across next 60 days
+    // Dr. Skin appointments - spread across next 6 months
     let skinApptCounter = 1;
     let skinPatientIndex = 0;
     let skinRandomSeed = 67890;
@@ -1059,13 +1959,13 @@ async function seed() {
       return skinRandomSeed / 0x7fffffff;
     };
 
-    for (let dayOffset = 0; dayOffset <= 60; dayOffset++) {
+    for (let dayOffset = 0; dayOffset <= scheduleHorizonDays; dayOffset++) {
       const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
       const dayOfWeek = apptDate.getDay();
       if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip weekends
       if (skinSeededRandom() < 0.15) continue; // Skip some days
 
-      const apptsPerDay = Math.floor(skinSeededRandom() * 5) + 4; // 4-8 appointments
+      const apptsPerDay = Math.floor(skinSeededRandom() * 5) + 7; // 7-11 appointments
       let currentHour = 8;
       let currentMinute = 0;
 
@@ -1087,11 +1987,14 @@ async function seed() {
         while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
 
         if (skinSeededRandom() < 0.7) skinPatientIndex++;
-        const patientId = otherProviderPatients[skinPatientIndex % otherProviderPatients.length];
+        const patientId = skinPatients[skinPatientIndex % skinPatients.length];
 
         let status = "scheduled";
-        if (dayOffset <= 0) status = "completed";
-        else if (dayOffset <= 3 && skinSeededRandom() < 0.3) status = "checked_in";
+        if (dayOffset === 0) {
+          const statusRoll = skinSeededRandom();
+          if (statusRoll < 0.08) status = "checked_in";
+          else if (statusRoll < 0.12) status = "in_room";
+        } else if (dayOffset <= 3 && skinSeededRandom() < 0.3) status = "checked_in";
         else if (dayOffset > 14 && skinSeededRandom() < 0.06) status = "cancelled";
 
         await pool.query(
@@ -1114,7 +2017,10 @@ async function seed() {
       }
     }
 
-    // PA Riley appointments - spread across next 60 days
+    // Location IDs to rotate through
+    const locationIds = ["loc-demo", "loc-east", "loc-south"];
+
+    // PA Riley appointments - spread across next 6 months
     let rileyApptCounter = 1;
     let rileyPatientIndex = 0;
     let rileyRandomSeed = 54321;
@@ -1123,13 +2029,13 @@ async function seed() {
       return rileyRandomSeed / 0x7fffffff;
     };
 
-    for (let dayOffset = 0; dayOffset <= 60; dayOffset++) {
+    for (let dayOffset = 0; dayOffset <= scheduleHorizonDays; dayOffset++) {
       const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
       const dayOfWeek = apptDate.getDay();
       if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip weekends
       if (rileySeededRandom() < 0.12) continue; // Skip some days
 
-      const apptsPerDay = Math.floor(rileySeededRandom() * 6) + 5; // 5-10 appointments (PA sees more patients)
+      const apptsPerDay = Math.floor(rileySeededRandom() * 5) + 8; // 8-12 appointments
       let currentHour = 8;
       let currentMinute = 0;
 
@@ -1151,11 +2057,14 @@ async function seed() {
         while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
 
         if (rileySeededRandom() < 0.7) rileyPatientIndex++;
-        const patientId = otherProviderPatients[rileyPatientIndex % otherProviderPatients.length];
+        const patientId = rileyPatients[rileyPatientIndex % rileyPatients.length];
 
         let status = "scheduled";
-        if (dayOffset <= 0) status = "completed";
-        else if (dayOffset <= 3 && rileySeededRandom() < 0.25) status = "checked_in";
+        if (dayOffset === 0) {
+          const statusRoll = rileySeededRandom();
+          if (statusRoll < 0.08) status = "checked_in";
+          else if (statusRoll < 0.12) status = "in_room";
+        } else if (dayOffset <= 3 && rileySeededRandom() < 0.25) status = "checked_in";
         else if (dayOffset > 14 && rileySeededRandom() < 0.05) status = "cancelled";
 
         await pool.query(
@@ -1178,13 +2087,122 @@ async function seed() {
       }
     }
 
-    // Dr. Martinez appointments - spread across next 3 months (90 days)
-    const martinezPatients = [
-      // Patient IDs to use (mix of all patients)
-      "p-001", "p-002", "p-003", "p-004", "p-005", "p-006", "p-007", "p-008", "p-009", "p-010",
-      "p-011", "p-012", "p-013", "p-014", "p-015", "p-016", "p-017", "p-018", "p-019", "p-020",
-      "p-021", "p-022", "p-023", "p-024", "p-025", "p-026", "p-027", "p-028", "p-029", "p-030",
+    // Dr. Phil Jackson appointments - established patient derm, skin checks, and minor procedures
+    const apptTypesForPhil = [
+      { id: "appttype-fu", duration: 20 },
+      { id: "appttype-demo", duration: 30 },
+      { id: "appttype-acne-fu", duration: 15 },
+      { id: "appttype-eczema-visit", duration: 20 },
+      { id: "appttype-psoriasis-fu", duration: 20 },
+      { id: "appttype-skin-tag-removal", duration: 15 },
+      { id: "appttype-wart-removal", duration: 15 },
+      { id: "appttype-ak-treatment", duration: 20 },
+      { id: "appttype-fullbody-screening", duration: 45 },
     ];
+
+    let philApptCounter = 1;
+    let philPatientIndex = 0;
+    let philRandomSeed = 86420;
+    const philSeededRandom = () => {
+      philRandomSeed = (philRandomSeed * 1103515245 + 12345) & 0x7fffffff;
+      return philRandomSeed / 0x7fffffff;
+    };
+
+    for (let dayOffset = 0; dayOffset <= scheduleHorizonDays; dayOffset++) {
+      const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+      const dayOfWeek = apptDate.getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+      if (philSeededRandom() < 0.12) continue;
+
+      const apptsPerDay = Math.floor(philSeededRandom() * 4) + 5;
+      let currentHour = 8;
+      let currentMinute = 0;
+
+      for (let apptNum = 0; apptNum < apptsPerDay; apptNum++) {
+        const extraGap = Math.floor(philSeededRandom() * 2) * 15;
+        currentMinute += extraGap;
+        while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
+        if (currentHour >= 17) break;
+
+        const apptStart = new Date(apptDate);
+        apptStart.setHours(currentHour, currentMinute, 0, 0);
+
+        const typeRoll = philSeededRandom();
+        let apptType: { id: string; duration: number };
+        if (typeRoll < 0.26) {
+          apptType = apptTypesForPhil[0]!;
+        } else if (typeRoll < 0.46) {
+          apptType = apptTypesForPhil[1]!;
+        } else if (typeRoll < 0.58) {
+          apptType = apptTypesForPhil[8]!;
+        } else if (typeRoll < 0.69) {
+          apptType = apptTypesForPhil[2]!;
+        } else if (typeRoll < 0.79) {
+          apptType = apptTypesForPhil[3]!;
+        } else if (typeRoll < 0.87) {
+          apptType = apptTypesForPhil[4]!;
+        } else if (typeRoll < 0.93) {
+          apptType = apptTypesForPhil[5]!;
+        } else if (typeRoll < 0.97) {
+          apptType = apptTypesForPhil[6]!;
+        } else {
+          apptType = apptTypesForPhil[7]!;
+        }
+
+        const apptEnd = new Date(apptStart.getTime() + apptType.duration * 60 * 1000);
+        currentMinute += apptType.duration;
+        while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
+
+        if (philSeededRandom() < 0.72) {
+          philPatientIndex++;
+        }
+        const patientId = philPatients[philPatientIndex % philPatients.length];
+
+        const locRoll = philSeededRandom();
+        let locationForAppt;
+        if (locRoll < 0.55) {
+          locationForAppt = locationIds[0];
+        } else if (locRoll < 0.82) {
+          locationForAppt = locationIds[1];
+        } else {
+          locationForAppt = locationIds[2];
+        }
+
+        let status = "scheduled";
+        if (dayOffset === 0) {
+          const statusRoll = philSeededRandom();
+          if (statusRoll < 0.1) status = "checked_in";
+          else if (statusRoll < 0.15) status = "in_room";
+        } else if (dayOffset <= 3) {
+          const statusRoll = philSeededRandom();
+          if (statusRoll < 0.18) status = "checked_in";
+          else if (statusRoll < 0.28) status = "in_room";
+        } else if (dayOffset > 14 && philSeededRandom() < 0.05) {
+          status = "cancelled";
+        }
+
+        await pool.query(
+          `insert into appointments(id, tenant_id, patient_id, provider_id, location_id, appointment_type_id, scheduled_start, scheduled_end, status)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           on conflict (id) do nothing`,
+          [
+            `appt-phil-${String(philApptCounter).padStart(4, "0")}`,
+            tenantId,
+            patientId,
+            philProviderId,
+            locationForAppt,
+            apptType.id,
+            apptStart.toISOString(),
+            apptEnd.toISOString(),
+            status,
+          ],
+        );
+
+        philApptCounter++;
+      }
+    }
+
+    // Dr. Martinez appointments - spread across next 6 months
 
     // Appointment types to rotate through (expanded with new dermatology types)
     const apptTypesForMartinez = [
@@ -1201,9 +2219,6 @@ async function seed() {
       { id: "appttype-wart-removal", duration: 15 },            // Wart Removal
     ];
 
-    // Location IDs to rotate through
-    const locationIds = ["loc-demo", "loc-east", "loc-south"];
-
     // Simple seeded random function for reproducible randomization
     let randomSeed = 12345;
     const seededRandom = () => {
@@ -1214,8 +2229,8 @@ async function seed() {
     let apptCounter = 1;
     let patientIndex = 0;
 
-    // Create appointments for next 90 days (3 months, weekdays only) - start from today
-    for (let dayOffset = 0; dayOffset <= 90; dayOffset++) {
+    // Create appointments for next 6 months (weekdays only) - start from today
+    for (let dayOffset = 0; dayOffset <= scheduleHorizonDays; dayOffset++) {
       const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
       const dayOfWeek = apptDate.getDay();
 
@@ -1225,12 +2240,12 @@ async function seed() {
       // Randomly skip some days (simulating PTO, conferences, etc.) - about 10% of days
       if (seededRandom() < 0.1) continue;
 
-      // Random number of appointments per day (3-8)
-      const baseAppts = Math.floor(seededRandom() * 6) + 3; // 3-8 appointments
+      // Random number of appointments per day (6-10)
+      const baseAppts = Math.floor(seededRandom() * 5) + 6; // 6-10 appointments
 
       // Mondays and Fridays tend to be busier
       const apptsPerDay = (dayOfWeek === 1 || dayOfWeek === 5)
-        ? Math.min(baseAppts + 2, 8)
+        ? Math.min(baseAppts + 1, 10)
         : baseAppts;
 
       // Random start times array (possible start hours: 8, 8:30, 9, 9:30, etc.)
@@ -1306,9 +2321,11 @@ async function seed() {
 
         // Mix of statuses based on how far in the future
         let status = "scheduled";
-        if (dayOffset <= 0) {
-          // Past - all completed
-          status = "completed";
+        if (dayOffset === 0) {
+          const statusRoll = seededRandom();
+          if (statusRoll < 0.1) status = "checked_in";
+          else if (statusRoll < 0.16) status = "in_room";
+          else if (statusRoll < 0.2) status = "with_provider";
         } else if (dayOffset <= 3) {
           // Very near future - some checked in or in progress
           const statusRoll = seededRandom();
@@ -1344,12 +2361,7 @@ async function seed() {
       }
     }
 
-    // Sarah Mitchell, PA-C appointments - Cosmetic specialist, spread across next 60 days
-    const sarahPatients = [
-      "p-001", "p-002", "p-003", "p-004", "p-005", "p-006", "p-007", "p-008", "p-009", "p-010",
-      "p-011", "p-012", "p-013", "p-014", "p-015", "p-016", "p-017", "p-018", "p-019", "p-020",
-      "p-021", "p-022", "p-023", "p-024", "p-025", "p-026", "p-027", "p-028", "p-029", "p-030",
-    ];
+    // Sarah Mitchell, PA-C appointments - cosmetic specialist, spread across next 6 months
 
     // Cosmetic appointment types for Sarah Mitchell
     const cosmeticApptTypes = [
@@ -1375,15 +2387,14 @@ async function seed() {
       return sarahRandomSeed / 0x7fffffff;
     };
 
-    // Extended to 120 days (through May 2026) for comprehensive scheduling
-    for (let dayOffset = 0; dayOffset <= 120; dayOffset++) {
+    for (let dayOffset = 0; dayOffset <= scheduleHorizonDays; dayOffset++) {
       const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
       const dayOfWeek = apptDate.getDay();
       if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip weekends
       if (sarahSeededRandom() < 0.1) continue; // Skip some days (PTO, etc.)
 
-      // Sarah sees 6-10 cosmetic patients per day (cosmetic procedures can be quicker)
-      const apptsPerDay = Math.floor(sarahSeededRandom() * 5) + 6;
+      // Sarah sees a lighter cosmetic panel so the schedule still has open time.
+      const apptsPerDay = Math.floor(sarahSeededRandom() * 4) + 4;
       let currentHour = 9; // Sarah starts at 9am
       let currentMinute = 0;
 
@@ -1438,8 +2449,10 @@ async function seed() {
 
         // Status based on how far in the future
         let status = "scheduled";
-        if (dayOffset <= 0) {
-          status = "completed";
+        if (dayOffset === 0) {
+          const statusRoll = sarahSeededRandom();
+          if (statusRoll < 0.1) status = "checked_in";
+          else if (statusRoll < 0.14) status = "in_room";
         } else if (dayOffset <= 3) {
           const statusRoll = sarahSeededRandom();
           if (statusRoll < 0.2) status = "checked_in";
@@ -1472,12 +2485,823 @@ async function seed() {
       }
     }
 
+    const buildAppointmentWindow = (
+      dayOffset: number,
+      hour: number,
+      minute: number,
+      durationMinutes: number,
+    ) => {
+      const startTime = new Date(now);
+      startTime.setDate(startTime.getDate() + dayOffset);
+      startTime.setHours(hour, minute, 0, 0);
+      const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+      return { startTime, endTime };
+    };
+
+    const overlapsAppointmentWindow = (
+      leftStart: Date,
+      leftEnd: Date,
+      rightStart: Date,
+      rightEnd: Date,
+    ) => leftStart.getTime() < rightEnd.getTime() && leftEnd.getTime() > rightStart.getTime();
+
+    const findOpenTelehealthWindow = async (
+      providerId: string,
+      telehealthDate: Date,
+      durationMinutes: number,
+      candidates: ReadonlyArray<{ hour: number; minute: number }>,
+    ) => {
+      const dayStart = new Date(telehealthDate);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+
+      const existingAppointments = await pool.query(
+        `select scheduled_start, scheduled_end
+           from appointments
+          where tenant_id = $1
+            and provider_id = $2
+            and status <> 'cancelled'
+            and scheduled_start < $4
+            and scheduled_end > $3`,
+        [tenantId, providerId, dayStart.toISOString(), dayEnd.toISOString()],
+      );
+
+      for (const candidate of candidates) {
+        const startTime = new Date(telehealthDate);
+        startTime.setHours(candidate.hour, candidate.minute, 0, 0);
+        const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+        const hasConflict = existingAppointments.rows.some((row) => {
+          const existingStart = new Date(row.scheduled_start);
+          const existingEnd = new Date(row.scheduled_end);
+          if (Number.isNaN(existingStart.getTime()) || Number.isNaN(existingEnd.getTime())) {
+            return false;
+          }
+          return overlapsAppointmentWindow(startTime, endTime, existingStart, existingEnd);
+        });
+        if (!hasConflict) {
+          return { startTime, endTime };
+        }
+      }
+
+      return null;
+    };
+
+    const portalPatientFixtures = [
+      {
+        patientId: "demo-patient-1",
+        providerId: "prov-demo",
+        pastAppointment: {
+          id: "appt-portal-alex-completed",
+          typeId: "appttype-psoriasis-fu",
+          chiefComplaint: "Psoriasis follow-up and methotrexate monitoring",
+          dayOffset: -42,
+          hour: 14,
+          minute: 30,
+          duration: 30,
+        },
+        upcomingAppointment: {
+          id: "appt-portal-alex-upcoming",
+          typeId: "appttype-psoriasis-fu",
+          chiefComplaint: "Psoriasis follow-up and medication review",
+          dayOffset: 8,
+          hour: 16,
+          minute: 0,
+          duration: 30,
+        },
+        encounter: {
+          id: "enc-portal-alex-completed",
+          chiefComplaint: "Plaque psoriasis follow-up",
+          hpi: "Established patient with chronic plaque psoriasis reports improved scale and erythema on methotrexate with no new joint pain. Mild nausea the day after dosing only.",
+          ros: "Skin: improved plaques, mild dryness. GI: mild post-dose nausea. MSK: denies joint swelling.",
+          exam: "Residual erythematous plaques on elbows with minimal scale. No scalp involvement. No nail pitting.",
+          assessmentPlan: "Assessment: Plaque psoriasis improving on methotrexate. Plan: continue methotrexate 15mg weekly with folic acid, repeat CBC/CMP in 8 weeks, follow up in 2 months.",
+        },
+        vitals: { id: "vitals-portal-alex-completed", heightCm: 178, weightKg: 81.8, bpSystolic: 120, bpDiastolic: 76, pulse: 70, tempC: 36.8 },
+        prescriptions: [
+          {
+            id: "rx-portal-alex-1",
+            medicationName: "Methotrexate",
+            genericName: "Methotrexate",
+            strength: "2.5mg",
+            dosageForm: "tablet",
+            sig: "Take 6 tablets by mouth once weekly.",
+            quantity: 24,
+            quantityUnit: "tablets",
+            refills: 2,
+            daysSupply: 28,
+            pharmacyName: "Walgreens Denver",
+          },
+          {
+            id: "rx-portal-alex-2",
+            medicationName: "Tretinoin",
+            genericName: "Tretinoin",
+            strength: "0.025%",
+            dosageForm: "cream",
+            sig: "Apply a pea-sized amount nightly to affected areas.",
+            quantity: 1,
+            quantityUnit: "tube",
+            refills: 3,
+            daysSupply: 90,
+            pharmacyName: "Walgreens Denver",
+          },
+        ],
+        allergies: [
+          { id: "alg-portal-alex-1", allergenType: "drug", allergenName: "Penicillin", reactionType: "hives", severity: "moderate", notes: "Childhood reaction with urticaria." },
+          { id: "alg-portal-alex-2", allergenType: "drug", allergenName: "Sulfonamides", reactionType: "rash", severity: "mild", notes: "Delayed maculopapular rash." },
+        ],
+        documents: [
+          {
+            id: "doc-portal-alex-1",
+            title: "Visit Summary - Psoriasis Follow-Up",
+            type: "visit_summary",
+            url: "https://example.com/portal/alex-visit-summary.pdf",
+            category: "Visit Notes",
+            notes: "Shared after methotrexate follow-up.",
+          },
+        ],
+        visitSummary: {
+          id: "vs-portal-alex-1",
+          summaryText: "Psoriasis is improving on methotrexate with stable labs.",
+          symptomsDiscussed: "Residual elbow plaques and mild post-dose nausea.",
+          diagnosisShared: "Plaque psoriasis",
+          treatmentPlan: "Continue methotrexate and folic acid.",
+          nextSteps: "Repeat labs before next follow-up.",
+          diagnoses: [{ code: "L40.0", description: "Plaque psoriasis" }],
+          medications: [{ name: "Methotrexate", sig: "15mg weekly", quantity: 24 }],
+          followUpInstructions: "Return in 8 weeks for repeat evaluation.",
+        },
+      },
+      {
+        patientId: "demo-patient-2",
+        providerId: "prov-demo-3",
+        pastAppointment: {
+          id: "appt-portal-jane-completed",
+          typeId: "appttype-eczema-visit",
+          chiefComplaint: "Eczema control and post-procedure scar review",
+          dayOffset: -55,
+          hour: 15,
+          minute: 0,
+          duration: 30,
+        },
+        upcomingAppointment: {
+          id: "appt-portal-jane-upcoming",
+          typeId: "appttype-patch-testing",
+          chiefComplaint: "Patch testing and eczema follow-up",
+          dayOffset: 12,
+          hour: 16,
+          minute: 0,
+          duration: 45,
+        },
+        encounter: {
+          id: "enc-portal-jane-completed",
+          chiefComplaint: "Eczema follow-up",
+          hpi: "Established patient reports fewer severe flares on dupilumab with persistent intermittent pruritus on hands and neck. Surgical scar on right cheek healing well.",
+          ros: "Skin: intermittent pruritus, improved eczema. Constitutional: no fever. All other systems reviewed and negative.",
+          exam: "Mild erythematous lichenified plaques on dorsal hands and flexural neck. Well-healed linear scar on right cheek.",
+          assessmentPlan: "Assessment: Atopic dermatitis improving on dupilumab. Plan: continue dupilumab, hydrocortisone for flares, proceed with patch testing at next visit.",
+        },
+        vitals: { id: "vitals-portal-jane-completed", heightCm: 165, weightKg: 61.5, bpSystolic: 110, bpDiastolic: 68, pulse: 74, tempC: 36.9 },
+        prescriptions: [
+          {
+            id: "rx-portal-jane-1",
+            medicationName: "Dupilumab",
+            genericName: "Dupilumab",
+            strength: "300mg/2mL",
+            dosageForm: "injection",
+            sig: "Inject 300mg subcutaneously every 2 weeks.",
+            quantity: 2,
+            quantityUnit: "syringes",
+            refills: 5,
+            daysSupply: 28,
+            pharmacyName: "CVS Specialty Boulder",
+          },
+          {
+            id: "rx-portal-jane-2",
+            medicationName: "Hydrocortisone",
+            genericName: "Hydrocortisone",
+            strength: "2.5%",
+            dosageForm: "cream",
+            sig: "Apply to affected areas twice daily as needed for flares.",
+            quantity: 1,
+            quantityUnit: "tube",
+            refills: 2,
+            daysSupply: 60,
+            pharmacyName: "CVS Boulder",
+          },
+        ],
+        allergies: [
+          { id: "alg-portal-jane-1", allergenType: "latex", allergenName: "Latex", reactionType: "anaphylaxis", severity: "life_threatening", notes: "History of throat swelling." },
+          { id: "alg-portal-jane-2", allergenType: "contact", allergenName: "Nickel", reactionType: "contact_dermatitis", severity: "moderate", notes: "Patch-test positive contact allergy." },
+        ],
+        documents: [
+          {
+            id: "doc-portal-jane-1",
+            title: "Patch Testing Instructions",
+            type: "patient_handout",
+            url: "https://example.com/portal/jane-patch-testing.pdf",
+            category: "Forms",
+            notes: "Pre-visit instructions for extended patch testing.",
+          },
+        ],
+        visitSummary: {
+          id: "vs-portal-jane-1",
+          summaryText: "Eczema control has improved and patch testing remains indicated.",
+          symptomsDiscussed: "Intermittent pruritus on hands and neck.",
+          diagnosisShared: "Atopic dermatitis",
+          treatmentPlan: "Continue dupilumab and topical steroid as needed.",
+          nextSteps: "Return for patch testing.",
+          diagnoses: [{ code: "L20.9", description: "Atopic dermatitis" }],
+          medications: [{ name: "Dupilumab", sig: "300mg every 2 weeks", quantity: 2 }],
+          followUpInstructions: "Avoid topical steroids before patch testing appointment.",
+        },
+      },
+      {
+        patientId: "demo-patient-3",
+        providerId: philProviderId,
+        pastAppointment: {
+          id: "appt-portal-marcus-completed",
+          typeId: "appttype-acne-fu",
+          chiefComplaint: "Isotretinoin monitoring and acne follow-up",
+          dayOffset: -35,
+          hour: 14,
+          minute: 45,
+          duration: 15,
+        },
+        upcomingAppointment: {
+          id: "appt-portal-marcus-upcoming",
+          typeId: "appttype-video-acne",
+          locationId: "loc-virtual",
+          chiefComplaint: "Video acne follow-up and isotretinoin lab review",
+          dayOffset: 0,
+          hour: 10,
+          minute: 0,
+          duration: 20,
+        },
+        encounter: {
+          id: "enc-portal-marcus-completed",
+          chiefComplaint: "Isotretinoin follow-up",
+          hpi: "Established acne patient is tolerating isotretinoin with dry lips and improving inflammatory lesions. No mood changes, headaches, or visual symptoms.",
+          ros: "Skin: fewer papules and pustules, dry lips. Neuro: negative. Psych: negative.",
+          exam: "Moderate improvement in inflammatory facial acne. Mild cheilitis. No cystic lesions today.",
+          assessmentPlan: "Assessment: Acne vulgaris improving on isotretinoin. Plan: continue isotretinoin 40mg daily, continue benzoyl peroxide wash to trunk, repeat CBC/CMP/lipids.",
+        },
+        vitals: { id: "vitals-portal-marcus-completed", heightCm: 183, weightKg: 77.1, bpSystolic: 118, bpDiastolic: 74, pulse: 70, tempC: 36.8 },
+        prescriptions: [
+          {
+            id: "rx-portal-marcus-1",
+            medicationName: "Isotretinoin",
+            genericName: "Isotretinoin",
+            strength: "40mg",
+            dosageForm: "capsule",
+            sig: "Take 1 capsule by mouth daily with food.",
+            quantity: 30,
+            quantityUnit: "capsules",
+            refills: 0,
+            daysSupply: 30,
+            pharmacyName: "King Soopers Pharmacy Denver",
+          },
+          {
+            id: "rx-portal-marcus-2",
+            medicationName: "Clindamycin",
+            genericName: "Clindamycin Phosphate",
+            strength: "1%",
+            dosageForm: "lotion",
+            sig: "Apply thin layer daily to acne-prone areas.",
+            quantity: 1,
+            quantityUnit: "bottle",
+            refills: 2,
+            daysSupply: 60,
+            pharmacyName: "King Soopers Pharmacy Denver",
+          },
+        ],
+        allergies: [
+          { id: "alg-portal-marcus-1", allergenType: "drug", allergenName: "Sulfa drugs", reactionType: "rash", severity: "moderate", notes: "Rash after prior sulfonamide antibiotic." },
+        ],
+        documents: [
+          {
+            id: "doc-portal-marcus-1",
+            title: "Isotretinoin Lab Results",
+            type: "lab_result",
+            url: "https://example.com/portal/marcus-labs.pdf",
+            category: "Lab Results",
+            notes: "Shared monthly monitoring labs.",
+          },
+        ],
+        visitSummary: {
+          id: "vs-portal-marcus-1",
+          summaryText: "Acne is improving on isotretinoin with expected dryness only.",
+          symptomsDiscussed: "Dry lips and resolving inflammatory acne.",
+          diagnosisShared: "Acne vulgaris",
+          treatmentPlan: "Continue isotretinoin and monthly labs.",
+          nextSteps: "Follow up next month.",
+          diagnoses: [{ code: "L70.0", description: "Acne vulgaris" }],
+          medications: [{ name: "Isotretinoin", sig: "40mg daily", quantity: 30 }],
+          followUpInstructions: "Use emollients and avoid donating blood while on isotretinoin.",
+        },
+      },
+      {
+        patientId: "demo-patient-4",
+        providerId: "prov-demo-2",
+        pastAppointment: {
+          id: "appt-portal-sofia-completed",
+          typeId: "appttype-acne-fu",
+          chiefComplaint: "Hormonal acne and pigment follow-up",
+          dayOffset: -70,
+          hour: 15,
+          minute: 15,
+          duration: 30,
+        },
+        upcomingAppointment: {
+          id: "appt-portal-sofia-upcoming",
+          typeId: "appttype-fu",
+          chiefComplaint: "Acne maintenance follow-up and skin check",
+          dayOffset: 15,
+          hour: 17,
+          minute: 15,
+          duration: 30,
+        },
+        encounter: {
+          id: "enc-portal-sofia-completed",
+          chiefComplaint: "Hormonal acne follow-up",
+          hpi: "Established patient reports fewer jawline breakouts on spironolactone and tretinoin. Melasma is stable with sun protection.",
+          ros: "Skin: improved acne, stable melasma. GU: no dizziness or breast tenderness.",
+          exam: "Scattered resolving papules on chin with post-inflammatory hyperpigmented macules. Stable malar melasma.",
+          assessmentPlan: "Assessment: Hormonal acne improving and melasma stable. Plan: continue spironolactone, tretinoin, azelaic acid, and tinted mineral sunscreen daily.",
+        },
+        vitals: { id: "vitals-portal-sofia-completed", heightCm: 168, weightKg: 57.6, bpSystolic: 108, bpDiastolic: 66, pulse: 70, tempC: 36.8 },
+        prescriptions: [
+          {
+            id: "rx-portal-sofia-1",
+            medicationName: "Spironolactone",
+            genericName: "Spironolactone",
+            strength: "50mg",
+            dosageForm: "tablet",
+            sig: "Take 1 tablet by mouth daily.",
+            quantity: 30,
+            quantityUnit: "tablets",
+            refills: 5,
+            daysSupply: 30,
+            pharmacyName: "CVS Pharmacy Boulder",
+          },
+          {
+            id: "rx-portal-sofia-2",
+            medicationName: "Azelaic Acid",
+            genericName: "Azelaic Acid",
+            strength: "15%",
+            dosageForm: "gel",
+            sig: "Apply thin layer to face every morning.",
+            quantity: 1,
+            quantityUnit: "tube",
+            refills: 2,
+            daysSupply: 60,
+            pharmacyName: "CVS Pharmacy Boulder",
+          },
+        ],
+        allergies: [],
+        documents: [
+          {
+            id: "doc-portal-sofia-1",
+            title: "Acne and Melasma Treatment Plan",
+            type: "care_plan",
+            url: "https://example.com/portal/sofia-treatment-plan.pdf",
+            category: "Forms",
+            notes: "Shared treatment instructions and sunscreen recommendations.",
+          },
+        ],
+        visitSummary: {
+          id: "vs-portal-sofia-1",
+          summaryText: "Hormonal acne is improving and melasma remains stable.",
+          symptomsDiscussed: "Fewer jawline flares and stable facial pigment.",
+          diagnosisShared: "Hormonal acne and melasma",
+          treatmentPlan: "Continue spironolactone, tretinoin, and azelaic acid.",
+          nextSteps: "Return for maintenance follow-up and skin check.",
+          diagnoses: [
+            { code: "L70.0", description: "Acne vulgaris" },
+            { code: "L81.1", description: "Melasma" },
+          ],
+          medications: [{ name: "Spironolactone", sig: "50mg daily", quantity: 30 }],
+          followUpInstructions: "Continue strict daily mineral sunscreen use.",
+        },
+      },
+    ] as const;
+
+    const prescriptionColumns = await getTableColumns("prescriptions");
+    const allergyColumns = await getTableColumns("patient_allergies");
+
+    for (const fixture of portalPatientFixtures) {
+      const pastWindow = buildAppointmentWindow(
+        fixture.pastAppointment.dayOffset,
+        fixture.pastAppointment.hour,
+        fixture.pastAppointment.minute,
+        fixture.pastAppointment.duration,
+      );
+      const upcomingWindow = buildAppointmentWindow(
+        fixture.upcomingAppointment.dayOffset,
+        fixture.upcomingAppointment.hour,
+        fixture.upcomingAppointment.minute,
+        fixture.upcomingAppointment.duration,
+      );
+
+      await pool.query(
+        `insert into appointments(id, tenant_id, patient_id, provider_id, location_id, appointment_type_id, scheduled_start, scheduled_end, status)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,'completed')
+         on conflict (id) do update set
+           tenant_id = excluded.tenant_id,
+           patient_id = excluded.patient_id,
+           provider_id = excluded.provider_id,
+           location_id = excluded.location_id,
+           appointment_type_id = excluded.appointment_type_id,
+           scheduled_start = excluded.scheduled_start,
+           scheduled_end = excluded.scheduled_end,
+           status = 'completed'`,
+        [
+          fixture.pastAppointment.id,
+          tenantId,
+          fixture.patientId,
+          fixture.providerId,
+          "loc-demo",
+          fixture.pastAppointment.typeId,
+          pastWindow.startTime.toISOString(),
+          pastWindow.endTime.toISOString(),
+        ],
+      );
+
+      await pool.query(
+        `insert into appointments(id, tenant_id, patient_id, provider_id, location_id, appointment_type_id, scheduled_start, scheduled_end, status)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,'scheduled')
+         on conflict (id) do update set
+           tenant_id = excluded.tenant_id,
+           patient_id = excluded.patient_id,
+           provider_id = excluded.provider_id,
+           location_id = excluded.location_id,
+           appointment_type_id = excluded.appointment_type_id,
+           scheduled_start = excluded.scheduled_start,
+           scheduled_end = excluded.scheduled_end,
+           status = 'scheduled'`,
+        [
+          fixture.upcomingAppointment.id,
+          tenantId,
+          fixture.patientId,
+          fixture.providerId,
+          ("locationId" in fixture.upcomingAppointment ? fixture.upcomingAppointment.locationId : undefined) || "loc-demo",
+          fixture.upcomingAppointment.typeId,
+          upcomingWindow.startTime.toISOString(),
+          upcomingWindow.endTime.toISOString(),
+        ],
+      );
+
+      await pool.query(
+        `insert into encounters(id, tenant_id, appointment_id, patient_id, provider_id, status, chief_complaint, hpi, ros, exam, assessment_plan)
+         values ($1,$2,$3,$4,$5,'locked',$6,$7,$8,$9,$10)
+         on conflict (id) do update set
+           appointment_id = excluded.appointment_id,
+           patient_id = excluded.patient_id,
+           provider_id = excluded.provider_id,
+           status = excluded.status,
+           chief_complaint = excluded.chief_complaint,
+           hpi = excluded.hpi,
+           ros = excluded.ros,
+           exam = excluded.exam,
+           assessment_plan = excluded.assessment_plan,
+           updated_at = current_timestamp`,
+        [
+          fixture.encounter.id,
+          tenantId,
+          fixture.pastAppointment.id,
+          fixture.patientId,
+          fixture.providerId,
+          fixture.encounter.chiefComplaint,
+          fixture.encounter.hpi,
+          fixture.encounter.ros,
+          fixture.encounter.exam,
+          fixture.encounter.assessmentPlan,
+        ],
+      );
+
+      await pool.query(
+        `insert into vitals(id, tenant_id, encounter_id, height_cm, weight_kg, bp_systolic, bp_diastolic, pulse, temp_c)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         on conflict (id) do nothing`,
+        [
+          fixture.vitals.id,
+          tenantId,
+          fixture.encounter.id,
+          fixture.vitals.heightCm,
+          fixture.vitals.weightKg,
+          fixture.vitals.bpSystolic,
+          fixture.vitals.bpDiastolic,
+          fixture.vitals.pulse,
+          fixture.vitals.tempC,
+        ],
+      );
+
+      for (const prescription of fixture.prescriptions) {
+        if (prescriptionColumns.has("encounter_id")) {
+          await pool.query(
+            `insert into prescriptions(
+              id, tenant_id, patient_id, encounter_id, provider_id,
+              medication_name, generic_name, strength, dosage_form,
+              sig, quantity, quantity_unit, refills, days_supply,
+              pharmacy_name, status, created_by, updated_by
+            )
+             values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'transmitted',$16,$16)
+             on conflict (id) do nothing`,
+            [
+              prescription.id,
+              tenantId,
+              fixture.patientId,
+              fixture.encounter.id,
+              fixture.providerId,
+              prescription.medicationName,
+              prescription.genericName,
+              prescription.strength,
+              prescription.dosageForm,
+              prescription.sig,
+              prescription.quantity,
+              prescription.quantityUnit,
+              prescription.refills,
+              prescription.daysSupply,
+              prescription.pharmacyName,
+              "u-provider",
+            ],
+          );
+        } else {
+          await pool.query(
+            `insert into prescriptions(
+              id, tenant_id, patient_id, provider_id,
+              medication_name, strength, sig, quantity, quantity_unit,
+              refills, refills_remaining, days_supply, prescribed_date,
+              pharmacy_name, status, drug_description
+            )
+             values (
+              $1,$2,$3,$4,
+              $5,$6,$7,$8,$9,
+              $10,$10,$11,current_timestamp,
+              $12,'transmitted',$13
+             )
+             on conflict (id) do nothing`,
+            [
+              prescription.id,
+              tenantId,
+              fixture.patientId,
+              "u-provider",
+              prescription.medicationName,
+              prescription.strength,
+              prescription.sig,
+              prescription.quantity,
+              prescription.quantityUnit,
+              prescription.refills,
+              prescription.daysSupply,
+              prescription.pharmacyName,
+              [prescription.genericName, prescription.dosageForm].filter(Boolean).join(" "),
+            ],
+          );
+        }
+      }
+
+      for (const allergy of fixture.allergies) {
+        const allergenColumn = allergyColumns.has("allergen_name") ? "allergen_name" : "allergen";
+        await pool.query(
+          `insert into patient_allergies(
+            id, tenant_id, patient_id, allergen_type, ${allergenColumn}, reaction, reaction_type,
+            severity, verified_by, verified_at, status, notes, source, created_by, updated_by
+          )
+           select
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,current_timestamp,'active',$10,'patient_reported',$9,$9
+           where not exists (
+             select 1
+             from patient_allergies
+             where tenant_id = $2
+               and patient_id = $3
+               and allergen_type = $4
+               and ${allergenColumn} = $5
+           )`,
+          [
+            allergy.id,
+            tenantId,
+            fixture.patientId,
+            allergy.allergenType,
+            allergy.allergenName,
+            allergy.reactionType,
+            allergy.reactionType,
+            allergy.severity,
+            "u-provider",
+            allergy.notes,
+          ],
+        );
+      }
+
+      for (const document of fixture.documents) {
+        await pool.query(
+          `insert into documents(id, tenant_id, patient_id, encounter_id, title, type, url)
+           values ($1,$2,$3,$4,$5,$6,$7)
+           on conflict (id) do nothing`,
+          [
+            document.id,
+            tenantId,
+            fixture.patientId,
+            fixture.encounter.id,
+            document.title,
+            document.type,
+            document.url,
+          ],
+        );
+
+        await pool.query(
+          `insert into patient_document_shares(
+            id, tenant_id, document_id, patient_id, shared_by, shared_at, notes, category
+          )
+           values ($1,$2,$3,$4,$5,current_timestamp,$6,$7)
+           on conflict (id) do nothing`,
+          [
+            `share-${document.id}`,
+            tenantId,
+            document.id,
+            fixture.patientId,
+            "u-provider",
+            document.notes,
+            document.category,
+          ],
+        );
+      }
+
+      await pool.query(
+        `insert into visit_summaries(
+          id, tenant_id, encounter_id, patient_id, provider_id, visit_date, provider_name,
+          summary_text, symptoms_discussed, diagnosis_shared, treatment_plan, next_steps,
+          chief_complaint, diagnoses, medications, follow_up_instructions,
+          is_released, released_at, released_by, shared_at, created_at, updated_at
+        )
+         values (
+           $1,$2,$3,$4,$5,$6,$7,
+           $8,$9,$10,$11,$12,
+           $13,$14::jsonb,$15::jsonb,$16,
+           true,current_timestamp,'u-provider',current_timestamp,current_timestamp,current_timestamp
+         )
+         on conflict (id) do nothing`,
+        [
+          fixture.visitSummary.id,
+          tenantId,
+          fixture.encounter.id,
+          fixture.patientId,
+          fixture.providerId,
+          pastWindow.startTime.toISOString(),
+          providers.find((provider) => provider.id === fixture.providerId)?.name || "Derm Provider",
+          fixture.visitSummary.summaryText,
+          fixture.visitSummary.symptomsDiscussed,
+          fixture.visitSummary.diagnosisShared,
+          fixture.visitSummary.treatmentPlan,
+          fixture.visitSummary.nextSteps,
+          fixture.encounter.chiefComplaint,
+          JSON.stringify(fixture.visitSummary.diagnoses),
+          JSON.stringify(fixture.visitSummary.medications),
+          fixture.visitSummary.followUpInstructions,
+        ],
+      );
+    }
+
+    const telehealthProviderConfigs = [
+      {
+        providerId: "prov-demo-2",
+        patientIds: ["demo-patient-4", ...rileyPatients],
+        appointmentTypeId: "appttype-telehealth-fu",
+        slotCandidates: [
+          { hour: 9, minute: 40 },
+          { hour: 11, minute: 0 },
+          { hour: 13, minute: 0 },
+          { hour: 15, minute: 0 },
+          { hour: 16, minute: 20 },
+        ],
+      },
+      {
+        providerId: "prov-demo",
+        patientIds: ["demo-patient-1", ...skinPatients],
+        appointmentTypeId: "appttype-telehealth-fu",
+        slotCandidates: [
+          { hour: 9, minute: 50 },
+          { hour: 11, minute: 20 },
+          { hour: 13, minute: 10 },
+          { hour: 15, minute: 20 },
+        ],
+      },
+      {
+        providerId: "prov-demo-3",
+        patientIds: ["demo-patient-2", ...martinezPatients],
+        appointmentTypeId: "appttype-telehealth-fu",
+        slotCandidates: [
+          { hour: 9, minute: 20 },
+          { hour: 10, minute: 50 },
+          { hour: 13, minute: 20 },
+          { hour: 14, minute: 50 },
+        ],
+      },
+      {
+        providerId: "prov-cosmetic-pa",
+        patientIds: sarahPatients,
+        appointmentTypeId: "appttype-telehealth-fu",
+        slotCandidates: [
+          { hour: 10, minute: 15 },
+          { hour: 12, minute: 15 },
+          { hour: 14, minute: 15 },
+          { hour: 16, minute: 15 },
+        ],
+      },
+      {
+        providerId: philProviderId,
+        patientIds: [...philPatients],
+        appointmentTypeId: "appttype-video-acne",
+        slotCandidates: [
+          { hour: 10, minute: 0 },
+          { hour: 11, minute: 20 },
+          { hour: 13, minute: 20 },
+          { hour: 15, minute: 20 },
+        ],
+      },
+    ] as const;
+
+    const usedTelehealthPatientIds = new Set<string>(["demo-patient-3"]);
+    const telehealthQueueOffsets = new Map<string, number>();
+    let telehealthRotationOffset = 0;
+    let telehealthCounter = 1;
+
+    const getNextUniqueTelehealthPatient = (providerId: string, patientIds: readonly string[]) => {
+      if (patientIds.length === 0) return null;
+      const offset = telehealthQueueOffsets.get(providerId) || 0;
+      for (let attempt = 0; attempt < patientIds.length; attempt += 1) {
+        const patientId = patientIds[(offset + attempt) % patientIds.length]!;
+        if (usedTelehealthPatientIds.has(patientId)) continue;
+        return {
+          patientId,
+          nextOffset: offset + attempt + 1,
+        };
+      }
+      return null;
+    };
+
+    for (let dayOffset = 1; dayOffset <= 60; dayOffset += 1) {
+      const telehealthDate = new Date(now);
+      telehealthDate.setDate(telehealthDate.getDate() + dayOffset);
+      telehealthDate.setHours(0, 0, 0, 0);
+      const dayOfWeek = telehealthDate.getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+
+      for (let providerAttempt = 0; providerAttempt < telehealthProviderConfigs.length; providerAttempt += 1) {
+        const config = telehealthProviderConfigs[(telehealthRotationOffset + providerAttempt) % telehealthProviderConfigs.length]!;
+        const candidate = getNextUniqueTelehealthPatient(config.providerId, config.patientIds);
+        if (!candidate) continue;
+
+        const window = await findOpenTelehealthWindow(
+          config.providerId,
+          telehealthDate,
+          20,
+          config.slotCandidates,
+        );
+        if (!window) continue;
+
+        usedTelehealthPatientIds.add(candidate.patientId);
+        telehealthQueueOffsets.set(config.providerId, candidate.nextOffset);
+        await pool.query(
+          `insert into appointments(
+            id, tenant_id, patient_id, provider_id, location_id, appointment_type_id,
+            scheduled_start, scheduled_end, status
+          )
+           values ($1,$2,$3,$4,$5,$6,$7,$8,'scheduled')
+           on conflict (id) do nothing`,
+          [
+            `appt-telehealth-${String(telehealthCounter).padStart(4, "0")}`,
+            tenantId,
+            candidate.patientId,
+            config.providerId,
+            "loc-virtual",
+            config.appointmentTypeId,
+            window.startTime.toISOString(),
+            window.endTime.toISOString(),
+          ],
+        );
+
+        telehealthCounter += 1;
+        telehealthRotationOffset += 1;
+        break;
+      }
+    }
+
     // encounters and vitals
     const encounterId = "enc-demo";
     await pool.query(
       `insert into encounters(id, tenant_id, appointment_id, patient_id, provider_id, status, chief_complaint, hpi, ros, exam, assessment_plan)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       on conflict (id) do nothing`,
+       on conflict (id) do update set
+         appointment_id = excluded.appointment_id,
+         patient_id = excluded.patient_id,
+         provider_id = excluded.provider_id,
+         status = excluded.status,
+         chief_complaint = excluded.chief_complaint,
+         hpi = excluded.hpi,
+         ros = excluded.ros,
+         exam = excluded.exam,
+         assessment_plan = excluded.assessment_plan,
+         updated_at = current_timestamp`,
       [
         encounterId,
         tenantId,
@@ -2017,6 +3841,10 @@ async function seed() {
     // Seed patient portal accounts for testing
     const portalPasswordHash = bcrypt.hashSync("Portal123!", 10); // Dev/test only
     const portalAccounts = [
+      { patientId: "demo-patient-1", email: "patient@demo.portal" },
+      { patientId: "demo-patient-2", email: "jane@demo.portal" },
+      { patientId: "demo-patient-3", email: "marcus@demo.portal" },
+      { patientId: "demo-patient-4", email: "sofia@demo.portal" },
       { patientId: "p-demo", email: "jamie.patient@example.com" },
       { patientId: "p-demo-2", email: "alex.derm@example.com" },
     ];
@@ -2030,6 +3858,22 @@ async function seed() {
       );
     }
     console.log("Seeded patient portal accounts");
+
+    await pool.query(
+      `update appointments
+       set status = 'scheduled',
+       where tenant_id = $1
+         and status = 'completed'
+         and (scheduled_start at time zone 'America/Denver')::date = (now() at time zone 'America/Denver')::date
+         and (
+           id like 'appt-skin-%' or
+           id like 'appt-riley-%' or
+           id like 'appt-phil-%' or
+           id like 'appt-martinez-%' or
+           id like 'appt-sarah-%'
+         )`,
+      [tenantId],
+    );
 
     await pool.query("commit");
     // eslint-disable-next-line no-console

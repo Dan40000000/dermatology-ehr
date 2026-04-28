@@ -3,6 +3,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { Navigate, Link, useSearchParams } from 'react-router-dom';
 import { API_BASE_URL } from '../utils/apiBase';
 import { buildEffectiveRoles, hasRole, normalizeRoleArray } from '../utils/roles';
+import {
+  formatDowntimeDeviceShortId,
+  getOrCreateDowntimeBrowserDevice,
+  type DowntimeBrowserDevice,
+} from '../utils/downtimeDevice';
 
 interface Facility {
   id: string;
@@ -10,6 +15,23 @@ interface Facility {
   address: string;
   phone?: string;
   isActive: boolean;
+  downtimeSettings: {
+    enabled: boolean;
+    packetTime: string;
+    deviceProfile: 'auto' | 'ipad' | 'desktop';
+    includeDob: boolean;
+    includePhone: boolean;
+    includeInsurance: boolean;
+  };
+  downtimePrimaryDevice?: {
+    deviceId: string;
+    label?: string | null;
+    registeredAt?: string | null;
+    registeredBy?: string | null;
+    lastSeenAt?: string | null;
+    lastPacketSavedAt?: string | null;
+    lastPacketDate?: string | null;
+  } | null;
 }
 
 interface Room {
@@ -172,6 +194,60 @@ const roomTypeLabels: Record<string, string> = {
   lab: 'Lab Room',
 };
 
+const defaultDowntimeSettings = {
+  enabled: false,
+  packetTime: '12:00',
+  deviceProfile: 'auto' as const,
+  includeDob: true,
+  includePhone: true,
+  includeInsurance: true,
+};
+
+function createFacilityDraft(item?: Partial<Facility> | null): Facility {
+  return {
+    id: item?.id || '',
+    name: item?.name || '',
+    address: item?.address || '',
+    phone: item?.phone || '',
+    isActive: item?.isActive ?? true,
+    downtimeSettings: {
+      ...defaultDowntimeSettings,
+      ...(item?.downtimeSettings || {}),
+    },
+    downtimePrimaryDevice: item?.downtimePrimaryDevice || null,
+  };
+}
+
+function describeDowntimeSettings(facility: Facility): string {
+  if (!facility.downtimeSettings?.enabled) {
+    return 'Auto download off';
+  }
+  const deviceLabel =
+    facility.downtimeSettings.deviceProfile === 'auto'
+      ? 'Auto detect'
+      : facility.downtimeSettings.deviceProfile === 'ipad'
+        ? 'iPad'
+        : 'Desktop';
+  return `Auto download on • ${deviceLabel} • ${facility.downtimeSettings.packetTime}`;
+}
+
+function formatAdminTimestamp(value?: string | null): string {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
+function describePrimaryStation(facility: Facility): string {
+  const station = facility.downtimePrimaryDevice;
+  if (!station?.deviceId) {
+    return 'Primary station not assigned';
+  }
+  const label = station.label?.trim() || `Device ${formatDowntimeDeviceShortId(station.deviceId)}`;
+  const lastSaved = station.lastPacketDate ? `Last packet ${station.lastPacketDate}` : 'No packet saved yet';
+  return `${label} • ${lastSaved}`;
+}
+
 const MANAGEABLE_USER_ROLES = [
   'admin',
   'provider',
@@ -274,7 +350,7 @@ const modalStyle: React.CSSProperties = {
   borderRadius: '1.5rem',
   padding: '2rem',
   width: '100%',
-  maxWidth: '500px',
+  maxWidth: '640px',
   boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
 };
 
@@ -301,6 +377,26 @@ const badgeInactiveStyle: React.CSSProperties = {
   color: '#991b1b',
 };
 
+const segmentedGroupStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  gap: '0.5rem',
+  flexWrap: 'wrap',
+};
+
+function segmentedButtonStyle(active: boolean): React.CSSProperties {
+  return {
+    padding: '0.625rem 0.95rem',
+    borderRadius: '9999px',
+    border: active ? '1px solid #0891b2' : '1px solid #d1d5db',
+    background: active ? '#ecfeff' : '#ffffff',
+    color: active ? '#0f766e' : '#374151',
+    fontSize: '0.875rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    boxShadow: active ? '0 0 0 2px rgba(6, 182, 212, 0.12)' : 'none',
+  };
+}
+
 export function AdminPage() {
   const { session, user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -313,6 +409,7 @@ export function AdminPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const isMountedRef = useRef(true);
+  const [downtimeDevice] = useState<DowntimeBrowserDevice>(() => getOrCreateDowntimeBrowserDevice());
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -436,6 +533,63 @@ export function AdminPage() {
       console.error('Error deleting:', err);
     }
   };
+
+  const replaceFacility = useCallback((updatedFacility: Facility) => {
+    setFacilities((prev) => {
+      const next = prev.some((facility) => facility.id === updatedFacility.id)
+        ? prev.map((facility) => (facility.id === updatedFacility.id ? updatedFacility : facility))
+        : [...prev, updatedFacility];
+      return next.sort((a, b) => a.name.localeCompare(b.name));
+    });
+    setEditingItem((prev: Facility | null) => (prev?.id === updatedFacility.id ? updatedFacility : prev));
+  }, []);
+
+  const registerFacilityDowntimePrimaryDevice = useCallback(async (facilityId: string) => {
+    if (!session) {
+      throw new Error('You must be signed in to register a downtime station.');
+    }
+
+    const res = await fetch(`${API_BASE_URL}/api/admin/facilities/${facilityId}/downtime-primary-device`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.accessToken}`,
+        'X-Tenant-ID': session.tenantId,
+      },
+      body: JSON.stringify({
+        deviceId: downtimeDevice.deviceId,
+        deviceLabel: downtimeDevice.label,
+      }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(payload.error || 'Failed to register downtime station');
+    }
+    const facility = payload.facility as Facility;
+    replaceFacility(facility);
+    return facility;
+  }, [downtimeDevice.deviceId, downtimeDevice.label, replaceFacility, session]);
+
+  const clearFacilityDowntimePrimaryDevice = useCallback(async (facilityId: string) => {
+    if (!session) {
+      throw new Error('You must be signed in to clear a downtime station.');
+    }
+
+    const res = await fetch(`${API_BASE_URL}/api/admin/facilities/${facilityId}/downtime-primary-device`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${session.accessToken}`,
+        'X-Tenant-ID': session.tenantId,
+      },
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(payload.error || 'Failed to clear downtime station');
+    }
+    const facility = payload.facility as Facility;
+    replaceFacility(facility);
+    return facility;
+  }, [replaceFacility, session]);
 
   const openAddModal = () => {
     setEditingItem(null);
@@ -629,6 +783,9 @@ export function AdminPage() {
             type={activeTab}
             item={editingItem}
             facilities={facilities}
+            currentDowntimeDevice={downtimeDevice}
+            onRegisterDowntimePrimaryDevice={registerFacilityDowntimePrimaryDevice}
+            onClearDowntimePrimaryDevice={clearFacilityDowntimePrimaryDevice}
             onClose={() => { setShowModal(false); setEditingItem(null); }}
             onSave={handleSave}
           />
@@ -767,6 +924,7 @@ function FacilitiesTable({ facilities, onEdit, onDelete }: { facilities: Facilit
           <th style={thStyle}>Name</th>
           <th style={thStyle}>Address</th>
           <th style={thStyle}>Phone</th>
+          <th style={thStyle}>Downtime Packet</th>
           <th style={thStyle}>Status</th>
           <th style={thStyle}>Actions</th>
         </tr>
@@ -777,6 +935,30 @@ function FacilitiesTable({ facilities, onEdit, onDelete }: { facilities: Facilit
             <td style={tdStyle}><strong>{f.name}</strong></td>
             <td style={tdStyle}>{f.address || '—'}</td>
             <td style={tdStyle}>{f.phone || '—'}</td>
+            <td style={tdStyle}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    padding: '0.25rem 0.6rem',
+                    borderRadius: '9999px',
+                    width: 'fit-content',
+                    background: f.downtimeSettings?.enabled ? '#ecfeff' : '#f3f4f6',
+                    color: f.downtimeSettings?.enabled ? '#0f766e' : '#4b5563',
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                  }}
+                >
+                  {f.downtimeSettings?.enabled ? 'Auto Download On' : 'Auto Download Off'}
+                </span>
+                <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>{describeDowntimeSettings(f)}</span>
+                <span style={{ fontSize: '0.8rem', color: f.downtimePrimaryDevice?.deviceId ? '#0f172a' : '#9ca3af' }}>
+                  {describePrimaryStation(f)}
+                </span>
+              </div>
+            </td>
             <td style={tdStyle}>
               <span style={f.isActive !== false ? badgeActiveStyle : badgeInactiveStyle}>
                 {f.isActive !== false ? 'Active' : 'Inactive'}
@@ -950,16 +1132,25 @@ function Modal({
   type,
   item,
   facilities,
+  currentDowntimeDevice,
+  onRegisterDowntimePrimaryDevice,
+  onClearDowntimePrimaryDevice,
   onClose,
   onSave,
 }: {
   type: string;
   item: any;
   facilities: Facility[];
+  currentDowntimeDevice: DowntimeBrowserDevice;
+  onRegisterDowntimePrimaryDevice: (facilityId: string) => Promise<Facility>;
+  onClearDowntimePrimaryDevice: (facilityId: string) => Promise<Facility>;
   onClose: () => void;
   onSave: (data: any) => void;
 }) {
-  const [formData, setFormData] = useState<any>(item || {});
+  const [formData, setFormData] = useState<any>(type === 'facilities' ? createFacilityDraft(item) : item || {});
+  const [deviceActionError, setDeviceActionError] = useState<string | null>(null);
+  const [deviceActionMessage, setDeviceActionMessage] = useState<string | null>(null);
+  const [deviceActionRunning, setDeviceActionRunning] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -974,6 +1165,38 @@ function Modal({
 
   const handleChange = (field: string, value: any) => {
     setFormData({ ...formData, [field]: value });
+  };
+
+  const handleRegisterThisBrowser = async () => {
+    if (!formData.id) return;
+    setDeviceActionError(null);
+    setDeviceActionMessage(null);
+    setDeviceActionRunning(true);
+    try {
+      const facility = await onRegisterDowntimePrimaryDevice(formData.id);
+      setFormData(createFacilityDraft(facility));
+      setDeviceActionMessage(`Registered ${currentDowntimeDevice.label} as the primary downtime station.`);
+    } catch (err: any) {
+      setDeviceActionError(err?.message || 'Failed to register the current browser as the downtime station.');
+    } finally {
+      setDeviceActionRunning(false);
+    }
+  };
+
+  const handleClearPrimaryStation = async () => {
+    if (!formData.id) return;
+    setDeviceActionError(null);
+    setDeviceActionMessage(null);
+    setDeviceActionRunning(true);
+    try {
+      const facility = await onClearDowntimePrimaryDevice(formData.id);
+      setFormData(createFacilityDraft(facility));
+      setDeviceActionMessage('Cleared the primary downtime station assignment.');
+    } catch (err: any) {
+      setDeviceActionError(err?.message || 'Failed to clear the downtime station assignment.');
+    } finally {
+      setDeviceActionRunning(false);
+    }
   };
 
   const toggleSecondaryRole = (role: string) => {
@@ -1034,6 +1257,225 @@ function Modal({
                   style={inputStyle}
                   placeholder="(555) 123-4567"
                 />
+              </div>
+              <div style={{ ...formGroupStyle, padding: '1rem', borderRadius: '0.75rem', background: '#f8fafc', border: '1px solid #e5e7eb' }}>
+                <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#111827', marginBottom: '0.75rem' }}>
+                  Downtime Packet
+                </div>
+                <div style={{ marginBottom: '0.5rem', color: '#374151', fontSize: '0.9rem', fontWeight: 600 }}>
+                  Auto Download
+                </div>
+                <div style={{ ...segmentedGroupStyle, marginBottom: '0.75rem' }}>
+                  <button
+                    type="button"
+                    style={segmentedButtonStyle(!formData.downtimeSettings?.enabled)}
+                    onClick={() =>
+                      handleChange('downtimeSettings', {
+                        ...defaultDowntimeSettings,
+                        ...(formData.downtimeSettings || {}),
+                        enabled: false,
+                      })
+                    }
+                  >
+                    Manual Only
+                  </button>
+                  <button
+                    type="button"
+                    style={segmentedButtonStyle(Boolean(formData.downtimeSettings?.enabled))}
+                    onClick={() =>
+                      handleChange('downtimeSettings', {
+                        ...defaultDowntimeSettings,
+                        ...(formData.downtimeSettings || {}),
+                        enabled: true,
+                      })
+                    }
+                  >
+                    Auto Download On
+                  </button>
+                </div>
+                <div style={{ color: '#6b7280', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                  The next business day packet becomes eligible at this time. Friday afternoon prepares Monday, active devices download it automatically once the cutoff is reached, and staff can still download it manually from the Schedule page at any time.
+                </div>
+
+                <div style={{ marginBottom: '1rem', padding: '0.9rem 1rem', borderRadius: '0.75rem', background: '#ffffff', border: '1px solid #dbe4ee' }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#111827', marginBottom: '0.35rem' }}>
+                    Primary Downtime Station
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: '#374151', marginBottom: '0.65rem' }}>
+                    Open Admin on the actual workstation you want to rely on during downtime, then register that browser here.
+                  </div>
+                  <div style={{ display: 'grid', gap: '0.4rem', fontSize: '0.82rem', color: '#475569' }}>
+                    <div><strong>This browser:</strong> {currentDowntimeDevice.label} • ID {formatDowntimeDeviceShortId(currentDowntimeDevice.deviceId)}</div>
+                    <div>
+                      <strong>Assigned station:</strong>{' '}
+                      {formData.downtimePrimaryDevice?.deviceId
+                        ? formData.downtimePrimaryDevice.label || `Device ${formatDowntimeDeviceShortId(formData.downtimePrimaryDevice.deviceId)}`
+                        : 'None'}
+                    </div>
+                    {formData.downtimePrimaryDevice?.deviceId ? (
+                      <>
+                        <div><strong>Registered:</strong> {formatAdminTimestamp(formData.downtimePrimaryDevice.registeredAt)}</div>
+                        <div><strong>Registered by:</strong> {formData.downtimePrimaryDevice.registeredBy || '—'}</div>
+                        <div><strong>Last seen:</strong> {formatAdminTimestamp(formData.downtimePrimaryDevice.lastSeenAt)}</div>
+                        <div><strong>Last packet saved:</strong> {formatAdminTimestamp(formData.downtimePrimaryDevice.lastPacketSavedAt)}</div>
+                        <div><strong>Last packet date:</strong> {formData.downtimePrimaryDevice.lastPacketDate || '—'}</div>
+                      </>
+                    ) : null}
+                  </div>
+                  {formData.id ? (
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.85rem' }}>
+                      <button
+                        type="button"
+                        onClick={handleRegisterThisBrowser}
+                        disabled={deviceActionRunning}
+                        style={{
+                          ...btnSecondaryStyle,
+                          borderColor: '#0891b2',
+                          color: '#0f766e',
+                          opacity: deviceActionRunning ? 0.6 : 1,
+                          cursor: deviceActionRunning ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        Register This Browser
+                      </button>
+                      {formData.downtimePrimaryDevice?.deviceId ? (
+                        <button
+                          type="button"
+                          onClick={handleClearPrimaryStation}
+                          disabled={deviceActionRunning}
+                          style={{
+                            ...btnSecondaryStyle,
+                            borderColor: '#cbd5e1',
+                            color: '#475569',
+                            opacity: deviceActionRunning ? 0.6 : 1,
+                            cursor: deviceActionRunning ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          Clear Assigned Station
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: '0.85rem', fontSize: '0.82rem', color: '#6b7280' }}>
+                      Save this facility first, then register the primary downtime station.
+                    </div>
+                  )}
+                  {deviceActionMessage ? (
+                    <div style={{ marginTop: '0.75rem', fontSize: '0.82rem', color: '#166534' }}>{deviceActionMessage}</div>
+                  ) : null}
+                  {deviceActionError ? (
+                    <div style={{ marginTop: '0.75rem', fontSize: '0.82rem', color: '#b91c1c' }}>{deviceActionError}</div>
+                  ) : null}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '1rem' }}>
+                  <div style={formGroupStyle}>
+                    <label htmlFor="facility-downtime-time" style={labelStyle}>Packet Time</label>
+                    <input
+                      type="time"
+                      id="facility-downtime-time"
+                      value={formData.downtimeSettings?.packetTime || defaultDowntimeSettings.packetTime}
+                      onChange={(e) =>
+                        handleChange('downtimeSettings', {
+                          ...defaultDowntimeSettings,
+                          ...(formData.downtimeSettings || {}),
+                          packetTime: e.target.value || defaultDowntimeSettings.packetTime,
+                        })
+                      }
+                      style={inputStyle}
+                    />
+                  </div>
+
+                  <div style={formGroupStyle}>
+                    <label htmlFor="facility-downtime-device" style={labelStyle}>Device Type</label>
+                    <div id="facility-downtime-device" style={segmentedGroupStyle}>
+                      <button
+                        type="button"
+                        style={segmentedButtonStyle((formData.downtimeSettings?.deviceProfile || defaultDowntimeSettings.deviceProfile) === 'auto')}
+                        onClick={() =>
+                          handleChange('downtimeSettings', {
+                            ...defaultDowntimeSettings,
+                            ...(formData.downtimeSettings || {}),
+                            deviceProfile: 'auto',
+                          })
+                        }
+                      >
+                        Auto Detect
+                      </button>
+                      <button
+                        type="button"
+                        style={segmentedButtonStyle((formData.downtimeSettings?.deviceProfile || defaultDowntimeSettings.deviceProfile) === 'desktop')}
+                        onClick={() =>
+                          handleChange('downtimeSettings', {
+                            ...defaultDowntimeSettings,
+                            ...(formData.downtimeSettings || {}),
+                            deviceProfile: 'desktop',
+                          })
+                        }
+                      >
+                        Mac / Dell Desktop
+                      </button>
+                      <button
+                        type="button"
+                        style={segmentedButtonStyle((formData.downtimeSettings?.deviceProfile || defaultDowntimeSettings.deviceProfile) === 'ipad')}
+                        onClick={() =>
+                          handleChange('downtimeSettings', {
+                            ...defaultDowntimeSettings,
+                            ...(formData.downtimeSettings || {}),
+                            deviceProfile: 'ipad',
+                          })
+                        }
+                      >
+                        iPad / Tablet
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem' }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: '#374151', fontSize: '0.9rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(formData.downtimeSettings?.includeDob)}
+                      onChange={(e) =>
+                        handleChange('downtimeSettings', {
+                          ...defaultDowntimeSettings,
+                          ...(formData.downtimeSettings || {}),
+                          includeDob: e.target.checked,
+                        })
+                      }
+                    />
+                    Include DOB
+                  </label>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: '#374151', fontSize: '0.9rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(formData.downtimeSettings?.includePhone)}
+                      onChange={(e) =>
+                        handleChange('downtimeSettings', {
+                          ...defaultDowntimeSettings,
+                          ...(formData.downtimeSettings || {}),
+                          includePhone: e.target.checked,
+                        })
+                      }
+                    />
+                    Include phone
+                  </label>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', color: '#374151', fontSize: '0.9rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(formData.downtimeSettings?.includeInsurance)}
+                      onChange={(e) =>
+                        handleChange('downtimeSettings', {
+                          ...defaultDowntimeSettings,
+                          ...(formData.downtimeSettings || {}),
+                          includeInsurance: e.target.checked,
+                        })
+                      }
+                    />
+                    Include insurance
+                  </label>
+                </div>
               </div>
             </>
           )}

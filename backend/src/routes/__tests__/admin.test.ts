@@ -34,7 +34,26 @@ beforeEach(() => {
 describe("Admin routes - Facilities", () => {
   it("GET /admin/facilities returns facilities", async () => {
     queryMock.mockResolvedValueOnce({
-      rows: [{ id: "facility-1", name: "Main Clinic", address: "123 Main St", phone: "555-1234", isActive: true }],
+      rows: [{
+        id: "facility-1",
+        name: "Main Clinic",
+        address: "123 Main St",
+        phone: "555-1234",
+        isActive: true,
+        downtimePacketsEnabled: true,
+        downtimePacketTime: "05:00",
+        downtimeDeviceProfile: "desktop",
+        downtimeIncludeDob: true,
+        downtimeIncludePhone: true,
+        downtimeIncludeInsurance: false,
+        downtimePrimaryDeviceId: "device-1",
+        downtimePrimaryDeviceLabel: "Chrome on Mac",
+        downtimePrimaryDeviceRegisteredAt: "2026-04-27T18:00:00.000Z",
+        downtimePrimaryDeviceRegisteredBy: "Admin User",
+        downtimePrimaryDeviceLastSeenAt: "2026-04-27T18:05:00.000Z",
+        downtimePrimaryDeviceLastPacketSavedAt: "2026-04-27T18:06:00.000Z",
+        downtimePrimaryDeviceLastPacketDate: "2026-04-28",
+      }],
       rowCount: 1,
     });
 
@@ -43,6 +62,23 @@ describe("Admin routes - Facilities", () => {
     expect(res.status).toBe(200);
     expect(res.body.facilities).toHaveLength(1);
     expect(res.body.facilities[0].name).toBe("Main Clinic");
+    expect(res.body.facilities[0].downtimeSettings).toEqual({
+      enabled: true,
+      packetTime: "05:00",
+      deviceProfile: "desktop",
+      includeDob: true,
+      includePhone: true,
+      includeInsurance: false,
+    });
+    expect(res.body.facilities[0].downtimePrimaryDevice).toEqual({
+      deviceId: "device-1",
+      label: "Chrome on Mac",
+      registeredAt: "2026-04-27T18:00:00.000Z",
+      registeredBy: "Admin User",
+      lastSeenAt: "2026-04-27T18:05:00.000Z",
+      lastPacketSavedAt: "2026-04-27T18:06:00.000Z",
+      lastPacketDate: "2026-04-28",
+    });
   });
 
   it("POST /admin/facilities creates facility", async () => {
@@ -75,6 +111,68 @@ describe("Admin routes - Facilities", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+  });
+
+  it("POST /admin/facilities/:id/downtime-primary-device registers facility device", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{
+        id: "facility-1",
+        name: "Main Clinic",
+        address: "123 Main St",
+        phone: "555-1234",
+        isActive: true,
+        downtimePacketsEnabled: true,
+        downtimePacketTime: "12:00",
+        downtimeDeviceProfile: "desktop",
+        downtimeIncludeDob: true,
+        downtimeIncludePhone: true,
+        downtimeIncludeInsurance: true,
+        downtimePrimaryDeviceId: "device-1",
+        downtimePrimaryDeviceLabel: "Chrome on Mac",
+        downtimePrimaryDeviceRegisteredAt: "2026-04-27T18:00:00.000Z",
+        downtimePrimaryDeviceRegisteredBy: "Admin User",
+        downtimePrimaryDeviceLastSeenAt: null,
+        downtimePrimaryDeviceLastPacketSavedAt: null,
+        downtimePrimaryDeviceLastPacketDate: null,
+      }],
+      rowCount: 1,
+    });
+
+    const res = await request(app)
+      .post("/admin/facilities/facility-1/downtime-primary-device")
+      .send({ deviceId: "device-1", deviceLabel: "Chrome on Mac" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.facility.downtimePrimaryDevice.deviceId).toBe("device-1");
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE locations"),
+      expect.arrayContaining(["device-1", "Chrome on Mac", "Admin User", "facility-1", "tenant-1"]),
+    );
+  });
+
+  it("DELETE /admin/facilities/:id/downtime-primary-device clears facility device", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{
+        id: "facility-1",
+        name: "Main Clinic",
+        address: "123 Main St",
+        phone: "555-1234",
+        isActive: true,
+        downtimePacketsEnabled: true,
+        downtimePacketTime: "12:00",
+        downtimeDeviceProfile: "desktop",
+        downtimeIncludeDob: true,
+        downtimeIncludePhone: true,
+        downtimeIncludeInsurance: true,
+        downtimePrimaryDeviceId: null,
+      }],
+      rowCount: 1,
+    });
+
+    const res = await request(app).delete("/admin/facilities/facility-1/downtime-primary-device");
+
+    expect(res.status).toBe(200);
+    expect(res.body.facility.downtimePrimaryDevice).toBeNull();
   });
 
   it("DELETE /admin/facilities/:id rejects facility with rooms", async () => {

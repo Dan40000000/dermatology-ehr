@@ -2,6 +2,21 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { API_BASE_URL } from '../utils/apiBase';
 
+// ── Local demo fallback for when the backend is unavailable ───────────────────
+const DEMO_PORTAL_CREDS: Record<string, { firstName: string; lastName: string; id: string }> = {
+  'patient@demo.portal': { id: 'demo-patient-1', firstName: 'Alex',   lastName: 'Johnson' },
+  'jane@demo.portal':    { id: 'demo-patient-2', firstName: 'Jane',   lastName: 'Doe' },
+  'marcus@demo.portal':  { id: 'demo-patient-3', firstName: 'Marcus', lastName: 'Williams' },
+  'sofia@demo.portal':   { id: 'demo-patient-4', firstName: 'Sofia',  lastName: 'Chen' },
+};
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DEMO_PORTAL_PASSWORD = 'Portal123!';
+
+function isLocalDemoEnabled(): boolean {
+  return import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
+}
+
 interface Patient {
   id: string;
   firstName: string;
@@ -30,6 +45,21 @@ interface RegisterData {
   dob: string;
 }
 
+function getDemoPortalPatient(email: string, password: string): Patient | null {
+  if (!isLocalDemoEnabled()) return null;
+
+  const demo = DEMO_PORTAL_CREDS[email.toLowerCase()];
+  if (!demo || password !== DEMO_PORTAL_PASSWORD) return null;
+
+  return {
+    id: demo.id,
+    firstName: demo.firstName,
+    lastName: demo.lastName,
+    email,
+    practiceName: 'Dermatology Demo Office',
+  };
+}
+
 const PatientPortalAuthContext = createContext<PatientPortalAuthContextType | null>(null);
 
 export function PatientPortalAuthProvider({ children }: { children: ReactNode }) {
@@ -45,6 +75,14 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
     const storedPatient = localStorage.getItem('patientPortalPatient');
 
     if (storedToken && storedTenantId && storedPatient) {
+      if (storedToken === 'demo-portal-token') {
+        localStorage.removeItem('patientPortalToken');
+        localStorage.removeItem('patientPortalTenantId');
+        localStorage.removeItem('patientPortalPatient');
+        setIsLoading(false);
+        return;
+      }
+
       setSessionToken(storedToken);
       setTenantId(storedTenantId);
       setPatient(JSON.parse(storedPatient));
@@ -55,6 +93,21 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
 
   const login = async (tenantId: string, email: string, password: string) => {
     setIsLoading(true);
+    const demoPatient = getDemoPortalPatient(email, password);
+    const startLocalDemoSession = () => {
+      if (!demoPatient) return false;
+
+      const demoToken = 'demo-portal-token';
+      const demoTenant = tenantId || 'tenant-demo';
+      setSessionToken(demoToken);
+      setTenantId(demoTenant);
+      setPatient(demoPatient);
+      localStorage.setItem('patientPortalToken', demoToken);
+      localStorage.setItem('patientPortalTenantId', demoTenant);
+      localStorage.setItem('patientPortalPatient', JSON.stringify(demoPatient));
+      return true;
+    };
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/patient-portal/login`, {
         method: 'POST',
@@ -66,7 +119,8 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
       });
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({}));
+        if (response.status >= 500 && startLocalDemoSession()) return;
         throw new Error(error.error || 'Login failed');
       }
 
@@ -81,6 +135,7 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
       localStorage.setItem('patientPortalTenantId', tenantId);
       localStorage.setItem('patientPortalPatient', JSON.stringify(data.patient));
     } catch (error) {
+      if (demoPatient && error instanceof TypeError && startLocalDemoSession()) return;
       throw error;
     } finally {
       setIsLoading(false);
@@ -163,6 +218,21 @@ export function usePatientPortalAuth() {
   return context;
 }
 
+// Demo mode — returns empty shells so portal pages render without a backend
+function getDemoResponse(endpoint: string): unknown {
+  if (endpoint.includes('/dashboard')) {
+    return { dashboard: { upcomingAppointments: 0, nextAppointment: null, newDocuments: 0, newVisits: 0, activePrescriptions: 0 } };
+  }
+  if (endpoint.includes('/appointments')) return { appointments: [] };
+  if (endpoint.includes('/documents')) return { documents: [] };
+  if (endpoint.includes('/visits') || endpoint.includes('/visit-summaries')) return { visits: [] };
+  if (endpoint.includes('/billing')) return { invoices: [], balance: 0 };
+  if (endpoint.includes('/health-record')) return { healthRecord: {} };
+  if (endpoint.includes('/profile')) return { profile: {} };
+  if (endpoint.includes('/messages')) return { messages: [] };
+  return {};
+}
+
 // API helper for authenticated requests
 export async function patientPortalFetch(endpoint: string, options: RequestInit = {}) {
   const token = localStorage.getItem('patientPortalToken');
@@ -171,6 +241,9 @@ export async function patientPortalFetch(endpoint: string, options: RequestInit 
   if (!token || !tenantId) {
     throw new Error('Not authenticated');
   }
+
+  // Demo mode — the global fetch interceptor handles this, just let it through
+  // (interceptor is installed in main.tsx and will return rich demo data)
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,

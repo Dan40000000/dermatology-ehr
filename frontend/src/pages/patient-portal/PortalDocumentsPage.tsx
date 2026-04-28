@@ -26,6 +26,7 @@ export function PortalDocumentsPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewingDocument, setViewingDocument] = useState<Document | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchDocuments();
@@ -38,11 +39,13 @@ export function PortalDocumentsPage() {
     }
 
     setLoading(true);
+    setError(null);
     try {
       const data = await patientPortalFetch('/api/patient-portal-data/documents');
       setDocuments(data.documents || []);
     } catch (error) {
       console.error('Failed to fetch documents:', error);
+      setError(error instanceof Error ? error.message : 'Failed to load documents');
     } finally {
       setLoading(false);
     }
@@ -464,6 +467,34 @@ export function PortalDocumentsPage() {
           color: #6b7280;
         }
 
+        .error-state {
+          padding: 3rem;
+          text-align: center;
+          color: #64748b;
+        }
+
+        .error-state h4 {
+          margin: 0 0 0.5rem;
+          color: #991b1b;
+          font-size: 1rem;
+        }
+
+        .error-state p {
+          margin: 0 auto 1rem;
+          max-width: 420px;
+          line-height: 1.5;
+        }
+
+        .error-state button {
+          border: none;
+          border-radius: 8px;
+          background: #6366f1;
+          color: white;
+          font-weight: 700;
+          padding: 0.65rem 1rem;
+          cursor: pointer;
+        }
+
         .empty-icon {
           width: 64px;
           height: 64px;
@@ -700,6 +731,12 @@ export function PortalDocumentsPage() {
               {[1, 2, 3].map(i => (
                 <div key={i} className="loading-skeleton" style={{ height: '5rem', marginBottom: '1rem' }} />
               ))}
+            </div>
+          ) : error ? (
+            <div className="error-state">
+              <h4>We could not load your documents</h4>
+              <p>{error}. Please try again.</p>
+              <button type="button" onClick={fetchDocuments}>Retry</button>
             </div>
           ) : filteredDocuments.length === 0 ? (
             <div className="empty-state">

@@ -1,13 +1,21 @@
 import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
-import { Navigate, Link, useNavigate } from 'react-router-dom';
+import { Navigate, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
+import {
+  buildPortalUrl,
+  DEFAULT_PATIENT_PORTAL_TENANT_ID,
+  sanitizePortalRedirect,
+} from '../../utils/patientPortalLinks';
 
 export function PortalLoginPage() {
   const { isAuthenticated, login, isLoading } = usePatientPortalAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedTenantId = searchParams.get('tenantId') || DEFAULT_PATIENT_PORTAL_TENANT_ID;
+  const redirectPath = sanitizePortalRedirect(searchParams.get('redirect'), '/portal/dashboard');
 
-  const [tenantId, setTenantId] = useState('tenant-demo');
+  const [tenantId, setTenantId] = useState(requestedTenantId);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -20,8 +28,12 @@ export function PortalLoginPage() {
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    setTenantId(requestedTenantId);
+  }, [requestedTenantId]);
+
   if (isAuthenticated) {
-    return <Navigate to="/portal/dashboard" replace />;
+    return <Navigate to={redirectPath} replace />;
   }
 
   const handleSubmit = async (e: FormEvent) => {
@@ -29,7 +41,7 @@ export function PortalLoginPage() {
     setError(null);
     try {
       await login(tenantId, email, password);
-      navigate('/portal/dashboard');
+      navigate(redirectPath);
     } catch (err: any) {
       setError(err.message || 'Login failed. Please check your credentials.');
     }
@@ -59,7 +71,7 @@ export function PortalLoginPage() {
                 <circle cx="24" cy="24" r="3" fill="white"/>
               </svg>
             </div>
-            <h1>Mountain Pine<br/>Dermatology</h1>
+            <h1>Dermatology DEMO<br/>Office</h1>
             <p className="brand-tagline">Your health, your way</p>
 
             <div className="brand-features">
@@ -228,7 +240,13 @@ export function PortalLoginPage() {
               <span>New to the portal?</span>
             </div>
 
-            <Link to="/portal/register" className="portal-register-btn">
+            <Link
+              to={buildPortalUrl('/portal/register', {
+                tenantId,
+                redirect: redirectPath,
+              })}
+              className="portal-register-btn"
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
                 <circle cx="8.5" cy="7" r="4"/>
@@ -238,6 +256,19 @@ export function PortalLoginPage() {
               <span>Create Account</span>
             </Link>
 
+            <Link
+              to={buildPortalUrl('/book-appointment/guest', { tenantId })}
+              className="portal-guest-booking-btn"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+              </svg>
+              <span>Schedule appointment as guest</span>
+            </Link>
+
             <div className="portal-security-badge">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -245,13 +276,62 @@ export function PortalLoginPage() {
               </svg>
               <span>256-bit SSL encrypted connection</span>
             </div>
+
+            {/* Beta test credentials */}
+            <div style={{
+              marginTop: '1.25rem',
+              borderRadius: '12px',
+              border: '1px solid rgba(99, 102, 241, 0.2)',
+              overflow: 'hidden',
+            }}>
+              <div style={{
+                padding: '0.6rem 1rem',
+                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(139, 92, 246, 0.06))',
+                borderBottom: '1px solid rgba(99, 102, 241, 0.12)',
+              }}>
+                <p style={{ fontSize: '0.7rem', fontWeight: '700', color: '#4f46e5', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
+                  Beta test credentials — click to fill
+                </p>
+              </div>
+              {[
+                { label: 'Alex Johnson',   email: 'patient@demo.portal', password: 'Portal123!' },
+                { label: 'Jane Doe',       email: 'jane@demo.portal',    password: 'Portal123!' },
+                { label: 'Marcus Williams',email: 'marcus@demo.portal',  password: 'Portal123!' },
+                { label: 'Sofia Chen',     email: 'sofia@demo.portal',   password: 'Portal123!' },
+              ].map((cred, i) => (
+                <button
+                  key={cred.email}
+                  type="button"
+                  onClick={() => { setEmail(cred.email); setPassword(cred.password); }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    width: '100%',
+                    padding: '0.6rem 1rem',
+                    background: 'transparent',
+                    border: 'none',
+                    borderTop: i > 0 ? '1px solid rgba(99, 102, 241, 0.08)' : 'none',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'background 0.15s',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(99, 102, 241, 0.06)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#4f46e5', width: '100px', flexShrink: 0 }}>{cred.label}</span>
+                  <code style={{ fontSize: '0.78rem', color: '#374151', flex: 1, fontFamily: "'SF Mono', 'Fira Code', monospace" }}>{cred.email}</code>
+                  <code style={{ fontSize: '0.78rem', color: '#6b7280', fontFamily: "'SF Mono', 'Fira Code', monospace" }}>Portal123!</code>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
 
       {/* Footer */}
       <footer className="portal-login-footer">
-        <p>&copy; 2026 Mountain Pine Dermatology &bull; <a href="#privacy">Privacy Policy</a> &bull; <a href="#terms">Terms of Service</a></p>
+        <p>&copy; 2026 Dermatology DEMO Office &bull; <a href="#privacy">Privacy Policy</a> &bull; <a href="#terms">Terms of Service</a></p>
       </footer>
 
       <style>{`
@@ -806,6 +886,36 @@ export function PortalLoginPage() {
         .portal-register-btn svg {
           width: 20px;
           height: 20px;
+        }
+
+        /* Guest booking shortcut */
+        .portal-guest-booking-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.6rem;
+          padding: 0.75rem 1.5rem;
+          background: transparent;
+          color: #6b7280;
+          border: 1.5px dashed #d1d5db;
+          border-radius: 12px;
+          font-size: 0.875rem;
+          font-weight: 500;
+          text-decoration: none;
+          transition: all 0.2s ease;
+          margin-top: 0.75rem;
+        }
+
+        .portal-guest-booking-btn svg {
+          width: 16px;
+          height: 16px;
+          flex-shrink: 0;
+        }
+
+        .portal-guest-booking-btn:hover {
+          border-color: #6366f1;
+          color: #6366f1;
+          background: #f5f3ff;
         }
 
         /* Security Badge */

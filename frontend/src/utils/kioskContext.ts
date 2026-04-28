@@ -1,3 +1,5 @@
+import { API_BASE_URL } from './apiBase';
+
 const DERM_SESSION_STORAGE_KEY = 'derm_session';
 const KIOSK_CODE_STORAGE_KEY = 'kioskCode';
 const TENANT_ID_STORAGE_KEY = 'tenantId';
@@ -44,6 +46,16 @@ function persistIfPresent(key: string, value: string | null | undefined) {
   const normalized = readString(value);
   if (!normalized || typeof window === 'undefined') return;
   localStorage.setItem(key, normalized);
+}
+
+function buildApiUrl(path: string): string {
+  if (API_BASE_URL) {
+    return `${API_BASE_URL}${path}`;
+  }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return new URL(path, window.location.origin).toString();
+  }
+  return path;
 }
 
 export function syncKioskContextFromUrl(search = '') {
@@ -113,7 +125,7 @@ export async function ensureKioskContext(
         params.set('locationId', locationId);
       }
 
-      const response = await fetch(`/api/kiosk/launch-context${params.toString() ? `?${params.toString()}` : ''}`, {
+      const response = await fetch(buildApiUrl(`/api/kiosk/launch-context${params.toString() ? `?${params.toString()}` : ''}`), {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           'X-Tenant-Id': effectiveTenantId,

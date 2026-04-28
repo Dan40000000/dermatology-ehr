@@ -3,6 +3,12 @@ import {
   CMS_2026_VISIT_RATE_SOURCE_NOTE,
   inferVisitRevenueBenchmark,
 } from '../data/appointmentRevenueBenchmarks';
+import {
+  classifyRevenueCategory,
+  revenueCategoryLabel,
+  type RevenueCategoryKey,
+  type RevenueCategorySummary,
+} from './financialRevenueCategories';
 
 export interface FinancialSnapshotPeriod {
   key: 'daily' | 'weekly' | 'monthly';
@@ -11,11 +17,13 @@ export interface FinancialSnapshotPeriod {
   completedAppointments: number;
   actualRevenueCents: number;
   benchmarkRevenueCents: number;
+  standaloneRevenueCents: number;
   totalRevenueCents: number;
   collectionsCents: number;
   avgRevenuePerVisitCents: number;
   benchmarkVisitsCount: number;
   collectionRate: number;
+  revenueCategories: RevenueCategorySummary[];
 }
 
 export interface FinancialSnapshots {
@@ -36,6 +44,16 @@ interface AppointmentRevenueRow {
 interface CollectionRow {
   collected_on: string;
   amount_cents: string | number | null;
+}
+
+interface StandaloneBillRevenueRow {
+  bill_id: string;
+  billed_on: string;
+  total_charges_cents: string | number | null;
+  notes: string | null;
+  appointment_type_name: string | null;
+  cpt_codes: string | null;
+  line_descriptions: string | null;
 }
 
 function parseSnapshotDate(value: string): Date | null {
@@ -106,12 +124,38 @@ function buildEmptyPeriod(
     completedAppointments: 0,
     actualRevenueCents: 0,
     benchmarkRevenueCents: 0,
+    standaloneRevenueCents: 0,
     totalRevenueCents: 0,
     collectionsCents: 0,
     avgRevenuePerVisitCents: 0,
     benchmarkVisitsCount: 0,
     collectionRate: 0,
+    revenueCategories: [],
   };
+}
+
+function createCategoryAccumulator(): Record<RevenueCategoryKey, RevenueCategorySummary> {
+  return {
+    office_visit: { key: 'office_visit', label: revenueCategoryLabel('office_visit'), revenueCents: 0, itemCount: 0 },
+    procedure: { key: 'procedure', label: revenueCategoryLabel('procedure'), revenueCents: 0, itemCount: 0 },
+    cosmetic: { key: 'cosmetic', label: revenueCategoryLabel('cosmetic'), revenueCents: 0, itemCount: 0 },
+    late_fee: { key: 'late_fee', label: revenueCategoryLabel('late_fee'), revenueCents: 0, itemCount: 0 },
+    no_show_fee: { key: 'no_show_fee', label: revenueCategoryLabel('no_show_fee'), revenueCents: 0, itemCount: 0 },
+    product_sale: { key: 'product_sale', label: revenueCategoryLabel('product_sale'), revenueCents: 0, itemCount: 0 },
+    other: { key: 'other', label: revenueCategoryLabel('other'), revenueCents: 0, itemCount: 0 },
+  };
+}
+
+function addRevenueCategory(
+  accumulator: Record<RevenueCategoryKey, RevenueCategorySummary>,
+  categoryKey: RevenueCategoryKey,
+  revenueCents: number,
+): void {
+  if (revenueCents <= 0) {
+    return;
+  }
+  accumulator[categoryKey].revenueCents += revenueCents;
+  accumulator[categoryKey].itemCount += 1;
 }
 
 export async function getFinancialSnapshots(tenantId: string): Promise<FinancialSnapshots> {
@@ -121,7 +165,8 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
   const monthlyStart = startOfMonth(now);
   const maxStart = monthlyStart;
 
-  const [appointmentRevenueResult, patientCollectionsResult, payerCollectionsResult] = await Promise.all([
+  const [appointmentRevenueResult, patientCollectionsResult, payerCollectionsResult, standaloneRevenueResult] =
+    await Promise.all([
     pool.query(
       `SELECT
          a.id AS appointment_id,
@@ -175,6 +220,34 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
        GROUP BY payment_date::date`,
       [tenantId, maxStart.toISOString(), now.toISOString()]
     ),
+    pool.query(
+      `SELECT
+         b.id AS bill_id,
+         b.bill_date::date::text AS billed_on,
+         b.total_charges_cents,
+         b.notes,
+         MAX(at.name) AS appointment_type_name,
+         STRING_AGG(DISTINCT COALESCE(bli.cpt_code, ''), ',') AS cpt_codes,
+         STRING_AGG(DISTINCT COALESCE(bli.description, ''), ' | ') AS line_descriptions
+       FROM bills b
+       LEFT JOIN bill_line_items bli
+         ON bli.bill_id = b.id
+        AND bli.tenant_id = b.tenant_id
+       LEFT JOIN encounters e
+         ON e.id = b.encounter_id
+        AND e.tenant_id = b.tenant_id
+       LEFT JOIN appointments a
+         ON a.id = e.appointment_id
+        AND a.tenant_id = b.tenant_id
+       LEFT JOIN appointment_types at
+         ON at.id = a.appointment_type_id
+       WHERE b.tenant_id = $1
+         AND b.encounter_id IS NULL
+         AND b.bill_date >= $2::date
+         AND b.bill_date <= $3::date
+       GROUP BY b.id, b.bill_date, b.total_charges_cents, b.notes`,
+      [tenantId, maxStart.toISOString(), now.toISOString()]
+    ),
   ]);
 
   const periods: Array<{ key: FinancialSnapshotPeriod['key']; label: string; start: Date; rangeLabel: string }> = [
@@ -186,6 +259,9 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
   const snapshots = Object.fromEntries(
     periods.map((period) => [period.key, buildEmptyPeriod(period.key, period.label, period.rangeLabel)])
   ) as Record<FinancialSnapshotPeriod['key'], FinancialSnapshotPeriod>;
+  const categoryAccumulators = Object.fromEntries(
+    periods.map((period) => [period.key, createCategoryAccumulator()])
+  ) as Record<FinancialSnapshotPeriod['key'], Record<RevenueCategoryKey, RevenueCategorySummary>>;
 
   const appointments = Array.isArray(appointmentRevenueResult.rows)
     ? (appointmentRevenueResult.rows as AppointmentRevenueRow[])
@@ -211,6 +287,10 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
       }
 
       const bucket = snapshots[period.key];
+      const categoryKey = classifyRevenueCategory({
+        appointmentTypeName: appointment.appointment_type_name,
+        encounterBacked: true,
+      });
       bucket.completedAppointments += 1;
       bucket.actualRevenueCents += actualRevenueCents;
       bucket.benchmarkRevenueCents += benchmarkRevenueCents;
@@ -218,6 +298,42 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
       if (benchmarkRevenueCents > 0) {
         bucket.benchmarkVisitsCount += 1;
       }
+      addRevenueCategory(categoryAccumulators[period.key], categoryKey, totalRevenueCents);
+    }
+  }
+
+  const standaloneBillRows = Array.isArray(standaloneRevenueResult.rows)
+    ? (standaloneRevenueResult.rows as StandaloneBillRevenueRow[])
+    : [];
+
+  for (const bill of standaloneBillRows) {
+    const billedOn = parseSnapshotDate(bill.billed_on);
+    if (!billedOn) {
+      continue;
+    }
+
+    const totalRevenueCents = parseCents(bill.total_charges_cents);
+    if (totalRevenueCents <= 0) {
+      continue;
+    }
+
+    const categoryKey = classifyRevenueCategory({
+      appointmentTypeName: bill.appointment_type_name,
+      notes: bill.notes,
+      cptCodes: bill.cpt_codes,
+      lineDescriptions: bill.line_descriptions,
+      encounterBacked: false,
+    });
+
+    for (const period of periods) {
+      if (billedOn < period.start || billedOn > now) {
+        continue;
+      }
+
+      const bucket = snapshots[period.key];
+      bucket.standaloneRevenueCents += totalRevenueCents;
+      bucket.totalRevenueCents += totalRevenueCents;
+      addRevenueCategory(categoryAccumulators[period.key], categoryKey, totalRevenueCents);
     }
   }
 
@@ -252,6 +368,9 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
       bucket.totalRevenueCents > 0
         ? Number(((bucket.collectionsCents / bucket.totalRevenueCents) * 100).toFixed(1))
         : 0;
+    bucket.revenueCategories = Object.values(categoryAccumulators[period.key])
+      .filter((category) => category.revenueCents > 0)
+      .sort((left, right) => right.revenueCents - left.revenueCents);
   }
 
   return {

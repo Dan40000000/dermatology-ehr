@@ -61,7 +61,7 @@ export async function fetchPatients(
   options?: { page?: number; limit?: number; fields?: string }
 ) {
   const params = new URLSearchParams();
-  const limit = options?.limit ?? 100;
+  const limit = options?.limit ?? 1000;
   if (limit) params.set("limit", String(limit));
   if (options?.page) params.set("page", String(options.page));
   if (options?.fields) params.set("fields", options.fields);
@@ -94,6 +94,62 @@ export async function fetchPatient(tenantId: string, accessToken: string, patien
       throw new Error("Patient not found");
     }
     throw new Error("Failed to load patient");
+  }
+  return res.json();
+}
+
+export interface PatientDiagnosisSummary {
+  id: string;
+  encounterId: string;
+  icd10Code: string;
+  description: string;
+  isPrimary?: boolean;
+  createdAt?: string;
+  encounterDate?: string;
+  chiefComplaint?: string | null;
+  providerName?: string | null;
+}
+
+export interface PatientRecallSummary {
+  id: string;
+  patientId: string;
+  campaignId?: string | null;
+  dueDate?: string | null;
+  recallDate?: string | null;
+  recallType?: string | null;
+  status: 'pending' | 'contacted' | 'scheduled' | 'completed' | 'dismissed' | string;
+  lastContactDate?: string | null;
+  contactMethod?: string | null;
+  notes?: string | null;
+  doctorNotes?: string | null;
+  preferredContactMethod?: string | null;
+  notifiedOn?: string | null;
+  notificationCount?: number | null;
+  appointmentId?: string | null;
+  campaignName?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PatientClinicalSummary {
+  diagnoses: PatientDiagnosisSummary[];
+  recalls: PatientRecallSummary[];
+}
+
+export async function fetchPatientClinicalSummary(
+  tenantId: string,
+  accessToken: string,
+  patientId: string
+): Promise<PatientClinicalSummary> {
+  const res = await fetch(`${API_BASE}/api/patients/${patientId}/clinical-summary`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to load patient clinical summary');
   }
   return res.json();
 }
@@ -521,6 +577,184 @@ export async function fetchLocations(tenantId: string, accessToken: string) {
   });
   if (!res.ok) throw new Error("Failed to load locations");
   return res.json();
+}
+
+export interface DowntimePrimaryDevice {
+  deviceId: string;
+  label?: string | null;
+  registeredAt?: string | null;
+  registeredBy?: string | null;
+  lastSeenAt?: string | null;
+  lastPacketSavedAt?: string | null;
+  lastPacketDate?: string | null;
+}
+
+export type DowntimeDeviceProfile = 'auto' | 'ipad' | 'desktop';
+
+export interface DowntimeSettings {
+  enabled: boolean;
+  packetTime: string;
+  deviceProfile: DowntimeDeviceProfile;
+  includeDob: boolean;
+  includePhone: boolean;
+  includeInsurance: boolean;
+}
+
+export interface DowntimePacketAppointment {
+  appointmentId: string;
+  patientId: string;
+  scheduledStart: string;
+  scheduledEnd?: string | null;
+  status: string;
+  patientName: string;
+  mrn?: string | null;
+  dob?: string | null;
+  phone?: string | null;
+  addressLine?: string | null;
+  insurance?: string | null;
+  insuranceId?: string | null;
+  insuranceGroupNumber?: string | null;
+  allergies?: string | null;
+  providerName: string;
+  locationName?: string | null;
+  appointmentTypeName: string;
+  reason?: string | null;
+  chiefComplaint?: string | null;
+  clinicalSnapshot?: string | null;
+  medicationsSummary?: string | null;
+  notes?: string | null;
+}
+
+export interface DowntimePacket {
+  date: string;
+  generatedAt: string;
+  location: {
+    id: string;
+    name: string;
+    address?: string | null;
+    phone?: string | null;
+  };
+  settings: DowntimeSettings;
+  counts: {
+    total: number;
+    byStatus: Record<string, number>;
+  };
+  appointments: DowntimePacketAppointment[];
+}
+
+export async function generateDowntimePacket(
+  tenantId: string,
+  accessToken: string,
+  payload: { date: string; locationId: string }
+) {
+  const res = await fetch(`${API_BASE}/api/downtime-packets/generate`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to generate downtime packet');
+  }
+  return res.json() as Promise<{ packet: DowntimePacket; changed?: boolean }>;
+}
+
+export async function fetchReadyDowntimePacket(
+  tenantId: string,
+  accessToken: string,
+  payload: { date: string; locationId: string }
+) {
+  const params = new URLSearchParams({
+    date: payload.date,
+    locationId: payload.locationId,
+  });
+  const res = await fetch(`${API_BASE}/api/downtime-packets/ready?${params.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (res.status === 404) {
+    return { packet: null as DowntimePacket | null };
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to load downtime packet');
+  }
+  return res.json() as Promise<{ packet: DowntimePacket }>;
+}
+
+export async function registerDowntimePrimaryDevice(
+  tenantId: string,
+  accessToken: string,
+  facilityId: string,
+  payload: { deviceId: string; deviceLabel?: string | null },
+) {
+  const res = await fetch(`${API_BASE}/api/admin/facilities/${facilityId}/downtime-primary-device`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to register downtime primary device');
+  }
+  return res.json() as Promise<{ facility: { id: string; downtimePrimaryDevice: DowntimePrimaryDevice | null } }>;
+}
+
+export async function clearDowntimePrimaryDevice(
+  tenantId: string,
+  accessToken: string,
+  facilityId: string,
+) {
+  const res = await fetch(`${API_BASE}/api/admin/facilities/${facilityId}/downtime-primary-device`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to clear downtime primary device');
+  }
+  return res.json() as Promise<{ facility: { id: string; downtimePrimaryDevice: DowntimePrimaryDevice | null } }>;
+}
+
+export async function reportDowntimeDeviceStatus(
+  tenantId: string,
+  accessToken: string,
+  payload: {
+    deviceId: string;
+    reports?: Array<{
+      locationId: string;
+      lastPacketSavedAt?: string;
+      lastPacketDate?: string;
+    }>;
+  },
+) {
+  const res = await fetch(`${API_BASE}/api/downtime-packets/device-status`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to report downtime device status');
+  }
+  return res.json() as Promise<{ updatedLocationIds: string[] }>;
 }
 
 export async function fetchAppointmentTypes(tenantId: string, accessToken: string) {
@@ -1190,16 +1424,6 @@ export const updateAppointmentStatus = (
   authedPost(tenantId, accessToken, `/api/appointments/${id}/status`, {
     status,
     ...(options?.reason ? { reason: options.reason } : {}),
-  });
-
-export const waiveAppointmentLateFee = (
-  tenantId: string,
-  accessToken: string,
-  billId: string,
-  reason?: string,
-) =>
-  authedPost(tenantId, accessToken, `/api/appointments/late-fees/${billId}/waive`, {
-    reason,
   });
 
 export const waiveAppointmentLateFee = (
@@ -1965,6 +2189,7 @@ export interface PatientRecall {
   patientId: string;
   campaignId?: string;
   dueDate: string;
+  recallDate?: string;
   status: 'pending' | 'contacted' | 'scheduled' | 'completed' | 'dismissed';
   lastContactDate?: string;
   contactMethod?: string;
@@ -1984,6 +2209,11 @@ export interface PatientRecall {
   campaignName?: string;
   recallType?: string;
   contactAttempts?: number;
+  lastReminderType?: 'email' | 'sms' | 'phone' | 'mail' | 'portal' | string;
+  lastReminderSentAt?: string;
+  lastReminderDeliveryStatus?: 'pending' | 'sent' | 'delivered' | 'failed' | 'bounced' | 'opted_out' | string;
+  textThreadId?: string;
+  textThreadStatus?: 'open' | 'in-progress' | 'waiting-patient' | 'waiting-provider' | 'closed' | string;
 }
 
 export interface ReminderLogEntry {
@@ -2023,6 +2253,7 @@ export interface RecallStats {
     contacted: number;
     scheduled: number;
     completed: number;
+    dismissed: number;
   }>;
 }
 
@@ -2145,6 +2376,7 @@ export async function createPatientRecall(
     campaignId?: string;
     dueDate: string;
     notes?: string;
+    recallType?: string;
   }
 ): Promise<PatientRecall> {
   return authedPost(tenantId, accessToken, `/api/recalls/patient`, data);
@@ -5110,6 +5342,8 @@ export interface TelehealthSession {
   appointment_id?: number;
   patient_id: number;
   provider_id: number;
+  scheduled_start?: string;
+  scheduled_end?: string;
   session_token: string;
   room_name: string;
   status: 'scheduled' | 'waiting' | 'in_progress' | 'completed' | 'cancelled' | 'error';
@@ -5138,10 +5372,15 @@ export interface TelehealthSession {
 }
 
 export interface TelehealthStats {
-  myInProgress: number;
-  myCompleted: number;
-  myUnreadMessages: number;
-  unassignedCases: number;
+  todayVisits: number;
+  waitingNow: number;
+  liveNow: number;
+  upcomingWeek: number;
+  completedToday: number;
+  cancelledThisWeek: number;
+  averageCompletedDurationMinutes: number;
+  uniquePatientsInRange: number;
+  providersWithTelehealth: number;
 }
 
 export interface WaitingRoomEntry {

@@ -66,6 +66,10 @@ const applyDiscountSchema = z.object({
 
 export const productsRouter = Router();
 
+function isMissingProductsTableError(error: any): boolean {
+  return error?.code === "42P01";
+}
+
 /**
  * @swagger
  * /api/products:
@@ -281,6 +285,54 @@ productsRouter.post("/sales", requireAuth, async (req: AuthedRequest, res) => {
 
 /**
  * @swagger
+ * /api/products/sales/report:
+ *   get:
+ *     summary: Get sales report
+ *     tags: [Products]
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: category
+ *         schema:
+ *           type: string
+ *           enum: [skincare, sunscreen, cosmetic, prescription, post_procedure]
+ *       - in: query
+ *         name: soldBy
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Sales report
+ */
+productsRouter.get("/sales/report", requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { startDate, endDate, category, soldBy } = req.query;
+
+    const report = await productSalesService.getSalesReport(tenantId, {
+      startDate: startDate as string | undefined,
+      endDate: endDate as string | undefined,
+      category: category as productSalesService.ProductCategory | undefined,
+      soldBy: soldBy as string | undefined,
+    });
+
+    res.json({ report });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to generate sales report' });
+  }
+});
+
+/**
+ * @swagger
  * /api/products/sales/{id}:
  *   get:
  *     summary: Get sale details
@@ -451,6 +503,18 @@ productsRouter.get("/inventory/status", requireAuth, async (req: AuthedRequest, 
 
     res.json({ status });
   } catch (error: any) {
+    if (isMissingProductsTableError(error)) {
+      return res.json({
+        status: {
+          totalProducts: 0,
+          totalValue: 0,
+          lowStockCount: 0,
+          outOfStockCount: 0,
+          byCategory: [],
+        },
+      });
+    }
+
     res.status(500).json({ error: error.message || 'Failed to fetch inventory status' });
   }
 });
@@ -527,54 +591,6 @@ productsRouter.put("/:id/inventory", requireAuth, requireRoles(["admin", "provid
     res.json({ newCount: result.newCount });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Failed to adjust inventory' });
-  }
-});
-
-/**
- * @swagger
- * /api/products/sales/report:
- *   get:
- *     summary: Get sales report
- *     tags: [Products]
- *     parameters:
- *       - in: query
- *         name: startDate
- *         schema:
- *           type: string
- *           format: date
- *       - in: query
- *         name: endDate
- *         schema:
- *           type: string
- *           format: date
- *       - in: query
- *         name: category
- *         schema:
- *           type: string
- *           enum: [skincare, sunscreen, cosmetic, prescription, post_procedure]
- *       - in: query
- *         name: soldBy
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Sales report
- */
-productsRouter.get("/sales/report", requireAuth, async (req: AuthedRequest, res) => {
-  try {
-    const tenantId = req.user!.tenantId;
-    const { startDate, endDate, category, soldBy } = req.query;
-
-    const report = await productSalesService.getSalesReport(tenantId, {
-      startDate: startDate as string | undefined,
-      endDate: endDate as string | undefined,
-      category: category as productSalesService.ProductCategory | undefined,
-      soldBy: soldBy as string | undefined,
-    });
-
-    res.json({ report });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to generate sales report' });
   }
 });
 

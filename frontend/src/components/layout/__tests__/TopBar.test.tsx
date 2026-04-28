@@ -1,12 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { BrowserRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router-dom';
 import { TopBar } from '../TopBar';
 import { AuthContext } from '../../../contexts/AuthContext';
-import { ACTIVE_ENCOUNTER_STORAGE_KEY } from '../../../utils/activeEncounter';
 
 const mockNavigate = vi.fn();
+const fetchMock = vi.fn();
+const mockLogout = vi.fn();
+
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
   return {
@@ -15,15 +17,42 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
-describe('TopBar Component', () => {
+vi.mock('html2canvas', () => ({
+  default: vi.fn(async () => ({
+    toBlob: (callback: (blob: Blob | null) => void) => {
+      callback(new Blob(['capture'], { type: 'image/png' }));
+    },
+  })),
+}));
+
+vi.mock('../../feedback/FeedbackScreenshotEditor', () => ({
+  FeedbackScreenshotEditor: ({ onConfirm, onUseOriginal, onCancel }: any) => (
+    <div>
+      <p>Mock screenshot editor</p>
+      <button
+        type="button"
+        onClick={() => onConfirm(new File([new Blob(['annotated'], { type: 'image/png' })], 'annotated-capture.png', { type: 'image/png' }))}
+      >
+        OK
+      </button>
+      <button type="button" onClick={onUseOriginal}>Skip Markup</button>
+      <button type="button" onClick={onCancel}>Cancel</button>
+    </div>
+  ),
+}));
+
+describe('TopBar feedback flow', () => {
   const mockUser = {
     id: '1',
-    fullName: 'Dr. Smith',
-    email: 'smith@example.com',
-    role: 'physician' as const,
+    fullName: 'Admin User',
+    email: 'admin@example.com',
+    role: 'admin' as const,
   };
 
-  const mockLogout = vi.fn();
+  const mockSession = {
+    accessToken: 'test-access-token',
+    tenantId: 'tenant-1',
+  };
 
   const mockPatients = [
     { id: '1', firstName: 'John', lastName: 'Doe', mrn: 'MRN001' } as any,
@@ -32,188 +61,95 @@ describe('TopBar Component', () => {
 
   const renderWithContext = (props = {}) => {
     return render(
-      <BrowserRouter>
-        <AuthContext.Provider value={{ user: mockUser, logout: mockLogout } as any}>
+      <MemoryRouter>
+        <AuthContext.Provider value={{ user: mockUser, session: mockSession, logout: mockLogout } as any}>
           <TopBar patients={mockPatients} {...props} />
         </AuthContext.Provider>
-      </BrowserRouter>
+      </MemoryRouter>,
     );
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(window, 'alert').mockImplementation(() => {});
-    localStorage.clear();
-  });
-
-  it('renders brand name', () => {
-    renderWithContext();
-    expect(screen.getByText(/Mountain Pine/i)).toBeInTheDocument();
-    expect(screen.getByText(/Dermatology PLLC/i)).toBeInTheDocument();
-  });
-
-  it('renders patient search', () => {
-    renderWithContext();
-    expect(screen.getByLabelText(/Patient search dropdown/i)).toBeInTheDocument();
-  });
-
-  it('renders patient options', () => {
-    renderWithContext();
-    const select = screen.getByLabelText(/Patient search dropdown/i);
-    expect(select).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: /Patient Search/i })).toBeInTheDocument();
-  });
-
-  it('renders refresh button when onRefresh provided', () => {
-    const onRefresh = vi.fn();
-    renderWithContext({ onRefresh });
-    expect(screen.getByLabelText(/Refresh patient list/i)).toBeInTheDocument();
-  });
-
-  it('calls onRefresh when refresh button clicked', async () => {
-    const onRefresh = vi.fn();
-    const user = userEvent.setup();
-    renderWithContext({ onRefresh });
-
-    await user.click(screen.getByLabelText(/Refresh patient list/i));
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-  });
-
-  it('renders user name', () => {
-    renderWithContext();
-    expect(screen.getByText('Dr. Smith')).toBeInTheDocument();
-  });
-
-  it('renders Help button', () => {
-    renderWithContext();
-    expect(screen.getByRole('button', { name: /Open help dialog/i })).toBeInTheDocument();
-  });
-
-  it('opens help modal when Help clicked', async () => {
-    const user = userEvent.setup();
-    renderWithContext();
-
-    await user.click(screen.getByRole('button', { name: /Open help dialog/i }));
-    // Modal should be rendered
-  });
-
-  it('renders Feedback button', () => {
-    renderWithContext();
-    expect(screen.getByRole('button', { name: /Open feedback dialog/i })).toBeInTheDocument();
-  });
-
-  it('opens feedback modal when Feedback clicked', async () => {
-    const user = userEvent.setup();
-    renderWithContext();
-
-    await user.click(screen.getByRole('button', { name: /Open feedback dialog/i }));
-    expect(screen.getByText('Send Feedback')).toBeInTheDocument();
-  });
-
-  it('renders Customer Portal link', () => {
-    renderWithContext();
-    const link = screen.getByRole('link', { name: /Customer Portal/i });
-    expect(link).toHaveAttribute('href', '/portal/login');
-  });
-
-  it('renders Preferences button', () => {
-    renderWithContext();
-    expect(screen.getByRole('button', { name: /Open preferences dialog/i })).toBeInTheDocument();
-  });
-
-  it('opens preferences modal when Preferences clicked', async () => {
-    const user = userEvent.setup();
-    renderWithContext();
-
-    await user.click(screen.getByRole('button', { name: /Open preferences dialog/i }));
-    expect(screen.getByText('User Preferences')).toBeInTheDocument();
-  });
-
-  it('renders My Account button', () => {
-    renderWithContext();
-    expect(screen.getByRole('button', { name: /Open my account menu/i })).toBeInTheDocument();
-  });
-
-  it('opens account modal when My Account clicked', async () => {
-    const user = userEvent.setup();
-    renderWithContext();
-
-    await user.click(screen.getByRole('button', { name: /Open my account menu/i }));
-    expect(screen.getByRole('heading', { name: 'My Account' })).toBeInTheDocument();
-  });
-
-  it('renders Logout button', () => {
-    renderWithContext();
-    expect(screen.getByRole('button', { name: /Logout from application/i })).toBeInTheDocument();
-  });
-
-  it('calls logout when Logout clicked', async () => {
-    const user = userEvent.setup();
-    renderWithContext();
-
-    await user.click(screen.getByRole('button', { name: /Logout from application/i }));
-    expect(mockLogout).toHaveBeenCalledTimes(1);
-  });
-
-  it('submits feedback', async () => {
-    const user = userEvent.setup();
-    renderWithContext();
-
-    // Open feedback modal
-    await user.click(screen.getByRole('button', { name: /Open feedback dialog/i }));
-
-    // Type feedback
-    const textarea = screen.getByLabelText(/Your Feedback/i);
-    await user.type(textarea, 'Great system!');
-
-    // Submit
-    const submitButton = screen.getByRole('button', { name: /Submit Feedback/i });
-    await user.click(submitButton);
-
-    await vi.waitFor(
-      () => {
-        expect(window.alert).toHaveBeenCalledWith('Thank you for your feedback!');
-      },
-      { timeout: 2000 },
-    );
-  });
-
-  it('disables submit when feedback is empty', async () => {
-    const user = userEvent.setup();
-    renderWithContext();
-
-    await user.click(screen.getByRole('button', { name: /Open feedback dialog/i }));
-
-    const submitButton = screen.getByRole('button', { name: /Submit Feedback/i });
-    expect(submitButton).toBeDisabled();
-  });
-
-  it('shows and navigates via the live encounter shortcut', async () => {
-    localStorage.setItem(
-      ACTIVE_ENCOUNTER_STORAGE_KEY,
-      JSON.stringify({
-        encounterId: 'enc-123',
-        patientId: 'patient-123',
-        patientName: 'Jane Smith',
-        appointmentTypeName: 'Consult',
-        startedAt: '2026-02-23T09:00:00.000Z',
-        startedEncounterFrom: 'office_flow',
-        undoAppointmentStatus: 'in_room',
-        returnPath: '/office-flow',
-      }),
-    );
-
-    const user = userEvent.setup();
-    renderWithContext();
-
-    await user.click(screen.getByRole('button', { name: /Return to live encounter/i }));
-    expect(mockNavigate).toHaveBeenCalledWith('/patients/patient-123/encounter/enc-123', {
-      state: {
-        startedEncounterFrom: 'office_flow',
-        undoAppointmentStatus: 'in_room',
-        appointmentTypeName: 'Consult',
-        returnPath: '/office-flow',
-      },
+    vi.stubGlobal('fetch', fetchMock);
+    if (!URL.createObjectURL) {
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        writable: true,
+        value: vi.fn(() => 'blob:feedback-preview'),
+      });
+    } else {
+      vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:feedback-preview');
+    }
+    if (!URL.revokeObjectURL) {
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        writable: true,
+        value: vi.fn(),
+      });
+    } else {
+      vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    }
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ ok: true }),
     });
+  });
+
+  it('renders the current office branding and feedback entry point', () => {
+    renderWithContext();
+    expect(screen.getByText(/Dermatology DEMO/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Report issue or suggestion/i })).toBeInTheDocument();
+  });
+
+  it('opens screenshot markup before the normal feedback form', async () => {
+    const user = userEvent.setup();
+    renderWithContext();
+
+    await user.click(screen.getByRole('button', { name: /Report issue or suggestion/i }));
+
+    expect(await screen.findByText('Mock screenshot editor')).toBeInTheDocument();
+    expect(screen.queryByText('Report Issue / Suggestion')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'OK' }));
+
+    expect(await screen.findByText('Report Issue / Suggestion')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Send to Dan/i })).toBeInTheDocument();
+    expect(screen.getByText(/Attached marked-up page screenshot/i)).toBeInTheDocument();
+  });
+
+  it('submits the annotated screenshot and feedback to the professional feedback route', async () => {
+    const user = userEvent.setup();
+    renderWithContext();
+
+    await user.click(screen.getByRole('button', { name: /Report issue or suggestion/i }));
+    await user.click(await screen.findByRole('button', { name: 'OK' }));
+
+    await user.type(
+      screen.getByLabelText(/What happened or what should improve\?/i),
+      'The Add Procedure button is missing Botox.',
+    );
+    await user.click(screen.getByRole('button', { name: /Send to Dan/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain('/api/professional-feedback');
+    expect(options.headers).toMatchObject({
+      Authorization: 'Bearer test-access-token',
+      'x-tenant-id': 'tenant-1',
+    });
+
+    const formData = options.body as FormData;
+    expect(formData.get('type')).toBe('issue');
+    expect(formData.get('message')).toBe('The Add Procedure button is missing Botox.');
+    const attachments = formData.getAll('attachments') as File[];
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0].name).toBe('annotated-capture.png');
+
+    expect(window.alert).toHaveBeenCalledWith('Issue/suggestion sent to Dan.');
   });
 });

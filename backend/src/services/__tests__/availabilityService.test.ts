@@ -1,3 +1,5 @@
+process.env.PATIENT_SCHEDULING_TIME_ZONE = 'America/Denver';
+
 import {
   getBookingSettings,
   isDateInBookingWindow,
@@ -7,6 +9,7 @@ import {
   getAvailableDatesInMonth,
 } from '../availabilityService';
 import { pool } from '../../db/pool';
+import { getUtcInstantForPracticeDateTime } from '../../lib/practiceTimeZone';
 
 jest.mock('../../db/pool', () => ({
   pool: {
@@ -17,6 +20,9 @@ jest.mock('../../db/pool', () => ({
 const queryMock = pool.query as jest.Mock;
 
 describe('availabilityService', () => {
+  const buildPracticeDate = (dateKey: string, hour: number, minute: number) =>
+    getUtcInstantForPracticeDateTime(dateKey, hour, minute, 'America/Denver').toISOString();
+
   beforeEach(() => {
     queryMock.mockReset();
     jest.useRealTimers();
@@ -58,7 +64,7 @@ describe('availabilityService', () => {
   });
 
   it('checks booking window boundaries', () => {
-    jest.useFakeTimers().setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
+    jest.useFakeTimers().setSystemTime(new Date('2024-01-01T12:00:00.000Z'));
     const rules = {
       isEnabled: true,
       minAdvanceHours: 24,
@@ -66,7 +72,7 @@ describe('availabilityService', () => {
       bookingWindowDays: 60,
     };
 
-    expect(isDateInBookingWindow(new Date('2024-01-01T12:00:00.000Z'), rules)).toBe(false);
+    expect(isDateInBookingWindow(new Date('2023-12-31T12:00:00.000Z'), rules)).toBe(false);
     expect(isDateInBookingWindow(new Date('2024-01-04T00:00:00.000Z'), rules)).toBe(false);
     expect(isDateInBookingWindow(new Date('2024-01-03T00:00:00.000Z'), rules)).toBe(true);
   });
@@ -98,7 +104,7 @@ describe('availabilityService', () => {
       tenantId: 'tenant-1',
       providerId: 'provider-1',
       appointmentTypeId: 'type-1',
-      date: new Date('2024-01-02T00:00:00.000Z'),
+      date: new Date('2024-01-05T00:00:00.000Z'),
     });
 
     expect(slots).toEqual([]);
@@ -106,7 +112,7 @@ describe('availabilityService', () => {
   });
 
   it('returns empty slots when date is outside booking window', async () => {
-    jest.useFakeTimers().setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
+    jest.useFakeTimers().setSystemTime(new Date('2024-01-01T12:00:00.000Z'));
     queryMock.mockResolvedValueOnce({
       rows: [
         {
@@ -122,7 +128,7 @@ describe('availabilityService', () => {
       tenantId: 'tenant-1',
       providerId: 'provider-1',
       appointmentTypeId: 'type-1',
-      date: new Date('2024-01-02T00:00:00.000Z'),
+      date: new Date('2024-01-05T00:00:00.000Z'),
     });
 
     expect(slots).toEqual([]);
@@ -237,12 +243,7 @@ describe('availabilityService', () => {
 
   it('filters time off and appointment conflicts', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
-    const baseDate = new Date('2024-01-02T00:00:00.000Z');
-    const buildDate = (hour: number, minute: number) => {
-      const value = new Date(baseDate);
-      value.setHours(hour, minute, 0, 0);
-      return value.toISOString();
-    };
+    const dateKey = '2024-01-02';
 
     queryMock
       .mockResolvedValueOnce({
@@ -268,8 +269,8 @@ describe('availabilityService', () => {
       .mockResolvedValueOnce({
         rows: [
           {
-            startDatetime: buildDate(10, 30),
-            endDatetime: buildDate(11, 0),
+            startDatetime: buildPracticeDate(dateKey, 10, 30),
+            endDatetime: buildPracticeDate(dateKey, 11, 0),
             isAllDay: false,
           },
         ],
@@ -277,8 +278,8 @@ describe('availabilityService', () => {
       .mockResolvedValueOnce({
         rows: [
           {
-            scheduledStart: buildDate(9, 30),
-            scheduledEnd: buildDate(10, 0),
+            scheduledStart: buildPracticeDate(dateKey, 9, 30),
+            scheduledEnd: buildPracticeDate(dateKey, 10, 0),
           },
         ],
       })
@@ -288,18 +289,12 @@ describe('availabilityService', () => {
       tenantId: 'tenant-1',
       providerId: 'provider-1',
       appointmentTypeId: 'type-1',
-      date: baseDate,
+      date: dateKey,
     });
 
-    const expectedSlot = (hour: number, minute: number) => {
-      const slotStart = new Date(baseDate);
-      slotStart.setHours(hour, minute, 0, 0);
-      return slotStart.toISOString();
-    };
-
     expect(slots.map(slot => slot.startTime)).toEqual([
-      expectedSlot(9, 0),
-      expectedSlot(10, 0),
+      buildPracticeDate(dateKey, 9, 0),
+      buildPracticeDate(dateKey, 10, 0),
     ]);
   });
 
@@ -338,6 +333,52 @@ describe('availabilityService', () => {
     });
 
     expect(slots).toEqual([]);
+  });
+
+  it('returns slot end times using the appointment duration', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
+    const dateKey = '2024-01-02';
+
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            isEnabled: true,
+            minAdvanceHours: 0,
+            maxAdvanceDays: 30,
+            bookingWindowDays: 60,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            startTime: '09:00',
+            endTime: '10:00',
+            slotDuration: 15,
+            allowOnlineBooking: true,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ durationMinutes: 45 }] });
+
+    const slots = await calculateAvailableSlots({
+      tenantId: 'tenant-1',
+      providerId: 'provider-1',
+      appointmentTypeId: 'type-1',
+      date: dateKey,
+    });
+
+    expect(slots[0]).toMatchObject({
+      startTime: buildPracticeDate(dateKey, 9, 0),
+      endTime: buildPracticeDate(dateKey, 9, 45),
+    });
+    expect(slots[1]).toMatchObject({
+      startTime: buildPracticeDate(dateKey, 9, 15),
+      endTime: buildPracticeDate(dateKey, 10, 0),
+    });
   });
 
   it('returns provider info or null', async () => {
@@ -394,14 +435,14 @@ describe('availabilityService', () => {
   });
 
   it('returns available dates in month', async () => {
-    jest.useFakeTimers().setSystemTime(new Date(2024, 0, 1, 12, 0, 0));
+    jest.useFakeTimers().setSystemTime(new Date('2024-01-01T12:00:00.000Z'));
     queryMock
       .mockResolvedValueOnce({
         rows: [
           {
             isEnabled: true,
             minAdvanceHours: 0,
-            maxAdvanceDays: 1,
+            maxAdvanceDays: 0,
             bookingWindowDays: 60,
           },
         ],
@@ -412,7 +453,7 @@ describe('availabilityService', () => {
           {
             isEnabled: true,
             minAdvanceHours: 0,
-            maxAdvanceDays: 1,
+            maxAdvanceDays: 0,
             bookingWindowDays: 60,
           },
         ],
@@ -433,7 +474,7 @@ describe('availabilityService', () => {
 
     const dates = await getAvailableDatesInMonth('tenant-1', 'provider-1', 'type-1', 2024, 0);
 
-    const expectedDate = new Date(2024, 0, 2).toISOString().split('T')[0];
+    const expectedDate = '2024-01-01';
     expect(dates).toContain(expectedDate);
   });
 

@@ -1,10 +1,19 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 import { AppointmentCalendar } from '../../components/scheduling/AppointmentCalendar';
 import { TimeSlotSelector } from '../../components/scheduling/TimeSlotSelector';
 import { AppointmentConfirmation } from '../../components/scheduling/AppointmentConfirmation';
 import { usePatientPortalAuth, patientPortalFetch } from '../../contexts/PatientPortalAuthContext';
+import {
+  buildPortalUrl,
+  DEFAULT_PATIENT_PORTAL_TENANT_ID,
+} from '../../utils/patientPortalLinks';
+import {
+  formatDateInPracticeTimeZone,
+  formatLocalDateKey,
+  formatTimeInPracticeTimeZone,
+} from '../../utils/practiceDateTime';
 
 interface Provider {
   id: string;
@@ -36,12 +45,13 @@ interface BookingSettings {
   maxAdvanceDays: number;
   customMessage?: string;
   requireReason?: boolean;
+  timeZone?: string;
 }
 
 type BookingStep = 'type' | 'provider' | 'date' | 'time' | 'confirm' | 'success';
 
 export function PortalBookAppointmentPage() {
-  const { patient } = usePatientPortalAuth();
+  const { patient, isAuthenticated, isLoading, tenantId } = usePatientPortalAuth();
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState<BookingStep>('type');
   const [loading, setLoading] = useState(false);
@@ -65,8 +75,10 @@ export function PortalBookAppointmentPage() {
 
   // Load initial data
   useEffect(() => {
-    loadInitialData();
-  }, []);
+    if (!isLoading && isAuthenticated) {
+      loadInitialData();
+    }
+  }, [isAuthenticated, isLoading]);
 
   // Load available dates when provider and type are selected
   useEffect(() => {
@@ -123,7 +135,7 @@ export function PortalBookAppointmentPage() {
   const loadTimeSlots = async (date: Date, providerId: string, appointmentTypeId: string) => {
     setLoading(true);
     try {
-      const dateStr = date.toISOString().split('T')[0];
+      const dateStr = formatLocalDateKey(date);
       const data = await patientPortalFetch(
         `/api/patient-portal/scheduling/availability?date=${dateStr}&providerId=${providerId}&appointmentTypeId=${appointmentTypeId}`
       );
@@ -272,6 +284,18 @@ export function PortalBookAppointmentPage() {
     };
     return icons[iconName] || null;
   };
+
+  if (!isLoading && !isAuthenticated) {
+    return (
+      <Navigate
+        to={buildPortalUrl('/portal/login', {
+          tenantId: tenantId || DEFAULT_PATIENT_PORTAL_TENANT_ID,
+          redirect: '/portal/book-appointment',
+        })}
+        replace
+      />
+    );
+  }
 
   if (initialLoading) {
     return (
@@ -490,6 +514,7 @@ export function PortalBookAppointmentPage() {
                 onSlotSelect={handleSelectSlot}
                 loading={loading}
                 date={selectedDate}
+                timeZone={settings?.timeZone}
               />
             </div>
           )}
@@ -538,6 +563,7 @@ export function PortalBookAppointmentPage() {
                 onConfirm={handleBookAppointment}
                 onBack={handleBack}
                 loading={loading}
+                timeZone={settings?.timeZone}
               />
             </div>
           )}
@@ -558,17 +584,13 @@ export function PortalBookAppointmentPage() {
                   <div className="detail-item">
                     <span className="detail-label">Date</span>
                     <span className="detail-value">
-                      {new Date(selectedSlot.startTime).toLocaleDateString('en-US', {
-                        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
-                      })}
+                      {formatDateInPracticeTimeZone(selectedSlot.startTime, settings?.timeZone)}
                     </span>
                   </div>
                   <div className="detail-item">
                     <span className="detail-label">Time</span>
                     <span className="detail-value">
-                      {new Date(selectedSlot.startTime).toLocaleTimeString('en-US', {
-                        hour: 'numeric', minute: '2-digit', hour12: true
-                      })}
+                      {formatTimeInPracticeTimeZone(selectedSlot.startTime, settings?.timeZone)}
                     </span>
                   </div>
                   <div className="detail-item">

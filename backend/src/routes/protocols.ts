@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
+import { requireModuleAccess } from "../middleware/moduleAccess";
 import { requireRoles } from "../middleware/rbac";
 import { parsePagination, paginatedResponse } from "../middleware/pagination";
 import { logger } from "../lib/logger";
@@ -48,6 +49,7 @@ const protocolApplicationSchema = z.object({
 });
 
 export const protocolsRouter = Router();
+protocolsRouter.use(requireAuth, requireModuleAccess("protocols"));
 
 // Get all protocols
 protocolsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {

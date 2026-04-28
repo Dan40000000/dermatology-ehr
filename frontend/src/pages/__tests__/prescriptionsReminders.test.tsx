@@ -395,6 +395,32 @@ describe('RemindersPage', () => {
     );
   });
 
+  it('opens a campaign patient list from the campaign card', async () => {
+    render(
+      <MemoryRouter>
+        <RemindersPage />
+      </MemoryRouter>
+    );
+    await screen.findByText('Reminders & Recalls');
+
+    const campaignCard = screen.getByRole('heading', { name: 'Annual Skin Check' }).closest('.campaign-card');
+    expect(campaignCard).toBeTruthy();
+    fireEvent.click(campaignCard as HTMLElement);
+
+    await waitFor(() =>
+      expect(apiMocks.fetchDueRecalls).toHaveBeenCalledWith('tenant-1', 'token-1', {
+        campaignId: 'camp-1',
+        status: '',
+        startDate: '',
+        endDate: '',
+      }),
+    );
+
+    expect(await screen.findByDisplayValue('Annual Skin Check')).toBeInTheDocument();
+    expect(screen.getByText(/Showing the patient list for/i)).toBeInTheDocument();
+    expect(screen.getByText('Derm, Ana')).toBeInTheDocument();
+  });
+
   it('records contacts, updates status, exports, and loads history', async () => {
     render(
       <MemoryRouter>

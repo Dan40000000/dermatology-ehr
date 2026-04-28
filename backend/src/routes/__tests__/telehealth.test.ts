@@ -148,9 +148,15 @@ describe("Telehealth routes", () => {
     queryMock.mockResolvedValueOnce({
       rows: [
         {
-          in_progress_count: "5",
-          completed_count: "10",
-          unassigned_count: "2",
+          today_visits: "6",
+          waiting_now: "1",
+          live_now: "2",
+          upcoming_week: "14",
+          completed_today: "4",
+          cancelled_this_week: "1",
+          average_completed_duration_minutes: "19",
+          unique_patients_in_range: "12",
+          providers_with_telehealth: "4",
         },
       ],
     });
@@ -158,19 +164,30 @@ describe("Telehealth routes", () => {
     const res = await request(app).get("/telehealth/stats");
 
     expect(res.status).toBe(200);
-    expect(res.body.myInProgress).toBe(5);
-    expect(res.body.myCompleted).toBe(10);
-    expect(res.body.unassignedCases).toBe(2);
-    expect(res.body.myUnreadMessages).toBe(0);
+    expect(res.body.todayVisits).toBe(6);
+    expect(res.body.waitingNow).toBe(1);
+    expect(res.body.liveNow).toBe(2);
+    expect(res.body.upcomingWeek).toBe(14);
+    expect(res.body.completedToday).toBe(4);
+    expect(res.body.cancelledThisWeek).toBe(1);
+    expect(res.body.averageCompletedDurationMinutes).toBe(19);
+    expect(res.body.uniquePatientsInRange).toBe(12);
+    expect(res.body.providersWithTelehealth).toBe(4);
   });
 
   it("GET /telehealth/stats supports date filtering", async () => {
     queryMock.mockResolvedValueOnce({
       rows: [
         {
-          in_progress_count: "3",
-          completed_count: "7",
-          unassigned_count: "1",
+          today_visits: "3",
+          waiting_now: "0",
+          live_now: "1",
+          upcoming_week: "7",
+          completed_today: "1",
+          cancelled_this_week: "0",
+          average_completed_duration_minutes: "16",
+          unique_patients_in_range: "7",
+          providers_with_telehealth: "3",
         },
       ],
     });
@@ -181,8 +198,8 @@ describe("Telehealth routes", () => {
 
     expect(res.status).toBe(200);
     expect(queryMock).toHaveBeenCalledWith(
-      expect.stringContaining("ts.created_at >="),
-      expect.arrayContaining(["tenant-1", 101, "2024-01-01", "2024-12-31"])
+      expect.stringContaining("COALESCE(a.scheduled_start, ts.created_at) >= $2::date"),
+      expect.arrayContaining(["tenant-1", "2024-01-01", "2024-12-31"])
     );
   });
 

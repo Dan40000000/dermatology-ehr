@@ -12,6 +12,11 @@ export interface PaginationParams {
   offset: number;
 }
 
+interface PaginationOptions {
+  defaultLimit?: number;
+  maxLimit?: number;
+}
+
 export interface PaginationMeta {
   page: number;
   limit: number;
@@ -24,9 +29,11 @@ export interface PaginationMeta {
 /**
  * Parse pagination parameters from query string
  */
-export function parsePagination(req: Request): PaginationParams {
+export function parsePagination(req: Request, options: PaginationOptions = {}): PaginationParams {
+  const defaultLimit = options.defaultLimit ?? 20;
+  const maxLimit = options.maxLimit ?? 100;
   const page = Math.max(1, parseInt(req.query.page as string) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+  const limit = Math.min(maxLimit, Math.max(1, parseInt(req.query.limit as string) || defaultLimit));
   const offset = (page - 1) * limit;
 
   return { page, limit, offset };

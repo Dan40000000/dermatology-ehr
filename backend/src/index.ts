@@ -45,6 +45,17 @@ const allowedOriginUrls = allowedOrigins
   })
   .filter((origin): origin is URL => origin !== null);
 
+const localhostAliases = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+function isEquivalentLocalOrigin(originUrl: URL, allowed: URL): boolean {
+  return (
+    originUrl.protocol === allowed.protocol &&
+    originUrl.port === allowed.port &&
+    localhostAliases.has(originUrl.hostname) &&
+    localhostAliases.has(allowed.hostname)
+  );
+}
+
 function isOriginAllowed(origin: string): boolean {
   if (allowAnyOrigin && !config.cors.credentials) {
     return true;
@@ -56,6 +67,9 @@ function isOriginAllowed(origin: string): boolean {
     return false;
   }
   return allowedOriginUrls.some((allowed) => {
+    if (isEquivalentLocalOrigin(originUrl, allowed)) {
+      return true;
+    }
     if (allowed.port) {
       return originUrl.origin === allowed.origin;
     }

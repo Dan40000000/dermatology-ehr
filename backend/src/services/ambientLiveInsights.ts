@@ -18,12 +18,49 @@ export interface LiveSuggestedTestInsight {
   cptCode?: string;
 }
 
+export type LiveSpeakerRole = 'provider' | 'patient' | 'unknown';
+
+export interface LiveVisitSummaryInsight {
+  oneLiner: string;
+  patientReported: string[];
+  providerObserved: string[];
+  planDraft: string[];
+  documentationGaps: string[];
+}
+
+export interface LiveMedicationInsight {
+  name: string;
+  confidence: number;
+  context: 'current' | 'recommended' | 'discussed';
+  evidence?: string;
+}
+
+export interface LiveClinicalActionInsight {
+  label: string;
+  type: 'medication' | 'procedure' | 'lab' | 'follow_up' | 'education' | 'documentation';
+  urgency: 'routine' | 'soon' | 'urgent';
+  status: 'mentioned' | 'consider' | 'planned';
+  rationale: string;
+  evidence?: string;
+}
+
+export interface LiveSafetyFlagInsight {
+  label: string;
+  severity: 'watch' | 'soon' | 'urgent';
+  rationale: string;
+  evidence?: string;
+}
+
 export interface AmbientLiveInsights {
   source: 'heuristic';
   updatedAt: string;
+  visitSummary: LiveVisitSummaryInsight;
   symptoms: LiveSymptomInsight[];
   workingDiagnoses: LiveDiagnosisInsight[];
   suggestedTests: LiveSuggestedTestInsight[];
+  medications: LiveMedicationInsight[];
+  clinicalActions: LiveClinicalActionInsight[];
+  safetyFlags: LiveSafetyFlagInsight[];
 }
 
 type WeightedPattern = {
@@ -53,6 +90,26 @@ const symptomRules: Array<{ label: string; patterns: RegExp[] }> = [
   { label: 'Changing lesion / mole concern', patterns: [/\bchanging mole\b/i, /\bmole\b/i, /\bgrowth\b/i, /\blesion\b/i] },
   { label: 'Joint pain / stiffness', patterns: [/\bjoint pain\b/i, /\bstiff(?:ness)?\b/i, /\bswollen joints?\b/i] },
   { label: 'Fatigue / systemic symptoms', patterns: [/\bfatigue\b/i, /\btired\b/i, /\bfever\b/i] },
+];
+
+const medicationRules: Array<{ name: string; patterns: RegExp[] }> = [
+  { name: 'Triamcinolone', patterns: [/\btriamcinolone\b/i] },
+  { name: 'Clobetasol', patterns: [/\bclobetasol\b/i] },
+  { name: 'Hydrocortisone', patterns: [/\bhydrocortisone\b/i] },
+  { name: 'Tacrolimus', patterns: [/\btacrolimus\b|\bprotopic\b/i] },
+  { name: 'Mupirocin', patterns: [/\bmupirocin\b|\bbactroban\b/i] },
+  { name: 'Ketoconazole', patterns: [/\bketoconazole\b|\bnizoral\b/i] },
+  { name: 'Doxycycline', patterns: [/\bdoxycycline\b/i] },
+  { name: 'Tretinoin', patterns: [/\btretinoin\b|\bretin-a\b/i] },
+  { name: 'Isotretinoin', patterns: [/\bisotretinoin\b|\baccutane\b/i] },
+  { name: 'Cetirizine', patterns: [/\bcetirizine\b|\bzyrtec\b/i] },
+  { name: 'Diphenhydramine', patterns: [/\bdiphenhydramine\b|\bbenadryl\b/i] },
+  { name: 'Dupixent', patterns: [/\bdupixent\b|\bdupilumab\b/i] },
+  { name: 'Humira', patterns: [/\bhumira\b|\badalimumab\b/i] },
+  { name: 'Skyrizi', patterns: [/\bskyrizi\b|\brisankizumab\b/i] },
+  { name: 'Cosentyx', patterns: [/\bcosentyx\b|\bsecukinumab\b/i] },
+  { name: 'Taltz', patterns: [/\btaltz\b|\bixekizumab\b/i] },
+  { name: 'Tremfya', patterns: [/\btremfya\b|\bguselkumab\b/i] },
 ];
 
 const diagnosisRules: DiagnosisRule[] = [
@@ -197,10 +254,10 @@ const diagnosisRules: DiagnosisRule[] = [
     icd10Code: 'D48.5',
     threshold: 0.42,
     patterns: [
-      { pattern: /\bchanging mole\b|\bmole changing\b|\bnew mole\b/i, weight: 0.34, clue: 'changing mole concern' },
+      { pattern: /\bchanging mole\b|\bmole changing\b|\bnew mole\b|\bmole\b.{0,60}\bchang(?:ing|ed|es)\b|\bchang(?:ing|ed|es)\b.{0,60}\bmole\b/i, weight: 0.34, clue: 'changing mole concern' },
       { pattern: /\bbleed(?:ing)?\b|\bwon'?t heal\b/i, weight: 0.18, clue: 'bleeding or non-healing lesion' },
-      { pattern: /\bdark\b|\bblack\b|\birregular\b|\basymmetric\b/i, weight: 0.2, clue: 'high-risk lesion descriptors' },
-      { pattern: /\bgrowth\b|\blesion\b|\bspot\b/i, weight: 0.14, clue: 'concerning lesion language' },
+      { pattern: /\bdark\b|\bblack\b|\birregular\b|\basymmetric\b|\bvariegated\b|\bborder\b/i, weight: 0.2, clue: 'high-risk lesion descriptors' },
+      { pattern: /\bgrowth\b|\blesion\b|\bspot\b|\bmole\b/i, weight: 0.14, clue: 'concerning lesion language' },
     ],
     suggestedTests: [
       { testName: 'Skin biopsy', urgency: 'urgent', rationale: 'Needed when a changing or concerning lesion is being described.' },
@@ -256,6 +313,23 @@ const diagnosisRules: DiagnosisRule[] = [
   },
 ];
 
+function uniqueByText(values: string[], limit: number): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const value of values) {
+    const normalized = value.trim().replace(/\s+/g, ' ');
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalized);
+    if (result.length >= limit) break;
+  }
+
+  return result;
+}
+
 function normalizeTranscript(input: string | string[]): string {
   if (Array.isArray(input)) {
     return input.filter(Boolean).join(' ').trim();
@@ -282,6 +356,330 @@ function extractEvidenceSnippet(transcript: string, patterns: RegExp[]): string 
   return undefined;
 }
 
+function splitSentences(transcript: string): string[] {
+  const matches = transcript
+    .replace(/\s+/g, ' ')
+    .match(/[^.!?\n]+[.!?]?/g);
+
+  return (matches || [])
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
+
+function stripSpeakerPrefix(text: string): string {
+  return text
+    .replace(/^\s*(doctor|provider|physician|clinician|dr\.?|patient|pt|nurse|ma)\s*:\s*/i, '')
+    .trim();
+}
+
+function truncateText(text: string, maxLength = 180): string {
+  const normalized = stripSpeakerPrefix(text).replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1).trim()}...`;
+}
+
+function findSentences(sentences: string[], patterns: RegExp[], limit: number): string[] {
+  return uniqueByText(
+    sentences
+      .filter((sentence) => patterns.some((pattern) => pattern.test(sentence)))
+      .map((sentence) => truncateText(sentence)),
+    limit
+  );
+}
+
+export function inferLiveSpeakerRole(text: string): LiveSpeakerRole {
+  const stripped = stripSpeakerPrefix(text);
+  const normalized = stripped.toLowerCase();
+
+  if (!normalized) {
+    return 'unknown';
+  }
+
+  if (/^\s*(doctor|provider|physician|clinician|dr\.?|nurse|ma)\s*:/i.test(text)) {
+    return 'provider';
+  }
+
+  if (/^\s*(patient|pt)\s*:/i.test(text)) {
+    return 'patient';
+  }
+
+  if (/\b(patient reports|patient says|patient notes|patient describes|patient complains)\b/i.test(stripped)) {
+    return 'patient';
+  }
+
+  if (/\b(i have|i've had|i am having|i'm having|my |i noticed|i tried|it started|it hurts|i feel|i get)\b/i.test(stripped)) {
+    return 'patient';
+  }
+
+  if (/\b(exam shows|on exam|i can see|let me|we will|we'll|i recommend|recommend|prescribe|start|apply|biopsy|follow up|return in|call us|any fever|any joint|have you|do you|what brings)\b/i.test(stripped)) {
+    return 'provider';
+  }
+
+  return 'unknown';
+}
+
+function extractPrimaryConcern(
+  transcript: string,
+  sentences: string[],
+  symptoms: LiveSymptomInsight[]
+): string {
+  const patientSentences = sentences.filter((sentence) => inferLiveSpeakerRole(sentence) === 'patient');
+  const symptomSentence = patientSentences.find((sentence) =>
+    symptomRules.some((rule) => rule.patterns.some((pattern) => pattern.test(sentence)))
+  );
+
+  if (symptomSentence) {
+    return truncateText(
+      symptomSentence
+        .replace(/\b(patient reports|patient says|patient notes|patient describes|patient complains that?)\b/i, '')
+        .replace(/\b(i have|i've had|i am having|i'm having)\b/i, '')
+    );
+  }
+
+  const firstSymptom = symptoms[0]?.label;
+  if (firstSymptom) {
+    return firstSymptom;
+  }
+
+  return transcript ? 'Clinical conversation in progress' : 'Waiting for conversation';
+}
+
+function buildDocumentationGaps(transcript: string): string[] {
+  const gaps: string[] = [];
+
+  if (!/\b(\d+\s*(day|week|month|year)s?|for\s+(about\s+)?(a|an|one|two|three|four|five|six|seven|eight|nine|ten)|x\s*\d+)/i.test(transcript)) {
+    gaps.push('Confirm onset and duration.');
+  }
+  if (!/\b(face|scalp|arm|arms|hand|hands|leg|legs|trunk|back|chest|abdomen|neck|eyelid|groin|feet|foot|forearm|mole|lesion|spot)\b/i.test(transcript)) {
+    gaps.push('Confirm lesion location and distribution.');
+  }
+  if (!/\b(mild|moderate|severe|worse|better|pain scale|\d+\/10)\b/i.test(transcript)) {
+    gaps.push('Ask severity and whether symptoms are improving or worsening.');
+  }
+  if (!/\b(trigger|new soap|detergent|fragrance|sun|heat|stress|medication|outdoor|pet|gym|travel|exposure)\b/i.test(transcript)) {
+    gaps.push('Ask about triggers, exposures, and new products.');
+  }
+  if (!/\b(tried|using|used|cream|ointment|antihistamine|steroid|antibiotic|treatment)\b/i.test(transcript)) {
+    gaps.push('Document treatments already tried.');
+  }
+  if (!/\b(allergy|allergic|nkda|no known drug allergies)\b/i.test(transcript)) {
+    gaps.push('Confirm medication allergies before prescribing.');
+  }
+  if (!/\b(exam shows|on exam|i can see|erythematous|papule|plaque|scale|crust|ulcer|nodule|macule|patch|dermoscopy)\b/i.test(transcript)) {
+    gaps.push('Capture objective skin exam morphology.');
+  }
+
+  return gaps.slice(0, 5);
+}
+
+function inferMedicationContext(sentence: string): LiveMedicationInsight['context'] {
+  if (/\b(start|prescribe|recommend|apply|take|use|continue)\b/i.test(sentence)) {
+    return 'recommended';
+  }
+  if (/\b(taking|currently|already|tried|used)\b/i.test(sentence)) {
+    return 'current';
+  }
+  return 'discussed';
+}
+
+function extractMedications(transcript: string, sentences: string[]): LiveMedicationInsight[] {
+  const meds: LiveMedicationInsight[] = [];
+
+  for (const medication of medicationRules) {
+    const evidence = extractEvidenceSnippet(transcript, medication.patterns);
+    if (!evidence) continue;
+
+    const sentence = sentences.find((candidate) =>
+      medication.patterns.some((pattern) => pattern.test(candidate))
+    ) || evidence;
+
+    meds.push({
+      name: medication.name,
+      confidence: 0.88,
+      context: inferMedicationContext(sentence),
+      evidence: truncateText(sentence),
+    });
+  }
+
+  return meds.slice(0, 6);
+}
+
+function buildSafetyFlags(transcript: string): LiveSafetyFlagInsight[] {
+  const flags: LiveSafetyFlagInsight[] = [];
+  const pushFlag = (flag: LiveSafetyFlagInsight) => {
+    if (flags.some((existing) => existing.label === flag.label)) return;
+    flags.push(flag);
+  };
+
+  if (/\b(changing mole|mole changing|new mole|irregular|asymmetric|black|dark|bleeding|won'?t heal)\b/i.test(transcript)
+    && /\b(mole|lesion|spot|growth)\b/i.test(transcript)) {
+    pushFlag({
+      label: 'Skin cancer warning features',
+      severity: 'urgent',
+      rationale: 'Changing, bleeding, non-healing, dark, or irregular lesions should be clinically reviewed and may need biopsy.',
+      evidence: extractEvidenceSnippet(transcript, [/\b(changing mole|mole changing|new mole|irregular|asymmetric|black|dark|bleeding|won'?t heal)\b/i]),
+    });
+  }
+
+  if (/\b(fever|pus|spreading redness|red streak|warm to touch|rapidly worse|severe pain)\b/i.test(transcript)) {
+    pushFlag({
+      label: 'Possible infection or urgent inflammatory flare',
+      severity: 'urgent',
+      rationale: 'Systemic symptoms, pus, rapidly spreading redness, or severe pain may require same-day escalation.',
+      evidence: extractEvidenceSnippet(transcript, [/\b(fever|pus|spreading redness|red streak|warm to touch|rapidly worse|severe pain)\b/i]),
+    });
+  }
+
+  if (/\b(isotretinoin|accutane)\b/i.test(transcript)) {
+    pushFlag({
+      label: 'Isotretinoin safety requirements',
+      severity: 'urgent',
+      rationale: 'Confirm pregnancy testing/iPLEDGE requirements when applicable plus baseline/monitoring labs.',
+      evidence: extractEvidenceSnippet(transcript, [/\b(isotretinoin|accutane)\b/i]),
+    });
+  }
+
+  if (/\b(biologic|humira|skyrizi|cosentyx|dupixent|taltz|tremfya|enbrel)\b/i.test(transcript)) {
+    pushFlag({
+      label: 'Systemic therapy safety screening',
+      severity: 'soon',
+      rationale: 'Biologic/systemic therapy discussions usually require infection risk screening and baseline lab review.',
+      evidence: extractEvidenceSnippet(transcript, [/\b(biologic|humira|skyrizi|cosentyx|dupixent|taltz|tremfya|enbrel)\b/i]),
+    });
+  }
+
+  if (/\b(psoriasis|plaque|plaques|biologic|humira|skyrizi|cosentyx|taltz|tremfya)\b/i.test(transcript)
+    && /\b(joint pain|joint stiffness|stiffness|swollen joints?)\b/i.test(transcript)) {
+    pushFlag({
+      label: 'Possible psoriatic arthritis symptoms',
+      severity: 'soon',
+      rationale: 'Joint symptoms in psoriasis should be assessed because treatment choices and referrals may change.',
+      evidence: extractEvidenceSnippet(transcript, [/\b(joint pain|stiffness|swollen joints?)\b/i]),
+    });
+  }
+
+  if (/\b(photosensitive|sun sensitive|malar|butterfly rash|lupus)\b/i.test(transcript)
+    && /\b(joint pain|fatigue|fever)\b/i.test(transcript)) {
+    pushFlag({
+      label: 'Systemic autoimmune features',
+      severity: 'soon',
+      rationale: 'Photosensitive rash with systemic symptoms can justify autoimmune review and lab consideration.',
+      evidence: extractEvidenceSnippet(transcript, [/\b(photosensitive|sun sensitive|malar|butterfly rash|lupus|joint pain|fatigue|fever)\b/i]),
+    });
+  }
+
+  return flags.slice(0, 5);
+}
+
+function buildClinicalActions(
+  transcript: string,
+  suggestedTests: LiveSuggestedTestInsight[],
+  medications: LiveMedicationInsight[]
+): LiveClinicalActionInsight[] {
+  const actions: LiveClinicalActionInsight[] = [];
+  const addAction = (action: LiveClinicalActionInsight) => {
+    const key = `${action.type}:${action.label}`.toLowerCase();
+    if (actions.some((existing) => `${existing.type}:${existing.label}`.toLowerCase() === key)) {
+      return;
+    }
+    actions.push(action);
+  };
+
+  for (const medication of medications) {
+    if (medication.context === 'recommended') {
+      addAction({
+        label: `Medication discussed: ${medication.name}`,
+        type: 'medication',
+        urgency: 'routine',
+        status: 'planned',
+        rationale: 'Medication was mentioned as part of the live treatment discussion.',
+        evidence: medication.evidence,
+      });
+    }
+  }
+
+  for (const test of suggestedTests) {
+    addAction({
+      label: `Consider/order: ${test.testName}`,
+      type: test.testName.toLowerCase().includes('biopsy') || test.testName.toLowerCase().includes('dermoscopy') ? 'procedure' : 'lab',
+      urgency: test.urgency,
+      status: 'consider',
+      rationale: test.rationale,
+    });
+  }
+
+  if (/\b(biopsy|shave|punch)\b/i.test(transcript)) {
+    addAction({
+      label: 'Prepare biopsy workflow',
+      type: 'procedure',
+      urgency: /\b(melanoma|changing|irregular|bleeding|black|dark)\b/i.test(transcript) ? 'urgent' : 'soon',
+      status: 'planned',
+      rationale: 'Biopsy language was captured in the conversation.',
+      evidence: extractEvidenceSnippet(transcript, [/\b(biopsy|shave|punch)\b/i]),
+    });
+  }
+
+  if (/\b(follow up|return in|recheck|come back)\b/i.test(transcript)) {
+    addAction({
+      label: 'Create follow-up reminder',
+      type: 'follow_up',
+      urgency: 'routine',
+      status: 'planned',
+      rationale: 'Follow-up timing was discussed and should be carried into the plan.',
+      evidence: extractEvidenceSnippet(transcript, [/\b(follow up|return in|recheck|come back)[^.?!]*/i]),
+    });
+  }
+
+  if (/\b(avoid|gentle|moisturizer|sunscreen|wound care|do not scratch|fragrance-free)\b/i.test(transcript)) {
+    addAction({
+      label: 'Capture patient education',
+      type: 'education',
+      urgency: 'routine',
+      status: 'mentioned',
+      rationale: 'Education or self-care instructions were stated during the visit.',
+      evidence: extractEvidenceSnippet(transcript, [/\b(avoid|gentle|moisturizer|sunscreen|wound care|do not scratch|fragrance-free)[^.?!]*/i]),
+    });
+  }
+
+  return actions.slice(0, 8);
+}
+
+function buildVisitSummary(
+  transcript: string,
+  sentences: string[],
+  symptoms: LiveSymptomInsight[],
+  diagnoses: LiveDiagnosisInsight[]
+): LiveVisitSummaryInsight {
+  const patientReported = findSentences(sentences, [
+    /\b(patient reports|patient says|patient notes|patient describes|patient complains)\b/i,
+    /\b(i have|i've had|i am having|i'm having|my |i noticed|i tried|it started|it hurts|i feel|i get)\b/i,
+  ], 4);
+
+  const providerObserved = findSentences(sentences, [
+    /\b(exam shows|on exam|i can see|there (is|are)|erythematous|papule|plaque|scale|crust|ulcer|nodule|macule|patch|dermoscopy|distribution|morphology)\b/i,
+  ], 4);
+
+  const planDraft = findSentences(sentences, [
+    /\b(recommend|start|prescribe|apply|take|use|continue|biopsy|culture|koh|labs?|follow up|return in|call|avoid|moisturizer|sunscreen)\b/i,
+  ], 5);
+
+  const concern = extractPrimaryConcern(transcript, sentences, symptoms).replace(/[.?!]+$/g, '');
+  const topDiagnosis = diagnoses[0];
+  const oneLiner = topDiagnosis
+    ? `${concern} with ${topDiagnosis.condition} in the working differential.`
+    : `${concern}. Live differential will update as more history and exam details are captured.`;
+
+  return {
+    oneLiner,
+    patientReported,
+    providerObserved,
+    planDraft,
+    documentationGaps: buildDocumentationGaps(transcript),
+  };
+}
+
 function dedupeTests(tests: LiveSuggestedTestInsight[]): LiveSuggestedTestInsight[] {
   const byName = new Map<string, LiveSuggestedTestInsight>();
   const urgencyRank = { urgent: 3, soon: 2, routine: 1 };
@@ -305,11 +703,23 @@ export function generateAmbientLiveInsights(input: string | string[]): AmbientLi
     return {
       source: 'heuristic',
       updatedAt: new Date().toISOString(),
+      visitSummary: {
+        oneLiner: 'Waiting for clinical conversation.',
+        patientReported: [],
+        providerObserved: [],
+        planDraft: [],
+        documentationGaps: [],
+      },
       symptoms: [],
       workingDiagnoses: [],
       suggestedTests: [],
+      medications: [],
+      clinicalActions: [],
+      safetyFlags: [],
     };
   }
+
+  const sentences = splitSentences(transcript);
 
   const symptoms = symptomRules
     .map((rule) => {
@@ -370,12 +780,20 @@ export function generateAmbientLiveInsights(input: string | string[]): AmbientLi
         ]
       : []),
   ]);
+  const medications = extractMedications(transcript, sentences);
+  const safetyFlags = buildSafetyFlags(transcript);
+  const clinicalActions = buildClinicalActions(transcript, suggestedTests, medications);
+  const visitSummary = buildVisitSummary(transcript, sentences, filteredSymptoms, filteredDiagnoses);
 
   return {
     source: 'heuristic',
     updatedAt: new Date().toISOString(),
+    visitSummary,
     symptoms: filteredSymptoms,
     workingDiagnoses: filteredDiagnoses,
     suggestedTests,
+    medications,
+    clinicalActions,
+    safetyFlags,
   };
 }

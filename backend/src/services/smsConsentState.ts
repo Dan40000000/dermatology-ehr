@@ -315,7 +315,8 @@ export async function clearSMSOptOut(
   await client.query(
     `UPDATE sms_opt_out
      SET opted_in_at = CURRENT_TIMESTAMP,
-         reason = 'Opted back in'
+         reason = 'Opted back in',
+         is_active = false
      WHERE tenant_id = $1 AND phone_number = $2`,
     [tenantId, phoneNumber]
   );
@@ -329,13 +330,14 @@ export async function upsertSMSOptOut(
 ): Promise<void> {
   await client.query(
     `INSERT INTO sms_opt_out
-     (id, tenant_id, phone_number, opted_out_at, opted_in_at, reason)
-     VALUES ($1, $2, $3, CURRENT_TIMESTAMP, NULL, $4)
+     (id, tenant_id, phone_number, opted_out_at, opted_in_at, reason, is_active)
+     VALUES ($1, $2, $3, CURRENT_TIMESTAMP, NULL, $4, true)
      ON CONFLICT (tenant_id, phone_number)
      DO UPDATE SET
        opted_out_at = CURRENT_TIMESTAMP,
        opted_in_at = NULL,
-       reason = EXCLUDED.reason`,
+       reason = EXCLUDED.reason,
+       is_active = true`,
     [crypto.randomUUID(), tenantId, phoneNumber, reason]
   );
 }

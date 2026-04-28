@@ -6,7 +6,9 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { pool } from '../db/pool';
+import { env } from '../config/env';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
+import { requireModuleAccess } from '../middleware/moduleAccess';
 import { auditLog } from '../services/audit';
 import { createTwilioService, TwilioService } from '../services/twilioService';
 import {
@@ -28,8 +30,26 @@ import { getSMSPracticeBranding, buildSMSHelpText, buildSMSOptInConfirmationText
 import { getSMSConsentState, revokeSMSConsent, upsertSMSOptOut } from '../services/smsConsentState';
 
 const router = Router();
+const textMessagesModuleAccess = requireModuleAccess('text_messages');
+router.use((req, res, next) => {
+  if (req.path === '/webhook/incoming' || req.path === '/webhook/status') {
+    return next();
+  }
+
+  return requireAuth(req as AuthedRequest, res, () =>
+    textMessagesModuleAccess(req as AuthedRequest, res, next)
+  );
+});
 const DEFAULT_TEST_SMS_FROM = '+15555550100';
 const smsRoutingCategories = ['general', 'appointment', 'billing', 'prescription', 'medical', 'other'] as const;
+
+function isInboundSimulationEnabled(isTestMode: boolean): boolean {
+  return (
+    isTestMode ||
+    env.nodeEnv !== 'production' ||
+    process.env.SMS_INBOUND_SIMULATION_ENABLED === 'true'
+  );
+}
 
 function calculateSmsSegments(body: string): number {
   const hasUnicode = /[^\x00-\x7F]/.test(body);
@@ -43,6 +63,99 @@ function buildMockSmsResult(body: string) {
     status: 'sent',
     numSegments: calculateSmsSegments(body),
   };
+}
+
+function normalizeSmsConversationPhone(value: unknown): string {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function normalizeSmsConversationNameToken(value: unknown): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+function getSmsConversationDedupKey(conversation: Record<string, any>): string | null {
+  const normalizedPhone = normalizeSmsConversationPhone(conversation.phoneNumber || conversation.phone);
+  const firstName = normalizeSmsConversationNameToken(conversation.firstName);
+  const lastName = normalizeSmsConversationNameToken(conversation.lastName);
+
+  if (!normalizedPhone || !firstName || !lastName) {
+    return null;
+  }
+
+  const [nameA, nameB] = [firstName, lastName].sort();
+  return `${normalizedPhone}:${nameA}:${nameB}`;
+}
+
+function compareSmsConversationPriority(
+  left: Record<string, any>,
+  right: Record<string, any>
+): number {
+  const leftHasThread = Boolean(left.threadId) || left.category !== 'general' || left.threadStatus !== 'open';
+  const rightHasThread = Boolean(right.threadId) || right.category !== 'general' || right.threadStatus !== 'open';
+  if (leftHasThread !== rightHasThread) {
+    return leftHasThread ? -1 : 1;
+  }
+
+  const leftConsentRank = left.smsOptIn === false ? 1 : 0;
+  const rightConsentRank = right.smsOptIn === false ? 1 : 0;
+  if (leftConsentRank !== rightConsentRank) {
+    return leftConsentRank - rightConsentRank;
+  }
+
+  const leftCategoryRank = left.category === 'general' ? 1 : 0;
+  const rightCategoryRank = right.category === 'general' ? 1 : 0;
+  if (leftCategoryRank !== rightCategoryRank) {
+    return leftCategoryRank - rightCategoryRank;
+  }
+
+  const leftFormattedPhoneRank =
+    normalizeSmsConversationPhone(left.phoneNumber || left.phone) === String(left.phoneNumber || left.phone || '')
+      ? 1
+      : 0;
+  const rightFormattedPhoneRank =
+    normalizeSmsConversationPhone(right.phoneNumber || right.phone) === String(right.phoneNumber || right.phone || '')
+      ? 1
+      : 0;
+  if (leftFormattedPhoneRank !== rightFormattedPhoneRank) {
+    return leftFormattedPhoneRank - rightFormattedPhoneRank;
+  }
+
+  const leftLastMessageAt = Date.parse(left.lastMessageAt || left.lastMessageTime || '') || 0;
+  const rightLastMessageAt = Date.parse(right.lastMessageAt || right.lastMessageTime || '') || 0;
+  if (leftLastMessageAt !== rightLastMessageAt) {
+    return rightLastMessageAt - leftLastMessageAt;
+  }
+
+  const leftUnreadCount = Number(left.unreadCount || 0);
+  const rightUnreadCount = Number(right.unreadCount || 0);
+  if (leftUnreadCount !== rightUnreadCount) {
+    return rightUnreadCount - leftUnreadCount;
+  }
+
+  return String(left.patientId || left.id || '').localeCompare(String(right.patientId || right.id || ''));
+}
+
+function dedupeSmsConversations(conversations: Array<Record<string, any>>) {
+  const deduped = new Map<string, Record<string, any>>();
+
+  for (const conversation of conversations) {
+    const dedupKey = getSmsConversationDedupKey(conversation);
+    if (!dedupKey) {
+      deduped.set(`patient:${conversation.patientId || conversation.id}`, conversation);
+      continue;
+    }
+
+    const existing = deduped.get(dedupKey);
+    if (!existing || compareSmsConversationPriority(conversation, existing) < 0) {
+      deduped.set(dedupKey, conversation);
+    }
+  }
+
+  return Array.from(deduped.values()).sort(compareSmsConversationPriority);
 }
 
 async function getPatientSMSMessagingBlock(
@@ -73,6 +186,31 @@ async function getPatientSMSMessagingBlock(
     error: 'SMS consent is required before sending messages to this patient.',
     code: 'consent_required',
   };
+}
+
+async function getOptedOutSMSRecipientIds(
+  tenantId: string,
+  patientIds: string[]
+): Promise<Set<string>> {
+  const uniquePatientIds = Array.from(new Set(patientIds.filter(Boolean)));
+  if (uniquePatientIds.length === 0) {
+    return new Set();
+  }
+
+  const result = await pool.query(
+    `SELECT patient_id as "patientId"
+     FROM patient_sms_preferences
+     WHERE tenant_id = $1
+       AND patient_id = ANY($2::uuid[])
+       AND opted_in = false`,
+    [tenantId, uniquePatientIds]
+  );
+
+  return new Set(
+    result.rows
+      .map((row) => String(row.patientId || row.patient_id || ''))
+      .filter(Boolean)
+  );
 }
 
 // ============================================================================
@@ -621,7 +759,7 @@ router.get('/conversations', requireAuth, async (req: AuthedRequest, res: Respon
       status ? [tenantId, limit, offset, status] : [tenantId, limit, offset]
     );
 
-    res.json({ conversations: result.rows });
+    res.json({ conversations: dedupeSmsConversations(result.rows) });
   } catch (error: any) {
     logger.error('Error fetching SMS conversations', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch conversations' });
@@ -1567,6 +1705,14 @@ router.post('/send-bulk', requireAuth, async (req: AuthedRequest, res: Response)
     }
 
     const { patientIds, messageBody, templateId, scheduleTime } = parsed.data;
+    const optedOutPatientIds = await getOptedOutSMSRecipientIds(tenantId, patientIds);
+
+    if (scheduleTime && optedOutPatientIds.size > 0) {
+      return res.status(400).json({
+        error: 'One or more selected patients have opted out of SMS',
+        code: 'opted_out',
+      });
+    }
 
     // Get SMS settings
     const settingsResult = await pool.query(
@@ -1633,13 +1779,7 @@ router.post('/send-bulk', requireAuth, async (req: AuthedRequest, res: Response)
         continue;
       }
 
-      // Check opt-out status
-      const prefsResult = await pool.query(
-        `SELECT opted_in FROM patient_sms_preferences WHERE tenant_id = $1 AND patient_id = $2`,
-        [tenantId, patient.id]
-      );
-
-      if (prefsResult.rows.length > 0 && !prefsResult.rows[0].opted_in) {
+      if (optedOutPatientIds.has(String(patient.id))) {
         results.failed++;
         continue;
       }
@@ -1798,6 +1938,19 @@ router.post('/scheduled', requireAuth, async (req: AuthedRequest, res: Response)
       return res.status(400).json({ error: 'Must provide patientId or patientIds' });
     }
 
+    const targetPatientIds = data.patientIds?.length
+      ? data.patientIds
+      : data.patientId
+      ? [data.patientId]
+      : [];
+    const optedOutPatientIds = await getOptedOutSMSRecipientIds(tenantId, targetPatientIds);
+    if (optedOutPatientIds.size > 0) {
+      return res.status(400).json({
+        error: 'One or more selected patients have opted out of SMS',
+        code: 'opted_out',
+      });
+    }
+
     const scheduledId = crypto.randomUUID();
     const totalRecipients = data.patientIds ? data.patientIds.length : 1;
 
@@ -1869,7 +2022,7 @@ const simulateInboundSchema = z.object({
 
 /**
  * POST /api/sms/test/inbound
- * Simulate an inbound patient SMS in test mode.
+ * Simulate an inbound patient SMS in test mode or non-production environments.
  */
 router.post('/test/inbound', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
@@ -1893,8 +2046,10 @@ router.post('/test/inbound', requireAuth, async (req: AuthedRequest, res: Respon
     if (settingsResult.rows.length === 0 || !settingsResult.rows[0].is_active) {
       return res.status(400).json({ error: 'SMS not configured or not active' });
     }
-    if (!settingsResult.rows[0].is_test_mode) {
-      return res.status(400).json({ error: 'Inbound simulation is only available in test mode' });
+    if (!isInboundSimulationEnabled(Boolean(settingsResult.rows[0].is_test_mode))) {
+      return res.status(400).json({
+        error: 'Inbound simulation is only available in SMS test mode or non-production environments',
+      });
     }
 
     const patientResult = await pool.query(

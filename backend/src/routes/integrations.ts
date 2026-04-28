@@ -9,6 +9,26 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 
+function isMissingRelationError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: string }).code === "42P01"
+  );
+}
+
+function emptyIntegrationStats() {
+  return {
+    total_notifications: "0",
+    successful_notifications: "0",
+    failed_notifications: "0",
+    notification_types_used: "0",
+    first_notification: null,
+    last_notification: null,
+  };
+}
+
 // Validation schemas
 const createSlackIntegrationSchema = z.object({
   webhookUrl: z.string().url().startsWith("https://hooks.slack.com/"),
@@ -104,6 +124,13 @@ router.get("/", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest,
 
     res.json({ integrations: integrationsWithStats });
   } catch (error: any) {
+    if (isMissingRelationError(error)) {
+      logger.warn("Integrations table missing; returning empty demo integrations", {
+        tenantId: req.user?.tenantId,
+      });
+      return res.json({ integrations: [] });
+    }
+
     logger.error("Error fetching integrations", { error: error.message });
     res.status(500).json({ error: "Failed to fetch integrations" });
   }
@@ -395,6 +422,13 @@ router.get("/logs", requireAuth, requireRoles(["admin"]), async (req: AuthedRequ
 
     res.json(result);
   } catch (error: any) {
+    if (isMissingRelationError(error)) {
+      logger.warn("Integration notification log table missing; returning empty demo logs", {
+        tenantId: req.user?.tenantId,
+      });
+      return res.json({ logs: [], total: 0 });
+    }
+
     logger.error("Error fetching notification logs", { error: error.message });
     res.status(500).json({ error: "Failed to fetch notification logs" });
   }
@@ -421,6 +455,13 @@ router.get("/stats", requireAuth, requireRoles(["admin"]), async (req: AuthedReq
 
     res.json({ stats });
   } catch (error: any) {
+    if (isMissingRelationError(error)) {
+      logger.warn("Integration notification log table missing; returning empty demo stats", {
+        tenantId: req.user?.tenantId,
+      });
+      return res.json({ stats: emptyIntegrationStats() });
+    }
+
     logger.error("Error fetching integration stats", { error: error.message });
     res.status(500).json({ error: "Failed to fetch integration stats" });
   }

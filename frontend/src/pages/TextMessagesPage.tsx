@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Modal, Skeleton } from '../components/ui';
-import { fetchPatients } from '../api';
 import {
   fetchSMSTemplates,
   createSMSTemplate,
@@ -111,6 +111,29 @@ const formatTime = (dateStr: string) => {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
+const formatOutboundStatus = (status?: string) => {
+  switch ((status || '').toLowerCase()) {
+    case 'delivered':
+      return ' (Delivered)';
+    case 'read':
+      return ' (Read)';
+    case 'accepted':
+      return ' (Accepted)';
+    case 'queued':
+    case 'sending':
+    case 'sent':
+      return ' (Sent)';
+    case 'undelivered':
+      return ' (Undelivered)';
+    case 'failed':
+      return ' (Failed)';
+    case 'scheduled':
+      return ' (Scheduled)';
+    default:
+      return '';
+  }
+};
+
 type TabType = 'conversations' | 'templates' | 'bulk' | 'scheduled' | 'rules' | 'audit' | 'settings' | 'optin';
 type ConversationGroup = 'all' | 'general' | 'appointment' | 'billing' | 'prescription' | 'medical' | 'other';
 type RoutedConversationGroup = Exclude<ConversationGroup, 'all'>;
@@ -165,6 +188,8 @@ export default function TextMessagesPage() {
   const { session, user } = auth;
   const { showSuccess, showError } = useToast();
   const currentRole = user?.role || session?.user?.role || null;
+  const [searchParams] = useSearchParams();
+  const requestedPatientId = searchParams.get('patientId');
 
   const [activeTab, setActiveTab] = useState<TabType>('conversations');
   const [loading, setLoading] = useState(true);
@@ -314,6 +339,18 @@ export default function TextMessagesPage() {
           daysUntilExpiration: consentData.daysUntilExpiration,
         },
       }));
+      setPatients(prev =>
+        prev.map(patient =>
+          patient.id === patientId
+            ? {
+                ...patient,
+                smsOptIn: consentData.optedOut ? false : consentData.hasConsent ? true : patient.smsOptIn,
+                hasConsent: consentData.hasConsent,
+                consentExpiresDays: consentData.daysUntilExpiration,
+              }
+            : patient
+        )
+      );
       return consentData.hasConsent;
     } catch (err: any) {
       console.error('Failed to check consent:', err);
@@ -415,7 +452,7 @@ export default function TextMessagesPage() {
     }
   }, [activeTab, loadScheduledMessages, loadAutoResponseRules, loadAuditLogs, loadSMSSettings, loadPatients]);
 
-  const loadConversation = async (patientId: string) => {
+  const loadConversation = useCallback(async (patientId: string) => {
     if (!session) return;
     setSelectedPatientId(patientId);
 
@@ -425,31 +462,119 @@ export default function TextMessagesPage() {
 
       // Load conversation from API
       const data = await fetchSMSConversation(session.tenantId, session.accessToken, patientId);
+      const latestMessage = data.messages[data.messages.length - 1];
       setConversation(data);
 
       // Mark as read
       await markSMSConversationRead(session.tenantId, session.accessToken, patientId);
-      setPatients(prev => prev.map(p =>
-        p.id === patientId
-          ? {
-              ...p,
-              unreadCount: 0,
-              category: data.category || p.category || 'general',
-              threadStatus: data.threadStatus || p.threadStatus,
-              threadId: data.threadId || p.threadId,
-            }
-          : p
-      ));
+      setPatients(prev => {
+        const existingPatient = prev.find((patient) => patient.id === patientId);
+        const [firstName = '', ...lastNameParts] = String(data.patientName || '').trim().split(/\s+/);
+        const lastName = lastNameParts.join(' ');
+        const nextPatient: PatientWithSMS = {
+          id: patientId,
+          firstName: existingPatient?.firstName || firstName,
+          lastName: existingPatient?.lastName || lastName,
+          phone: data.patientPhone || existingPatient?.phone || '',
+          lastMessage: latestMessage?.messageBody || existingPatient?.lastMessage,
+          lastMessageTime: latestMessage?.sentAt || latestMessage?.createdAt || existingPatient?.lastMessageTime,
+          unreadCount: 0,
+          smsOptIn: existingPatient?.smsOptIn,
+          smsOptInDate: existingPatient?.smsOptInDate,
+          hasConsent: existingPatient?.hasConsent,
+          consentExpiresDays: existingPatient?.consentExpiresDays,
+          category: data.category || existingPatient?.category || 'general',
+          threadStatus: data.threadStatus || existingPatient?.threadStatus || 'open',
+          threadId: data.threadId || existingPatient?.threadId,
+          tenantId: session.tenantId,
+          dateOfBirth: existingPatient?.dateOfBirth || '',
+          email: existingPatient?.email || '',
+          createdAt: existingPatient?.createdAt || '',
+        };
+
+        if (existingPatient) {
+          return prev.map((patient) => (patient.id === patientId ? nextPatient : patient));
+        }
+
+        return [nextPatient, ...prev];
+      });
     } catch (err: any) {
       showError(err.message || 'Failed to load conversation');
     }
-  };
+  }, [checkPatientConsent, session, showError]);
+
+  useEffect(() => {
+    if (!requestedPatientId || !session) {
+      return;
+    }
+
+    if (selectedPatientId === requestedPatientId) {
+      return;
+    }
+
+    setActiveTab('conversations');
+    setGroupFilter('all');
+    loadConversation(requestedPatientId);
+  }, [loadConversation, patients, requestedPatientId, selectedPatientId, session]);
+
+  const refreshSelectedConversation = useCallback(async () => {
+    if (!session || !selectedPatientId) return;
+
+    try {
+      await checkPatientConsent(selectedPatientId);
+      const data = await fetchSMSConversation(session.tenantId, session.accessToken, selectedPatientId);
+      const latestMessage = data.messages[data.messages.length - 1];
+
+      setConversation(current =>
+        current?.patientId === selectedPatientId ? data : current
+      );
+      setPatients(prev => prev.map(patient =>
+        patient.id === selectedPatientId
+          ? {
+              ...patient,
+              lastMessage: latestMessage?.messageBody || patient.lastMessage,
+              lastMessageTime: latestMessage?.sentAt || latestMessage?.createdAt || patient.lastMessageTime,
+              category: data.category || patient.category || 'general',
+              threadStatus: data.threadStatus || patient.threadStatus,
+              threadId: data.threadId || patient.threadId,
+            }
+          : patient
+      ));
+    } catch {
+      // Keep background refresh silent. Explicit open/send flows surface errors directly.
+    }
+  }, [checkPatientConsent, selectedPatientId, session]);
+
+  useEffect(() => {
+    if (!session || activeTab !== 'conversations') {
+      return;
+    }
+
+    const refresh = () => {
+      loadPatients();
+      refreshSelectedConversation();
+    };
+
+    const intervalId = window.setInterval(refresh, 15000);
+    const handleFocus = () => refresh();
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [activeTab, loadPatients, refreshSelectedConversation, session]);
 
   const sendMessage = async () => {
     if (!messageText.trim() || !selectedPatientId || !session) return;
 
+    const selectedConversationPatient = patients.find(patient => patient.id === selectedPatientId);
     // Check if patient has consent
     const consent = patientConsent[selectedPatientId];
+    if (consent?.optedOut || selectedConversationPatient?.smsOptIn === false) {
+      showError('Patient has opted out of SMS and cannot be texted until they reply START or YES.');
+      return;
+    }
     if (!consent?.hasConsent) {
       setShowConsentModal(true);
       return;
@@ -457,20 +582,22 @@ export default function TextMessagesPage() {
 
     setSending(true);
     try {
+      const patientId = selectedPatientId;
+      const outboundMessage = messageText;
       // Send via real API
-      await sendSMSConversationMessage(
+      const sendResult = await sendSMSConversationMessage(
         session.tenantId,
         session.accessToken,
-        selectedPatientId,
-        messageText
+        patientId,
+        outboundMessage
       );
 
       // Add message to conversation immediately
       const newMessage: Message = {
         id: `msg-${Date.now()}`,
         direction: 'outbound',
-        messageBody: messageText,
-        status: 'sent',
+        messageBody: outboundMessage,
+        status: sendResult.status || 'sent',
         sentAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
       };
@@ -482,10 +609,10 @@ export default function TextMessagesPage() {
       } : null);
 
       setPatients(prev => prev.map(patient =>
-        patient.id === selectedPatientId
+        patient.id === patientId
           ? {
               ...patient,
-              lastMessage: messageText,
+              lastMessage: outboundMessage,
               lastMessageTime: newMessage.createdAt,
               threadStatus: 'waiting-patient',
             }
@@ -494,6 +621,9 @@ export default function TextMessagesPage() {
 
       showSuccess('Message sent');
       setMessageText('');
+      window.setTimeout(() => {
+        loadConversation(patientId).catch(() => undefined);
+      }, 1500);
     } catch (err: any) {
       showError(err.message || 'Failed to send message');
     } finally {
@@ -678,15 +808,37 @@ export default function TextMessagesPage() {
       });
 
       setPatients(prev => prev.map(p =>
-        p.id === patientId ? { ...p, smsOptIn: optIn, smsOptInDate: optIn ? new Date().toISOString() : undefined } : p
+        p.id === patientId
+          ? {
+              ...p,
+              smsOptIn: optIn,
+              smsOptInDate: optIn ? new Date().toISOString() : undefined,
+              hasConsent: optIn,
+              consentExpiresDays: optIn ? null : p.consentExpiresDays,
+            }
+          : p
       ));
       setPatientConsent(prev => ({
         ...prev,
         [patientId]: {
+          ...prev[patientId],
           hasConsent: optIn,
-          daysUntilExpiration: optIn ? null : prev[patientId]?.daysUntilExpiration,
+          pendingRequest: false,
+          requestedAt: null,
+          optedOut: !optIn,
+          daysUntilExpiration: optIn ? null : prev[patientId]?.daysUntilExpiration ?? null,
         },
       }));
+      if (!optIn) {
+        setSelectedPatients(prev => {
+          if (!prev.has(patientId)) {
+            return prev;
+          }
+          const next = new Set(prev);
+          next.delete(patientId);
+          return next;
+        });
+      }
       showSuccess(optIn ? 'Patient opted in to SMS' : 'Patient opted out of SMS');
     } catch (err: any) {
       showError(err.message || 'Failed to update SMS preference');
@@ -837,6 +989,10 @@ export default function TextMessagesPage() {
   });
 
   const selectedPatient = patients.find(p => p.id === selectedPatientId);
+  const selectedPatientOptedOut = Boolean(
+    selectedPatientId &&
+      (patientConsent[selectedPatientId]?.optedOut || selectedPatient?.smsOptIn === false)
+  );
   const charCount = messageText.length;
   const smsSegments = Math.ceil(charCount / 160) || 1;
 
@@ -1088,9 +1244,7 @@ export default function TextMessagesPage() {
                             {formatTime(msg.sentAt || msg.createdAt)}
                             {msg.direction === 'outbound' && (
                               <span className="sms-message-status">
-                                {msg.status === 'delivered' ? ' (Delivered)' :
-                                 msg.status === 'sent' || msg.status === 'queued' ? ' (Sent)' :
-                                 msg.status === 'failed' ? ' (Failed)' : ''}
+                                {formatOutboundStatus(msg.status)}
                               </span>
                             )}
                           </div>
@@ -1125,12 +1279,16 @@ export default function TextMessagesPage() {
                           value={messageText}
                           onChange={e => setMessageText(e.target.value)}
                           onKeyDown={e => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
+                            if (e.key === 'Enter' && !e.shiftKey && !selectedPatientOptedOut) {
                               e.preventDefault();
                               sendMessage();
                             }
                           }}
-                          placeholder="Type a message..."
+                          placeholder={
+                            selectedPatientOptedOut
+                              ? 'Patient opted out of SMS. They must reply START or YES before staff can text again.'
+                              : 'Type a message...'
+                          }
                           className="sms-textarea"
                           rows={1}
                         />
@@ -1142,7 +1300,7 @@ export default function TextMessagesPage() {
                       <button
                         className="sms-send-btn"
                         onClick={sendMessage}
-                        disabled={sending || !messageText.trim()}
+                        disabled={sending || !messageText.trim() || selectedPatientOptedOut}
                       >
                         {sending ? 'Sending...' : 'Send'}
                       </button>

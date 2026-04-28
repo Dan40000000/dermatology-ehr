@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
+import { requireModuleAccess } from "../middleware/moduleAccess";
 
 export const templatesRouter = Router();
 
-templatesRouter.get("/notes", requireAuth, (_req, res) => {
+templatesRouter.get("/notes", requireAuth, requireModuleAccess("templates"), (_req, res) => {
   res.json({
     templates: [
       {

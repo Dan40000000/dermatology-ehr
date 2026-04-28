@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
+import { requireModuleAccess } from "../middleware/moduleAccess";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
 import { logger } from "../lib/logger";
@@ -43,6 +44,7 @@ const adjustmentSchema = z.object({
 });
 
 export const inventoryRouter = Router();
+inventoryRouter.use(requireAuth, requireModuleAccess("inventory"));
 
 const INVENTORY_BILL_LINE_CPT_CODE = "INV-ITEM";
 const INVENTORY_BILL_NOTES_TAG = "[INVENTORY_USAGE]";
@@ -630,28 +632,6 @@ inventoryRouter.get("/procedure-templates/:procedureName/items", requireAuth, as
   );
 
   res.json({ items: result.rows });
-});
-
-// Get single inventory item with usage stats
-inventoryRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
-  const tenantId = req.user!.tenantId;
-  const { id } = req.params;
-
-  const result = await pool.query(
-    `SELECT
-      id, name, category, sku, description, quantity, reorder_level as "reorderLevel",
-      unit_cost_cents as "unitCostCents", supplier, location, expiration_date as "expirationDate",
-      lot_number as "lotNumber", created_at as "createdAt", updated_at as "updatedAt"
-    FROM inventory_items
-    WHERE id = $1 AND tenant_id = $2`,
-    [id, tenantId]
-  );
-
-  if (!result.rowCount) {
-    return res.status(404).json({ error: "Item not found" });
-  }
-
-  res.json({ item: result.rows[0] });
 });
 
 // Record procedure-based inventory usage (batch)
@@ -1969,4 +1949,26 @@ inventoryRouter.get("/transactions", requireAuth, async (req: AuthedRequest, res
 
   const result = await pool.query(query, params);
   res.json({ transactions: result.rows });
+});
+
+// Get single inventory item with usage stats
+inventoryRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
+  const tenantId = req.user!.tenantId;
+  const { id } = req.params;
+
+  const result = await pool.query(
+    `SELECT
+      id, name, category, sku, description, quantity, reorder_level as "reorderLevel",
+      unit_cost_cents as "unitCostCents", supplier, location, expiration_date as "expirationDate",
+      lot_number as "lotNumber", created_at as "createdAt", updated_at as "updatedAt"
+    FROM inventory_items
+    WHERE id = $1 AND tenant_id = $2`,
+    [id, tenantId]
+  );
+
+  if (!result.rowCount) {
+    return res.status(404).json({ error: "Item not found" });
+  }
+
+  res.json({ item: result.rows[0] });
 });

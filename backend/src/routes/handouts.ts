@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, AuthedRequest } from '../middleware/auth';
+import { requireModuleAccess } from '../middleware/moduleAccess';
 import { pool } from '../db/pool';
 import { randomUUID } from 'crypto';
 import { DEFAULT_HANDOUT_TEMPLATES, InstructionType } from '../data/defaultHandoutTemplates';
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireModuleAccess("handouts"));
 
 const INSTRUCTION_TYPES: InstructionType[] = [
   'general',

@@ -14,7 +14,7 @@ interface Medication {
   sig: string;
   quantity?: string;
   refills?: number;
-  prescribedDate: string;
+  prescribedDate?: string | null;
   providerName?: string;
   strength?: string;
   pharmacyName?: string;
@@ -53,6 +53,7 @@ export function PortalHealthRecordPage() {
   const [activeTab, setActiveTab] = useState<'overview' | 'allergies' | 'medications' | 'vitals' | 'labs'>('overview');
   const [refillNotice, setRefillNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [refillInFlight, setRefillInFlight] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchHealthData();
@@ -65,6 +66,7 @@ export function PortalHealthRecordPage() {
     }
 
     setLoading(true);
+    setLoadError(null);
     try {
       const [allergiesData, medicationsData, vitalsData, labsData] = await Promise.all([
         patientPortalFetch('/api/patient-portal-data/allergies'),
@@ -79,13 +81,17 @@ export function PortalHealthRecordPage() {
       setLabResults(labsData.labResults || []);
     } catch (error) {
       console.error('Failed to fetch health data:', error);
+      setLoadError(error instanceof Error ? error.message : 'Failed to load health record');
     } finally {
       setLoading(false);
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+  const formatDate = (dateString?: string | null) => {
+    if (!dateString) return 'Not on file';
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return 'Not on file';
+    return date.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -525,6 +531,36 @@ export function PortalHealthRecordPage() {
           color: #6b7280;
         }
 
+        .error-state {
+          padding: 1rem 1.25rem;
+          margin-bottom: 1rem;
+          background: #fef2f2;
+          border: 1px solid #fecaca;
+          color: #991b1b;
+          border-radius: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+        }
+
+        .error-state p {
+          margin: 0;
+          color: #991b1b;
+          line-height: 1.5;
+        }
+
+        .error-state button {
+          border: none;
+          border-radius: 8px;
+          background: #6366f1;
+          color: white;
+          font-weight: 700;
+          padding: 0.55rem 0.9rem;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
         .empty-icon {
           width: 64px;
           height: 64px;
@@ -628,6 +664,13 @@ export function PortalHealthRecordPage() {
           <h1 className="page-title">Health Record</h1>
           <p className="page-subtitle">View your medical history and health information</p>
         </div>
+
+        {loadError && !loading && (
+          <div className="error-state">
+            <p>We could not load your health record. {loadError}. Please try again.</p>
+            <button type="button" onClick={fetchHealthData}>Retry</button>
+          </div>
+        )}
 
         {/* Summary Cards */}
         <div className="summary-cards">

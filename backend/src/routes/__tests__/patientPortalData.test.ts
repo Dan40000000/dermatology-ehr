@@ -266,7 +266,9 @@ describe("Patient portal data routes", () => {
   });
 
   it("GET /patient-portal-data/allergies parses allergies", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ allergies: "Peanuts, Shellfish" }] });
+    queryMock
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ allergies: "Peanuts, Shellfish" }] });
 
     const res = await request(app).get("/patient-portal-data/allergies");
 
@@ -290,7 +292,10 @@ describe("Patient portal data routes", () => {
       .mockResolvedValueOnce({ rows: [{ appointmentDate: "2025-01-02" }] })
       .mockResolvedValueOnce({ rows: [{ count: "1" }] })
       .mockResolvedValueOnce({ rows: [{ count: "3" }] })
-      .mockResolvedValueOnce({ rows: [{ count: "4" }] });
+      .mockResolvedValueOnce({ rows: [{ count: "4" }] })
+      .mockResolvedValueOnce({ rows: [{ count: "2" }] })
+      .mockResolvedValueOnce({ rows: [{ currentBalance: "25.00" }] })
+      .mockResolvedValueOnce({ rows: [{ appointmentId: "appt-1" }] });
 
     const res = await request(app).get("/patient-portal-data/dashboard");
 
@@ -300,6 +305,10 @@ describe("Patient portal data routes", () => {
       newDocuments: 1,
       newVisits: 3,
       activePrescriptions: 4,
+      unreadMessages: 2,
+      currentBalance: 25,
+      preCheckinAvailable: true,
+      actionNeededCount: 8,
     });
   });
 });

@@ -314,6 +314,25 @@ export interface Location {
   tenantId: string;
   name: string;
   address?: string;
+  phone?: string;
+  isActive?: boolean;
+  downtimeSettings?: {
+    enabled: boolean;
+    packetTime: string;
+    deviceProfile: 'auto' | 'ipad' | 'desktop';
+    includeDob: boolean;
+    includePhone: boolean;
+    includeInsurance: boolean;
+  };
+  downtimePrimaryDevice?: {
+    deviceId: string;
+    label?: string | null;
+    registeredAt?: string | null;
+    registeredBy?: string | null;
+    lastSeenAt?: string | null;
+    lastPacketSavedAt?: string | null;
+    lastPacketDate?: string | null;
+  } | null;
   createdAt: string;
 }
 

@@ -1,4 +1,8 @@
 import { useMemo, useState } from 'react';
+import {
+  formatTimeInPracticeTimeZone,
+  getHourInPracticeTimeZone,
+} from '../../utils/practiceDateTime';
 
 interface TimeSlot {
   startTime: string; // ISO datetime string
@@ -14,6 +18,7 @@ interface TimeSlotSelectorProps {
   onSlotSelect: (slot: TimeSlot) => void;
   loading?: boolean;
   date: Date | null;
+  timeZone?: string | null;
 }
 
 type TimeFilter = 'all' | 'morning' | 'afternoon' | 'evening';
@@ -24,6 +29,7 @@ export function TimeSlotSelector({
   onSlotSelect,
   loading = false,
   date,
+  timeZone,
 }: TimeSlotSelectorProps) {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
 
@@ -32,7 +38,7 @@ export function TimeSlotSelector({
     if (timeFilter === 'all') return slots;
 
     return slots.filter((slot) => {
-      const hour = new Date(slot.startTime).getHours();
+      const hour = getHourInPracticeTimeZone(slot.startTime, timeZone);
 
       switch (timeFilter) {
         case 'morning':
@@ -45,15 +51,14 @@ export function TimeSlotSelector({
           return true;
       }
     });
-  }, [slots, timeFilter]);
+  }, [slots, timeFilter, timeZone]);
 
   // Group slots by hour for better display
   const groupedSlots = useMemo(() => {
     const groups: { [hour: string]: TimeSlot[] } = {};
 
     filteredSlots.forEach((slot) => {
-      const date = new Date(slot.startTime);
-      const hour = date.getHours();
+      const hour = getHourInPracticeTimeZone(slot.startTime, timeZone);
       const hourKey = `${hour}:00`;
 
       if (!groups[hourKey]) {
@@ -64,15 +69,10 @@ export function TimeSlotSelector({
     });
 
     return groups;
-  }, [filteredSlots]);
+  }, [filteredSlots, timeZone]);
 
   const formatTime = (isoString: string): string => {
-    const date = new Date(isoString);
-    return date.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
+    return formatTimeInPracticeTimeZone(isoString, timeZone);
   };
 
   const formatHour = (hourStr: string): string => {

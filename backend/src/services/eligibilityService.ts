@@ -12,11 +12,10 @@
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import {
-  mockEligibilityCheck,
-  mockBatchEligibilityCheck,
   type EligibilityRequest,
   type EligibilityResponse,
-} from './availityMock';
+} from '../integrations/eligibilityAdapter';
+import { getIntegrationService } from './integrationService';
 
 export interface Patient {
   id: string;
@@ -55,6 +54,15 @@ export interface BatchVerificationResult {
   errorCount: number;
   issueCount: number;
   results: VerificationResult[];
+}
+
+function isMissingRelationError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: string }).code === '42P01'
+  );
 }
 
 /**
@@ -97,6 +105,7 @@ export async function verifyPatientEligibility(
 
     // Build eligibility request
     const eligibilityRequest: EligibilityRequest = {
+      patientId,
       payerId: patient.insurance_payer_id || 'BCBS',
       memberId: patient.insurance_member_id,
       patientFirstName: patient.first_name,
@@ -105,8 +114,9 @@ export async function verifyPatientEligibility(
       serviceDate: new Date().toISOString().split('T')[0],
     };
 
-    // Call eligibility API (using mock for now)
-    const eligibilityResponse = await mockEligibilityCheck(eligibilityRequest);
+    const integrationService = getIntegrationService(tenantId);
+    const adapter = await integrationService.getEligibilityAdapter();
+    const eligibilityResponse = await adapter.checkEligibility(eligibilityRequest);
 
     // Parse and store the verification result
     const verification = await storeVerificationResult(
@@ -114,7 +124,8 @@ export async function verifyPatientEligibility(
       patientId,
       tenantId,
       verifiedBy,
-      appointmentId
+      appointmentId,
+      adapter.isMockMode() ? `${adapter.getProvider()}_mock` : adapter.getProvider()
     );
 
     logger.info('Eligibility verification completed', {
@@ -175,6 +186,7 @@ export async function batchVerifyEligibility(
     // Build eligibility requests
     const eligiblePatients = patients.filter(p => p.insurance_member_id); // Only verify patients with insurance
     const eligibilityRequests: EligibilityRequest[] = eligiblePatients.map(p => ({
+        patientId: p.id,
         payerId: p.insurance_payer_id || 'BCBS',
         memberId: p.insurance_member_id,
         patientFirstName: p.first_name,
@@ -183,8 +195,19 @@ export async function batchVerifyEligibility(
         serviceDate: new Date().toISOString().split('T')[0],
       }));
 
-    // Call batch eligibility API
-    const responses = await mockBatchEligibilityCheck(eligibilityRequests);
+    const integrationService = getIntegrationService(request.tenantId);
+    const adapter = await integrationService.getEligibilityAdapter();
+    const batchResult = await adapter.batchEligibilityCheck(
+      eligibilityRequests.map((eligibilityRequest, index) => ({
+        patientId: eligiblePatients[index]!.id,
+        payerId: eligibilityRequest.payerId,
+        memberId: eligibilityRequest.memberId,
+        firstName: eligibilityRequest.patientFirstName,
+        lastName: eligibilityRequest.patientLastName,
+        dob: eligibilityRequest.patientDob,
+      }))
+    );
+    const responses = batchResult.results;
 
     // Store all verification results
     const verifications: VerificationResult[] = [];
@@ -202,7 +225,9 @@ export async function batchVerifyEligibility(
           response,
           patient.id,
           request.tenantId,
-          request.initiatedBy
+          request.initiatedBy,
+          undefined,
+          adapter.isMockMode() ? `${adapter.getProvider()}_mock` : adapter.getProvider()
         );
 
         verifications.push(verification);
@@ -287,7 +312,8 @@ async function storeVerificationResult(
   patientId: string,
   tenantId: string,
   verifiedBy?: string,
-  appointmentId?: string
+  appointmentId?: string,
+  verificationSource: string = 'eligibility'
 ): Promise<VerificationResult> {
   const { coverage, benefits, payer, patient: patientInfo, subscriber } = response;
 
@@ -320,7 +346,7 @@ async function storeVerificationResult(
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
       $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-      $31, $32, $33, NOW(), $34, 'availity_mock', 'real_time', $35, $36, $37, $38, $39, $40
+      $31, $32, $33, NOW(), $34, $35, 'real_time', $36, $37, $38, $39, $40, $41
     ) RETURNING id, verification_status, verified_at, payer_name, has_issues, issue_notes`,
     [
       tenantId,
@@ -334,7 +360,7 @@ async function storeVerificationResult(
       coverage.status,
       coverage.effectiveDate || null,
       coverage.terminationDate || null,
-      response.pcp?.required || false,
+      benefits.referral?.required || false,
       benefits.copays?.specialist || null,
       benefits.copays?.primaryCare || null,
       benefits.copays?.emergency || null,
@@ -346,7 +372,7 @@ async function storeVerificationResult(
       benefits.outOfPocketMax?.individual?.total || null,
       benefits.outOfPocketMax?.individual?.met || null,
       benefits.outOfPocketMax?.individual?.remaining || null,
-      benefits.priorAuth?.services || null,
+      benefits.priorAuth?.required || false,
       benefits.priorAuth?.phone || null,
       benefits.referral?.required || false,
       response.network?.inNetwork || true,
@@ -357,6 +383,7 @@ async function storeVerificationResult(
       subscriber ? `${subscriber.firstName} ${subscriber.lastName}` : null,
       subscriber?.dob || null,
       verifiedBy || null,
+      verificationSource,
       JSON.stringify(response),
       hasIssues,
       issueType,
@@ -367,6 +394,7 @@ async function storeVerificationResult(
   );
 
   const verification = result.rows[0];
+  await updatePatientEligibilitySnapshot(patientId, tenantId, verification.id, response);
 
   return {
     id: verification.id,
@@ -384,6 +412,36 @@ async function storeVerificationResult(
       priorAuth: benefits.priorAuth,
     },
   };
+}
+
+async function updatePatientEligibilitySnapshot(
+  patientId: string,
+  tenantId: string,
+  verificationId: string,
+  response: EligibilityResponse
+): Promise<void> {
+  const eligibilityCheckedAt = new Date().toISOString();
+  const planName = response.coverage.planName || response.payer.payerName || null;
+  const copayAmountCents = response.benefits.copays?.specialist ?? response.benefits.copays?.primaryCare ?? null;
+
+  await pool.query(
+    `UPDATE patients
+     SET eligibility_status = $1,
+         eligibility_checked_at = $2,
+         copay_amount_cents = $3,
+         insurance_plan_name = COALESCE($4, insurance_plan_name),
+         latest_verification_id = $5
+     WHERE id = $6 AND tenant_id = $7`,
+    [
+      response.status,
+      eligibilityCheckedAt,
+      copayAmountCents,
+      planName,
+      verificationId,
+      patientId,
+      tenantId,
+    ]
+  );
 }
 
 /**
@@ -410,6 +468,15 @@ async function createErrorVerification(
 
   const verification = result.rows[0];
 
+  await pool.query(
+    `UPDATE patients
+     SET eligibility_status = 'error',
+         eligibility_checked_at = NOW(),
+         latest_verification_id = $1
+     WHERE id = $2 AND tenant_id = $3`,
+    [verification.id, patientId, tenantId]
+  );
+
   return {
     id: verification.id,
     patientId,
@@ -429,18 +496,30 @@ export async function getVerificationHistory(
   patientId: string,
   tenantId: string
 ): Promise<any[]> {
-  const result = await pool.query(
-    `SELECT
-      id, payer_name, member_id, verification_status, verified_at,
-      copay_specialist_cents, deductible_total_cents, deductible_remaining_cents,
-      oop_max_cents, oop_remaining_cents, has_issues, issue_notes,
-      prior_auth_required
-     FROM insurance_verifications
-     WHERE patient_id = $1 AND tenant_id = $2
-     ORDER BY verified_at DESC
-     LIMIT 50`,
-    [patientId, tenantId]
-  );
+  let result;
+  try {
+    result = await pool.query(
+      `SELECT
+        id, payer_name, member_id, verification_status, verified_at,
+        copay_specialist_cents, deductible_total_cents, deductible_remaining_cents,
+        oop_max_cents, oop_remaining_cents, has_issues, issue_notes,
+        prior_auth_required
+       FROM insurance_verifications
+       WHERE patient_id = $1 AND tenant_id = $2
+       ORDER BY verified_at DESC
+       LIMIT 50`,
+      [patientId, tenantId]
+    );
+  } catch (error) {
+    if (isMissingRelationError(error)) {
+      logger.warn('Eligibility verification table missing; returning empty demo history', {
+        patientId,
+        tenantId,
+      });
+      return [];
+    }
+    throw error;
+  }
 
   return result.rows;
 }
@@ -457,33 +536,46 @@ export async function getLatestVerificationByPatients(
     return {};
   }
 
-  const result = await pool.query(
-    `SELECT DISTINCT ON (patient_id)
-      patient_id,
-      id,
-      payer_name,
-      member_id,
-      verification_status,
-      verified_at,
-      copay_specialist_cents,
-      deductible_total_cents,
-      deductible_remaining_cents,
-      oop_max_cents,
-      oop_remaining_cents,
-      has_issues,
-      issue_notes,
-      prior_auth_required
-     FROM insurance_verifications
-     WHERE tenant_id = $1
-       AND patient_id = ANY($2)
-     ORDER BY patient_id, verified_at DESC`,
-    [tenantId, uniquePatientIds]
-  );
-
   const historyMap: Record<string, any | null> = {};
   uniquePatientIds.forEach((patientId) => {
     historyMap[patientId] = null;
   });
+
+  let result;
+  try {
+    result = await pool.query(
+      `SELECT DISTINCT ON (patient_id)
+        patient_id,
+        id,
+        payer_name,
+        member_id,
+        verification_status,
+        verified_at,
+        copay_specialist_cents,
+        deductible_total_cents,
+        deductible_remaining_cents,
+        oop_max_cents,
+        oop_remaining_cents,
+        has_issues,
+        issue_notes,
+        prior_auth_required
+       FROM insurance_verifications
+       WHERE tenant_id = $1
+         AND patient_id = ANY($2)
+       ORDER BY patient_id, verified_at DESC`,
+      [tenantId, uniquePatientIds]
+    );
+  } catch (error) {
+    if (isMissingRelationError(error)) {
+      logger.warn('Eligibility verification table missing; returning empty demo batch history', {
+        tenantId,
+        count: uniquePatientIds.length,
+      });
+      return historyMap;
+    }
+    throw error;
+  }
+
   result.rows.forEach((row) => {
     historyMap[row.patient_id] = row;
   });
@@ -1286,7 +1378,7 @@ async function getPayerConfiguration(tenantId: string, payerId: string): Promise
 }
 
 /**
- * Execute the actual eligibility check (uses mock for now)
+ * Execute the actual eligibility check through the configured adapter.
  */
 async function executeEligibilityCheck(
   tenantId: string,
@@ -1310,9 +1402,9 @@ async function executeEligibilityCheck(
 
   const patient = patientResult.rows[0];
 
-  // Use mock eligibility check for now
-  // In production, this would call the actual payer API
-  const response = await mockEligibilityCheck({
+  const adapter = await getIntegrationService(tenantId).getEligibilityAdapter();
+  const response = await adapter.checkEligibility({
+    patientId,
     payerId,
     memberId: patient.insurance_member_id || '',
     patientFirstName: patient.first_name,

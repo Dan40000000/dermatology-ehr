@@ -1066,27 +1066,61 @@ async function findPatientByPhone(tenantId: string, phoneNumber: string, client:
   const tenDigit = digitsOnly.length > 10 ? digitsOnly.slice(-10) : digitsOnly;
 
   const result = await client.query(
-    `SELECT id, first_name, last_name, email, phone
+    `SELECT id, first_name, last_name, email, phone, created_at
      FROM patients
      WHERE tenant_id = $1
        AND phone IS NOT NULL
        AND (
-         regexp_replace(phone, '\D', '', 'g') = $2
-         OR regexp_replace(phone, '\D', '', 'g') = $3
-         OR right(regexp_replace(phone, '\D', '', 'g'), 10) = $3
-       )
-     ORDER BY
-       CASE
-         WHEN regexp_replace(phone, '\D', '', 'g') = $2 THEN 0
-         WHEN regexp_replace(phone, '\D', '', 'g') = $3 THEN 1
-         ELSE 2
-       END,
-       created_at DESC NULLS LAST
-     LIMIT 1`,
+         regexp_replace(phone, '\\D', '', 'g') = $2
+         OR regexp_replace(phone, '\\D', '', 'g') = $3
+         OR right(regexp_replace(phone, '\\D', '', 'g'), 10) = $3
+       )`,
     [tenantId, digitsOnly, tenDigit]
   );
 
-  return result.rows[0] || null;
+  const candidates = result.rows || [];
+  if (candidates.length <= 1) {
+    return candidates[0] || null;
+  }
+
+  const rankedCandidates = await Promise.all(
+    candidates.map(async (candidate: any) => {
+      const [consentState, threadResult] = await Promise.all([
+        getSMSConsentState(tenantId, candidate.id, client),
+        client.query(
+          `SELECT 1
+           FROM patient_message_threads
+           WHERE tenant_id = $1 AND patient_id = $2
+           LIMIT 1`,
+          [tenantId, candidate.id]
+        ),
+      ]);
+
+      const normalizedPhone = String(candidate.phone || '').replace(/\D/g, '');
+      const phoneRank =
+        normalizedPhone === digitsOnly ? 0 : normalizedPhone === tenDigit ? 1 : 2;
+      const consentRank = consentState.hasConsent ? 0 : consentState.pendingRequest ? 1 : 2;
+      const threadRank = threadResult.rows.length > 0 ? 0 : 1;
+      const createdAt = candidate.created_at ? new Date(candidate.created_at).getTime() : 0;
+
+      return {
+        candidate,
+        consentRank,
+        threadRank,
+        phoneRank,
+        createdAt,
+      };
+    })
+  );
+
+  rankedCandidates.sort((a, b) => {
+    if (a.consentRank !== b.consentRank) return a.consentRank - b.consentRank;
+    if (a.threadRank !== b.threadRank) return a.threadRank - b.threadRank;
+    if (a.phoneRank !== b.phoneRank) return a.phoneRank - b.phoneRank;
+    return b.createdAt - a.createdAt;
+  });
+
+  return rankedCandidates[0]?.candidate || null;
 }
 
 /**
@@ -1375,6 +1409,35 @@ async function notifyStaffOfIncomingSMS(
 /**
  * Log SMS message to database
  */
+let smsMessageSchemaMode: 'extended' | 'legacy' | null = null;
+
+async function resolveSMSMessageSchemaMode(client: any): Promise<'extended' | 'legacy'> {
+  if (smsMessageSchemaMode) {
+    return smsMessageSchemaMode;
+  }
+
+  const result = await client.query(
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_name = 'sms_messages'
+       AND table_schema = ANY (current_schemas(false))`
+  );
+
+  const columns = new Set(
+    (result.rows || []).map((row: { column_name?: string }) => String(row.column_name || ''))
+  );
+
+  smsMessageSchemaMode =
+    columns.has('related_appointment_id') &&
+    columns.has('related_thread_id') &&
+    columns.has('in_response_to') &&
+    columns.has('media_urls')
+      ? 'extended'
+      : 'legacy';
+
+  return smsMessageSchemaMode;
+}
+
 async function logSMSMessage(
   params: {
     tenantId: string;
@@ -1395,13 +1458,42 @@ async function logSMSMessage(
   client: any
 ): Promise<string> {
   const messageId = crypto.randomUUID();
+  const schemaMode = await resolveSMSMessageSchemaMode(client);
+
+  if (schemaMode === 'extended') {
+    await client.query(
+      `INSERT INTO sms_messages
+       (id, tenant_id, twilio_message_sid, direction, from_number, to_number, patient_id,
+        message_body, status, message_type, related_appointment_id, related_thread_id,
+        in_response_to, keyword_matched, media_urls, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP)`,
+      [
+        messageId,
+        params.tenantId,
+        params.twilioSid || null,
+        params.direction,
+        params.from,
+        params.to,
+        params.patientId || null,
+        params.body,
+        params.status,
+        params.messageType,
+        params.relatedAppointmentId || null,
+        params.relatedThreadId || null,
+        params.inResponseTo || null,
+        params.keywordMatched || null,
+        params.mediaUrls ? JSON.stringify(params.mediaUrls) : null,
+      ]
+    );
+
+    return messageId;
+  }
 
   await client.query(
     `INSERT INTO sms_messages
      (id, tenant_id, twilio_message_sid, direction, from_number, to_number, patient_id,
-      message_body, status, message_type, related_appointment_id, related_thread_id,
-      in_response_to, keyword_matched, media_urls, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP)`,
+      content, message_body, status, message_type, keyword_matched, sent_at, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       messageId,
       params.tenantId,
@@ -1411,13 +1503,10 @@ async function logSMSMessage(
       params.to,
       params.patientId || null,
       params.body,
+      params.body,
       params.status,
       params.messageType,
-      params.relatedAppointmentId || null,
-      params.relatedThreadId || null,
-      params.inResponseTo || null,
       params.keywordMatched || null,
-      params.mediaUrls ? JSON.stringify(params.mediaUrls) : null,
     ]
   );
 

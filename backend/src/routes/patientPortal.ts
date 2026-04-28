@@ -51,6 +51,11 @@ const resetPasswordSchema = z.object({
     .regex(/[^a-zA-Z0-9]/),
 });
 
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(12),
+});
+
 const updateProfileSchema = z.object({
   phone: z.string().optional(),
   email: z.string().email().optional(),
@@ -427,7 +432,7 @@ patientPortalRouter.post(
         `UPDATE patient_portal_accounts
          SET failed_login_attempts = 0,
              locked_until = NULL,
-             last_login = CURRENT_TIMESTAMP
+             last_login_at = CURRENT_TIMESTAMP
          WHERE id = $1`,
         [account.id]
       );
@@ -487,7 +492,7 @@ patientPortalRouter.post(
           lastName: account.last_name,
           email: account.email,
           practicePhone: account.practice_phone || '(555) 123-4567',
-          practiceName: account.practice_name || 'Mountain Pine Dermatology'
+          practiceName: account.practice_name || 'Dermatology DEMO Office'
         }
       });
     } catch (error) {
@@ -708,7 +713,8 @@ patientPortalRouter.get("/me", requirePatientAuth, async (req: PatientPortalRequ
               p.emergency_contact_name as "emergencyContactName",
               p.emergency_contact_relationship as "emergencyContactRelationship",
               p.emergency_contact_phone as "emergencyContactPhone",
-              p.insurance, a.email as "portalEmail", a.last_login as "lastLogin"
+              p.insurance, a.email as "portalEmail", a.last_login_at as "lastLogin",
+              a.email_verified as "emailVerified", a.updated_at as "passwordUpdatedAt"
        FROM patients p
        JOIN patient_portal_accounts a ON p.id = a.patient_id
        WHERE p.id = $1 AND p.tenant_id = $2`,
@@ -723,6 +729,78 @@ patientPortalRouter.get("/me", requirePatientAuth, async (req: PatientPortalRequ
   } catch (error) {
     logPatientPortalError("Get patient error", error);
     return res.status(500).json({ error: "Failed to get patient information" });
+  }
+});
+
+/**
+ * POST /api/patient-portal/security/change-password
+ * Change current patient's portal password
+ */
+patientPortalRouter.post("/security/change-password", requirePatientAuth, async (req: PatientPortalRequest, res) => {
+  const parsed = changePasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.format() });
+  }
+
+  const passwordValidation = validatePasswordPolicy(parsed.data.newPassword);
+  if (!passwordValidation.isValid) {
+    return res.status(400).json({ error: "Password does not meet requirements", details: passwordValidation.errors });
+  }
+
+  try {
+    const accountResult = await pool.query(
+      `SELECT id, password_hash
+       FROM patient_portal_accounts
+       WHERE id = $1 AND tenant_id = $2 AND patient_id = $3`,
+      [req.patient!.accountId, req.patient!.tenantId, req.patient!.patientId]
+    );
+
+    if (accountResult.rows.length === 0) {
+      return res.status(404).json({ error: "Portal account not found" });
+    }
+
+    const account = accountResult.rows[0];
+    const currentPasswordMatches = await bcrypt.compare(parsed.data.currentPassword, account.password_hash);
+    if (!currentPasswordMatches) {
+      return res.status(400).json({ error: "Current password is incorrect" });
+    }
+
+    const samePassword = await bcrypt.compare(parsed.data.newPassword, account.password_hash);
+    if (samePassword) {
+      return res.status(400).json({ error: "New password must be different from your current password" });
+    }
+
+    const passwordHash = await bcrypt.hash(parsed.data.newPassword, 12);
+    await pool.query(
+      `UPDATE patient_portal_accounts
+       SET password_hash = $1,
+           failed_login_attempts = 0,
+           locked_until = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2 AND tenant_id = $3`,
+      [passwordHash, req.patient!.accountId, req.patient!.tenantId]
+    );
+
+    await pool.query(
+      `INSERT INTO audit_log (id, tenant_id, user_id, action, resource_type, resource_id, severity, status, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        crypto.randomUUID(),
+        req.patient!.tenantId,
+        req.patient!.accountId,
+        'patient_portal_password_change',
+        'patient_portal_account',
+        req.patient!.accountId,
+        'info',
+        'success',
+        JSON.stringify({ patientId: req.patient!.patientId })
+      ]
+    );
+
+    return res.json({ message: "Password changed successfully" });
+  } catch (error) {
+    logPatientPortalError("Change password error", error);
+    return res.status(500).json({ error: "Failed to change password" });
   }
 });
 

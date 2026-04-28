@@ -52,6 +52,7 @@ describe('AuthContext', () => {
 
   afterEach(() => {
     localStorage.clear();
+    vi.unstubAllEnvs();
   });
 
   it('should throw error when useAuth is used outside AuthProvider', () => {
@@ -114,6 +115,93 @@ describe('AuthContext', () => {
     expect(result.current.isAuthenticated).toBe(true);
   });
 
+  it('should upgrade a stored offline demo session when the backend is available again', async () => {
+    vi.stubEnv('VITE_ENABLE_LOCAL_DEMO', 'true');
+
+    const storedSession = {
+      tenantId: 'tenant-demo',
+      accessToken: 'header.payload.demo',
+      refreshToken: 'demo-refresh',
+      user: {
+        id: 'demo-provider@demo.practice',
+        email: 'provider@demo.practice',
+        fullName: 'Dr. James Whitfield, MD',
+        role: 'provider',
+      },
+    };
+
+    apiMocks.login.mockResolvedValueOnce({
+      tenantId: 'tenant-demo',
+      tokens: {
+        accessToken: 'real-provider-token',
+        refreshToken: 'real-provider-refresh',
+      },
+      user: {
+        id: 'u-provider',
+        email: 'provider@demo.practice',
+        fullName: 'Derm Provider',
+        role: 'provider',
+      },
+    });
+
+    localStorage.setItem('derm_session', JSON.stringify(storedSession));
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <AuthProvider>{children}</AuthProvider>
+      ),
+    });
+
+    await waitFor(() => {
+      expect(result.current.session?.accessToken).toBe('real-provider-token');
+    });
+
+    expect(apiMocks.login).toHaveBeenCalledWith('tenant-demo', 'provider@demo.practice', 'Password123!');
+    expect(result.current.user).toMatchObject({
+      id: 'u-provider',
+      email: 'provider@demo.practice',
+      role: 'provider',
+      roles: ['provider'],
+    });
+  });
+
+  it('should keep a stored offline demo session when the backend is still unavailable', async () => {
+    vi.stubEnv('VITE_ENABLE_LOCAL_DEMO', 'true');
+
+    const storedSession = {
+      tenantId: 'tenant-demo',
+      accessToken: 'header.payload.demo',
+      refreshToken: 'demo-refresh',
+      user: {
+        id: 'demo-provider@demo.practice',
+        email: 'provider@demo.practice',
+        fullName: 'Dr. James Whitfield, MD',
+        role: 'provider',
+      },
+    };
+
+    apiMocks.login.mockRejectedValueOnce(new Error('Failed to fetch'));
+
+    localStorage.setItem('derm_session', JSON.stringify(storedSession));
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <AuthProvider>{children}</AuthProvider>
+      ),
+    });
+
+    await waitFor(() => {
+      expect(apiMocks.login).toHaveBeenCalledWith('tenant-demo', 'provider@demo.practice', 'Password123!');
+    });
+
+    expect(result.current.session?.accessToken).toBe('header.payload.demo');
+    expect(result.current.user).toMatchObject({
+      email: 'provider@demo.practice',
+      role: 'provider',
+      roles: ['provider'],
+    });
+  });
+
   it('should handle invalid localStorage data', () => {
     localStorage.setItem('derm_session', 'invalid-json');
 
@@ -153,6 +241,67 @@ describe('AuthContext', () => {
 
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.isLoading).toBe(false);
+  });
+
+  it('should use backend-issued tokens for demo provider login when the API is available', async () => {
+    apiMocks.login.mockResolvedValueOnce({
+      ...mockLoginResponse,
+      tenantId: 'tenant-demo',
+      tokens: {
+        accessToken: 'real-provider-token',
+        refreshToken: 'real-provider-refresh',
+      },
+      user: {
+        id: 'u-provider',
+        email: 'provider@demo.practice',
+        fullName: 'Derm Provider',
+        role: 'provider',
+      },
+    });
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <AuthProvider>{children}</AuthProvider>
+      ),
+    });
+
+    await act(async () => {
+      await result.current.login('tenant-demo', 'provider@demo.practice', 'Password123!');
+    });
+
+    expect(apiMocks.login).toHaveBeenCalledWith('tenant-demo', 'provider@demo.practice', 'Password123!');
+    expect(result.current.session?.accessToken).toBe('real-provider-token');
+    expect(result.current.session?.refreshToken).toBe('real-provider-refresh');
+    expect(result.current.user).toMatchObject({
+      id: 'u-provider',
+      email: 'provider@demo.practice',
+      role: 'provider',
+      roles: ['provider'],
+    });
+  });
+
+  it('should only fall back to local demo provider login when the API is unavailable', async () => {
+    vi.stubEnv('VITE_ENABLE_LOCAL_DEMO', 'true');
+    apiMocks.login.mockRejectedValue(new Error('Failed to fetch'));
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <AuthProvider>{children}</AuthProvider>
+      ),
+    });
+
+    await act(async () => {
+      await result.current.login('tenant-demo', 'provider@demo.practice', 'Password123!');
+    });
+
+    expect(apiMocks.login).toHaveBeenCalledWith('tenant-demo', 'provider@demo.practice', 'Password123!');
+    expect(result.current.session?.accessToken).toContain('.demo');
+    expect(result.current.session?.refreshToken).toBe('demo-refresh');
+    expect(result.current.user).toMatchObject({
+      email: 'provider@demo.practice',
+      role: 'provider',
+      roles: ['provider'],
+    });
   });
 
   it('should persist session to localStorage on login', async () => {

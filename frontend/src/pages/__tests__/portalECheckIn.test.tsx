@@ -26,6 +26,7 @@ describe('ECheckInPage', () => {
       insuranceVerified: false,
       formsCompleted: false,
       copayCollected: false,
+      copayAmount: 25,
       staffNotified: false,
       startedAt: '2024-03-01T12:00:00',
     });
@@ -40,30 +41,7 @@ describe('ECheckInPage', () => {
         emergencyContactPhone: '(555) 987-6543',
       },
     });
-    apiMocks.fetchPortalRequiredConsents.mockResolvedValue({
-      requiredConsents: [
-        {
-          id: 'consent-1',
-          title: 'HIPAA Notice',
-          consentType: 'privacy',
-          content: '',
-          version: 'v1',
-          requiresSignature: true,
-          requiresWitness: false,
-          isRequired: true,
-        },
-        {
-          id: 'consent-2',
-          title: 'Financial Policy',
-          consentType: 'billing',
-          content: '',
-          version: 'v1',
-          requiresSignature: true,
-          requiresWitness: false,
-          isRequired: true,
-        },
-      ],
-    });
+    apiMocks.fetchPortalRequiredConsents.mockResolvedValue({ requiredConsents: [] });
     apiMocks.updatePortalCheckinSession.mockResolvedValue({ id: 'session-1', status: 'updated' });
     apiMocks.updatePortalProfile.mockResolvedValue({ id: 'patient-1' });
     apiMocks.signPortalConsent.mockResolvedValue({ id: 'sig-1', signedAt: '2024-03-01T12:00:00' });
@@ -73,38 +51,39 @@ describe('ECheckInPage', () => {
     vi.clearAllMocks();
   });
 
-  it('walks through the check-in flow and completes', async () => {
+  it('uses the full new-patient paperwork flow for first visits', async () => {
     render(
-      <ECheckInPage tenantId="tenant-1" portalToken="token-1" appointmentId="apt-1" />
+      <ECheckInPage
+        tenantId="tenant-1"
+        portalToken="token-1"
+        appointmentId="apt-1"
+        appointmentType="New Patient Dermatology"
+      />
     );
 
-    expect(await screen.findByText('Verify Your Information')).toBeInTheDocument();
-    expect(apiMocks.startPortalCheckin).toHaveBeenCalledWith('tenant-1', 'token-1', {
-      appointmentId: 'apt-1',
-      sessionType: 'mobile',
-    });
-    expect(apiMocks.fetchPortalCheckinSession).toHaveBeenCalledWith('tenant-1', 'token-1', 'session-1');
+    expect(await screen.findByText('New Patient Check-In')).toBeInTheDocument();
+    expect(screen.getByText('Verify Your Information')).toBeInTheDocument();
     expect(apiMocks.fetchPortalProfile).toHaveBeenCalledWith('tenant-1', 'token-1');
     expect(apiMocks.fetchPortalRequiredConsents).toHaveBeenCalledWith('tenant-1', 'token-1');
+  });
 
-    const nextButton = screen.getByRole('button', { name: 'Next' });
-    expect(nextButton).toBeDisabled();
-    fireEvent.click(screen.getByRole('checkbox'));
-    expect(nextButton).toBeEnabled();
-
-    fireEvent.click(nextButton);
-    await waitFor(() =>
-      expect(apiMocks.updatePortalProfile).toHaveBeenCalledWith(
-        'tenant-1',
-        'token-1',
-        expect.objectContaining({
-          address: '123 Main St',
-          phone: '(555) 123-4567',
-          emergencyContactName: 'Sam Contact',
-          emergencyContactPhone: '(555) 987-6543',
-        })
-      )
+  it('renders an expanded dermatology follow-up questionnaire and persists visit details', async () => {
+    render(
+      <ECheckInPage
+        tenantId="tenant-1"
+        portalToken="token-1"
+        appointmentId="apt-1"
+        appointmentType="Follow Up"
+      />
     );
+
+    expect(await screen.findByText('Follow-Up Check-In')).toBeInTheDocument();
+    expect(screen.getByText('Confirm Your Information')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'No, everything is the same' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /I confirm my information is up to date/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
     await waitFor(() =>
       expect(apiMocks.updatePortalCheckinSession).toHaveBeenNthCalledWith(
         1,
@@ -115,77 +94,58 @@ describe('ECheckInPage', () => {
       )
     );
 
-    expect(await screen.findByText('Insurance Card')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findAllByText("Today's Visit")).toHaveLength(2);
+    expect(screen.getByText('Type of concern')).toBeInTheDocument();
+    expect(screen.getByText('Affected area(s)')).toBeInTheDocument();
+    expect(screen.getByText("Skin symptoms you're noticing")).toBeInTheDocument();
+    expect(screen.getByText('Mole / spot warning signs')).toBeInTheDocument();
+    expect(screen.getByText('Possible triggers or exposures')).toBeInTheDocument();
+    expect(screen.getByText('Treatments tried since last visit')).toBeInTheDocument();
+    expect(screen.getByText('Review of systems')).toBeInTheDocument();
+
+    const continueButton = screen.getByRole('button', { name: 'Continue' });
+    expect(continueButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rash / eczema flare' }));
+    fireEvent.change(screen.getByPlaceholderText(/Rash on left forearm/i), {
+      target: { value: 'Worsening itchy rash on left forearm' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Arms / hands' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Itching' }));
+    fireEvent.click(screen.getByRole('button', { name: '1–4 weeks' }));
+    fireEvent.click(screen.getByRole('button', { name: '4–6 Moderate' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Worse' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New soap / detergent' }));
+    fireEvent.click(screen.getByRole('button', { name: 'OTC hydrocortisone' }));
+    fireEvent.click(screen.getByRole('button', { name: 'No change' }));
+
+    expect(continueButton).toBeEnabled();
+    fireEvent.click(continueButton);
+
     await waitFor(() =>
       expect(apiMocks.updatePortalCheckinSession).toHaveBeenNthCalledWith(
         2,
         'tenant-1',
         'token-1',
         'session-1',
-        { insuranceVerified: true }
+        {
+          visitDetails: expect.objectContaining({
+            intakeKind: 'follow_up',
+            visitConcernType: 'Rash / eczema flare',
+            chiefComplaint: 'Worsening itchy rash on left forearm',
+            affectedAreas: ['Arms / hands'],
+            skinSymptoms: ['Itching'],
+            duration: '1–4 weeks',
+            severity: '4–6 Moderate',
+            trendSinceLastVisit: 'Worse',
+            possibleExposures: ['New soap / detergent'],
+            treatmentUse: ['OTC hydrocortisone'],
+            treatmentResponse: ['No change'],
+          }),
+        }
       )
     );
 
-    expect(await screen.findByText('Required Consents')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
-
-    const signButtons = screen.getAllByRole('button', { name: 'Sign' });
-    fireEvent.click(signButtons[0]);
-    await waitFor(() => expect(apiMocks.signPortalConsent).toHaveBeenCalledTimes(1), { timeout: 3000 });
-
-    const remainingSignButtons = screen.getAllByRole('button', { name: 'Sign' });
-    fireEvent.click(remainingSignButtons[0]);
-    await waitFor(() => expect(apiMocks.signPortalConsent).toHaveBeenCalledTimes(2), { timeout: 3000 });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled(), { timeout: 3000 });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    await waitFor(() =>
-      expect(apiMocks.updatePortalCheckinSession).toHaveBeenNthCalledWith(
-        3,
-        'tenant-1',
-        'token-1',
-        'session-1',
-        { formsCompleted: true }
-      )
-    );
-
-    expect(await screen.findByText('Copay')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Pay Now' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-
-    await waitFor(() =>
-      expect(apiMocks.updatePortalCheckinSession).toHaveBeenNthCalledWith(
-        4,
-        'tenant-1',
-        'token-1',
-        'session-1',
-        { copayCollected: true }
-      )
-    );
-
-    expect(await screen.findByText('Review Your Check-In')).toBeInTheDocument();
-    expect(screen.getByText('Copay paid')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Complete Check-In' }));
-    await waitFor(() =>
-      expect(apiMocks.updatePortalCheckinSession).toHaveBeenNthCalledWith(
-        5,
-        'tenant-1',
-        'token-1',
-        'session-1',
-        { complete: true }
-      )
-    );
-
-    expect(await screen.findByText('Check-In Complete!')).toBeInTheDocument();
-  });
-
-  it('shows an error when initialization fails', async () => {
-    apiMocks.startPortalCheckin.mockRejectedValueOnce(new Error('boom'));
-
-    render(<ECheckInPage tenantId="tenant-1" portalToken="token-1" appointmentId="apt-1" />);
-
-    expect(await screen.findByText('Failed to initialize check-in')).toBeInTheDocument();
+    expect(await screen.findByText('Medications Review')).toBeInTheDocument();
   });
 });

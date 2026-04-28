@@ -1,11 +1,5 @@
 import React from 'react';
-
-export interface TelehealthStats {
-  myInProgress: number;
-  myCompleted: number;
-  myUnreadMessages: number;
-  unassignedCases: number;
-}
+import type { TelehealthStats } from '../../api';
 
 interface TelehealthStatsCardsProps {
   stats: TelehealthStats;
@@ -20,34 +14,46 @@ const TelehealthStatsCards: React.FC<TelehealthStatsCardsProps> = ({
 }) => {
   const cards = [
     {
-      id: 'in_progress',
-      label: 'My cases in progress',
-      value: stats.myInProgress,
-      className: 'in-progress',
+      id: 'today',
+      label: "Today's Visits",
+      value: stats.todayVisits,
+      className: 'today',
     },
     {
-      id: 'completed',
-      label: 'My completed cases',
-      value: stats.myCompleted,
+      id: 'waiting',
+      label: 'Waiting Room',
+      value: stats.waitingNow,
+      className: 'waiting',
+    },
+    {
+      id: 'live',
+      label: 'Live Now',
+      value: stats.liveNow,
+      className: 'live',
+    },
+    {
+      id: 'upcoming_week',
+      label: 'Upcoming 7 Days',
+      value: stats.upcomingWeek,
+      className: 'upcoming',
+    },
+    {
+      id: 'completed_today',
+      label: 'Completed Today',
+      value: stats.completedToday,
       className: 'completed',
     },
     {
-      id: 'unread',
-      label: 'My unread messages',
-      value: stats.myUnreadMessages,
-      className: 'unread',
-    },
-    {
-      id: 'unassigned',
-      label: 'Unassigned Cases',
-      value: stats.unassignedCases,
-      className: 'unassigned',
+      id: 'cancelled',
+      label: 'Cancelled / No-show',
+      value: stats.cancelledThisWeek,
+      className: 'cancelled',
     },
   ];
 
   return (
     <div className="telehealth-stats-section">
-      <h2>Current Telehealth Stats</h2>
+      <h2>Telehealth Overview</h2>
       <div className="telehealth-stats">
         {cards.map((card) => (
           <button
@@ -62,6 +68,25 @@ const TelehealthStatsCards: React.FC<TelehealthStatsCardsProps> = ({
             <div className="stat-label">{card.label}</div>
           </button>
         ))}
+      </div>
+
+      <div className="telehealth-stats-summary">
+        <div className="telehealth-summary-pill">
+          <span className="summary-label">Avg completed visit</span>
+          <span className="summary-value">
+            {stats.averageCompletedDurationMinutes > 0
+              ? `${stats.averageCompletedDurationMinutes} min`
+              : 'n/a'}
+          </span>
+        </div>
+        <div className="telehealth-summary-pill">
+          <span className="summary-label">Unique patients in range</span>
+          <span className="summary-value">{stats.uniquePatientsInRange}</span>
+        </div>
+        <div className="telehealth-summary-pill">
+          <span className="summary-label">Providers scheduled</span>
+          <span className="summary-value">{stats.providersWithTelehealth}</span>
+        </div>
       </div>
 
       <style>{`
@@ -81,7 +106,7 @@ const TelehealthStatsCards: React.FC<TelehealthStatsCardsProps> = ({
 
         .telehealth-stats {
           display: grid;
-          grid-template-columns: repeat(4, 1fr);
+          grid-template-columns: repeat(3, 1fr);
           gap: 1.25rem;
           animation: fadeIn 0.5s ease-out 0.1s both;
         }
@@ -96,6 +121,42 @@ const TelehealthStatsCards: React.FC<TelehealthStatsCardsProps> = ({
           .telehealth-stats {
             grid-template-columns: 1fr;
           }
+        }
+
+        .telehealth-stats-summary {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 0.875rem;
+          margin-top: 1rem;
+        }
+
+        @media (max-width: 900px) {
+          .telehealth-stats-summary {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        .telehealth-summary-pill {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 1rem;
+          padding: 0.9rem 1rem;
+          border-radius: 10px;
+          background: #f8fafc;
+          border: 1px solid #dbeafe;
+        }
+
+        .summary-label {
+          font-size: 0.8rem;
+          font-weight: 600;
+          color: #475569;
+        }
+
+        .summary-value {
+          font-size: 0.95rem;
+          font-weight: 700;
+          color: #0f172a;
         }
 
         @keyframes fadeIn {
@@ -132,36 +193,52 @@ const TelehealthStatsCards: React.FC<TelehealthStatsCardsProps> = ({
           height: 4px;
         }
 
-        .telehealth-stat-card.in-progress {
+        .telehealth-stat-card.today {
+          border-color: #0ea5e9;
+        }
+
+        .telehealth-stat-card.today::before {
+          background: linear-gradient(90deg, #0ea5e9, #38bdf8);
+        }
+
+        .telehealth-stat-card.waiting {
+          border-color: #f59e0b;
+        }
+
+        .telehealth-stat-card.waiting::before {
+          background: linear-gradient(90deg, #f59e0b, #fbbf24);
+        }
+
+        .telehealth-stat-card.live {
           border-color: #0891b2;
         }
 
-        .telehealth-stat-card.in-progress::before {
+        .telehealth-stat-card.live::before {
           background: linear-gradient(90deg, #0891b2, #06b6d4);
+        }
+
+        .telehealth-stat-card.upcoming {
+          border-color: #6366f1;
+        }
+
+        .telehealth-stat-card.upcoming::before {
+          background: linear-gradient(90deg, #6366f1, #818cf8);
         }
 
         .telehealth-stat-card.completed {
-          border-color: #0891b2;
+          border-color: #16a34a;
         }
 
         .telehealth-stat-card.completed::before {
-          background: linear-gradient(90deg, #0891b2, #06b6d4);
+          background: linear-gradient(90deg, #16a34a, #4ade80);
         }
 
-        .telehealth-stat-card.unread {
-          border-color: #0891b2;
+        .telehealth-stat-card.cancelled {
+          border-color: #ef4444;
         }
 
-        .telehealth-stat-card.unread::before {
-          background: linear-gradient(90deg, #0891b2, #06b6d4);
-        }
-
-        .telehealth-stat-card.unassigned {
-          border-color: #0891b2;
-        }
-
-        .telehealth-stat-card.unassigned::before {
-          background: linear-gradient(90deg, #0891b2, #06b6d4);
+        .telehealth-stat-card.cancelled::before {
+          background: linear-gradient(90deg, #ef4444, #fb7185);
         }
 
         .telehealth-stat-card:hover,

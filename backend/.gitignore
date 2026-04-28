@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+logs
+uploads
+/data/app.db
+test-results
+.env
+.DS_Store
+*.log
+*.local

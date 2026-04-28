@@ -2,11 +2,12 @@ import { Router, Response } from "express";
 import { body, param, query, validationResult } from "express-validator";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
+import { requireModuleAccess } from "../middleware/moduleAccess";
 import crypto from "crypto";
 import { logger } from "../lib/logger";
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireModuleAccess("telehealth"));
 
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -26,6 +27,174 @@ function logTelehealthError(message: string, error: unknown): void {
   });
 }
 
+function isMissingRelationError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: string }).code === "42P01"
+  );
+}
+
+function isDemoTenant(tenantId: string): boolean {
+  return tenantId === "tenant-demo";
+}
+
+function mapDerivedTelehealthStatus(appointmentStatus: string): string {
+  const normalized = String(appointmentStatus || "").toLowerCase();
+  if (normalized === "completed") return "completed";
+  if (normalized === "cancelled" || normalized === "no_show") return "cancelled";
+  if (["checked_in", "in_room", "with_provider"].includes(normalized)) return "in_progress";
+  return "scheduled";
+}
+
+function mapDerivedTelehealthSession(row: any) {
+  const mappedStatus = mapDerivedTelehealthStatus(row.appointment_status);
+  const scheduledStart = row.scheduled_start ? new Date(row.scheduled_start) : null;
+  const scheduledEnd = row.scheduled_end ? new Date(row.scheduled_end) : null;
+  const durationMinutes =
+    scheduledStart && scheduledEnd
+      ? Math.max(1, Math.round((scheduledEnd.getTime() - scheduledStart.getTime()) / 60000))
+      : null;
+
+  return {
+    id: `demo-telehealth-${row.appointment_id}`,
+    tenant_id: row.tenant_id,
+    appointment_id: row.appointment_id,
+    patient_id: row.patient_id,
+    provider_id: row.provider_id,
+    scheduled_start: row.scheduled_start,
+    scheduled_end: row.scheduled_end,
+    session_token: `demo-session-${row.appointment_id}`,
+    room_name: `demo-room-${row.appointment_id}`,
+    status: mappedStatus,
+    started_at: mappedStatus === "in_progress" || mappedStatus === "completed" ? row.scheduled_start : null,
+    ended_at: mappedStatus === "completed" ? row.scheduled_end : null,
+    duration_minutes: mappedStatus === "completed" ? durationMinutes : null,
+    recording_consent: false,
+    recording_consent_timestamp: null,
+    patient_state: row.patient_state || "CO",
+    provider_licensed_states: ["CO"],
+    state_licensing_verified: true,
+    virtual_background_enabled: true,
+    beauty_filter_enabled: false,
+    screen_sharing_enabled: true,
+    connection_quality: "excellent",
+    reconnection_count: 0,
+    reason: row.appointment_type_name,
+    assigned_to: row.provider_id,
+    created_at: row.created_at || row.scheduled_start,
+    updated_at: row.created_at || row.scheduled_start,
+    patient_first_name: row.patient_first_name,
+    patient_last_name: row.patient_last_name,
+    provider_name: row.provider_name,
+    assigned_to_name: row.provider_name,
+    physician_name: row.provider_name,
+  };
+}
+
+function getTelehealthSessionAnchor(session: any) {
+  const value = session?.scheduled_start || session?.started_at || session?.created_at;
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+}
+
+function isSameLocalDay(left: Date, right: Date) {
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
+}
+
+async function listDerivedDemoTelehealthSessions(
+  tenantId: string,
+  filters: {
+    providerId?: unknown;
+    patientId?: unknown;
+    startDate?: unknown;
+    endDate?: unknown;
+    reason?: unknown;
+    assignedTo?: unknown;
+    physicianId?: unknown;
+  } = {},
+) {
+  let queryText = `
+    SELECT
+      a.id AS appointment_id,
+      a.tenant_id,
+      a.patient_id,
+      a.provider_id,
+      a.scheduled_start,
+      a.scheduled_end,
+      a.status AS appointment_status,
+      COALESCE(a.created_at, a.scheduled_start) AS created_at,
+      p.first_name AS patient_first_name,
+      p.last_name AS patient_last_name,
+      pr.full_name AS provider_name,
+      at.name AS appointment_type_name,
+      l.name AS location_name,
+      'CO' AS patient_state
+    FROM appointments a
+    LEFT JOIN patients p ON a.patient_id = p.id
+    LEFT JOIN providers pr ON a.provider_id = pr.id
+    LEFT JOIN appointment_types at ON a.appointment_type_id = at.id
+    LEFT JOIN locations l ON a.location_id = l.id
+    WHERE a.tenant_id = $1
+      AND (
+        at.name ILIKE '%telehealth%'
+        OR at.name ILIKE '%video%'
+        OR l.name ILIKE '%virtual%'
+      )
+  `;
+  const params: any[] = [tenantId];
+  let paramCount = 1;
+
+  if (filters.providerId) {
+    queryText += ` AND a.provider_id = $${++paramCount}`;
+    params.push(filters.providerId);
+  }
+
+  if (filters.patientId) {
+    queryText += ` AND a.patient_id = $${++paramCount}`;
+    params.push(filters.patientId);
+  }
+
+  if (filters.startDate) {
+    queryText += ` AND a.scheduled_start >= $${++paramCount}`;
+    params.push(filters.startDate);
+  }
+
+  if (filters.endDate) {
+    queryText += ` AND a.scheduled_start < ($${++paramCount}::date + INTERVAL '1 day')`;
+    params.push(filters.endDate);
+  }
+
+  if (filters.reason) {
+    queryText += ` AND at.name ILIKE $${++paramCount}`;
+    params.push(`%${filters.reason}%`);
+  }
+
+  if (filters.assignedTo) {
+    queryText += ` AND a.provider_id = $${++paramCount}`;
+    params.push(filters.assignedTo);
+  }
+
+  if (filters.physicianId) {
+    queryText += ` AND a.provider_id = $${++paramCount}`;
+    params.push(filters.physicianId);
+  }
+
+  queryText += ` ORDER BY a.scheduled_start ASC`;
+  const result = await pool.query(queryText, params);
+  return result.rows.map(mapDerivedTelehealthSession);
+}
+
+async function getDerivedDemoTelehealthSession(tenantId: string, id: string) {
+  const match = id.match(/^demo-telehealth-(.+)$/);
+  if (!match?.[1]) return null;
+  const sessions = await listDerivedDemoTelehealthSessions(tenantId);
+  return sessions.find((session) => session.id === id || String(session.appointment_id) === match[1]) || null;
+}
+
 // ============================================
 // STATS AND ANALYTICS
 // ============================================
@@ -33,44 +202,128 @@ function logTelehealthError(message: string, error: unknown): void {
 // Get telehealth stats
 router.get("/stats", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
-  const userId = req.user!.id;
   const { startDate, endDate } = req.query;
 
   try {
+    if (isDemoTenant(tenantId)) {
+      const sessions = await listDerivedDemoTelehealthSessions(tenantId, { startDate, endDate });
+      const today = new Date();
+      const startOfToday = new Date(today);
+      startOfToday.setHours(0, 0, 0, 0);
+      const nextWeek = new Date(startOfToday);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      const completedDurations = sessions
+        .filter((session) => session.status === "completed" && Number(session.duration_minutes) > 0)
+        .map((session) => Number(session.duration_minutes));
+
+      return res.json({
+        todayVisits: sessions.filter((session) => {
+          const anchor = getTelehealthSessionAnchor(session);
+          return anchor && isSameLocalDay(anchor, today) && !["cancelled", "error", "no_show"].includes(String(session.status));
+        }).length,
+        waitingNow: sessions.filter((session) => session.status === "waiting").length,
+        liveNow: sessions.filter((session) => session.status === "in_progress").length,
+        upcomingWeek: sessions.filter((session) => {
+          const anchor = getTelehealthSessionAnchor(session);
+          return anchor
+            && anchor >= startOfToday
+            && anchor < nextWeek
+            && !["completed", "cancelled", "error", "no_show"].includes(String(session.status));
+        }).length,
+        completedToday: sessions.filter((session) => {
+          const anchor = getTelehealthSessionAnchor(session);
+          return anchor && session.status === "completed" && isSameLocalDay(anchor, today);
+        }).length,
+        cancelledThisWeek: sessions.filter((session) => {
+          const anchor = getTelehealthSessionAnchor(session);
+          return anchor
+            && anchor >= startOfToday
+            && anchor < nextWeek
+            && ["cancelled", "error", "no_show"].includes(String(session.status));
+        }).length,
+        averageCompletedDurationMinutes: completedDurations.length > 0
+          ? Math.round(completedDurations.reduce((sum, duration) => sum + duration, 0) / completedDurations.length)
+          : 0,
+        uniquePatientsInRange: new Set(sessions.map((session) => String(session.patient_id || ""))).size,
+        providersWithTelehealth: new Set(sessions.map((session) => String(session.provider_id || ""))).size,
+      });
+    }
+
     let dateFilter = "";
-    const params: any[] = [tenantId, userId];
-    let paramCount = 2;
+    const params: any[] = [tenantId];
+    let paramCount = 1;
 
     if (startDate) {
-      dateFilter += ` AND ts.created_at >= $${++paramCount}`;
+      dateFilter += ` AND COALESCE(a.scheduled_start, ts.created_at) >= $${++paramCount}::date`;
       params.push(startDate);
     }
 
     if (endDate) {
-      dateFilter += ` AND ts.created_at <= $${++paramCount}`;
+      dateFilter += ` AND COALESCE(a.scheduled_start, ts.created_at) < ($${++paramCount}::date + INTERVAL '1 day')`;
       params.push(endDate);
     }
 
-    // Get stats for the current provider
     const statsQuery = `
+      WITH scoped AS (
+        SELECT
+          ts.patient_id,
+          ts.provider_id,
+          ts.assigned_to,
+          ts.status,
+          COALESCE(a.scheduled_start, ts.created_at) AS session_time,
+          CASE
+            WHEN ts.duration_minutes IS NOT NULL THEN ts.duration_minutes::numeric
+            WHEN ts.started_at IS NOT NULL AND ts.ended_at IS NOT NULL
+              THEN EXTRACT(EPOCH FROM (ts.ended_at - ts.started_at)) / 60.0
+            WHEN a.scheduled_start IS NOT NULL AND a.scheduled_end IS NOT NULL AND ts.status = 'completed'
+              THEN EXTRACT(EPOCH FROM (a.scheduled_end - a.scheduled_start)) / 60.0
+            ELSE NULL
+          END AS completed_duration_minutes
+        FROM telehealth_sessions ts
+        LEFT JOIN appointments a ON ts.appointment_id = a.id
+        WHERE ts.tenant_id = $1${dateFilter}
+      )
       SELECT
-        COUNT(CASE WHEN ts.status = 'in_progress' THEN 1 END) as in_progress_count,
-        COUNT(CASE WHEN ts.status = 'completed' THEN 1 END) as completed_count,
-        COUNT(CASE WHEN ts.status IN ('scheduled', 'waiting') AND ts.provider_id IS NULL THEN 1 END) as unassigned_count
-      FROM telehealth_sessions ts
-      WHERE ts.tenant_id = $1 AND (ts.provider_id = $2 OR ts.assigned_to = $2)${dateFilter}
+        COUNT(*) FILTER (
+          WHERE session_time >= CURRENT_DATE
+            AND session_time < CURRENT_DATE + INTERVAL '1 day'
+            AND status NOT IN ('cancelled', 'error', 'no_show')
+        ) AS today_visits,
+        COUNT(*) FILTER (WHERE status = 'waiting') AS waiting_now,
+        COUNT(*) FILTER (WHERE status = 'in_progress') AS live_now,
+        COUNT(*) FILTER (
+          WHERE session_time >= CURRENT_DATE
+            AND session_time < CURRENT_DATE + INTERVAL '7 day'
+            AND status NOT IN ('completed', 'cancelled', 'error', 'no_show')
+        ) AS upcoming_week,
+        COUNT(*) FILTER (
+          WHERE session_time >= CURRENT_DATE
+            AND session_time < CURRENT_DATE + INTERVAL '1 day'
+            AND status = 'completed'
+        ) AS completed_today,
+        COUNT(*) FILTER (
+          WHERE session_time >= CURRENT_DATE
+            AND session_time < CURRENT_DATE + INTERVAL '7 day'
+            AND status IN ('cancelled', 'error', 'no_show')
+        ) AS cancelled_this_week,
+        COALESCE(ROUND(AVG(completed_duration_minutes) FILTER (WHERE status = 'completed')), 0) AS average_completed_duration_minutes,
+        COUNT(DISTINCT patient_id) AS unique_patients_in_range,
+        COUNT(DISTINCT COALESCE(assigned_to, provider_id)) AS providers_with_telehealth
+      FROM scoped
     `;
 
     const statsResult = await pool.query(statsQuery, params);
 
-    // Get unread messages count (placeholder - implement when messaging is added)
-    const unreadCount = 0;
-
     res.json({
-      myInProgress: parseInt(statsResult.rows[0].in_progress_count) || 0,
-      myCompleted: parseInt(statsResult.rows[0].completed_count) || 0,
-      myUnreadMessages: unreadCount,
-      unassignedCases: parseInt(statsResult.rows[0].unassigned_count) || 0,
+      todayVisits: parseInt(statsResult.rows[0].today_visits) || 0,
+      waitingNow: parseInt(statsResult.rows[0].waiting_now) || 0,
+      liveNow: parseInt(statsResult.rows[0].live_now) || 0,
+      upcomingWeek: parseInt(statsResult.rows[0].upcoming_week) || 0,
+      completedToday: parseInt(statsResult.rows[0].completed_today) || 0,
+      cancelledThisWeek: parseInt(statsResult.rows[0].cancelled_this_week) || 0,
+      averageCompletedDurationMinutes: parseInt(statsResult.rows[0].average_completed_duration_minutes) || 0,
+      uniquePatientsInRange: parseInt(statsResult.rows[0].unique_patients_in_range) || 0,
+      providersWithTelehealth: parseInt(statsResult.rows[0].providers_with_telehealth) || 0,
     });
   } catch (error) {
     logTelehealthError("Error fetching telehealth stats", error);
@@ -165,14 +418,21 @@ router.post(
 // Get session details
 router.get("/sessions/:id", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
-  const { id } = req.params;
+  const id = req.params.id || "";
 
   try {
+    if (isDemoTenant(tenantId)) {
+      const derived = await getDerivedDemoTelehealthSession(tenantId, id);
+      if (derived) return res.json(derived);
+    }
+
     const result = await pool.query(
       `SELECT ts.*,
+              a.scheduled_start, a.scheduled_end,
               p.first_name as patient_first_name, p.last_name as patient_last_name,
-              pr.name as provider_name
+              pr.full_name as provider_name
        FROM telehealth_sessions ts
+       LEFT JOIN appointments a ON ts.appointment_id = a.id
        LEFT JOIN patients p ON ts.patient_id = p.id
        LEFT JOIN providers pr ON ts.provider_id = pr.id
        WHERE ts.tenant_id = $1 AND ts.id = $2`,
@@ -196,13 +456,34 @@ router.get("/sessions", async (req: AuthedRequest, res: Response) => {
   const { status, providerId, patientId, startDate, endDate, reason, assignedTo, physicianId, myUnreadOnly } = req.query;
 
   try {
+    if (isDemoTenant(tenantId)) {
+      let sessions = await listDerivedDemoTelehealthSessions(tenantId, {
+        providerId,
+        patientId,
+        startDate,
+        endDate,
+        reason,
+        assignedTo,
+        physicianId,
+      });
+      if (status) {
+        sessions = sessions.filter((session) => session.status === status);
+      }
+      if (myUnreadOnly === "true") {
+        sessions = [];
+      }
+      return res.json(sessions);
+    }
+
     let queryText = `
       SELECT ts.*,
+             a.scheduled_start, a.scheduled_end,
              p.first_name as patient_first_name, p.last_name as patient_last_name,
-             pr.name as provider_name,
-             assigned.name as assigned_to_name,
-             physician.name as physician_name
+             pr.full_name as provider_name,
+             assigned.full_name as assigned_to_name,
+             physician.full_name as physician_name
       FROM telehealth_sessions ts
+      LEFT JOIN appointments a ON ts.appointment_id = a.id
       LEFT JOIN patients p ON ts.patient_id = p.id
       LEFT JOIN providers pr ON ts.provider_id = pr.id
       LEFT JOIN providers assigned ON ts.assigned_to = assigned.id
@@ -228,12 +509,12 @@ router.get("/sessions", async (req: AuthedRequest, res: Response) => {
     }
 
     if (startDate) {
-      queryText += ` AND ts.created_at >= $${++paramCount}`;
+      queryText += ` AND COALESCE(a.scheduled_start, ts.created_at) >= $${++paramCount}::date`;
       params.push(startDate);
     }
 
     if (endDate) {
-      queryText += ` AND ts.created_at <= $${++paramCount}`;
+      queryText += ` AND COALESCE(a.scheduled_start, ts.created_at) < ($${++paramCount}::date + INTERVAL '1 day')`;
       params.push(endDate);
     }
 
@@ -257,7 +538,7 @@ router.get("/sessions", async (req: AuthedRequest, res: Response) => {
       // Add filter when messaging is implemented
     }
 
-    queryText += ` ORDER BY ts.created_at DESC LIMIT 100`;
+    queryText += ` ORDER BY COALESCE(a.scheduled_start, ts.created_at) ASC LIMIT 100`;
 
     const result = await pool.query(queryText, params);
     res.json(result.rows);
@@ -270,10 +551,21 @@ router.get("/sessions", async (req: AuthedRequest, res: Response) => {
 // Update session status
 router.patch("/sessions/:id/status", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
-  const { id } = req.params;
+  const id = req.params.id || "";
   const { status } = req.body;
 
   try {
+    if (isDemoTenant(tenantId) && id.startsWith("demo-telehealth-")) {
+      const derived = await getDerivedDemoTelehealthSession(tenantId, id);
+      if (!derived) return res.status(404).json({ error: "Session not found" });
+      return res.json({
+        ...derived,
+        status,
+        started_at: status === "in_progress" ? new Date().toISOString() : derived.started_at,
+        ended_at: status === "completed" ? new Date().toISOString() : derived.ended_at,
+      });
+    }
+
     const updateData: any = { status };
 
     if (status === "in_progress" && !req.body.startedAt) {
@@ -411,9 +703,13 @@ router.get("/waiting-room", async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
 
   try {
+    if (isDemoTenant(tenantId)) {
+      return res.json([]);
+    }
+
     const result = await pool.query(
       `SELECT wr.*, p.first_name, p.last_name, p.email,
-              ts.provider_id, pr.name as provider_name
+              ts.provider_id, pr.full_name as provider_name
        FROM telehealth_waiting_room wr
        LEFT JOIN patients p ON wr.patient_id = p.id
        LEFT JOIN telehealth_sessions ts ON wr.session_id = ts.id
@@ -425,6 +721,11 @@ router.get("/waiting-room", async (req: AuthedRequest, res: Response) => {
 
     res.json(result.rows);
   } catch (error) {
+    if (isMissingRelationError(error)) {
+      logger.warn("Telehealth waiting room table missing; returning empty demo queue", { tenantId });
+      return res.json([]);
+    }
+
     logTelehealthError("Error fetching waiting room", error);
     res.status(500).json({ error: "Failed to fetch waiting room" });
   }

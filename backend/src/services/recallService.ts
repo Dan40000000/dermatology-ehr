@@ -135,9 +135,25 @@ export async function generateRecalls(
 
         await client.query(
           `INSERT INTO patient_recalls (
-            id, tenant_id, patient_id, campaign_id, due_date, status, created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, 'pending', NOW(), NOW())`,
-          [recallId, tenantId, row.patient_id, campaignId, dueDate.toISOString().split('T')[0]]
+            id,
+            tenant_id,
+            patient_id,
+            campaign_id,
+            due_date,
+            recall_date,
+            recall_type,
+            status,
+            created_at,
+            updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $5, $6, 'pending', NOW(), NOW())`,
+          [
+            recallId,
+            tenantId,
+            row.patient_id,
+            campaignId,
+            dueDate.toISOString().split('T')[0],
+            campaign.recallType,
+          ]
         );
 
         created++;
@@ -204,16 +220,17 @@ export async function logReminder(
   reminderType: 'email' | 'sms' | 'phone' | 'mail' | 'portal',
   messageContent: string,
   sentBy: string,
-  deliveryStatus: 'pending' | 'sent' | 'delivered' | 'failed' | 'bounced' | 'opted_out' = 'sent'
+  deliveryStatus: 'pending' | 'sent' | 'delivered' | 'failed' | 'bounced' | 'opted_out' = 'sent',
+  errorMessage: string | null = null
 ): Promise<string> {
   const logId = crypto.randomUUID();
 
   await pool.query(
     `INSERT INTO reminder_log (
       id, tenant_id, patient_id, recall_id, reminder_type, sent_at,
-      delivery_status, message_content, sent_by
-    ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8)`,
-    [logId, tenantId, patientId, recallId, reminderType, deliveryStatus, messageContent, sentBy]
+      delivery_status, message_content, sent_by, error_message
+    ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9)`,
+    [logId, tenantId, patientId, recallId, reminderType, deliveryStatus, messageContent, sentBy, errorMessage]
   );
 
   return logId;
@@ -255,32 +272,29 @@ export async function updatePatientPreferences(
 ): Promise<CommunicationPreferences> {
   const id = crypto.randomUUID();
 
-  const result = await pool.query<CommunicationPreferences>(
-    `INSERT INTO patient_communication_preferences (
-      id, tenant_id, patient_id, allow_email, allow_sms, allow_phone,
-      allow_mail, preferred_method, opted_out, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-    ON CONFLICT (tenant_id, patient_id)
-    DO UPDATE SET
-      allow_email = COALESCE($4, patient_communication_preferences.allow_email),
-      allow_sms = COALESCE($5, patient_communication_preferences.allow_sms),
-      allow_phone = COALESCE($6, patient_communication_preferences.allow_phone),
-      allow_mail = COALESCE($7, patient_communication_preferences.allow_mail),
-      preferred_method = COALESCE($8, patient_communication_preferences.preferred_method),
-      opted_out = COALESCE($9, patient_communication_preferences.opted_out),
-      updated_at = NOW()
-    RETURNING id,
-              tenant_id as "tenantId",
-              patient_id as "patientId",
-              allow_email as "allowEmail",
-              allow_sms as "allowSms",
-              allow_phone as "allowPhone",
-              allow_mail as "allowMail",
-              preferred_method as "preferredMethod",
-              opted_out as "optedOut",
-              opted_out_at as "optedOutAt"`,
+  const returningSql = `RETURNING id,
+    tenant_id as "tenantId",
+    patient_id as "patientId",
+    allow_email as "allowEmail",
+    allow_sms as "allowSms",
+    allow_phone as "allowPhone",
+    allow_mail as "allowMail",
+    preferred_method as "preferredMethod",
+    opted_out as "optedOut",
+    opted_out_at as "optedOutAt"`;
+
+  const updateResult = await pool.query<CommunicationPreferences>(
+    `UPDATE patient_communication_preferences
+     SET allow_email = COALESCE($3, allow_email),
+         allow_sms = COALESCE($4, allow_sms),
+         allow_phone = COALESCE($5, allow_phone),
+         allow_mail = COALESCE($6, allow_mail),
+         preferred_method = COALESCE($7, preferred_method),
+         opted_out = COALESCE($8, opted_out),
+         updated_at = NOW()
+     WHERE tenant_id = $1 AND patient_id = $2
+     ${returningSql}`,
     [
-      id,
       tenantId,
       patientId,
       preferences.allowEmail,
@@ -292,7 +306,30 @@ export async function updatePatientPreferences(
     ]
   );
 
-  return result.rows[0]!;
+  if (updateResult.rows[0]) {
+    return updateResult.rows[0];
+  }
+
+  const insertResult = await pool.query<CommunicationPreferences>(
+    `INSERT INTO patient_communication_preferences (
+      id, tenant_id, patient_id, allow_email, allow_sms, allow_phone,
+      allow_mail, preferred_method, opted_out, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+    ${returningSql}`,
+    [
+      id,
+      tenantId,
+      patientId,
+      preferences.allowEmail ?? true,
+      preferences.allowSms ?? true,
+      preferences.allowPhone ?? true,
+      preferences.allowMail ?? true,
+      preferences.preferredMethod ?? 'sms',
+      preferences.optedOut ?? false,
+    ]
+  );
+
+  return insertResult.rows[0]!;
 }
 
 /**
@@ -301,7 +338,7 @@ export async function updatePatientPreferences(
 export async function canContactPatient(
   tenantId: string,
   patientId: string,
-  method: 'email' | 'sms' | 'phone' | 'mail'
+  method: 'email' | 'sms' | 'phone' | 'mail' | 'portal'
 ): Promise<{ canContact: boolean; reason?: string }> {
   const prefs = await getPatientPreferences(tenantId, patientId);
 
@@ -318,6 +355,7 @@ export async function canContactPatient(
     sms: prefs.allowSms,
     phone: prefs.allowPhone,
     mail: prefs.allowMail,
+    portal: true,
   };
 
   if (!methodMap[method]) {

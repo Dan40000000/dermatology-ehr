@@ -74,17 +74,41 @@ describe("financialSnapshotService", () => {
       })
       .mockResolvedValueOnce({
         rows: [{ collected_on: "2026-03-10", amount_cents: "10000" }],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            bill_id: "bill-1",
+            billed_on: "2026-03-11",
+            total_charges_cents: "5000",
+            notes: "[NO_SHOW_FEE]|appointmentId=appt-9",
+            appointment_type_name: null,
+            cpt_codes: "NOSHOW",
+            line_descriptions: "No-show fee (missed appointment)",
+          },
+        ],
       });
 
     const snapshots = await getFinancialSnapshots("tenant-1");
 
-    expect(snapshots.daily.totalRevenueCents).toBe(33360);
+    expect(snapshots.daily.totalRevenueCents).toBe(38360);
     expect(snapshots.daily.benchmarkRevenueCents).toBe(13360);
+    expect(snapshots.daily.standaloneRevenueCents).toBe(5000);
     expect(snapshots.daily.collectionsCents).toBe(5000);
     expect(snapshots.daily.completedAppointments).toBe(2);
+    expect(snapshots.daily.revenueCategories[0]).toMatchObject({
+      key: "procedure",
+      revenueCents: 20000,
+    });
+    expect(snapshots.daily.revenueCategories).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "no_show_fee", revenueCents: 5000 }),
+      ]),
+    );
 
-    expect(snapshots.weekly.totalRevenueCents).toBe(42921);
+    expect(snapshots.weekly.totalRevenueCents).toBe(47921);
     expect(snapshots.weekly.benchmarkRevenueCents).toBe(22921);
+    expect(snapshots.weekly.standaloneRevenueCents).toBe(5000);
     expect(snapshots.weekly.collectionsCents).toBe(19000);
     expect(snapshots.weekly.completedAppointments).toBe(3);
     expect(snapshots.weekly.benchmarkVisitsCount).toBe(2);

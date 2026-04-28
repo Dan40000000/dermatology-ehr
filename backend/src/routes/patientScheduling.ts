@@ -13,13 +13,34 @@ import {
   getProviderInfo,
   getAvailableDatesInMonth,
 } from "../services/availabilityService";
+import { getPracticeTimeZone } from "../lib/practiceTimeZone";
 import { logger } from "../lib/logger";
+import { env } from "../config/env";
 
 // ============================================================================
 // PATIENT PORTAL ROUTES (Public-facing for patients)
 // ============================================================================
 
 export const patientSchedulingRouter = Router();
+const DEFAULT_GUEST_CANCELLATION_FEE_CENTS = 5000;
+const GUEST_BOOKING_TEST_CARD_NUMBERS = new Set([
+  "4242424242424242",
+]);
+const GUEST_BOOKING_TEST_CARD_MESSAGE =
+  "Guest booking is currently in demo payment mode. Use the test card 4242 4242 4242 4242; do not enter a real card.";
+
+type PublicBookingSettings = {
+  isEnabled: boolean;
+  minAdvanceHours: number;
+  maxAdvanceDays: number;
+  bookingWindowDays: number;
+  timeZone: string;
+  customMessage?: string | null;
+  requireReason?: boolean | null;
+  allowGuestBooking?: boolean | null;
+  requireCardOnFileForGuestBooking?: boolean | null;
+  guestCancellationFeeCents?: number | null;
+};
 
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -39,6 +60,162 @@ function logPatientSchedulingError(message: string, error: unknown): void {
   });
 }
 
+function resolveTenantId(req: { header: (name: string) => string | undefined; query?: any }): string | null {
+  const headerTenantId = req.header(env.tenantHeader);
+  if (headerTenantId) {
+    return headerTenantId;
+  }
+
+  const queryTenantId = typeof req.query?.tenantId === "string" ? req.query.tenantId.trim() : "";
+  return queryTenantId || null;
+}
+
+async function getPublicBookingSettings(tenantId: string): Promise<PublicBookingSettings> {
+  const bookingRules = await getBookingSettings(tenantId);
+
+  const detailResult = await pool.query(
+    `SELECT custom_message as "customMessage",
+            require_reason as "requireReason",
+            COALESCE(allow_guest_booking, true) as "allowGuestBooking",
+            COALESCE(require_card_on_file_for_guest_booking, true) as "requireCardOnFileForGuestBooking",
+            COALESCE(guest_cancellation_fee_cents, $2) as "guestCancellationFeeCents"
+     FROM online_booking_settings
+     WHERE tenant_id = $1`,
+    [tenantId, DEFAULT_GUEST_CANCELLATION_FEE_CENTS]
+  );
+
+  return {
+    ...bookingRules,
+    timeZone: getPracticeTimeZone(),
+    customMessage: detailResult.rows[0]?.customMessage ?? null,
+    requireReason: detailResult.rows[0]?.requireReason ?? false,
+    allowGuestBooking: detailResult.rows[0]?.allowGuestBooking ?? true,
+    requireCardOnFileForGuestBooking:
+      detailResult.rows[0]?.requireCardOnFileForGuestBooking ?? true,
+    guestCancellationFeeCents:
+      detailResult.rows[0]?.guestCancellationFeeCents ?? DEFAULT_GUEST_CANCELLATION_FEE_CENTS,
+  };
+}
+
+async function getBookableProviders(tenantId: string) {
+  const result = await pool.query(
+    `SELECT DISTINCT
+            p.id,
+            p.full_name as "fullName",
+            NULL::text as specialty,
+            NULL::text as bio,
+            NULL::text as "profileImageUrl"
+     FROM providers p
+     INNER JOIN provider_availability_templates pat
+       ON p.id = pat.provider_id
+     WHERE p.tenant_id = $1
+       AND pat.is_active = true
+       AND pat.allow_online_booking = true
+     ORDER BY p.full_name`,
+    [tenantId]
+  );
+
+  return result.rows;
+}
+
+async function getBookableAppointmentTypes(tenantId: string) {
+  const result = await pool.query(
+    `SELECT id, name, duration_minutes as "durationMinutes",
+            description, color
+     FROM appointment_types
+     WHERE tenant_id = $1
+       AND is_active = true
+     ORDER BY name`,
+    [tenantId]
+  );
+
+  return result.rows;
+}
+
+function inferCardBrand(cardNumber: string): string {
+  const digits = cardNumber.replace(/\D/g, "");
+
+  if (/^4\d{12}(\d{3})?(\d{3})?$/.test(digits)) return "visa";
+  if (/^(5[1-5]\d{14}|2(2[2-9]\d{12}|[3-6]\d{13}|7[01]\d{12}|720\d{12}))$/.test(digits)) {
+    return "mastercard";
+  }
+  if (/^3[47]\d{13}$/.test(digits)) return "amex";
+  if (/^(6011\d{12}|65\d{14}|64[4-9]\d{13})$/.test(digits)) return "discover";
+  return "card";
+}
+
+async function findOrCreateGuestPatient(
+  client: { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> },
+  tenantId: string,
+  guest: {
+    firstName: string;
+    lastName: string;
+    dob: string;
+    phone: string;
+    email: string;
+  },
+): Promise<string> {
+  const normalizedEmail = guest.email.trim().toLowerCase();
+  const normalizedPhone = guest.phone.trim();
+
+  let patientResult = await client.query(
+    `SELECT id
+     FROM patients
+     WHERE tenant_id = $1
+       AND LOWER(email) = $2
+       AND dob = $3
+     LIMIT 1`,
+    [tenantId, normalizedEmail, guest.dob]
+  );
+
+  if (patientResult.rows.length === 0) {
+    patientResult = await client.query(
+      `SELECT id
+       FROM patients
+       WHERE tenant_id = $1
+         AND phone = $2
+         AND dob = $3
+       LIMIT 1`,
+      [tenantId, normalizedPhone, guest.dob]
+    );
+  }
+
+  if (patientResult.rows.length > 0) {
+    const patientId = patientResult.rows[0].id as string;
+    await client.query(
+      `UPDATE patients
+       SET first_name = COALESCE(NULLIF(first_name, ''), $1),
+           last_name = COALESCE(NULLIF(last_name, ''), $2),
+           phone = COALESCE(NULLIF(phone, ''), $3),
+           email = COALESCE(NULLIF(email, ''), $4),
+           referral_source = COALESCE(referral_source, 'Website guest booking'),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $5 AND tenant_id = $6`,
+      [guest.firstName, guest.lastName, normalizedPhone, normalizedEmail, patientId, tenantId]
+    );
+    return patientId;
+  }
+
+  const patientId = crypto.randomUUID();
+  await client.query(
+    `INSERT INTO patients (
+      id, tenant_id, first_name, last_name, dob, phone, email, referral_source
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      patientId,
+      tenantId,
+      guest.firstName,
+      guest.lastName,
+      guest.dob,
+      normalizedPhone,
+      normalizedEmail,
+      "Website guest booking",
+    ]
+  );
+
+  return patientId;
+}
+
 /**
  * GET /api/patient-portal/scheduling/settings
  * Get online booking settings
@@ -48,22 +225,8 @@ patientSchedulingRouter.get(
   requirePatientAuth,
   async (req: PatientPortalRequest, res) => {
     try {
-      const settings = await getBookingSettings(req.patient!.tenantId);
-
-      // Also get custom message
-      const customMessageResult = await pool.query(
-        `SELECT custom_message as "customMessage",
-                require_reason as "requireReason"
-         FROM online_booking_settings
-         WHERE tenant_id = $1`,
-        [req.patient!.tenantId]
-      );
-
-      return res.json({
-        ...settings,
-        customMessage: customMessageResult.rows[0]?.customMessage,
-        requireReason: customMessageResult.rows[0]?.requireReason,
-      });
+      const settings = await getPublicBookingSettings(req.patient!.tenantId);
+      return res.json(settings);
     } catch (error) {
       logPatientSchedulingError("Get booking settings error", error);
       return res.status(500).json({ error: "Failed to get booking settings" });
@@ -80,20 +243,8 @@ patientSchedulingRouter.get(
   requirePatientAuth,
   async (req: PatientPortalRequest, res) => {
     try {
-      const result = await pool.query(
-        `SELECT DISTINCT p.id, p.full_name as "fullName", p.specialty,
-                p.bio, p.profile_image_url as "profileImageUrl"
-         FROM providers p
-         INNER JOIN provider_availability_templates pat
-           ON p.id = pat.provider_id
-         WHERE p.tenant_id = $1
-           AND pat.is_active = true
-           AND pat.allow_online_booking = true
-         ORDER BY p.full_name`,
-        [req.patient!.tenantId]
-      );
-
-      return res.json({ providers: result.rows });
+      const providers = await getBookableProviders(req.patient!.tenantId);
+      return res.json({ providers });
     } catch (error) {
       logPatientSchedulingError("Get providers error", error);
       return res.status(500).json({ error: "Failed to get providers" });
@@ -110,19 +261,67 @@ patientSchedulingRouter.get(
   requirePatientAuth,
   async (req: PatientPortalRequest, res) => {
     try {
-      const result = await pool.query(
-        `SELECT id, name, duration_minutes as "durationMinutes",
-                description, color
-         FROM appointment_types
-         WHERE tenant_id = $1
-           AND is_active = true
-         ORDER BY name`,
-        [req.patient!.tenantId]
-      );
-
-      return res.json({ appointmentTypes: result.rows });
+      const appointmentTypes = await getBookableAppointmentTypes(req.patient!.tenantId);
+      return res.json({ appointmentTypes });
     } catch (error) {
       logPatientSchedulingError("Get appointment types error", error);
+      return res.status(500).json({ error: "Failed to get appointment types" });
+    }
+  }
+);
+
+patientSchedulingRouter.get(
+  "/public/settings",
+  rateLimit({ windowMs: 60_000, max: 60 }),
+  async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+    }
+
+    try {
+      const settings = await getPublicBookingSettings(tenantId);
+      return res.json(settings);
+    } catch (error) {
+      logPatientSchedulingError("Get public booking settings error", error);
+      return res.status(500).json({ error: "Failed to get booking settings" });
+    }
+  }
+);
+
+patientSchedulingRouter.get(
+  "/public/providers",
+  rateLimit({ windowMs: 60_000, max: 60 }),
+  async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+    }
+
+    try {
+      const providers = await getBookableProviders(tenantId);
+      return res.json({ providers });
+    } catch (error) {
+      logPatientSchedulingError("Get public providers error", error);
+      return res.status(500).json({ error: "Failed to get providers" });
+    }
+  }
+);
+
+patientSchedulingRouter.get(
+  "/public/appointment-types",
+  rateLimit({ windowMs: 60_000, max: 60 }),
+  async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+    }
+
+    try {
+      const appointmentTypes = await getBookableAppointmentTypes(tenantId);
+      return res.json({ appointmentTypes });
+    } catch (error) {
+      logPatientSchedulingError("Get public appointment types error", error);
       return res.status(500).json({ error: "Failed to get appointment types" });
     }
   }
@@ -132,9 +331,11 @@ patientSchedulingRouter.get(
  * GET /api/patient-portal/scheduling/available-dates
  * Get dates in a month that have availability
  */
+const bookingEntityId = z.string().trim().min(1).max(120);
+
 const availableDatesSchema = z.object({
-  providerId: z.string().uuid(),
-  appointmentTypeId: z.string().uuid(),
+  providerId: bookingEntityId,
+  appointmentTypeId: bookingEntityId,
   year: z.string().regex(/^\d{4}$/),
   month: z.string().regex(/^(0?[1-9]|1[0-2])$/),
 });
@@ -167,14 +368,47 @@ patientSchedulingRouter.get(
   }
 );
 
+patientSchedulingRouter.get(
+  "/public/available-dates",
+  rateLimit({ windowMs: 60_000, max: 60 }),
+  async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+    }
+
+    const parsed = availableDatesSchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { providerId, appointmentTypeId, year, month } = parsed.data;
+
+    try {
+      const dates = await getAvailableDatesInMonth(
+        tenantId,
+        providerId,
+        appointmentTypeId,
+        parseInt(year),
+        parseInt(month) - 1,
+      );
+
+      return res.json({ dates });
+    } catch (error) {
+      logPatientSchedulingError("Get public available dates error", error);
+      return res.status(500).json({ error: "Failed to get available dates" });
+    }
+  }
+);
+
 /**
  * GET /api/patient-portal/scheduling/availability
  * Get available time slots for a specific date
  */
 const availabilitySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  providerId: z.string().uuid(),
-  appointmentTypeId: z.string().uuid(),
+  providerId: bookingEntityId,
+  appointmentTypeId: bookingEntityId,
 });
 
 patientSchedulingRouter.get(
@@ -190,13 +424,11 @@ patientSchedulingRouter.get(
     const { date, providerId, appointmentTypeId } = parsed.data;
 
     try {
-      const dateObj = new Date(date + "T00:00:00");
-
       const slots = await calculateAvailableSlots({
         tenantId: req.patient!.tenantId,
         providerId,
         appointmentTypeId,
-        date: dateObj,
+        date,
       });
 
       // Add provider info to slots
@@ -215,17 +447,82 @@ patientSchedulingRouter.get(
   }
 );
 
+patientSchedulingRouter.get(
+  "/public/availability",
+  rateLimit({ windowMs: 60_000, max: 60 }),
+  async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+    }
+
+    const parsed = availabilitySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { date, providerId, appointmentTypeId } = parsed.data;
+
+    try {
+      const slots = await calculateAvailableSlots({
+        tenantId,
+        providerId,
+        appointmentTypeId,
+        date,
+      });
+
+      const providerInfo = await getProviderInfo(tenantId, providerId);
+      return res.json({
+        slots: slots.map((slot) => ({
+          ...slot,
+          providerName: providerInfo?.fullName,
+        })),
+      });
+    } catch (error) {
+      logPatientSchedulingError("Get public availability error", error);
+      return res.status(500).json({ error: "Failed to get availability" });
+    }
+  }
+);
+
 /**
  * POST /api/patient-portal/scheduling/book
  * Book a new appointment
  */
 const bookAppointmentSchema = z.object({
-  providerId: z.string().uuid(),
-  appointmentTypeId: z.string().uuid(),
+  providerId: bookingEntityId,
+  appointmentTypeId: bookingEntityId,
   scheduledStart: z.string().datetime(),
   scheduledEnd: z.string().datetime(),
   reason: z.string().optional(),
   notes: z.string().optional(),
+});
+
+const guestBookingSchema = z.object({
+  providerId: bookingEntityId,
+  appointmentTypeId: bookingEntityId,
+  scheduledStart: z.string().datetime(),
+  scheduledEnd: z.string().datetime(),
+  reason: z.string().trim().min(3).max(500),
+  notes: z.string().trim().max(1000).optional(),
+  guest: z.object({
+    firstName: z.string().trim().min(1).max(100),
+    lastName: z.string().trim().min(1).max(100),
+    dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    phone: z.string().trim().min(7).max(30),
+    email: z.string().trim().email(),
+  }),
+  paymentMethod: z.object({
+    cardNumber: z.string().trim().min(12).max(25),
+    cardholderName: z.string().trim().min(2).max(120),
+    expiryMonth: z.number().int().min(1).max(12),
+    expiryYear: z.number().int().min(new Date().getFullYear()).max(new Date().getFullYear() + 20),
+    billingZip: z.string().trim().min(3).max(12),
+  }),
+  policy: z.object({
+    acknowledged: z.literal(true),
+    cancellationFeeCents: z.number().int().positive(),
+  }),
 });
 
 patientSchedulingRouter.post(
@@ -247,12 +544,11 @@ patientSchedulingRouter.post(
       await client.query("BEGIN");
 
       // Verify slot is still available
-      const startDate = new Date(scheduledStart);
       const slots = await calculateAvailableSlots({
         tenantId: req.patient!.tenantId,
         providerId,
         appointmentTypeId,
-        date: startDate,
+        date: scheduledStart,
       });
 
       const requestedSlot = slots.find((slot) => slot.startTime === scheduledStart);
@@ -297,9 +593,8 @@ patientSchedulingRouter.post(
       await client.query(
         `INSERT INTO appointments (
           id, tenant_id, patient_id, provider_id, location_id,
-          appointment_type_id, scheduled_start, scheduled_end, status,
-          chief_complaint, notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          appointment_type_id, scheduled_start, scheduled_end, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           appointmentId,
           req.patient!.tenantId,
@@ -310,8 +605,6 @@ patientSchedulingRouter.post(
           scheduledStart,
           scheduledEnd,
           "scheduled",
-          reason || null,
-          notes || null,
         ]
       );
 
@@ -342,17 +635,22 @@ patientSchedulingRouter.post(
       await client.query(
         `INSERT INTO audit_log (
           id, tenant_id, user_id, action, resource_type, resource_id,
-          ip_address, user_agent, severity, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          ip_address, user_agent, metadata, severity, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           crypto.randomUUID(),
           req.patient!.tenantId,
-          req.patient!.accountId,
+          null,
           "patient_portal_book_appointment",
           "appointment",
           appointmentId,
           req.ip,
           req.get("user-agent"),
+          JSON.stringify({
+            source: "patient_portal",
+            patientPortalAccountId: req.patient!.accountId,
+            patientId: req.patient!.patientId,
+          }),
           "info",
           "success",
         ]
@@ -369,6 +667,222 @@ patientSchedulingRouter.post(
     } catch (error) {
       await client.query("ROLLBACK");
       logPatientSchedulingError("Book appointment error", error);
+      return res.status(500).json({ error: "Failed to book appointment" });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+patientSchedulingRouter.post(
+  "/public/book-guest",
+  rateLimit({ windowMs: 60_000, max: 10 }),
+  async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      return res.status(400).json({ error: `Missing tenant header: ${env.tenantHeader}` });
+    }
+
+    const parsed = guestBookingSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const { providerId, appointmentTypeId, scheduledStart, scheduledEnd, reason, notes, guest, paymentMethod, policy } =
+      parsed.data;
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const settings = await getPublicBookingSettings(tenantId);
+      if (!settings.isEnabled) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "Online booking is currently unavailable" });
+      }
+
+      if (!settings.allowGuestBooking) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "Guest booking is not enabled" });
+      }
+
+      const expectedFee = settings.guestCancellationFeeCents ?? DEFAULT_GUEST_CANCELLATION_FEE_CENTS;
+      if (policy.cancellationFeeCents !== expectedFee) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Guest booking policy has changed. Please review and try again." });
+      }
+
+      const slots = await calculateAvailableSlots({
+        tenantId,
+        providerId,
+        appointmentTypeId,
+        date: scheduledStart,
+      });
+      const requestedSlot = slots.find((slot) => slot.startTime === scheduledStart);
+
+      if (!requestedSlot || !requestedSlot.isAvailable) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Time slot is no longer available" });
+      }
+
+      const conflictCheck = await client.query(
+        `SELECT 1 FROM appointments
+         WHERE tenant_id = $1
+           AND provider_id = $2
+           AND status IN ('scheduled', 'confirmed', 'checked_in')
+           AND tstzrange(scheduled_start, scheduled_end, '[)') &&
+               tstzrange($3::timestamptz, $4::timestamptz, '[)')
+         LIMIT 1`,
+        [tenantId, providerId, scheduledStart, scheduledEnd]
+      );
+
+      if (conflictCheck.rows.length > 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Time slot is no longer available" });
+      }
+
+      const normalizedCardNumber = paymentMethod.cardNumber.replace(/\D/g, "");
+      if (!GUEST_BOOKING_TEST_CARD_NUMBERS.has(normalizedCardNumber)) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: GUEST_BOOKING_TEST_CARD_MESSAGE });
+      }
+
+      const patientId = await findOrCreateGuestPatient(client, tenantId, guest);
+
+      const locationResult = await client.query(
+        `SELECT id FROM locations WHERE tenant_id = $1 AND is_active = true ORDER BY created_at ASC LIMIT 1`,
+        [tenantId]
+      );
+
+      if (locationResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(500).json({ error: "No location found" });
+      }
+
+      const locationId = locationResult.rows[0].id as string;
+      const appointmentId = crypto.randomUUID();
+      await client.query(
+        `INSERT INTO appointments (
+          id, tenant_id, patient_id, provider_id, location_id,
+          appointment_type_id, scheduled_start, scheduled_end, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          appointmentId,
+          tenantId,
+          patientId,
+          providerId,
+          locationId,
+          appointmentTypeId,
+          scheduledStart,
+          scheduledEnd,
+          "scheduled",
+        ]
+      );
+
+      const paymentMethodId = crypto.randomUUID();
+      const paymentToken = `pm_guest_${crypto.randomUUID().replace(/-/g, "")}`;
+      await client.query(
+        `INSERT INTO payment_methods (
+          id, tenant_id, patient_id, stripe_payment_method_id, stripe_customer_id,
+          type, card_brand, card_last4, card_exp_month, card_exp_year,
+          billing_name, billing_zip, is_default, is_active
+        ) VALUES ($1, $2, $3, $4, $5, 'card', $6, $7, $8, $9, $10, $11, false, true)`,
+        [
+          paymentMethodId,
+          tenantId,
+          patientId,
+          paymentToken,
+          null,
+          inferCardBrand(normalizedCardNumber),
+          normalizedCardNumber.slice(-4),
+          paymentMethod.expiryMonth,
+          paymentMethod.expiryYear,
+          paymentMethod.cardholderName,
+          paymentMethod.billingZip,
+        ]
+      );
+
+      await client.query(
+        `INSERT INTO online_booking_guest_guarantees (
+          id, tenant_id, appointment_id, patient_id, payment_method_id,
+          cancellation_fee_cents, policy_acknowledged, policy_text, processor, authorization_status
+        ) VALUES ($1, $2, $3, $4, $5, $6, true, $7, $8, $9)`,
+        [
+          crypto.randomUUID(),
+          tenantId,
+          appointmentId,
+          patientId,
+          paymentMethodId,
+          expectedFee,
+          `Guest booking card on file authorizes up to $${(expectedFee / 100).toFixed(2)} for late cancellation or no-show.`,
+          "mock_stripe",
+          "authorized",
+        ]
+      );
+
+      await client.query(
+        `INSERT INTO appointment_booking_history (
+          id, tenant_id, appointment_id, patient_id, action,
+          new_scheduled_start, new_scheduled_end, reason,
+          booked_via, ip_address, user_agent, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [
+          crypto.randomUUID(),
+          tenantId,
+          appointmentId,
+          patientId,
+          "booked",
+          scheduledStart,
+          scheduledEnd,
+          reason,
+          "website_guest",
+          req.ip,
+          req.get("user-agent"),
+          null,
+        ]
+      );
+
+      await client.query(
+        `INSERT INTO audit_log (
+          id, tenant_id, user_id, action, resource_type, resource_id,
+          ip_address, user_agent, metadata, severity, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          crypto.randomUUID(),
+          tenantId,
+          null,
+          "website_guest_book_appointment",
+          "appointment",
+          appointmentId,
+          req.ip,
+          req.get("user-agent"),
+          JSON.stringify({
+            source: "website_guest",
+            patientId,
+            bookingEmail: guest.email,
+            paymentMethodId,
+            notes: notes || null,
+          }),
+          "info",
+          "success",
+        ]
+      );
+
+      await client.query("COMMIT");
+
+      return res.status(201).json({
+        appointmentId,
+        message: "Appointment booked successfully",
+        guestBooking: {
+          patientId,
+          cardLast4: normalizedCardNumber.slice(-4),
+          cancellationFeeCents: expectedFee,
+        },
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      logPatientSchedulingError("Guest website booking error", error);
       return res.status(500).json({ error: "Failed to book appointment" });
     } finally {
       client.release();
@@ -433,12 +947,11 @@ patientSchedulingRouter.put(
       }
 
       // Verify new slot is available
-      const startDate = new Date(scheduledStart);
       const slots = await calculateAvailableSlots({
         tenantId: req.patient!.tenantId,
         providerId: appointment.providerId,
         appointmentTypeId: appointment.appointmentTypeId,
-        date: startDate,
+        date: scheduledStart,
       });
 
       const requestedSlot = slots.find((slot) => slot.startTime === scheduledStart);
@@ -470,8 +983,7 @@ patientSchedulingRouter.put(
       await client.query(
         `UPDATE appointments
          SET scheduled_start = $1,
-             scheduled_end = $2,
-             updated_at = CURRENT_TIMESTAMP
+             scheduled_end = $2
          WHERE id = $3 AND tenant_id = $4`,
         [scheduledStart, scheduledEnd, appointmentId, req.patient!.tenantId]
       );
@@ -506,17 +1018,22 @@ patientSchedulingRouter.put(
       await client.query(
         `INSERT INTO audit_log (
           id, tenant_id, user_id, action, resource_type, resource_id,
-          ip_address, user_agent, severity, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          ip_address, user_agent, metadata, severity, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           crypto.randomUUID(),
           req.patient!.tenantId,
-          req.patient!.accountId,
+          null,
           "patient_portal_reschedule_appointment",
           "appointment",
           appointmentId,
           req.ip,
           req.get("user-agent"),
+          JSON.stringify({
+            source: "patient_portal",
+            patientPortalAccountId: req.patient!.accountId,
+            patientId: req.patient!.patientId,
+          }),
           "info",
           "success",
         ]
@@ -592,8 +1109,7 @@ patientSchedulingRouter.delete(
       // Cancel appointment
       await client.query(
         `UPDATE appointments
-         SET status = 'cancelled',
-             updated_at = CURRENT_TIMESTAMP
+         SET status = 'cancelled'
          WHERE id = $1 AND tenant_id = $2`,
         [appointmentId, req.patient!.tenantId]
       );
@@ -601,15 +1117,14 @@ patientSchedulingRouter.delete(
       // Add status history
       await client.query(
         `INSERT INTO appointment_status_history (
-          id, tenant_id, appointment_id, status, changed_by, notes
-        ) VALUES ($1, $2, $3, $4, $5, $6)`,
+          id, tenant_id, appointment_id, status, changed_by
+        ) VALUES ($1, $2, $3, $4, $5)`,
         [
           crypto.randomUUID(),
           req.patient!.tenantId,
           appointmentId,
           "cancelled",
           req.patient!.accountId,
-          reason || "Cancelled by patient via portal",
         ]
       );
 
@@ -640,17 +1155,22 @@ patientSchedulingRouter.delete(
       await client.query(
         `INSERT INTO audit_log (
           id, tenant_id, user_id, action, resource_type, resource_id,
-          ip_address, user_agent, severity, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          ip_address, user_agent, metadata, severity, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           crypto.randomUUID(),
           req.patient!.tenantId,
-          req.patient!.accountId,
+          null,
           "patient_portal_cancel_appointment",
           "appointment",
           appointmentId,
           req.ip,
           req.get("user-agent"),
+          JSON.stringify({
+            source: "patient_portal",
+            patientPortalAccountId: req.patient!.accountId,
+            patientId: req.patient!.patientId,
+          }),
           "info",
           "success",
         ]
@@ -1003,6 +1523,9 @@ const updateSettingsSchema = z.object({
   reminderEmail: z.boolean().optional(),
   reminderHoursBefore: z.number().min(0).optional(),
   customMessage: z.string().optional(),
+  allowGuestBooking: z.boolean().optional(),
+  requireCardOnFileForGuestBooking: z.boolean().optional(),
+  guestCancellationFeeCents: z.number().int().min(0).optional(),
 });
 
 providerSchedulingRouter.put(

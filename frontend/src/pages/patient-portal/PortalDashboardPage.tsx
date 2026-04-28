@@ -6,6 +6,7 @@ import { usePatientPortalAuth, patientPortalFetch } from '../../contexts/Patient
 interface DashboardData {
   upcomingAppointments: number;
   nextAppointment: {
+    appointmentId?: string;
     appointmentDate: string;
     appointmentTime: string;
     providerName: string;
@@ -14,12 +15,24 @@ interface DashboardData {
   newDocuments: number;
   newVisits: number;
   activePrescriptions: number;
+  unreadMessages?: number;
+  currentBalance?: number;
+  preCheckinAvailable?: boolean;
+  nextCheckinAppointment?: {
+    appointmentId: string;
+    appointmentDate: string;
+    appointmentTime: string;
+    providerName: string;
+    appointmentType?: string;
+  } | null;
+  actionNeededCount?: number;
 }
 
 export function PortalDashboardPage() {
   const { patient } = usePatientPortalAuth();
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -28,11 +41,13 @@ export function PortalDashboardPage() {
   }, []);
 
   const loadDashboard = async () => {
+    setError(null);
     try {
       const data = await patientPortalFetch('/api/patient-portal-data/dashboard');
       setDashboard(data.dashboard);
     } catch (error) {
       console.error('Failed to load dashboard:', error);
+      setError(error instanceof Error ? error.message : 'Failed to load your dashboard');
     } finally {
       setLoading(false);
     }
@@ -67,6 +82,58 @@ export function PortalDashboardPage() {
     const displayHour = hour % 12 || 12;
     return `${displayHour}:${minutes} ${ampm}`;
   };
+
+  const formatCurrency = (amount: number) => (
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0)
+  );
+
+  const buildCheckinLink = () => {
+    const appt = dashboard?.nextCheckinAppointment;
+    if (!appt?.appointmentId) return '/portal/check-in';
+    const params = new URLSearchParams({ appointmentId: appt.appointmentId });
+    if (appt.appointmentType) params.set('appointmentType', appt.appointmentType);
+    return `/portal/check-in?${params.toString()}`;
+  };
+
+  const actionItems = [
+    dashboard?.preCheckinAvailable ? {
+      label: 'Pre-check-in available',
+      detail: dashboard.nextCheckinAppointment
+        ? `${dashboard.nextCheckinAppointment.appointmentType || 'Upcoming visit'} with ${dashboard.nextCheckinAppointment.providerName}`
+        : 'Complete forms before your visit',
+      to: buildCheckinLink(),
+      icon: 'clipboard',
+      tone: 'urgent',
+    } : null,
+    (dashboard?.unreadMessages || 0) > 0 ? {
+      label: `${dashboard?.unreadMessages} unread message${dashboard?.unreadMessages === 1 ? '' : 's'}`,
+      detail: 'Review secure messages from your care team',
+      to: '/portal/messages',
+      icon: 'message',
+      tone: 'info',
+    } : null,
+    (dashboard?.newDocuments || 0) > 0 ? {
+      label: `${dashboard?.newDocuments} new document${dashboard?.newDocuments === 1 ? '' : 's'}`,
+      detail: 'View forms, results, and shared files',
+      to: '/portal/documents',
+      icon: 'document',
+      tone: 'info',
+    } : null,
+    (dashboard?.newVisits || 0) > 0 ? {
+      label: `${dashboard?.newVisits} recent visit summar${dashboard?.newVisits === 1 ? 'y' : 'ies'}`,
+      detail: 'Review care instructions and follow-up notes',
+      to: '/portal/visits',
+      icon: 'heart',
+      tone: 'info',
+    } : null,
+    (dashboard?.currentBalance || 0) > 0 ? {
+      label: `${formatCurrency(dashboard?.currentBalance || 0)} balance due`,
+      detail: 'Review statements or make a payment',
+      to: '/portal/billing',
+      icon: 'clock',
+      tone: 'billing',
+    } : null,
+  ].filter(Boolean) as Array<{ label: string; detail: string; to: string; icon: string; tone: string }>;
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -174,6 +241,13 @@ export function PortalDashboardPage() {
             <div className="loading-spinner"></div>
             <p>Loading your dashboard...</p>
           </div>
+        ) : error ? (
+          <div className="dashboard-error">
+            <div className="dashboard-error-icon">{getIcon('shield')}</div>
+            <h2>We could not load your portal dashboard</h2>
+            <p>{error}. Please try again, or contact the office if this keeps happening.</p>
+            <button type="button" onClick={loadDashboard}>Retry</button>
+          </div>
         ) : (
           <div className="dashboard-content">
             {/* Stats Grid */}
@@ -221,6 +295,34 @@ export function PortalDashboardPage() {
                 </div>
                 <span className="stat-arrow">{getIcon('arrowRight')}</span>
               </Link>
+            </div>
+
+            <div className="action-needed-card">
+              <div className="action-needed-header">
+                <div>
+                  <span className="action-needed-kicker">Action Needed</span>
+                  <h2>{actionItems.length > 0 ? `${actionItems.length} item${actionItems.length === 1 ? '' : 's'} to review` : 'Nothing needs your attention'}</h2>
+                </div>
+                <span className={`action-needed-count ${actionItems.length > 0 ? 'has-items' : ''}`}>
+                  {actionItems.length}
+                </span>
+              </div>
+              {actionItems.length > 0 ? (
+                <div className="action-needed-list">
+                  {actionItems.map((item) => (
+                    <Link key={`${item.to}-${item.label}`} to={item.to} className={`action-needed-item ${item.tone}`}>
+                      <span className="action-needed-icon">{getIcon(item.icon)}</span>
+                      <span className="action-needed-copy">
+                        <strong>{item.label}</strong>
+                        <span>{item.detail}</span>
+                      </span>
+                      <span className="action-needed-arrow">{getIcon('arrowRight')}</span>
+                    </Link>
+                  ))}
+                </div>
+              ) : (
+                <p className="action-needed-empty">Your forms, messages, documents, and billing items are caught up.</p>
+              )}
             </div>
 
             {/* Main Content Grid */}
@@ -447,6 +549,57 @@ export function PortalDashboardPage() {
           color: #64748b;
         }
 
+        .dashboard-error {
+          background: white;
+          border: 1px solid #fecaca;
+          border-radius: 16px;
+          padding: 2rem;
+          max-width: 620px;
+          margin: 2rem auto;
+          text-align: center;
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+        }
+
+        .dashboard-error-icon {
+          width: 48px;
+          height: 48px;
+          border-radius: 14px;
+          margin: 0 auto 1rem;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #fef2f2;
+          color: #dc2626;
+        }
+
+        .dashboard-error-icon svg {
+          width: 24px;
+          height: 24px;
+        }
+
+        .dashboard-error h2 {
+          margin: 0 0 0.5rem;
+          color: #111827;
+          font-size: 1.2rem;
+        }
+
+        .dashboard-error p {
+          margin: 0 auto 1.25rem;
+          max-width: 460px;
+          color: #64748b;
+          line-height: 1.6;
+        }
+
+        .dashboard-error button {
+          border: none;
+          border-radius: 8px;
+          background: #6366f1;
+          color: white;
+          font-weight: 700;
+          padding: 0.7rem 1.2rem;
+          cursor: pointer;
+        }
+
         /* Stats Grid */
         .stats-grid {
           display: grid;
@@ -545,6 +698,143 @@ export function PortalDashboardPage() {
         .stat-card:hover .stat-arrow {
           transform: translateX(4px);
           color: #6366f1;
+        }
+
+        .action-needed-card {
+          background: white;
+          border: 1px solid #e2e8f0;
+          border-radius: 16px;
+          padding: 1.25rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .action-needed-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 1rem;
+          margin-bottom: 1rem;
+        }
+
+        .action-needed-kicker {
+          display: block;
+          font-size: 0.7rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: #94a3b8;
+          margin-bottom: 0.25rem;
+        }
+
+        .action-needed-header h2 {
+          margin: 0;
+          font-size: 1.1rem;
+          color: #1e293b;
+        }
+
+        .action-needed-count {
+          min-width: 32px;
+          height: 32px;
+          border-radius: 999px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: #f1f5f9;
+          color: #64748b;
+          font-weight: 800;
+        }
+
+        .action-needed-count.has-items {
+          background: #eef2ff;
+          color: #4f46e5;
+        }
+
+        .action-needed-list {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+          gap: 0.75rem;
+        }
+
+        .action-needed-item {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          padding: 0.9rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          text-decoration: none;
+          color: inherit;
+          transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+        }
+
+        .action-needed-item:hover {
+          border-color: #c7d2fe;
+          box-shadow: 0 6px 18px rgba(15, 23, 42, 0.07);
+          transform: translateY(-1px);
+        }
+
+        .action-needed-icon {
+          width: 36px;
+          height: 36px;
+          border-radius: 10px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #f8fafc;
+          color: #64748b;
+          flex-shrink: 0;
+        }
+
+        .action-needed-item.urgent .action-needed-icon {
+          background: #ecfdf5;
+          color: #059669;
+        }
+
+        .action-needed-item.info .action-needed-icon {
+          background: #eef2ff;
+          color: #4f46e5;
+        }
+
+        .action-needed-item.billing .action-needed-icon {
+          background: #fff7ed;
+          color: #c2410c;
+        }
+
+        .action-needed-icon svg {
+          width: 18px;
+          height: 18px;
+        }
+
+        .action-needed-copy {
+          min-width: 0;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 0.15rem;
+        }
+
+        .action-needed-copy strong {
+          color: #1e293b;
+          font-size: 0.9rem;
+        }
+
+        .action-needed-copy span {
+          color: #64748b;
+          font-size: 0.8rem;
+          line-height: 1.4;
+        }
+
+        .action-needed-arrow {
+          width: 18px;
+          height: 18px;
+          color: #cbd5e1;
+          flex-shrink: 0;
+        }
+
+        .action-needed-empty {
+          margin: 0;
+          color: #64748b;
+          font-size: 0.9rem;
         }
 
         /* Content Grid */

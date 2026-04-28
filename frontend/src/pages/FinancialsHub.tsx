@@ -4,13 +4,13 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton } from '../components/ui';
 import { RCMDashboard } from '../components/financials/RCMDashboard';
-import { ClaimsManagement } from '../components/financials/ClaimsManagement';
 import { PatientPaymentPortal } from '../components/financials/PatientPaymentPortal';
 import { PremiumAnalytics } from '../components/financials/PremiumAnalytics';
-import { FeeScheduleManager } from '../components/financials/FeeScheduleManager';
+import { FeeSchedulePage } from './FeeSchedulePage';
 import {
   fetchARAging,
   fetchBillsSummary,
+  fetchClaims,
   fetchCollectionsTrend,
   fetchFinancialMetrics,
   fetchPaymentsSummary,
@@ -36,6 +36,15 @@ interface SnapshotMetricCard {
   avgRevenuePerVisitCents: number;
   benchmarkVisitsCount: number;
   collectionRate: number;
+  standaloneRevenueCents: number;
+  revenueCategories: RevenueCategorySummary[];
+}
+
+interface RevenueCategorySummary {
+  key: string;
+  label: string;
+  revenueCents: number;
+  itemCount: number;
 }
 
 interface DashboardSnapshotMetrics {
@@ -56,6 +65,28 @@ interface SnapshotTrendSummary {
   avgDailyPaymentsCollectedCents: number;
   avgDailyRevenueEarnedCents: number;
   collectionRate: number;
+  revenueCategories?: RevenueCategorySummary[];
+}
+
+interface DashboardRcmMetrics {
+  totalClinicalCollections: number;
+  netCollectionRatio: number;
+  adjustmentsWriteoffs: number;
+  daysSalesOutstanding: number;
+  firstPassClaimRate: number;
+  denialRate: number;
+  avgDaysToPay: number;
+  claimsInQueue: number;
+  pendingAppeals: number;
+}
+
+interface DashboardAraBucket {
+  label: string;
+  range: string;
+  amountCents: number;
+  count: number;
+  percentage: number;
+  color: string;
 }
 
 function toIsoDate(date: Date): string {
@@ -151,6 +182,8 @@ export function FinancialsHub() {
     avgRevenuePerVisitCents: 0,
     benchmarkVisitsCount: 0,
     collectionRate: 0,
+    standaloneRevenueCents: 0,
+    revenueCategories: [],
   });
 
   const [snapshotMetrics, setSnapshotMetrics] = useState<DashboardSnapshotMetrics>({
@@ -159,6 +192,18 @@ export function FinancialsHub() {
     monthly: emptySnapshotCard('monthly', 'Monthly Snapshot', 'Month to Date'),
     sourceNote: '',
   });
+  const [dashboardMetrics, setDashboardMetrics] = useState<DashboardRcmMetrics>({
+    totalClinicalCollections: 0,
+    netCollectionRatio: 0,
+    adjustmentsWriteoffs: 0,
+    daysSalesOutstanding: 0,
+    firstPassClaimRate: 0,
+    denialRate: 0,
+    avgDaysToPay: 0,
+    claimsInQueue: 0,
+    pendingAppeals: 0,
+  });
+  const [dashboardARAging, setDashboardARAging] = useState<DashboardAraBucket[]>([]);
 
   // Get active tab from URL, default to 'dashboard' if not specified
   const tabFromUrl = searchParams.get('tab') as TabType | null;
@@ -174,6 +219,11 @@ export function FinancialsHub() {
       maximumFractionDigits: 0,
     }).format((cents || 0) / 100);
 
+  const formatCategoryList = (categories?: RevenueCategorySummary[]) =>
+    (categories || [])
+      .slice(0, 3)
+      .map((category) => `${category.label} ${formatCurrency(category.revenueCents)}`);
+
   const loadData = useCallback(async () => {
     if (!session) {
       setLoading(false);
@@ -182,11 +232,86 @@ export function FinancialsHub() {
 
     setLoading(true);
     try {
-      const dashboard = await fetchFinancialMetrics({
-        tenantId: session.tenantId,
-        accessToken: session.accessToken,
-      });
+      const today = toIsoDate(new Date());
+      const monthRange = getSnapshotRange('monthly');
+      const [dashboard, paymentsSummary, agingSummary, claimsResponse] = await Promise.all([
+        fetchFinancialMetrics({
+          tenantId: session.tenantId,
+          accessToken: session.accessToken,
+        }),
+        fetchPaymentsSummary(
+          {
+            tenantId: session.tenantId,
+            accessToken: session.accessToken,
+          },
+          { startDate: monthRange.startDate, endDate: monthRange.endDate },
+        ),
+        fetchARAging(
+          {
+            tenantId: session.tenantId,
+            accessToken: session.accessToken,
+          },
+          { asOfDate: today },
+        ),
+        fetchClaims(
+          {
+            tenantId: session.tenantId,
+            accessToken: session.accessToken,
+          },
+        ),
+      ]);
       const snapshots = dashboard?.snapshots || {};
+      const claims = Array.isArray(claimsResponse?.claims) ? claimsResponse.claims : [];
+      const agingBuckets = Array.isArray(agingSummary?.buckets) ? agingSummary.buckets : [];
+      const totalArCents = agingBuckets.reduce((sum: number, bucket: any) => sum + Number(bucket.totalBalanceCents || 0), 0);
+      const patientPaymentsTotal = Array.isArray(paymentsSummary?.patientPaymentsByMethod)
+        ? paymentsSummary.patientPaymentsByMethod.reduce((sum: number, row: any) => sum + Number(row.totalCents || 0), 0)
+        : 0;
+      const payerPaymentsTotal = Number(paymentsSummary?.payerPaymentsSummary?.appliedCents || 0);
+      const totalPaymentsCollected = payerPaymentsTotal + patientPaymentsTotal;
+      const monthlyRevenue = Number(snapshots?.monthly?.totalRevenueCents || 0);
+      const adjustmentsWriteoffs = Math.max(
+        0,
+        monthlyRevenue - totalPaymentsCollected - Number(paymentsSummary?.receivables?.outstandingBalanceCents || 0),
+      );
+      const adjudicatedClaims = claims.filter((claim: any) => !['draft', 'ready'].includes(String(claim.status || '')));
+      const paidClaims = claims.filter((claim: any) => String(claim.status || '') === 'paid');
+      const deniedClaims = claims.filter((claim: any) => ['denied', 'rejected'].includes(String(claim.status || '')));
+      const avgDaysToPay = paidClaims.length
+        ? paidClaims.reduce((sum: number, claim: any) => {
+            const serviceDate = new Date(`${String(claim.serviceDate || claim.createdAt || today)}T00:00:00Z`).getTime();
+            const paidDate = new Date(String(claim.updatedAt || claim.createdAt || `${today}T00:00:00Z`)).getTime();
+            return sum + Math.max(0, Math.round((paidDate - serviceDate) / DAY_MS));
+          }, 0) / paidClaims.length
+        : 0;
+      const dsoWeightedDays = agingBuckets.reduce((sum: number, bucket: any) => {
+        const key = String(bucket.key || '');
+        const midpoint = key === '0-30' ? 15 : key === '31-60' ? 45 : key === '61-90' ? 75 : key === '91-120' ? 105 : 135;
+        return sum + midpoint * Number(bucket.totalBalanceCents || 0);
+      }, 0);
+
+      setDashboardMetrics({
+        totalClinicalCollections: Number(snapshots?.monthly?.collectionsCents || totalPaymentsCollected),
+        netCollectionRatio: Number(paymentsSummary?.calculated?.netCollectionRate || snapshots?.monthly?.collectionRate || 0),
+        adjustmentsWriteoffs,
+        daysSalesOutstanding: totalArCents > 0 ? Number((dsoWeightedDays / totalArCents).toFixed(1)) : 0,
+        firstPassClaimRate: adjudicatedClaims.length ? Number(((paidClaims.length / adjudicatedClaims.length) * 100).toFixed(1)) : 0,
+        denialRate: adjudicatedClaims.length ? Number(((deniedClaims.length / adjudicatedClaims.length) * 100).toFixed(1)) : 0,
+        avgDaysToPay: Number(avgDaysToPay.toFixed(1)),
+        claimsInQueue: claims.filter((claim: any) => ['draft', 'ready', 'submitted', 'accepted'].includes(String(claim.status || ''))).length,
+        pendingAppeals: claims.filter((claim: any) => ['appealed', 'denied', 'rejected'].includes(String(claim.status || ''))).length,
+      });
+
+      setDashboardARAging(
+        agingBuckets.map((bucket: any, index: number) => ({
+          label: bucket.key === '0-30' ? 'Current' : String(bucket.label || bucket.key || ''),
+          range: String(bucket.label || bucket.key || ''),
+          amountCents: Number(bucket.totalBalanceCents || 0),
+          count: Number(bucket.billCount || 0),
+          percentage: totalArCents > 0 ? Number((((Number(bucket.totalBalanceCents || 0) / totalArCents) * 100)).toFixed(1)) : 0,
+          color: ['#10b981', '#f59e0b', '#f97316', '#ef4444', '#dc2626'][index] || '#6b7280',
+        })),
+      );
 
       setSnapshotMetrics({
         daily: {
@@ -355,24 +480,18 @@ export function FinancialsHub() {
 
   if (loading) {
     return (
-      <div style={{
-        background: 'linear-gradient(135deg, #059669 0%, #10b981 50%, #34d399 100%)',
-        minHeight: '100vh',
-        padding: '2rem',
-      }}>
+      <div style={{ background: '#F3F4F6', minHeight: '100vh' }}>
         <div style={{
-          background: 'white',
-          borderRadius: '16px',
-          padding: '2rem',
-          marginBottom: '2rem',
+          background: '#111827', height: '64px', display: 'flex',
+          alignItems: 'center', padding: '0 28px', gap: '12px',
         }}>
-          <Skeleton variant="card" height={80} />
+          <div style={{ width: 200, height: 28, background: 'rgba(255,255,255,0.1)', borderRadius: 6 }} />
         </div>
-        <div style={{ display: 'flex', gap: '2rem' }}>
-          <div style={{ width: '250px' }}>
-            <Skeleton variant="card" height={400} />
+        <div style={{ display: 'flex', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+          <div style={{ width: 280, background: '#fff', borderRight: '1px solid #E5E7EB', flexShrink: 0 }}>
+            <Skeleton variant="card" height={500} />
           </div>
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, padding: '24px', overflow: 'auto' }}>
             <Skeleton variant="card" height={600} />
           </div>
         </div>
@@ -405,60 +524,62 @@ export function FinancialsHub() {
   const snapshotReceivables = snapshotPaymentsSummary?.receivables || {};
   const snapshotPayerSummary = snapshotPaymentsSummary?.payerPaymentsSummary || {};
 
+  // ─── Tab label map for sidebar ───────────────────────────────────────────
+  const tabIcons: Record<TabType, string> = {
+    dashboard: '◈', snapshots: '◉', bills: '◧', payments: '◨',
+    analytics: '◎', fees: '◫', statements: '◪', reports: '◩',
+  };
+
   return (
-    <div style={{
-      background: 'linear-gradient(135deg, #059669 0%, #10b981 50%, #34d399 100%)',
-      minHeight: '100vh',
-    }}>
-      {/* Top Header Bar */}
-      <div style={{
-        background: 'rgba(255,255,255,0.98)',
-        borderBottom: '1px solid #e5e7eb',
-        padding: '1rem 2rem',
-        display: 'flex',
+    <div style={{ background: '#F3F4F6', minHeight: '100vh', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+
+      {/* ── Header ───────────────────────────────────────────────────────── */}
+      <header style={{
+        position: 'sticky', top: 0, zIndex: 50,
+        background: '#111827',
+        height: '64px',
+        display: 'flex', alignItems: 'center',
+        padding: '0 24px',
         justifyContent: 'space-between',
-        alignItems: 'center',
-        position: 'sticky',
-        top: 0,
-        zIndex: 100,
-        backdropFilter: 'blur(10px)',
+        boxShadow: '0 1px 0 rgba(255,255,255,0.06)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <h1 style={{
-            fontSize: '1.75rem',
-            fontWeight: '800',
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div style={{
+            width: 34, height: 34, borderRadius: '10px',
             background: 'linear-gradient(135deg, #059669, #10b981)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '16px', color: 'white', fontWeight: 800,
+          }}>$</div>
+          <h1 style={{
+            fontSize: '1.15rem', fontWeight: 700, color: '#F9FAFB',
+            letterSpacing: '-0.01em', margin: 0,
           }}>
             Financial Management
           </h1>
           <span style={{
-            padding: '0.25rem 0.75rem',
-            background: '#dcfce7',
-            color: '#166534',
+            padding: '3px 10px',
+            background: 'rgba(5,150,105,0.25)',
+            color: '#34d399',
             borderRadius: '20px',
-            fontSize: '0.75rem',
-            fontWeight: '600',
+            fontSize: '0.7rem',
+            fontWeight: 700,
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
           }}>
             Premium
           </span>
         </div>
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           <button
             onClick={() => showSuccess('Quick actions menu opened')}
             style={{
-              padding: '0.6rem 1.2rem',
-              background: 'white',
-              color: '#374151',
-              border: '2px solid #e5e7eb',
+              padding: '8px 16px',
+              background: 'rgba(255,255,255,0.08)',
+              color: '#E5E7EB',
+              border: '1px solid rgba(255,255,255,0.12)',
               borderRadius: '8px',
-              fontWeight: '600',
-              fontSize: '0.9rem',
+              fontWeight: 600, fontSize: '0.85rem',
               cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
             }}
           >
             Quick Actions
@@ -466,113 +587,118 @@ export function FinancialsHub() {
           <button
             onClick={() => handleTabChange('reports')}
             style={{
-              padding: '0.6rem 1.2rem',
+              padding: '8px 18px',
               background: '#059669',
               color: 'white',
               border: 'none',
               borderRadius: '8px',
-              fontWeight: '600',
-              fontSize: '0.9rem',
+              fontWeight: 700, fontSize: '0.85rem',
               cursor: 'pointer',
+              boxShadow: '0 2px 8px rgba(5,150,105,0.4)',
             }}
           >
             Generate Report
           </button>
         </div>
-      </div>
+      </header>
 
-      <div style={{ display: 'flex' }}>
-        {/* Sidebar Navigation */}
-        <div style={{
-          width: sidebarCollapsed ? '70px' : '250px',
-          background: 'rgba(255,255,255,0.98)',
-          minHeight: 'calc(100vh - 60px)',
-          borderRight: '1px solid #e5e7eb',
+      {/* ── Body: sidebar + content ───────────────────────────────────────── */}
+      {/* KEY FIX: overflow:hidden here prevents background bleed-through */}
+      <div style={{ display: 'flex', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+
+        {/* ── Sidebar ── */}
+        <aside style={{
+          width: sidebarCollapsed ? 64 : 280,
+          background: '#FFFFFF',
+          borderRight: '1px solid #E5E7EB',
+          height: '100%',
+          overflowY: 'auto',   /* independent scroll — no background bleed */
+          overflowX: 'hidden', /* clip any card overflow */
+          flexShrink: 0,
           transition: 'width 0.3s ease',
-          position: 'sticky',
-          top: '60px',
-          alignSelf: 'flex-start',
         }}>
-          <div style={{ padding: '1rem' }}>
+          <div style={{ padding: '12px 10px 0' }}>
             {/* Collapse Toggle */}
             <button
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
               style={{
-                width: '100%',
-                padding: '0.5rem',
-                background: '#f9fafb',
-                border: '1px solid #e5e7eb',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                marginBottom: '1rem',
-                display: 'flex',
-                justifyContent: 'center',
+                width: '100%', padding: '8px',
+                background: '#F9FAFB', border: '1px solid #E5E7EB',
+                borderRadius: '8px', cursor: 'pointer',
+                marginBottom: '10px', display: 'flex', justifyContent: 'center',
+                color: '#6B7280', fontSize: '0.8rem', fontWeight: 700,
               }}
             >
-              {sidebarCollapsed ? '>' : '<'}
+              {sidebarCollapsed ? '›' : '‹'}
             </button>
 
             {/* Navigation Items */}
-            <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {TABS.map(tab => (
-                <button
-                  key={tab.key}
-                  onClick={() => handleTabChange(tab.key)}
-                  style={{
-                    padding: sidebarCollapsed ? '0.75rem' : '0.75rem 1rem',
-                    background: activeTab === tab.key ? '#f0fdf4' : 'transparent',
-                    border: activeTab === tab.key ? '2px solid #bbf7d0' : '2px solid transparent',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.75rem',
-                    transition: 'all 0.2s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (activeTab !== tab.key) {
-                      e.currentTarget.style.background = '#f9fafb';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (activeTab !== tab.key) {
-                      e.currentTarget.style.background = 'transparent';
-                    }
-                  }}
-                >
-                  <span style={{ fontSize: '1.25rem' }}>{tab.icon}</span>
-                  {!sidebarCollapsed && (
-                    <div>
-                      <div style={{
-                        fontWeight: '600',
-                        color: activeTab === tab.key ? '#059669' : '#374151',
-                        fontSize: '0.9rem',
-                      }}>
-                        {tab.label}
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {TABS.map(tab => {
+                const isActive = activeTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    onClick={() => handleTabChange(tab.key)}
+                    title={sidebarCollapsed ? tab.label : undefined}
+                    style={{
+                      padding: sidebarCollapsed ? '10px' : '9px 12px',
+                      background: isActive ? '#F0FDF4' : 'transparent',
+                      border: 'none',
+                      borderLeft: `3px solid ${isActive ? '#059669' : 'transparent'}`,
+                      borderRadius: isActive ? '0 8px 8px 0' : '0 8px 8px 0',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      width: '100%',
+                      transition: 'all 0.15s ease',
+                    }}
+                    onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = '#F9FAFB'; }}
+                    onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <span style={{
+                      fontSize: '0.9rem',
+                      color: isActive ? '#059669' : '#9CA3AF',
+                      flexShrink: 0,
+                    }}>
+                      {tabIcons[tab.key]}
+                    </span>
+                    {!sidebarCollapsed && (
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{
+                          fontWeight: 600,
+                          color: isActive ? '#059669' : '#374151',
+                          fontSize: '0.88rem',
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}>
+                          {tab.label}
+                        </div>
+                        <div style={{
+                          fontSize: '0.72rem',
+                          color: '#9CA3AF',
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}>
+                          {tab.description}
+                        </div>
                       </div>
-                      <div style={{
-                        fontSize: '0.75rem',
-                        color: '#9ca3af',
-                      }}>
-                        {tab.description}
-                      </div>
-                    </div>
-                  )}
-                </button>
-              ))}
+                    )}
+                  </button>
+                );
+              })}
             </nav>
 
-            {/* Quick Stats in Sidebar */}
+            {/* Revenue Snapshots in Sidebar */}
             {!sidebarCollapsed && (
               <div style={{
-                marginTop: '2rem',
-                padding: '1rem',
-                background: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
+                marginTop: '16px',
+                padding: '12px',
+                background: '#F8FFF9',
                 borderRadius: '12px',
-                border: '1px solid #bbf7d0',
+                border: '1px solid #D1FAE5',
               }}>
-                <div style={{ fontSize: '0.85rem', color: '#166534', marginBottom: '0.75rem', fontWeight: '700' }}>
+                <div style={{ fontSize: '0.88rem', color: '#166534', marginBottom: '0.85rem', fontWeight: '800', letterSpacing: '0.01em' }}>
                   Revenue Snapshots
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -583,68 +709,151 @@ export function FinancialsHub() {
                       onClick={() => openSnapshotPage(card.key)}
                       style={{
                         background: '#ffffff',
-                        borderRadius: '10px',
-                        border: '1px solid #bbf7d0',
-                        padding: '0.75rem',
+                        borderRadius: '12px',
+                        border: '1px solid #E5E7EB',
+                        padding: '12px',
                         textAlign: 'left',
                         width: '100%',
                         cursor: 'pointer',
+                        boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+                        overflow: 'hidden', /* ← KEY FIX: clip any content overflow */
+                        display: 'block',
+                        boxSizing: 'border-box',
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
-                        <div>
-                          <div style={{ fontSize: '0.74rem', color: '#166534', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem' }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: '0.75rem', color: '#166534', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                             {card.label}
                           </div>
-                          <div style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: '0.1rem' }}>
+                          <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.18rem' }}>
                             {card.rangeLabel}
                           </div>
                         </div>
+                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                          <div style={{ fontSize: '0.72rem', color: '#6b7280', textTransform: 'uppercase', fontWeight: 700 }}>
+                            Revenue
+                          </div>
+                          <div style={{ fontSize: '1.35rem', lineHeight: 1.1, fontWeight: 900, color: '#166534', marginTop: '0.12rem' }}>
+                            {formatCurrency(card.totalRevenueCents)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginTop: '0.8rem' }}>
                         <div style={{
-                          padding: '0.2rem 0.45rem',
+                          padding: '0.3rem 0.58rem',
                           borderRadius: '999px',
                           background: '#ecfdf5',
                           color: '#166534',
                           fontSize: '0.72rem',
-                          fontWeight: '700',
+                          fontWeight: '800',
                         }}>
                           {card.completedAppointments} visits
                         </div>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.6rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>Revenue</span>
-                          <span style={{ fontSize: '0.82rem', fontWeight: '700', color: '#166534' }}>
-                            {formatCurrency(card.totalRevenueCents)}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>Collections</span>
-                          <span style={{ fontSize: '0.82rem', fontWeight: '700', color: '#1d4ed8' }}>
-                            {formatCurrency(card.collectionsCents)}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>Avg / Visit</span>
-                          <span style={{ fontSize: '0.82rem', fontWeight: '700', color: '#374151' }}>
-                            {formatCurrency(card.avgRevenuePerVisitCents)}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>Collection Rate</span>
-                          <span style={{
-                            fontSize: '0.82rem',
-                            fontWeight: '700',
-                            color: card.collectionRate >= 90 ? '#059669' : '#374151',
+                        {card.standaloneRevenueCents > 0 ? (
+                          <div style={{
+                            padding: '0.3rem 0.58rem',
+                            borderRadius: '999px',
+                            background: '#fffbeb',
+                            color: '#92400e',
+                            fontSize: '0.72rem',
+                            fontWeight: '800',
                           }}>
-                            {card.collectionRate.toFixed(1)}%
-                          </span>
-                        </div>
-                        {card.benchmarkVisitsCount > 0 ? (
-                          <div style={{ fontSize: '0.72rem', color: '#166534', lineHeight: 1.4, marginTop: '0.15rem' }}>
-                            {card.benchmarkVisitsCount} visit{card.benchmarkVisitsCount === 1 ? '' : 's'} used a CMS benchmark because no charges were posted yet.
+                            Fees/Other {formatCurrency(card.standaloneRevenueCents)}
                           </div>
                         ) : null}
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: '0.85rem',
+                          borderRadius: '14px',
+                          background: '#f8fafc',
+                          border: '1px solid #e5e7eb',
+                          padding: '0.7rem 0.8rem',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '0.55rem',
+                        }}
+                      >
+                        {[
+                          { label: 'Collections', value: formatCurrency(card.collectionsCents), tone: '#1d4ed8' },
+                          { label: 'Avg / Visit', value: formatCurrency(card.avgRevenuePerVisitCents), tone: '#374151' },
+                          { label: 'Collection Rate', value: `${card.collectionRate.toFixed(1)}%`, tone: card.collectionRate >= 90 ? '#059669' : '#374151' },
+                          { label: 'Benchmarked Visits', value: `${card.benchmarkVisitsCount}`, tone: '#065f46' },
+                        ].map((metric, index) => (
+                          <div
+                            key={`${card.key}-${metric.label}`}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              gap: '0.75rem',
+                              paddingBottom: index === 3 ? 0 : '0.5rem',
+                              borderBottom: index === 3 ? 'none' : '1px solid #e5e7eb',
+                            }}
+                          >
+                            <span style={{ fontSize: '0.78rem', color: '#6b7280', fontWeight: 700 }}>
+                              {metric.label}
+                            </span>
+                            <span style={{ fontSize: '0.9rem', fontWeight: 800, color: metric.tone, textAlign: 'right' }}>
+                              {metric.value}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {card.revenueCategories.length > 0 ? (
+                        <div style={{ marginTop: '0.8rem' }}>
+                          <div style={{ fontSize: '0.68rem', color: '#6b7280', textTransform: 'uppercase', fontWeight: 700, marginBottom: '0.35rem' }}>
+                            Revenue Mix
+                          </div>
+                          <div
+                            style={{
+                              borderRadius: '12px',
+                              background: '#f0fdf4',
+                              border: '1px solid #bbf7d0',
+                              padding: '0.45rem 0.65rem',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '0.42rem',
+                            }}
+                          >
+                            {card.revenueCategories.slice(0, 3).map((category, index) => (
+                              <div
+                                key={`${card.key}-${category.key}`}
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  gap: '0.75rem',
+                                  paddingBottom: index === Math.min(card.revenueCategories.slice(0, 3).length - 1, 2) ? 0 : '0.42rem',
+                                  borderBottom: index === Math.min(card.revenueCategories.slice(0, 3).length - 1, 2) ? 'none' : '1px solid #d1fae5',
+                                  color: '#166534',
+                                  fontSize: '0.76rem',
+                                  fontWeight: 700,
+                                }}
+                              >
+                                <span style={{ minWidth: 0 }}>{category.label}</span>
+                                <span style={{ color: '#065f46', flexShrink: 0 }}>{formatCurrency(category.revenueCents)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {card.benchmarkVisitsCount > 0 ? (
+                        <div style={{ fontSize: '0.72rem', color: '#166534', lineHeight: 1.45, marginTop: '0.75rem' }}>
+                          {card.benchmarkVisitsCount} visit{card.benchmarkVisitsCount === 1 ? '' : 's'} used a CMS benchmark because no charges were posted yet.
+                        </div>
+                      ) : null}
+                      {card.completedAppointments === 0 && card.totalRevenueCents === 0 ? (
+                        <div style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: '0.72rem' }}>
+                          No posted revenue in this snapshot yet.
+                        </div>
+                      ) : null}
+                      <div style={{ marginTop: '0.7rem', fontSize: '0.75rem', color: '#059669', fontWeight: 700 }}>
+                        Open breakdown
                       </div>
                     </button>
                   ))}
@@ -657,20 +866,30 @@ export function FinancialsHub() {
               </div>
             )}
           </div>
-        </div>
+        </aside>
 
-        {/* Main Content Area */}
-        <div style={{ flex: 1, padding: '2rem' }}>
+        {/* ── Main content ── */}
+        <main style={{
+          flex: 1,
+          height: '100%',
+          overflowY: 'auto',  /* independent scroll — no background bleed */
+          background: '#F3F4F6',
+          padding: '20px',
+        }}>
           <div style={{
             background: 'white',
-            borderRadius: '16px',
-            padding: '2rem',
-            minHeight: 'calc(100vh - 140px)',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+            borderRadius: '12px',
+            padding: '24px',
+            minHeight: 'calc(100% - 40px)',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04)',
           }}>
             {/* Dashboard Tab (Overview) */}
             {activeTab === 'dashboard' && (
-              <RCMDashboard onDrillDown={handleDrillDown} />
+              <RCMDashboard
+                metrics={dashboardMetrics}
+                arAging={dashboardARAging}
+                onDrillDown={handleDrillDown}
+              />
             )}
 
             {/* Snapshots Tab */}
@@ -847,6 +1066,54 @@ export function FinancialsHub() {
                     <div style={{
                       background: '#ffffff',
                       border: '1px solid #e5e7eb',
+                      borderRadius: '12px',
+                      padding: '1rem',
+                      marginBottom: '1rem',
+                    }}>
+                      <div style={{ fontWeight: 700, color: '#111827', marginBottom: '0.35rem' }}>
+                        Revenue Categories
+                      </div>
+                      <div style={{ fontSize: '0.84rem', color: '#6b7280', marginBottom: '0.85rem' }}>
+                        What made up this snapshot range.
+                      </div>
+                      {(snapshotSummary.revenueCategories || []).length === 0 ? (
+                        <div style={{ fontSize: '0.84rem', color: '#6b7280' }}>
+                          No categorized revenue found for this range.
+                        </div>
+                      ) : (
+                        <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                          gap: '0.75rem',
+                        }}>
+                          {(snapshotSummary.revenueCategories || []).map((category) => (
+                            <div
+                              key={`summary-category-${category.key}`}
+                              style={{
+                                borderRadius: '12px',
+                                border: '1px solid #d1fae5',
+                                background: '#f8fafc',
+                                padding: '0.85rem',
+                              }}
+                            >
+                              <div style={{ fontSize: '0.74rem', color: '#6b7280', textTransform: 'uppercase', fontWeight: 700 }}>
+                                {category.label}
+                              </div>
+                              <div style={{ marginTop: '0.25rem', fontSize: '1.05rem', fontWeight: 800, color: '#166534' }}>
+                                {formatCurrency(category.revenueCents)}
+                              </div>
+                              <div style={{ marginTop: '0.2rem', fontSize: '0.8rem', color: '#6b7280' }}>
+                                {category.itemCount} item{category.itemCount === 1 ? '' : 's'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{
+                      background: '#ffffff',
+                      border: '1px solid #e5e7eb',
                       borderRadius: '10px',
                       marginBottom: '1rem',
                       overflowX: 'auto',
@@ -859,6 +1126,7 @@ export function FinancialsHub() {
                           <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
                             <th style={{ padding: '0.65rem', textAlign: 'left' }}>Date</th>
                             <th style={{ padding: '0.65rem', textAlign: 'right' }}>Revenue</th>
+                            <th style={{ padding: '0.65rem', textAlign: 'left' }}>Categories</th>
                             <th style={{ padding: '0.65rem', textAlign: 'right' }}>Payments</th>
                             <th style={{ padding: '0.65rem', textAlign: 'right' }}>Patient</th>
                             <th style={{ padding: '0.65rem', textAlign: 'right' }}>Payer</th>
@@ -869,7 +1137,7 @@ export function FinancialsHub() {
                         <tbody>
                           {(snapshotTrendData || []).length === 0 ? (
                             <tr>
-                              <td colSpan={7} style={{ padding: '0.85rem', textAlign: 'center', color: '#6b7280' }}>
+                              <td colSpan={8} style={{ padding: '0.85rem', textAlign: 'center', color: '#6b7280' }}>
                                 No trend data found for this range.
                               </td>
                             </tr>
@@ -880,6 +1148,34 @@ export function FinancialsHub() {
                                   {formatIsoDateForUi(point.bucketStartDate)}
                                 </td>
                                 <td style={{ padding: '0.65rem', textAlign: 'right' }}>{formatCurrency(Number(point.revenueEarnedCents || 0))}</td>
+                                <td style={{ padding: '0.65rem' }}>
+                                  {(point.revenueCategories || []).length === 0 ? (
+                                    <span style={{ color: '#9ca3af' }}>--</span>
+                                  ) : (
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                                      {(point.revenueCategories || []).slice(0, 3).map((category: RevenueCategorySummary) => (
+                                        <span
+                                          key={`${point.bucketStartDate}-${category.key}`}
+                                          style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.28rem',
+                                            padding: '0.2rem 0.45rem',
+                                            borderRadius: '999px',
+                                            background: '#f0fdf4',
+                                            border: '1px solid #bbf7d0',
+                                            color: '#166534',
+                                            fontSize: '0.72rem',
+                                            fontWeight: 700,
+                                          }}
+                                        >
+                                          <span>{category.label}</span>
+                                          <span>{formatCurrency(category.revenueCents)}</span>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </td>
                                 <td style={{ padding: '0.65rem', textAlign: 'right' }}>{formatCurrency(Number(point.paymentsCollectedCents || 0))}</td>
                                 <td style={{ padding: '0.65rem', textAlign: 'right' }}>{formatCurrency(Number(point.patientPaymentsCents || 0))}</td>
                                 <td style={{ padding: '0.65rem', textAlign: 'right' }}>{formatCurrency(Number(point.payerPaymentsCents || 0))}</td>
@@ -1151,7 +1447,7 @@ export function FinancialsHub() {
 
             {/* Fee Schedule Tab */}
             {activeTab === 'fees' && (
-              <FeeScheduleManager onSave={(item) => showSuccess(`Saved fee: ${item.cptCode}`)} />
+              <FeeSchedulePage />
             )}
 
             {/* Statements Tab */}
@@ -1574,7 +1870,7 @@ export function FinancialsHub() {
               </div>
             )}
           </div>
-        </div>
+        </main>
       </div>
     </div>
   );

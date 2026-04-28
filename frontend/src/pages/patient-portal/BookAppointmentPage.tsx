@@ -4,6 +4,11 @@ import { TimeSlotSelector } from '../../components/scheduling/TimeSlotSelector';
 import { AppointmentConfirmation } from '../../components/scheduling/AppointmentConfirmation';
 import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
 import { API_BASE_URL } from '../../utils/apiBase';
+import {
+  formatDateInPracticeTimeZone,
+  formatLocalDateKey,
+  formatTimeInPracticeTimeZone,
+} from '../../utils/practiceDateTime';
 
 const API_BASE = API_BASE_URL;
 
@@ -37,6 +42,7 @@ interface BookingSettings {
   maxAdvanceDays: number;
   customMessage?: string;
   requireReason?: boolean;
+  timeZone?: string;
 }
 
 type BookingStep = 'type' | 'provider' | 'date' | 'time' | 'confirm' | 'success';
@@ -182,7 +188,7 @@ export default function BookAppointmentPage() {
 
     setLoading(true);
     try {
-      const dateStr = date.toISOString().split('T')[0];
+      const dateStr = formatLocalDateKey(date);
       const response = await fetch(
         `${API_BASE}/api/patient-portal/scheduling/availability?date=${dateStr}&providerId=${providerId}&appointmentTypeId=${appointmentTypeId}`,
         {
@@ -417,6 +423,7 @@ export default function BookAppointmentPage() {
                 onSlotSelect={handleSelectSlot}
                 loading={loading}
                 date={selectedDate}
+                timeZone={settings?.timeZone}
               />
             </div>
           )}
@@ -460,6 +467,7 @@ export default function BookAppointmentPage() {
                 onConfirm={handleBookAppointment}
                 onBack={handleBack}
                 loading={loading}
+                timeZone={settings?.timeZone}
               />
             </div>
           )}
@@ -476,8 +484,8 @@ export default function BookAppointmentPage() {
 
               {selectedSlot && selectedProvider && (
                 <div className="success-details">
-                  <p><strong>Date:</strong> {new Date(selectedSlot.startTime).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
-                  <p><strong>Time:</strong> {new Date(selectedSlot.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</p>
+                  <p><strong>Date:</strong> {formatDateInPracticeTimeZone(selectedSlot.startTime, settings?.timeZone)}</p>
+                  <p><strong>Time:</strong> {formatTimeInPracticeTimeZone(selectedSlot.startTime, settings?.timeZone)}</p>
                   <p><strong>Provider:</strong> {selectedProvider.fullName}</p>
                 </div>
               )}

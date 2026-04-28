@@ -25,16 +25,20 @@ import {
   fetchOrders,
   fetchPrescriptionsEnhanced,
   fetchTasks,
+  fetchPatientClinicalSummary,
   fetchEligibilityHistory,
   verifyPatientEligibility,
   deletePatient,
+  createPatientRecall,
   uploadPhotoFile,
   createPhoto,
+  fetchRecallCampaigns,
   getPresignedAccess,
   signUploadKey,
   API_BASE_URL,
   TENANT_HEADER_NAME,
 } from '../api';
+import type { PatientClinicalSummary, PatientDiagnosisSummary, PatientRecallSummary, RecallCampaign, Vital } from '../api';
 import type {
   Patient,
   Encounter,
@@ -46,39 +50,26 @@ import type {
   Order,
   PhotoType,
 } from '../types';
-import type { Vital } from '../api';
 
-type TabId = 'overview' | 'demographics' | 'insurance' | 'account' | 'medical-history' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks' | 'scribe';
-
-const PHOTO_BODY_LOCATIONS = [
-  'Face',
-  'Scalp',
-  'Neck',
-  'Chest',
-  'Back',
-  'Abdomen',
-  'Upper Arm (L)',
-  'Upper Arm (R)',
-  'Forearm (L)',
-  'Forearm (R)',
-  'Hand (L)',
-  'Hand (R)',
-  'Upper Leg (L)',
-  'Upper Leg (R)',
-  'Lower Leg (L)',
-  'Lower Leg (R)',
-  'Foot (L)',
-  'Foot (R)',
-  'Other',
-];
-
-const PHOTO_TYPE_OPTIONS: Array<{ value: PhotoType; label: string }> = [
-  { value: 'clinical', label: 'Clinical' },
-  { value: 'before', label: 'Before Treatment' },
-  { value: 'after', label: 'After Treatment' },
-  { value: 'dermoscopy', label: 'Dermoscopy' },
-  { value: 'baseline', label: 'Baseline' },
-];
+type TabId = 'overview' | 'demographics' | 'insurance' | 'account' | 'medical-history' | 'clinical-summary' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks' | 'scribe';
+const VALID_PATIENT_DETAIL_TABS = new Set<TabId>([
+  'overview',
+  'demographics',
+  'insurance',
+  'account',
+  'medical-history',
+  'clinical-summary',
+  'clinical-trends',
+  'encounters',
+  'appointments',
+  'orders',
+  'documents',
+  'photos',
+  'timeline',
+  'rx-history',
+  'tasks',
+  'scribe',
+]);
 
 const PHOTO_BODY_LOCATIONS = [
   'Face',
@@ -109,6 +100,167 @@ const PHOTO_TYPE_OPTIONS: Array<{ value: PhotoType; label: string }> = [
   { value: 'dermoscopy', label: 'Dermoscopy' },
   { value: 'baseline', label: 'Baseline' },
 ];
+
+const ACTIVE_APPOINTMENT_STATUSES = new Set<Appointment['status']>([
+  'scheduled',
+  'checked_in',
+  'in_room',
+  'with_provider',
+  'checkout',
+]);
+
+function getAppointmentTimeValue(appointment: Appointment): number {
+  const timestamp = new Date(appointment.scheduledStart).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function sortAppointmentsForPatientChart(appointments: Appointment[]): Appointment[] {
+  return [...appointments].sort((a, b) => {
+    const aIsActive = ACTIVE_APPOINTMENT_STATUSES.has(a.status);
+    const bIsActive = ACTIVE_APPOINTMENT_STATUSES.has(b.status);
+    const aTime = getAppointmentTimeValue(a);
+    const bTime = getAppointmentTimeValue(b);
+
+    if (aIsActive !== bIsActive) {
+      return aIsActive ? -1 : 1;
+    }
+
+    if (aIsActive) {
+      return aTime - bTime;
+    }
+
+    return bTime - aTime;
+  });
+}
+
+function getNextRelevantAppointment(appointments: Appointment[]): Appointment | null {
+  return (
+    sortAppointmentsForPatientChart(
+      appointments.filter((appointment) => appointment.status !== 'cancelled' && appointment.status !== 'no_show')
+    )[0] || null
+  );
+}
+
+type MedicalHistoryAllergy = {
+  name: string;
+  allergen?: string;
+  allergenName?: string;
+  reaction?: string;
+  severity?: string;
+};
+
+type MedicalHistoryMedication = {
+  name: string;
+  medicationName?: string;
+  dosage?: string;
+  sig?: string;
+  prescribedDate?: string | null;
+};
+
+const NO_KNOWN_HISTORY_VALUES = new Set([
+  'none',
+  'none known',
+  'no known allergies',
+  'no known drug allergies',
+  'no allergies',
+  'nka',
+  'nkda',
+]);
+
+function splitHistoryList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || '').trim())
+      .filter((item) => item && !NO_KNOWN_HISTORY_VALUES.has(item.toLowerCase()));
+  }
+
+  if (typeof value !== 'string') return [];
+  const trimmed = value.trim();
+  if (!trimmed || NO_KNOWN_HISTORY_VALUES.has(trimmed.toLowerCase())) return [];
+
+  return trimmed
+    .split(/[,;\n]/)
+    .map((item) => item.trim())
+    .filter((item) => item && !NO_KNOWN_HISTORY_VALUES.has(item.toLowerCase()));
+}
+
+function parseAllergyText(entry: string): MedicalHistoryAllergy {
+  const parenMatch = entry.match(/^(.+?)\s*\((.+?)\)\s*$/);
+  if (parenMatch?.[1] && parenMatch?.[2]) {
+    return {
+      name: parenMatch[1].trim(),
+      reaction: parenMatch[2].trim(),
+      severity: 'unknown',
+    };
+  }
+
+  return { name: entry, reaction: 'Unknown', severity: 'unknown' };
+}
+
+function getMedicalHistoryAllergies(patient: Patient): MedicalHistoryAllergy[] {
+  const structured = (patient as any).allergiesList;
+  if (Array.isArray(structured) && structured.length > 0) {
+    return structured
+      .map((allergy: any) => {
+        const name = allergy.name || allergy.allergenName || allergy.allergen || '';
+        if (!name) return null;
+        return {
+          ...allergy,
+          name,
+          reaction: allergy.reaction || allergy.reactionType || 'Unknown',
+          severity: (allergy.severity || 'unknown').toLowerCase(),
+        };
+      })
+      .filter(Boolean) as MedicalHistoryAllergy[];
+  }
+
+  return splitHistoryList(patient.allergies).map(parseAllergyText);
+}
+
+function getMedicalHistoryMedications(patient: Patient): MedicalHistoryMedication[] {
+  const structured = (patient as any).medicationsList;
+  if (Array.isArray(structured) && structured.length > 0) {
+    return structured
+      .map((medication: any) => {
+        const name = medication.name || medication.medicationName || '';
+        if (!name) return null;
+        return {
+          ...medication,
+          name,
+          dosage: medication.dosage || medication.sig || '',
+          prescribedDate: medication.prescribedDate || null,
+        };
+      })
+      .filter(Boolean) as MedicalHistoryMedication[];
+  }
+
+  return splitHistoryList(patient.medications).map((name) => ({
+    name,
+    dosage: '',
+    prescribedDate: null,
+  }));
+}
+
+function formatHistoryDate(dateValue?: string | null): string {
+  if (!dateValue) return 'Not on file';
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return 'Not on file';
+  return date.toLocaleDateString();
+}
+
+function toDateInputValue(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addMonthsDateInputValue(months: number): string {
+  const date = new Date();
+  date.setMonth(date.getMonth() + Math.max(1, months || 1));
+  return toDateInputValue(date);
+}
+
+function getDefaultRecallDueDate(campaign?: RecallCampaign | null): string {
+  return addMonthsDateInputValue(campaign?.intervalMonths || 12);
+}
 
 export function PatientDetailPage() {
   const { patientId } = useParams<{ patientId: string }>();
@@ -120,6 +272,7 @@ export function PatientDetailPage() {
   const autoStartScribe = scribeParam && searchParams.get('auto') === '1';
   const encounterIdParam = searchParams.get('encounterId') || undefined;
   const providerIdParam = searchParams.get('providerId') || undefined;
+  const requestedTab = searchParams.get('tab');
 
   const [loading, setLoading] = useState(true);
   const [patient, setPatient] = useState<Patient | null>(null);
@@ -131,6 +284,17 @@ export function PatientDetailPage() {
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [vitalsHistory, setVitalsHistory] = useState<Vital[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [clinicalSummary, setClinicalSummary] = useState<PatientClinicalSummary>({ diagnoses: [], recalls: [] });
+  const [recallCampaigns, setRecallCampaigns] = useState<RecallCampaign[]>([]);
+  const [showAddRecallModal, setShowAddRecallModal] = useState(false);
+  const [isLoadingRecallCampaigns, setIsLoadingRecallCampaigns] = useState(false);
+  const [isCreatingRecall, setIsCreatingRecall] = useState(false);
+  const [recallForm, setRecallForm] = useState({
+    campaignId: '',
+    dueDate: addMonthsDateInputValue(12),
+    recallType: 'Manual Recall',
+    notes: '',
+  });
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   // Body diagram state is now managed by the PatientBodyDiagram component
   const [showFaceSheet, setShowFaceSheet] = useState(false);
@@ -206,6 +370,16 @@ export function PatientDetailPage() {
       setAppointments(appointmentsRes.appointments || []);
 
       // Non-critical fetches - don't fail the page if these fail
+      try {
+        const clinicalSummaryRes = await fetchPatientClinicalSummary(session.tenantId, session.accessToken, patientId);
+        setClinicalSummary({
+          diagnoses: clinicalSummaryRes.diagnoses || [],
+          recalls: clinicalSummaryRes.recalls || [],
+        });
+      } catch {
+        setClinicalSummary({ diagnoses: [], recalls: [] });
+      }
+
       try {
         const vitalsRes = await fetchVitals(session.tenantId, session.accessToken, patientId);
         setVitalsHistory(vitalsRes.vitals || []);
@@ -366,11 +540,7 @@ export function PatientDetailPage() {
       // Fall through to basic parsing below.
     }
 
-    const fallback = photo.url.split('/').pop();
-    if (!fallback) {
-      return null;
-    }
-    return decodeURIComponent(fallback.split('?')[0]?.split('#')[0] || fallback);
+    return null;
   };
 
   const handleProfilePhotoUpload = async () => {
@@ -413,14 +583,21 @@ export function PatientDetailPage() {
     }
   };
 
-  const nextAppointment = appointments
-    .filter((a) => a.status !== 'cancelled')
-    .sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime())[0];
+  const displayAppointments = sortAppointmentsForPatientChart(appointments);
+  const nextAppointment = getNextRelevantAppointment(appointments);
   const latestVital = vitalsHistory[0];
+  const activeRecalls = clinicalSummary.recalls.filter((recall) => isActiveRecallStatus(recall.status));
+  const clinicalSummaryCount = clinicalSummary.diagnoses.length + activeRecalls.length;
 
   useEffect(() => {
     loadPatientData();
   }, [loadPatientData]);
+
+  useEffect(() => {
+    if (requestedTab && VALID_PATIENT_DETAIL_TABS.has(requestedTab as TabId)) {
+      setActiveTab(requestedTab as TabId);
+    }
+  }, [requestedTab]);
 
   useEffect(
     () => () => {
@@ -543,6 +720,80 @@ export function PatientDetailPage() {
     }
   };
 
+  const loadRecallCampaigns = useCallback(async () => {
+    if (!session) return;
+    setIsLoadingRecallCampaigns(true);
+    try {
+      const result = await fetchRecallCampaigns(session.tenantId, session.accessToken);
+      const active = (result.campaigns || []).filter((campaign) => campaign.isActive);
+      setRecallCampaigns(active);
+      if (!recallForm.campaignId && active[0]) {
+        setRecallForm((current) => ({
+          ...current,
+          campaignId: active[0]!.id,
+          dueDate: getDefaultRecallDueDate(active[0]),
+        }));
+      }
+    } catch (error: any) {
+      showError(error.message || 'Failed to load recall programs');
+    } finally {
+      setIsLoadingRecallCampaigns(false);
+    }
+  }, [recallForm.campaignId, session, showError]);
+
+  const openAddRecallModal = () => {
+    const defaultCampaign = recallCampaigns[0] || null;
+    setRecallForm({
+      campaignId: defaultCampaign?.id || '',
+      dueDate: getDefaultRecallDueDate(defaultCampaign),
+      recallType: defaultCampaign?.recallType || 'Manual Recall',
+      notes: '',
+    });
+    setShowAddRecallModal(true);
+    if (recallCampaigns.length === 0) {
+      void loadRecallCampaigns();
+    }
+  };
+
+  const handleRecallCampaignChange = (campaignId: string) => {
+    const campaign = recallCampaigns.find((item) => item.id === campaignId) || null;
+    setRecallForm((current) => ({
+      ...current,
+      campaignId,
+      dueDate: getDefaultRecallDueDate(campaign),
+      recallType: campaign?.recallType || current.recallType || 'Manual Recall',
+    }));
+  };
+
+  const handleCreateRecall = async () => {
+    if (!session || !patientId || !patient) return;
+    if (!recallForm.dueDate) {
+      showError('Due date is required');
+      return;
+    }
+
+    setIsCreatingRecall(true);
+    try {
+      const campaign = recallCampaigns.find((item) => item.id === recallForm.campaignId);
+      await createPatientRecall(session.tenantId, session.accessToken, {
+        patientId,
+        campaignId: recallForm.campaignId || undefined,
+        dueDate: recallForm.dueDate,
+        recallType: campaign?.recallType || recallForm.recallType || 'Manual Recall',
+        notes: recallForm.notes || undefined,
+      });
+
+      showSuccess(`Added ${patient.firstName} ${patient.lastName} to ${campaign?.name || recallForm.recallType || 'recall'} follow-up`);
+      setShowAddRecallModal(false);
+      setActiveTab('clinical-summary');
+      await loadPatientData();
+    } catch (error: any) {
+      showError(error.message || 'Failed to add recall');
+    } finally {
+      setIsCreatingRecall(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="patient-detail-page">
@@ -585,6 +836,7 @@ export function PatientDetailPage() {
     { id: 'insurance', label: 'Insurance', icon: '' },
     { id: 'account', label: 'Account', icon: '' },
     { id: 'medical-history', label: 'Medical History', icon: '' },
+    { id: 'clinical-summary', label: 'Dx & Recalls', icon: '', count: clinicalSummaryCount },
     { id: 'clinical-trends', label: 'Clinical Trends', icon: '📊' },
     { id: 'encounters', label: 'Encounters', icon: '', count: encounters.length },
     { id: 'appointments', label: 'Appointments', icon: '', count: appointments.length },
@@ -636,6 +888,10 @@ export function PatientDetailPage() {
         <button type="button" className="ema-action-btn" onClick={() => navigate('/schedule')}>
           <span className="icon"></span>
           Schedule Appt
+        </button>
+        <button type="button" className="ema-action-btn" onClick={openAddRecallModal}>
+          <span className="icon">+</span>
+          Add to Recall
         </button>
         <button type="button" className="ema-action-btn" onClick={() => setShowFaceSheet(true)}>
           <span className="icon"></span>
@@ -692,6 +948,93 @@ export function PatientDetailPage() {
               style={{ background: '#dc2626', color: 'white' }}
             >
               {isDeleting ? 'Deleting...' : 'Delete Patient'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showAddRecallModal}
+        onClose={() => setShowAddRecallModal(false)}
+        title="Add Recall / Surveillance"
+        size="lg"
+      >
+        <div style={{ display: 'grid', gap: '1rem', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
+          <div>
+            <div style={{ fontWeight: 700, color: '#111827' }}>
+              {patient.firstName} {patient.lastName}
+            </div>
+            <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>
+              Add this patient to a recall program such as melanoma surveillance or annual skin check.
+            </div>
+          </div>
+
+          <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+            Recall program
+            <select
+              value={recallForm.campaignId}
+              onChange={(event) => handleRecallCampaignChange(event.target.value)}
+              disabled={isLoadingRecallCampaigns || isCreatingRecall}
+              style={{ width: '100%', boxSizing: 'border-box', padding: '0.65rem', border: '1px solid #d1d5db', borderRadius: '8px' }}
+            >
+              {recallCampaigns.length === 0 && <option value="">Manual recall</option>}
+              {recallCampaigns.map((campaign) => (
+                <option key={campaign.id} value={campaign.id}>
+                  {campaign.name} ({campaign.intervalMonths || 0} mo)
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {!recallForm.campaignId && (
+            <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+              Manual recall type
+              <input
+                type="text"
+                value={recallForm.recallType}
+                onChange={(event) => setRecallForm((current) => ({ ...current, recallType: event.target.value }))}
+                disabled={isCreatingRecall}
+                placeholder="e.g., Annual Skin Check"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '0.65rem', border: '1px solid #d1d5db', borderRadius: '8px' }}
+              />
+            </label>
+          )}
+
+          <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+            Due date
+            <input
+              type="date"
+              value={recallForm.dueDate}
+              onChange={(event) => setRecallForm((current) => ({ ...current, dueDate: event.target.value }))}
+              disabled={isCreatingRecall}
+              style={{ width: '100%', boxSizing: 'border-box', padding: '0.65rem', border: '1px solid #d1d5db', borderRadius: '8px' }}
+            />
+          </label>
+
+          <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+            Staff / doctor note
+            <textarea
+              value={recallForm.notes}
+              onChange={(event) => setRecallForm((current) => ({ ...current, notes: event.target.value }))}
+              disabled={isCreatingRecall}
+              placeholder="Example: melanoma surveillance, schedule full-body skin exam before next quarter."
+              rows={4}
+              style={{ width: '100%', boxSizing: 'border-box', padding: '0.65rem', border: '1px solid #d1d5db', borderRadius: '8px', resize: 'vertical' }}
+            />
+          </label>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', flexWrap: 'wrap', width: '100%' }}>
+            <button type="button" className="ema-action-btn" onClick={() => setShowAddRecallModal(false)} disabled={isCreatingRecall}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="ema-action-btn"
+              onClick={handleCreateRecall}
+              disabled={isCreatingRecall || isLoadingRecallCampaigns || !recallForm.dueDate}
+              style={{ background: '#0369a1', color: '#ffffff' }}
+            >
+              {isCreatingRecall ? 'Adding...' : 'Add Recall'}
             </button>
           </div>
         </div>
@@ -836,6 +1179,13 @@ export function PatientDetailPage() {
                 </button>
               </div>
 
+              <ClinicalSummaryPreview
+                diagnoses={clinicalSummary.diagnoses}
+                recalls={activeRecalls}
+                onOpenSummary={() => setActiveTab('clinical-summary')}
+                onOpenEncounter={handleViewEncounter}
+              />
+
               {/* Recent Activity */}
               <div>
                 <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
@@ -886,7 +1236,7 @@ export function PatientDetailPage() {
                         <span style={{ color: '#9ca3af' }}>→</span>
                       </div>
                     ))}
-                    {appointments.slice(0, 3).map((appt) => (
+                    {displayAppointments.slice(0, 3).map((appt) => (
                       <div
                         key={appt.id}
                         style={{
@@ -953,6 +1303,7 @@ export function PatientDetailPage() {
                   {[
                     { label: 'New Encounter', icon: '', onClick: handleStartEncounter },
                   { label: 'Schedule', icon: '', onClick: () => navigate('/schedule') },
+                  { label: 'Add Recall', icon: '+', onClick: openAddRecallModal },
                   { label: 'Message', icon: '', onClick: () => navigate('/mail') },
                   { label: 'Documents', icon: '', onClick: () => setActiveTab('documents') },
                   { label: 'Photos', icon: '', onClick: () => setActiveTab('photos') },
@@ -1088,7 +1439,7 @@ export function PatientDetailPage() {
               </div>
             ) : (
               <div style={{ display: 'grid', gap: '0.75rem' }}>
-                {appointments.map((appt) => (
+                {displayAppointments.map((appt) => (
                   <div
                     key={appt.id}
                     style={{
@@ -1152,9 +1503,20 @@ export function PatientDetailPage() {
         {activeTab === 'medical-history' && (
           <MedicalHistoryTab
             patient={patient}
+            diagnoses={clinicalSummary.diagnoses}
             onEditAllergy={() => setEditAllergyOpen(true)}
             onEditMedication={() => setEditMedicationOpen(true)}
             onEditProblem={() => setEditProblemOpen(true)}
+          />
+        )}
+
+        {activeTab === 'clinical-summary' && (
+          <ClinicalSummaryTab
+            diagnoses={clinicalSummary.diagnoses}
+            recalls={clinicalSummary.recalls}
+            onOpenEncounter={handleViewEncounter}
+            onOpenRecalls={() => navigate('/recalls')}
+            onAddRecall={openAddRecallModal}
           />
         )}
 
@@ -1855,21 +2217,23 @@ function OrdersTab({ orders, onOpenOrders }: { orders: Order[]; onOpenOrders: ()
 // Medical History Tab Component
 function MedicalHistoryTab({
   patient,
+  diagnoses,
   onEditAllergy,
   onEditMedication,
   onEditProblem
 }: {
   patient: Patient;
+  diagnoses: PatientDiagnosisSummary[];
   onEditAllergy: () => void;
   onEditMedication: () => void;
   onEditProblem: () => void;
 }) {
-  // Use actual patient data - no mock fallbacks for new patients
-  const allergies = (patient as any).allergiesList || [];
+  const allergies = getMedicalHistoryAllergies(patient);
 
-  const medications = (patient as any).medicationsList || [];
+  const medications = getMedicalHistoryMedications(patient);
 
   const problems = (patient as any).problemsList || [];
+  const hasProblemData = problems.length > 0 || diagnoses.length > 0;
 
   return (
     <div style={{ maxWidth: '1200px' }}>
@@ -1891,25 +2255,25 @@ function MedicalHistoryTab({
             <p style={{ color: '#6b7280', fontStyle: 'italic' }}>No known allergies</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {allergies.map((allergy: any, idx: number) => (
-                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '4px' }}>
-                  <span style={{
-                    padding: '0.25rem 0.5rem',
-                    borderRadius: '4px',
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    background: allergy.severity === 'severe' ? '#fef2f2' : allergy.severity === 'moderate' ? '#fef3c7' : '#f0fdf4',
-                    color: allergy.severity === 'severe' ? '#dc2626' : allergy.severity === 'moderate' ? '#f59e0b' : '#10b981',
-                    textTransform: 'uppercase'
-                  }}>
-                    {allergy.severity}
-                  </span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 500 }}>{allergy.name}</div>
-                    <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>Reaction: {allergy.reaction}</div>
-                  </div>
-                </div>
-              ))}
+	              {allergies.map((allergy: any, idx: number) => (
+	                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '4px' }}>
+	                  <span style={{
+	                    padding: '0.25rem 0.5rem',
+	                    borderRadius: '4px',
+	                    fontSize: '0.75rem',
+	                    fontWeight: 600,
+	                    background: allergy.severity === 'severe' ? '#fef2f2' : allergy.severity === 'moderate' ? '#fef3c7' : '#f0fdf4',
+	                    color: allergy.severity === 'severe' ? '#dc2626' : allergy.severity === 'moderate' ? '#f59e0b' : '#10b981',
+	                    textTransform: 'uppercase'
+	                  }}>
+	                    {allergy.severity || 'unknown'}
+	                  </span>
+	                  <div style={{ flex: 1 }}>
+	                    <div style={{ fontWeight: 500 }}>{allergy.name}</div>
+	                    <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>Reaction: {allergy.reaction || 'Unknown'}</div>
+	                  </div>
+	                </div>
+	              ))}
             </div>
           )}
         </div>
@@ -1929,17 +2293,17 @@ function MedicalHistoryTab({
             <p style={{ color: '#6b7280', fontStyle: 'italic' }}>No current medications</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {medications.map((med: any, idx: number) => (
-                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '4px' }}>
-                  <span style={{ fontSize: '1.25rem' }}></span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 500 }}>{med.name}</div>
-                    <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-                      {med.dosage} • Prescribed: {new Date(med.prescribedDate).toLocaleDateString()}
-                    </div>
-                  </div>
-                </div>
-              ))}
+	              {medications.map((med: any, idx: number) => (
+	                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '4px' }}>
+	                  <span style={{ fontSize: '1.25rem' }}></span>
+	                  <div style={{ flex: 1 }}>
+	                    <div style={{ fontWeight: 500 }}>{med.name}</div>
+	                    <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+	                      {(med.dosage || 'Directions not on file')} • Prescribed: {formatHistoryDate(med.prescribedDate)}
+	                    </div>
+	                  </div>
+	                </div>
+	              ))}
             </div>
           )}
         </div>
@@ -1955,7 +2319,7 @@ function MedicalHistoryTab({
               Add Problem
             </button>
           </div>
-          {problems.length === 0 ? (
+          {!hasProblemData ? (
             <p style={{ color: '#6b7280', fontStyle: 'italic' }}>No problems recorded</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -1979,6 +2343,42 @@ function MedicalHistoryTab({
                     color: problem.status === 'Active' ? '#0369a1' : '#6b7280'
                   }}>
                     {problem.status}
+                  </span>
+                </div>
+              ))}
+              {diagnoses.map((diagnosis) => (
+                <div key={diagnosis.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '4px' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 500 }}>{diagnosis.description || 'Diagnosis'}</span>
+                      <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>({diagnosis.icd10Code})</span>
+                      {diagnosis.isPrimary && (
+                        <span style={{
+                          background: '#dbeafe',
+                          color: '#1d4ed8',
+                          borderRadius: '999px',
+                          padding: '0.125rem 0.5rem',
+                          fontSize: '0.7rem',
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                        }}>
+                          Primary
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
+                      Encounter diagnosis{diagnosis.encounterDate ? ` - ${new Date(diagnosis.encounterDate).toLocaleDateString()}` : ''}
+                    </div>
+                  </div>
+                  <span style={{
+                    padding: '0.25rem 0.5rem',
+                    borderRadius: '4px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background: '#fef3c7',
+                    color: '#92400e'
+                  }}>
+                    Dx
                   </span>
                 </div>
               ))}
@@ -2012,6 +2412,299 @@ function MedicalHistoryTab({
             <InfoRow label="Alcohol Use" value={(patient as any).alcoholUse || 'Not assessed'} />
             <InfoRow label="Exercise" value={(patient as any).exerciseFrequency || 'Not assessed'} />
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function isActiveRecallStatus(status?: string) {
+  return ['pending', 'contacted', 'scheduled'].includes(String(status || '').toLowerCase());
+}
+
+function formatClinicalDate(value?: string | null) {
+  if (!value) return 'Not set';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Not set';
+  return date.toLocaleDateString();
+}
+
+function recallStatusStyle(status?: string) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'completed') {
+    return { background: '#dcfce7', color: '#166534' };
+  }
+  if (normalized === 'scheduled') {
+    return { background: '#dbeafe', color: '#1d4ed8' };
+  }
+  if (normalized === 'dismissed') {
+    return { background: '#f3f4f6', color: '#6b7280' };
+  }
+  if (normalized === 'contacted') {
+    return { background: '#fef3c7', color: '#92400e' };
+  }
+  return { background: '#fee2e2', color: '#991b1b' };
+}
+
+function ClinicalSummaryPreview({
+  diagnoses,
+  recalls,
+  onOpenSummary,
+  onOpenEncounter,
+}: {
+  diagnoses: PatientDiagnosisSummary[];
+  recalls: PatientRecallSummary[];
+  onOpenSummary: () => void;
+  onOpenEncounter: (encounterId: string) => void;
+}) {
+  const primaryDiagnosis = diagnoses[0];
+  const nextRecall = recalls[0];
+
+  return (
+    <div>
+      <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
+        Diagnoses & Recalls
+      </div>
+      <div style={{
+        background: diagnoses.length || recalls.length ? '#f8fafc' : '#f9fafb',
+        border: diagnoses.length || recalls.length ? '1px solid #bae6fd' : '1px dashed #d1d5db',
+        borderRadius: '8px',
+        padding: '1rem',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '0.75rem',
+      }}>
+        {!primaryDiagnosis && !nextRecall ? (
+          <div style={{ color: '#6b7280', fontStyle: 'italic' }}>
+            No diagnoses or recalls on file.
+          </div>
+        ) : (
+          <>
+            {primaryDiagnosis && (
+              <button
+                type="button"
+                onClick={() => onOpenEncounter(primaryDiagnosis.encounterId)}
+                style={{
+                  textAlign: 'left',
+                  border: '1px solid #e5e7eb',
+                  background: '#ffffff',
+                  borderRadius: '8px',
+                  padding: '0.75rem',
+                  cursor: 'pointer',
+                }}
+              >
+                <div style={{ fontSize: '0.75rem', color: '#0369a1', fontWeight: 700, textTransform: 'uppercase' }}>
+                  Active diagnosis
+                </div>
+                <div style={{ fontWeight: 700, color: '#111827', marginTop: '0.25rem' }}>
+                  {primaryDiagnosis.description || 'Diagnosis'}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.25rem' }}>
+                  {primaryDiagnosis.icd10Code} {primaryDiagnosis.chiefComplaint ? `- ${primaryDiagnosis.chiefComplaint}` : ''}
+                </div>
+              </button>
+            )}
+            {nextRecall && (
+              <div style={{
+                border: '1px solid #e5e7eb',
+                background: '#ffffff',
+                borderRadius: '8px',
+                padding: '0.75rem',
+              }}>
+                <div style={{ fontSize: '0.75rem', color: '#991b1b', fontWeight: 700, textTransform: 'uppercase' }}>
+                  Active recall
+                </div>
+                <div style={{ fontWeight: 700, color: '#111827', marginTop: '0.25rem' }}>
+                  {nextRecall.recallType || nextRecall.campaignName || 'Recall'}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '0.25rem' }}>
+                  Due {formatClinicalDate(nextRecall.dueDate || nextRecall.recallDate)}
+                </div>
+                {nextRecall.doctorNotes && (
+                  <div style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.5rem' }}>
+                    {nextRecall.doctorNotes}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+        <button
+          type="button"
+          onClick={onOpenSummary}
+          style={{
+            border: 'none',
+            background: 'transparent',
+            color: '#0369a1',
+            fontWeight: 600,
+            fontSize: '0.875rem',
+            padding: 0,
+            cursor: 'pointer',
+            alignSelf: 'flex-start',
+          }}
+        >
+          View full diagnosis and recall plan
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ClinicalSummaryTab({
+  diagnoses,
+  recalls,
+  onOpenEncounter,
+  onOpenRecalls,
+  onAddRecall,
+}: {
+  diagnoses: PatientDiagnosisSummary[];
+  recalls: PatientRecallSummary[];
+  onOpenEncounter: (encounterId: string) => void;
+  onOpenRecalls: () => void;
+  onAddRecall: () => void;
+}) {
+  const activeRecalls = recalls.filter((recall) => isActiveRecallStatus(recall.status));
+
+  return (
+    <div style={{ maxWidth: '1200px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '1rem' }}>
+        <div>
+          <div className="ema-section-header" style={{ marginBottom: '0.25rem' }}>
+            Diagnoses & Recalls
+          </div>
+          <div style={{ color: '#6b7280', fontSize: '0.875rem' }}>
+            Encounter diagnoses, melanoma surveillance recalls, and follow-up timing for this patient.
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button type="button" className="ema-action-btn" onClick={onAddRecall}>
+            Add Recall
+          </button>
+          <button type="button" className="ema-action-btn" onClick={onOpenRecalls}>
+            Open Recall Worklist
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '1rem' }}>
+        <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h3 style={{ margin: 0, fontSize: '1rem', color: '#111827' }}>Diagnoses</h3>
+            <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>{diagnoses.length} total</span>
+          </div>
+
+          {diagnoses.length === 0 ? (
+            <div style={{ color: '#6b7280', fontStyle: 'italic' }}>No encounter diagnoses recorded.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {diagnoses.map((diagnosis) => (
+                <button
+                  key={diagnosis.id}
+                  type="button"
+                  onClick={() => onOpenEncounter(diagnosis.encounterId)}
+                  style={{
+                    textAlign: 'left',
+                    background: '#ffffff',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '8px',
+                    padding: '0.875rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#111827' }}>
+                        {diagnosis.description || 'Diagnosis'}
+                      </div>
+                      <div style={{ color: '#6b7280', fontSize: '0.875rem', marginTop: '0.25rem' }}>
+                        {diagnosis.icd10Code} {diagnosis.chiefComplaint ? `- ${diagnosis.chiefComplaint}` : ''}
+                      </div>
+                      <div style={{ color: '#6b7280', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                        {formatClinicalDate(diagnosis.encounterDate || diagnosis.createdAt)}
+                        {diagnosis.providerName ? ` - ${diagnosis.providerName}` : ''}
+                      </div>
+                    </div>
+                    {diagnosis.isPrimary && (
+                      <span style={{
+                        background: '#dbeafe',
+                        color: '#1d4ed8',
+                        borderRadius: '999px',
+                        padding: '0.25rem 0.5rem',
+                        fontSize: '0.7rem',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                      }}>
+                        Primary
+                      </span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h3 style={{ margin: 0, fontSize: '1rem', color: '#111827' }}>Recall & Follow-Up Plan</h3>
+            <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>{activeRecalls.length} active</span>
+          </div>
+
+          {recalls.length === 0 ? (
+            <div style={{ color: '#6b7280', fontStyle: 'italic' }}>No recalls or follow-ups recorded.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {recalls.map((recall) => {
+                const statusStyle = recallStatusStyle(recall.status);
+                return (
+                  <div
+                    key={recall.id}
+                    style={{
+                      background: '#ffffff',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      padding: '0.875rem',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'flex-start' }}>
+                      <div>
+                        <div style={{ fontWeight: 700, color: '#111827' }}>
+                          {recall.recallType || recall.campaignName || 'Recall'}
+                        </div>
+                        <div style={{ color: '#6b7280', fontSize: '0.875rem', marginTop: '0.25rem' }}>
+                          Due {formatClinicalDate(recall.dueDate || recall.recallDate)}
+                        </div>
+                        <div style={{ color: '#6b7280', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                          Preferred contact: {recall.preferredContactMethod || recall.contactMethod || 'Not set'}
+                        </div>
+                      </div>
+                      <span style={{
+                        ...statusStyle,
+                        borderRadius: '999px',
+                        padding: '0.25rem 0.5rem',
+                        fontSize: '0.7rem',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                      }}>
+                        {recall.status || 'pending'}
+                      </span>
+                    </div>
+                    {(recall.doctorNotes || recall.notes) && (
+                      <div style={{
+                        color: '#374151',
+                        fontSize: '0.875rem',
+                        marginTop: '0.75rem',
+                        paddingTop: '0.75rem',
+                        borderTop: '1px solid #e5e7eb',
+                      }}>
+                        {recall.doctorNotes || recall.notes}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>

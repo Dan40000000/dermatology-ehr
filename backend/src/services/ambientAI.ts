@@ -15,6 +15,11 @@ import FormData from 'form-data';
 import { logger } from '../lib/logger';
 import { redactValue } from '../utils/phiRedaction';
 import { AgentConfiguration } from './agentConfigService';
+import { getIntegrationConfig } from '../integrations/baseAdapter';
+import {
+  createAmbientTranscriptionAdapter,
+  type AmbientTranscriptionResult,
+} from '../integrations/ambientTranscriptionAdapter';
 
 // ============================================================================
 // RETRY CONFIGURATION
@@ -264,6 +269,10 @@ export interface LiveTranscriptionResult {
   source: 'live' | 'mock';
 }
 
+interface AmbientTranscriptionOptions {
+  tenantId?: string;
+}
+
 export interface DifferentialDiagnosis {
   condition: string;
   confidence: number;
@@ -336,8 +345,21 @@ export type ClinicalNoteGenerationResult =
  */
 export async function transcribeAudio(
   audioFilePath: string,
-  durationSeconds: number
+  durationSeconds: number,
+  options?: AmbientTranscriptionOptions
 ): Promise<TranscriptionResult> {
+  const wisprAdapter = await getConfiguredAmbientTranscriptionAdapter(options?.tenantId);
+  if (wisprAdapter) {
+    try {
+      const result = await wisprAdapter.transcribeFile(audioFilePath);
+      return buildTranscriptionResultFromAdapter(result, durationSeconds);
+    } catch (error) {
+      logger.warn('Wispr Flow transcription failed, falling back to OpenAI/mock', {
+        error: toSafeErrorMessage(error),
+      });
+    }
+  }
+
   // Use real OpenAI transcription if API key available
   const openAIKey = getOpenAIKey();
   if (openAIKey) {
@@ -552,8 +574,25 @@ function mockLiveTranscription(chunkIndex: number): LiveTranscriptionResult {
 export async function transcribeLiveAudioChunk(
   audioBuffer: Buffer,
   mimeType: string,
-  chunkIndex: number
+  chunkIndex: number,
+  options?: AmbientTranscriptionOptions
 ): Promise<LiveTranscriptionResult> {
+  const wisprAdapter = await getConfiguredAmbientTranscriptionAdapter(options?.tenantId);
+  if (wisprAdapter) {
+    try {
+      const result = await wisprAdapter.transcribeBuffer(audioBuffer, mimeType);
+      return {
+        text: result.text,
+        confidence: result.confidence,
+        source: result.source === 'mock' ? 'mock' : 'live',
+      };
+    } catch (error) {
+      logger.warn('Wispr Flow live transcription failed, falling back to OpenAI/mock', {
+        error: toSafeErrorMessage(error),
+      });
+    }
+  }
+
   const openAIKey = getOpenAIKey();
   if (!openAIKey) {
     return mockLiveTranscription(chunkIndex);
@@ -628,6 +667,94 @@ export async function transcribeLiveAudioChunk(
     });
     return mockLiveTranscription(chunkIndex);
   }
+}
+
+async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
+  if (!tenantId) {
+    return null;
+  }
+
+  const config = await getIntegrationConfig(tenantId, 'ambient_transcription');
+  if (!config) {
+    const envApiKey = process.env.WISPR_FLOW_API_KEY || process.env.WISPR_API_KEY;
+    if (!envApiKey) {
+      return null;
+    }
+
+    return createAmbientTranscriptionAdapter(
+      tenantId,
+      'wispr_flow',
+      false
+    );
+  }
+
+  if (!config.isActive) {
+    return null;
+  }
+
+  const configuredEnvironment = String(config.config?.environment || config.config?.mode || '')
+    .trim()
+    .toLowerCase();
+  const useMock = configuredEnvironment === 'mock' || configuredEnvironment === 'demo' || configuredEnvironment === 'test';
+  const adapter = createAmbientTranscriptionAdapter(
+    tenantId,
+    config.provider || 'wispr_flow',
+    useMock
+  );
+  await adapter.loadConfig();
+  return adapter;
+}
+
+function normalizeAdapterSegments(
+  segments: Array<{ speaker: string; text: string; start: number; end: number; confidence: number }>,
+  durationSeconds: number
+): TranscriptionSegment[] {
+  if (segments.length === 0) {
+    return [];
+  }
+
+  const maxEnd = Math.max(...segments.map((segment) => segment.end || 0), 0);
+  const scale = maxEnd > 0 && maxEnd <= 1.05 ? durationSeconds : 1;
+
+  return segments.map((segment, index) => ({
+    speaker: segment.speaker || `speaker_${index === 0 ? 0 : 1}`,
+    text: segment.text,
+    start: Number(((segment.start || 0) * scale).toFixed(3)),
+    end: Number(((segment.end || 0) * scale).toFixed(3)),
+    confidence: segment.confidence ?? 0.85,
+  }));
+}
+
+function buildTranscriptionResultFromAdapter(
+  adapterResult: AmbientTranscriptionResult,
+  durationSeconds: number
+): TranscriptionResult {
+  const fullText = adapterResult.text || '';
+  const segments = normalizeAdapterSegments(adapterResult.segments || [], durationSeconds);
+  const phiEntities = detectPHI(fullText);
+  const speakers: SpeakerInfo = {};
+
+  segments.forEach((segment, index) => {
+    if (!speakers[segment.speaker]) {
+      speakers[segment.speaker] = {
+        label: index === 0 ? 'doctor' : 'patient',
+      };
+    }
+  });
+
+  return {
+    text: fullText,
+    segments: segments.length > 0 ? segments : buildSingleSpeakerSegments(fullText, durationSeconds),
+    speakers: Object.keys(speakers).length > 0
+      ? speakers
+      : { speaker_0: { label: 'doctor', name: 'Provider' } },
+    speakerCount: Math.max(1, Object.keys(speakers).length || 1),
+    confidence: adapterResult.confidence || 0.85,
+    wordCount: fullText.split(/\s+/).filter(Boolean).length,
+    phiEntities,
+    language: adapterResult.language || 'en',
+    duration: durationSeconds,
+  };
 }
 
 /**
@@ -2395,6 +2522,79 @@ function generateDifferentialDiagnoses(transcript: string): DifferentialDiagnosi
   const text = transcript.toLowerCase();
   const differentials: DifferentialDiagnosis[] = [];
 
+  if (
+    text.includes('changing mole') ||
+    text.includes('mole changing') ||
+    /\bmole\b.{0,80}\bchang/.test(text) ||
+    (/\b(dark|black|irregular|asymmetric|variegated|bleeding)\b/.test(text) && /\b(mole|lesion|spot|growth)\b/.test(text))
+  ) {
+    differentials.push({
+      condition: 'Suspicious pigmented lesion / melanoma rule-out',
+      confidence: 0.88,
+      reasoning: 'Changing, dark, irregular, asymmetric, or bleeding pigmented lesion features require biopsy/pathology consideration.',
+      icd10Code: 'D48.5'
+    });
+    differentials.push({
+      condition: 'Atypical melanocytic nevus',
+      confidence: 0.64,
+      reasoning: 'Pigmented lesion with atypical features may represent dysplastic nevus; pathology is needed for distinction.',
+      icd10Code: 'D22.9'
+    });
+    differentials.push({
+      condition: 'Seborrheic keratosis, inflamed or atypical',
+      confidence: 0.34,
+      reasoning: 'Can mimic concerning pigmented lesions clinically, especially if irritated or dark.',
+      icd10Code: 'L82.0'
+    });
+    return differentials;
+  }
+
+  if (text.includes('acne') || text.includes('isotretinoin') || text.includes('accutane') || text.includes('cyst') || text.includes('scarring')) {
+    differentials.push({
+      condition: 'Acne vulgaris',
+      confidence: 0.9,
+      reasoning: 'Deep painful cysts, facial/chest involvement, and scarring are consistent with moderate to severe acne.',
+      icd10Code: 'L70.0'
+    });
+    differentials.push({
+      condition: 'Acne conglobata / nodulocystic acne',
+      confidence: 0.58,
+      reasoning: 'Painful cysts and scarring raise concern for a nodulocystic acne phenotype.',
+      icd10Code: 'L70.1'
+    });
+    differentials.push({
+      condition: 'Folliculitis',
+      confidence: 0.28,
+      reasoning: 'Can mimic acneiform papules/pustules, though cysts and scarring favor acne.',
+      icd10Code: 'L73.9'
+    });
+    return differentials;
+  }
+
+  if (text.includes('psoriasis') || text.includes('scaly plaques') || text.includes('silvery scale') || text.includes('biologic')) {
+    differentials.push({
+      condition: 'Psoriasis',
+      confidence: 0.89,
+      reasoning: 'Thick scaly plaques on classic sites such as scalp, elbows, or knees are consistent with psoriasis.',
+      icd10Code: 'L40.9'
+    });
+    if (text.includes('joint pain') || text.includes('joint stiffness') || text.includes('stiffness')) {
+      differentials.push({
+        condition: 'Psoriatic arthritis consideration',
+        confidence: 0.62,
+        reasoning: 'Joint stiffness or pain in a patient with psoriasis warrants screening for psoriatic arthritis.',
+        icd10Code: 'L40.50'
+      });
+    }
+    differentials.push({
+      condition: 'Seborrheic dermatitis',
+      confidence: 0.33,
+      reasoning: 'Scalp scale can overlap with seborrheic dermatitis, though plaque morphology favors psoriasis.',
+      icd10Code: 'L21.9'
+    });
+    return differentials;
+  }
+
   // Primary diagnosis based on conversation context
   if (text.includes('contact dermatitis') || text.includes('detergent') || text.includes('new laundry')) {
     differentials.push({
@@ -2455,6 +2655,72 @@ function generateDifferentialDiagnoses(transcript: string): DifferentialDiagnosi
 function generateRecommendedTests(transcript: string): RecommendedTest[] {
   const text = transcript.toLowerCase();
   const tests: RecommendedTest[] = [];
+
+  if (
+    text.includes('changing mole') ||
+    text.includes('mole changing') ||
+    /\bmole\b.{0,80}\bchang/.test(text) ||
+    (/\b(dark|black|irregular|asymmetric|variegated|bleeding)\b/.test(text) && /\b(mole|lesion|spot|growth)\b/.test(text))
+  ) {
+    tests.push({
+      testName: 'Skin biopsy',
+      rationale: 'Changing, irregular, bleeding, or dark pigmented lesion requires tissue diagnosis when clinically appropriate.',
+      urgency: 'urgent',
+      cptCode: '11102'
+    });
+    tests.push({
+      testName: 'Dermoscopy / lesion photography',
+      rationale: 'Document morphology and support lesion triage before biopsy/pathology correlation.',
+      urgency: 'soon',
+      cptCode: '96904'
+    });
+    tests.push({
+      testName: 'Pathology review',
+      rationale: 'Required after biopsy to confirm diagnosis and guide treatment.',
+      urgency: 'urgent'
+    });
+    return tests;
+  }
+
+  if (text.includes('isotretinoin') || text.includes('accutane')) {
+    tests.push({
+      testName: 'Lipid panel',
+      rationale: 'Common baseline or monitoring lab when isotretinoin is being considered.',
+      urgency: 'routine'
+    });
+    tests.push({
+      testName: 'Hepatic function panel',
+      rationale: 'Often checked before and during isotretinoin therapy.',
+      urgency: 'routine'
+    });
+    tests.push({
+      testName: 'Pregnancy test if applicable',
+      rationale: 'Required before isotretinoin initiation when applicable.',
+      urgency: 'urgent'
+    });
+    return tests;
+  }
+
+  if (text.includes('biologic') || text.includes('humira') || text.includes('skyrizi') || text.includes('cosentyx') || text.includes('taltz') || text.includes('tremfya')) {
+    tests.push({
+      testName: 'CBC / CMP baseline labs',
+      rationale: 'Baseline safety review before systemic or biologic therapy.',
+      urgency: 'routine'
+    });
+    tests.push({
+      testName: 'TB screening and hepatitis panel',
+      rationale: 'Common infection risk screening before biologic therapy.',
+      urgency: 'soon'
+    });
+    if (text.includes('joint pain') || text.includes('joint stiffness') || text.includes('stiffness')) {
+      tests.push({
+        testName: 'ESR / CRP',
+        rationale: 'Consider inflammatory markers when joint symptoms suggest possible psoriatic arthritis.',
+        urgency: 'routine'
+      });
+    }
+    return tests;
+  }
 
   if (text.includes('contact dermatitis') || text.includes('rash')) {
     // For contact dermatitis case

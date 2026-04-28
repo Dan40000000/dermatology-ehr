@@ -855,6 +855,13 @@ export function EncounterPage() {
       description: charge.description,
     });
   });
+  const chargeTotalCents = (charge: Charge) => (charge.feeCents || 0) * (charge.quantity || 1);
+  const insuranceChargesTotalCents = charges
+    .filter((charge) => charge.status !== 'self_pay')
+    .reduce((sum, charge) => sum + chargeTotalCents(charge), 0);
+  const selfPayChargesTotalCents = charges
+    .filter((charge) => charge.status === 'self_pay')
+    .reduce((sum, charge) => sum + chargeTotalCents(charge), 0);
 
   return (
     <div className="encounter-page">

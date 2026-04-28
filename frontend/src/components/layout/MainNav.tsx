@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -386,7 +386,7 @@ export function MainNav() {
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
   const navItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const userRole = getEffectiveRoles(user);
+  const userRole = useMemo(() => getEffectiveRoles(user), [user]);
 
   // Filter nav items based on user role
   const filteredNavItems = navItems.filter(item => canAccessModule(userRole, item.module));
@@ -427,15 +427,19 @@ export function MainNav() {
 
   const loadUnreadCount = useCallback(async () => {
     if (!session) return;
+    if (!canAccessModule(userRole, 'mail')) {
+      setUnreadCount(0);
+      return;
+    }
 
     try {
       const response = await fetchUnreadCount(session.tenantId, session.accessToken);
       setUnreadCount(response.count || 0);
     } catch (err) {
       // Silently fail - don't show error for unread count
-      console.error('Failed to load unread count:', err);
+      console.warn('Failed to load unread count:', err);
     }
-  }, [session]);
+  }, [session, userRole]);
 
   useEffect(() => {
     loadUnreadCount();

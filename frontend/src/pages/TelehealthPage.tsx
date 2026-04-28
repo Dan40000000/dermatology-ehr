@@ -27,6 +27,36 @@ import '../styles/telehealth.css';
 
 type ViewMode = 'list' | 'waiting-room' | 'video' | 'notes';
 
+function formatAppointmentTime(session: TelehealthSession) {
+  const dateValue = session.scheduled_start || session.started_at || session.created_at;
+  if (!dateValue) return 'TBD';
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return 'TBD';
+  return date.toLocaleString([], {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function getSessionAnchorTime(session: TelehealthSession) {
+  const dateValue = session.scheduled_start || session.started_at || session.created_at;
+  const date = dateValue ? new Date(dateValue) : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+}
+
+function isSameLocalDay(left: Date, right: Date) {
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
+}
+
+function isOperationalUpcomingStatus(status: string) {
+  return !['completed', 'cancelled', 'error', 'no_show'].includes(String(status));
+}
+
 const TelehealthPage: React.FC = () => {
   const { session } = useAuth();
   const tenantId = session?.tenantId;
@@ -45,10 +75,15 @@ const TelehealthPage: React.FC = () => {
 
   // Stats
   const [stats, setStats] = useState<TelehealthStats>({
-    myInProgress: 0,
-    myCompleted: 0,
-    myUnreadMessages: 0,
-    unassignedCases: 0,
+    todayVisits: 0,
+    waitingNow: 0,
+    liveNow: 0,
+    upcomingWeek: 0,
+    completedToday: 0,
+    cancelledThisWeek: 0,
+    averageCompletedDurationMinutes: 0,
+    uniquePatientsInRange: 0,
+    providersWithTelehealth: 0,
   });
   const [activeStatsFilter, setActiveStatsFilter] = useState<string | null>(null);
 
@@ -140,17 +175,42 @@ const TelehealthPage: React.FC = () => {
     // Apply stats card filter
     if (activeStatsFilter) {
       switch (activeStatsFilter) {
-        case 'in_progress':
+        case 'today': {
+          const now = new Date();
+          filtered = filtered.filter((session) => {
+            const anchor = getSessionAnchorTime(session);
+            return anchor && isSameLocalDay(anchor, now) && String(session.status) !== 'cancelled';
+          });
+          break;
+        }
+        case 'waiting':
+          filtered = filtered.filter((s) => s.status === 'waiting');
+          break;
+        case 'live':
           filtered = filtered.filter((s) => s.status === 'in_progress');
           break;
-        case 'completed':
-          filtered = filtered.filter((s) => s.status === 'completed');
+        case 'upcoming_week': {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const nextWeek = new Date(today);
+          nextWeek.setDate(nextWeek.getDate() + 7);
+          filtered = filtered.filter((session) => {
+            const anchor = getSessionAnchorTime(session);
+            if (!anchor) return false;
+            return anchor >= today && anchor < nextWeek && isOperationalUpcomingStatus(session.status);
+          });
           break;
-        case 'unread':
-          // Filter for unread messages when implemented
+        }
+        case 'completed_today': {
+          const now = new Date();
+          filtered = filtered.filter((session) => {
+            const anchor = getSessionAnchorTime(session);
+            return anchor && session.status === 'completed' && isSameLocalDay(anchor, now);
+          });
           break;
-        case 'unassigned':
-          filtered = filtered.filter((s) => !s.assigned_to || s.assigned_to === null);
+        }
+        case 'cancelled':
+          filtered = filtered.filter((session) => ['cancelled', 'error', 'no_show'].includes(String(session.status)));
           break;
       }
     }
@@ -421,19 +481,10 @@ const TelehealthPage: React.FC = () => {
         <DataTable
           columns={[
             {
-              key: 'updated_at',
-              label: 'Last Updated',
+              key: 'scheduled_start',
+              label: 'Appointment Time',
               sortable: true,
-              render: (row: TelehealthSession) =>
-                row.updated_at
-                  ? new Date(row.updated_at).toLocaleString()
-                  : new Date(row.created_at).toLocaleString(),
-            },
-            {
-              key: 'created_at',
-              label: 'Date Created',
-              sortable: true,
-              render: (row: TelehealthSession) => new Date(row.created_at).toLocaleString(),
+              render: (row: TelehealthSession) => formatAppointmentTime(row),
             },
             {
               key: 'patient',

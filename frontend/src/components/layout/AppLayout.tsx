@@ -3,6 +3,7 @@ import { Outlet, Navigate, useLocation } from 'react-router-dom';
 import { TopBar } from './TopBar';
 import { MainNav, MobileNav } from './MainNav';
 import { Footer } from './Footer';
+import { DemoIntegrationBanner } from './DemoIntegrationBanner';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchPatients } from '../../api';
 import type { Patient } from '../../types';
@@ -16,13 +17,19 @@ export function AppLayout() {
 
   const loadPatients = useCallback(async () => {
     if (!session) return;
+    const effectiveRoles = getEffectiveRoles(user || session.user);
+    if (!canAccessModule(effectiveRoles, 'patients')) {
+      setPatients([]);
+      return;
+    }
+
     try {
       const res = await fetchPatients(session.tenantId, session.accessToken);
       setPatients(res.data || res.patients || []);
     } catch {
       // Silently fail for patient search
     }
-  }, [session]);
+  }, [session, user]);
 
   useEffect(() => {
     loadPatients();
@@ -39,7 +46,7 @@ export function AppLayout() {
   }
 
   const activeModule = getModuleForPath(location.pathname);
-  const effectiveRoles = getEffectiveRoles(user);
+  const effectiveRoles = getEffectiveRoles(user || session?.user);
   if (activeModule && !canAccessModule(effectiveRoles, activeModule)) {
     return <Navigate to="/home" replace />;
   }
@@ -53,6 +60,7 @@ export function AppLayout() {
         <TopBar patients={patients} onRefresh={loadPatients} />
         <MainNav />
         <MobileNav />
+        <DemoIntegrationBanner />
 
         <main id="main-content" className="content-card" role="main" aria-label="Main content">
           <Outlet />

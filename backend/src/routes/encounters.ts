@@ -752,7 +752,8 @@ encountersRouter.post("/:id/diagnoses", requireAuth, requireRoles(["provider", "
       encId,
       parsed.data.icd10Code,
       parsed.data.description,
-      parsed.data.isPrimary || false
+      parsed.data.isPrimary || false,
+      req.user!.id
     );
 
     await auditLog(tenantId, req.user!.id, "diagnosis_added", "encounter", encId);

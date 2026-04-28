@@ -288,13 +288,18 @@ describe('Recalls Routes', () => {
   describe('POST /api/recalls/patient', () => {
     it('should create patient recall manually', async () => {
       const newRecall = {
-        id: 'recall-uuid-123',
-        patient_id: 'patient-456',
-        due_date: '2024-03-15',
+        id: 'recall-created-123',
+        patientId: 'patient-456',
+        dueDate: '2024-03-15',
+        recallType: 'Melanoma Surveillance',
         status: 'pending',
       };
 
-      queryMock.mockResolvedValueOnce({ rows: [newRecall] });
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: 'patient-456' }] })
+        .mockResolvedValueOnce({ rows: [{ id: 'campaign-123', recallType: 'Melanoma Surveillance' }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [newRecall] });
 
       const response = await request(app).post('/api/recalls/patient').send({
         patientId: 'patient-456',
@@ -304,7 +309,11 @@ describe('Recalls Routes', () => {
       });
 
       expect(response.status).toBe(201);
-      expect(response.body.id).toBe('recall-uuid-123');
+      expect(response.body.id).toBe('recall-created-123');
+      expect(queryMock).toHaveBeenLastCalledWith(
+        expect.stringContaining('INSERT INTO patient_recalls'),
+        expect.arrayContaining(['tenant-123', 'patient-456', 'campaign-123', '2024-03-15', 'Manual follow-up needed', 'Melanoma Surveillance'])
+      );
     });
 
     it('should validate required fields', async () => {
@@ -315,6 +324,35 @@ describe('Recalls Routes', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.error).toBe('Patient ID and due date are required');
+    });
+
+    it('should reject recalls for patients outside the tenant', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const response = await request(app).post('/api/recalls/patient').send({
+        patientId: 'patient-456',
+        campaignId: 'campaign-123',
+        dueDate: '2024-03-15',
+      });
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toBe('Patient not found');
+    });
+
+    it('should reject duplicate active campaign recalls', async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: 'patient-456' }] })
+        .mockResolvedValueOnce({ rows: [{ id: 'campaign-123', recallType: 'Annual Skin Check' }] })
+        .mockResolvedValueOnce({ rows: [{ id: 'existing-recall' }] });
+
+      const response = await request(app).post('/api/recalls/patient').send({
+        patientId: 'patient-456',
+        campaignId: 'campaign-123',
+        dueDate: '2024-03-15',
+      });
+
+      expect(response.status).toBe(409);
+      expect(response.body.error).toBe('Patient already has an active recall for this campaign');
     });
   });
 
@@ -474,6 +512,7 @@ describe('Recalls Routes', () => {
           contacted: '15',
           scheduled: '10',
           completed: '30',
+          dismissed: '0',
         },
       ];
 
@@ -487,6 +526,7 @@ describe('Recalls Routes', () => {
       expect(response.body.overall.total_recalls).toBe('105');
       expect(response.body.overall.contactRate).toBeGreaterThanOrEqual(0);
       expect(response.body.byCampaign).toHaveLength(1);
+      expect(response.body.byCampaign[0].dismissed).toBe('0');
     });
 
     it('should filter stats by date range', async () => {

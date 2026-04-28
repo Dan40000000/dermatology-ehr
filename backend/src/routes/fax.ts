@@ -3,9 +3,11 @@ import crypto from "crypto";
 import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
+import { requireModuleAccess } from "../middleware/moduleAccess";
 import { requireRoles } from "../middleware/rbac";
 
 export const faxRouter = Router();
+faxRouter.use(requireAuth, requireModuleAccess("fax"));
 
 // Mock fax service for simulation
 const mockFaxService = {

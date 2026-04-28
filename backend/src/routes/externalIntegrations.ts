@@ -31,7 +31,7 @@ const router = Router();
 // ============================================================================
 
 const integrationTypeSchema = z.enum([
-  'clearinghouse', 'eligibility', 'eprescribe', 'lab', 'payment', 'fax',
+  'clearinghouse', 'eligibility', 'eprescribe', 'lab', 'payment', 'fax', 'ambient_transcription',
 ]);
 // Keep route params compatible with Express 5 path matching.
 // Integration type constraints are enforced via Zod parsing in handlers.
@@ -173,6 +173,60 @@ router.get('/', requireAuth, requireRoles(['admin']), async (req: AuthedRequest,
 
 /**
  * @swagger
+ * /api/external-integrations/logs:
+ *   get:
+ *     summary: Get integration logs
+ *     tags: [External Integrations]
+ */
+router.get('/logs', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
+  try {
+    const service = getIntegrationService(req.user!.tenantId);
+    const { type, status, limit, offset, startDate, endDate } = req.query;
+
+    const result = await service.getIntegrationLogs(
+      type as IntegrationType | undefined,
+      {
+        limit: limit ? parseInt(limit as string, 10) : 50,
+        offset: offset ? parseInt(offset as string, 10) : 0,
+        status: status as string | undefined,
+        startDate: startDate as string | undefined,
+        endDate: endDate as string | undefined,
+      }
+    );
+
+    res.json(result);
+  } catch (error: any) {
+    logger.error('Failed to get integration logs', { error: error.message });
+    res.status(500).json({ error: 'Failed to get integration logs' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/external-integrations/stats:
+ *   get:
+ *     summary: Get integration statistics
+ *     tags: [External Integrations]
+ */
+router.get('/stats', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
+  try {
+    const service = getIntegrationService(req.user!.tenantId);
+    const { type, days } = req.query;
+
+    const stats = await service.getIntegrationStats(
+      type as IntegrationType | undefined,
+      days ? parseInt(days as string, 10) : 7
+    );
+
+    res.json({ stats });
+  } catch (error: any) {
+    logger.error('Failed to get integration stats', { error: error.message });
+    res.status(500).json({ error: 'Failed to get integration stats' });
+  }
+});
+
+/**
+ * @swagger
  * /api/external-integrations/{type}:
  *   get:
  *     summary: Get detailed status of specific integration
@@ -276,60 +330,6 @@ router.post(`/${integrationTypePath}/sync`, requireAuth, requireRoles(['admin'])
     }
     logger.error('Failed to sync integration', { error: error.message });
     res.status(500).json({ error: 'Failed to sync integration' });
-  }
-});
-
-/**
- * @swagger
- * /api/external-integrations/logs:
- *   get:
- *     summary: Get integration logs
- *     tags: [External Integrations]
- */
-router.get('/logs', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
-  try {
-    const service = getIntegrationService(req.user!.tenantId);
-    const { type, status, limit, offset, startDate, endDate } = req.query;
-
-    const result = await service.getIntegrationLogs(
-      type as IntegrationType | undefined,
-      {
-        limit: limit ? parseInt(limit as string, 10) : 50,
-        offset: offset ? parseInt(offset as string, 10) : 0,
-        status: status as string | undefined,
-        startDate: startDate as string | undefined,
-        endDate: endDate as string | undefined,
-      }
-    );
-
-    res.json(result);
-  } catch (error: any) {
-    logger.error('Failed to get integration logs', { error: error.message });
-    res.status(500).json({ error: 'Failed to get integration logs' });
-  }
-});
-
-/**
- * @swagger
- * /api/external-integrations/stats:
- *   get:
- *     summary: Get integration statistics
- *     tags: [External Integrations]
- */
-router.get('/stats', requireAuth, requireRoles(['admin']), async (req: AuthedRequest, res) => {
-  try {
-    const service = getIntegrationService(req.user!.tenantId);
-    const { type, days } = req.query;
-
-    const stats = await service.getIntegrationStats(
-      type as IntegrationType | undefined,
-      days ? parseInt(days as string, 10) : 7
-    );
-
-    res.json({ stats });
-  } catch (error: any) {
-    logger.error('Failed to get integration stats', { error: error.message });
-    res.status(500).json({ error: 'Failed to get integration stats' });
   }
 });
 

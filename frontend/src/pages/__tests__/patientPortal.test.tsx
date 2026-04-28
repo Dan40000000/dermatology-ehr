@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { vi } from 'vitest';
 import { PortalLoginPage } from '../patient-portal/PortalLoginPage';
 import { PortalRegisterPage } from '../patient-portal/PortalRegisterPage';
@@ -10,7 +10,10 @@ import { PortalDocumentsPage } from '../patient-portal/PortalDocumentsPage';
 import { PortalHealthRecordPage } from '../patient-portal/PortalHealthRecordPage';
 import { PortalProfilePage } from '../patient-portal/PortalProfilePage';
 import { PortalVisitSummariesPage } from '../patient-portal/PortalVisitSummariesPage';
+import { PublicBookAppointmentPage } from '../patient-portal/PublicBookAppointmentPage';
+import { PublicGuestBookAppointmentPage } from '../patient-portal/PublicGuestBookAppointmentPage';
 import { PatientPortalMessagesPage } from '../patient-portal/MessagesPage';
+import { RequirePortalAuth } from '../../router/routes';
 
 const navigateMock = vi.hoisted(() => vi.fn());
 const patientPortalFetchMock = vi.hoisted(() => vi.fn());
@@ -56,6 +59,7 @@ vi.mock('react-router-dom', async () => {
 });
 
 vi.mock('../../contexts/PatientPortalAuthContext', () => ({
+  PatientPortalAuthProvider: ({ children }: { children: ReactElement }) => children,
   usePatientPortalAuth: () => portalAuthMocks,
   patientPortalFetch: patientPortalFetchMock,
 }));
@@ -66,7 +70,8 @@ vi.mock('../../contexts/ToastContext', () => ({
 
 vi.mock('../../portalApi', () => portalApiMocks);
 
-const renderWithRouter = (ui: ReactElement) => render(<MemoryRouter>{ui}</MemoryRouter>);
+const renderWithRouter = (ui: ReactElement, initialEntries: string[] = ['/']) =>
+  render(<MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>);
 
 beforeEach(() => {
   Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
@@ -96,6 +101,38 @@ beforeEach(() => {
 });
 
 describe('Patient portal pages', () => {
+  it('redirects protected portal routes when no portal session exists', async () => {
+    portalAuthMocks.isAuthenticated = false;
+
+    renderWithRouter(
+      <Routes>
+        <Route element={<RequirePortalAuth />}>
+          <Route path="/portal/dashboard" element={<div>Protected dashboard</div>} />
+        </Route>
+        <Route path="/portal/login" element={<div>Portal login page</div>} />
+      </Routes>,
+      ['/portal/dashboard?from=test']
+    );
+
+    expect(await screen.findByText('Portal login page')).toBeInTheDocument();
+    expect(screen.queryByText('Protected dashboard')).not.toBeInTheDocument();
+  });
+
+  it('renders protected portal routes when a portal session exists', () => {
+    portalAuthMocks.isAuthenticated = true;
+
+    renderWithRouter(
+      <Routes>
+        <Route element={<RequirePortalAuth />}>
+          <Route path="/portal/dashboard" element={<div>Protected dashboard</div>} />
+        </Route>
+      </Routes>,
+      ['/portal/dashboard']
+    );
+
+    expect(screen.getByText('Protected dashboard')).toBeInTheDocument();
+  });
+
   it('submits login and navigates to dashboard', async () => {
     renderWithRouter(<PortalLoginPage />);
 
@@ -112,6 +149,26 @@ describe('Patient portal pages', () => {
     );
     expect(navigateMock).toHaveBeenCalledWith('/portal/dashboard');
   }, 15000);
+
+  it('uses query params to route patients back into booking', async () => {
+    renderWithRouter(
+      <PortalLoginPage />,
+      ['/portal/login?tenantId=tenant-west&redirect=%2Fportal%2Fbook-appointment']
+    );
+
+    fireEvent.change(screen.getByLabelText(/Email Address/i), {
+      target: { value: 'patient@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText(/Password/i), {
+      target: { value: 'secret' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Sign In/i }));
+
+    await waitFor(() =>
+      expect(portalAuthMocks.login).toHaveBeenCalledWith('tenant-west', 'patient@example.com', 'secret')
+    );
+    expect(navigateMock).toHaveBeenCalledWith('/portal/book-appointment');
+  });
 
   it('shows a login error when credentials fail', async () => {
     portalAuthMocks.login.mockRejectedValueOnce(new Error('Bad credentials'));
@@ -132,6 +189,69 @@ describe('Patient portal pages', () => {
     renderWithRouter(<PortalRegisterPage />);
     expect(screen.getByRole('heading', { name: /verify your identity/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/Last Name/i)).toBeInTheDocument();
+  });
+
+  it('renders a public website booking entry page with portal handoff links', () => {
+    renderWithRouter(
+      <PublicBookAppointmentPage />,
+      ['/book-appointment?tenantId=tenant-demo']
+    );
+
+    expect(screen.getByRole('heading', { name: /Book a Dermatology Appointment Online/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Existing Patient Sign In/i })).toHaveAttribute(
+      'href',
+      '/portal/login?tenantId=tenant-demo&redirect=%2Fportal%2Fbook-appointment'
+    );
+    expect(screen.getByRole('link', { name: /Create Portal Account/i })).toHaveAttribute(
+      'href',
+      '/portal/register?tenantId=tenant-demo&redirect=%2Fportal%2Fbook-appointment'
+    );
+    expect(screen.getByRole('link', { name: /Continue as Guest/i })).toHaveAttribute(
+      'href',
+      '/book-appointment/guest?tenantId=tenant-demo'
+    );
+  });
+
+  it('renders the guest booking page shell', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/public/settings')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            isEnabled: true,
+            minAdvanceHours: 24,
+            maxAdvanceDays: 90,
+            allowGuestBooking: true,
+            requireCardOnFileForGuestBooking: true,
+            guestCancellationFeeCents: 5000,
+          }),
+        } as Response);
+      }
+      if (url.includes('/public/providers')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ providers: [{ id: 'prov-demo', fullName: 'Dr. Demo' }] }),
+        } as Response);
+      }
+      if (url.includes('/public/appointment-types')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ appointmentTypes: [{ id: 'appttype-acne-fu', name: 'Acne Follow-up', durationMinutes: 15 }] }),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({}),
+      } as Response);
+    });
+
+    renderWithRouter(<PublicGuestBookAppointmentPage />, ['/book-appointment/guest?tenantId=tenant-demo']);
+
+    expect(await screen.findByRole('heading', { name: /Book as a Guest/i })).toBeInTheDocument();
+    expect(screen.getByText(/late-cancellation policy/i)).toBeInTheDocument();
+    fetchSpy.mockRestore();
   });
 
   it('loads and renders the portal dashboard', async () => {
@@ -187,7 +307,7 @@ describe('Patient portal pages', () => {
     expect(await screen.findByText('Consultation')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Start Pre-Check-In/i }));
-    expect(navigateMock).toHaveBeenCalledWith('/portal/check-in?appointmentId=apt-1');
+    expect(navigateMock).toHaveBeenCalledWith('/portal/check-in?appointmentId=apt-1&appointmentType=Consultation');
 
     fireEvent.click(screen.getByRole('button', { name: /Past History/i }));
     await waitFor(() =>
@@ -259,7 +379,7 @@ describe('Patient portal pages', () => {
       } as Response);
     });
 
-    render(<PatientPortalMessagesPage />);
+    renderWithRouter(<PatientPortalMessagesPage />, ['/portal/messages']);
 
     expect(await screen.findByText('Prescription Question')).toBeInTheDocument();
 
@@ -324,11 +444,33 @@ describe('Patient portal pages', () => {
   it('loads visit summaries', async () => {
     patientPortalFetchMock.mockImplementation((endpoint: string) => {
       if (endpoint === '/api/patient-portal-data/visit-summaries') {
-        return Promise.resolve({ summaries: [] });
+        return Promise.resolve({
+          summaries: [
+            {
+              id: 'summary-1',
+              visitDate: '2026-04-10T15:00:00Z',
+              providerName: 'Dr. Rivera',
+              summaryText: 'Your acne is improving with the current topical plan.',
+              symptomsDiscussed: ['Acne flare', 'Dryness'],
+              diagnosisShared: 'Acne vulgaris',
+              treatmentPlan: 'Continue tretinoin and moisturizer.',
+              nextSteps: 'Send photos if irritation gets worse.',
+              followUpDate: '2026-05-10T15:00:00Z',
+              createdAt: '2026-04-10T16:00:00Z',
+            },
+          ],
+        });
       }
       return Promise.resolve({});
     });
     renderWithRouter(<PortalVisitSummariesPage />);
     expect(await screen.findByText('Your Visit Summaries')).toBeInTheDocument();
+    expect(screen.getByText('Dr. Rivera')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Your acne is improving/i }));
+
+    expect(await screen.findByText('Summary of Appointment')).toBeInTheDocument();
+    expect(screen.getAllByText('Acne vulgaris')).toHaveLength(2);
+    expect(screen.getAllByText('Continue tretinoin and moisturizer.')).toHaveLength(2);
   });
 });

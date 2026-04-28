@@ -3,12 +3,14 @@ import crypto from "crypto";
 import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
+import { requireModuleAccess } from "../middleware/moduleAccess";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
 import { waitlistAutoFillService } from "../services/waitlistAutoFillService";
 import { notificationService } from "../services/integrations/notificationService";
 import { workflowOrchestrator } from "../services/workflowOrchestrator";
 import { logger } from "../lib/logger";
+import { getPracticeTimeZone } from "../lib/practiceTimeZone";
 import {
   emitAppointmentCreated,
   emitAppointmentUpdated,
@@ -38,10 +40,7 @@ const waiveLateFeeSchema = z.object({
 
 const APPOINTMENT_WINDOW_START_MINUTES = 7 * 60;
 const APPOINTMENT_WINDOW_END_MINUTES = 18 * 60;
-const APPOINTMENT_WINDOW_TIME_ZONE =
-  process.env.APPOINTMENT_WINDOW_TIME_ZONE ||
-  Intl.DateTimeFormat().resolvedOptions().timeZone ||
-  "UTC";
+const APPOINTMENT_WINDOW_TIME_ZONE = getPracticeTimeZone();
 const appointmentWindowFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: APPOINTMENT_WINDOW_TIME_ZONE,
   hour: "2-digit",
@@ -321,6 +320,7 @@ const updateStatusSchema = z.object({
 });
 
 export const appointmentsRouter = Router();
+appointmentsRouter.use(requireAuth, requireModuleAccess("schedule"));
 
 /**
  * @swagger

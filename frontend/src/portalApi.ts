@@ -142,6 +142,10 @@ export interface PortalPatientProfile {
   emergencyContactName?: string;
   emergencyContactRelationship?: string;
   emergencyContactPhone?: string;
+  portalEmail?: string;
+  lastLogin?: string | null;
+  emailVerified?: boolean;
+  passwordUpdatedAt?: string | null;
 }
 
 export async function fetchPortalProfile(
@@ -185,6 +189,32 @@ export async function updatePortalProfile(
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Failed to update patient profile');
+  return res.json();
+}
+
+export async function changePortalPassword(
+  tenantId: string,
+  portalToken: string,
+  data: {
+    currentPassword: string;
+    newPassword: string;
+  }
+): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/api/patient-portal/security/change-password`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${portalToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({ error: 'Failed to change password' }));
+    const details = Array.isArray(payload.details) ? ` ${payload.details.join(' ')}` : '';
+    throw new Error(`${payload.error || 'Failed to change password'}${details}`);
+  }
   return res.json();
 }
 
@@ -545,6 +575,7 @@ export interface CheckinSession {
   insuranceCardFrontUrl?: string;
   insuranceCardBackUrl?: string;
   insuranceVerificationStatus?: string;
+  visitDetails?: Record<string, unknown>;
   staffNotified: boolean;
   startedAt: string;
   completedAt?: string;
@@ -770,6 +801,7 @@ export async function updatePortalCheckinSession(
     copayCollected?: boolean;
     insuranceCardFrontUrl?: string;
     insuranceCardBackUrl?: string;
+    visitDetails?: Record<string, unknown>;
     complete?: boolean;
   }
 ): Promise<{ id: string; status: string; completedAt?: string }> {

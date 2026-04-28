@@ -1,4 +1,11 @@
 import { pool } from "../db/pool";
+import {
+  getDateKeyInTimeZone,
+  getPracticeTimeZone,
+  getUtcInstantForPracticeDateTime,
+  getUtcRangeForPracticeDate,
+  getWeekdayForDateKey,
+} from "../lib/practiceTimeZone";
 
 export interface TimeSlot {
   startTime: string; // ISO datetime string
@@ -12,7 +19,7 @@ export interface AvailabilityParams {
   tenantId: string;
   providerId: string;
   appointmentTypeId: string;
-  date: Date;
+  date: Date | string;
 }
 
 export interface BookingRules {
@@ -52,14 +59,30 @@ export async function getBookingSettings(tenantId: string): Promise<BookingRules
 /**
  * Check if a date is within the allowed booking window
  */
-export function isDateInBookingWindow(date: Date, rules: BookingRules): boolean {
+function getRequestedDateKey(date: Date | string, practiceTimeZone: string): string {
+  if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return date;
+  }
+
+  if (typeof date === "string") {
+    return getDateKeyInTimeZone(date, practiceTimeZone);
+  }
+
+  return date.toISOString().split("T")[0] ?? date.toISOString();
+}
+
+export function isDateInBookingWindow(date: Date | string, rules: BookingRules): boolean {
   if (!rules.isEnabled) return false;
 
+  const practiceTimeZone = getPracticeTimeZone();
+  const dateKey = getRequestedDateKey(date, practiceTimeZone);
   const now = new Date();
   const minDate = new Date(now.getTime() + rules.minAdvanceHours * 60 * 60 * 1000);
   const maxDate = new Date(now.getTime() + rules.maxAdvanceDays * 24 * 60 * 60 * 1000);
+  const minDateKey = getDateKeyInTimeZone(minDate, practiceTimeZone);
+  const maxDateKey = getDateKeyInTimeZone(maxDate, practiceTimeZone);
 
-  return date >= minDate && date <= maxDate;
+  return dateKey >= minDateKey && dateKey <= maxDateKey;
 }
 
 /**
@@ -82,6 +105,8 @@ export function isDateInBookingWindow(date: Date, rules: BookingRules): boolean 
  */
 export async function calculateAvailableSlots(params: AvailabilityParams): Promise<TimeSlot[]> {
   const { tenantId, providerId, appointmentTypeId, date } = params;
+  const practiceTimeZone = getPracticeTimeZone();
+  const requestedDateKey = getRequestedDateKey(date, practiceTimeZone);
 
   // Get booking rules
   const rules = await getBookingSettings(tenantId);
@@ -95,7 +120,7 @@ export async function calculateAvailableSlots(params: AvailabilityParams): Promi
   }
 
   // Get day of week (0=Sunday, 6=Saturday)
-  const dayOfWeek = date.getDay();
+  const dayOfWeek = getWeekdayForDateKey(requestedDateKey);
 
   // 1. Get provider's availability template for this day
   const templateResult = await pool.query(
@@ -120,10 +145,10 @@ export async function calculateAvailableSlots(params: AvailabilityParams): Promi
   const template = templateResult.rows[0];
 
   // 2. Get provider's time-off for this date
-  const dateStart = new Date(date);
-  dateStart.setHours(0, 0, 0, 0);
-  const dateEnd = new Date(date);
-  dateEnd.setHours(23, 59, 59, 999);
+  const { start: dateStart, end: dateEnd } = getUtcRangeForPracticeDate(
+    requestedDateKey,
+    practiceTimeZone,
+  );
 
   const timeOffResult = await pool.query(
     `SELECT start_datetime as "startDatetime",
@@ -132,11 +157,9 @@ export async function calculateAvailableSlots(params: AvailabilityParams): Promi
      FROM provider_time_off
      WHERE tenant_id = $1
        AND provider_id = $2
-       AND (
-         (start_datetime <= $3 AND end_datetime >= $3)
-         OR (start_datetime >= $3 AND start_datetime <= $4)
-       )`,
-    [tenantId, providerId, dateEnd, dateStart]
+       AND start_datetime < $4
+       AND end_datetime > $3`,
+    [tenantId, providerId, dateStart, dateEnd]
   );
 
   const timeOffPeriods = timeOffResult.rows;
@@ -154,8 +177,9 @@ export async function calculateAvailableSlots(params: AvailabilityParams): Promi
      WHERE tenant_id = $1
        AND provider_id = $2
        AND status IN ('scheduled', 'confirmed', 'checked_in', 'in_room', 'with_provider')
-       AND DATE(scheduled_start) = DATE($3::timestamptz)`,
-    [tenantId, providerId, date.toISOString()]
+       AND scheduled_start < $4
+       AND scheduled_end > $3`,
+    [tenantId, providerId, dateStart, dateEnd]
   );
 
   const existingAppointments = appointmentsResult.rows;
@@ -185,16 +209,27 @@ export async function calculateAvailableSlots(params: AvailabilityParams): Promi
   const startMinutes = startHour * 60 + startMinute;
   const endMinutes = endHour * 60 + endMinute;
 
+  const availabilityEnd = getUtcInstantForPracticeDateTime(
+    requestedDateKey,
+    endHour,
+    endMinute,
+    practiceTimeZone,
+  );
+
   // Generate all possible slots
   for (let minutes = startMinutes; minutes < endMinutes; minutes += slotDuration) {
     const slotHour = Math.floor(minutes / 60);
     const slotMinute = minutes % 60;
 
-    const slotStart = new Date(date);
-    slotStart.setHours(slotHour, slotMinute, 0, 0);
+    const slotStart = getUtcInstantForPracticeDateTime(
+      requestedDateKey,
+      slotHour,
+      slotMinute,
+      practiceTimeZone,
+    );
 
     const slotEnd = new Date(slotStart);
-    slotEnd.setMinutes(slotEnd.getMinutes() + slotDuration);
+    slotEnd.setMinutes(slotEnd.getMinutes() + appointmentDuration);
 
     slots.push({
       startTime: slotStart.toISOString(),
@@ -249,7 +284,7 @@ export async function calculateAvailableSlots(params: AvailabilityParams): Promi
     }
 
     // Check if appointment would extend beyond provider's availability
-    if (appointmentEnd > new Date(date.setHours(endHour, endMinute, 0, 0))) {
+    if (appointmentEnd > availabilityEnd) {
       return false;
     }
 
@@ -267,8 +302,8 @@ export async function getProviderInfo(tenantId: string, providerId: string) {
     `SELECT id,
             full_name as "fullName",
             specialty,
-            bio,
-            profile_image_url as "profileImageUrl"
+            NULL::text as bio,
+            NULL::text as "profileImageUrl"
      FROM providers
      WHERE id = $1 AND tenant_id = $2`,
     [providerId, tenantId]
@@ -337,7 +372,7 @@ export async function getAvailableDatesInMonth(
   month: number // 0-11
 ): Promise<string[]> {
   const availableDates: string[] = [];
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 
   const rules = await getBookingSettings(tenantId);
   if (!rules.isEnabled) {
@@ -345,7 +380,7 @@ export async function getAvailableDatesInMonth(
   }
 
   for (let day = 1; day <= daysInMonth; day++) {
-    const date = new Date(year, month, day);
+    const date = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 
     // Skip if not in booking window
     if (!isDateInBookingWindow(date, rules)) {
@@ -353,7 +388,7 @@ export async function getAvailableDatesInMonth(
     }
 
     // Check if this day has availability template
-    const dayOfWeek = date.getDay();
+    const dayOfWeek = getWeekdayForDateKey(date);
     const hasTemplate = await pool.query(
       `SELECT 1
        FROM provider_availability_templates
@@ -376,10 +411,7 @@ export async function getAvailableDatesInMonth(
       });
 
       if (slots.length > 0) {
-        const dateString = date.toISOString().split("T")[0];
-        if (dateString) {
-          availableDates.push(dateString);
-        }
+        availableDates.push(date);
       }
     }
   }

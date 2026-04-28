@@ -3,6 +3,7 @@ import { pool } from '../db/pool';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { randomUUID } from 'crypto';
 import { logger } from '../lib/logger';
+import { SMSService } from '../services/smsService';
 import {
   generateRecalls,
   generateAllRecalls,
@@ -16,6 +17,103 @@ import {
 } from '../services/recallService';
 
 const router = Router();
+const VALID_CONTACT_METHODS = ['email', 'sms', 'phone', 'mail', 'portal'] as const;
+type ContactMethod = (typeof VALID_CONTACT_METHODS)[number];
+
+function campaignSelect(): string {
+  return `
+    id,
+    tenant_id as "tenantId",
+    name,
+    description,
+    recall_type as "recallType",
+    interval_months as "intervalMonths",
+    is_active as "isActive",
+    created_at as "createdAt",
+    updated_at as "updatedAt"
+  `;
+}
+
+function patientRecallSelect(prefix = 'pr'): string {
+  return `
+    ${prefix}.id,
+    ${prefix}.tenant_id as "tenantId",
+    ${prefix}.patient_id as "patientId",
+    ${prefix}.campaign_id as "campaignId",
+    COALESCE(${prefix}.due_date, ${prefix}.recall_date) as "dueDate",
+    ${prefix}.recall_date as "recallDate",
+    COALESCE(${prefix}.recall_type, rc.recall_type) as "recallType",
+    ${prefix}.status,
+    ${prefix}.last_contact_date as "lastContactDate",
+    ${prefix}.contact_method as "contactMethod",
+    ${prefix}.notes,
+    ${prefix}.doctor_notes as "doctorNotes",
+    ${prefix}.preferred_contact_method as "preferredContactMethod",
+    ${prefix}.notified_on as "notifiedOn",
+    ${prefix}.notification_count as "notificationCount",
+    ${prefix}.appointment_id as "appointmentId",
+    ${prefix}.created_at as "createdAt",
+    ${prefix}.updated_at as "updatedAt"
+  `;
+}
+
+function patientRecallReturning(prefix = 'patient_recalls'): string {
+  return `
+    ${prefix}.id,
+    ${prefix}.tenant_id as "tenantId",
+    ${prefix}.patient_id as "patientId",
+    ${prefix}.campaign_id as "campaignId",
+    COALESCE(${prefix}.due_date, ${prefix}.recall_date) as "dueDate",
+    ${prefix}.recall_date as "recallDate",
+    ${prefix}.recall_type as "recallType",
+    ${prefix}.status,
+    ${prefix}.last_contact_date as "lastContactDate",
+    ${prefix}.contact_method as "contactMethod",
+    ${prefix}.notes,
+    ${prefix}.doctor_notes as "doctorNotes",
+    ${prefix}.preferred_contact_method as "preferredContactMethod",
+    ${prefix}.notified_on as "notifiedOn",
+    ${prefix}.notification_count as "notificationCount",
+    ${prefix}.appointment_id as "appointmentId",
+    ${prefix}.created_at as "createdAt",
+    ${prefix}.updated_at as "updatedAt"
+  `;
+}
+
+function defaultRecallMessage(recall: Record<string, any>): string {
+  const template = recall.messageTemplate || recall.message_template;
+  if (template) {
+    return template;
+  }
+
+  // Avoid diagnosis-specific PHI in SMS by default.
+  return 'Dermatology DEMO Office: You are due for a dermatology follow-up visit. Please call us or reply to schedule. Reply STOP to opt out.';
+}
+
+function getRecallPatientId(recall: Record<string, any>): string | undefined {
+  return recall.patientId || recall.patient_id;
+}
+
+async function sendSmsIfRequested(
+  tenantId: string,
+  userId: string,
+  patientId: string,
+  messageContent: string
+): Promise<{ ok: boolean; error?: string }> {
+  const smsService = new SMSService(tenantId);
+  const smsResult = await smsService.sendSMS({
+    patientId,
+    message: messageContent,
+    userId,
+    messageType: 'reminder',
+  });
+
+  if (!smsResult.success) {
+    return { ok: false, error: smsResult.error || 'Failed to send SMS' };
+  }
+
+  return { ok: true };
+}
 
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -47,7 +145,7 @@ router.get('/campaigns', async (req: AuthedRequest, res) => {
     const { tenantId } = req.user!;
 
     const result = await pool.query<RecallCampaign>(
-      `SELECT * FROM recall_campaigns
+      `SELECT ${campaignSelect()} FROM recall_campaigns
        WHERE tenant_id = $1
        ORDER BY is_active DESC, name ASC`,
       [tenantId]
@@ -79,7 +177,7 @@ router.post('/campaigns', async (req: AuthedRequest, res) => {
       `INSERT INTO recall_campaigns (
         id, tenant_id, name, description, recall_type, interval_months, is_active, created_at, updated_at
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-      RETURNING *`,
+      RETURNING ${campaignSelect()}`,
       [id, tenantId, name, description, recallType, intervalMonths || 12, isActive ?? true]
     );
 
@@ -109,7 +207,7 @@ router.put('/campaigns/:id', async (req: AuthedRequest, res) => {
            is_active = COALESCE($5, is_active),
            updated_at = NOW()
        WHERE id = $6 AND tenant_id = $7
-       RETURNING *`,
+       RETURNING ${campaignSelect()}`,
       [name, description, recallType, intervalMonths, isActive, id, tenantId]
     );
 
@@ -201,22 +299,42 @@ router.get('/due', async (req: AuthedRequest, res) => {
 
     let query = `
       SELECT
-        pr.*,
-        p.first_name,
-        p.last_name,
+        ${patientRecallSelect('pr')},
+        p.first_name as "firstName",
+        p.last_name as "lastName",
         p.email,
         p.phone,
-        p.dob as date_of_birth,
-        rc.name as campaign_name,
-        rc.recall_type,
+        p.dob as "dateOfBirth",
+        rc.name as "campaignName",
+        rc.recall_type as "campaignRecallType",
+        latest_log.reminder_type as "lastReminderType",
+        latest_log.sent_at as "lastReminderSentAt",
+        latest_log.delivery_status as "lastReminderDeliveryStatus",
+        latest_thread.id as "textThreadId",
+        latest_thread.status as "textThreadStatus",
         (
-          SELECT COUNT(*)
+          SELECT COUNT(*)::int
           FROM reminder_log rl
           WHERE rl.recall_id = pr.id
-        ) as contact_attempts
+        ) as "contactAttempts"
       FROM patient_recalls pr
       JOIN patients p ON p.id = pr.patient_id
-      LEFT JOIN recall_campaigns rc ON rc.id = pr.campaign_id
+      LEFT JOIN recall_campaigns rc ON rc.id = pr.campaign_id AND rc.tenant_id = pr.tenant_id
+      LEFT JOIN LATERAL (
+        SELECT rl.reminder_type, rl.sent_at, rl.delivery_status
+        FROM reminder_log rl
+        WHERE rl.recall_id = pr.id
+        ORDER BY rl.sent_at DESC
+        LIMIT 1
+      ) latest_log ON true
+      LEFT JOIN LATERAL (
+        SELECT t.id, t.status
+        FROM patient_message_threads t
+        WHERE t.patient_id = pr.patient_id
+          AND t.tenant_id = pr.tenant_id
+        ORDER BY t.last_message_at DESC NULLS LAST, t.created_at DESC
+        LIMIT 1
+      ) latest_thread ON true
       WHERE pr.tenant_id = $1
     `;
 
@@ -225,13 +343,13 @@ router.get('/due', async (req: AuthedRequest, res) => {
 
     if (startDate) {
       paramCount++;
-      query += ` AND pr.due_date >= $${paramCount}`;
+      query += ` AND COALESCE(pr.due_date, pr.recall_date) >= $${paramCount}`;
       params.push(startDate);
     }
 
     if (endDate) {
       paramCount++;
-      query += ` AND pr.due_date <= $${paramCount}`;
+      query += ` AND COALESCE(pr.due_date, pr.recall_date) <= $${paramCount}`;
       params.push(endDate);
     }
 
@@ -247,7 +365,7 @@ router.get('/due', async (req: AuthedRequest, res) => {
       params.push(status);
     }
 
-    query += ' ORDER BY pr.due_date ASC, p.last_name ASC';
+    query += ' ORDER BY COALESCE(pr.due_date, pr.recall_date) ASC, p.last_name ASC';
 
     const result = await pool.query(query, params);
 
@@ -265,20 +383,83 @@ router.get('/due', async (req: AuthedRequest, res) => {
 router.post('/patient', async (req: AuthedRequest, res) => {
   try {
     const { tenantId } = req.user!;
-    const { patientId, campaignId, dueDate, notes } = req.body;
+    const { patientId, campaignId, dueDate, notes, recallType } = req.body;
 
     if (!patientId || !dueDate) {
       return res.status(400).json({ error: 'Patient ID and due date are required' });
+    }
+
+    const patientResult = await pool.query(
+      'SELECT id FROM patients WHERE id = $1 AND tenant_id = $2',
+      [patientId, tenantId]
+    );
+
+    if (patientResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    let resolvedRecallType = recallType || 'Manual Recall';
+
+    if (campaignId) {
+      const campaignResult = await pool.query(
+        `SELECT id, recall_type as "recallType"
+         FROM recall_campaigns
+         WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+        [campaignId, tenantId]
+      );
+
+      if (campaignResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Recall campaign not found' });
+      }
+
+      resolvedRecallType = campaignResult.rows[0].recallType || resolvedRecallType;
+
+      const duplicateResult = await pool.query(
+        `SELECT id
+         FROM patient_recalls
+         WHERE tenant_id = $1
+           AND patient_id = $2
+           AND campaign_id = $3
+           AND status IN ('pending', 'contacted', 'scheduled')
+         LIMIT 1`,
+        [tenantId, patientId, campaignId]
+      );
+
+      if (duplicateResult.rows.length > 0) {
+        return res.status(409).json({ error: 'Patient already has an active recall for this campaign' });
+      }
     }
 
     const id = randomUUID();
 
     const result = await pool.query<PatientRecall>(
       `INSERT INTO patient_recalls (
-        id, tenant_id, patient_id, campaign_id, due_date, status, notes, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, NOW(), NOW())
-      RETURNING *`,
-      [id, tenantId, patientId, campaignId, dueDate, notes]
+        id,
+        tenant_id,
+        patient_id,
+        campaign_id,
+        due_date,
+        recall_date,
+        recall_type,
+        status,
+        notes,
+        created_at,
+        updated_at
+      ) VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $5,
+        $7,
+        'pending',
+        $6,
+        NOW(),
+        NOW()
+      )
+      RETURNING ${patientRecallReturning('patient_recalls')}`,
+      [id, tenantId, patientId, campaignId || null, dueDate, notes, resolvedRecallType]
     );
 
     res.status(201).json(result.rows[0]);
@@ -314,7 +495,7 @@ router.put('/:id/status', async (req: AuthedRequest, res) => {
            notes = COALESCE($3, notes),
            updated_at = NOW()
        WHERE id = $4 AND tenant_id = $5
-       RETURNING *`,
+       RETURNING ${patientRecallReturning('patient_recalls')}`,
       [status, appointmentId, notes, id, tenantId]
     );
 
@@ -343,14 +524,24 @@ router.post('/:id/contact', async (req: AuthedRequest, res) => {
       return res.status(400).json({ error: 'Contact method is required' });
     }
 
-    const validMethods = ['email', 'sms', 'phone', 'mail', 'portal'];
-    if (!validMethods.includes(contactMethod)) {
+    if (!VALID_CONTACT_METHODS.includes(contactMethod)) {
       return res.status(400).json({ error: 'Invalid contact method' });
     }
 
     // Get recall details
-    const recallResult = await pool.query<PatientRecall>(
-      'SELECT * FROM patient_recalls WHERE id = $1 AND tenant_id = $2',
+    const recallResult = await pool.query(
+      `SELECT
+        ${patientRecallSelect('pr')},
+        p.first_name as "firstName",
+        p.last_name as "lastName",
+        p.phone,
+        p.email,
+        rc.name as "campaignName",
+        rc.message_template as "messageTemplate"
+       FROM patient_recalls pr
+       JOIN patients p ON p.id = pr.patient_id
+       LEFT JOIN recall_campaigns rc ON rc.id = pr.campaign_id AND rc.tenant_id = pr.tenant_id
+       WHERE pr.id = $1 AND pr.tenant_id = $2`,
       [id, tenantId]
     );
 
@@ -359,21 +550,47 @@ router.post('/:id/contact', async (req: AuthedRequest, res) => {
     }
 
     const recall = recallResult.rows[0]!;
+    const patientId = getRecallPatientId(recall);
+
+    if (!patientId) {
+      return res.status(500).json({ error: 'Recall is missing a patient link' });
+    }
 
     // Check if patient can be contacted via this method
-    const canContact = await canContactPatient(tenantId, recall.patientId, contactMethod as any);
+    const canContact = await canContactPatient(tenantId, patientId, contactMethod as ContactMethod);
 
     if (!canContact.canContact) {
       return res.status(403).json({ error: canContact.reason });
     }
 
+    const outboundMessage = messageContent || defaultRecallMessage(recall);
+
+    if (contactMethod === 'sms') {
+      const smsResult = await sendSmsIfRequested(tenantId, userId, patientId, outboundMessage);
+
+      if (!smsResult.ok) {
+        await logReminder(
+          tenantId,
+          patientId,
+          id!,
+          contactMethod,
+          outboundMessage,
+          userId,
+          'failed',
+          smsResult.error
+        );
+
+        return res.status(502).json({ error: smsResult.error || 'Failed to send SMS recall reminder' });
+      }
+    }
+
     // Log the reminder
     await logReminder(
       tenantId,
-      recall.patientId,
+      patientId,
       id!,
-      contactMethod as any,
-      messageContent || `Recall: ${contactMethod} contact`,
+      contactMethod,
+      outboundMessage,
       userId
     );
 
@@ -383,6 +600,11 @@ router.post('/:id/contact', async (req: AuthedRequest, res) => {
        SET last_contact_date = CURRENT_DATE,
            contact_method = $1,
            notes = COALESCE($2, notes),
+           notified_on = CASE WHEN $1 IN ('email', 'sms', 'portal') THEN NOW() ELSE notified_on END,
+           notification_count = CASE
+             WHEN $1 IN ('email', 'sms', 'portal') THEN COALESCE(notification_count, 0) + 1
+             ELSE notification_count
+           END,
            status = CASE WHEN status = 'pending' THEN 'contacted' ELSE status END,
            updated_at = NOW()
        WHERE id = $3 AND tenant_id = $4`,
@@ -407,11 +629,20 @@ router.get('/history', async (req: AuthedRequest, res) => {
 
     let query = `
       SELECT
-        rl.*,
-        p.first_name,
-        p.last_name,
-        pr.campaign_id,
-        rc.name as campaign_name
+        rl.id,
+        rl.tenant_id as "tenantId",
+        rl.patient_id as "patientId",
+        rl.recall_id as "recallId",
+        rl.reminder_type as "reminderType",
+        rl.sent_at as "sentAt",
+        rl.delivery_status as "deliveryStatus",
+        rl.message_content as "messageContent",
+        rl.sent_by as "sentBy",
+        rl.error_message as "errorMessage",
+        p.first_name as "firstName",
+        p.last_name as "lastName",
+        pr.campaign_id as "campaignId",
+        rc.name as "campaignName"
       FROM reminder_log rl
       JOIN patients p ON p.id = rl.patient_id
       LEFT JOIN patient_recalls pr ON pr.id = rl.recall_id
@@ -490,12 +721,12 @@ router.get('/stats', async (req: AuthedRequest, res) => {
     // Overall statistics
     const statsResult = await pool.query(
       `SELECT
-        COUNT(*) FILTER (WHERE status = 'pending') as total_pending,
-        COUNT(*) FILTER (WHERE status = 'contacted') as total_contacted,
-        COUNT(*) FILTER (WHERE status = 'scheduled') as total_scheduled,
-        COUNT(*) FILTER (WHERE status = 'completed') as total_completed,
-        COUNT(*) FILTER (WHERE status = 'dismissed') as total_dismissed,
-        COUNT(*) as total_recalls
+        COUNT(*) FILTER (WHERE status = 'pending')::int as total_pending,
+        COUNT(*) FILTER (WHERE status = 'contacted')::int as total_contacted,
+        COUNT(*) FILTER (WHERE status = 'scheduled')::int as total_scheduled,
+        COUNT(*) FILTER (WHERE status = 'completed')::int as total_completed,
+        COUNT(*) FILTER (WHERE status = 'dismissed')::int as total_dismissed,
+        COUNT(*)::int as total_recalls
       FROM patient_recalls pr
       WHERE pr.tenant_id = $1 ${campaignFilter} ${dateFilter}`,
       params
@@ -506,12 +737,13 @@ router.get('/stats', async (req: AuthedRequest, res) => {
       `SELECT
         rc.id,
         rc.name,
-        rc.recall_type,
-        COUNT(pr.id) as total_recalls,
-        COUNT(*) FILTER (WHERE pr.status = 'pending') as pending,
-        COUNT(*) FILTER (WHERE pr.status = 'contacted') as contacted,
-        COUNT(*) FILTER (WHERE pr.status = 'scheduled') as scheduled,
-        COUNT(*) FILTER (WHERE pr.status = 'completed') as completed
+        rc.recall_type as "recallType",
+        COUNT(pr.id)::int as total_recalls,
+        COUNT(*) FILTER (WHERE pr.status = 'pending')::int as pending,
+        COUNT(*) FILTER (WHERE pr.status = 'contacted')::int as contacted,
+        COUNT(*) FILTER (WHERE pr.status = 'scheduled')::int as scheduled,
+        COUNT(*) FILTER (WHERE pr.status = 'completed')::int as completed,
+        COUNT(*) FILTER (WHERE pr.status = 'dismissed')::int as dismissed
       FROM recall_campaigns rc
       LEFT JOIN patient_recalls pr ON pr.campaign_id = rc.id AND pr.tenant_id = rc.tenant_id ${dateFilter}
       WHERE rc.tenant_id = $1 ${campaignFilter}
@@ -522,9 +754,9 @@ router.get('/stats', async (req: AuthedRequest, res) => {
 
     // Contact rate and conversion rate
     const stats = statsResult.rows[0];
-    const totalContacted = parseInt(stats.total_contacted) + parseInt(stats.total_scheduled) + parseInt(stats.total_completed);
+    const totalContacted = Number(stats.total_contacted) + Number(stats.total_scheduled) + Number(stats.total_completed);
     const contactRate = stats.total_recalls > 0 ? (totalContacted / stats.total_recalls) * 100 : 0;
-    const conversionRate = totalContacted > 0 ? ((parseInt(stats.total_scheduled) + parseInt(stats.total_completed)) / totalContacted) * 100 : 0;
+    const conversionRate = totalContacted > 0 ? ((Number(stats.total_scheduled) + Number(stats.total_completed)) / totalContacted) * 100 : 0;
 
     res.json({
       overall: {
@@ -594,7 +826,7 @@ router.post('/bulk-notify', async (req: AuthedRequest, res) => {
       return res.status(400).json({ error: 'Notification type is required' });
     }
 
-    const validTypes = ['email', 'sms', 'phone', 'portal'];
+    const validTypes = ['email', 'sms', 'phone', 'portal'] as const;
     if (!validTypes.includes(notificationType)) {
       return res.status(400).json({ error: 'Invalid notification type' });
     }
@@ -610,10 +842,18 @@ router.post('/bulk-notify', async (req: AuthedRequest, res) => {
     for (const recallId of recallIds) {
       try {
         // Get recall details
-        const recallResult = await pool.query<PatientRecall>(
-          `SELECT pr.*, p.first_name, p.last_name, p.email, p.phone
+        const recallResult = await pool.query(
+          `SELECT
+             ${patientRecallSelect('pr')},
+             p.first_name as "firstName",
+             p.last_name as "lastName",
+             p.email,
+             p.phone,
+             rc.name as "campaignName",
+             rc.message_template as "messageTemplate"
            FROM patient_recalls pr
            JOIN patients p ON p.id = pr.patient_id
+           LEFT JOIN recall_campaigns rc ON rc.id = pr.campaign_id AND rc.tenant_id = pr.tenant_id
            WHERE pr.id = $1 AND pr.tenant_id = $2`,
           [recallId, tenantId]
         );
@@ -625,9 +865,16 @@ router.post('/bulk-notify', async (req: AuthedRequest, res) => {
         }
 
         const recall = recallResult.rows[0]!;
+        const patientId = getRecallPatientId(recall);
+
+        if (!patientId) {
+          results.failed++;
+          results.errors.push({ recallId, error: 'Recall is missing a patient link' });
+          continue;
+        }
 
         // Check if patient can be contacted via this method
-        const canContact = await canContactPatient(tenantId, recall.patientId, notificationType as any);
+        const canContact = await canContactPatient(tenantId, patientId, notificationType as ContactMethod);
 
         if (!canContact.canContact) {
           results.failed++;
@@ -636,14 +883,35 @@ router.post('/bulk-notify', async (req: AuthedRequest, res) => {
         }
 
         // Create notification message
-        const messageContent = messageTemplate || `Reminder: You have a scheduled appointment coming up.`;
+        const messageContent = messageTemplate || defaultRecallMessage(recall);
+
+        if (notificationType === 'sms') {
+          const smsResult = await sendSmsIfRequested(tenantId, userId, patientId, messageContent);
+
+          if (!smsResult.ok) {
+            await logReminder(
+              tenantId,
+              patientId,
+              recallId,
+              notificationType,
+              messageContent,
+              userId,
+              'failed',
+              smsResult.error
+            );
+
+            results.failed++;
+            results.errors.push({ recallId, error: smsResult.error || 'Failed to send SMS' });
+            continue;
+          }
+        }
 
         // Log the reminder
         await logReminder(
           tenantId,
-          recall.patientId,
+          patientId,
           recallId,
-          notificationType as any,
+          notificationType,
           messageContent,
           userId
         );
@@ -690,15 +958,15 @@ router.get('/:id/notification-history', async (req: AuthedRequest, res) => {
     const result = await pool.query(
       `SELECT
         rl.id,
-        rl.tenant_id,
-        rl.recall_id,
-        rl.patient_id,
-        rl.reminder_type as notification_type,
+        rl.tenant_id as "tenantId",
+        rl.recall_id as "recallId",
+        rl.patient_id as "patientId",
+        rl.reminder_type as "notificationType",
         rl.delivery_status as status,
-        rl.message_content,
-        rl.sent_by,
-        rl.sent_at,
-        u.full_name as sent_by_name
+        rl.message_content as "messageContent",
+        rl.sent_by as "sentBy",
+        rl.sent_at as "sentAt",
+        u.full_name as "sentByName"
       FROM reminder_log rl
       LEFT JOIN users u ON rl.sent_by = u.id::text
       WHERE rl.recall_id = $1 AND rl.tenant_id = $2
@@ -728,12 +996,12 @@ router.get('/export', async (req: AuthedRequest, res) => {
         p.first_name,
         p.email,
         p.phone,
-        pr.due_date,
+        COALESCE(pr.due_date, pr.recall_date) as due_date,
         pr.status,
         pr.last_contact_date,
         pr.contact_method,
         rc.name as campaign_name,
-        rc.recall_type
+        COALESCE(pr.recall_type, rc.recall_type) as recall_type
       FROM patient_recalls pr
       JOIN patients p ON p.id = pr.patient_id
       LEFT JOIN recall_campaigns rc ON rc.id = pr.campaign_id
@@ -755,7 +1023,7 @@ router.get('/export', async (req: AuthedRequest, res) => {
       params.push(status);
     }
 
-    query += ' ORDER BY pr.due_date ASC, p.last_name ASC';
+    query += ' ORDER BY COALESCE(pr.due_date, pr.recall_date) ASC, p.last_name ASC';
 
     const result = await pool.query(query, params);
 

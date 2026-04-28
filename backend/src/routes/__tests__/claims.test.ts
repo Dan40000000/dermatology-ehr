@@ -370,6 +370,24 @@ describe("Claims routes", () => {
     expect(res.body.topDenialReasons).toHaveLength(1);
   });
 
+  it("GET /claims/era resolves the ERA list route before claim detail", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "era-1" }], rowCount: 1 });
+
+    const res = await request(app).get("/claims/era");
+
+    expect(res.status).toBe(200);
+    expect(res.body.eraImports).toHaveLength(1);
+  });
+
+  it("GET /claims/modifiers returns empty rules when modifier tables are missing", async () => {
+    getAllModifierRulesMock.mockRejectedValueOnce(Object.assign(new Error("missing modifier_rules"), { code: "42P01" }));
+
+    const res = await request(app).get("/claims/modifiers");
+
+    expect(res.status).toBe(200);
+    expect(res.body.modifiers).toEqual([]);
+  });
+
   it("GET /claims/modifiers returns rules", async () => {
     getAllModifierRulesMock.mockResolvedValueOnce([{ modifier_code: "25" }]);
 

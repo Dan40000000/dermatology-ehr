@@ -8,7 +8,6 @@ import {
   getTomorrowsPatients,
 } from "../eligibilityService";
 import { pool } from "../../db/pool";
-import { mockEligibilityCheck, mockBatchEligibilityCheck } from "../availityMock";
 import { logger } from "../../lib/logger";
 
 jest.mock("../../db/pool", () => ({
@@ -17,16 +16,27 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
-jest.mock("../availityMock", () => ({
-  mockEligibilityCheck: jest.fn(),
-  mockBatchEligibilityCheck: jest.fn(),
-}));
-
 jest.mock("../../lib/logger", () => ({
   logger: {
     info: jest.fn(),
     error: jest.fn(),
   },
+}));
+
+const checkEligibilityMock = jest.fn();
+const batchEligibilityCheckMock = jest.fn();
+const isMockModeMock = jest.fn(() => false);
+const getProviderMock = jest.fn(() => "availity");
+
+jest.mock("../integrationService", () => ({
+  getIntegrationService: jest.fn(() => ({
+    getEligibilityAdapter: jest.fn(async () => ({
+      checkEligibility: checkEligibilityMock,
+      batchEligibilityCheck: batchEligibilityCheckMock,
+      isMockMode: isMockModeMock,
+      getProvider: getProviderMock,
+    })),
+  })),
 }));
 
 const baseEligibilityResponse = {
@@ -104,6 +114,12 @@ const baseEligibilityResponse = {
 describe("eligibilityService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    checkEligibilityMock.mockReset();
+    batchEligibilityCheckMock.mockReset();
+    isMockModeMock.mockReset();
+    getProviderMock.mockReset();
+    isMockModeMock.mockReturnValue(false);
+    getProviderMock.mockReturnValue("availity");
   });
 
   it("throws when patient is not found", async () => {
@@ -161,7 +177,7 @@ describe("eligibilityService", () => {
       insurance_payer_id: "BCBS",
     };
 
-    (mockEligibilityCheck as jest.Mock).mockResolvedValue(baseEligibilityResponse);
+    checkEligibilityMock.mockResolvedValue(baseEligibilityResponse);
 
     (pool.query as jest.Mock)
       .mockResolvedValueOnce({ rows: [patientRow] })
@@ -180,7 +196,13 @@ describe("eligibilityService", () => {
 
     const result = await verifyPatientEligibility("patient-1", "tenant-1", "user-1");
 
-    expect(mockEligibilityCheck).toHaveBeenCalled();
+    expect(checkEligibilityMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        patientId: "patient-1",
+        payerId: "BCBS",
+        memberId: "MEM123",
+      })
+    );
     expect(result.verificationStatus).toBe("active");
     expect(result.hasIssues).toBe(false);
   });
@@ -233,7 +255,15 @@ describe("eligibilityService", () => {
       return { rows: [] };
     });
 
-    (mockBatchEligibilityCheck as jest.Mock).mockResolvedValue([baseEligibilityResponse]);
+    batchEligibilityCheckMock.mockResolvedValue({
+      batchId: "remote-batch-1",
+      totalPatients: 1,
+      verifiedCount: 1,
+      activeCount: 1,
+      inactiveCount: 0,
+      errorCount: 0,
+      results: [baseEligibilityResponse],
+    });
 
     const result = await batchVerifyEligibility({
       patientIds: ["patient-no-insurance", "patient-verified"],

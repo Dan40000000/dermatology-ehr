@@ -1354,6 +1354,7 @@ const migrations: { name: string; sql: string }[] = [
       copay_amount numeric,
       insurance_card_front_url text,
       insurance_card_back_url text,
+      visit_details jsonb,
       ip_address text,
       user_agent text,
       started_at timestamptz default now(),
@@ -1434,6 +1435,7 @@ const migrations: { name: string; sql: string }[] = [
     alter table tasks add column if not exists description text;
     alter table tasks add column if not exists category text;
     alter table tasks add column if not exists priority text default 'normal';
+    alter table tasks add column if not exists created_by text references users(id);
     `,
   },
   {
@@ -7802,6 +7804,8 @@ Consider age-appropriate treatments and include family counseling points.',
     ALTER TABLE recall_campaigns ADD COLUMN IF NOT EXISTS recall_type TEXT;
     ALTER TABLE recall_campaigns ADD COLUMN IF NOT EXISTS interval_months INTEGER;
     ALTER TABLE recall_campaigns ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+    ALTER TABLE recall_campaigns ADD COLUMN IF NOT EXISTS criteria JSONB DEFAULT '{}'::jsonb;
+    ALTER TABLE recall_campaigns ADD COLUMN IF NOT EXISTS message_template TEXT;
 
     -- Patient Recalls Table
     CREATE TABLE IF NOT EXISTS patient_recalls (
@@ -7822,11 +7826,23 @@ Consider age-appropriate treatments and include family counseling points.',
     -- Add missing columns to patient_recalls if table existed
     ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS campaign_id TEXT;
     ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS due_date DATE;
+    ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS recall_date DATE;
+    ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS recall_type TEXT;
     ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending';
     ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS last_contact_date DATE;
     ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS contact_method TEXT;
     ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS notes TEXT;
+    ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS doctor_notes TEXT;
+    ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS preferred_contact_method TEXT;
+    ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS notified_on TIMESTAMPTZ;
+    ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS notification_count INTEGER DEFAULT 0;
     ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS appointment_id TEXT;
+    ALTER TABLE patient_recalls ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES users(id);
+
+    UPDATE patient_recalls
+    SET recall_date = COALESCE(recall_date, due_date),
+        recall_type = COALESCE(recall_type, 'Manual Recall')
+    WHERE recall_date IS NULL OR recall_type IS NULL;
 
     -- Reminder Log Table (HIPAA audit trail)
     CREATE TABLE IF NOT EXISTS reminder_log (
@@ -9044,6 +9060,1745 @@ Consider age-appropriate treatments and include family counseling points.',
     CREATE INDEX IF NOT EXISTS idx_patient_messages_sender_type ON patient_messages(sender_type);
     CREATE INDEX IF NOT EXISTS idx_patient_messages_sender_patient ON patient_messages(sender_patient_id);
     CREATE INDEX IF NOT EXISTS idx_patient_messages_sender_user ON patient_messages(sender_user_id);
+    `,
+  },
+  {
+    name: "141_location_downtime_packet_settings",
+    sql: `
+    ALTER TABLE locations ADD COLUMN IF NOT EXISTS downtime_packets_enabled BOOLEAN DEFAULT false;
+    ALTER TABLE locations ADD COLUMN IF NOT EXISTS downtime_packet_time TEXT DEFAULT '05:00';
+    ALTER TABLE locations ADD COLUMN IF NOT EXISTS downtime_device_profile TEXT DEFAULT 'auto';
+    ALTER TABLE locations ADD COLUMN IF NOT EXISTS downtime_include_dob BOOLEAN DEFAULT true;
+    ALTER TABLE locations ADD COLUMN IF NOT EXISTS downtime_include_phone BOOLEAN DEFAULT true;
+    ALTER TABLE locations ADD COLUMN IF NOT EXISTS downtime_include_insurance BOOLEAN DEFAULT true;
+
+    UPDATE locations
+    SET downtime_packets_enabled = COALESCE(downtime_packets_enabled, false),
+        downtime_packet_time = COALESCE(downtime_packet_time, '05:00'),
+        downtime_device_profile = COALESCE(downtime_device_profile, 'auto'),
+        downtime_include_dob = COALESCE(downtime_include_dob, true),
+        downtime_include_phone = COALESCE(downtime_include_phone, true),
+        downtime_include_insurance = COALESCE(downtime_include_insurance, true);
+    `,
+  },
+  {
+    name: "142_stored_downtime_packets",
+    sql: `
+    CREATE TABLE IF NOT EXISTS downtime_packets (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      location_id TEXT NOT NULL REFERENCES locations(id),
+      packet_date DATE NOT NULL,
+      packet_payload JSONB NOT NULL,
+      source TEXT NOT NULL DEFAULT 'scheduled',
+      generated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (tenant_id, location_id, packet_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_downtime_packets_tenant_date
+      ON downtime_packets (tenant_id, packet_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_downtime_packets_location_date
+      ON downtime_packets (location_id, packet_date DESC);
+
+    ALTER TABLE locations ALTER COLUMN downtime_packet_time SET DEFAULT '12:00';
+
+    UPDATE locations
+    SET downtime_packet_time = '12:00'
+    WHERE downtime_packet_time IS NULL
+       OR downtime_packet_time = ''
+       OR downtime_packet_time = '05:00';
+    `,
+  },
+  {
+    name: "143_patient_self_scheduling_runtime_compat",
+    sql: `
+    CREATE TABLE IF NOT EXISTS provider_availability_templates (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+      day_of_week INTEGER NOT NULL,
+      start_time TIME NOT NULL,
+      end_time TIME NOT NULL,
+      slot_duration_minutes INTEGER NOT NULL DEFAULT 15,
+      allow_online_booking BOOLEAN NOT NULL DEFAULT true,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT provider_availability_templates_valid_day CHECK (day_of_week >= 0 AND day_of_week <= 6),
+      CONSTRAINT provider_availability_templates_valid_times CHECK (start_time < end_time),
+      CONSTRAINT provider_availability_templates_valid_slot_duration CHECK (slot_duration_minutes IN (15, 30, 60))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_provider_availability_templates_provider
+      ON provider_availability_templates(provider_id);
+    CREATE INDEX IF NOT EXISTS idx_provider_availability_templates_tenant
+      ON provider_availability_templates(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_provider_availability_templates_dow
+      ON provider_availability_templates(day_of_week);
+    CREATE INDEX IF NOT EXISTS idx_provider_availability_templates_active
+      ON provider_availability_templates(is_active)
+      WHERE is_active = true;
+
+    CREATE TABLE IF NOT EXISTS provider_time_off (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+      start_datetime TIMESTAMPTZ NOT NULL,
+      end_datetime TIMESTAMPTZ NOT NULL,
+      reason TEXT,
+      notes TEXT,
+      is_all_day BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by TEXT,
+      CONSTRAINT provider_time_off_valid_range CHECK (start_datetime < end_datetime)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_provider_time_off_provider
+      ON provider_time_off(provider_id);
+    CREATE INDEX IF NOT EXISTS idx_provider_time_off_tenant
+      ON provider_time_off(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_provider_time_off_dates
+      ON provider_time_off(start_datetime, end_datetime);
+
+    CREATE TABLE IF NOT EXISTS online_booking_settings (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL UNIQUE REFERENCES tenants(id) ON DELETE CASCADE,
+      is_enabled BOOLEAN NOT NULL DEFAULT true,
+      booking_window_days INTEGER NOT NULL DEFAULT 60,
+      min_advance_hours INTEGER NOT NULL DEFAULT 24,
+      max_advance_days INTEGER NOT NULL DEFAULT 90,
+      allow_cancellation BOOLEAN NOT NULL DEFAULT true,
+      cancellation_cutoff_hours INTEGER NOT NULL DEFAULT 24,
+      require_reason BOOLEAN NOT NULL DEFAULT false,
+      confirmation_email BOOLEAN NOT NULL DEFAULT true,
+      reminder_email BOOLEAN NOT NULL DEFAULT true,
+      reminder_hours_before INTEGER NOT NULL DEFAULT 24,
+      custom_message TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT online_booking_settings_valid_window CHECK (booking_window_days > 0 AND booking_window_days <= max_advance_days),
+      CONSTRAINT online_booking_settings_valid_min_advance CHECK (min_advance_hours >= 0),
+      CONSTRAINT online_booking_settings_valid_cancellation CHECK (cancellation_cutoff_hours >= 0)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_online_booking_settings_tenant
+      ON online_booking_settings(tenant_id);
+
+    CREATE TABLE IF NOT EXISTS appointment_booking_history (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      appointment_id TEXT NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      previous_scheduled_start TIMESTAMPTZ,
+      previous_scheduled_end TIMESTAMPTZ,
+      new_scheduled_start TIMESTAMPTZ,
+      new_scheduled_end TIMESTAMPTZ,
+      reason TEXT,
+      booked_via TEXT NOT NULL DEFAULT 'patient_portal',
+      ip_address TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_appointment_booking_history_appointment
+      ON appointment_booking_history(appointment_id);
+    CREATE INDEX IF NOT EXISTS idx_appointment_booking_history_patient
+      ON appointment_booking_history(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_appointment_booking_history_tenant
+      ON appointment_booking_history(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_appointment_booking_history_created_at
+      ON appointment_booking_history(created_at DESC);
+
+    INSERT INTO online_booking_settings (
+      id,
+      tenant_id,
+      is_enabled,
+      booking_window_days,
+      min_advance_hours,
+      max_advance_days,
+      allow_cancellation,
+      cancellation_cutoff_hours,
+      require_reason,
+      confirmation_email,
+      reminder_email,
+      reminder_hours_before,
+      custom_message
+    )
+    SELECT
+      CONCAT('booking-settings-', t.id),
+      t.id,
+      true,
+      60,
+      24,
+      90,
+      true,
+      24,
+      false,
+      true,
+      true,
+      24,
+      'Welcome to our online booking system. Please select your preferred appointment time.'
+    FROM tenants t
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM online_booking_settings obs
+      WHERE obs.tenant_id = t.id
+    );
+
+    INSERT INTO provider_availability_templates (
+      id,
+      tenant_id,
+      provider_id,
+      day_of_week,
+      start_time,
+      end_time,
+      slot_duration_minutes,
+      allow_online_booking,
+      is_active,
+      created_at,
+      updated_at
+    )
+    SELECT
+      CONCAT('availability-template-', pa.id),
+      pa.tenant_id,
+      pa.provider_id,
+      pa.day_of_week,
+      pa.start_time,
+      pa.end_time,
+      15,
+      true,
+      true,
+      COALESCE(pa.created_at, CURRENT_TIMESTAMP),
+      CURRENT_TIMESTAMP
+    FROM provider_availability pa
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM provider_availability_templates pat
+      WHERE pat.tenant_id = pa.tenant_id
+        AND pat.provider_id = pa.provider_id
+        AND pat.day_of_week = pa.day_of_week
+        AND pat.start_time = pa.start_time
+        AND pat.end_time = pa.end_time
+    );
+
+    INSERT INTO provider_availability_templates (
+      id,
+      tenant_id,
+      provider_id,
+      day_of_week,
+      start_time,
+      end_time,
+      slot_duration_minutes,
+      allow_online_booking,
+      is_active,
+      created_at,
+      updated_at
+    )
+    SELECT
+      CONCAT('availability-template-default-', t.id, '-', p.id, '-', gs.day_of_week),
+      t.id,
+      p.id,
+      gs.day_of_week,
+      TIME '09:00',
+      TIME '17:00',
+      15,
+      true,
+      true,
+      CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP
+    FROM tenants t
+    JOIN providers p ON p.tenant_id = t.id
+    CROSS JOIN generate_series(1, 5) AS gs(day_of_week)
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM provider_availability_templates pat
+      WHERE pat.tenant_id = t.id
+        AND pat.provider_id = p.id
+    );
+    `,
+  },
+  {
+    name: "144_guest_online_booking_guarantees",
+    sql: `
+    ALTER TABLE online_booking_settings
+      ADD COLUMN IF NOT EXISTS allow_guest_booking BOOLEAN NOT NULL DEFAULT true,
+      ADD COLUMN IF NOT EXISTS require_card_on_file_for_guest_booking BOOLEAN NOT NULL DEFAULT true,
+      ADD COLUMN IF NOT EXISTS guest_cancellation_fee_cents INTEGER NOT NULL DEFAULT 5000;
+
+    CREATE TABLE IF NOT EXISTS online_booking_guest_guarantees (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      appointment_id TEXT NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      payment_method_id TEXT NOT NULL REFERENCES payment_methods(id) ON DELETE CASCADE,
+      cancellation_fee_cents INTEGER NOT NULL DEFAULT 5000,
+      policy_acknowledged BOOLEAN NOT NULL DEFAULT true,
+      policy_text TEXT,
+      processor TEXT NOT NULL DEFAULT 'mock_stripe',
+      authorization_status TEXT NOT NULL DEFAULT 'authorized',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (appointment_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_online_booking_guest_guarantees_tenant
+      ON online_booking_guest_guarantees(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_online_booking_guest_guarantees_patient
+      ON online_booking_guest_guarantees(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_online_booking_guest_guarantees_appointment
+      ON online_booking_guest_guarantees(appointment_id);
+    `,
+  },
+  {
+    name: "145_sms_runtime_compat",
+    sql: `
+    ALTER TABLE sms_opt_out
+      ADD COLUMN IF NOT EXISTS patient_id TEXT,
+      ADD COLUMN IF NOT EXISTS opted_out_via TEXT,
+      ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+
+    UPDATE sms_opt_out
+    SET is_active = CASE
+      WHEN opted_in_at IS NOT NULL
+        AND (opted_out_at IS NULL OR opted_in_at >= opted_out_at)
+        THEN false
+      ELSE COALESCE(is_active, true)
+    END
+    WHERE is_active IS NULL
+       OR opted_in_at IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_sms_opt_out_tenant ON sms_opt_out(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_sms_opt_out_phone ON sms_opt_out(phone_number);
+    CREATE INDEX IF NOT EXISTS idx_sms_opt_out_active ON sms_opt_out(tenant_id, is_active) WHERE is_active = true;
+
+    ALTER TABLE sms_messages
+      ADD COLUMN IF NOT EXISTS body TEXT,
+      ADD COLUMN IF NOT EXISTS error_code TEXT,
+      ADD COLUMN IF NOT EXISTS related_appointment_id TEXT,
+      ADD COLUMN IF NOT EXISTS related_thread_id TEXT,
+      ADD COLUMN IF NOT EXISTS in_response_to TEXT,
+      ADD COLUMN IF NOT EXISTS media_urls JSONB,
+      ADD COLUMN IF NOT EXISTS sent_by_user_id TEXT,
+      ADD COLUMN IF NOT EXISTS template_id TEXT;
+
+    UPDATE sms_messages
+    SET body = COALESCE(body, NULLIF(message_body, ''), NULLIF(content, ''))
+    WHERE body IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_sms_messages_appointment ON sms_messages(related_appointment_id);
+    CREATE INDEX IF NOT EXISTS idx_sms_messages_thread ON sms_messages(related_thread_id);
+    CREATE INDEX IF NOT EXISTS idx_sms_messages_patient_created ON sms_messages(patient_id, created_at DESC);
+
+    ALTER TABLE sms_conversations
+      ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active',
+      ADD COLUMN IF NOT EXISTS last_message_direction TEXT,
+      ADD COLUMN IF NOT EXISTS last_message_preview TEXT,
+      ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS last_read_by TEXT,
+      ADD COLUMN IF NOT EXISTS assigned_to TEXT,
+      ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'general',
+      ADD COLUMN IF NOT EXISTS thread_status TEXT DEFAULT 'open';
+
+    UPDATE sms_conversations
+    SET status = CASE
+      WHEN consent_status = 'opted_out' OR opt_out_date IS NOT NULL THEN 'blocked'
+      ELSE COALESCE(status, 'active')
+    END,
+    category = COALESCE(category, 'general'),
+    thread_status = COALESCE(thread_status, 'open');
+    `,
+  },
+  {
+    name: "146_portal_checkin_visit_details",
+    sql: `
+    ALTER TABLE portal_checkin_sessions
+      ADD COLUMN IF NOT EXISTS visit_details JSONB;
+    `,
+  },
+  {
+    name: "147_sync_demo_portal_patients",
+    sql: `
+    INSERT INTO patients (
+      id, tenant_id, first_name, last_name, dob, phone, email,
+      address, city, state, zip, insurance, allergies, medications
+    )
+    SELECT
+      'demo-patient-1',
+      'tenant-demo',
+      'Alex',
+      'Johnson',
+      '1985-03-15',
+      '(720) 555-0142',
+      'patient@demo.portal',
+      '4821 Pinecrest Drive',
+      'Denver',
+      'CO',
+      '80202',
+      'Blue Cross Blue Shield of Colorado',
+      'Penicillin (Hives), Sulfonamides (Rash)',
+      'Methotrexate 15mg weekly, Tretinoin 0.025% cream'
+    WHERE EXISTS (SELECT 1 FROM tenants WHERE id = 'tenant-demo')
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      first_name = EXCLUDED.first_name,
+      last_name = EXCLUDED.last_name,
+      dob = EXCLUDED.dob,
+      phone = EXCLUDED.phone,
+      email = EXCLUDED.email,
+      address = EXCLUDED.address,
+      city = EXCLUDED.city,
+      state = EXCLUDED.state,
+      zip = EXCLUDED.zip,
+      insurance = EXCLUDED.insurance,
+      allergies = EXCLUDED.allergies,
+      medications = EXCLUDED.medications;
+
+    INSERT INTO patient_portal_accounts (
+      id, tenant_id, patient_id, email, password_hash, is_active, email_verified
+    )
+    SELECT
+      'demo-portal-alex-johnson',
+      'tenant-demo',
+      'demo-patient-1',
+      'patient@demo.portal',
+      '$2b$10$X1524MJqRU7BvDMRqhOHp.wJ79AeCsWCkwC1D8Cgk24a4cQ0WrEkC',
+      true,
+      true
+    WHERE EXISTS (SELECT 1 FROM patients WHERE id = 'demo-patient-1' AND tenant_id = 'tenant-demo')
+      AND NOT EXISTS (
+        SELECT 1 FROM patient_portal_accounts
+        WHERE tenant_id = 'tenant-demo' AND email = 'patient@demo.portal'
+      )
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      patient_id = EXCLUDED.patient_id,
+      email = EXCLUDED.email,
+      is_active = true,
+      email_verified = true,
+      updated_at = CURRENT_TIMESTAMP;
+
+    UPDATE patient_portal_accounts
+    SET patient_id = 'demo-patient-1',
+        is_active = true,
+        email_verified = true,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE tenant_id = 'tenant-demo'
+      AND email = 'patient@demo.portal';
+    `,
+  },
+  {
+    name: "148_sync_additional_demo_portal_patients",
+    sql: `
+    INSERT INTO patients (
+      id, tenant_id, first_name, last_name, dob, phone, email,
+      address, city, state, zip, insurance, allergies, medications
+    )
+    VALUES
+      (
+        'demo-patient-2',
+        'tenant-demo',
+        'Jane',
+        'Doe',
+        '1992-07-22',
+        '(303) 555-0287',
+        'jane@demo.portal',
+        '1103 Maple Street',
+        'Boulder',
+        'CO',
+        '80301',
+        'Aetna HMO Silver Plan',
+        'Latex (Anaphylaxis), Nickel (Contact Dermatitis)',
+        'Dupilumab 300mg SC q2w, Hydrocortisone 2.5% cream, Cetirizine 10mg daily'
+      ),
+      (
+        'demo-patient-3',
+        'tenant-demo',
+        'Marcus',
+        'Williams',
+        '2002-07-22',
+        '(720) 555-0319',
+        'marcus@demo.portal',
+        '88 Larimer Street',
+        'Denver',
+        'CO',
+        '80202',
+        'United Healthcare',
+        'Sulfa drugs (Rash)',
+        'Isotretinoin 40mg daily, Benzoyl peroxide 5% wash'
+      ),
+      (
+        'demo-patient-4',
+        'tenant-demo',
+        'Sofia',
+        'Chen',
+        '1995-12-01',
+        '(303) 555-0441',
+        'sofia@demo.portal',
+        '302 Pearl Street',
+        'Boulder',
+        'CO',
+        '80302',
+        'Cigna PPO',
+        'No known allergies',
+        'Spironolactone 50mg daily, Tretinoin 0.05% cream'
+      )
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      first_name = EXCLUDED.first_name,
+      last_name = EXCLUDED.last_name,
+      dob = EXCLUDED.dob,
+      phone = EXCLUDED.phone,
+      email = EXCLUDED.email,
+      address = EXCLUDED.address,
+      city = EXCLUDED.city,
+      state = EXCLUDED.state,
+      zip = EXCLUDED.zip,
+      insurance = EXCLUDED.insurance,
+      allergies = EXCLUDED.allergies,
+      medications = EXCLUDED.medications,
+      updated_at = CURRENT_TIMESTAMP;
+
+    INSERT INTO patient_portal_accounts (
+      id, tenant_id, patient_id, email, password_hash, is_active, email_verified
+    )
+    VALUES
+      (
+        'demo-portal-jane-doe',
+        'tenant-demo',
+        'demo-patient-2',
+        'jane@demo.portal',
+        '$2b$10$X1524MJqRU7BvDMRqhOHp.wJ79AeCsWCkwC1D8Cgk24a4cQ0WrEkC',
+        true,
+        true
+      ),
+      (
+        'demo-portal-marcus-williams',
+        'tenant-demo',
+        'demo-patient-3',
+        'marcus@demo.portal',
+        '$2b$10$X1524MJqRU7BvDMRqhOHp.wJ79AeCsWCkwC1D8Cgk24a4cQ0WrEkC',
+        true,
+        true
+      ),
+      (
+        'demo-portal-sofia-chen',
+        'tenant-demo',
+        'demo-patient-4',
+        'sofia@demo.portal',
+        '$2b$10$X1524MJqRU7BvDMRqhOHp.wJ79AeCsWCkwC1D8Cgk24a4cQ0WrEkC',
+        true,
+        true
+      )
+    ON CONFLICT (tenant_id, email) DO UPDATE SET
+      patient_id = EXCLUDED.patient_id,
+      password_hash = EXCLUDED.password_hash,
+      is_active = true,
+      email_verified = true,
+      updated_at = CURRENT_TIMESTAMP;
+    `,
+  },
+  {
+    name: "149_seed_demo_portal_examples",
+    sql: `
+    -- Runtime compatibility for portal screens that are backed by the main TypeScript migrator.
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS reason TEXT;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS notes TEXT;
+
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_type TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_path TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMPTZ DEFAULT NOW();
+
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS sig TEXT;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS quantity NUMERIC(10,2);
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS quantity_unit TEXT DEFAULT 'each';
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS refills INTEGER DEFAULT 0;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS refills_remaining INTEGER;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS days_supply INTEGER;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS prescribed_date TIMESTAMPTZ;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS pharmacy_id TEXT;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS pharmacy_name TEXT;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS pharmacy_ncpdp TEXT;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS strength TEXT;
+    ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS drug_description TEXT;
+
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS patient_id TEXT REFERENCES patients(id);
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS service_date DATE;
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS amount NUMERIC(10,2);
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS transaction_type TEXT DEFAULT 'charge';
+
+    UPDATE charges c
+    SET patient_id = e.patient_id
+    FROM encounters e
+    WHERE c.encounter_id = e.id
+      AND c.patient_id IS NULL;
+
+    UPDATE charges
+    SET service_date = COALESCE(service_date, created_at::date),
+        amount = COALESCE(amount, ROUND((COALESCE(amount_cents, fee_cents * COALESCE(quantity, 1), 0)::numeric / 100), 2)),
+        transaction_type = COALESCE(transaction_type, 'charge');
+
+    CREATE TABLE IF NOT EXISTS portal_payment_methods (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      payment_type TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      processor TEXT DEFAULT 'stripe',
+      last_four TEXT NOT NULL,
+      card_brand TEXT,
+      account_type TEXT,
+      bank_name TEXT,
+      cardholder_name TEXT,
+      expiry_month INTEGER,
+      expiry_year INTEGER,
+      billing_address JSONB,
+      is_default BOOLEAN DEFAULT false,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS portal_payment_transactions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      amount NUMERIC(10,2) NOT NULL,
+      currency TEXT DEFAULT 'USD',
+      status TEXT NOT NULL DEFAULT 'pending',
+      payment_method_id TEXT REFERENCES portal_payment_methods(id),
+      payment_method_type TEXT,
+      processor TEXT DEFAULT 'stripe',
+      processor_transaction_id TEXT,
+      processor_response JSONB,
+      invoice_id TEXT,
+      charge_ids JSONB,
+      description TEXT,
+      ip_address TEXT,
+      user_agent TEXT,
+      receipt_url TEXT,
+      receipt_number TEXT UNIQUE,
+      refund_amount NUMERIC(10,2) DEFAULT 0,
+      refund_reason TEXT,
+      refunded_at TIMESTAMPTZ,
+      refunded_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    );
+
+    CREATE TABLE IF NOT EXISTS portal_payment_plans (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      total_amount NUMERIC(10,2) NOT NULL,
+      amount_paid NUMERIC(10,2) DEFAULT 0,
+      installment_amount NUMERIC(10,2) NOT NULL,
+      installment_frequency TEXT NOT NULL,
+      number_of_installments INTEGER NOT NULL,
+      start_date DATE NOT NULL,
+      next_payment_date DATE NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      auto_pay BOOLEAN DEFAULT false,
+      payment_method_id TEXT REFERENCES portal_payment_methods(id),
+      invoice_id TEXT,
+      charge_ids JSONB,
+      description TEXT,
+      terms_accepted BOOLEAN DEFAULT false,
+      terms_accepted_at TIMESTAMPTZ,
+      terms_ip_address TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      created_by TEXT REFERENCES users(id),
+      completed_at TIMESTAMPTZ,
+      cancelled_at TIMESTAMPTZ
+    );
+
+    CREATE TABLE IF NOT EXISTS portal_payment_plan_installments (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      payment_plan_id TEXT NOT NULL REFERENCES portal_payment_plans(id) ON DELETE CASCADE,
+      installment_number INTEGER NOT NULL,
+      amount NUMERIC(10,2) NOT NULL,
+      due_date DATE NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      paid_amount NUMERIC(10,2) DEFAULT 0,
+      paid_at TIMESTAMPTZ,
+      transaction_id TEXT REFERENCES portal_payment_transactions(id),
+      failed_attempts INTEGER DEFAULT 0,
+      last_attempt_at TIMESTAMPTZ,
+      failure_reason TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS portal_patient_balances (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE UNIQUE,
+      total_charges NUMERIC(10,2) DEFAULT 0,
+      total_payments NUMERIC(10,2) DEFAULT 0,
+      total_adjustments NUMERIC(10,2) DEFAULT 0,
+      current_balance NUMERIC(10,2) GENERATED ALWAYS AS (total_charges - total_payments - total_adjustments) STORED,
+      last_payment_date TIMESTAMPTZ,
+      last_payment_amount NUMERIC(10,2),
+      last_updated TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS portal_autopay_enrollments (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      payment_method_id TEXT NOT NULL REFERENCES portal_payment_methods(id) ON DELETE CASCADE,
+      is_active BOOLEAN DEFAULT true,
+      charge_day INTEGER DEFAULT 1,
+      charge_all_balances BOOLEAN DEFAULT true,
+      minimum_amount NUMERIC(10,2),
+      notify_before_charge BOOLEAN DEFAULT true,
+      notification_days INTEGER DEFAULT 3,
+      enrolled_at TIMESTAMPTZ DEFAULT NOW(),
+      terms_accepted BOOLEAN DEFAULT false,
+      terms_accepted_at TIMESTAMPTZ,
+      last_charge_date TIMESTAMPTZ,
+      last_charge_amount NUMERIC(10,2),
+      cancelled_at TIMESTAMPTZ,
+      cancelled_reason TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS patient_document_shares (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      shared_by TEXT NOT NULL REFERENCES users(id),
+      shared_at TIMESTAMPTZ DEFAULT NOW(),
+      viewed_at TIMESTAMPTZ,
+      notes TEXT,
+      category TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_portal_payment_methods_patient ON portal_payment_methods(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_transactions_patient ON portal_payment_transactions(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_payment_plans_patient ON portal_payment_plans(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_installments_plan ON portal_payment_plan_installments(payment_plan_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_balances_patient ON portal_patient_balances(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_autopay_patient ON portal_autopay_enrollments(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_doc_shares_patient_runtime ON patient_document_shares(patient_id);
+
+    INSERT INTO appointment_types(id, tenant_id, name, duration_minutes, color, category, description, is_active)
+    VALUES (
+      'appttype-new-patient',
+      'tenant-demo',
+      'New Patient Dermatology Visit',
+      45,
+      '#4f46e5',
+      'consultation',
+      'First visit with demographics, insurance, consents, and complete intake',
+      true
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      name = EXCLUDED.name,
+      duration_minutes = EXCLUDED.duration_minutes,
+      color = EXCLUDED.color,
+      category = EXCLUDED.category,
+      description = EXCLUDED.description,
+      is_active = true;
+
+    INSERT INTO appointments (
+      id, tenant_id, patient_id, provider_id, location_id, appointment_type_id,
+      scheduled_start, scheduled_end, status, reason, notes
+    )
+    VALUES
+      (
+        '10000000-0000-4000-8000-000000000101',
+        'tenant-demo',
+        'demo-patient-1',
+        'prov-demo',
+        'loc-demo',
+        'appttype-psoriasis-fu',
+        CURRENT_DATE + TIME '09:00',
+        CURRENT_DATE + TIME '09:20',
+        'scheduled',
+        'Psoriasis medication follow-up and itch control',
+        'Demo portal appointment for established follow-up check-in'
+      ),
+      (
+        '10000000-0000-4000-8000-000000000102',
+        'tenant-demo',
+        'demo-patient-1',
+        'prov-demo',
+        'loc-demo',
+        'appttype-ak-treatment',
+        (CURRENT_DATE - 39) + TIME '10:30',
+        (CURRENT_DATE - 39) + TIME '11:15',
+        'completed',
+        'Actinic keratosis cryotherapy',
+        'Cryotherapy performed on left temple'
+      ),
+      (
+        '10000000-0000-4000-8000-000000000201',
+        'tenant-demo',
+        'demo-patient-2',
+        'prov-demo-3',
+        'loc-east',
+        'appttype-new-patient',
+        CURRENT_DATE + TIME '10:15',
+        CURRENT_DATE + TIME '11:00',
+        'scheduled',
+        'New patient eczema and patch testing consult',
+        'Demo appointment triggers first-time check-in flow'
+      ),
+      (
+        '10000000-0000-4000-8000-000000000202',
+        'tenant-demo',
+        'demo-patient-2',
+        'prov-demo-3',
+        'loc-east',
+        'appttype-lesion-biopsy',
+        (CURRENT_DATE - 31) + TIME '14:00',
+        (CURRENT_DATE - 31) + TIME '14:30',
+        'completed',
+        'Shave biopsy of irritated chest lesion',
+        'Pathology released to portal'
+      ),
+      (
+        '10000000-0000-4000-8000-000000000301',
+        'tenant-demo',
+        'demo-patient-3',
+        'prov-demo-2',
+        'loc-demo',
+        'appttype-acne-fu',
+        CURRENT_DATE + TIME '13:30',
+        CURRENT_DATE + TIME '13:50',
+        'confirmed',
+        'Isotretinoin monitoring visit',
+        'Monthly acne follow-up check-in'
+      ),
+      (
+        '10000000-0000-4000-8000-000000000302',
+        'tenant-demo',
+        'demo-patient-3',
+        'prov-demo-2',
+        'loc-demo',
+        'appttype-acne-fu',
+        (CURRENT_DATE - 19) + TIME '09:00',
+        (CURRENT_DATE - 19) + TIME '09:20',
+        'completed',
+        'Acne follow-up and isotretinoin counseling',
+        'Monthly monitoring labs reviewed'
+      ),
+      (
+        '10000000-0000-4000-8000-000000000401',
+        'tenant-demo',
+        'demo-patient-4',
+        'prov-cosmetic-pa',
+        'loc-south',
+        'appttype-acne-fu',
+        CURRENT_DATE + TIME '15:00',
+        CURRENT_DATE + TIME '15:20',
+        'scheduled',
+        'Hormonal acne medication follow-up',
+        'Returning patient standard symptom check-in'
+      ),
+      (
+        '10000000-0000-4000-8000-000000000402',
+        'tenant-demo',
+        'demo-patient-4',
+        'prov-cosmetic-pa',
+        'loc-south',
+        'appttype-microneedling',
+        (CURRENT_DATE - 23) + TIME '13:00',
+        (CURRENT_DATE - 23) + TIME '14:00',
+        'completed',
+        'Microneedling for acne scarring',
+        'Cosmetic package visit with out-of-pocket balance'
+      )
+    ON CONFLICT (id) DO UPDATE SET
+      provider_id = EXCLUDED.provider_id,
+      location_id = EXCLUDED.location_id,
+      appointment_type_id = EXCLUDED.appointment_type_id,
+      scheduled_start = EXCLUDED.scheduled_start,
+      scheduled_end = EXCLUDED.scheduled_end,
+      status = EXCLUDED.status,
+      reason = EXCLUDED.reason,
+      notes = EXCLUDED.notes;
+
+    INSERT INTO encounters (
+      id, tenant_id, appointment_id, patient_id, provider_id, status,
+      chief_complaint, hpi, ros, exam, assessment_plan, created_at, updated_at
+    )
+    VALUES
+      (
+        'enc-demo-alex-ak',
+        'tenant-demo',
+        '10000000-0000-4000-8000-000000000102',
+        'demo-patient-1',
+        'prov-demo',
+        'signed',
+        'Rough spots on left temple and psoriasis follow-up',
+        'Established patient with stable plaque psoriasis on methotrexate. Reports two scaly tender lesions on left temple present for three months.',
+        'No fever, bleeding, or rapidly changing pigmented lesions.',
+        'Two erythematous gritty papules on left temple. Psoriatic plaques improved on elbows and knees. No suspicious melanoma features on focused exam.',
+        'Actinic keratoses treated with liquid nitrogen x2. Continue methotrexate with monitoring labs. Reinforced sun protection and return precautions.',
+        (CURRENT_DATE - 39) + TIME '11:15',
+        (CURRENT_DATE - 39) + TIME '11:25'
+      ),
+      (
+        'enc-demo-jane-biopsy',
+        'tenant-demo',
+        '10000000-0000-4000-8000-000000000202',
+        'demo-patient-2',
+        'prov-demo-3',
+        'signed',
+        'Itchy eczema flare and irritated chest lesion',
+        'Patient reports worsening hand dermatitis despite topical steroid. Also notes a bleeding irritated papule on upper chest.',
+        'No fever or systemic symptoms. Latex allergy reviewed.',
+        'Lichenified fissured plaques on hands. 5 mm pearly papule on central chest photographed and biopsied.',
+        'Shave biopsy performed. Eczema plan updated with barrier repair, topical steroid burst, and patch testing discussion. Pathology portal release planned.',
+        (CURRENT_DATE - 31) + TIME '14:30',
+        (CURRENT_DATE - 31) + TIME '14:45'
+      ),
+      (
+        'enc-demo-marcus-acne',
+        'tenant-demo',
+        '10000000-0000-4000-8000-000000000302',
+        'demo-patient-3',
+        'prov-demo-2',
+        'signed',
+        'Isotretinoin follow-up',
+        'Nodulocystic acne improving after first month of isotretinoin. Reports dryness but no mood changes, headaches, or abdominal pain.',
+        'Dry lips. No vision changes, depression, or joint pain.',
+        'Inflammatory papules reduced on cheeks and jawline. Cheilitis present. No concerning rash.',
+        'Continue isotretinoin 40 mg daily pending labs. Add lip emollient and gentle cleanser. Monthly follow-up required.',
+        (CURRENT_DATE - 19) + TIME '09:20',
+        (CURRENT_DATE - 19) + TIME '09:30'
+      ),
+      (
+        'enc-demo-sofia-microneedling',
+        'tenant-demo',
+        '10000000-0000-4000-8000-000000000402',
+        'demo-patient-4',
+        'prov-cosmetic-pa',
+        'signed',
+        'Acne scarring and hormonal acne follow-up',
+        'Patient presents for microneedling session for acne scarring and review of spironolactone response.',
+        'No pregnancy, dizziness, or breast tenderness reported.',
+        'Rolling acne scars on cheeks. Mild active inflammatory papules on chin. Treatment area cleansed and topical anesthetic used.',
+        'Microneedling performed. Continue spironolactone and tretinoin. Reviewed post-procedure care and strict sunscreen use.',
+        (CURRENT_DATE - 23) + TIME '14:00',
+        (CURRENT_DATE - 23) + TIME '14:10'
+      )
+    ON CONFLICT (id) DO UPDATE SET
+      appointment_id = EXCLUDED.appointment_id,
+      provider_id = EXCLUDED.provider_id,
+      status = EXCLUDED.status,
+      chief_complaint = EXCLUDED.chief_complaint,
+      hpi = EXCLUDED.hpi,
+      ros = EXCLUDED.ros,
+      exam = EXCLUDED.exam,
+      assessment_plan = EXCLUDED.assessment_plan,
+      updated_at = EXCLUDED.updated_at;
+
+    INSERT INTO vitals (
+      id, tenant_id, encounter_id, height_cm, weight_kg, bp_systolic, bp_diastolic, pulse, temp_c, created_at
+    )
+    VALUES
+      ('vital-demo-alex-1', 'tenant-demo', 'enc-demo-alex-ak', 180.3, 84.8, 128, 78, 72, 36.8, (CURRENT_DATE - 39) + TIME '10:35'),
+      ('vital-demo-jane-1', 'tenant-demo', 'enc-demo-jane-biopsy', 165.1, 63.5, 118, 74, 76, 36.7, (CURRENT_DATE - 31) + TIME '14:05'),
+      ('vital-demo-marcus-1', 'tenant-demo', 'enc-demo-marcus-acne', 177.8, 72.1, 122, 76, 68, 36.6, (CURRENT_DATE - 19) + TIME '09:05'),
+      ('vital-demo-sofia-1', 'tenant-demo', 'enc-demo-sofia-microneedling', 162.6, 58.5, 112, 70, 70, 36.7, (CURRENT_DATE - 23) + TIME '13:05')
+    ON CONFLICT (id) DO UPDATE SET
+      height_cm = EXCLUDED.height_cm,
+      weight_kg = EXCLUDED.weight_kg,
+      bp_systolic = EXCLUDED.bp_systolic,
+      bp_diastolic = EXCLUDED.bp_diastolic,
+      pulse = EXCLUDED.pulse,
+      temp_c = EXCLUDED.temp_c,
+      created_at = EXCLUDED.created_at;
+
+    INSERT INTO visit_summaries (
+      id, tenant_id, encounter_id, patient_id, provider_id, visit_date, provider_name,
+      summary_text, symptoms_discussed, diagnosis_shared, treatment_plan, next_steps,
+      follow_up_date, chief_complaint, diagnoses, procedures, medications,
+      follow_up_instructions, next_appointment_date, generated_by, is_released,
+      released_at, released_by, shared_at, created_at, updated_at
+    )
+    VALUES
+      (
+        'visit-demo-alex-ak',
+        'tenant-demo',
+        'enc-demo-alex-ak',
+        'demo-patient-1',
+        'prov-demo',
+        (CURRENT_DATE - 39) + TIME '11:20',
+        'Dr. David Skin, MD, FAAD',
+        'We treated two precancerous rough spots on your left temple with liquid nitrogen. Your psoriasis looked improved, so we kept your methotrexate plan the same and ordered routine monitoring labs.',
+        E'Rough scaly spots on left temple\\nPsoriasis control\\nMedication monitoring',
+        'Actinic keratoses and stable plaque psoriasis',
+        'Liquid nitrogen treatment today. Continue methotrexate 15 mg weekly and folic acid as directed.',
+        'Use sunscreen daily. Call for blistering that looks infected, rapidly changing spots, or worsening psoriasis.',
+        CURRENT_DATE + 14,
+        'Rough spots on left temple',
+        '[{"code":"L57.0","description":"Actinic keratosis"},{"code":"L40.0","description":"Plaque psoriasis"}]'::jsonb,
+        '[{"code":"17000","description":"Cryotherapy/destruction of first premalignant lesion"},{"code":"17003","description":"Cryotherapy/destruction of additional lesion"}]'::jsonb,
+        '[{"name":"Methotrexate","sig":"15 mg by mouth weekly"},{"name":"Folic acid","sig":"1 mg daily except methotrexate day"}]'::jsonb,
+        'Return in two weeks if the treated area has not healed. Routine psoriasis follow-up is scheduled.',
+        CURRENT_DATE + TIME '09:00',
+        'u-provider',
+        true,
+        (CURRENT_DATE - 38) + TIME '09:00',
+        'u-provider',
+        (CURRENT_DATE - 38) + TIME '09:15',
+        (CURRENT_DATE - 39) + TIME '11:25',
+        (CURRENT_DATE - 38) + TIME '09:15'
+      ),
+      (
+        'visit-demo-jane-biopsy',
+        'tenant-demo',
+        'enc-demo-jane-biopsy',
+        'demo-patient-2',
+        'prov-demo-3',
+        (CURRENT_DATE - 31) + TIME '14:35',
+        'Dr. Maria Martinez, MD, FAAD',
+        'We reviewed your eczema flare and performed a shave biopsy of the irritated spot on your chest. Your hand eczema plan was adjusted and we discussed patch testing because contact allergy may be contributing.',
+        E'Hand eczema flare\\nIrritated chest lesion\\nPatch testing discussion',
+        'Eczema flare and biopsied neoplasm of uncertain behavior',
+        'Use the prescribed topical steroid burst, moisturize after every hand wash, avoid latex exposure, and keep the biopsy site covered with petrolatum.',
+        'Pathology will be released to the portal. Schedule patch testing if hand dermatitis continues.',
+        CURRENT_DATE + 21,
+        'Eczema flare and irritated chest lesion',
+        '[{"code":"L30.9","description":"Dermatitis"},{"code":"D48.5","description":"Neoplasm of uncertain behavior of skin"}]'::jsonb,
+        '[{"code":"11102","description":"Tangential biopsy of skin, single lesion"}]'::jsonb,
+        '[{"name":"Triamcinolone 0.1% ointment","sig":"Apply twice daily for up to 14 days"},{"name":"Cetirizine","sig":"10 mg daily as needed for itch"}]'::jsonb,
+        'Continue wound care until healed. Watch for spreading redness, warmth, pus, fever, or increasing pain.',
+        CURRENT_DATE + TIME '10:15',
+        'u-provider',
+        true,
+        (CURRENT_DATE - 30) + TIME '08:30',
+        'u-provider',
+        (CURRENT_DATE - 30) + TIME '08:45',
+        (CURRENT_DATE - 31) + TIME '14:45',
+        (CURRENT_DATE - 30) + TIME '08:45'
+      ),
+      (
+        'visit-demo-marcus-acne',
+        'tenant-demo',
+        'enc-demo-marcus-acne',
+        'demo-patient-3',
+        'prov-demo-2',
+        (CURRENT_DATE - 19) + TIME '09:25',
+        'Riley Johnson, PA-C',
+        'Your acne is improving on isotretinoin. We reviewed side effects, confirmed no concerning symptoms, and planned routine monthly lab monitoring before continuing the medication.',
+        E'Acne improvement\\nDry lips\\nIsotretinoin safety monitoring',
+        'Nodulocystic acne, improving on isotretinoin',
+        'Continue isotretinoin 40 mg daily if labs are acceptable. Use gentle cleanser, moisturizer, and lip emollient.',
+        'Complete monthly labs and keep your required follow-up appointment.',
+        CURRENT_DATE + 30,
+        'Isotretinoin follow-up',
+        '[{"code":"L70.0","description":"Acne vulgaris"},{"code":"Z79.899","description":"Other long term drug therapy"}]'::jsonb,
+        '[{"code":"99214","description":"Established patient visit, moderate complexity"}]'::jsonb,
+        '[{"name":"Isotretinoin","sig":"40 mg daily with food"},{"name":"Benzoyl peroxide wash","sig":"Use once daily as tolerated"}]'::jsonb,
+        'Call immediately for severe headache, vision changes, mood changes, abdominal pain, or severe rash.',
+        CURRENT_DATE + TIME '13:30',
+        'u-provider',
+        true,
+        (CURRENT_DATE - 18) + TIME '10:00',
+        'u-provider',
+        (CURRENT_DATE - 18) + TIME '10:10',
+        (CURRENT_DATE - 19) + TIME '09:30',
+        (CURRENT_DATE - 18) + TIME '10:10'
+      ),
+      (
+        'visit-demo-sofia-microneedling',
+        'tenant-demo',
+        'enc-demo-sofia-microneedling',
+        'demo-patient-4',
+        'prov-cosmetic-pa',
+        (CURRENT_DATE - 23) + TIME '14:05',
+        'Sarah Mitchell, PA-C',
+        'You completed a microneedling treatment for acne scarring. We reviewed aftercare and continued your acne maintenance medicines because your hormonal breakouts are improving.',
+        E'Acne scarring\\nMicroneedling aftercare\\nHormonal acne maintenance',
+        'Acne scarring and improving hormonal acne',
+        'Microneedling performed. Continue spironolactone and tretinoin. Use bland moisturizer and sunscreen while healing.',
+        'Avoid retinoids for several days after treatment and avoid direct sun exposure.',
+        CURRENT_DATE + 28,
+        'Acne scarring',
+        '[{"code":"L73.0","description":"Acne keloid/scarring"},{"code":"L70.0","description":"Acne vulgaris"}]'::jsonb,
+        '[{"code":"17999","description":"Unlisted cosmetic skin procedure - microneedling"}]'::jsonb,
+        '[{"name":"Spironolactone","sig":"50 mg daily"},{"name":"Tretinoin 0.05% cream","sig":"Restart when skin has healed"}]'::jsonb,
+        'Use sunscreen, avoid exfoliants until healed, and message us for increasing pain or drainage.',
+        CURRENT_DATE + TIME '15:00',
+        'u-provider',
+        true,
+        (CURRENT_DATE - 22) + TIME '09:30',
+        'u-provider',
+        (CURRENT_DATE - 22) + TIME '09:45',
+        (CURRENT_DATE - 23) + TIME '14:10',
+        (CURRENT_DATE - 22) + TIME '09:45'
+      )
+    ON CONFLICT (id) DO UPDATE SET
+      summary_text = EXCLUDED.summary_text,
+      symptoms_discussed = EXCLUDED.symptoms_discussed,
+      diagnosis_shared = EXCLUDED.diagnosis_shared,
+      treatment_plan = EXCLUDED.treatment_plan,
+      next_steps = EXCLUDED.next_steps,
+      follow_up_date = EXCLUDED.follow_up_date,
+      diagnoses = EXCLUDED.diagnoses,
+      procedures = EXCLUDED.procedures,
+      medications = EXCLUDED.medications,
+      is_released = true,
+      released_at = EXCLUDED.released_at,
+      shared_at = EXCLUDED.shared_at,
+      updated_at = EXCLUDED.updated_at;
+
+    INSERT INTO charges (
+      id, tenant_id, encounter_id, patient_id, service_date, cpt_code,
+      description, icd_codes, amount_cents, fee_cents, amount,
+      quantity, status, transaction_type, created_at
+    )
+    VALUES
+      ('charge-demo-alex-99214', 'tenant-demo', 'enc-demo-alex-ak', 'demo-patient-1', CURRENT_DATE - 39, '99214', 'Established patient dermatology visit', ARRAY['L40.0','L57.0'], 24500, 24500, 245.00, 1, 'ready', 'charge', (CURRENT_DATE - 39) + TIME '11:30'),
+      ('charge-demo-alex-17000', 'tenant-demo', 'enc-demo-alex-ak', 'demo-patient-1', CURRENT_DATE - 39, '17000', 'Cryotherapy/destruction first premalignant lesion', ARRAY['L57.0'], 18500, 18500, 185.00, 1, 'ready', 'charge', (CURRENT_DATE - 39) + TIME '11:31'),
+      ('charge-demo-alex-17003', 'tenant-demo', 'enc-demo-alex-ak', 'demo-patient-1', CURRENT_DATE - 39, '17003', 'Cryotherapy/destruction additional premalignant lesion', ARRAY['L57.0'], 20000, 20000, 200.00, 1, 'ready', 'charge', (CURRENT_DATE - 39) + TIME '11:32'),
+      ('charge-demo-jane-99204', 'tenant-demo', 'enc-demo-jane-biopsy', 'demo-patient-2', CURRENT_DATE - 31, '99204', 'New patient dermatology evaluation', ARRAY['L30.9','D48.5'], 39000, 39000, 390.00, 1, 'ready', 'charge', (CURRENT_DATE - 31) + TIME '14:40'),
+      ('charge-demo-jane-11102', 'tenant-demo', 'enc-demo-jane-biopsy', 'demo-patient-2', CURRENT_DATE - 31, '11102', 'Tangential skin biopsy, single lesion', ARRAY['D48.5'], 42000, 42000, 420.00, 1, 'ready', 'charge', (CURRENT_DATE - 31) + TIME '14:41'),
+      ('charge-demo-jane-path', 'tenant-demo', 'enc-demo-jane-biopsy', 'demo-patient-2', CURRENT_DATE - 30, '88305', 'Dermatopathology tissue exam', ARRAY['D48.5'], 17000, 17000, 170.00, 1, 'ready', 'charge', (CURRENT_DATE - 30) + TIME '08:00'),
+      ('charge-demo-marcus-99214', 'tenant-demo', 'enc-demo-marcus-acne', 'demo-patient-3', CURRENT_DATE - 19, '99214', 'Acne isotretinoin monitoring visit', ARRAY['L70.0','Z79.899'], 24500, 24500, 245.00, 1, 'ready', 'charge', (CURRENT_DATE - 19) + TIME '09:35'),
+      ('charge-demo-marcus-labs', 'tenant-demo', 'enc-demo-marcus-acne', 'demo-patient-3', CURRENT_DATE - 19, '80076', 'Hepatic function panel monitoring', ARRAY['Z79.899'], 9000, 9000, 90.00, 1, 'ready', 'charge', (CURRENT_DATE - 19) + TIME '09:36'),
+      ('charge-demo-marcus-lipid', 'tenant-demo', 'enc-demo-marcus-acne', 'demo-patient-3', CURRENT_DATE - 19, '80061', 'Lipid panel monitoring', ARRAY['Z79.899'], 7500, 7500, 75.00, 1, 'ready', 'charge', (CURRENT_DATE - 19) + TIME '09:37'),
+      ('charge-demo-sofia-99213', 'tenant-demo', 'enc-demo-sofia-microneedling', 'demo-patient-4', CURRENT_DATE - 23, '99213', 'Acne medication follow-up', ARRAY['L70.0'], 18500, 18500, 185.00, 1, 'self_pay', 'charge', (CURRENT_DATE - 23) + TIME '14:12'),
+      ('charge-demo-sofia-17999', 'tenant-demo', 'enc-demo-sofia-microneedling', 'demo-patient-4', CURRENT_DATE - 23, '17999', 'Cosmetic microneedling treatment', ARRAY['L73.0'], 95000, 95000, 950.00, 1, 'self_pay', 'charge', (CURRENT_DATE - 23) + TIME '14:13'),
+      ('charge-demo-sofia-postcare', 'tenant-demo', 'enc-demo-sofia-microneedling', 'demo-patient-4', CURRENT_DATE - 23, 'A9270', 'Post-procedure skincare kit', ARRAY['L73.0'], 28500, 28500, 285.00, 1, 'self_pay', 'charge', (CURRENT_DATE - 23) + TIME '14:14')
+    ON CONFLICT (id) DO UPDATE SET
+      encounter_id = EXCLUDED.encounter_id,
+      patient_id = EXCLUDED.patient_id,
+      service_date = EXCLUDED.service_date,
+      cpt_code = EXCLUDED.cpt_code,
+      description = EXCLUDED.description,
+      icd_codes = EXCLUDED.icd_codes,
+      amount_cents = EXCLUDED.amount_cents,
+      fee_cents = EXCLUDED.fee_cents,
+      amount = EXCLUDED.amount,
+      quantity = EXCLUDED.quantity,
+      status = EXCLUDED.status,
+      transaction_type = EXCLUDED.transaction_type,
+      created_at = EXCLUDED.created_at;
+
+    INSERT INTO portal_patient_balances (
+      tenant_id, patient_id, total_charges, total_payments, total_adjustments,
+      last_payment_date, last_payment_amount
+    )
+    VALUES
+      ('tenant-demo', 'demo-patient-1', 630.00, 175.00, 220.00, CURRENT_DATE - 15, 175.00),
+      ('tenant-demo', 'demo-patient-2', 980.00, 250.00, 430.00, CURRENT_DATE - 12, 250.00),
+      ('tenant-demo', 'demo-patient-3', 410.00, 75.00, 250.00, CURRENT_DATE - 7, 75.00),
+      ('tenant-demo', 'demo-patient-4', 1420.00, 400.00, 600.00, CURRENT_DATE - 5, 400.00)
+    ON CONFLICT (patient_id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      total_charges = EXCLUDED.total_charges,
+      total_payments = EXCLUDED.total_payments,
+      total_adjustments = EXCLUDED.total_adjustments,
+      last_payment_date = EXCLUDED.last_payment_date,
+      last_payment_amount = EXCLUDED.last_payment_amount,
+      last_updated = NOW();
+
+    INSERT INTO portal_payment_methods (
+      id, tenant_id, patient_id, payment_type, token, processor, last_four,
+      card_brand, cardholder_name, expiry_month, expiry_year, billing_address,
+      is_default, is_active, created_at, updated_at
+    )
+    VALUES
+      ('11111111-1111-4111-8111-111111111111', 'tenant-demo', 'demo-patient-1', 'credit_card', 'tok_demo_alex_4242', 'stripe', '4242', 'visa', 'Alex Johnson', 8, 2029, '{"street":"742 Clarkson Street","city":"Denver","state":"CO","zip":"80218","country":"US"}'::jsonb, true, true, CURRENT_DATE - 45, CURRENT_DATE - 15),
+      ('22222222-2222-4222-8222-222222222222', 'tenant-demo', 'demo-patient-2', 'credit_card', 'tok_demo_jane_1881', 'stripe', '1881', 'mastercard', 'Jane Doe', 11, 2028, '{"street":"1103 Maple Street","city":"Boulder","state":"CO","zip":"80301","country":"US"}'::jsonb, true, true, CURRENT_DATE - 20, CURRENT_DATE - 12),
+      ('33333333-3333-4333-8333-333333333333', 'tenant-demo', 'demo-patient-3', 'debit_card', 'tok_demo_marcus_0055', 'stripe', '0055', 'visa', 'Marcus Williams', 6, 2027, '{"street":"88 Larimer Street","city":"Denver","state":"CO","zip":"80202","country":"US"}'::jsonb, true, true, CURRENT_DATE - 19, CURRENT_DATE - 7),
+      ('44444444-4444-4444-8444-444444444444', 'tenant-demo', 'demo-patient-4', 'credit_card', 'tok_demo_sofia_7331', 'stripe', '7331', 'amex', 'Sofia Chen', 3, 2030, '{"street":"302 Pearl Street","city":"Boulder","state":"CO","zip":"80302","country":"US"}'::jsonb, true, true, CURRENT_DATE - 28, CURRENT_DATE - 5)
+    ON CONFLICT (id) DO UPDATE SET
+      payment_type = EXCLUDED.payment_type,
+      token = EXCLUDED.token,
+      last_four = EXCLUDED.last_four,
+      card_brand = EXCLUDED.card_brand,
+      cardholder_name = EXCLUDED.cardholder_name,
+      expiry_month = EXCLUDED.expiry_month,
+      expiry_year = EXCLUDED.expiry_year,
+      billing_address = EXCLUDED.billing_address,
+      is_default = true,
+      is_active = true,
+      updated_at = NOW();
+
+    INSERT INTO portal_payment_transactions (
+      id, tenant_id, patient_id, amount, currency, status, payment_method_id,
+      payment_method_type, processor, processor_transaction_id, description,
+      receipt_url, receipt_number, refund_amount, created_at, completed_at
+    )
+    VALUES
+      ('51111111-1111-4111-8111-111111111111', 'tenant-demo', 'demo-patient-1', 175.00, 'USD', 'completed', '11111111-1111-4111-8111-111111111111', 'credit_card', 'stripe', 'ch_demo_alex_175', 'Portal payment for March dermatology visit', 'https://mock-stripe.com/receipts/demo-alex-175', 'RCP-DEMO-ALEX-001', 0, CURRENT_DATE - 15, CURRENT_DATE - 15),
+      ('52222222-2222-4222-8222-222222222222', 'tenant-demo', 'demo-patient-2', 250.00, 'USD', 'completed', '22222222-2222-4222-8222-222222222222', 'credit_card', 'stripe', 'ch_demo_jane_250', 'Portal payment toward biopsy statement', 'https://mock-stripe.com/receipts/demo-jane-250', 'RCP-DEMO-JANE-001', 0, CURRENT_DATE - 12, CURRENT_DATE - 12),
+      ('53333333-3333-4333-8333-333333333333', 'tenant-demo', 'demo-patient-3', 75.00, 'USD', 'completed', '33333333-3333-4333-8333-333333333333', 'debit_card', 'stripe', 'ch_demo_marcus_075', 'Portal payment for isotretinoin monitoring', 'https://mock-stripe.com/receipts/demo-marcus-075', 'RCP-DEMO-MARCUS-001', 0, CURRENT_DATE - 7, CURRENT_DATE - 7),
+      ('54444444-4444-4444-8444-444444444444', 'tenant-demo', 'demo-patient-4', 400.00, 'USD', 'completed', '44444444-4444-4444-8444-444444444444', 'credit_card', 'stripe', 'ch_demo_sofia_400', 'Portal payment toward cosmetic procedure balance', 'https://mock-stripe.com/receipts/demo-sofia-400', 'RCP-DEMO-SOFIA-001', 0, CURRENT_DATE - 5, CURRENT_DATE - 5)
+    ON CONFLICT (id) DO UPDATE SET
+      amount = EXCLUDED.amount,
+      status = EXCLUDED.status,
+      payment_method_id = EXCLUDED.payment_method_id,
+      description = EXCLUDED.description,
+      receipt_url = EXCLUDED.receipt_url,
+      receipt_number = EXCLUDED.receipt_number,
+      completed_at = EXCLUDED.completed_at;
+
+    INSERT INTO patient_statements (
+      id, tenant_id, patient_id, statement_number, statement_date, balance_cents,
+      status, last_sent_date, sent_via, due_date, notes, generated_by
+    )
+    VALUES
+      ('stmt-demo-alex-001', 'tenant-demo', 'demo-patient-1', 'DEMO-ALEX-001', CURRENT_DATE - 14, 23500, 'partial', CURRENT_DATE - 14, 'portal', CURRENT_DATE + 16, 'Insurance processed. Remaining balance is patient responsibility.', 'u-billing'),
+      ('stmt-demo-jane-001', 'tenant-demo', 'demo-patient-2', 'DEMO-JANE-001', CURRENT_DATE - 10, 30000, 'partial', CURRENT_DATE - 10, 'portal', CURRENT_DATE + 20, 'Includes biopsy and dermatopathology patient responsibility.', 'u-billing'),
+      ('stmt-demo-marcus-001', 'tenant-demo', 'demo-patient-3', 'DEMO-MARCUS-001', CURRENT_DATE - 6, 8500, 'sent', CURRENT_DATE - 6, 'portal', CURRENT_DATE + 24, 'Monthly monitoring balance after insurance.', 'u-billing'),
+      ('stmt-demo-sofia-001', 'tenant-demo', 'demo-patient-4', 'DEMO-SOFIA-001', CURRENT_DATE - 4, 42000, 'partial', CURRENT_DATE - 4, 'portal', CURRENT_DATE + 26, 'Cosmetic services are self-pay and not billed to insurance.', 'u-billing')
+    ON CONFLICT (id) DO UPDATE SET
+      statement_date = EXCLUDED.statement_date,
+      balance_cents = EXCLUDED.balance_cents,
+      status = EXCLUDED.status,
+      last_sent_date = EXCLUDED.last_sent_date,
+      due_date = EXCLUDED.due_date,
+      notes = EXCLUDED.notes,
+      updated_at = NOW();
+
+    INSERT INTO statement_line_items (
+      id, tenant_id, statement_id, service_date, description,
+      amount_cents, insurance_paid_cents, patient_responsibility_cents
+    )
+    VALUES
+      ('stmt-line-alex-visit', 'tenant-demo', 'stmt-demo-alex-001', CURRENT_DATE - 39, 'Established visit and psoriasis medication monitoring', 24500, 14500, 10000),
+      ('stmt-line-alex-cryo', 'tenant-demo', 'stmt-demo-alex-001', CURRENT_DATE - 39, 'Cryotherapy for actinic keratoses', 38500, 25000, 13500),
+      ('stmt-line-jane-visit', 'tenant-demo', 'stmt-demo-jane-001', CURRENT_DATE - 31, 'New patient eczema evaluation', 39000, 24000, 15000),
+      ('stmt-line-jane-biopsy', 'tenant-demo', 'stmt-demo-jane-001', CURRENT_DATE - 31, 'Skin biopsy and dermatopathology', 59000, 44000, 15000),
+      ('stmt-line-marcus-visit', 'tenant-demo', 'stmt-demo-marcus-001', CURRENT_DATE - 19, 'Isotretinoin monitoring visit', 24500, 18500, 6000),
+      ('stmt-line-marcus-labs', 'tenant-demo', 'stmt-demo-marcus-001', CURRENT_DATE - 19, 'Medication monitoring lab panels', 16500, 14000, 2500),
+      ('stmt-line-sofia-followup', 'tenant-demo', 'stmt-demo-sofia-001', CURRENT_DATE - 23, 'Acne medication follow-up', 18500, 18000, 500),
+      ('stmt-line-sofia-cosmetic', 'tenant-demo', 'stmt-demo-sofia-001', CURRENT_DATE - 23, 'Microneedling and post-care kit', 123500, 0, 41500)
+    ON CONFLICT (id) DO UPDATE SET
+      service_date = EXCLUDED.service_date,
+      description = EXCLUDED.description,
+      amount_cents = EXCLUDED.amount_cents,
+      insurance_paid_cents = EXCLUDED.insurance_paid_cents,
+      patient_responsibility_cents = EXCLUDED.patient_responsibility_cents;
+
+    INSERT INTO bills (
+      id, tenant_id, patient_id, encounter_id, bill_number, bill_date, due_date,
+      total_charges_cents, insurance_responsibility_cents, patient_responsibility_cents,
+      paid_amount_cents, adjustment_amount_cents, balance_cents, status,
+      service_date_start, service_date_end, notes, created_by
+    )
+    VALUES
+      ('bill-demo-alex-001', 'tenant-demo', 'demo-patient-1', 'enc-demo-alex-ak', 'BILL-DEMO-ALEX-001', CURRENT_DATE - 14, CURRENT_DATE + 16, 63000, 22000, 41000, 17500, 22000, 23500, 'partial', CURRENT_DATE - 39, CURRENT_DATE - 39, 'Demo bill for visit plus cryotherapy procedures.', 'u-billing'),
+      ('bill-demo-jane-001', 'tenant-demo', 'demo-patient-2', 'enc-demo-jane-biopsy', 'BILL-DEMO-JANE-001', CURRENT_DATE - 10, CURRENT_DATE + 20, 98000, 43000, 55000, 25000, 43000, 30000, 'partial', CURRENT_DATE - 31, CURRENT_DATE - 30, 'Demo bill for new patient evaluation, biopsy, and pathology.', 'u-billing'),
+      ('bill-demo-marcus-001', 'tenant-demo', 'demo-patient-3', 'enc-demo-marcus-acne', 'BILL-DEMO-MARCUS-001', CURRENT_DATE - 6, CURRENT_DATE + 24, 41000, 25000, 16000, 7500, 25000, 8500, 'partial', CURRENT_DATE - 19, CURRENT_DATE - 19, 'Demo bill for acne follow-up and monitoring labs.', 'u-billing'),
+      ('bill-demo-sofia-001', 'tenant-demo', 'demo-patient-4', 'enc-demo-sofia-microneedling', 'BILL-DEMO-SOFIA-001', CURRENT_DATE - 4, CURRENT_DATE + 26, 142000, 60000, 82000, 40000, 60000, 42000, 'partial', CURRENT_DATE - 23, CURRENT_DATE - 23, 'Demo cosmetic bill with self-pay balance.', 'u-billing')
+    ON CONFLICT (id) DO UPDATE SET
+      bill_date = EXCLUDED.bill_date,
+      due_date = EXCLUDED.due_date,
+      total_charges_cents = EXCLUDED.total_charges_cents,
+      insurance_responsibility_cents = EXCLUDED.insurance_responsibility_cents,
+      patient_responsibility_cents = EXCLUDED.patient_responsibility_cents,
+      paid_amount_cents = EXCLUDED.paid_amount_cents,
+      adjustment_amount_cents = EXCLUDED.adjustment_amount_cents,
+      balance_cents = EXCLUDED.balance_cents,
+      status = EXCLUDED.status,
+      notes = EXCLUDED.notes,
+      updated_at = NOW();
+
+    INSERT INTO bill_line_items (
+      id, tenant_id, bill_id, charge_id, service_date, cpt_code,
+      description, quantity, unit_price_cents, total_cents, icd_codes
+    )
+    VALUES
+      ('bill-line-alex-99214', 'tenant-demo', 'bill-demo-alex-001', 'charge-demo-alex-99214', CURRENT_DATE - 39, '99214', 'Established patient visit', 1, 24500, 24500, ARRAY['L40.0','L57.0']),
+      ('bill-line-alex-17000', 'tenant-demo', 'bill-demo-alex-001', 'charge-demo-alex-17000', CURRENT_DATE - 39, '17000', 'Cryotherapy first lesion', 1, 18500, 18500, ARRAY['L57.0']),
+      ('bill-line-alex-17003', 'tenant-demo', 'bill-demo-alex-001', 'charge-demo-alex-17003', CURRENT_DATE - 39, '17003', 'Cryotherapy additional lesion', 1, 20000, 20000, ARRAY['L57.0']),
+      ('bill-line-jane-99204', 'tenant-demo', 'bill-demo-jane-001', 'charge-demo-jane-99204', CURRENT_DATE - 31, '99204', 'New patient evaluation', 1, 39000, 39000, ARRAY['L30.9','D48.5']),
+      ('bill-line-jane-11102', 'tenant-demo', 'bill-demo-jane-001', 'charge-demo-jane-11102', CURRENT_DATE - 31, '11102', 'Tangential biopsy', 1, 42000, 42000, ARRAY['D48.5']),
+      ('bill-line-jane-path', 'tenant-demo', 'bill-demo-jane-001', 'charge-demo-jane-path', CURRENT_DATE - 30, '88305', 'Dermatopathology tissue exam', 1, 17000, 17000, ARRAY['D48.5']),
+      ('bill-line-marcus-99214', 'tenant-demo', 'bill-demo-marcus-001', 'charge-demo-marcus-99214', CURRENT_DATE - 19, '99214', 'Acne monitoring visit', 1, 24500, 24500, ARRAY['L70.0','Z79.899']),
+      ('bill-line-marcus-labs', 'tenant-demo', 'bill-demo-marcus-001', 'charge-demo-marcus-labs', CURRENT_DATE - 19, '80076', 'Hepatic function panel', 1, 9000, 9000, ARRAY['Z79.899']),
+      ('bill-line-marcus-lipid', 'tenant-demo', 'bill-demo-marcus-001', 'charge-demo-marcus-lipid', CURRENT_DATE - 19, '80061', 'Lipid panel', 1, 7500, 7500, ARRAY['Z79.899']),
+      ('bill-line-sofia-99213', 'tenant-demo', 'bill-demo-sofia-001', 'charge-demo-sofia-99213', CURRENT_DATE - 23, '99213', 'Acne follow-up', 1, 18500, 18500, ARRAY['L70.0']),
+      ('bill-line-sofia-17999', 'tenant-demo', 'bill-demo-sofia-001', 'charge-demo-sofia-17999', CURRENT_DATE - 23, '17999', 'Microneedling treatment', 1, 95000, 95000, ARRAY['L73.0']),
+      ('bill-line-sofia-kit', 'tenant-demo', 'bill-demo-sofia-001', 'charge-demo-sofia-postcare', CURRENT_DATE - 23, 'A9270', 'Post-procedure skincare kit', 1, 28500, 28500, ARRAY['L73.0'])
+    ON CONFLICT (id) DO UPDATE SET
+      service_date = EXCLUDED.service_date,
+      description = EXCLUDED.description,
+      unit_price_cents = EXCLUDED.unit_price_cents,
+      total_cents = EXCLUDED.total_cents,
+      icd_codes = EXCLUDED.icd_codes;
+
+    INSERT INTO portal_payment_plans (
+      id, tenant_id, patient_id, total_amount, amount_paid, installment_amount,
+      installment_frequency, number_of_installments, start_date, next_payment_date,
+      status, auto_pay, payment_method_id, description, terms_accepted,
+      terms_accepted_at, created_by, created_at
+    )
+    VALUES (
+      'plan-demo-sofia-001',
+      'tenant-demo',
+      'demo-patient-4',
+      420.00,
+      0.00,
+      140.00,
+      'monthly',
+      3,
+      CURRENT_DATE + 1,
+      CURRENT_DATE + 1,
+      'active',
+      true,
+      '44444444-4444-4444-8444-444444444444',
+      'Three-month payment plan for cosmetic procedure balance',
+      true,
+      CURRENT_DATE - 4,
+      'u-billing',
+      CURRENT_DATE - 4
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      total_amount = EXCLUDED.total_amount,
+      amount_paid = EXCLUDED.amount_paid,
+      installment_amount = EXCLUDED.installment_amount,
+      next_payment_date = EXCLUDED.next_payment_date,
+      status = EXCLUDED.status,
+      auto_pay = EXCLUDED.auto_pay,
+      payment_method_id = EXCLUDED.payment_method_id,
+      description = EXCLUDED.description;
+
+    INSERT INTO portal_payment_plan_installments (
+      id, tenant_id, payment_plan_id, installment_number, amount,
+      due_date, status, paid_amount, created_at
+    )
+    VALUES
+      ('plan-demo-sofia-001-installment-1', 'tenant-demo', 'plan-demo-sofia-001', 1, 140.00, CURRENT_DATE + 1, 'pending', 0.00, CURRENT_DATE - 4),
+      ('plan-demo-sofia-001-installment-2', 'tenant-demo', 'plan-demo-sofia-001', 2, 140.00, CURRENT_DATE + 31, 'pending', 0.00, CURRENT_DATE - 4),
+      ('plan-demo-sofia-001-installment-3', 'tenant-demo', 'plan-demo-sofia-001', 3, 140.00, CURRENT_DATE + 61, 'pending', 0.00, CURRENT_DATE - 4)
+    ON CONFLICT (id) DO UPDATE SET
+      amount = EXCLUDED.amount,
+      due_date = EXCLUDED.due_date,
+      status = EXCLUDED.status,
+      paid_amount = EXCLUDED.paid_amount;
+
+    INSERT INTO portal_autopay_enrollments (
+      id, tenant_id, patient_id, payment_method_id, is_active, charge_day,
+      charge_all_balances, minimum_amount, notify_before_charge,
+      notification_days, terms_accepted, terms_accepted_at, enrolled_at
+    )
+    VALUES (
+      'autopay-demo-sofia-001',
+      'tenant-demo',
+      'demo-patient-4',
+      '44444444-4444-4444-8444-444444444444',
+      true,
+      5,
+      false,
+      140.00,
+      true,
+      3,
+      true,
+      CURRENT_DATE - 4,
+      CURRENT_DATE - 4
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      payment_method_id = EXCLUDED.payment_method_id,
+      is_active = true,
+      charge_day = EXCLUDED.charge_day,
+      charge_all_balances = EXCLUDED.charge_all_balances,
+      minimum_amount = EXCLUDED.minimum_amount,
+      notify_before_charge = EXCLUDED.notify_before_charge,
+      notification_days = EXCLUDED.notification_days;
+
+    INSERT INTO prescriptions (
+      id, tenant_id, patient_id, provider_id, medication_name, strength,
+      drug_description, sig, quantity, quantity_unit, refills,
+      refills_remaining, days_supply, prescribed_date, written_date,
+      status, pharmacy_name, created_at
+    )
+    VALUES
+      ('rx-demo-alex-mtx', 'tenant-demo', 'demo-patient-1', 'u-provider', 'Methotrexate', '2.5 mg tablet', 'Methotrexate 2.5 mg oral tablet', 'Take 6 tablets by mouth once weekly', 24, 'tablet', 2, 2, 28, CURRENT_DATE - 39, CURRENT_DATE - 39, 'active', 'Target/CVS Pharmacy #7002', CURRENT_DATE - 39),
+      ('rx-demo-alex-folic', 'tenant-demo', 'demo-patient-1', 'u-provider', 'Folic acid', '1 mg tablet', 'Folic acid 1 mg oral tablet', 'Take 1 tablet daily except methotrexate day', 30, 'tablet', 5, 5, 30, CURRENT_DATE - 39, CURRENT_DATE - 39, 'active', 'Target/CVS Pharmacy #7002', CURRENT_DATE - 39),
+      ('rx-demo-jane-triamcinolone', 'tenant-demo', 'demo-patient-2', 'u-provider', 'Triamcinolone', '0.1% ointment', 'Triamcinolone acetonide 0.1% topical ointment', 'Apply thin layer to eczema twice daily for up to 14 days', 80, 'gram', 1, 1, 14, CURRENT_DATE - 31, CURRENT_DATE - 31, 'active', 'CVS Pharmacy #1001', CURRENT_DATE - 31),
+      ('rx-demo-marcus-isotretinoin', 'tenant-demo', 'demo-patient-3', 'u-provider', 'Isotretinoin', '40 mg capsule', 'Isotretinoin 40 mg oral capsule', 'Take 1 capsule by mouth daily with food', 30, 'capsule', 0, 0, 30, CURRENT_DATE - 19, CURRENT_DATE - 19, 'active', 'Walgreens #2001', CURRENT_DATE - 19),
+      ('rx-demo-sofia-spironolactone', 'tenant-demo', 'demo-patient-4', 'u-provider', 'Spironolactone', '50 mg tablet', 'Spironolactone 50 mg oral tablet', 'Take 1 tablet by mouth daily', 30, 'tablet', 3, 3, 30, CURRENT_DATE - 23, CURRENT_DATE - 23, 'active', 'Kroger Pharmacy #5002', CURRENT_DATE - 23),
+      ('rx-demo-sofia-tretinoin', 'tenant-demo', 'demo-patient-4', 'u-provider', 'Tretinoin', '0.05% cream', 'Tretinoin 0.05% topical cream', 'Apply pea-sized amount nightly as tolerated', 45, 'gram', 2, 2, 30, CURRENT_DATE - 23, CURRENT_DATE - 23, 'active', 'Kroger Pharmacy #5002', CURRENT_DATE - 23)
+    ON CONFLICT (id) DO UPDATE SET
+      medication_name = EXCLUDED.medication_name,
+      strength = EXCLUDED.strength,
+      drug_description = EXCLUDED.drug_description,
+      sig = EXCLUDED.sig,
+      quantity = EXCLUDED.quantity,
+      quantity_unit = EXCLUDED.quantity_unit,
+      refills = EXCLUDED.refills,
+      refills_remaining = EXCLUDED.refills_remaining,
+      days_supply = EXCLUDED.days_supply,
+      prescribed_date = EXCLUDED.prescribed_date,
+      written_date = EXCLUDED.written_date,
+      status = EXCLUDED.status,
+      pharmacy_name = EXCLUDED.pharmacy_name;
+
+    INSERT INTO patient_allergies (
+      id, tenant_id, patient_id, allergen, allergen_type, reaction,
+      reaction_type, severity, status, source, verified_at, verified_by, notes
+    )
+    VALUES
+      ('allergy-demo-alex-penicillin', 'tenant-demo', 'demo-patient-1', 'Penicillin', 'drug', 'Hives', 'Hives', 'moderate', 'active', 'patient_reported', CURRENT_DATE - 39, 'u-provider', 'Matches portal and provider profile allergy list.'),
+      ('allergy-demo-alex-sulfa', 'tenant-demo', 'demo-patient-1', 'Sulfonamides', 'drug', 'Rash', 'Rash', 'moderate', 'active', 'patient_reported', CURRENT_DATE - 39, 'u-provider', 'Documented before methotrexate monitoring.'),
+      ('allergy-demo-jane-latex', 'tenant-demo', 'demo-patient-2', 'Latex', 'latex', 'Anaphylaxis', 'Anaphylaxis', 'severe', 'active', 'patient_reported', CURRENT_DATE - 31, 'u-provider', 'Latex-free setup required for procedures.'),
+      ('allergy-demo-jane-nickel', 'tenant-demo', 'demo-patient-2', 'Nickel', 'contact', 'Contact dermatitis', 'Contact dermatitis', 'moderate', 'active', 'patch_test', CURRENT_DATE - 31, 'u-provider', 'Patch testing discussion example.'),
+      ('allergy-demo-marcus-sulfa', 'tenant-demo', 'demo-patient-3', 'Sulfa drugs', 'drug', 'Rash', 'Rash', 'moderate', 'active', 'patient_reported', CURRENT_DATE - 19, 'u-provider', 'Reviewed during isotretinoin medication safety check.')
+    ON CONFLICT (id) DO UPDATE SET
+      allergen = EXCLUDED.allergen,
+      allergen_type = EXCLUDED.allergen_type,
+      reaction = EXCLUDED.reaction,
+      reaction_type = EXCLUDED.reaction_type,
+      severity = EXCLUDED.severity,
+      status = EXCLUDED.status,
+      source = EXCLUDED.source,
+      verified_at = EXCLUDED.verified_at,
+      verified_by = EXCLUDED.verified_by,
+      notes = EXCLUDED.notes,
+      updated_at = NOW();
+    `,
+  },
+  {
+    name: "150_portal_intake_runtime_schema",
+    sql: `
+    -- Runtime compatibility for the patient portal intake and e-check-in API.
+    ALTER TABLE portal_checkin_sessions
+      ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+
+    ALTER TABLE portal_checkin_sessions
+      ADD COLUMN IF NOT EXISTS session_type TEXT DEFAULT 'mobile',
+      ADD COLUMN IF NOT EXISTS device_type TEXT,
+      ADD COLUMN IF NOT EXISTS location_id TEXT REFERENCES locations(id),
+      ADD COLUMN IF NOT EXISTS insurance_verification_status TEXT DEFAULT 'not_checked',
+      ADD COLUMN IF NOT EXISTS insurance_verification_payload JSONB,
+      ADD COLUMN IF NOT EXISTS staff_notified BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS staff_notified_at TIMESTAMPTZ;
+
+    CREATE TABLE IF NOT EXISTS portal_consent_forms (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      consent_type TEXT NOT NULL DEFAULT 'general',
+      content TEXT NOT NULL,
+      version TEXT NOT NULL DEFAULT '1.0',
+      requires_signature BOOLEAN NOT NULL DEFAULT true,
+      requires_witness BOOLEAN NOT NULL DEFAULT false,
+      is_required BOOLEAN NOT NULL DEFAULT false,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_portal_consent_forms_tenant
+      ON portal_consent_forms(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_consent_forms_active
+      ON portal_consent_forms(tenant_id, is_active, is_required);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_portal_consent_forms_tenant_title_version
+      ON portal_consent_forms(tenant_id, lower(title), version);
+
+    CREATE TABLE IF NOT EXISTS portal_consent_signatures (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      consent_form_id TEXT NOT NULL REFERENCES portal_consent_forms(id) ON DELETE CASCADE,
+      signature_data TEXT NOT NULL,
+      signer_name TEXT NOT NULL,
+      signer_relationship TEXT NOT NULL DEFAULT 'self',
+      witness_signature_data TEXT,
+      witness_name TEXT,
+      consent_version TEXT NOT NULL,
+      consent_content TEXT NOT NULL,
+      ip_address TEXT,
+      user_agent TEXT,
+      is_valid BOOLEAN NOT NULL DEFAULT true,
+      signed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_portal_consent_signatures_tenant
+      ON portal_consent_signatures(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_consent_signatures_patient
+      ON portal_consent_signatures(patient_id, signed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_portal_consent_signatures_form
+      ON portal_consent_signatures(consent_form_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_consent_signatures_valid
+      ON portal_consent_signatures(patient_id, consent_form_id, is_valid)
+      WHERE is_valid = true;
+
+    CREATE TABLE IF NOT EXISTS portal_intake_form_templates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      form_type TEXT NOT NULL DEFAULT 'general',
+      form_schema JSONB NOT NULL DEFAULT '{}'::jsonb,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_portal_intake_form_templates_tenant
+      ON portal_intake_form_templates(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_intake_form_templates_active
+      ON portal_intake_form_templates(tenant_id, is_active);
+
+    CREATE TABLE IF NOT EXISTS portal_intake_form_assignments (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      form_template_id TEXT NOT NULL REFERENCES portal_intake_form_templates(id) ON DELETE CASCADE,
+      appointment_id TEXT REFERENCES appointments(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      due_date TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      assigned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      assigned_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_portal_intake_assignments_tenant
+      ON portal_intake_form_assignments(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_intake_assignments_patient_status
+      ON portal_intake_form_assignments(patient_id, status);
+    CREATE INDEX IF NOT EXISTS idx_portal_intake_assignments_appointment
+      ON portal_intake_form_assignments(appointment_id);
+
+    CREATE TABLE IF NOT EXISTS portal_intake_form_responses (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      assignment_id TEXT NOT NULL REFERENCES portal_intake_form_assignments(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      form_template_id TEXT NOT NULL REFERENCES portal_intake_form_templates(id) ON DELETE CASCADE,
+      response_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'draft',
+      ip_address TEXT,
+      user_agent TEXT,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      submitted_at TIMESTAMPTZ,
+      signature_data TEXT,
+      signature_timestamp TIMESTAMPTZ,
+      completion_time_seconds INTEGER,
+      reviewed_at TIMESTAMPTZ,
+      reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_portal_intake_responses_tenant
+      ON portal_intake_form_responses(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_portal_intake_responses_patient
+      ON portal_intake_form_responses(patient_id, submitted_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_portal_intake_responses_template
+      ON portal_intake_form_responses(form_template_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_portal_intake_responses_assignment_unique
+      ON portal_intake_form_responses(assignment_id);
+    `,
+  },
+  {
+    name: "151_seed_demo_portal_documents",
+    sql: `
+    -- Keep released demo summaries visible on the portal dashboard.
+    UPDATE visit_summaries
+    SET released_at = CASE id
+          WHEN 'visit-demo-alex-ak' THEN (CURRENT_DATE - 1) + TIME '09:00'
+          WHEN 'visit-demo-jane-biopsy' THEN (CURRENT_DATE - 2) + TIME '08:30'
+          WHEN 'visit-demo-marcus-acne' THEN (CURRENT_DATE - 3) + TIME '10:00'
+          WHEN 'visit-demo-sofia-microneedling' THEN (CURRENT_DATE - 4) + TIME '11:15'
+          ELSE released_at
+        END,
+        shared_at = CASE id
+          WHEN 'visit-demo-alex-ak' THEN (CURRENT_DATE - 1) + TIME '09:15'
+          WHEN 'visit-demo-jane-biopsy' THEN (CURRENT_DATE - 2) + TIME '08:45'
+          WHEN 'visit-demo-marcus-acne' THEN (CURRENT_DATE - 3) + TIME '10:15'
+          WHEN 'visit-demo-sofia-microneedling' THEN (CURRENT_DATE - 4) + TIME '11:30'
+          ELSE shared_at
+        END,
+        is_released = true,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE tenant_id = 'tenant-demo'
+      AND id IN (
+        'visit-demo-alex-ak',
+        'visit-demo-jane-biopsy',
+        'visit-demo-marcus-acne',
+        'visit-demo-sofia-microneedling'
+      );
+
+    INSERT INTO documents (
+      id, tenant_id, patient_id, encounter_id, title, type, url,
+      description, file_size, file_type, file_path, uploaded_at, created_at
+    )
+    VALUES
+      (
+        'doc-demo-alex-care-plan',
+        'tenant-demo',
+        'demo-patient-1',
+        'enc-demo-alex-ak',
+        'Psoriasis and Cryotherapy Care Plan',
+        'care_plan',
+        'demo-documents/alex-care-plan.txt',
+        'Post-visit care plan with psoriasis medication monitoring and cryotherapy aftercare.',
+        862,
+        'text/plain',
+        'demo-documents/alex-care-plan.txt',
+        (CURRENT_DATE - 1) + TIME '09:20',
+        (CURRENT_DATE - 1) + TIME '09:20'
+      ),
+      (
+        'doc-demo-jane-pathology-instructions',
+        'tenant-demo',
+        'demo-patient-2',
+        'enc-demo-jane-biopsy',
+        'Biopsy Aftercare and Pathology Follow-up',
+        'after_visit',
+        'demo-documents/jane-biopsy-aftercare.txt',
+        'Shave biopsy wound care instructions and next steps for pathology results.',
+        771,
+        'text/plain',
+        'demo-documents/jane-biopsy-aftercare.txt',
+        (CURRENT_DATE - 2) + TIME '08:50',
+        (CURRENT_DATE - 2) + TIME '08:50'
+      ),
+      (
+        'doc-demo-marcus-isotretinoin',
+        'tenant-demo',
+        'demo-patient-3',
+        'enc-demo-marcus-acne',
+        'Isotretinoin Monitoring Checklist',
+        'medication',
+        'demo-documents/marcus-isotretinoin-checklist.txt',
+        'Monthly isotretinoin safety checklist, lab reminder, and refill requirements.',
+        789,
+        'text/plain',
+        'demo-documents/marcus-isotretinoin-checklist.txt',
+        (CURRENT_DATE - 3) + TIME '10:20',
+        (CURRENT_DATE - 3) + TIME '10:20'
+      ),
+      (
+        'doc-demo-sofia-microneedling',
+        'tenant-demo',
+        'demo-patient-4',
+        'enc-demo-sofia-microneedling',
+        'Microneedling Post-Procedure Instructions',
+        'cosmetic_aftercare',
+        'demo-documents/sofia-microneedling-aftercare.txt',
+        'Cosmetic procedure aftercare instructions and payment plan reminder.',
+        798,
+        'text/plain',
+        'demo-documents/sofia-microneedling-aftercare.txt',
+        (CURRENT_DATE - 4) + TIME '11:35',
+        (CURRENT_DATE - 4) + TIME '11:35'
+      )
+    ON CONFLICT (id) DO UPDATE SET
+      encounter_id = EXCLUDED.encounter_id,
+      title = EXCLUDED.title,
+      type = EXCLUDED.type,
+      url = EXCLUDED.url,
+      description = EXCLUDED.description,
+      file_size = EXCLUDED.file_size,
+      file_type = EXCLUDED.file_type,
+      file_path = EXCLUDED.file_path,
+      uploaded_at = EXCLUDED.uploaded_at;
+
+    INSERT INTO patient_document_shares (
+      id, tenant_id, document_id, patient_id, shared_by, shared_at, viewed_at, notes, category
+    )
+    VALUES
+      (
+        'share-demo-alex-care-plan',
+        'tenant-demo',
+        'doc-demo-alex-care-plan',
+        'demo-patient-1',
+        'u-provider',
+        (CURRENT_DATE - 1) + TIME '09:25',
+        NULL,
+        'Shared after cryotherapy and psoriasis follow-up.',
+        'care_plan'
+      ),
+      (
+        'share-demo-jane-pathology-instructions',
+        'tenant-demo',
+        'doc-demo-jane-pathology-instructions',
+        'demo-patient-2',
+        'u-provider',
+        (CURRENT_DATE - 2) + TIME '08:55',
+        NULL,
+        'Shared after shave biopsy visit.',
+        'after_visit'
+      ),
+      (
+        'share-demo-marcus-isotretinoin',
+        'tenant-demo',
+        'doc-demo-marcus-isotretinoin',
+        'demo-patient-3',
+        'u-provider',
+        (CURRENT_DATE - 3) + TIME '10:25',
+        NULL,
+        'Shared for isotretinoin monitoring.',
+        'medication'
+      ),
+      (
+        'share-demo-sofia-microneedling',
+        'tenant-demo',
+        'doc-demo-sofia-microneedling',
+        'demo-patient-4',
+        'u-provider',
+        (CURRENT_DATE - 4) + TIME '11:40',
+        NULL,
+        'Shared after cosmetic microneedling visit.',
+        'cosmetic_aftercare'
+      )
+    ON CONFLICT (id) DO UPDATE SET
+      shared_at = EXCLUDED.shared_at,
+      viewed_at = EXCLUDED.viewed_at,
+      notes = EXCLUDED.notes,
+      category = EXCLUDED.category;
+    `,
+  },
+  {
+    name: "152_patient_portal_last_login_alignment",
+    sql: `
+    ALTER TABLE patient_portal_accounts
+      ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'patient_portal_accounts'
+          AND column_name = 'last_login'
+      ) THEN
+        EXECUTE '
+          UPDATE patient_portal_accounts
+          SET last_login_at = COALESCE(last_login_at, last_login)
+          WHERE last_login IS NOT NULL
+        ';
+      END IF;
+    END $$;
+    `,
+  },
+  {
+    name: "153_location_downtime_primary_station",
+    sql: `
+    ALTER TABLE locations
+      ADD COLUMN IF NOT EXISTS downtime_primary_device_id TEXT,
+      ADD COLUMN IF NOT EXISTS downtime_primary_device_label TEXT,
+      ADD COLUMN IF NOT EXISTS downtime_primary_device_registered_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS downtime_primary_device_registered_by TEXT,
+      ADD COLUMN IF NOT EXISTS downtime_primary_device_last_seen_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS downtime_primary_device_last_packet_saved_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS downtime_primary_device_last_packet_date DATE;
+
+    CREATE INDEX IF NOT EXISTS idx_locations_downtime_primary_device
+      ON locations (tenant_id, downtime_primary_device_id)
+      WHERE downtime_primary_device_id IS NOT NULL;
     `,
   },
 

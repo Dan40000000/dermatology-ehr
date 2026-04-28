@@ -5,6 +5,9 @@ import { MainNav } from '../MainNav';
 
 let mockRole = 'admin';
 const mockSession = { tenantId: 'demo-tenant', accessToken: 'test-token' };
+const apiMocks = vi.hoisted(() => ({
+  fetchUnreadCount: vi.fn(),
+}));
 
 vi.mock('../../../contexts/AuthContext', () => ({
   useAuth: () => ({
@@ -13,13 +16,13 @@ vi.mock('../../../contexts/AuthContext', () => ({
   }),
 }));
 
-vi.mock('../../../api', () => ({
-  fetchUnreadCount: vi.fn().mockResolvedValue({ count: 0 }),
-}));
+vi.mock('../../../api', () => apiMocks);
 
 describe('MainNav role-based visibility', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.clearAllMocks();
+    apiMocks.fetchUnreadCount.mockResolvedValue({ count: 0 });
   });
 
   afterEach(() => {
@@ -69,5 +72,12 @@ describe('MainNav role-based visibility', () => {
     expect(screen.getByText('Clearinghouse')).toBeInTheDocument();
     expect(screen.queryByText('Analytics')).not.toBeInTheDocument();
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
+  });
+
+  it('does not fetch unread mail count for roles without mail access', () => {
+    mockRole = 'compliance_officer';
+    renderNav();
+    expect(screen.queryByText('Mail')).not.toBeInTheDocument();
+    expect(apiMocks.fetchUnreadCount).not.toHaveBeenCalled();
   });
 });

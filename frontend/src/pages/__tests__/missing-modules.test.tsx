@@ -71,6 +71,26 @@ vi.mock('../../api', () => ({
   fetchReferrals: vi.fn().mockResolvedValue({ referrals: [] }),
   createReferral: vi.fn(),
   updateReferral: vi.fn(),
+  fetchDueRecalls: vi.fn().mockResolvedValue({ recalls: [] }),
+  fetchRecallCampaigns: vi.fn().mockResolvedValue({ campaigns: [] }),
+  fetchRecallStats: vi.fn().mockResolvedValue({
+    overall: {
+      total_recalls: 0,
+      total_pending: 0,
+      total_contacted: 0,
+      total_scheduled: 0,
+      total_completed: 0,
+      total_dismissed: 0,
+      contactRate: 0,
+      conversionRate: 0,
+    },
+    byCampaign: [],
+  }),
+  generateAllRecalls: vi.fn(),
+  bulkNotifyRecalls: vi.fn(),
+  recordRecallContact: vi.fn(),
+  updateRecallStatus: vi.fn(),
+  exportRecalls: vi.fn(),
 }));
 
 describe('Missing module placeholder pages', () => {
@@ -80,7 +100,7 @@ describe('Missing module placeholder pages', () => {
     { Component: FormsPage, heading: 'Forms', emptyTitle: 'No forms configured' },
     { Component: ProtocolsPage, heading: 'Treatment Protocols', emptyTitle: 'No protocols found' },
     { Component: HelpPage, heading: 'Role-Based Training Center', emptyTitle: 'First-time user onboarding with role-specific workflows, visual snapshots, and step-by-step checklists.' },
-    { Component: RecallsPage, heading: 'Recalls', emptyTitle: 'No recall campaigns' },
+    { Component: RecallsPage, heading: 'Recall Worklist', emptyTitle: 'No recalls match this view' },
   ];
 
   cases.forEach(({ Component, heading, emptyTitle }) => {

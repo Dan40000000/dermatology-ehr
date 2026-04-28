@@ -127,7 +127,7 @@ const TelehealthFilters: React.FC<TelehealthFiltersProps> = ({ filters, onChange
         {filters.datePreset === 'custom' && (
           <>
             <div className="filter-group">
-              <label htmlFor="startDate">Date Created (From)</label>
+              <label htmlFor="startDate">Appointment Date (From)</label>
               <input
                 id="startDate"
                 type="date"
@@ -136,7 +136,7 @@ const TelehealthFilters: React.FC<TelehealthFiltersProps> = ({ filters, onChange
               />
             </div>
             <div className="filter-group">
-              <label htmlFor="endDate">Date Created (To)</label>
+              <label htmlFor="endDate">Appointment Date (To)</label>
               <input
                 id="endDate"
                 type="date"

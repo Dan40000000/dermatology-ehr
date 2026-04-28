@@ -4,16 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Modal, Skeleton } from '../components/ui';
 import { API_BASE_URL } from '../utils/apiBase';
-import { fetchAppointments, fetchPatients } from '../api';
-
-type InstructionType =
-  | 'all'
-  | 'general'
-  | 'aftercare'
-  | 'lab_results'
-  | 'prescription_instructions'
-  | 'rash_care'
-  | 'cleansing';
+import { fetchAppointments, fetchOrders, fetchPatients } from '../api';
 
 type InstructionType =
   | 'all'
@@ -63,6 +54,8 @@ interface PatientOption {
   firstName: string;
   lastName: string;
   dateOfBirth?: string;
+  mrn?: string;
+  phone?: string;
 }
 
 interface PatientsResponseLike {
@@ -101,6 +94,64 @@ const PLACEHOLDER_GUIDE = [
   '{{lab_summary}}',
   '{{follow_up_date}}',
 ];
+
+const HANDOUT_PATIENT_LOOKUP_LIMIT = 1000;
+
+function isLabOrPathologyTemplate(handout: Handout | null): boolean {
+  if (!handout) return false;
+  const category = handout.category.toLowerCase();
+  return (
+    handout.instruction_type === 'lab_results' ||
+    category.includes('lab') ||
+    category.includes('pathology')
+  );
+}
+
+function getRelevantOrderTypesForHandout(handout: Handout | null): string[] {
+  if (!handout) return [];
+  const category = handout.category.toLowerCase();
+  if (category.includes('pathology')) {
+    return ['pathology', 'biopsy'];
+  }
+  if (handout.instruction_type === 'lab_results' || category.includes('lab')) {
+    return ['lab', 'pathology', 'biopsy'];
+  }
+  return [];
+}
+
+function formatOrderResultFlag(flag?: string): string {
+  if (!flag || flag === 'none') return '';
+  return flag
+    .split(/[_\s-]+/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function buildRelevantOrderSummary(
+  handout: Handout | null,
+  orders: Array<{ type?: string; details?: string; notes?: string; resultFlag?: string; createdAt?: string }>
+): string {
+  if (!isLabOrPathologyTemplate(handout) || orders.length === 0) {
+    return '';
+  }
+
+  const orderTypes = new Set(getRelevantOrderTypesForHandout(handout));
+  const relevant = orders
+    .filter((order) => order.type && orderTypes.has(order.type))
+    .sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime());
+
+  const latest = relevant[0];
+  if (!latest) return '';
+
+  const segments = [
+    formatOrderResultFlag(latest.resultFlag),
+    latest.details?.trim() || '',
+    latest.notes?.trim() || '',
+  ].filter(Boolean);
+
+  return segments.join(' - ');
+}
 
 const defaultFormState: HandoutFormState = {
   title: '',
@@ -374,7 +425,7 @@ function toPrintableHtml(
     <main class="sheet">
       <header class="header">
         <div>
-          <div class="clinic-name">Mountain Pine Dermatology PLLC</div>
+          <div class="clinic-name">Dermatology DEMO Office</div>
           <div class="clinic-subtitle">Clinical handout and patient instruction document</div>
         </div>
         <div class="document-badge">${typeLabel}</div>
@@ -411,6 +462,7 @@ export function HandoutsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const queryInstructionType = searchParams.get('instructionType') as InstructionType | null;
+  const preferredPatientId = searchParams.get('patientId') || '';
 
   const [loading, setLoading] = useState(true);
   const [handouts, setHandouts] = useState<Handout[]>([]);
@@ -444,12 +496,6 @@ export function HandoutsPage() {
   const [selectedPatientId, setSelectedPatientId] = useState('');
   const [patientsLoading, setPatientsLoading] = useState(false);
   const [followUpLoading, setFollowUpLoading] = useState(false);
-
-  useEffect(() => {
-    if (queryInstructionType && INSTRUCTION_TYPE_LABELS[queryInstructionType]) {
-      setInstructionTypeFilter(queryInstructionType);
-    }
-  }, [queryInstructionType]);
 
   useEffect(() => {
     if (queryInstructionType && INSTRUCTION_TYPE_LABELS[queryInstructionType]) {
@@ -494,7 +540,7 @@ export function HandoutsPage() {
 
   const openPreview = (handout: Handout) => {
     setSelectedHandout(handout);
-    setSelectedPatientId('');
+    setSelectedPatientId(preferredPatientId);
     setPatientSearch('');
     setPersonalization({
       patientName: '',
@@ -513,8 +559,8 @@ export function HandoutsPage() {
     setPatientsLoading(true);
     try {
       const response = (await fetchPatients(session.tenantId, session.accessToken, {
-        limit: 100,
-        fields: 'id,firstName,lastName,dateOfBirth',
+        limit: HANDOUT_PATIENT_LOOKUP_LIMIT,
+        fields: 'id,firstName,lastName,dateOfBirth,mrn,phone',
       })) as PatientsResponseLike;
       const rows = response.patients || response.data || [];
       const normalized = rows.map((row) => ({
@@ -522,6 +568,8 @@ export function HandoutsPage() {
         firstName: String(row.firstName || ''),
         lastName: String(row.lastName || ''),
         dateOfBirth: row.dateOfBirth || '',
+        mrn: row.mrn ? String(row.mrn) : '',
+        phone: row.phone ? String(row.phone) : '',
       }));
       setPatientOptions(normalized);
     } catch {
@@ -540,26 +588,56 @@ export function HandoutsPage() {
   const handleSelectPatient = useCallback(
     async (patientId: string) => {
       setSelectedPatientId(patientId);
-      if (!patientId || !session) return;
+      if (!patientId || !session) {
+        setPersonalization((prev) => ({
+          ...prev,
+          patientName: '',
+          patientDob: '',
+          labSummary: '',
+          followUpDate: '',
+        }));
+        return;
+      }
 
       const selected = patientOptions.find((p) => p.id === patientId);
       if (!selected) return;
+
+      setPatientSearch(`${selected.lastName}, ${selected.firstName}`);
 
       setPersonalization((prev) => ({
         ...prev,
         patientName: `${selected.firstName} ${selected.lastName}`.trim(),
         patientDob: formatDateLabel(selected.dateOfBirth),
+        labSummary: '',
+        followUpDate: '',
       }));
 
       setFollowUpLoading(true);
       try {
-        const appointmentsPayload = await fetchAppointments(session.tenantId, session.accessToken, {
-          patientId,
-        });
+        const relevantOrderTypes = getRelevantOrderTypesForHandout(selectedHandout);
+        const [appointmentsPayload, ordersPayload] = await Promise.all([
+          fetchAppointments(session.tenantId, session.accessToken, {
+            patientId,
+          }),
+          relevantOrderTypes.length > 0
+            ? fetchOrders(session.tenantId, session.accessToken, {
+                patientId,
+                orderTypes: relevantOrderTypes,
+                limit: 10,
+              })
+            : Promise.resolve({ orders: [] }),
+        ]);
         const appointments = (appointmentsPayload?.appointments || []) as Array<{
           appointmentTypeName?: string;
           scheduledStart?: string;
           status?: string;
+        }>;
+        const orders = (ordersPayload?.orders || []) as Array<{
+          type?: string;
+          details?: string;
+          notes?: string;
+          resultFlag?: string;
+          createdAt?: string;
         }>;
 
         const now = Date.now();
@@ -588,14 +666,28 @@ export function HandoutsPage() {
             followUpDate: formatDateLabel(followUpCandidate.scheduledStart),
           }));
         }
+
+        const autoLabSummary = buildRelevantOrderSummary(selectedHandout, orders);
+        if (autoLabSummary) {
+          setPersonalization((prev) => ({
+            ...prev,
+            labSummary: autoLabSummary,
+          }));
+        }
       } catch {
         // Leave follow-up date manual when appointment lookup fails.
       } finally {
         setFollowUpLoading(false);
       }
     },
-    [patientOptions, session]
+    [patientOptions, selectedHandout, session]
   );
+
+  useEffect(() => {
+    if (!showPreviewModal || !preferredPatientId || patientOptions.length === 0) return;
+    if (selectedPatientId === preferredPatientId) return;
+    void handleSelectPatient(preferredPatientId);
+  }, [showPreviewModal, preferredPatientId, patientOptions, selectedPatientId, handleSelectPatient]);
 
   const handleCreate = async () => {
     if (!session) return;
@@ -777,8 +869,18 @@ export function HandoutsPage() {
     if (!term) return patientOptions;
     return patientOptions.filter((patient) => {
       const fullName = `${patient.firstName} ${patient.lastName}`.toLowerCase();
+      const reverseName = `${patient.lastName} ${patient.firstName}`.toLowerCase();
       const dob = formatDateLabel(patient.dateOfBirth).toLowerCase();
-      return fullName.includes(term) || dob.includes(term);
+      const mrn = (patient.mrn || '').toLowerCase();
+      const phone = (patient.phone || '').replace(/\D/g, '');
+      const phoneSearch = term.replace(/\D/g, '');
+      return (
+        fullName.includes(term) ||
+        reverseName.includes(term) ||
+        dob.includes(term) ||
+        mrn.includes(term) ||
+        (phoneSearch.length >= 3 && phone.includes(phoneSearch))
+      );
     });
   }, [patientOptions, patientSearch]);
 
@@ -1028,11 +1130,54 @@ export function HandoutsPage() {
                 >
                   <input
                     type="text"
-                    placeholder="Search patient by name or DOB"
+                    placeholder="Search patient by name, DOB, MRN, or phone"
                     value={patientSearch}
                     onChange={(e) => setPatientSearch(e.target.value)}
                     disabled={patientsLoading}
                   />
+                  {!patientsLoading && filteredPatients.length > 0 && (
+                    <div
+                      style={{
+                        maxHeight: '180px',
+                        overflowY: 'auto',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: '8px',
+                        background: '#f8fafc',
+                        padding: '0.25rem',
+                      }}
+                    >
+                      {filteredPatients.slice(0, 8).map((patient) => {
+                        const isSelected = patient.id === selectedPatientId;
+                        return (
+                          <button
+                            key={patient.id}
+                            type="button"
+                            onClick={() => void handleSelectPatient(patient.id)}
+                            style={{
+                              width: '100%',
+                              textAlign: 'left',
+                              padding: '0.5rem 0.625rem',
+                              border: 'none',
+                              borderRadius: '6px',
+                              background: isSelected ? '#dbeafe' : 'transparent',
+                              color: '#111827',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              gap: '0.5rem',
+                            }}
+                          >
+                            <span style={{ fontWeight: 600 }}>
+                              {patient.lastName}, {patient.firstName}
+                            </span>
+                            <span style={{ color: '#6b7280', fontSize: '0.8rem' }}>
+                              {patient.dateOfBirth ? `DOB ${formatDateLabel(patient.dateOfBirth)}` : patient.mrn ? `MRN ${patient.mrn}` : ''}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                   <select
                     value={selectedPatientId}
                     onChange={(e) => void handleSelectPatient(e.target.value)}
@@ -1050,6 +1195,9 @@ export function HandoutsPage() {
                   </select>
                   <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
                     Selecting a patient auto-fills DOB and next follow-up date (if an upcoming visit exists).
+                    {isLabOrPathologyTemplate(selectedHandout)
+                      ? ' Recent lab/pathology details also auto-fill when available.'
+                      : ''}
                     {followUpLoading ? ' Looking up follow-up date...' : ''}
                   </div>
                 </div>

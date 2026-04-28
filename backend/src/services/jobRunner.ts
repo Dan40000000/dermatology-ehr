@@ -1,6 +1,7 @@
 import { CronParser, jobSchedulerService, JobHandler } from './jobSchedulerService';
 import { logger } from '../lib/logger';
 import { pool } from '../db/pool';
+import { prepareReadyDowntimePackets } from './downtimePacketService';
 
 // ============================================
 // JOB RUNNER
@@ -24,6 +25,9 @@ class JobRunner {
 
     // Register all handlers
     await this.registerAllHandlers();
+
+    // Register built-in schedules
+    await this.registerSystemJobs();
 
     // Initialize next run times for all jobs
     await this.initializeNextRunTimes();
@@ -670,7 +674,31 @@ class JobRunner {
       })
     );
 
+    jobSchedulerService.registerHandler(
+      'downtimePacketService',
+      'prepareReadyPackets',
+      this.createHandler(async () => {
+        return await prepareReadyDowntimePackets();
+      })
+    );
+
     logger.info('All job handlers registered');
+  }
+
+  private async registerSystemJobs(): Promise<void> {
+    await jobSchedulerService.registerJob(
+      'downtime-packet-prep-hourly',
+      '0 * * * *',
+      'downtimePacketService',
+      'prepareReadyPackets',
+      {
+        description: 'Prepare stored downtime packets for the next business day after each location cutoff.',
+        jobType: 'system',
+        priority: 4,
+        timezone: 'America/New_York',
+        tags: ['downtime', 'operations'],
+      }
+    );
   }
 
   /**

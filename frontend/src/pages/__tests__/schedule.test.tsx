@@ -16,6 +16,8 @@ const apiMocks = vi.hoisted(() => ({
   fetchPriorAuths: vi.fn(),
   fetchProviders: vi.fn(),
   fetchLocations: vi.fn(),
+  fetchReadyDowntimePacket: vi.fn(),
+  generateDowntimePacket: vi.fn(),
   fetchAppointmentTypes: vi.fn(),
   fetchAvailability: vi.fn(),
   fetchPatients: vi.fn(),
@@ -28,6 +30,7 @@ const apiMocks = vi.hoisted(() => ({
   createTimeBlock: vi.fn(),
   updateTimeBlock: vi.fn(),
   deleteTimeBlock: vi.fn(),
+  reportDowntimeDeviceStatus: vi.fn(),
 }));
 
 const navigateMock = vi.hoisted(() => vi.fn());
@@ -53,6 +56,9 @@ vi.mock('react-router-dom', async () => {
 });
 
 vi.mock('../../api', () => apiMocks);
+vi.mock('../../utils/kioskContext', () => ({
+  ensureKioskContext: vi.fn().mockResolvedValue({ kioskCode: 'kiosk-1', tenantId: 'tenant-1' }),
+}));
 
 vi.mock('../../components/ui', () => ({
   Skeleton: ({ height }: { height?: number }) => <div data-testid="skeleton" data-height={height ?? 0} />,
@@ -288,9 +294,15 @@ const buildFixtures = () => {
   providers: [
     { id: 'provider-1', fullName: 'Dr Demo', name: 'Dr Demo', createdAt: '2024-01-01' },
     { id: 'provider-2', fullName: 'Dr Two', name: 'Dr Two', createdAt: '2024-01-01' },
+    { id: 'provider-3', fullName: 'Dr Three', name: 'Dr Three', createdAt: '2024-01-01' },
   ],
   locations: [
-    { id: 'loc-1', name: 'Main Clinic', createdAt: '2024-01-01' },
+    {
+      id: 'loc-1',
+      name: 'Main Clinic',
+      createdAt: '2024-01-01',
+      downtimePrimaryDevice: { deviceId: 'device-1', label: 'Chrome on Mac' },
+    },
     { id: 'loc-2', name: 'East Wing', createdAt: '2024-01-01' },
   ],
   appointmentTypes: [
@@ -340,6 +352,24 @@ describe('SchedulePage', () => {
     apiMocks.fetchPriorAuths.mockResolvedValue({ data: [] });
     apiMocks.fetchProviders.mockResolvedValue({ providers: fixtures.providers });
     apiMocks.fetchLocations.mockResolvedValue({ locations: fixtures.locations });
+    apiMocks.fetchReadyDowntimePacket.mockResolvedValue({ packet: null });
+    apiMocks.generateDowntimePacket.mockResolvedValue({
+      packet: {
+        date: '2024-04-02',
+        generatedAt: '2024-04-01T19:00:00.000Z',
+        location: { id: 'loc-1', name: 'Main Clinic' },
+        settings: {
+          enabled: true,
+          packetTime: '12:00',
+          deviceProfile: 'desktop',
+          includeDob: true,
+          includePhone: true,
+          includeInsurance: true,
+        },
+        counts: { total: 0, byStatus: {} },
+        appointments: [],
+      },
+    });
     apiMocks.fetchAppointmentTypes.mockResolvedValue({ appointmentTypes: fixtures.appointmentTypes });
     apiMocks.fetchAvailability.mockResolvedValue({ availability: fixtures.availability });
     apiMocks.fetchPatients.mockResolvedValue({ patients: fixtures.patients });
@@ -352,10 +382,22 @@ describe('SchedulePage', () => {
     apiMocks.createTimeBlock.mockResolvedValue({ ok: true });
     apiMocks.updateTimeBlock.mockResolvedValue({ ok: true });
     apiMocks.deleteTimeBlock.mockResolvedValue({ ok: true });
+    apiMocks.reportDowntimeDeviceStatus.mockResolvedValue({ updatedLocationIds: [] });
     toastMocks.showSuccess.mockClear();
     toastMocks.showError.mockClear();
     navigateMock.mockClear();
     localStorage.clear();
+    localStorage.setItem(
+      'downtime:primary-device',
+      JSON.stringify({
+        deviceId: 'device-1',
+        label: 'Chrome on Mac',
+        platform: 'Mac',
+        browser: 'Chrome',
+        userAgent: 'Vitest',
+        createdAt: '2026-04-27T00:00:00.000Z',
+      }),
+    );
     confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
@@ -379,7 +421,7 @@ describe('SchedulePage', () => {
     );
     await screen.findByText('Scheduling Conflicts:');
     expect(screen.getByTestId('calendar-appointments')).toHaveTextContent('3');
-    expect(screen.getByTestId('calendar-providers')).toHaveTextContent('2');
+    expect(screen.getByTestId('calendar-providers')).toHaveTextContent('3');
     expect(screen.getByTestId('calendar-timeblocks')).toHaveTextContent('2');
 
     const filterSelects = screen.getAllByRole('combobox');
@@ -392,19 +434,19 @@ describe('SchedulePage', () => {
     expect(screen.getByTestId('calendar-timeblocks')).toHaveTextContent('1');
 
     fireEvent.change(providerSelect, { target: { value: 'all' } });
-    await waitFor(() => expect(screen.getByTestId('calendar-providers')).toHaveTextContent('2'));
+    await waitFor(() => expect(screen.getByTestId('calendar-providers')).toHaveTextContent('3'));
 
     fireEvent.change(locationSelect, { target: { value: 'loc-2' } });
     await waitFor(() => expect(screen.getByTestId('calendar-appointments')).toHaveTextContent('1'));
-    expect(screen.getByTestId('calendar-providers')).toHaveTextContent('1');
-    expect(screen.getByTestId('calendar-timeblocks')).toHaveTextContent('1');
+    expect(screen.getByTestId('calendar-providers')).toHaveTextContent('3');
+    expect(screen.getByTestId('calendar-timeblocks')).toHaveTextContent('2');
 
     fireEvent.change(typeSelect, { target: { value: 'type-1' } });
     await waitFor(() => expect(screen.getByTestId('calendar-appointments')).toHaveTextContent('0'));
 
     fireEvent.change(locationSelect, { target: { value: 'all' } });
     await waitFor(() => expect(screen.getByTestId('calendar-appointments')).toHaveTextContent('2'));
-    expect(screen.getByTestId('calendar-providers')).toHaveTextContent('2');
+    expect(screen.getByTestId('calendar-providers')).toHaveTextContent('3');
     expect(screen.getByTestId('calendar-timeblocks')).toHaveTextContent('2');
 
     fireEvent.click(screen.getByRole('button', { name: /Prev/ }));
@@ -415,54 +457,111 @@ describe('SchedulePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Day' }));
 
     fireEvent.click(screen.getByRole('button', { name: /Appointment Finder/i }));
-    expect(screen.getByRole('heading', { name: 'Appointment Finder' })).toBeInTheDocument();
+    const finderModal = await screen.findByTestId('modal-smart-appointment-finder');
+    const finderScope = within(finderModal);
 
-    const finderPanel = screen.getByRole('heading', { name: 'Appointment Finder' }).closest('div')?.parentElement as HTMLElement;
-    const finderSelects = within(finderPanel).getAllByRole('combobox');
-    fireEvent.change(finderSelects[1], { target: { value: 'loc-1' } });
-    fireEvent.change(finderSelects[2], { target: { value: 'provider-1' } });
-    fireEvent.change(finderSelects[3], { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    expect(toastMocks.showError).toHaveBeenCalledWith('Please select an appointment type');
-    fireEvent.change(finderSelects[3], { target: { value: 'type-1' } });
-    fireEvent.change(finderSelects[4], { target: { value: '30' } });
-    fireEvent.change(finderSelects[5], { target: { value: 'Morning' } });
-    fireEvent.change(finderSelects[6], { target: { value: 'Weekdays' } });
-    fireEvent.change(finderSelects[7], { target: { value: 'Specific date' } });
-    fireEvent.change(finderSelects[0], { target: { value: 'patient-1' } });
-    fireEvent.click(within(finderPanel).getByRole('radio', { name: 'By Time Availability' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Loaded patient into New Appointment. Pick an available time.');
-    fireEvent.click(within(finderPanel).getByRole('button', { name: 'Close' }));
+    fireEvent.click(finderScope.getByRole('button', { name: /Consult/i }));
+    fireEvent.change(finderScope.getByLabelText(/Search patient by name or date of birth/i), {
+      target: { value: 'Ana' },
+    });
+    fireEvent.click(finderScope.getByRole('button', { name: /Derm, Ana/i }));
+    fireEvent.click(finderScope.getByRole('button', { name: 'Search openings' }));
+    await waitFor(() => {
+      expect(toastMocks.showSuccess).toHaveBeenCalledWith('Found 12 available slots.');
+    });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Quick Filters' }));
-    const expandedModal = await screen.findByTestId('modal-expanded-appointment-finder');
-    const expandedScope = within(expandedModal);
-
-    fireEvent.click(expandedScope.getByRole('button', { name: 'Search 1st Appt' }));
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Searching for 1st appointment...');
-    fireEvent.click(expandedScope.getByRole('button', { name: 'Search 2nd Appt' }));
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Searching for 2nd appointment...');
-
-    fireEvent.click(expandedScope.getByRole('button', { name: 'Quick Filters' }));
-    expect(navigateMock).toHaveBeenCalledWith('/appointment-finder');
-
-    fireEvent.click(expandedScope.getByRole('button', { name: 'Search All' }));
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Searching all appointments...');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Quick Filters' }));
-    const expandedModalAgain = await screen.findByTestId('modal-expanded-appointment-finder');
-    const expandedScopeAgain = within(expandedModalAgain);
-    fireEvent.click(expandedScopeAgain.getByRole('button', { name: 'Close Modal' }));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Quick Filters' }));
-    const expandedModalThird = await screen.findByTestId('modal-expanded-appointment-finder');
-    const expandedScopeThird = within(expandedModalThird);
-    fireEvent.click(expandedScopeThird.getByRole('button', { name: 'Close' }));
+    fireEvent.click(finderScope.getAllByRole('button', { name: 'Use this slot' })[0]);
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Loaded selected opening into New Appointment.');
+    expect(screen.getByText('Appointment Modal')).toBeInTheDocument();
+    expect(screen.getByTestId('appointment-initial-date').textContent).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
     fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
     expect(toastMocks.showSuccess).toHaveBeenCalledWith('Exported 0 appointments as CSV');
   }, 15000);
+
+  it('only auto-prepares the downtime packet once per location and date', async () => {
+    const fixtures = buildFixtures();
+    localStorage.setItem('sched:location', 'loc-1');
+    apiMocks.fetchLocations.mockResolvedValue({
+      locations: [
+        {
+          ...fixtures.locations[0],
+          downtimeSettings: {
+            enabled: true,
+            packetTime: '00:00',
+            deviceProfile: 'desktop',
+            includeDob: true,
+            includePhone: true,
+            includeInsurance: true,
+          },
+        },
+        fixtures.locations[1],
+      ],
+    });
+
+    render(<SchedulePage />);
+
+    await screen.findByTestId('calendar');
+    await waitFor(() => expect(apiMocks.generateDowntimePacket).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(apiMocks.generateDowntimePacket).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits until the configured cutoff before auto-preparing the downtime packet', async () => {
+    const fixtures = buildFixtures();
+    localStorage.setItem('sched:location', 'loc-1');
+    apiMocks.fetchLocations.mockResolvedValue({
+      locations: [
+        {
+          ...fixtures.locations[0],
+          downtimeSettings: {
+            enabled: true,
+            packetTime: '23:59',
+            deviceProfile: 'desktop',
+            includeDob: true,
+            includePhone: true,
+            includeInsurance: true,
+          },
+        },
+        fixtures.locations[1],
+      ],
+    });
+
+    render(<SchedulePage />);
+
+    await screen.findByTestId('calendar');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(apiMocks.generateDowntimePacket).not.toHaveBeenCalled();
+    expect(apiMocks.fetchReadyDowntimePacket).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-prepare when this browser is not the registered downtime station', async () => {
+    const fixtures = buildFixtures();
+    localStorage.setItem('sched:location', 'loc-1');
+    apiMocks.fetchLocations.mockResolvedValue({
+      locations: [
+        {
+          ...fixtures.locations[0],
+          downtimePrimaryDevice: { deviceId: 'other-device', label: 'Other PC' },
+          downtimeSettings: {
+            enabled: true,
+            packetTime: '00:00',
+            deviceProfile: 'desktop',
+            includeDob: true,
+            includePhone: true,
+            includeInsurance: true,
+          },
+        },
+      ],
+    });
+
+    render(<SchedulePage />);
+
+    await screen.findByTestId('calendar');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(apiMocks.generateDowntimePacket).not.toHaveBeenCalled();
+    expect(apiMocks.fetchReadyDowntimePacket).not.toHaveBeenCalled();
+  });
 
   it('handles appointment actions and time blocks', async () => {
     render(<SchedulePage />);
@@ -478,10 +577,12 @@ describe('SchedulePage', () => {
     const actionScope = within(actionBar);
 
     fireEvent.click(actionScope.getByRole('button', { name: /New Appointment/i }));
-    expect(screen.getByText('Appointment Modal')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Close Appointment' }));
+    expect(screen.getByTestId('modal-smart-appointment-finder')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Modal' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Select Appointment' }));
+    expect(screen.queryByTestId('modal-appointment-actions')).not.toBeInTheDocument();
+    expect(actionScope.getByRole('button', { name: /Reschedule/i })).not.toBeDisabled();
 
     fireEvent.click(actionScope.getByRole('button', { name: /Check In/ }));
     expect(screen.getByText('Check-In Review')).toBeInTheDocument();
@@ -734,7 +835,7 @@ describe('SchedulePage', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole('button', { name: 'Open iPad Kiosk' }));
-    expect(openSpy).toHaveBeenCalled();
+    await waitFor(() => expect(openSpy).toHaveBeenCalled());
 
     openSpy.mockRestore();
   });
@@ -854,7 +955,7 @@ it('confirms no-show for overdue appointments and posts a no-show fee', async ()
     render(<SchedulePage />);
 
     fireEvent.click(screen.getByRole('button', { name: /New Appointment/i }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save Appointment' }));
+    expect(screen.getByTestId('modal-smart-appointment-finder')).toBeInTheDocument();
     expect(apiMocks.createAppointment).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: /Time Block/i }));

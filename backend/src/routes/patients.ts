@@ -13,6 +13,7 @@ import { emitPatientUpdated } from "../websocket/emitter";
 import { logger } from "../lib/logger";
 import { buildSsnFields } from "../security/encryption";
 import { auditPatientDataAccess } from "../services/audit";
+import { getPatientAllergySummaries, getPatientMedicationSummaries } from "../services/patientHealthRecord";
 
 const ssnInputSchema = z.string().refine((value) => {
   const digits = value.replace(/\D/g, "");
@@ -170,7 +171,7 @@ export const patientsRouter = Router();
  */
 patientsRouter.get("/", requireAuth, requireModuleAccess("patients"), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
-  const { page, limit, offset } = parsePagination(req);
+  const { page, limit, offset } = parsePagination(req, { maxLimit: 1000 });
   const selectedFields = parseFields(req);
   const canViewSsn = canAccessSsnLast4(req);
 
@@ -437,7 +438,13 @@ patientsRouter.get("/:id", requireAuth, requireModuleAccess("patients"), async (
       userAgent: req.get("user-agent") || undefined,
     });
 
-    return res.json({ patient: result.rows[0] });
+    const patient = result.rows[0];
+    const [allergiesList, medicationsList] = await Promise.all([
+      getPatientAllergySummaries(tenantId, id, pool, { legacyAllergies: patient.allergies }),
+      getPatientMedicationSummaries(tenantId, id, pool, { legacyMedications: patient.medications }),
+    ]);
+
+    return res.json({ patient: { ...patient, allergiesList, medicationsList } });
   } catch (error) {
     logPatientsError("Error fetching patient", error);
     return res.status(500).json({ error: "Failed to fetch patient" });
@@ -836,6 +843,75 @@ patientsRouter.get("/:id/encounters", requireAuth, requireModuleAccess("notes"),
   }
 });
 
+patientsRouter.get("/:id/clinical-summary", requireAuth, requireModuleAccess("patients"), async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+
+  try {
+    const diagnosesResult = await pool.query(
+      `SELECT ed.id,
+              ed.encounter_id as "encounterId",
+              COALESCE(ed.icd10_code, ed.icd_code) as "icd10Code",
+              ed.description,
+              ed.is_primary as "isPrimary",
+              ed.created_at as "createdAt",
+              e.created_at as "encounterDate",
+              e.chief_complaint as "chiefComplaint",
+              pr.full_name as "providerName"
+       FROM encounter_diagnoses ed
+       INNER JOIN encounters e
+         ON e.id = ed.encounter_id
+        AND e.tenant_id = ed.tenant_id
+       LEFT JOIN providers pr
+         ON pr.id = e.provider_id
+        AND pr.tenant_id = e.tenant_id
+       WHERE ed.tenant_id = $1
+         AND e.patient_id = $2
+       ORDER BY ed.is_primary DESC, ed.created_at DESC`,
+      [tenantId, id]
+    );
+
+    const recallsResult = await pool.query(
+      `SELECT pr.id,
+              pr.patient_id as "patientId",
+              pr.campaign_id as "campaignId",
+              COALESCE(pr.due_date, pr.recall_date) as "dueDate",
+              pr.recall_date as "recallDate",
+              COALESCE(pr.recall_type, rc.recall_type) as "recallType",
+              pr.status,
+              pr.last_contact_date as "lastContactDate",
+              pr.contact_method as "contactMethod",
+              pr.notes,
+              pr.doctor_notes as "doctorNotes",
+              pr.preferred_contact_method as "preferredContactMethod",
+              pr.notified_on as "notifiedOn",
+              pr.notification_count as "notificationCount",
+              pr.appointment_id as "appointmentId",
+              pr.created_at as "createdAt",
+              pr.updated_at as "updatedAt",
+              rc.name as "campaignName"
+       FROM patient_recalls pr
+       LEFT JOIN recall_campaigns rc
+         ON rc.id = pr.campaign_id
+        AND rc.tenant_id = pr.tenant_id
+       WHERE pr.tenant_id = $1
+         AND pr.patient_id = $2
+       ORDER BY CASE WHEN pr.status IN ('pending', 'contacted', 'scheduled') THEN 0 ELSE 1 END,
+                COALESCE(pr.due_date, pr.recall_date) ASC NULLS LAST,
+                pr.created_at DESC`,
+      [tenantId, id]
+    );
+
+    return res.json({
+      diagnoses: diagnosesResult.rows,
+      recalls: recallsResult.rows,
+    });
+  } catch (error) {
+    logPatientsError("Error fetching patient clinical summary", error);
+    return res.status(500).json({ error: "Failed to fetch patient clinical summary" });
+  }
+});
+
 /**
  * @swagger
  * /api/patients/{id}/prescriptions:
@@ -850,7 +926,15 @@ patientsRouter.get("/:id/prescriptions", requireAuth, requireModuleAccess("rx"),
 
   try {
     const prescriptionColumns = await getTableColumns("prescriptions");
-    const hasStatusColumn = prescriptionColumns.has("status");
+    const statusColumn = prescriptionColumns.has("status")
+      ? "p.status"
+      : prescriptionColumns.has("erx_status")
+        ? "p.erx_status"
+        : null;
+    const hasEncounterColumn = prescriptionColumns.has("encounter_id");
+    const hasPharmacyColumn = prescriptionColumns.has("pharmacy_id");
+    const pharmacyColumns = hasPharmacyColumn ? await getTableColumns("pharmacies") : new Set<string>();
+    const hasPharmacyTable = pharmacyColumns.size > 0;
 
     // Verify patient exists
     const patientCheck = await pool.query(
@@ -865,17 +949,30 @@ patientsRouter.get("/:id/prescriptions", requireAuth, requireModuleAccess("rx"),
       SELECT p.*,
              p.patient_id as "patientId",
              p.provider_id as "providerId",
-             p.encounter_id as "encounterId",
+             NULLIF(to_jsonb(p)->>'encounter_id', '') as "encounterId",
              p.medication_name as "medicationName",
              p.created_at as "createdAt",
-             p.updated_at as "updatedAt",
+             NULLIF(to_jsonb(p)->>'updated_at', '') as "updatedAt",
              prov.full_name as "providerName",
-             ph.name as "pharmacyFullName", ph.phone as "pharmacyPhone",
-             e.created_at as "encounterDate"
+             ${hasPharmacyTable ? `ph.name` : `NULL::text`} as "pharmacyFullName",
+             ${hasPharmacyTable && pharmacyColumns.has("phone") ? `ph.phone` : `NULL::text`} as "pharmacyPhone",
+             ${hasEncounterColumn ? `e.created_at` : `NULL::timestamptz`} as "encounterDate",
+             COALESCE(${statusColumn ? `NULLIF(${statusColumn}, '')` : `NULL::text`}, 'active') as "status",
+             NULLIF(to_jsonb(p)->>'generic_name', '') as "genericName",
+             NULLIF(to_jsonb(p)->>'dosage_form', '') as "dosageForm",
+             NULLIF(to_jsonb(p)->>'quantity_unit', '') as "quantityUnit",
+             NULLIF(to_jsonb(p)->>'refills_remaining', '') as "refillsRemaining",
+             NULLIF(to_jsonb(p)->>'days_supply', '') as "daysSupply",
+             NULLIF(to_jsonb(p)->>'dea_schedule', '') as "deaSchedule",
+             NULLIF(to_jsonb(p)->>'written_date', '') as "writtenDate",
+             NULLIF(to_jsonb(p)->>'sent_at', '') as "sentAt",
+             NULLIF(to_jsonb(p)->>'last_filled_date', '') as "lastFilledDate",
+             NULLIF(to_jsonb(p)->>'pharmacy_id', '') as "pharmacyId",
+             NULLIF(to_jsonb(p)->>'pharmacy_name', '') as "pharmacyName"
       FROM prescriptions p
-      LEFT JOIN providers prov ON p.provider_id = prov.id
-      LEFT JOIN pharmacies ph ON p.pharmacy_id = ph.id
-      LEFT JOIN encounters e ON p.encounter_id = e.id
+      LEFT JOIN providers prov ON p.provider_id = prov.id AND p.tenant_id = prov.tenant_id
+      ${hasPharmacyTable ? `LEFT JOIN pharmacies ph ON p.pharmacy_id = ph.id AND p.tenant_id = ph.tenant_id` : ``}
+      ${hasEncounterColumn ? `LEFT JOIN encounters e ON p.encounter_id = e.id AND p.tenant_id = e.tenant_id` : ``}
       WHERE p.patient_id = $1 AND p.tenant_id = $2
     `;
 
@@ -883,13 +980,13 @@ patientsRouter.get("/:id/prescriptions", requireAuth, requireModuleAccess("rx"),
     let paramIndex = 3;
 
     // Filter by status if provided
-    if (status && hasStatusColumn) {
-      query += ` AND p.status = $${paramIndex}`;
+    if (status && statusColumn) {
+      query += ` AND ${statusColumn} = $${paramIndex}`;
       params.push(status);
       paramIndex++;
-    } else if (includeInactive !== 'true' && hasStatusColumn) {
+    } else if (includeInactive !== 'true' && statusColumn) {
       // By default, exclude cancelled and discontinued prescriptions
-      query += ` AND p.status NOT IN ('cancelled', 'discontinued')`;
+      query += ` AND ${statusColumn} NOT IN ('cancelled', 'discontinued')`;
     }
 
     query += ' ORDER BY p.created_at DESC';
@@ -1072,8 +1169,11 @@ patientsRouter.get("/:id/balance", requireAuth, requireRoles(REVENUE_CYCLE_ROLES
       `SELECT
          COALESCE(SUM(c.amount_cents), 0) / 100.0 AS unbilled_charges
        FROM charges c
-       WHERE c.patient_id = $1
-         AND c.tenant_id = $2
+       LEFT JOIN encounters e
+         ON e.id = c.encounter_id
+        AND e.tenant_id = c.tenant_id
+       WHERE c.tenant_id = $2
+         AND COALESCE(e.patient_id, NULLIF(to_jsonb(c)->>'patient_id', '')) = $1
          AND COALESCE(c.status, 'pending') <> 'voided'
          AND NOT EXISTS (
            SELECT 1
@@ -1110,12 +1210,38 @@ patientsRouter.get("/:id/balance", requireAuth, requireRoles(REVENUE_CYCLE_ROLES
 
     // Get payment plans
     const paymentPlansResult = await pool.query(
-      `SELECT id, total_amount as "totalAmount", amount_paid as "amountPaid",
-              monthly_payment as "monthlyPayment", status,
-              start_date as "startDate", created_at as "createdAt"
-       FROM payment_plans
-       WHERE patient_id = $1 AND tenant_id = $2
-       ORDER BY created_at DESC`,
+      `SELECT
+         pp.id,
+         COALESCE(
+           NULLIF(to_jsonb(pp)->>'total_amount', '')::numeric,
+           NULLIF(to_jsonb(pp)->>'total_amount_cents', '')::numeric / 100.0,
+           0
+         ) as "totalAmount",
+         COALESCE(
+           NULLIF(to_jsonb(pp)->>'amount_paid', '')::numeric,
+           NULLIF(to_jsonb(pp)->>'amount_paid_cents', '')::numeric / 100.0,
+           COALESCE(
+             NULLIF(to_jsonb(pp)->>'total_amount', '')::numeric,
+             NULLIF(to_jsonb(pp)->>'total_amount_cents', '')::numeric / 100.0,
+             0
+           ) - COALESCE(
+             NULLIF(to_jsonb(pp)->>'remaining_balance', '')::numeric,
+             NULLIF(to_jsonb(pp)->>'remaining_balance_cents', '')::numeric / 100.0,
+             0
+           ),
+           0
+         ) as "amountPaid",
+         COALESCE(
+           NULLIF(to_jsonb(pp)->>'monthly_payment', '')::numeric,
+           NULLIF(to_jsonb(pp)->>'monthly_payment_cents', '')::numeric / 100.0,
+           0
+         ) as "monthlyPayment",
+         pp.status,
+         COALESCE(NULLIF(to_jsonb(pp)->>'start_date', ''), NULLIF(to_jsonb(pp)->>'first_payment_date', '')) as "startDate",
+         pp.created_at as "createdAt"
+       FROM payment_plans pp
+       WHERE pp.patient_id = $1 AND pp.tenant_id = $2
+       ORDER BY pp.created_at DESC`,
       [id, tenantId]
     );
 

@@ -65,6 +65,17 @@ describe("Lab orders routes", () => {
     expect(res.body).toHaveLength(1);
   });
 
+  it("GET /lab-orders falls back to v2 tables when legacy tables are missing", async () => {
+    queryMock
+      .mockRejectedValueOnce(Object.assign(new Error("missing relation"), { code: "42P01" }))
+      .mockResolvedValueOnce({ rows: [{ id: "order-1" }], rowCount: 1 });
+
+    const res = await request(app).get("/lab-orders");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+  });
+
   it("GET /lab-orders returns 500 on error", async () => {
     queryMock.mockRejectedValueOnce(new Error("boom"));
     const res = await request(app).get("/lab-orders");

@@ -83,17 +83,24 @@ describe("ambientScribeHandlers", () => {
       expect.objectContaining({
         recordingId: "rec-1",
         text: expect.stringContaining("itchy rash"),
+        speakerRole: "patient",
       })
     );
     expect(roomEmitMock).toHaveBeenCalledWith(
       "ambient:insights",
       expect.objectContaining({
         recordingId: "rec-1",
+        visitSummary: expect.objectContaining({
+          oneLiner: expect.stringMatching(/itchy rash|contact dermatitis|eczema/i),
+        }),
         symptoms: expect.arrayContaining([
           expect.objectContaining({ label: expect.stringContaining("Itching") }),
         ]),
         workingDiagnoses: expect.arrayContaining([
           expect.objectContaining({ condition: expect.stringMatching(/contact dermatitis|eczema/i) }),
+        ]),
+        clinicalActions: expect.arrayContaining([
+          expect.objectContaining({ label: expect.stringContaining("Patch testing") }),
         ]),
       })
     );

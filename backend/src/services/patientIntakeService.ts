@@ -16,6 +16,7 @@ import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import crypto from 'crypto';
 import { smsWorkflowService } from './smsWorkflowService';
+import { verifyPatientEligibility } from './eligibilityService';
 
 // ============================================
 // TYPE DEFINITIONS
@@ -482,114 +483,73 @@ class PatientIntakeService {
       return result;
     }
 
-    // Mock eligibility check - in production, call Availity, Change Healthcare, etc.
-    const mockResponse = this.mockEligibilityCheck(patient);
+    const verification = await verifyPatientEligibility(patientId, tenantId, undefined, appointmentId);
 
-    // Store verification result
-    const verificationId = crypto.randomUUID();
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30);
-
-    await pool.query(
-      `INSERT INTO insurance_verifications (
-        id, tenant_id, patient_id, payer_id, payer_name, member_id, group_number,
-        plan_name, plan_type, verification_status, coverage_details,
-        effective_date, termination_date, copay_amount_cents, deductible_total_cents,
-        deductible_met_cents, coinsurance_pct, out_of_pocket_max_cents, out_of_pocket_met_cents,
-        prior_auth_required, verified_at, verification_source, expires_at,
-        has_issues, issue_type, issue_notes, appointment_id, raw_response
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW(), $21, $22, $23, $24, $25, $26, $27)`,
-      [
-        verificationId,
-        tenantId,
-        patientId,
-        patient.insurance_payer_id,
-        patient.insurance_provider,
-        patient.insurance_member_id,
-        patient.insurance_group_number,
-        mockResponse.planName,
-        mockResponse.planType,
-        mockResponse.status,
-        JSON.stringify(mockResponse.coverageDetails),
-        mockResponse.effectiveDate,
-        mockResponse.terminationDate,
-        mockResponse.copayAmountCents,
-        mockResponse.deductibleTotalCents,
-        mockResponse.deductibleMetCents,
-        mockResponse.coinsurancePct,
-        mockResponse.outOfPocketMaxCents,
-        mockResponse.outOfPocketMetCents,
-        mockResponse.priorAuthRequired,
-        'mock_api',
-        expiresAt,
-        mockResponse.hasIssues,
-        mockResponse.hasIssues ? 'verification_issue' : null,
-        mockResponse.issueNotes,
-        appointmentId || null,
-        JSON.stringify(mockResponse.rawResponse),
-      ]
+    const detailResult = await pool.query(
+      `SELECT
+        id,
+        verification_status,
+        payer_name,
+        member_id,
+        effective_date,
+        termination_date,
+        copay_specialist_cents,
+        deductible_total_cents,
+        deductible_met_cents,
+        coinsurance_pct,
+        oop_max_cents,
+        oop_met_cents,
+        prior_auth_required,
+        has_issues,
+        issue_notes,
+        coverage_level,
+        plan_name,
+        plan_type,
+        in_network,
+        network_name,
+        raw_response
+       FROM insurance_verifications
+       WHERE id = $1 AND tenant_id = $2`,
+      [verification.id, tenantId]
     );
+
+    const details = detailResult.rows[0];
+    if (!details) {
+      throw new Error('Insurance verification completed but detail record was not found');
+    }
 
     // Update intake status
     await this.updateIntakeStatusField(tenantId, patientId, appointmentId, 'insurance_verified', true);
-    await this.updateIntakeStatusField(tenantId, patientId, appointmentId, 'insurance_verification_id', verificationId);
+    await this.updateIntakeStatusField(tenantId, patientId, appointmentId, 'insurance_verification_id', verification.id);
 
-    logger.info('Insurance verification completed', { verificationId, status: mockResponse.status });
-
-    return {
-      id: verificationId,
-      status: mockResponse.status,
-      payerName: patient.insurance_provider || 'Unknown',
-      memberId: patient.insurance_member_id,
-      effectiveDate: mockResponse.effectiveDate,
-      terminationDate: mockResponse.terminationDate,
-      copayAmountCents: mockResponse.copayAmountCents,
-      deductibleTotalCents: mockResponse.deductibleTotalCents,
-      deductibleMetCents: mockResponse.deductibleMetCents,
-      coinsurancePct: mockResponse.coinsurancePct,
-      outOfPocketMaxCents: mockResponse.outOfPocketMaxCents,
-      outOfPocketMetCents: mockResponse.outOfPocketMetCents,
-      priorAuthRequired: mockResponse.priorAuthRequired,
-      hasIssues: mockResponse.hasIssues,
-      issueNotes: mockResponse.issueNotes,
-      coverageDetails: mockResponse.coverageDetails,
-    };
-  }
-
-  private mockEligibilityCheck(patient: any): any {
-    // Mock response - in production, call real eligibility API
-    const isActive = Math.random() > 0.1; // 90% active coverage
+    logger.info('Insurance verification completed', {
+      verificationId: verification.id,
+      status: details.verification_status,
+    });
 
     return {
-      status: isActive ? 'active' : 'inactive',
-      planName: patient.insurance_plan_name || 'Standard PPO',
-      planType: 'PPO',
-      effectiveDate: '2024-01-01',
-      terminationDate: null,
-      copayAmountCents: 3000, // $30 copay
-      deductibleTotalCents: 150000, // $1500 deductible
-      deductibleMetCents: 75000, // $750 met
-      coinsurancePct: 20,
-      outOfPocketMaxCents: 500000, // $5000 OOP max
-      outOfPocketMetCents: 125000, // $1250 met
-      priorAuthRequired: false,
-      hasIssues: !isActive,
-      issueNotes: !isActive ? 'Coverage is not currently active' : null,
+      id: verification.id,
+      status: details.verification_status,
+      payerName: details.payer_name || patient.insurance_provider || 'Unknown',
+      memberId: details.member_id || patient.insurance_member_id,
+      effectiveDate: details.effective_date || undefined,
+      terminationDate: details.termination_date || undefined,
+      copayAmountCents: details.copay_specialist_cents || undefined,
+      deductibleTotalCents: details.deductible_total_cents || undefined,
+      deductibleMetCents: details.deductible_met_cents || undefined,
+      coinsurancePct: details.coinsurance_pct || undefined,
+      outOfPocketMaxCents: details.oop_max_cents || undefined,
+      outOfPocketMetCents: details.oop_met_cents || undefined,
+      priorAuthRequired: Boolean(details.prior_auth_required),
+      hasIssues: Boolean(details.has_issues),
+      issueNotes: details.issue_notes || undefined,
       coverageDetails: {
-        inNetwork: true,
-        specialistCopay: 5000,
-        primaryCareCopay: 2500,
-        preventiveCareCovered: true,
-        dermatologyBenefits: {
-          medicalDermatology: 'covered',
-          cosmetic: 'not_covered',
-          skinCancerScreening: 'covered',
-        },
-      },
-      rawResponse: {
-        responseCode: '200',
-        timestamp: new Date().toISOString(),
-        source: 'mock',
+        planName: details.plan_name || null,
+        planType: details.plan_type || null,
+        coverageLevel: details.coverage_level || null,
+        inNetwork: details.in_network,
+        networkName: details.network_name || null,
+        rawResponse: details.raw_response || null,
       },
     };
   }

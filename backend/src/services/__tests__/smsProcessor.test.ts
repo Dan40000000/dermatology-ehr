@@ -235,6 +235,133 @@ describe("smsProcessor", () => {
     expect(touchedPrefs).toBe(true);
   });
 
+  it("falls back to the legacy sms_messages schema when newer linkage columns are missing", async () => {
+    const client = buildClient({ patientRows: [patient] });
+    connectMock.mockResolvedValueOnce(client);
+    twilioService.sendSMS.mockResolvedValueOnce({ sid: "sid-route", status: "sent", numSegments: 1 });
+
+    const result = await processIncomingSMS(
+      {
+        ...baseParams,
+        body: "Need help with billing",
+      },
+      twilioService as any
+    );
+
+    const legacyInsertUsed = client.query.mock.calls.some(
+      ([sql]) =>
+        typeof sql === "string" &&
+        sql.includes("INSERT INTO sms_messages") &&
+        sql.includes("content") &&
+        !sql.includes("related_appointment_id")
+    );
+
+    expect(result.success).toBe(true);
+    expect(legacyInsertUsed).toBe(true);
+  });
+
+  it("prefers the consented patient when duplicate records share the same phone number", async () => {
+    const consentedPatient = {
+      id: "patient-consented",
+      first_name: "Daniel",
+      last_name: "Perry",
+      phone: "541-231-8693",
+      created_at: "2026-01-15T21:24:09.609Z",
+    };
+    const duplicatePatient = {
+      id: "patient-duplicate",
+      first_name: "Perry",
+      last_name: "Daniel",
+      phone: "5412318693",
+      created_at: "2026-03-11T20:10:21.556Z",
+    };
+
+    const client = {
+      release: jest.fn(),
+      query: jest.fn(async (sql: string, params?: any[]) => {
+        if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+          return { rows: [], rowCount: 0 };
+        }
+
+        if (sql.includes("information_schema.columns") && sql.includes("sms_messages")) {
+          return { rows: [] };
+        }
+
+        if (sql.includes("FROM patients")) {
+          return { rows: [duplicatePatient, consentedPatient] };
+        }
+
+        if (sql.includes("FROM patient_sms_preferences")) {
+          if (params?.[1] === "patient-consented") {
+            return { rows: [{ optedIn: true, opted_in: true }] };
+          }
+          return { rows: [] };
+        }
+
+        if (sql.includes("FROM sms_consent")) {
+          if (params?.[1] === "patient-consented") {
+            return {
+              rows: [
+                {
+                  id: "consent-1",
+                  patientId: "patient-consented",
+                  consentGiven: true,
+                  consentRevoked: false,
+                  expirationDate: null,
+                },
+              ],
+            };
+          }
+          if (params?.[1] === "patient-duplicate") {
+            return {
+              rows: [
+                {
+                  id: "consent-dup",
+                  patientId: "patient-duplicate",
+                  consentGiven: false,
+                  consentRevoked: false,
+                  expirationDate: null,
+                },
+              ],
+            };
+          }
+          return { rows: [] };
+        }
+
+        if (sql.includes("FROM patient_message_threads")) {
+          if (params?.[1] === "patient-consented") {
+            return { rows: [{ id: "thread-1", category: "general", status: "open" }] };
+          }
+          return { rows: [] };
+        }
+
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+
+    connectMock.mockResolvedValueOnce(client);
+    twilioService.sendSMS.mockResolvedValueOnce({ sid: "sid-route", status: "sent", numSegments: 1 });
+
+    const result = await processIncomingSMS(
+      {
+        ...baseParams,
+        body: "Need billing help",
+      },
+      twilioService as any
+    );
+
+    const inboundInsert = client.query.mock.calls.find(
+      ([sql, params]) =>
+        typeof sql === "string" &&
+        sql.includes("INSERT INTO sms_messages") &&
+        Array.isArray(params) &&
+        params.includes("Need billing help")
+    );
+
+    expect(result.actionPerformed).toBe("routed_billing");
+    expect(inboundInsert?.[1]).toContain("patient-consented");
+  });
+
   it.each([
     ["confirm_appointment", "appointment_confirmed"],
     ["cancel_appointment", "appointment_cancel_requested"],

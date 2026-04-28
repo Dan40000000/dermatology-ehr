@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { API_BASE_URL } from '../../utils/apiBase';
+import {
+  buildPortalUrl,
+  DEFAULT_PATIENT_PORTAL_TENANT_ID,
+  sanitizePortalRedirect,
+} from '../../utils/patientPortalLinks';
 
 const API_URL = API_BASE_URL;
 
@@ -22,6 +27,9 @@ const passwordRequirements: PasswordRequirement[] = [
 
 export function PortalRegisterPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedTenantId = searchParams.get('tenantId') || DEFAULT_PATIENT_PORTAL_TENANT_ID;
+  const redirectPath = sanitizePortalRedirect(searchParams.get('redirect'), '/portal/dashboard');
   const [mounted, setMounted] = useState(false);
   const [step, setStep] = useState<RegistrationStep>('verify');
   const [isLoading, setIsLoading] = useState(false);
@@ -62,7 +70,7 @@ export function PortalRegisterPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Tenant-ID': 'tenant-demo',
+          'X-Tenant-ID': requestedTenantId,
         },
         body: JSON.stringify({
           lastName,
@@ -132,7 +140,7 @@ export function PortalRegisterPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Tenant-ID': 'tenant-demo',
+          'X-Tenant-ID': requestedTenantId,
         },
         body: JSON.stringify({
           firstName: verifiedPatient?.firstName,
@@ -193,7 +201,7 @@ export function PortalRegisterPage() {
                 <circle cx="24" cy="24" r="3" fill="white"/>
               </svg>
             </div>
-            <h1>Mountain Pine<br/>Dermatology</h1>
+            <h1>Dermatology DEMO<br/>Office</h1>
             <p className="brand-tagline">Your health, your way</p>
 
             <div className="registration-steps">
@@ -374,7 +382,13 @@ export function PortalRegisterPage() {
                   <span>Already have an account?</span>
                 </div>
 
-                <Link to="/portal/login" className="portal-login-link">
+                <Link
+                  to={buildPortalUrl('/portal/login', {
+                    tenantId: requestedTenantId,
+                    redirect: redirectPath,
+                  })}
+                  className="portal-login-link"
+                >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
                     <polyline points="10,17 15,12 10,7"/>
@@ -653,7 +667,17 @@ export function PortalRegisterPage() {
                   </div>
                 </div>
 
-                <button onClick={() => navigate('/portal/login')} className="portal-submit-btn">
+                <button
+                  onClick={() =>
+                    navigate(
+                      buildPortalUrl('/portal/login', {
+                        tenantId: requestedTenantId,
+                        redirect: redirectPath,
+                      })
+                    )
+                  }
+                  className="portal-submit-btn"
+                >
                   <span>Go to Sign In</span>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <line x1="5" y1="12" x2="19" y2="12"/>
@@ -680,7 +704,7 @@ export function PortalRegisterPage() {
 
       {/* Footer */}
       <footer className="portal-register-footer">
-        <p>&copy; 2026 Mountain Pine Dermatology &bull; <a href="#privacy">Privacy Policy</a> &bull; <a href="#terms">Terms of Service</a></p>
+        <p>&copy; 2026 Dermatology DEMO Office &bull; <a href="#privacy">Privacy Policy</a> &bull; <a href="#terms">Terms of Service</a></p>
       </footer>
 
       <style>{`

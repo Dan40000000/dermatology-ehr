@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { formatLocalDateKey } from '../../utils/practiceDateTime';
 
 interface AppointmentCalendarProps {
   selectedDate: Date | null;
@@ -51,8 +52,7 @@ export function AppointmentCalendar({
 
   // Check if a date is available
   const isDateAvailable = (date: Date): boolean => {
-    const dateStr = date.toISOString().split('T')[0];
-    return availableDates.includes(dateStr);
+    return availableDates.includes(formatLocalDateKey(date));
   };
 
   // Check if a date is selectable

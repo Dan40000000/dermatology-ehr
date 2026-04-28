@@ -2,7 +2,7 @@ import { Router } from "express";
 
 const publicPagesRouter = Router();
 
-const practiceName = process.env.MESSAGING_FROM_NAME || process.env.FROM_NAME || "Mountain Pine Dermatology";
+const practiceName = process.env.MESSAGING_FROM_NAME || process.env.FROM_NAME || "Dermatology DEMO Office";
 const supportPhone = process.env.MESSAGING_SUPPORT_PHONE || "+1 (980) 737-1319";
 const supportEmail = process.env.MESSAGING_SUPPORT_EMAIL || "support@testmedical.com";
 

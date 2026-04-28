@@ -1,14 +1,15 @@
 import { lazy, Suspense } from 'react';
-import { Navigate, Outlet, type RouteObject } from 'react-router-dom';
+import { Navigate, Outlet, useLocation, type RouteObject } from 'react-router-dom';
 import { AppLayout } from '../components/layout';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 
 // Eager load critical pages (login, home, app layout)
+import { BetaLandingPage } from '../pages/BetaLandingPage';
 import { LoginPage } from '../pages/LoginPage';
 import { HomePage } from '../pages/HomePage';
 
 // Patient Portal pages
-import { PatientPortalAuthProvider } from '../contexts/PatientPortalAuthContext';
+import { PatientPortalAuthProvider, usePatientPortalAuth } from '../contexts/PatientPortalAuthContext';
 import {
   PortalLoginPage,
   PortalRegisterPage,
@@ -20,8 +21,11 @@ import {
   PortalProfilePage,
   PortalBillingPage,
   PortalBookAppointmentPage,
+  PublicBookAppointmentPage,
+  PublicGuestBookAppointmentPage,
   PortalIntakePage,
   PortalCheckInPage,
+  PatientPortalMessagesPage,
 } from '../pages/patient-portal';
 import {
   KioskWelcomePage,
@@ -51,11 +55,13 @@ const RadiologyPage = lazy(() => import('../pages/RadiologyPage').then(m => ({ d
 const MessagingPage = lazy(() => import('../pages/MessagingPage').then(m => ({ default: m.MessagingPage })));
 const TasksPage = lazy(() => import('../pages/TasksPage').then(m => ({ default: m.TasksPage })));
 const RemindersPage = lazy(() => import('../pages/RemindersPage').then(m => ({ default: m.RemindersPage })));
+const RecallsPage = lazy(() => import('../pages/RecallsPage').then(m => ({ default: m.RecallsPage })));
 const TextMessagesPage = lazy(() =>
   import('../pages/TextMessagesPage').then((module) => ({
     default: module.default || (module as any).TextMessagesPage,
   }))
 );
+const MailPage = lazy(() => import('../pages/MailPage').then(m => ({ default: m.MailPage })));
 const TelehealthPage = lazy(() =>
   import('../pages/TelehealthPage').then((module) => ({
     default: module.default || (module as any).TelehealthPage,
@@ -108,7 +114,24 @@ function lazyWithSuspense(Component: React.LazyExoticComponent<any>) {
   );
 }
 
+export function RequirePortalAuth() {
+  const { isAuthenticated, isLoading } = usePatientPortalAuth();
+  const location = useLocation();
+
+  if (isLoading) return <PageLoader />;
+  if (!isAuthenticated) {
+    const redirect = `${location.pathname}${location.search}${location.hash}`;
+    return <Navigate to={`/portal/login?redirect=${encodeURIComponent(redirect)}`} replace />;
+  }
+
+  return <Outlet />;
+}
+
 export const routes: RouteObject[] = [
+  {
+    path: '/',
+    element: <BetaLandingPage />,
+  },
   {
     path: '/login',
     element: <LoginPage />,
@@ -124,18 +147,56 @@ export const routes: RouteObject[] = [
     children: [
       { path: 'login', element: <PortalLoginPage /> },
       { path: 'register', element: <PortalRegisterPage /> },
-      { path: 'dashboard', element: <PortalDashboardPage /> },
-      { path: 'appointments', element: <PortalAppointmentsPage /> },
-      { path: 'check-in', element: <PortalCheckInPage /> },
-      { path: 'intake', element: <PortalIntakePage /> },
-      { path: 'book-appointment', element: <PortalBookAppointmentPage /> },
-      { path: 'visits', element: <PortalVisitSummariesPage /> },
-      { path: 'documents', element: <PortalDocumentsPage /> },
-      { path: 'health-record', element: <PortalHealthRecordPage /> },
-      { path: 'billing', element: <PortalBillingPage /> },
-      { path: 'profile', element: <PortalProfilePage /> },
+      {
+        element: <RequirePortalAuth />,
+        children: [
+          { path: 'dashboard', element: <PortalDashboardPage /> },
+          { path: 'appointments', element: <PortalAppointmentsPage /> },
+          { path: 'check-in', element: <PortalCheckInPage /> },
+          { path: 'intake', element: <PortalIntakePage /> },
+          { path: 'book-appointment', element: <PortalBookAppointmentPage /> },
+          { path: 'visits', element: <PortalVisitSummariesPage /> },
+          { path: 'documents', element: <PortalDocumentsPage /> },
+          { path: 'health-record', element: <PortalHealthRecordPage /> },
+          { path: 'billing', element: <PortalBillingPage /> },
+          { path: 'profile', element: <PortalProfilePage /> },
+          { path: 'messages', element: <PatientPortalMessagesPage /> },
+        ],
+      },
       { index: true, element: <Navigate to="/portal/login" replace /> },
     ],
+  },
+  {
+    path: '/book-appointment',
+    element: (
+      <PatientPortalAuthProvider>
+        <PublicBookAppointmentPage />
+      </PatientPortalAuthProvider>
+    ),
+  },
+  {
+    path: '/book-appointment/guest',
+    element: (
+      <PatientPortalAuthProvider>
+        <PublicGuestBookAppointmentPage />
+      </PatientPortalAuthProvider>
+    ),
+  },
+  {
+    path: '/schedule-online',
+    element: (
+      <PatientPortalAuthProvider>
+        <PublicBookAppointmentPage />
+      </PatientPortalAuthProvider>
+    ),
+  },
+  {
+    path: '/schedule-online/guest',
+    element: (
+      <PatientPortalAuthProvider>
+        <PublicGuestBookAppointmentPage />
+      </PatientPortalAuthProvider>
+    ),
   },
   // In-office iPad kiosk routes
   { path: '/kiosk', element: <KioskWelcomePage /> },
@@ -150,7 +211,6 @@ export const routes: RouteObject[] = [
     path: '/',
     element: <AppLayout />,
     children: [
-      { index: true, element: <Navigate to="/home" replace /> },
       { path: 'home', element: <HomePage /> },
 
       // Scheduling
@@ -187,7 +247,7 @@ export const routes: RouteObject[] = [
       { path: 'fax', element: lazyWithSuspense(FaxPage) },
       { path: 'tasks', element: lazyWithSuspense(TasksPage) },
       { path: 'reminders', element: lazyWithSuspense(RemindersPage) },
-      { path: 'recalls', element: <Navigate to="/reminders?tab=due" replace /> },
+      { path: 'recalls', element: lazyWithSuspense(RecallsPage) },
 
       // Documents
       { path: 'documents', element: lazyWithSuspense(DocumentsPage) },
@@ -225,6 +285,6 @@ export const routes: RouteObject[] = [
   },
   {
     path: '*',
-    element: <Navigate to="/home" replace />,
+    element: <Navigate to="/" replace />,
   },
 ];

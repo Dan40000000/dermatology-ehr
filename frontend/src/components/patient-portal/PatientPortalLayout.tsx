@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
+import { patientPortalFetch, usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
 
 interface PatientPortalLayoutProps {
   children: ReactNode;
@@ -14,6 +14,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [notificationCount, setNotificationCount] = useState(0);
 
   useEffect(() => {
     setMounted(true);
@@ -22,6 +23,31 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
   useEffect(() => {
     setSidebarOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadNotifications = async () => {
+      if (!patient) {
+        setNotificationCount(0);
+        return;
+      }
+
+      try {
+        const data = await patientPortalFetch('/api/patient-portal-data/dashboard');
+        const dashboard = data.dashboard || {};
+        const count = Number(dashboard.actionNeededCount ?? 0);
+        if (!cancelled) setNotificationCount(Number.isFinite(count) ? count : 0);
+      } catch {
+        if (!cancelled) setNotificationCount(0);
+      }
+    };
+
+    loadNotifications();
+    return () => {
+      cancelled = true;
+    };
+  }, [patient?.id, location.pathname]);
 
   const handleLogout = async () => {
     await logout();
@@ -37,6 +63,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
     { path: '/portal/documents', label: 'Documents', icon: 'document' },
     { path: '/portal/health-record', label: 'Health Record', icon: 'heart' },
     { path: '/portal/billing', label: 'Billing', icon: 'billing' },
+    { path: '/portal/messages', label: 'Messages', icon: 'message' },
     { path: '/portal/profile', label: 'Profile', icon: 'user' },
   ];
 
@@ -91,6 +118,11 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
           <line x1="1" y1="10" x2="23" y2="10"/>
+        </svg>
+      ),
+      message: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
         </svg>
       ),
       consent: (
@@ -170,17 +202,23 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
                 </svg>
               </div>
               <div className="portal-brand-text">
-                <span className="portal-brand-name">Mountain Pine</span>
+                <span className="portal-brand-name">Dermatology DEMO Office</span>
                 <span className="portal-brand-sub">Patient Portal</span>
               </div>
             </Link>
           </div>
 
           <div className="portal-topbar-right">
-            <button className="portal-notification-btn" aria-label="Notifications">
+            <Link
+              to="/portal/dashboard"
+              className="portal-notification-btn"
+              aria-label={`${notificationCount} portal notification${notificationCount === 1 ? '' : 's'}`}
+            >
               {getIcon('bell')}
-              <span className="notification-badge">2</span>
-            </button>
+              {notificationCount > 0 && (
+                <span className="notification-badge">{notificationCount > 9 ? '9+' : notificationCount}</span>
+              )}
+            </Link>
 
             <div className="portal-user-dropdown">
               <button
@@ -276,7 +314,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
       <footer className="portal-footer">
         <div className="portal-footer-content">
           <div className="portal-footer-left">
-            <p>&copy; 2026 Mountain Pine Dermatology. All rights reserved.</p>
+            <p>&copy; 2026 Dermatology DEMO Office. All rights reserved.</p>
           </div>
           <div className="portal-footer-right">
             <a href="#privacy">Privacy Policy</a>
@@ -416,6 +454,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
           background: #f8fafc;
           color: #64748b;
           cursor: pointer;
+          text-decoration: none;
           transition: all 0.2s;
           display: flex;
           align-items: center;

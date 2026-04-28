@@ -62,6 +62,11 @@ const buildDemoObservation = (profile: DemoResultProfile): DemoLabObservation =>
   };
 };
 
+
+function isMissingLabSchemaError(error: any): boolean {
+  return error?.code === '42P01' || error?.code === '42703';
+}
+
 /**
  * GET /api/lab-orders
  * Get lab orders with filtering
@@ -146,7 +151,88 @@ router.get('/', async (req: AuthedRequest, res: Response) => {
 
     query += ` ORDER BY lo.order_date DESC LIMIT 100`;
 
-    const result = await pool.query(query, params);
+    let result;
+    try {
+      result = await pool.query(query, params);
+    } catch (error: any) {
+      if (!isMissingLabSchemaError(error)) {
+        throw error;
+      }
+
+      let fallbackQuery = `
+        SELECT
+          lo.id,
+          lo.tenant_id,
+          lo.patient_id,
+          lo.encounter_id,
+          lo.ordering_provider_id,
+          lo.lab_id as vendor_id,
+          lo.order_number,
+          lo.order_date,
+          lo.status,
+          lo.priority,
+          lo.clinical_indication,
+          p.first_name || ' ' || p.last_name as patient_name,
+          p.mrn,
+          pr.full_name as ordering_provider_name,
+          COALESCE(li.lab_name, 'Lab Interface') as vendor_name,
+          li.interface_type as vendor_type,
+          null::text as result_flag_updated_by_name,
+          '[]'::json as tests,
+          (
+            SELECT COUNT(*)
+            FROM lab_results_v2 lr
+            WHERE lr.order_id = lo.id
+          ) as result_count
+        FROM lab_orders_v2 lo
+        JOIN patients p ON lo.patient_id = p.id
+        LEFT JOIN providers pr ON lo.ordering_provider_id = pr.id
+        LEFT JOIN lab_interfaces li ON lo.lab_id = li.id
+        WHERE lo.tenant_id = $1
+      `;
+
+      const fallbackParams: any[] = [req.user!.tenantId];
+      let fallbackParamIndex = 2;
+
+      if (patient_id) {
+        fallbackQuery += ` AND lo.patient_id = $${fallbackParamIndex}`;
+        fallbackParams.push(patient_id);
+        fallbackParamIndex++;
+      }
+
+      if (encounter_id) {
+        fallbackQuery += ` AND lo.encounter_id = $${fallbackParamIndex}`;
+        fallbackParams.push(encounter_id);
+        fallbackParamIndex++;
+      }
+
+      if (status) {
+        fallbackQuery += ` AND lo.status = $${fallbackParamIndex}`;
+        fallbackParams.push(status);
+        fallbackParamIndex++;
+      }
+
+      if (vendor_id) {
+        fallbackQuery += ` AND lo.lab_id = $${fallbackParamIndex}`;
+        fallbackParams.push(vendor_id);
+        fallbackParamIndex++;
+      }
+
+      if (from_date) {
+        fallbackQuery += ` AND lo.order_date >= $${fallbackParamIndex}`;
+        fallbackParams.push(from_date);
+        fallbackParamIndex++;
+      }
+
+      if (to_date) {
+        fallbackQuery += ` AND lo.order_date <= $${fallbackParamIndex}`;
+        fallbackParams.push(to_date);
+        fallbackParamIndex++;
+      }
+
+      fallbackQuery += ` ORDER BY lo.order_date DESC LIMIT 100`;
+      result = await pool.query(fallbackQuery, fallbackParams);
+    }
 
     res.json(result.rows);
   } catch (error: any) {

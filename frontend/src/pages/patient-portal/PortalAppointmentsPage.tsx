@@ -21,6 +21,7 @@ export function PortalAppointmentsPage() {
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadAppointments();
@@ -28,18 +29,23 @@ export function PortalAppointmentsPage() {
 
   const loadAppointments = async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await patientPortalFetch(`/api/patient-portal-data/appointments?status=${tab}`);
-      setAppointments(data.appointments);
+      setAppointments(data.appointments || []);
     } catch (error) {
       console.error('Failed to load appointments:', error);
+      setError(error instanceof Error ? error.message : 'Failed to load appointments');
     } finally {
       setLoading(false);
     }
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('en-US', {
       weekday: 'long',
       month: 'long',
       day: 'numeric',
@@ -48,8 +54,10 @@ export function PortalAppointmentsPage() {
   };
 
   const formatTime = (timeStr: string) => {
+    if (!timeStr) return '';
     const [hours, minutes] = timeStr.split(':');
     const hour = parseInt(hours);
+    if (isNaN(hour)) return timeStr;
     const ampm = hour >= 12 ? 'PM' : 'AM';
     const displayHour = hour % 12 || 12;
     return `${displayHour}:${minutes} ${ampm}`;
@@ -78,8 +86,12 @@ export function PortalAppointmentsPage() {
     return labels[status] || status;
   };
 
-  const startCheckIn = (appointmentId: string) => {
-    navigate(`/portal/check-in?appointmentId=${appointmentId}`);
+  const startCheckIn = (appointment: Appointment) => {
+    const params = new URLSearchParams({ appointmentId: appointment.id });
+    if (appointment.appointmentType) {
+      params.set('appointmentType', appointment.appointmentType);
+    }
+    navigate(`/portal/check-in?${params.toString()}`);
   };
 
   return (
@@ -119,6 +131,12 @@ export function PortalAppointmentsPage() {
         <div className="appointments-container">
           {loading ? (
             <div className="portal-loading">Loading appointments...</div>
+          ) : error ? (
+            <div className="portal-error-state">
+              <h3>We could not load your appointments</h3>
+              <p>{error}. Please try again.</p>
+              <button type="button" onClick={loadAppointments}>Retry</button>
+            </div>
           ) : appointments.length === 0 ? (
             <div className="portal-empty-state">
               <div className="empty-icon">
@@ -145,66 +163,47 @@ export function PortalAppointmentsPage() {
             <div className="appointments-list">
               {appointments.map((apt) => (
                 <div key={apt.id} className="appointment-card">
-                  <div className="appointment-header">
-                    <div className="appointment-date-badge">
-                      <div className="date-day">
-                        {new Date(apt.appointmentDate).getDate()}
-                      </div>
-                      <div className="date-month">
-                        {new Date(apt.appointmentDate).toLocaleDateString('en-US', { month: 'short' })}
-                      </div>
+                  {/* Status bar */}
+                  <div className="appt-status-bar">
+                    <span className="appt-status-dot" style={{ background: getStatusColor(apt.status) }} />
+                    {getStatusLabel(apt.status)}
+                  </div>
+
+                  {/* Main row: date badge + info */}
+                  <div className="appt-main">
+                    <div className="appt-date-badge">
+                      <span className="appt-date-day">{new Date(apt.appointmentDate).getDate()}</span>
+                      <span className="appt-date-mon">{new Date(apt.appointmentDate).toLocaleDateString('en-US', { month: 'short' })}</span>
                     </div>
-                    <div className="appointment-main-info">
-                      <h3>{apt.providerName}</h3>
-                      {apt.providerSpecialty && (
-                        <p className="specialty">{apt.providerSpecialty}</p>
-                      )}
-                      <p className="datetime">
-                        {formatDate(apt.appointmentDate)} at {formatTime(apt.appointmentTime)}
-                      </p>
-                    </div>
-                    <div
-                      className="appointment-status"
-                      style={{ color: getStatusColor(apt.status) }}
-                    >
-                      {getStatusLabel(apt.status)}
+                    <div className="appt-info">
+                      <h3 className="appt-provider">{apt.providerName}</h3>
+                      <p className="appt-datetime">{formatDate(apt.appointmentDate)} at {formatTime(apt.appointmentTime)}</p>
+                      <div className="appt-tags">
+                        {apt.appointmentType && (
+                          <span className="appt-tag appt-tag--type">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                            {apt.appointmentType}
+                          </span>
+                        )}
+                        {apt.locationName && (
+                          <span className="appt-tag appt-tag--location">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                            {apt.locationName}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  <div className="appointment-details">
-                    {apt.appointmentType && (
-                      <div className="detail-row">
-                        <span className="detail-label">Type:</span>
-                        <span className="detail-value">{apt.appointmentType}</span>
-                      </div>
-                    )}
-                    {apt.reason && (
-                      <div className="detail-row">
-                        <span className="detail-label">Reason:</span>
-                        <span className="detail-value">{apt.reason}</span>
-                      </div>
-                    )}
-                    {apt.locationName && (
-                      <div className="detail-row">
-                        <span className="detail-label">Location:</span>
-                        <span className="detail-value">
-                          {apt.locationName}
-                          {apt.locationAddress && ` - ${apt.locationAddress}`}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
+                  {/* Actions */}
                   {tab === 'upcoming' && apt.status !== 'cancelled' && (
-                    <div className="appointment-actions">
-                      <button className="action-btn add-calendar">
+                    <div className="appt-actions">
+                      <button className="appt-btn appt-btn--secondary">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
                         Add to Calendar
                       </button>
-                      <button
-                        className="action-btn primary"
-                        onClick={() => startCheckIn(apt.id)}
-                        title="Start pre-check-in before arrival"
-                      >
+                      <button className="appt-btn appt-btn--primary" onClick={() => startCheckIn(apt)}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
                         Start Pre-Check-In
                       </button>
                     </div>
@@ -299,6 +298,37 @@ export function PortalAppointmentsPage() {
           margin-top: 2rem;
         }
 
+        .portal-error-state {
+          background: #fff;
+          border: 1px solid #fecaca;
+          border-radius: 12px;
+          padding: 2rem;
+          text-align: center;
+        }
+
+        .portal-error-state h3 {
+          margin: 0 0 0.5rem;
+          color: #991b1b;
+          font-size: 1.05rem;
+        }
+
+        .portal-error-state p {
+          margin: 0 auto 1rem;
+          max-width: 420px;
+          color: #64748b;
+          line-height: 1.5;
+        }
+
+        .portal-error-state button {
+          border: none;
+          border-radius: 8px;
+          background: #6366f1;
+          color: white;
+          font-weight: 700;
+          padding: 0.65rem 1rem;
+          cursor: pointer;
+        }
+
         .portal-empty-state {
           text-align: center;
           padding: 4rem 2rem;
@@ -351,154 +381,173 @@ export function PortalAppointmentsPage() {
         .appointments-list {
           display: flex;
           flex-direction: column;
-          gap: 1.5rem;
+          gap: 1rem;
         }
 
+        /* Card */
         .appointment-card {
           background: white;
-          border-radius: 12px;
-          padding: 1.5rem;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-          border: 2px solid #f3f4f6;
-          transition: border-color 0.2s;
+          border-radius: 14px;
+          border: 1.5px solid #f0f0f0;
+          overflow: hidden;
+          transition: border-color 0.2s, box-shadow 0.2s;
         }
 
         .appointment-card:hover {
-          border-color: #7c3aed;
+          border-color: #c4b5fd;
+          box-shadow: 0 4px 20px rgba(124, 58, 237, 0.08);
         }
 
-        .appointment-header {
+        /* Status bar at top */
+        .appt-status-bar {
           display: flex;
-          gap: 1.5rem;
-          align-items: flex-start;
-          margin-bottom: 1rem;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.45rem 1.25rem;
+          background: #f9fafb;
+          border-bottom: 1px solid #f0f0f0;
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: #6b7280;
+          letter-spacing: 0.02em;
+          text-transform: uppercase;
         }
 
-        .appointment-date-badge {
+        .appt-status-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          flex-shrink: 0;
+        }
+
+        /* Main content row */
+        .appt-main {
+          display: flex;
+          align-items: center;
+          gap: 1.25rem;
+          padding: 1.25rem 1.5rem;
+        }
+
+        /* Date badge */
+        .appt-date-badge {
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          width: 70px;
-          height: 70px;
-          background: linear-gradient(135deg, #7c3aed 0%, #6B46C1 100%);
+          width: 60px;
+          height: 60px;
+          background: linear-gradient(135deg, #7c3aed, #6b21a8);
           color: white;
           border-radius: 12px;
           flex-shrink: 0;
         }
 
-        .date-day {
-          font-size: 1.75rem;
+        .appt-date-day {
+          font-size: 1.5rem;
           font-weight: 700;
           line-height: 1;
         }
 
-        .date-month {
-          font-size: 0.875rem;
+        .appt-date-mon {
+          font-size: 0.65rem;
           text-transform: uppercase;
-          opacity: 0.9;
+          opacity: 0.85;
+          letter-spacing: 0.05em;
         }
 
-        .appointment-main-info {
+        /* Info block */
+        .appt-info {
           flex: 1;
+          min-width: 0;
         }
 
-        .appointment-main-info h3 {
-          color: #1f2937;
-          margin: 0 0 0.25rem 0;
-          font-size: 1.25rem;
+        .appt-provider {
+          font-size: 1.05rem;
+          font-weight: 700;
+          color: #111827;
+          margin: 0 0 0.2rem;
         }
 
-        .specialty {
+        .appt-datetime {
+          font-size: 0.85rem;
           color: #6b7280;
-          margin: 0 0 0.5rem 0;
-          font-size: 0.9rem;
+          margin: 0 0 0.65rem;
         }
 
-        .datetime {
-          color: #4b5563;
-          margin: 0;
-          font-size: 0.9rem;
-        }
-
-        .appointment-status {
-          font-weight: 600;
-          font-size: 0.9rem;
-          padding: 0.5rem 1rem;
-          background: #f9fafb;
-          border-radius: 8px;
-          height: fit-content;
-        }
-
-        .appointment-details {
-          padding: 1rem;
-          background: #f9fafb;
-          border-radius: 8px;
-          margin-bottom: 1rem;
-        }
-
-        .detail-row {
+        /* Tags row */
+        .appt-tags {
           display: flex;
-          gap: 0.5rem;
-          margin-bottom: 0.5rem;
+          flex-wrap: wrap;
+          gap: 0.4rem;
         }
 
-        .detail-row:last-child {
-          margin-bottom: 0;
+        .appt-tag {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.3rem;
+          padding: 0.25rem 0.65rem;
+          border-radius: 999px;
+          font-size: 0.75rem;
+          font-weight: 500;
+          white-space: nowrap;
         }
 
-        .detail-label {
-          font-weight: 600;
-          color: #6b7280;
-          min-width: 80px;
+        .appt-tag--type {
+          background: rgba(124, 58, 237, 0.08);
+          color: #6d28d9;
         }
 
-        .detail-value {
-          color: #1f2937;
+        .appt-tag--location {
+          background: rgba(16, 185, 129, 0.08);
+          color: #047857;
         }
 
-        .appointment-actions {
+        /* Actions bar */
+        .appt-actions {
           display: flex;
-          gap: 1rem;
-          padding-top: 1rem;
-          border-top: 1px solid #e5e7eb;
+          gap: 0.75rem;
+          padding: 0.875rem 1.5rem;
+          border-top: 1px solid #f3f4f6;
+          background: #fafafa;
         }
 
-        .action-btn {
-          padding: 0.75rem 1.25rem;
-          border: 2px solid #e5e7eb;
-          background: white;
+        .appt-btn {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.4rem;
+          padding: 0.55rem 1rem;
           border-radius: 8px;
+          font-size: 0.85rem;
           font-weight: 600;
           cursor: pointer;
           transition: all 0.2s;
-          font-size: 0.9rem;
+          white-space: nowrap;
         }
 
-        .action-btn:hover {
-          background: #f9fafb;
+        .appt-btn--secondary {
+          flex: 1;
+          background: white;
+          border: 1.5px solid #e5e7eb;
+          color: #374151;
         }
 
-        .action-btn.add-calendar:hover {
+        .appt-btn--secondary:hover {
           border-color: #7c3aed;
           color: #7c3aed;
         }
 
-        .action-btn.primary {
-          background: #10b981;
-          border-color: #059669;
+        .appt-btn--primary {
+          flex: 1;
+          background: linear-gradient(135deg, #10b981, #059669);
+          border: none;
           color: white;
+          box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
         }
 
-        .action-btn.primary:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .action-btn.confirm {
-          border-color: #2563eb;
-          color: #1d4ed8;
-          background: #eff6ff;
+        .appt-btn--primary:hover {
+          box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+          transform: translateY(-1px);
         }
 
         @media (max-width: 768px) {

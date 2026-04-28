@@ -17,19 +17,49 @@ export const splitToList = (text?: string, maxItems = 4): string[] => {
   return unique.slice(0, maxItems);
 };
 
+export const coerceSummaryList = (value: unknown, maxItems = 4): string[] => {
+  if (Array.isArray(value)) {
+    return Array.from(new Set(
+      value
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean)
+    )).slice(0, maxItems);
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return coerceSummaryList(parsed, maxItems);
+      }
+    } catch {
+      // Fall through to delimiter splitting for legacy text values.
+    }
+    return splitToList(trimmed, maxItems);
+  }
+
+  return [];
+};
+
 export const buildSymptoms = (
   note?: AmbientGeneratedNote | null,
   summary?: PatientSummary | null
 ): string[] => {
-  const structuredSymptoms = note?.noteContent?.formalAppointmentSummary?.symptoms;
-  if (structuredSymptoms?.length) {
-    return structuredSymptoms.filter(Boolean);
+  const structuredSymptoms = coerceSummaryList(note?.noteContent?.formalAppointmentSummary?.symptoms);
+  if (structuredSymptoms.length) {
+    return structuredSymptoms;
   }
-  if (summary?.symptomsDiscussed?.length) {
-    return summary.symptomsDiscussed.filter(Boolean);
+
+  const summarySymptoms = coerceSummaryList(summary?.symptomsDiscussed);
+  if (summarySymptoms.length) {
+    return summarySymptoms;
   }
-  if (note?.noteContent?.patientSummary?.yourConcerns?.length) {
-    return note.noteContent.patientSummary.yourConcerns.filter(Boolean);
+
+  const patientConcerns = coerceSummaryList(note?.noteContent?.patientSummary?.yourConcerns);
+  if (patientConcerns.length) {
+    return patientConcerns;
   }
   return splitToList(note?.hpi || note?.chiefComplaint);
 };

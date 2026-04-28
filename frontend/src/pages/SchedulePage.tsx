@@ -5,8 +5,20 @@ import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal, ExportButtons } from '../components/ui';
 import type { ExportColumn } from '../utils/export';
 import { formatDate as formatExportDate, formatPhone } from '../utils/export';
+import {
+  deliverCombinedDowntimePackets,
+  deliverDowntimePacket,
+  hasPreparedDowntimePacket,
+  hasReachedDowntimePacketCutoff,
+  getDowntimeTargetDate,
+  loadCachedDowntimePacket,
+  markDowntimePacketPrepared,
+  resolveDowntimeDeviceProfile,
+  saveDowntimePacketToCache,
+} from '../utils/downtime';
 import { Calendar } from '../components/schedule/Calendar';
 import { AppointmentModal, type AppointmentFormData } from '../components/schedule/AppointmentModal';
+import { AppointmentFinderWorkspace } from '../components/schedule/AppointmentFinderWorkspace';
 import { TimeBlockModal, type TimeBlockFormData } from '../components/schedule/TimeBlockModal';
 import { RescheduleModal, type RescheduleFormData } from '../components/schedule/RescheduleModal';
 import {
@@ -15,12 +27,15 @@ import {
   fetchPriorAuths,
   fetchProviders,
   fetchLocations,
+  fetchReadyDowntimePacket,
+  generateDowntimePacket,
   fetchAppointmentTypes,
   fetchAvailability,
   fetchPatients,
   updateAppointmentStatus,
   checkInFrontDeskAppointment,
   updatePatientFlowStatus,
+  createPatient,
   createAppointment,
   createEncounter,
   fetchPatientEncounters,
@@ -29,18 +44,43 @@ import {
   createTimeBlock,
   updateTimeBlock,
   deleteTimeBlock,
+  reportDowntimeDeviceStatus,
   type TimeBlock,
   type FrontDeskCheckInOptions,
   type FrontDeskCheckInResponse,
+  type DowntimePacket,
 } from '../api';
 import type { Appointment, Provider, Location, AppointmentType, Availability, Patient, ConflictInfo } from '../types';
 import { setActiveEncounter } from '../utils/activeEncounter';
 import { ensureKioskContext } from '../utils/kioskContext';
+import { hasAnyRole } from '../utils/roles';
+import { getOrCreateDowntimeBrowserDevice, type DowntimeBrowserDevice } from '../utils/downtimeDevice';
 
 type ScheduleViewMode = 'day' | 'week' | 'month';
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function isLaserAppointmentType(appointmentTypeName?: string): boolean {
   return /laser/i.test(appointmentTypeName || '');
+}
+
+function isTelehealthAppointment(appointmentTypeName?: string, locationName?: string): boolean {
+  return /telehealth|virtual|video/i.test(`${appointmentTypeName || ''} ${locationName || ''}`);
+}
+
+function isPrimaryDowntimeStationForLocation(location: Location | null | undefined, deviceId: string): boolean {
+  if (!location?.downtimeSettings?.enabled) return false;
+  const assignedDeviceId = location.downtimePrimaryDevice?.deviceId?.trim();
+  if (!assignedDeviceId || !deviceId) return false;
+  return assignedDeviceId === deviceId;
+}
+
+function VideoCameraIcon({ color = 'currentColor' }: { color?: string }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="7" width="14" height="10" rx="2" ry="2" />
+      <path d="M16 10l6-3v10l-6-3z" />
+    </svg>
+  );
 }
 
 function startOfDay(date: Date): Date {
@@ -53,6 +93,13 @@ function endOfDay(date: Date): Date {
   const result = new Date(date);
   result.setHours(23, 59, 59, 999);
   return result;
+}
+
+function toInputDateValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function getViewRange(
@@ -384,6 +431,10 @@ export function SchedulePage() {
   const [noShowAppointment, setNoShowAppointment] = useState<Appointment | null>(null);
   const [noShowReason, setNoShowReason] = useState('');
   const [noShowActionId, setNoShowActionId] = useState<string | null>(null);
+  const [downtimePacketAction, setDowntimePacketAction] = useState<'idle' | 'running'>('idle');
+  const [downtimeClock, setDowntimeClock] = useState(() => Date.now());
+  const [downtimeDevice] = useState<DowntimeBrowserDevice>(() => getOrCreateDowntimeBrowserDevice());
+  const automaticDowntimeAttemptKeyRef = useRef<string | null>(null);
 
   // New appointment form
   const [newAppt, setNewAppt] = useState({
@@ -399,18 +450,6 @@ export function SchedulePage() {
 
   // Appointment Finder states
   const [showAppointmentFinder, setShowAppointmentFinder] = useState(false);
-  const [showExpandedFinder, setShowExpandedFinder] = useState(false);
-  const [finderData, setFinderData] = useState({
-    patientId: '',
-    locations: '',
-    providers: '',
-    appointmentType: '',
-    duration: '5',
-    timePreference: 'Anytime',
-    weekdayPreference: 'Any Day',
-    schedulingPreference: 'First available',
-    displayBy: 'By Provider',
-  });
 
   // Reschedule form (legacy - keeping for compatibility)
   const [rescheduleData, setRescheduleData] = useState({
@@ -424,6 +463,10 @@ export function SchedulePage() {
     date?: string;
     startTime?: string;
   } | undefined>(undefined);
+
+  const selectAppointment = useCallback((appt: Appointment) => {
+    setSelectedAppt(appt);
+  }, []);
 
   // Sync view mode from URL query parameter changes when a valid view is present.
   // Do not force day when `view` is absent; that can race with localStorage-derived view.
@@ -442,7 +485,6 @@ export function SchedulePage() {
 
     if (appointment) {
       setSelectedAppt(appointment);
-      setShowRescheduleModal(true);
     } else {
       showError('Appointment not found');
     }
@@ -501,6 +543,20 @@ export function SchedulePage() {
     return date;
   }, [dayOffset]);
 
+  const setScheduleDate = useCallback((date: Date) => {
+    const today = startOfDay(new Date());
+    const target = startOfDay(date);
+    const diffDays = Math.round((target.getTime() - today.getTime()) / DAY_MS);
+    setDayOffset(diffDays);
+  }, []);
+
+  const handleScheduleDateInput = useCallback((value: string) => {
+    if (!value) return;
+    const [year, month, day] = value.split('-').map(Number);
+    if (!year || !month || !day) return;
+    setScheduleDate(new Date(year, month - 1, day));
+  }, [setScheduleDate]);
+
   const activeViewRange = useMemo(
     () => getViewRange(currentDate, viewMode, showWeekends),
     [currentDate, viewMode, showWeekends]
@@ -514,7 +570,13 @@ export function SchedulePage() {
       .filter((appointment) => {
         const providerOk = providerFilter === 'all' || appointment.providerId === providerFilter;
         const typeOk = typeFilter === 'all' || appointment.appointmentTypeId === typeFilter;
-        const locationOk = locationFilter === 'all' || appointment.locationId === locationFilter;
+        const telehealthOverride =
+          providerFilter !== 'all' &&
+          isTelehealthAppointment(appointment.appointmentTypeName, appointment.locationName);
+        const locationOk =
+          locationFilter === 'all' ||
+          appointment.locationId === locationFilter ||
+          telehealthOverride;
         if (!providerOk || !typeOk || !locationOk) return false;
 
         const appointmentStart = new Date(appointment.scheduledStart).getTime();
@@ -523,6 +585,51 @@ export function SchedulePage() {
       })
       .sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime());
   }, [appointments, providerFilter, typeFilter, locationFilter, activeViewRange]);
+
+  const selectedLocation = useMemo(
+    () => (locationFilter === 'all' ? null : locations.find((location) => location.id === locationFilter) || null),
+    [locations, locationFilter]
+  );
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setDowntimeClock(Date.now());
+    }, 60_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  const downtimeNow = useMemo(() => new Date(downtimeClock), [downtimeClock]);
+  const downtimePacketTime = selectedLocation?.downtimeSettings?.packetTime || '12:00';
+  const downtimePacketReadyForAutoDownload = useMemo(
+    () => hasReachedDowntimePacketCutoff(downtimePacketTime, downtimeNow),
+    [downtimeNow, downtimePacketTime]
+  );
+
+  const downtimePacketDate = useMemo(() => {
+    return getDowntimeTargetDate(downtimePacketTime, downtimeNow);
+  }, [downtimeNow, downtimePacketTime]);
+
+  const selectedLocationIsPrimaryStation = useMemo(
+    () => isPrimaryDowntimeStationForLocation(selectedLocation, downtimeDevice.deviceId),
+    [downtimeDevice.deviceId, selectedLocation],
+  );
+
+  const primaryDowntimeLocations = useMemo(
+    () =>
+      locations.filter(
+        (location) =>
+          location.isActive !== false &&
+          isPrimaryDowntimeStationForLocation(location, downtimeDevice.deviceId),
+      ),
+    [downtimeDevice.deviceId, locations],
+  );
+
+  const allLocationsReadyForAutoDownload = useMemo(() => {
+    if (primaryDowntimeLocations.length === 0) return false;
+    return primaryDowntimeLocations.every((location) =>
+      hasReachedDowntimePacketCutoff(location.downtimeSettings?.packetTime || '12:00', downtimeNow),
+    );
+  }, [downtimeNow, primaryDowntimeLocations]);
 
   const calendarAppointments = useMemo(
     () => filteredAppointments.filter((appointment) => appointment.status !== 'cancelled'),
@@ -550,11 +657,8 @@ export function SchedulePage() {
     if (providerFilter !== 'all') {
       return providers.filter((provider) => provider.id === providerFilter);
     }
-    if (!locationScopedProviderIds) {
-      return providers;
-    }
-    return providers.filter((provider) => locationScopedProviderIds.has(provider.id));
-  }, [providers, providerFilter, locationScopedProviderIds]);
+    return providers;
+  }, [providers, providerFilter]);
 
   const calendarProviderIdSet = useMemo(
     () => new Set(calendarProviders.map((provider) => provider.id)),
@@ -584,6 +688,28 @@ export function SchedulePage() {
       setProviderFilter(calendarProviders[0].id);
     }
   }, [viewMode, providerFilter, calendarProviders]);
+
+  useEffect(() => {
+    if (providerFilter !== 'all' && providers.length > 0 && !providers.some((provider) => provider.id === providerFilter)) {
+      setProviderFilter('all');
+    }
+  }, [providerFilter, providers]);
+
+  useEffect(() => {
+    if (locationFilter !== 'all' && locations.length > 0 && !locations.some((location) => location.id === locationFilter)) {
+      setLocationFilter('all');
+    }
+  }, [locationFilter, locations]);
+
+  useEffect(() => {
+    if (
+      typeFilter !== 'all'
+      && appointmentTypes.length > 0
+      && !appointmentTypes.some((appointmentType) => appointmentType.id === typeFilter)
+    ) {
+      setTypeFilter('all');
+    }
+  }, [appointmentTypes, typeFilter]);
 
   useEffect(() => {
     if (!selectedAppt) return;
@@ -624,6 +750,9 @@ export function SchedulePage() {
 
       const formatDate = (d: Date) => d.toISOString().split('T')[0];
 
+      const canLoadPriorAuths =
+        !session.user
+        || hasAnyRole(session.user, ['admin', 'provider', 'ma', 'nurse', 'manager', 'compliance_officer']);
       const [apptRes, provRes, locRes, typeRes, availRes, patRes, timeBlocksRes, frontDeskRes, priorAuthRes] = await Promise.all([
         fetchAppointments(session.tenantId, session.accessToken, {
           startDate: formatDate(startDate),
@@ -636,7 +765,7 @@ export function SchedulePage() {
         fetchPatients(session.tenantId, session.accessToken),
         fetchTimeBlocks(session.tenantId, session.accessToken).catch(() => []),
         fetchFrontDeskSchedule(session.tenantId, session.accessToken).catch(() => ({ appointments: [] })),
-        fetchPriorAuths(session.tenantId, session.accessToken).catch(() => []),
+        canLoadPriorAuths ? fetchPriorAuths(session.tenantId, session.accessToken).catch(() => []) : Promise.resolve([]),
       ]);
       const frontDeskCopayMap: Record<string, number> = {};
       const frontDeskOutstandingBalanceMap: Record<string, number> = {};
@@ -674,6 +803,393 @@ export function SchedulePage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const prepareDowntimePacketForLocation = useCallback(
+    async (
+      effectiveLocation: Location,
+      automatic = false,
+    ): Promise<{
+      packet: DowntimePacket;
+      packetDate: string;
+      usedCachedPacket: boolean;
+      fetchedReadyPacket: boolean;
+    }> => {
+      if (!session) {
+        throw new Error('You must be signed in to prepare a downtime packet');
+      }
+
+      const effectivePacketTime = effectiveLocation.downtimeSettings?.packetTime || '12:00';
+      const effectivePacketDate = getDowntimeTargetDate(effectivePacketTime, downtimeNow);
+      let packet: DowntimePacket;
+      let usedCachedPacket = false;
+      let fetchedReadyPacket = false;
+
+      try {
+        if (automatic) {
+          const readyResult = await fetchReadyDowntimePacket(session.tenantId, session.accessToken, {
+            date: effectivePacketDate,
+            locationId: effectiveLocation.id,
+          });
+
+          if (readyResult.packet) {
+            packet = readyResult.packet;
+            fetchedReadyPacket = true;
+            saveDowntimePacketToCache(packet);
+          } else {
+            const result = await generateDowntimePacket(session.tenantId, session.accessToken, {
+              date: effectivePacketDate,
+              locationId: effectiveLocation.id,
+            });
+            packet = result.packet;
+            saveDowntimePacketToCache(packet);
+          }
+        } else {
+          const result = await generateDowntimePacket(session.tenantId, session.accessToken, {
+            date: effectivePacketDate,
+            locationId: effectiveLocation.id,
+          });
+          packet = result.packet;
+          saveDowntimePacketToCache(packet);
+        }
+      } catch (err) {
+        const cached = loadCachedDowntimePacket(effectiveLocation.id, effectivePacketDate);
+        if (!cached) {
+          throw err;
+        }
+        packet = cached;
+        usedCachedPacket = true;
+      }
+
+      return {
+        packet,
+        packetDate: effectivePacketDate,
+        usedCachedPacket,
+        fetchedReadyPacket,
+      };
+    },
+    [downtimeNow, session],
+  );
+
+  const reportDowntimeStationStatus = useCallback(
+    async (
+      reports: Array<{
+        locationId: string;
+        lastPacketSavedAt?: string;
+        lastPacketDate?: string;
+      }> = [],
+    ) => {
+      if (!session || !downtimeDevice.deviceId) return;
+      try {
+        await reportDowntimeDeviceStatus(session.tenantId, session.accessToken, {
+          deviceId: downtimeDevice.deviceId,
+          reports,
+        });
+      } catch (err) {
+        console.error('Failed to report downtime station status:', err);
+      }
+    },
+    [downtimeDevice.deviceId, session],
+  );
+
+  const generateDowntimePacketsForAllLocations = useCallback(
+    async (automatic = false) => {
+      const availableLocations = automatic
+        ? primaryDowntimeLocations
+        : locations.filter((location) => location.isActive !== false);
+      if (availableLocations.length === 0) {
+        if (!automatic) {
+          showError('No active locations are available for downtime packet download.');
+        }
+        return;
+      }
+
+      const effectiveDevice = resolveDowntimeDeviceProfile('auto');
+      setDowntimePacketAction('running');
+      try {
+        const packets: DowntimePacket[] = [];
+        const cachedLocationNames: string[] = [];
+        const failedLocationNames: string[] = [];
+        const resultsByLocation = new Map<string, { packet: DowntimePacket; packetDate: string; usedCachedPacket: boolean }>();
+
+        for (const location of availableLocations) {
+          try {
+            const result = await prepareDowntimePacketForLocation(location, automatic);
+            packets.push(result.packet);
+            resultsByLocation.set(location.id, {
+              packet: result.packet,
+              packetDate: result.packetDate,
+              usedCachedPacket: result.usedCachedPacket,
+            });
+            if (result.usedCachedPacket) {
+              cachedLocationNames.push(location.name);
+            }
+          } catch (err) {
+            console.error(`Failed to prepare downtime packet for ${location.name}:`, err);
+            failedLocationNames.push(location.name);
+          }
+        }
+
+        if (packets.length === 0) {
+          throw new Error('Failed to prepare downtime packets for all active locations');
+        }
+
+        const allAlreadyPrepared = automatic && availableLocations.every((location) => {
+          const result = resultsByLocation.get(location.id);
+          if (!result) return false;
+          return hasPreparedDowntimePacket(location.id, result.packetDate, result.packet.generatedAt);
+        });
+
+        if (allAlreadyPrepared) {
+          return;
+        }
+
+        if (!automatic || effectiveDevice === 'desktop') {
+          const deliveredTo = deliverCombinedDowntimePackets(packets);
+          if (failedLocationNames.length > 0) {
+            showSuccess(
+              `${deliveredTo === 'ipad' ? 'Opened' : 'Downloaded'} combined downtime packet for ${packets.length} locations. Failed: ${failedLocationNames.join(', ')}`,
+            );
+          } else if (cachedLocationNames.length > 0) {
+            showSuccess(
+              `${automatic ? 'Prepared' : 'Downloaded'} combined downtime packet. Cached data used for: ${cachedLocationNames.join(', ')}`,
+            );
+          } else if (automatic) {
+            showSuccess('Downtime packet downloaded automatically for all locations');
+          } else {
+            showSuccess(
+              deliveredTo === 'ipad'
+                ? 'Downtime packet opened for all locations'
+                : 'Downtime packet downloaded for all locations',
+            );
+          }
+        } else {
+          showSuccess(
+            failedLocationNames.length > 0
+              ? `Downtime packet prepared for all locations except: ${failedLocationNames.join(', ')}`
+              : 'Downtime packet prepared for all locations. Tap Download Packet Now to open it on this iPad.',
+          );
+        }
+
+        availableLocations.forEach((location) => {
+          const result = resultsByLocation.get(location.id);
+          if (!result) return;
+          markDowntimePacketPrepared(location.id, result.packetDate, automatic ? 'automatic' : 'manual', result.packet.generatedAt);
+        });
+
+        await reportDowntimeStationStatus(
+          availableLocations
+            .map((location) => {
+              const result = resultsByLocation.get(location.id);
+              if (!result) return null;
+              return {
+                locationId: location.id,
+                lastPacketSavedAt: new Date().toISOString(),
+                lastPacketDate: result.packetDate,
+              };
+            })
+            .filter((value): value is { locationId: string; lastPacketSavedAt: string; lastPacketDate: string } => Boolean(value)),
+        );
+      } catch (err: any) {
+        if (automatic) {
+          console.error('Automatic all-locations downtime packet preparation failed:', err);
+        } else {
+          showError(err?.message || 'Failed to prepare downtime packets');
+        }
+      } finally {
+        setDowntimePacketAction('idle');
+      }
+    },
+    [locations, prepareDowntimePacketForLocation, primaryDowntimeLocations, reportDowntimeStationStatus, showError, showSuccess],
+  );
+
+  const handleGenerateDowntimePacket = useCallback(
+    async ({ automatic = false, locationOverride }: { automatic?: boolean; locationOverride?: Location | null } = {}) => {
+      const effectiveLocation = locationOverride ?? selectedLocation;
+      if (!effectiveLocation) {
+        if (!automatic) {
+          showError('Select a location first to prepare a downtime packet');
+        }
+        return;
+      }
+      const effectivePacketTime = effectiveLocation.downtimeSettings?.packetTime || '12:00';
+      const effectivePacketDate = getDowntimeTargetDate(effectivePacketTime, downtimeNow);
+      const readyForAutoDownload = hasReachedDowntimePacketCutoff(effectivePacketTime, downtimeNow);
+
+      if (automatic && !readyForAutoDownload) {
+        return;
+      }
+      if (automatic && !isPrimaryDowntimeStationForLocation(effectiveLocation, downtimeDevice.deviceId)) {
+        return;
+      }
+      if (downtimePacketAction === 'running') return;
+
+      const configuredDeviceProfile = effectiveLocation.downtimeSettings?.deviceProfile || 'auto';
+      const effectiveDevice = resolveDowntimeDeviceProfile(configuredDeviceProfile);
+
+      setDowntimePacketAction('running');
+      try {
+        const {
+          packet,
+          packetDate,
+          usedCachedPacket,
+          fetchedReadyPacket,
+        } = await prepareDowntimePacketForLocation(effectiveLocation, automatic);
+
+        if (automatic && hasPreparedDowntimePacket(effectiveLocation.id, packetDate, packet.generatedAt)) {
+          return;
+        }
+
+        if (!automatic || effectiveDevice === 'desktop') {
+          const deliveredTo = deliverDowntimePacket(packet, configuredDeviceProfile);
+          if (!automatic) {
+            showSuccess(
+              usedCachedPacket
+                ? 'Opened cached downtime packet'
+                : deliveredTo === 'ipad'
+                  ? 'Downtime packet opened for iPad review'
+                  : 'Downtime packet downloaded',
+            );
+          } else {
+            showSuccess(
+              usedCachedPacket
+                ? 'Cached downtime packet downloaded automatically'
+                : deliveredTo === 'desktop'
+                  ? 'Downtime packet downloaded automatically'
+                  : 'Downtime packet prepared automatically',
+            );
+          }
+        } else if (automatic) {
+          showSuccess(
+            usedCachedPacket
+              ? 'Cached downtime packet is ready on this iPad'
+              : fetchedReadyPacket
+                ? 'Downtime packet is ready. Tap Download Packet Now to open it on this iPad.'
+                : 'Downtime packet prepared. Tap Download Packet Now to open it on this iPad.',
+          );
+        }
+
+        markDowntimePacketPrepared(
+          effectiveLocation.id,
+          packetDate,
+          automatic ? 'automatic' : 'manual',
+          packet.generatedAt,
+        );
+
+        await reportDowntimeStationStatus([
+          {
+            locationId: effectiveLocation.id,
+            lastPacketSavedAt: new Date().toISOString(),
+            lastPacketDate: packetDate,
+          },
+        ]);
+      } catch (err: any) {
+        if (automatic) {
+          console.error('Automatic downtime packet preparation failed:', err);
+        } else {
+          showError(err?.message || 'Failed to prepare downtime packet');
+        }
+      } finally {
+        setDowntimePacketAction('idle');
+      }
+    },
+    [
+      downtimePacketAction,
+      downtimeDevice.deviceId,
+      downtimeNow,
+      prepareDowntimePacketForLocation,
+      reportDowntimeStationStatus,
+      selectedLocation,
+      showError,
+      showSuccess,
+    ],
+  );
+
+  const handleOpenDowntimePacketDownload = useCallback(() => {
+    if (downtimePacketAction === 'running') return;
+    if (locationFilter !== 'all' && selectedLocation) {
+      void handleGenerateDowntimePacket();
+      return;
+    }
+
+    const availableLocations = locations.filter((location) => location.isActive !== false);
+    if (availableLocations.length === 0) {
+      showError('No active locations are available for downtime packet download.');
+      return;
+    }
+
+    if (availableLocations.length === 1) {
+      void handleGenerateDowntimePacket({ locationOverride: availableLocations[0] });
+      return;
+    }
+
+    void generateDowntimePacketsForAllLocations(false);
+  }, [
+    downtimePacketAction,
+    generateDowntimePacketsForAllLocations,
+    handleGenerateDowntimePacket,
+    locationFilter,
+    locations,
+    selectedLocation,
+    showError,
+  ]);
+
+  useEffect(() => {
+    if (!session || primaryDowntimeLocations.length === 0) return;
+    void reportDowntimeStationStatus(primaryDowntimeLocations.map((location) => ({ locationId: location.id })));
+  }, [primaryDowntimeLocations, reportDowntimeStationStatus, session]);
+
+  useEffect(() => {
+    if (locationFilter === 'all') {
+      if (!allLocationsReadyForAutoDownload) {
+        automaticDowntimeAttemptKeyRef.current = null;
+        return;
+      }
+      if (downtimePacketAction === 'running') return;
+      const automaticAttemptKey = `all:${downtimePacketDate}:${locations
+        .filter((location) => primaryDowntimeLocations.some((primaryLocation) => primaryLocation.id === location.id))
+        .map((location) => location.id)
+        .sort()
+        .join(',')}`;
+      if (automaticDowntimeAttemptKeyRef.current === automaticAttemptKey) {
+        return;
+      }
+      automaticDowntimeAttemptKeyRef.current = automaticAttemptKey;
+      void generateDowntimePacketsForAllLocations(true);
+      return;
+    }
+
+    if (!selectedLocation?.downtimeSettings?.enabled) {
+      automaticDowntimeAttemptKeyRef.current = null;
+      return;
+    }
+    if (!selectedLocationIsPrimaryStation) {
+      automaticDowntimeAttemptKeyRef.current = null;
+      return;
+    }
+    if (!downtimePacketReadyForAutoDownload) {
+      automaticDowntimeAttemptKeyRef.current = null;
+      return;
+    }
+    if (downtimePacketAction === 'running') return;
+    const automaticAttemptKey = `${selectedLocation.id}:${downtimePacketDate}`;
+    if (automaticDowntimeAttemptKeyRef.current === automaticAttemptKey) {
+      return;
+    }
+    automaticDowntimeAttemptKeyRef.current = automaticAttemptKey;
+    void handleGenerateDowntimePacket({ automatic: true });
+  }, [
+    allLocationsReadyForAutoDownload,
+    downtimePacketAction,
+    downtimePacketDate,
+    downtimePacketReadyForAutoDownload,
+    generateDowntimePacketsForAllLocations,
+    handleGenerateDowntimePacket,
+    locationFilter,
+    locations,
+    primaryDowntimeLocations,
+    selectedLocation,
+    selectedLocationIsPrimaryStation,
+  ]);
 
   // Conflict detection
   useEffect(() => {
@@ -745,6 +1261,15 @@ export function SchedulePage() {
     if (Number.isNaN(scheduledStartMs)) return false;
     const deadlineMs = scheduledStartMs + NO_SHOW_CHECK_IN_GRACE_MINUTES * 60 * 1000;
     return Date.now() > deadlineMs;
+  }, []);
+
+  const isAppointmentPastDay = useCallback((appt: Appointment): boolean => {
+    const scheduledStart = new Date(appt.scheduledStart);
+    if (Number.isNaN(scheduledStart.getTime())) return false;
+    scheduledStart.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return scheduledStart.getTime() < today.getTime();
   }, []);
 
   const overdueCheckInAppointments = useMemo(
@@ -1096,6 +1621,67 @@ export function SchedulePage() {
     loadData();
   };
 
+  const handleUseFinderSlot = useCallback((selection: {
+    patientId: string;
+    providerId: string;
+    locationId: string;
+    appointmentTypeId: string;
+    duration: number;
+    date: string;
+    time: string;
+  }) => {
+    setNewAppt((prev) => ({
+      ...prev,
+      patientId: selection.patientId,
+      providerId: selection.providerId,
+      appointmentTypeId: selection.appointmentTypeId,
+      locationId: selection.locationId || prev.locationId,
+      date: selection.date,
+      time: selection.time,
+      duration: selection.duration,
+    }));
+    setShowAppointmentFinder(false);
+    setShowNewApptModal(true);
+    showSuccess(
+      selection.patientId
+        ? 'Loaded selected opening into New Appointment.'
+      : 'Loaded selected opening. Add the patient in New Appointment if needed.'
+    );
+  }, [showSuccess]);
+
+  const handleQuickCreateFinderPatient = useCallback(async ({
+    firstName,
+    lastName,
+  }: {
+    firstName: string;
+    lastName: string;
+  }) => {
+    if (!session) {
+      throw new Error('Session expired. Sign in again.');
+    }
+
+    const created = await createPatient(session.tenantId, session.accessToken, {
+      firstName,
+      lastName,
+    });
+
+    const patientRecord: Patient = {
+      id: created.id,
+      tenantId: session.tenantId,
+      firstName,
+      lastName,
+      createdAt: new Date().toISOString(),
+    };
+
+    setPatients((current) => [patientRecord, ...current.filter((patient) => patient.id !== created.id)]);
+    return patientRecord;
+  }, [session]);
+
+  const handleOpenExistingFinderAppointment = useCallback((appointment: Appointment) => {
+    setShowAppointmentFinder(false);
+    selectAppointment(appointment);
+  }, [selectAppointment]);
+
   const handleReschedule = async (formData: RescheduleFormData) => {
     if (!session || !selectedAppt) return;
 
@@ -1395,6 +1981,8 @@ const handleUndoNoShow = async (appt: Appointment) => {
   const selectedIsLaserVisit = isLaserAppointmentType(selectedAppt?.appointmentTypeName);
   const selectedIsNoShow = selectedAppt?.status === 'no_show';
   const selectedCanMarkNoShow = Boolean(selectedAppt && isAppointmentOverdueCheckIn(selectedAppt));
+  const selectedIsCompletedOrCancelled = selectedAppt?.status === 'completed' || selectedAppt?.status === 'cancelled';
+  const selectedCanCheckIn = selectedAppt?.status === 'scheduled';
 
   return (
     <div className="schedule-page" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -1404,7 +1992,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
           type="button"
           className="ema-action-btn"
           onClick={() => {
-            setShowNewApptModal(true);
+            setShowAppointmentFinder(true);
           }}
           style={{
             background: 'linear-gradient(to bottom, #10b981 0%, #059669 100%)',
@@ -1598,7 +2186,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
         <button
           type="button"
           className="ema-action-btn"
-          onClick={() => setShowAppointmentFinder(!showAppointmentFinder)}
+          onClick={() => setShowAppointmentFinder(true)}
           style={{
             background: showAppointmentFinder ? 'linear-gradient(to bottom, #06b6d4 0%, #0891b2 100%)' : 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
             border: showAppointmentFinder ? 'none' : '1px solid #d1d5db',
@@ -1611,6 +2199,31 @@ const handleUndoNoShow = async (appt: Appointment) => {
         >
           <span style={{ marginRight: '0.5rem' }}>🔍</span>
           Appointment Finder
+        </button>
+        <button
+          type="button"
+          className="ema-action-btn"
+          onClick={handleOpenDowntimePacketDownload}
+          disabled={downtimePacketAction === 'running' || locations.length === 0}
+          title={
+            locationFilter === 'all'
+              ? 'Download the next business day downtime packet for all active locations'
+              : `Download or refresh the next business day downtime packet for ${downtimePacketDate}`
+          }
+          style={{
+            background: 'linear-gradient(to bottom, #ecfeff 0%, #cffafe 100%)',
+            border: '1px solid #67e8f9',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+            color: '#155e75',
+            padding: '0.5rem 1rem',
+            borderRadius: '6px',
+            fontWeight: 600,
+            opacity: downtimePacketAction === 'running' || locations.length === 0 ? 0.6 : 1,
+            cursor: downtimePacketAction === 'running' || locations.length === 0 ? 'not-allowed' : 'pointer',
+          }}
+        >
+          <span style={{ marginRight: '0.5rem' }}>🛟</span>
+          {downtimePacketAction === 'running' ? 'Preparing Packet...' : 'Download Packet Now'}
         </button>
         <div style={{ marginLeft: 'auto' }}>
           <ExportButtons
@@ -1633,8 +2246,43 @@ const handleUndoNoShow = async (appt: Appointment) => {
       </div>
 
       {/* Schedule Section Header */}
-      <div className="ema-section-header">
-        Schedule - {dateLabel}
+      <div
+        className="ema-section-header"
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '0.75rem',
+          flexWrap: 'wrap',
+        }}
+      >
+        <span>Schedule - {dateLabel}</span>
+        <label
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            color: '#075985',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+          }}
+        >
+          <span>Go to date</span>
+          <input
+            type="date"
+            className="ema-filter-input"
+            aria-label="Schedule date"
+            value={toInputDateValue(currentDate)}
+            onChange={(e) => handleScheduleDateInput(e.target.value)}
+            style={{
+              minWidth: 165,
+              padding: '0.35rem 0.55rem',
+              borderColor: '#7dd3fc',
+              background: '#ffffff',
+              color: '#0f172a',
+            }}
+          />
+        </label>
       </div>
 
       {/* Filter Panel */}
@@ -1703,20 +2351,13 @@ const handleUndoNoShow = async (appt: Appointment) => {
                 className="ema-filter-btn secondary"
                 onClick={() => {
                   if (viewMode === 'month') {
-                    // Move back one month
                     const current = new Date();
                     current.setDate(current.getDate() + dayOffset);
                     current.setMonth(current.getMonth() - 1);
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0);
-                    current.setHours(0, 0, 0, 0);
-                    const diffDays = Math.round((current.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-                    setDayOffset(diffDays);
+                    setScheduleDate(current);
                   } else if (viewMode === 'week') {
-                    // Move back one week
                     setDayOffset((d) => d - 7);
                   } else {
-                    // Move back one day
                     setDayOffset((d) => d - 1);
                   }
                 }}
@@ -1735,20 +2376,13 @@ const handleUndoNoShow = async (appt: Appointment) => {
                 className="ema-filter-btn secondary"
                 onClick={() => {
                   if (viewMode === 'month') {
-                    // Move forward one month
                     const current = new Date();
                     current.setDate(current.getDate() + dayOffset);
                     current.setMonth(current.getMonth() + 1);
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0);
-                    current.setHours(0, 0, 0, 0);
-                    const diffDays = Math.round((current.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-                    setDayOffset(diffDays);
+                    setScheduleDate(current);
                   } else if (viewMode === 'week') {
-                    // Move forward one week
                     setDayOffset((d) => d + 7);
                   } else {
-                    // Move forward one day
                     setDayOffset((d) => d + 1);
                   }
                 }}
@@ -1865,7 +2499,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
         </div>
       )}
 
-      {!loading && providerFilter === 'all' && locationFilter !== 'all' && calendarProviders.length === 0 && (
+      {!loading && providerFilter === 'all' && locationFilter !== 'all' && (locationScopedProviderIds?.size ?? 0) === 0 && (
         <div
           style={{
             margin: '0.75rem 1rem',
@@ -1900,7 +2534,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
   availability={availability}
   timeBlocks={calendarTimeBlocks}
   selectedAppointment={selectedAppt}
-  onAppointmentClick={setSelectedAppt}
+  onAppointmentClick={selectAppointment}
   onSlotClick={handleSlotClick}
   onTimeBlockClick={handleTimeBlockClick}
   checkInActionId={checkInActionId}
@@ -1912,452 +2546,9 @@ const handleUndoNoShow = async (appt: Appointment) => {
   onAppointmentCancel={handleCancelAppt}
   onAppointmentReschedule={openRescheduleModal}
 />
-              {selectedAppt && (
-                <div
-                  data-testid="calendar-selected-actions"
-                  style={{
-                    position: 'sticky',
-                    bottom: 0,
-                    zIndex: 20,
-                    background: '#ffffff',
-                    borderTop: '1px solid #d1d5db',
-                    boxShadow: '0 -4px 10px rgba(0,0,0,0.08)',
-                    padding: '0.75rem 1rem',
-                    marginTop: '0.5rem',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                    <div style={{ color: '#1f2937', fontSize: '0.875rem' }}>
-                      <strong>Selected:</strong> {selectedAppt.patientName} · {new Date(selectedAppt.scheduledStart).toLocaleTimeString('en-US', {
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })} · {selectedAppt.providerName}
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        data-testid="calendar-action-check-in"
-                        className="ema-action-btn"
-                        disabled={selectedAppt.status !== 'scheduled' || checkInActionId === selectedAppt.id}
-                        onClick={() => handleCheckIn(selectedAppt)}
-                        style={{
-                          background: selectedAppt.status === 'scheduled' ? '#ede9fe' : '#f3f4f6',
-                          color: selectedAppt.status === 'scheduled' ? '#5b21b6' : '#9ca3af',
-                        }}
-                      >
-                        {checkInActionId === selectedAppt.id ? 'Checking In...' : 'Check In'}
-                      </button>
-<button
-  type="button"
-  data-testid={selectedAppt.status === 'no_show' ? 'calendar-action-undo-no-show' : 'calendar-action-no-show'}
-  className="ema-action-btn"
-  disabled={
-    noShowActionId === selectedAppt.id ||
-    (selectedAppt.status !== 'no_show' && !isAppointmentOverdueCheckIn(selectedAppt))
-  }
-  onClick={() => {
-    if (selectedAppt.status === 'no_show') {
-      handleUndoNoShow(selectedAppt);
-    } else {
-      openNoShowModal(selectedAppt);
-    }
-  }}
-  style={{
-    background: selectedAppt.status === 'no_show'
-      ? '#eff6ff'
-      : isAppointmentOverdueCheckIn(selectedAppt)
-        ? '#ffedd5'
-        : '#f3f4f6',
-    color: selectedAppt.status === 'no_show'
-      ? '#1d4ed8'
-      : isAppointmentOverdueCheckIn(selectedAppt)
-        ? '#9a3412'
-        : '#9ca3af',
-  }}
->
-  {noShowActionId === selectedAppt.id
-    ? (selectedAppt.status === 'no_show' ? 'Undoing...' : 'Marking...')
-    : (selectedAppt.status === 'no_show' ? 'Undo No-Show' : 'Mark No-Show')}
-</button>
-                      <button
-                        type="button"
-                        data-testid="calendar-action-start-encounter"
-                        className="ema-action-btn"
-                        disabled={selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled' || rowAction?.id === selectedAppt.id}
-                        onClick={() => handleStartEncounterFromSchedule(selectedAppt)}
-                        style={{
-                          background: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
-                            ? '#f3f4f6'
-                            : '#ecfdf5',
-                          color: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
-                            ? '#9ca3af'
-                            : '#065f46',
-                          opacity: rowAction?.id === selectedAppt.id ? 0.7 : 1,
-                        }}
-                      >
-                        {rowAction?.id === selectedAppt.id && rowAction?.action === 'encounter'
-                          ? 'Starting...'
-                          : isLaserAppointmentType(selectedAppt.appointmentTypeName)
-                            ? 'Start Laser Visit'
-                            : 'Start Encounter'}
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="calendar-action-reschedule"
-                        className="ema-action-btn"
-                        disabled={selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled'}
-                        onClick={() => openRescheduleModal(selectedAppt)}
-                        style={{
-                          background: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
-                            ? '#f3f4f6'
-                            : '#e0f2fe',
-                          color: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
-                            ? '#9ca3af'
-                            : '#075985',
-                        }}
-                      >
-                        Reschedule
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="calendar-action-cancel"
-                        className="ema-action-btn"
-                        disabled={selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled'}
-                        onClick={() => handleCancelAppt(selectedAppt)}
-                        style={{
-                          background: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
-                            ? '#f3f4f6'
-                            : '#fef2f2',
-                          color: (selectedAppt.status === 'completed' || selectedAppt.status === 'cancelled')
-                            ? '#9ca3af'
-                            : '#991b1b',
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
             </>
           )}
         </div>
-
-        {/* Appointment Finder Sidebar */}
-        {showAppointmentFinder && (
-          <div style={{
-            width: '320px',
-            background: 'linear-gradient(to bottom, #f0f9ff 0%, #e0f2fe 100%)',
-            borderLeft: '2px solid #0284c7',
-            padding: '1.5rem',
-            overflowY: 'auto',
-            boxShadow: '-4px 0 12px rgba(0,0,0,0.08)',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 600, color: '#075985' }}>
-                Appointment Finder
-              </h3>
-              <button
-                onClick={() => setShowExpandedFinder(true)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '0.75rem',
-                  color: '#0284c7',
-                  fontWeight: 500,
-                  textDecoration: 'underline',
-                }}
-              >
-                Quick Filters
-              </button>
-            </div>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                Patient <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              <select
-                name="finderPatient"
-                value={finderData.patientId}
-                onChange={(e) => setFinderData({ ...finderData, patientId: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  border: '1px solid #bae6fd',
-                  borderRadius: '6px',
-                  fontSize: '0.875rem',
-                  background: '#ffffff',
-                }}
-              >
-                <option value="">Select patient...</option>
-                {patients
-                  .slice()
-                  .sort((a, b) => `${a.lastName ?? ''}, ${a.firstName ?? ''}`.localeCompare(`${b.lastName ?? ''}, ${b.firstName ?? ''}`))
-                  .map((patient) => (
-                    <option key={patient.id} value={patient.id}>
-                      {patient.lastName}, {patient.firstName}
-                    </option>
-                  ))}
-              </select>
-            </div>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Locations</label>
-              <select
-                name="finderLocations"
-                value={finderData.locations}
-                onChange={(e) => setFinderData({ ...finderData, locations: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  border: '1px solid #bae6fd',
-                  borderRadius: '6px',
-                  fontSize: '0.875rem',
-                  background: '#ffffff',
-                }}
-              >
-                <option value="">Any Location</option>
-                {locations.map(loc => (
-                  <option key={loc.id} value={loc.id}>{loc.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Providers</label>
-              <select
-                name="finderProviders"
-                value={finderData.providers}
-                onChange={(e) => setFinderData({ ...finderData, providers: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  border: '1px solid #bae6fd',
-                  borderRadius: '6px',
-                  fontSize: '0.875rem',
-                  background: '#ffffff',
-                }}
-              >
-                <option value="">Any Provider</option>
-                {providers.map(p => (
-                  <option key={p.id} value={p.id}>{p.fullName}</option>
-                ))}
-              </select>
-            </div>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                Appointment Type <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              <select
-                name="finderAppointmentType"
-                value={finderData.appointmentType}
-                onChange={(e) => setFinderData({ ...finderData, appointmentType: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  border: '1px solid #bae6fd',
-                  borderRadius: '6px',
-                  fontSize: '0.875rem',
-                  background: '#ffffff',
-                }}
-              >
-                <option value="">Click to select...</option>
-                {appointmentTypes.map(t => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                Duration <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              <select
-                name="finderDuration"
-                value={finderData.duration}
-                onChange={(e) => setFinderData({ ...finderData, duration: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  border: '1px solid #bae6fd',
-                  borderRadius: '6px',
-                  fontSize: '0.875rem',
-                  background: '#ffffff',
-                }}
-              >
-                <option value="5">5 minutes</option>
-                <option value="15">15 minutes</option>
-                <option value="30">30 minutes</option>
-                <option value="45">45 minutes</option>
-                <option value="60">60 minutes</option>
-              </select>
-            </div>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                Time Preference <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              <select
-                name="finderTimePreference"
-                value={finderData.timePreference}
-                onChange={(e) => setFinderData({ ...finderData, timePreference: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  border: '1px solid #bae6fd',
-                  borderRadius: '6px',
-                  fontSize: '0.875rem',
-                  background: '#ffffff',
-                }}
-              >
-                <option value="Anytime">Anytime</option>
-                <option value="Morning">Morning</option>
-                <option value="Afternoon">Afternoon</option>
-                <option value="Evening">Evening</option>
-              </select>
-            </div>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Weekday Preference</label>
-              <select
-                name="finderWeekdayPreference"
-                value={finderData.weekdayPreference}
-                onChange={(e) => setFinderData({ ...finderData, weekdayPreference: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  border: '1px solid #bae6fd',
-                  borderRadius: '6px',
-                  fontSize: '0.875rem',
-                  background: '#ffffff',
-                }}
-              >
-                <option value="Any Day">Any Day</option>
-                <option value="Weekdays">Weekdays Only</option>
-                <option value="Weekends">Weekends Only</option>
-              </select>
-            </div>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                Scheduling Preference <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              <select
-                name="finderSchedulingPreference"
-                value={finderData.schedulingPreference}
-                onChange={(e) => setFinderData({ ...finderData, schedulingPreference: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  border: '1px solid #bae6fd',
-                  borderRadius: '6px',
-                  fontSize: '0.875rem',
-                  background: '#ffffff',
-                }}
-              >
-                <option value="First available">First available</option>
-                <option value="Specific date">Specific date</option>
-              </select>
-            </div>
-
-            <div style={{ marginBottom: '1.5rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Display Options</label>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
-                  <input
-                    type="radio"
-                    name="displayBy"
-                    value="By Provider"
-                    checked={finderData.displayBy === 'By Provider'}
-                    onChange={(e) => setFinderData({ ...finderData, displayBy: e.target.value })}
-                  />
-                  By Provider
-                </label>
-                <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
-                  <input
-                    type="radio"
-                    name="displayBy"
-                    value="By Time Availability"
-                    checked={finderData.displayBy === 'By Time Availability'}
-                    onChange={(e) => setFinderData({ ...finderData, displayBy: e.target.value })}
-                  />
-                  By Time Availability
-                </label>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button
-                onClick={() => {
-                  setFinderData({
-                    patientId: '',
-                    locations: '',
-                    providers: '',
-                    appointmentType: '',
-                    duration: '5',
-                    timePreference: 'Anytime',
-                    weekdayPreference: 'Any Day',
-                    schedulingPreference: 'First available',
-                    displayBy: 'By Provider',
-                  });
-                }}
-                style={{
-                  flex: 1,
-                  padding: '0.625rem',
-                  background: '#ffffff',
-                  border: '1px solid #0284c7',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                  fontWeight: 500,
-                  color: '#0284c7',
-                }}
-              >
-                Close
-              </button>
-              <button
-                onClick={() => {
-                  if (!finderData.appointmentType) {
-                    showError('Please select an appointment type');
-                    return;
-                  }
-                  if (!finderData.patientId) {
-                    showError('Please select a patient');
-                    return;
-                  }
-
-                  setNewAppt((prev) => ({
-                    ...prev,
-                    patientId: finderData.patientId,
-                    providerId: finderData.providers || prev.providerId,
-                    appointmentTypeId: finderData.appointmentType,
-                    locationId: finderData.locations || prev.locationId,
-                    duration: Number(finderData.duration) || prev.duration,
-                    date: prev.date || new Date().toISOString().split('T')[0],
-                  }));
-                  setShowNewApptModal(true);
-                  showSuccess('Loaded patient into New Appointment. Pick an available time.');
-                }}
-                style={{
-                  flex: 1,
-                  padding: '0.625rem',
-                  background: 'linear-gradient(to bottom, #0284c7 0%, #0369a1 100%)',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                  fontWeight: 600,
-                  color: '#ffffff',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                }}
-              >
-                Search
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Appointments Table */}
@@ -2395,6 +2586,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
               const isNoShow = a.status === 'no_show';
               const canCheckIn = a.status === 'scheduled';
               const isOverdueCheckIn = isAppointmentOverdueCheckIn(a);
+              const isHistoricalScheduled = a.status === 'scheduled' && isAppointmentPastDay(a);
               const canMarkNoShow = canCheckIn && isOverdueCheckIn;
               const isEncounterActionPending = rowAction?.id === a.id && rowAction?.action === 'encounter';
               const isEncounterDisabled = isCompletedOrCancelled || isEncounterActionPending;
@@ -2402,17 +2594,18 @@ const handleUndoNoShow = async (appt: Appointment) => {
                 <tr
                   key={a.id}
                   style={{
-                    background: selectedAppt?.id === a.id ? '#e0f2fe' : undefined,
+                    background: selectedAppt?.id === a.id ? '#e0f2fe' : isHistoricalScheduled ? '#f8fafc' : undefined,
+                    color: isHistoricalScheduled ? '#64748b' : undefined,
                     cursor: 'pointer'
                   }}
-                  onClick={() => setSelectedAppt(a)}
+                  onClick={() => selectAppointment(a)}
                 >
                   <td>
                     <input
                       type="radio"
                       name="selectedAppt"
                       checked={selectedAppt?.id === a.id}
-                      onChange={() => setSelectedAppt(a)}
+                      onChange={() => selectAppointment(a)}
                       aria-label={`Select appointment for ${a.patientName}`}
                     />
                   </td>
@@ -2446,10 +2639,18 @@ const handleUndoNoShow = async (appt: Appointment) => {
                     </button>
                   </td>
                   <td>{a.providerName}</td>
-                  <td>{a.appointmentTypeName}</td>
+                  <td>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                      {isTelehealthAppointment(a.appointmentTypeName, a.locationName) && <VideoCameraIcon color="#1d4ed8" />}
+                      <span>{a.appointmentTypeName}</span>
+                    </div>
+                  </td>
                   <td>{a.locationName}</td>
                   <td>
-                    <span className={`ema-status ${a.status === 'completed' ? 'established' : a.status === 'cancelled' ? 'inactive' : 'pending'}`}>
+                    <span
+                      className={`ema-status ${a.status === 'completed' ? 'established' : a.status === 'cancelled' ? 'inactive' : 'pending'}`}
+                      style={isHistoricalScheduled ? { background: '#e5e7eb', color: '#475569' } : undefined}
+                    >
                       {a.status}
                     </span>
                     {(() => {
@@ -2478,6 +2679,11 @@ const handleUndoNoShow = async (appt: Appointment) => {
                     {isOverdueCheckIn && (
                       <div style={{ marginTop: '0.25rem', fontSize: '0.7rem', fontWeight: 600, color: '#9a3412' }}>
                         Overdue check-in
+                      </div>
+                    )}
+                    {isHistoricalScheduled && (
+                      <div style={{ marginTop: '0.25rem', fontSize: '0.7rem', fontWeight: 600, color: '#64748b' }}>
+                        Past day
                       </div>
                     )}
                   </td>
@@ -2645,7 +2851,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
               );
             })
           )}
-        </tbody>
+      </tbody>
       </table>
 
       <Modal
@@ -3074,6 +3280,30 @@ const handleUndoNoShow = async (appt: Appointment) => {
         </div>
       </Modal>
 
+      <Modal
+        isOpen={showAppointmentFinder}
+        title="Smart Appointment Finder"
+        onClose={() => setShowAppointmentFinder(false)}
+        size="full"
+      >
+        <AppointmentFinderWorkspace
+          patients={patients}
+          providers={providers}
+          locations={locations}
+          appointmentTypes={appointmentTypes}
+          appointments={appointments}
+          timeBlocks={timeBlocks}
+          availability={availability}
+          defaultLocationId={locationFilter === 'all' ? undefined : locationFilter}
+          defaultProviderId={providerFilter === 'all' ? undefined : providerFilter}
+          onUseSlot={handleUseFinderSlot}
+          onOpenExistingAppointment={handleOpenExistingFinderAppointment}
+          onCreatePatient={handleQuickCreateFinderPatient}
+          onShowSuccess={showSuccess}
+          onShowError={showError}
+        />
+      </Modal>
+
       {/* New Appointment Modal */}
       <AppointmentModal
         isOpen={showNewApptModal}
@@ -3089,9 +3319,11 @@ const handleUndoNoShow = async (appt: Appointment) => {
         initialData={{
           patientId: newAppt.patientId,
           providerId: newAppt.providerId,
+          appointmentTypeId: newAppt.appointmentTypeId,
           locationId: newAppt.locationId,
           date: newAppt.date,
           time: newAppt.time,
+          duration: newAppt.duration,
         }}
       />
 
@@ -3120,447 +3352,6 @@ const handleUndoNoShow = async (appt: Appointment) => {
         timeBlock={selectedTimeBlock}
         initialData={timeBlockInitialData}
       />
-
-      {/* Expanded Appointment Finder Modal */}
-      <Modal
-        isOpen={showExpandedFinder}
-        title="Expanded Appointment Finder"
-        onClose={() => setShowExpandedFinder(false)}
-      >
-        <div style={{ padding: '1rem', minWidth: '600px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem' }}>
-            {/* 1st Appointment Column */}
-            <div>
-              <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: 600, color: '#075985', borderBottom: '2px solid #0284c7', paddingBottom: '0.5rem' }}>
-                1st Appointment
-              </h4>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                  Appointment Type <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <select
-                  name="firstAppointmentType"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="">Click to select...</option>
-                  {appointmentTypes.map(t => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Locations</label>
-                <select
-                  name="firstLocations"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="">Any Location</option>
-                  {locations.map(loc => (
-                    <option key={loc.id} value={loc.id}>{loc.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Providers</label>
-                <select
-                  name="firstProviders"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="">Any Provider</option>
-                  {providers.map(p => (
-                    <option key={p.id} value={p.id}>{p.fullName}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                  Duration <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <select
-                  name="firstDuration"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="5">5 minutes</option>
-                  <option value="15">15 minutes</option>
-                  <option value="30">30 minutes</option>
-                  <option value="45">45 minutes</option>
-                  <option value="60">60 minutes</option>
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                  Time Preference <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <select
-                  name="firstTimePreference"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="Anytime">Anytime</option>
-                  <option value="Morning">Morning</option>
-                  <option value="Afternoon">Afternoon</option>
-                  <option value="Evening">Evening</option>
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Weekday Preference</label>
-                <select
-                  name="firstWeekdayPreference"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="Any Day">Any Day</option>
-                  <option value="Weekdays">Weekdays Only</option>
-                  <option value="Weekends">Weekends Only</option>
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                  Scheduling Preference <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <select
-                  name="firstSchedulingPreference"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="First available">First available</option>
-                  <option value="Specific date">Specific date</option>
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Display Options</label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
-                    <input type="radio" name="display1" value="By Provider" defaultChecked />
-                    By Provider
-                  </label>
-                  <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
-                    <input type="radio" name="display1" value="By Time Availability" />
-                    By Time Availability
-                  </label>
-                </div>
-              </div>
-
-              <button
-                onClick={() => showSuccess('Searching for 1st appointment...')}
-                style={{
-                  width: '100%',
-                  padding: '0.625rem',
-                  background: 'linear-gradient(to bottom, #0284c7 0%, #0369a1 100%)',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                  fontWeight: 600,
-                  color: '#ffffff',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                }}
-              >
-                Search 1st Appt
-              </button>
-            </div>
-
-            {/* 2nd Appointment Column */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '2px solid #0284c7', paddingBottom: '0.5rem' }}>
-                <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: '#075985' }}>
-                  2nd Appointment
-                </h4>
-                <button
-                  onClick={() => navigate('/appointment-finder')}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '0.75rem',
-                    color: '#0284c7',
-                    fontWeight: 500,
-                    textDecoration: 'underline',
-                  }}
-                >
-                  Quick Filters
-                </button>
-              </div>
-
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                <input type="checkbox" name="secondAfterFirstAppointment" />
-                <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>
-                  After 1st Appointment <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>ℹ️</span>
-                </span>
-              </label>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                  Appointment Type <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <select
-                  name="secondAppointmentType"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="">Click to select...</option>
-                  {appointmentTypes.map(t => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Locations</label>
-                <select
-                  name="secondLocations"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="">Any Location</option>
-                  {locations.map(loc => (
-                    <option key={loc.id} value={loc.id}>{loc.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Providers</label>
-                <select
-                  name="secondProviders"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="">Any Provider</option>
-                  {providers.map(p => (
-                    <option key={p.id} value={p.id}>{p.fullName}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                  Duration <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <select
-                  name="secondDuration"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="5">5 minutes</option>
-                  <option value="15">15 minutes</option>
-                  <option value="30">30 minutes</option>
-                  <option value="45">45 minutes</option>
-                  <option value="60">60 minutes</option>
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                  Time Preference <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <select
-                  name="secondTimePreference"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="Anytime">Anytime</option>
-                  <option value="Morning">Morning</option>
-                  <option value="Afternoon">Afternoon</option>
-                  <option value="Evening">Evening</option>
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Weekday Preference</label>
-                <select
-                  name="secondWeekdayPreference"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="Any Day">Any Day</option>
-                  <option value="Weekdays">Weekdays Only</option>
-                  <option value="Weekends">Weekends Only</option>
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>
-                  Scheduling Preference <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <select
-                  name="secondSchedulingPreference"
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '0.875rem',
-                    background: '#ffffff',
-                  }}
-                >
-                  <option value="First available">First available</option>
-                  <option value="Specific date">Specific date</option>
-                </select>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#374151' }}>Display Options</label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
-                    <input type="radio" name="display2" value="By Provider" defaultChecked />
-                    By Provider
-                  </label>
-                  <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
-                    <input type="radio" name="display2" value="By Time Availability" />
-                    By Time Availability
-                  </label>
-                </div>
-              </div>
-
-              <button
-                onClick={() => showSuccess('Searching for 2nd appointment...')}
-                style={{
-                  width: '100%',
-                  padding: '0.625rem',
-                  background: 'linear-gradient(to bottom, #0284c7 0%, #0369a1 100%)',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                  fontWeight: 600,
-                  color: '#ffffff',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                }}
-              >
-                Search 2nd Appt
-              </button>
-            </div>
-          </div>
-
-          <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid #e5e7eb', display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-            <button
-              onClick={() => setShowExpandedFinder(false)}
-              style={{
-                padding: '0.625rem 1.5rem',
-                background: '#ffffff',
-                border: '1px solid #d1d5db',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-                fontWeight: 500,
-                color: '#374151',
-              }}
-            >
-              Close
-            </button>
-            <button
-              onClick={() => {
-                showSuccess('Searching all appointments...');
-                setShowExpandedFinder(false);
-              }}
-              style={{
-                padding: '0.625rem 1.5rem',
-                background: 'linear-gradient(to bottom, #0284c7 0%, #0369a1 100%)',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-                fontWeight: 600,
-                color: '#ffffff',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-              }}
-            >
-              Search All
-            </button>
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }

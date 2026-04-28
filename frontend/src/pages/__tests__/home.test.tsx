@@ -2,7 +2,8 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const authMocks = vi.hoisted(() => ({
-  session: null as null | { tenantId: string; accessToken: string; user: { id: string } },
+  session: null as null | { tenantId: string; accessToken: string; user: { id: string; role?: string; roles?: string[] } },
+  user: null as null | { id: string; role: string; roles?: string[] },
 }));
 
 const toastMocks = vi.hoisted(() => ({
@@ -11,10 +12,17 @@ const toastMocks = vi.hoisted(() => ({
 }));
 
 const apiMocks = vi.hoisted(() => ({
+  createAppointment: vi.fn(),
   fetchAppointments: vi.fn(),
+  fetchAppointmentTypes: vi.fn(),
+  fetchAvailability: vi.fn(),
   fetchEncounters: vi.fn(),
+  fetchLocations: vi.fn(),
   fetchTasks: vi.fn(),
   fetchOrders: vi.fn(),
+  fetchPatients: vi.fn(),
+  fetchProviders: vi.fn(),
+  fetchTimeBlocks: vi.fn(),
   fetchUnreadCount: vi.fn(),
 }));
 
@@ -140,8 +148,9 @@ describe('HomePage', () => {
     authMocks.session = {
       tenantId: 'tenant-1',
       accessToken: 'token-1',
-      user: { id: 'provider-1' },
+      user: { id: 'provider-1', role: 'provider', roles: ['provider'] },
     };
+    authMocks.user = { id: 'provider-1', role: 'provider', roles: ['provider'] };
 
     const fixtures = buildFixtures();
     searchParamsMocks.value = new URLSearchParams();
@@ -150,6 +159,13 @@ describe('HomePage', () => {
     apiMocks.fetchTasks.mockResolvedValue({ tasks: fixtures.tasks });
     apiMocks.fetchOrders.mockResolvedValue({ orders: fixtures.orders });
     apiMocks.fetchUnreadCount.mockResolvedValue({ count: fixtures.unreadCount });
+    apiMocks.fetchPatients.mockResolvedValue({ patients: [] });
+    apiMocks.fetchProviders.mockResolvedValue({ providers: [] });
+    apiMocks.fetchLocations.mockResolvedValue({ locations: [] });
+    apiMocks.fetchAppointmentTypes.mockResolvedValue({ appointmentTypes: [] });
+    apiMocks.fetchAvailability.mockResolvedValue({ availability: [] });
+    apiMocks.fetchTimeBlocks.mockResolvedValue([]);
+    apiMocks.createAppointment.mockResolvedValue({ appointment: { id: 'appt-new' } });
   });
 
   afterEach(() => {
@@ -258,6 +274,7 @@ describe('HomePage', () => {
 
   it('skips loading without a session and handles load errors', async () => {
     authMocks.session = null;
+    authMocks.user = null;
 
     const { unmount } = render(<HomePage />);
     expect(apiMocks.fetchAppointments).not.toHaveBeenCalled();
@@ -267,13 +284,50 @@ describe('HomePage', () => {
     authMocks.session = {
       tenantId: 'tenant-1',
       accessToken: 'token-1',
-      user: { id: 'provider-1' },
+      user: { id: 'provider-1', role: 'provider', roles: ['provider'] },
     };
+    authMocks.user = { id: 'provider-1', role: 'provider', roles: ['provider'] };
     searchParamsMocks.value = new URLSearchParams();
     apiMocks.fetchAppointments.mockRejectedValueOnce(new Error('load failed'));
 
     render(<HomePage />);
 
     await waitFor(() => expect(toastMocks.showError).toHaveBeenCalledWith('load failed'));
+  });
+
+  it('does not request clinical dashboard data for non-clinical roles', async () => {
+    authMocks.session = {
+      tenantId: 'tenant-1',
+      accessToken: 'token-1',
+      user: { id: 'front-desk-1', role: 'front_desk', roles: ['front_desk'] },
+    };
+    authMocks.user = { id: 'front-desk-1', role: 'front_desk', roles: ['front_desk'] };
+
+    render(<HomePage />);
+
+    await waitFor(() => expect(apiMocks.fetchAppointments).toHaveBeenCalled());
+
+    expect(apiMocks.fetchTasks).toHaveBeenCalledWith('tenant-1', 'token-1');
+    expect(apiMocks.fetchUnreadCount).toHaveBeenCalledWith('tenant-1', 'token-1');
+    expect(apiMocks.fetchEncounters).not.toHaveBeenCalled();
+    expect(apiMocks.fetchOrders).not.toHaveBeenCalled();
+  });
+
+  it('does not request patient schedule or mail dashboard data for workforce-only roles', async () => {
+    authMocks.session = {
+      tenantId: 'tenant-1',
+      accessToken: 'token-1',
+      user: { id: 'staff-1', role: 'staff', roles: ['staff'] },
+    };
+    authMocks.user = { id: 'staff-1', role: 'staff', roles: ['staff'] };
+
+    render(<HomePage />);
+
+    await waitFor(() => expect(apiMocks.fetchTasks).toHaveBeenCalled());
+
+    expect(apiMocks.fetchAppointments).not.toHaveBeenCalled();
+    expect(apiMocks.fetchEncounters).not.toHaveBeenCalled();
+    expect(apiMocks.fetchOrders).not.toHaveBeenCalled();
+    expect(apiMocks.fetchUnreadCount).not.toHaveBeenCalled();
   });
 });

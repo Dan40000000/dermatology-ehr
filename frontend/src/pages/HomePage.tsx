@@ -1,15 +1,29 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
+import { AppointmentFinderWorkspace } from '../components/schedule/AppointmentFinderWorkspace';
+import { AppointmentModal, type AppointmentFormData } from '../components/schedule/AppointmentModal';
 import {
+  createPatient,
+  createAppointment,
   fetchAppointments,
+  fetchAppointmentTypes,
+  fetchAvailability,
   fetchEncounters,
+  fetchLocations,
   fetchTasks,
   fetchOrders,
+  fetchPatients,
+  fetchProviders,
+  fetchTimeBlocks,
   fetchUnreadCount,
+  type TimeBlock,
 } from '../api';
+import { canAccessModule } from '../config/moduleAccess';
+import { getEffectiveRoles } from '../utils/roles';
+import type { Appointment, AppointmentType, Availability, Location, Patient, Provider } from '../types';
 
 interface Encounter {
   id: string;
@@ -47,9 +61,20 @@ interface HomeStats {
   teamNotesNeedingWork: number;
 }
 
+interface AppointmentFinderSelection {
+  patientId: string;
+  providerId: string;
+  locationId: string;
+  appointmentTypeId: string;
+  duration: number;
+  date: string;
+  time: string;
+}
+
 const DASHBOARD_REFRESH_INTERVAL_MS = 30000;
 const CALENDAR_WINDOW_START_HOUR = 7;
 const CALENDAR_WINDOW_END_HOUR = 18;
+const HOME_FINDER_LOOKAHEAD_DAYS = 120;
 
 const toLocalIsoDate = (date: Date): string => {
   const year = date.getFullYear();
@@ -171,7 +196,7 @@ const INITIAL_STATS: HomeStats = {
 };
 
 export function HomePage() {
-  const { session } = useAuth();
+  const { session, user } = useAuth();
   const { showError, showSuccess } = useToast();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -182,6 +207,18 @@ export function HomePage() {
 
   const [showRegulatoryModal, setShowRegulatoryModal] = useState(false);
   const [showReminderModal, setShowReminderModal] = useState(false);
+  const [showAppointmentFinder, setShowAppointmentFinder] = useState(false);
+  const [showFinderAppointmentModal, setShowFinderAppointmentModal] = useState(false);
+  const [finderLoading, setFinderLoading] = useState(false);
+  const [finderLoaded, setFinderLoaded] = useState(false);
+  const [finderAppointments, setFinderAppointments] = useState<Appointment[]>([]);
+  const [finderPatients, setFinderPatients] = useState<Patient[]>([]);
+  const [finderProviders, setFinderProviders] = useState<Provider[]>([]);
+  const [finderLocations, setFinderLocations] = useState<Location[]>([]);
+  const [finderAppointmentTypes, setFinderAppointmentTypes] = useState<AppointmentType[]>([]);
+  const [finderAvailability, setFinderAvailability] = useState<Availability[]>([]);
+  const [finderTimeBlocks, setFinderTimeBlocks] = useState<TimeBlock[]>([]);
+  const [finderAppointmentInitialData, setFinderAppointmentInitialData] = useState<AppointmentFinderSelection | undefined>(undefined);
 
   const [reminderData, setReminderData] = useState({
     doctorsNote: '',
@@ -199,6 +236,28 @@ export function HomePage() {
     });
   };
 
+  const effectiveRoles = useMemo(() => getEffectiveRoles(user || session?.user), [session?.user, user]);
+  const canUseAppointmentFinder = useMemo(
+    () => canAccessModule(effectiveRoles, 'schedule'),
+    [effectiveRoles]
+  );
+
+  const finderSummary = useMemo(() => {
+    if (!finderLoaded) {
+      return {
+        patients: 'Ready',
+        providers: 'Live',
+        visitTypes: 'Smart',
+      };
+    }
+
+    return {
+      patients: String(finderPatients.length),
+      providers: String(finderProviders.length),
+      visitTypes: String(finderAppointmentTypes.length),
+    };
+  }, [finderAppointmentTypes.length, finderLoaded, finderPatients.length, finderProviders.length]);
+
   const loadStats = useCallback(async () => {
     if (!session) return;
 
@@ -214,16 +273,28 @@ export function HomePage() {
       queryStart.setDate(queryStart.getDate() - 1);
       const queryEnd = new Date(Math.max(endOfDay(new Date()).getTime(), scheduleRange.end.getTime()));
       queryEnd.setDate(queryEnd.getDate() + 1);
+      const canLoadAppointments = canAccessModule(effectiveRoles, 'schedule');
+      const canLoadEncounters = canAccessModule(effectiveRoles, 'notes');
+      const canLoadOrders = canAccessModule(effectiveRoles, 'orders');
+      const canLoadUnreadMessages = canAccessModule(effectiveRoles, 'mail');
 
       const [appointmentsRes, encountersRes, tasksRes, ordersRes, unreadRes] = await Promise.all([
-        fetchAppointments(session.tenantId, session.accessToken, {
-          startDate: toLocalIsoDate(queryStart),
-          endDate: toLocalIsoDate(queryEnd),
-        }),
-        fetchEncounters(session.tenantId, session.accessToken),
+        canLoadAppointments
+          ? fetchAppointments(session.tenantId, session.accessToken, {
+              startDate: toLocalIsoDate(queryStart),
+              endDate: toLocalIsoDate(queryEnd),
+            })
+          : Promise.resolve({ appointments: [] }),
+        canLoadEncounters
+          ? fetchEncounters(session.tenantId, session.accessToken).catch(() => ({ encounters: [] }))
+          : Promise.resolve({ encounters: [] }),
         fetchTasks(session.tenantId, session.accessToken),
-        fetchOrders(session.tenantId, session.accessToken).catch(() => ({ orders: [] })),
-        fetchUnreadCount(session.tenantId, session.accessToken).catch(() => ({ count: 0 })),
+        canLoadOrders
+          ? fetchOrders(session.tenantId, session.accessToken).catch(() => ({ orders: [] }))
+          : Promise.resolve({ orders: [] }),
+        canLoadUnreadMessages
+          ? fetchUnreadCount(session.tenantId, session.accessToken).catch(() => ({ count: 0 }))
+          : Promise.resolve({ count: 0 }),
       ]);
 
       const appointments = appointmentsRes.appointments || [];
@@ -332,7 +403,170 @@ export function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, [overviewLocationFilter, session, showError]);
+  }, [effectiveRoles, overviewLocationFilter, session, showError]);
+
+  const loadAppointmentFinderData = useCallback(
+    async ({ force = false }: { force?: boolean } = {}) => {
+      if (!session) return;
+
+      if (!canUseAppointmentFinder) {
+        showError('This role does not have access to scheduling.');
+        return;
+      }
+
+      if (finderLoaded && !force) return;
+
+      setFinderLoading(true);
+      try {
+        const startDate = startOfDay(new Date());
+        startDate.setDate(startDate.getDate() - 1);
+        const endDate = endOfDay(new Date());
+        endDate.setDate(endDate.getDate() + HOME_FINDER_LOOKAHEAD_DAYS);
+
+        const [apptRes, patRes, provRes, locRes, typeRes, availRes, timeBlocksRes] = await Promise.all([
+          fetchAppointments(session.tenantId, session.accessToken, {
+            startDate: toLocalIsoDate(startDate),
+            endDate: toLocalIsoDate(endDate),
+          }),
+          fetchPatients(session.tenantId, session.accessToken),
+          fetchProviders(session.tenantId, session.accessToken),
+          fetchLocations(session.tenantId, session.accessToken),
+          fetchAppointmentTypes(session.tenantId, session.accessToken),
+          fetchAvailability(session.tenantId, session.accessToken),
+          fetchTimeBlocks(session.tenantId, session.accessToken, {
+            startDate: toLocalIsoDate(startDate),
+            endDate: toLocalIsoDate(endDate),
+          }).catch(() => []),
+        ]);
+
+        setFinderAppointments(apptRes.appointments || []);
+        setFinderPatients(patRes.data || patRes.patients || []);
+        setFinderProviders(provRes.providers || []);
+        setFinderLocations(locRes.locations || []);
+        setFinderAppointmentTypes(typeRes.appointmentTypes || []);
+        setFinderAvailability(availRes.availability || []);
+        setFinderTimeBlocks(Array.isArray(timeBlocksRes) ? timeBlocksRes : []);
+        setFinderLoaded(true);
+      } catch (err: any) {
+        showError(err.message || 'Failed to load appointment finder data');
+      } finally {
+        setFinderLoading(false);
+      }
+    },
+    [canUseAppointmentFinder, finderLoaded, session, showError]
+  );
+
+  const openAppointmentFinder = useCallback(() => {
+    if (!canUseAppointmentFinder) {
+      showError('This role does not have access to scheduling.');
+      return;
+    }
+
+    setShowAppointmentFinder(true);
+    void loadAppointmentFinderData();
+  }, [canUseAppointmentFinder, loadAppointmentFinderData, showError]);
+
+  const handleUseFinderSlot = useCallback(
+    (selection: AppointmentFinderSelection) => {
+      setFinderAppointmentInitialData(selection);
+      setShowAppointmentFinder(false);
+      setShowFinderAppointmentModal(true);
+      showSuccess(
+        selection.patientId
+          ? 'Selected opening loaded into New Appointment.'
+          : 'Selected opening loaded. Choose a patient to finish booking.'
+      );
+    },
+    [showSuccess]
+  );
+
+  const handleQuickCreateFinderPatient = useCallback(async ({
+    firstName,
+    lastName,
+  }: {
+    firstName: string;
+    lastName: string;
+  }) => {
+    if (!session) {
+      throw new Error('Session expired. Sign in again.');
+    }
+
+    const created = await createPatient(session.tenantId, session.accessToken, {
+      firstName,
+      lastName,
+    });
+
+    const patientRecord: Patient = {
+      id: created.id,
+      tenantId: session.tenantId,
+      firstName,
+      lastName,
+      createdAt: new Date().toISOString(),
+    };
+
+    setFinderPatients((current) => [patientRecord, ...current.filter((patient) => patient.id !== created.id)]);
+    return patientRecord;
+  }, [session]);
+
+  const handleOpenExistingFinderAppointment = useCallback(
+    (appointment: Appointment) => {
+      const appointmentStart = new Date(appointment.scheduledStart);
+      if (Number.isNaN(appointmentStart.getTime())) {
+        showError('Appointment date is invalid');
+        return;
+      }
+
+      const appointmentDay = startOfDay(appointmentStart);
+      const today = startOfDay(new Date());
+      const dayOffset = Math.round((appointmentDay.getTime() - today.getTime()) / 86400000);
+
+      localStorage.setItem('sched:dayOffset', String(dayOffset));
+      localStorage.setItem('sched:viewMode', 'day');
+      localStorage.setItem('sched:provider', appointment.providerId || 'all');
+      localStorage.setItem('sched:type', appointment.appointmentTypeId || 'all');
+      localStorage.setItem('sched:location', appointment.locationId || 'all');
+
+      setShowAppointmentFinder(false);
+      navigate(`/schedule?view=day&appointmentId=${encodeURIComponent(appointment.id)}`);
+    },
+    [navigate, showError]
+  );
+
+  const handleCreateFinderAppointment = useCallback(
+    async (formData: AppointmentFormData) => {
+      if (!session) return;
+
+      const startDate = new Date(`${formData.date}T${formData.time}:00`);
+      const endDate = new Date(startDate.getTime() + formData.duration * 60000);
+
+      if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        showError('Invalid date or time');
+        throw new Error('Invalid date or time');
+      }
+
+      try {
+        await createAppointment(session.tenantId, session.accessToken, {
+          patientId: formData.patientId,
+          providerId: formData.providerId,
+          appointmentTypeId: formData.appointmentTypeId,
+          locationId: formData.locationId || finderLocations[0]?.id,
+          scheduledStart: startDate.toISOString(),
+          scheduledEnd: endDate.toISOString(),
+          notes: formData.notes,
+        });
+
+        showSuccess('Appointment created successfully');
+        setShowFinderAppointmentModal(false);
+        setFinderAppointmentInitialData(undefined);
+        setFinderLoaded(false);
+        await loadStats();
+      } catch (err: any) {
+        showError(err.message || 'Failed to create appointment');
+        throw err;
+      }
+    },
+    [finderLocations, loadStats, session, showError, showSuccess]
+  );
 
   useEffect(() => {
     if (!session) return;
@@ -447,6 +681,142 @@ export function HomePage() {
           Current schedule view: <strong>{stats.scheduleViewCount}</strong> appointments ({stats.scheduleViewMode} view, {stats.scheduleDateLabel}
           {stats.scheduleHasFilters ? ', filtered' : ', unfiltered'}).
         </div>
+      )}
+
+      {canUseAppointmentFinder && (
+        <section
+          aria-label="Smart appointment finder"
+          style={{
+            marginTop: '1rem',
+            borderRadius: '24px',
+            overflow: 'hidden',
+            border: '1px solid rgba(14, 116, 144, 0.22)',
+            background:
+              'radial-gradient(circle at 12% 20%, rgba(20, 184, 166, 0.34), transparent 28%), linear-gradient(135deg, #06202f 0%, #0f3d47 48%, #14532d 100%)',
+            boxShadow: '0 24px 60px rgba(8, 47, 73, 0.24)',
+            color: '#ffffff',
+          }}
+        >
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+              gap: '1.25rem',
+              padding: '1.25rem',
+              alignItems: 'stretch',
+            }}
+          >
+            <div style={{ display: 'grid', gap: '0.85rem', alignContent: 'center' }}>
+              <div
+                style={{
+                  width: 'fit-content',
+                  padding: '0.3rem 0.65rem',
+                  borderRadius: '999px',
+                  background: 'rgba(236, 253, 245, 0.14)',
+                  border: '1px solid rgba(204, 251, 241, 0.28)',
+                  color: '#ccfbf1',
+                  fontSize: '0.72rem',
+                  fontWeight: 800,
+                  letterSpacing: '0.12em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Scheduling command center
+              </div>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 'clamp(1.7rem, 3vw, 2.65rem)', lineHeight: 1.02 }}>
+                  Smart Appointment Finder
+                </h2>
+                <p style={{ margin: '0.75rem 0 0', maxWidth: '740px', color: '#d1fae5', fontSize: '1rem', lineHeight: 1.55 }}>
+                  Search by patient, provider, visit type, exact time, or time window. It checks provider availability,
+                  blocked time, and existing appointments before handing the slot to the normal booking flow.
+                </p>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginTop: '0.25rem' }}>
+                <button
+                  type="button"
+                  onClick={openAppointmentFinder}
+                  disabled={finderLoading}
+                  style={{
+                    border: 'none',
+                    borderRadius: '16px',
+                    padding: '0.95rem 1.15rem',
+                    background: '#f8fafc',
+                    color: '#064e3b',
+                    fontWeight: 900,
+                    cursor: finderLoading ? 'wait' : 'pointer',
+                    boxShadow: '0 16px 32px rgba(15, 23, 42, 0.22)',
+                    minWidth: '190px',
+                  }}
+                >
+                  {finderLoading ? 'Loading finder...' : 'Launch Finder'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/schedule')}
+                  style={{
+                    border: '1px solid rgba(204, 251, 241, 0.4)',
+                    borderRadius: '16px',
+                    padding: '0.95rem 1.15rem',
+                    background: 'rgba(255,255,255,0.08)',
+                    color: '#ffffff',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Open full schedule
+                </button>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: 'grid',
+                gap: '0.75rem',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                alignContent: 'center',
+              }}
+            >
+              {[
+                { label: 'Patients searchable', value: finderSummary.patients },
+                { label: 'Providers checked', value: finderSummary.providers },
+                { label: 'Visit types', value: finderSummary.visitTypes },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  style={{
+                    borderRadius: '18px',
+                    padding: '1rem',
+                    background: 'rgba(255,255,255,0.1)',
+                    border: '1px solid rgba(255,255,255,0.18)',
+                    minHeight: '112px',
+                    display: 'grid',
+                    alignContent: 'center',
+                  }}
+                >
+                  <div style={{ fontSize: '1.65rem', fontWeight: 900, color: '#ffffff' }}>{item.value}</div>
+                  <div style={{ marginTop: '0.35rem', color: '#ccfbf1', fontSize: '0.82rem', fontWeight: 700 }}>
+                    {item.label}
+                  </div>
+                </div>
+              ))}
+              <div
+                style={{
+                  gridColumn: '1 / -1',
+                  borderRadius: '18px',
+                  padding: '0.9rem 1rem',
+                  background: 'rgba(6, 78, 59, 0.42)',
+                  border: '1px solid rgba(153, 246, 228, 0.28)',
+                  color: '#ecfeff',
+                  fontSize: '0.9rem',
+                  lineHeight: 1.45,
+                }}
+              >
+                Built for the front desk: find openings first, then book, reschedule, or keep working from Schedule.
+              </div>
+            </div>
+          </div>
+        </section>
       )}
 
       <div className="section-title-bar" style={{ marginTop: '1rem', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: '#ffffff' }}>
@@ -700,6 +1070,95 @@ export function HomePage() {
         </div>
 
       </div>
+
+      <Modal
+        isOpen={showAppointmentFinder}
+        title="Smart Appointment Finder"
+        onClose={() => setShowAppointmentFinder(false)}
+        size="full"
+      >
+        <div style={{ display: 'grid', gap: '1rem' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: '1rem',
+              flexWrap: 'wrap',
+              padding: '0.85rem 1rem',
+              borderRadius: '16px',
+              background: 'linear-gradient(135deg, #ecfeff 0%, #f0fdf4 100%)',
+              border: '1px solid #bae6fd',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0f766e', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                Live schedule search
+              </div>
+              <div style={{ marginTop: '0.2rem', color: '#334155', fontWeight: 600 }}>
+                Loaded from patients, providers, appointment types, availability, appointments, and time blocks.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadAppointmentFinderData({ force: true })}
+              disabled={finderLoading}
+              style={{
+                border: '1px solid #67e8f9',
+                borderRadius: '999px',
+                background: finderLoading ? '#e2e8f0' : '#ffffff',
+                color: '#155e75',
+                padding: '0.65rem 1rem',
+                fontWeight: 800,
+                cursor: finderLoading ? 'wait' : 'pointer',
+              }}
+            >
+              {finderLoading ? 'Refreshing...' : 'Refresh live data'}
+            </button>
+          </div>
+
+          {finderLoading && !finderLoaded ? (
+            <div style={{ display: 'grid', gap: '1rem', padding: '1rem' }}>
+              <Skeleton variant="card" />
+              <Skeleton variant="card" />
+              <Skeleton variant="card" />
+            </div>
+          ) : (
+            <AppointmentFinderWorkspace
+              patients={finderPatients}
+              providers={finderProviders}
+              locations={finderLocations}
+              appointmentTypes={finderAppointmentTypes}
+              appointments={finderAppointments}
+              timeBlocks={finderTimeBlocks}
+              availability={finderAvailability}
+              defaultLocationId={overviewLocationFilter === 'all' ? undefined : overviewLocationFilter}
+              onUseSlot={handleUseFinderSlot}
+              onOpenExistingAppointment={handleOpenExistingFinderAppointment}
+              onCreatePatient={handleQuickCreateFinderPatient}
+              onShowSuccess={showSuccess}
+              onShowError={showError}
+            />
+          )}
+        </div>
+      </Modal>
+
+      <AppointmentModal
+        isOpen={showFinderAppointmentModal}
+        onClose={() => {
+          setShowFinderAppointmentModal(false);
+          setFinderAppointmentInitialData(undefined);
+        }}
+        onSave={handleCreateFinderAppointment}
+        patients={finderPatients}
+        providers={finderProviders}
+        locations={finderLocations}
+        appointmentTypes={finderAppointmentTypes}
+        availability={finderAvailability}
+        appointments={finderAppointments}
+        timeBlocks={finderTimeBlocks}
+        initialData={finderAppointmentInitialData}
+      />
 
       <Modal
         isOpen={showReminderModal}

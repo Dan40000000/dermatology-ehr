@@ -1,6 +1,7 @@
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import crypto from 'crypto';
+import { ensureMelanomaRecallForDiagnosis } from './melanomaRecallService';
 
 export interface EncounterCreateData {
   tenantId: string;
@@ -280,7 +281,8 @@ export class EncounterService {
     encounterId: string,
     icd10Code: string,
     description: string,
-    isPrimary: boolean = false
+    isPrimary: boolean = false,
+    createdBy?: string
   ): Promise<string> {
     const client = await pool.connect();
     try {
@@ -302,6 +304,14 @@ export class EncounterService {
         ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
         [diagnosisId, tenantId, encounterId, icd10Code, description, isPrimary]
       );
+
+      await ensureMelanomaRecallForDiagnosis({
+        tenantId,
+        encounterId,
+        icd10Code,
+        description,
+        userId: createdBy,
+      });
 
       logger.info(`Added diagnosis ${icd10Code} to encounter ${encounterId}`);
       return diagnosisId;

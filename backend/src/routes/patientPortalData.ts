@@ -6,6 +6,7 @@ import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientP
 import path from "path";
 import fs from "fs";
 import { logger } from "../lib/logger";
+import { getPatientAllergySummaries, getPatientMedicationSummaries } from "../services/patientHealthRecord";
 
 export const patientPortalDataRouter = Router();
 
@@ -70,7 +71,7 @@ patientPortalDataRouter.post("/checkin/start", async (req: PatientPortalRequest,
       const apptCheck = await pool.query(
         `SELECT id FROM appointments
          WHERE id = $1 AND patient_id = $2 AND tenant_id = $3
-           AND appointment_date >= CURRENT_DATE`,
+           AND scheduled_start >= CURRENT_DATE`,
         [appointmentId, patientId, tenantId]
       );
 
@@ -237,27 +238,29 @@ patientPortalDataRouter.get("/appointments", async (req: PatientPortalRequest, r
     const tenantId = req.patient!.tenantId;
 
     let query = `
-      SELECT a.id, a.appointment_date as "appointmentDate",
-             a.appointment_time as "appointmentTime",
-             a.status, a.appointment_type as "appointmentType",
+      SELECT a.id,
+             a.scheduled_start::date as "appointmentDate",
+             to_char(a.scheduled_start, 'HH24:MI') as "appointmentTime",
+             a.status, at.name as "appointmentType",
              a.notes, a.reason,
-             pr.name as "providerName",
+             pr.full_name as "providerName",
              pr.specialty as "providerSpecialty",
              l.name as "locationName",
              l.address as "locationAddress"
       FROM appointments a
+      LEFT JOIN appointment_types at ON a.appointment_type_id = at.id
       LEFT JOIN providers pr ON a.provider_id = pr.id
       LEFT JOIN locations l ON a.location_id = l.id
       WHERE a.patient_id = $1 AND a.tenant_id = $2
     `;
 
     if (status === 'upcoming') {
-      query += ` AND a.appointment_date >= CURRENT_DATE
+      query += ` AND a.scheduled_start >= CURRENT_DATE
                  AND a.status NOT IN ('cancelled', 'no_show')
-                 ORDER BY a.appointment_date ASC, a.appointment_time ASC`;
+                 ORDER BY a.scheduled_start ASC`;
     } else {
-      query += ` AND a.appointment_date < CURRENT_DATE
-                 ORDER BY a.appointment_date DESC, a.appointment_time DESC`;
+      query += ` AND a.scheduled_start < CURRENT_DATE
+                 ORDER BY a.scheduled_start DESC`;
     }
 
     query += ` LIMIT 100`;
@@ -285,7 +288,7 @@ patientPortalDataRouter.get("/visits", async (req: PatientPortalRequest, res) =>
               vs.visit_date as "visitDate",
               vs.provider_name as "providerName",
               vs.summary_text as "summaryText",
-              vs.symptoms_discussed as "symptomsDiscussed",
+              regexp_split_to_array(NULLIF(vs.symptoms_discussed, ''), E'\\n+') as "symptomsDiscussed",
               vs.diagnosis_shared as "diagnosisShared",
               vs.treatment_plan as "treatmentPlan",
               vs.next_steps as "nextSteps",
@@ -321,7 +324,7 @@ patientPortalDataRouter.get("/visit-summaries", async (req: PatientPortalRequest
               vs.visit_date as "visitDate",
               vs.provider_name as "providerName",
               vs.summary_text as "summaryText",
-              vs.symptoms_discussed as "symptomsDiscussed",
+              regexp_split_to_array(NULLIF(vs.symptoms_discussed, ''), E'\\n+') as "symptomsDiscussed",
               vs.diagnosis_shared as "diagnosisShared",
               vs.treatment_plan as "treatmentPlan",
               vs.next_steps as "nextSteps",
@@ -354,8 +357,10 @@ patientPortalDataRouter.get("/documents", async (req: PatientPortalRequest, res)
     const { category } = req.query;
 
     let query = `
-      SELECT d.id, d.title, d.description, d.file_type as "fileType",
-             d.file_size as "fileSize", d.uploaded_at as "uploadedAt",
+      SELECT d.id, d.title, d.description,
+             COALESCE(d.file_type, d.mime_type, d.type) as "fileType",
+             d.file_size as "fileSize",
+             COALESCE(d.uploaded_at, d.created_at) as "uploadedAt",
              ds.category, ds.shared_at as "sharedAt",
              ds.viewed_at as "viewedAt", ds.notes,
              u.full_name as "sharedBy"
@@ -395,7 +400,11 @@ patientPortalDataRouter.get("/documents/:id/download", async (req: PatientPortal
 
     // Verify document is shared with this patient
     const shareResult = await pool.query(
-      `SELECT ds.id, ds.viewed_at, d.file_path, d.title, d.file_type
+      `SELECT ds.id,
+              ds.viewed_at,
+              COALESCE(d.file_path, d.url, d.object_key) as file_path,
+              d.title,
+              COALESCE(d.file_type, d.mime_type, d.type) as file_type
        FROM patient_document_shares ds
        JOIN documents d ON ds.document_id = d.id
        WHERE ds.document_id = $1
@@ -454,9 +463,10 @@ patientPortalDataRouter.get("/prescriptions", async (req: PatientPortalRequest, 
               p.sig, p.quantity, p.refills, p.days_supply as "daysSupply",
               p.prescribed_date as "prescribedDate",
               p.status, p.pharmacy_name as "pharmacyName",
-              pr.name as "providerName"
+              COALESCE(pr.full_name, u.full_name) as "providerName"
        FROM prescriptions p
        LEFT JOIN providers pr ON p.provider_id = pr.id
+       LEFT JOIN users u ON p.provider_id = u.id
        WHERE p.patient_id = $1 AND p.tenant_id = $2
        ORDER BY p.prescribed_date DESC
        LIMIT 100`,
@@ -479,27 +489,61 @@ patientPortalDataRouter.get("/vitals", async (req: PatientPortalRequest, res) =>
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
 
-    // Get vitals from encounters
     const result = await pool.query(
-      `SELECT e.id, e.encounter_date as "encounterDate",
-              e.vital_signs as "vitalSigns",
-              pr.name as "providerName"
-       FROM encounters e
+      `SELECT v.id,
+              COALESCE(v.recorded_at, v.created_at) as "recordedAt",
+              v.height_cm as "heightCm",
+              v.weight_kg as "weightKg",
+              v.bp_systolic as "bpSystolic",
+              v.bp_diastolic as "bpDiastolic",
+              v.pulse,
+              v.temp_c as "tempC",
+              v.o2_saturation as "o2Saturation",
+              COALESCE(pr.full_name, u.full_name) as "providerName"
+       FROM vitals v
+       LEFT JOIN encounters e ON e.id = v.encounter_id AND e.tenant_id = v.tenant_id
        LEFT JOIN providers pr ON e.provider_id = pr.id
-       WHERE e.patient_id = $1
-       AND e.tenant_id = $2
-       AND e.vital_signs IS NOT NULL
-       ORDER BY e.encounter_date DESC
+       LEFT JOIN users u ON v.recorded_by_id = u.id
+       WHERE v.tenant_id = $2
+       AND (v.patient_id = $1 OR e.patient_id = $1)
+       ORDER BY COALESCE(v.recorded_at, v.created_at) DESC
        LIMIT 50`,
       [patientId, tenantId]
     );
 
-    // Transform data for charting
-    const vitals = result.rows.map(row => ({
-      date: row.encounterDate,
-      provider: row.providerName,
-      ...row.vitalSigns
-    }));
+    const vitals = result.rows.map(row => {
+      let rawVitalSigns: any = {};
+      if (typeof row.vitalSigns === "string") {
+        try {
+          rawVitalSigns = JSON.parse(row.vitalSigns || "{}");
+        } catch {
+          rawVitalSigns = {};
+        }
+      } else if (row.vitalSigns) {
+        rawVitalSigns = row.vitalSigns;
+      }
+
+      const heightInches = row.heightCm != null ? Number(row.heightCm) / 2.54 : null;
+      const weightLbs = row.weightKg != null ? Number(row.weightKg) * 2.20462 : null;
+      const bmi = heightInches && weightLbs
+        ? (weightLbs / (heightInches * heightInches)) * 703
+        : null;
+
+      return {
+        id: row.id,
+        date: row.recordedAt ?? row.encounterDate ?? row.date,
+        provider: row.providerName ?? row.provider ?? "",
+        bloodPressure: row.bpSystolic && row.bpDiastolic ? `${row.bpSystolic}/${row.bpDiastolic}` : rawVitalSigns.bloodPressure,
+        heartRate: row.pulse ?? rawVitalSigns.heartRate,
+        temperature: row.tempC != null
+          ? Math.round(((Number(row.tempC) * 9) / 5 + 32) * 10) / 10
+          : rawVitalSigns.temperature,
+        weight: rawVitalSigns.weight ?? (weightLbs != null ? Math.round(weightLbs * 10) / 10 : undefined),
+        height: rawVitalSigns.height ?? (heightInches != null ? Math.round(heightInches * 10) / 10 : undefined),
+        bmi: rawVitalSigns.bmi ?? (bmi != null ? Math.round(bmi * 10) / 10 : undefined),
+        oxygenSaturation: row.o2Saturation ?? rawVitalSigns.oxygenSaturation,
+      };
+    });
 
     return res.json({ vitals });
   } catch (error) {
@@ -574,28 +618,7 @@ patientPortalDataRouter.get("/allergies", async (req: PatientPortalRequest, res)
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
 
-    // Get from patient record (simple string for now)
-    const result = await pool.query(
-      `SELECT allergies FROM patients WHERE id = $1 AND tenant_id = $2`,
-      [patientId, tenantId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.json({ allergies: [] });
-    }
-
-    // Parse allergies (assuming comma-separated for now)
-    const allergiesString = result.rows[0].allergies || '';
-    const allergies = allergiesString
-      .split(',')
-      .map((a: string) => a.trim())
-      .filter((a: string) => a.length > 0)
-      .map((allergen: string) => ({
-        allergen,
-        // Could be enhanced with structured allergy data
-        reaction: 'Unknown',
-        severity: 'Unknown'
-      }));
+    const allergies = await getPatientAllergySummaries(tenantId, patientId);
 
     return res.json({ allergies });
   } catch (error) {
@@ -613,29 +636,9 @@ patientPortalDataRouter.get("/medications", async (req: PatientPortalRequest, re
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
 
-    // Get from prescriptions with active status
-    const result = await pool.query(
-      `SELECT p.id,
-              p.medication_name as "medicationName",
-              p.strength,
-              p.sig,
-              p.quantity,
-              p.refills,
-              p.prescribed_date as "prescribedDate",
-              pr.name as "providerName",
-              p.pharmacy_id as "pharmacyId",
-              pharm.name as "pharmacyName"
-       FROM prescriptions p
-       LEFT JOIN providers pr ON p.provider_id = pr.id
-       LEFT JOIN pharmacies pharm ON p.pharmacy_id = pharm.id
-       WHERE p.patient_id = $1
-       AND p.tenant_id = $2
-       AND p.status = 'active'
-       ORDER BY p.prescribed_date DESC`,
-      [patientId, tenantId]
-    );
+    const medications = await getPatientMedicationSummaries(tenantId, patientId);
 
-    return res.json({ medications: result.rows });
+    return res.json({ medications });
   } catch (error) {
     logPatientPortalDataError("Get medications error", error);
     return res.status(500).json({ error: "Failed to get medications" });
@@ -751,22 +754,25 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
       `SELECT COUNT(*) as count
        FROM appointments
        WHERE patient_id = $1 AND tenant_id = $2
-       AND appointment_date >= CURRENT_DATE
+       AND scheduled_start >= CURRENT_DATE
        AND status NOT IN ('cancelled', 'no_show')`,
       [patientId, tenantId]
     );
 
     // Get next appointment
     const nextAppointmentResult = await pool.query(
-      `SELECT a.appointment_date as "appointmentDate",
-              a.appointment_time as "appointmentTime",
-              pr.name as "providerName"
+      `SELECT a.id as "appointmentId",
+              a.scheduled_start::date as "appointmentDate",
+              to_char(a.scheduled_start, 'HH24:MI') as "appointmentTime",
+              pr.full_name as "providerName",
+              at.name as "appointmentType"
        FROM appointments a
+       LEFT JOIN appointment_types at ON a.appointment_type_id = at.id
        LEFT JOIN providers pr ON a.provider_id = pr.id
        WHERE a.patient_id = $1 AND a.tenant_id = $2
-       AND a.appointment_date >= CURRENT_DATE
+       AND a.scheduled_start >= CURRENT_DATE
        AND a.status NOT IN ('cancelled', 'no_show')
-       ORDER BY a.appointment_date ASC, a.appointment_time ASC
+       ORDER BY a.scheduled_start ASC
        LIMIT 1`,
       [patientId, tenantId]
     );
@@ -799,13 +805,73 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
       [patientId, tenantId]
     );
 
+    const unreadMessagesResult = await pool.query(
+      `SELECT COUNT(*) as count
+       FROM patient_message_threads
+       WHERE patient_id = $1 AND tenant_id = $2
+       AND is_read_by_patient = false
+       AND status <> 'closed'`,
+      [patientId, tenantId]
+    );
+
+    const balanceResult = await pool.query(
+      `SELECT COALESCE(current_balance, 0) as "currentBalance"
+       FROM portal_patient_balances
+       WHERE patient_id = $1 AND tenant_id = $2
+       LIMIT 1`,
+      [patientId, tenantId]
+    );
+
+    const preCheckinResult = await pool.query(
+      `SELECT a.id as "appointmentId",
+              a.scheduled_start::date as "appointmentDate",
+              to_char(a.scheduled_start, 'HH24:MI') as "appointmentTime",
+              pr.full_name as "providerName",
+              at.name as "appointmentType"
+       FROM appointments a
+       LEFT JOIN appointment_types at ON a.appointment_type_id = at.id
+       LEFT JOIN providers pr ON a.provider_id = pr.id
+       WHERE a.patient_id = $1 AND a.tenant_id = $2
+       AND a.scheduled_start >= CURRENT_TIMESTAMP
+       AND a.scheduled_start < CURRENT_TIMESTAMP + INTERVAL '14 days'
+       AND a.status NOT IN ('cancelled', 'no_show', 'completed')
+       AND NOT EXISTS (
+         SELECT 1
+         FROM portal_checkin_sessions pcs
+         WHERE pcs.appointment_id = a.id
+           AND pcs.tenant_id = a.tenant_id
+           AND pcs.patient_id = a.patient_id
+           AND pcs.status = 'completed'
+       )
+       ORDER BY a.scheduled_start ASC
+       LIMIT 1`,
+      [patientId, tenantId]
+    );
+
+    const unreadMessages = parseInt(unreadMessagesResult.rows[0]?.count || "0", 10);
+    const newDocuments = parseInt(documentsResult.rows[0]?.count || "0", 10);
+    const newVisits = parseInt(visitsResult.rows[0]?.count || "0", 10);
+    const currentBalance = Number(balanceResult.rows[0]?.currentBalance || 0);
+    const preCheckinAvailable = preCheckinResult.rows.length > 0;
+    const actionNeededCount =
+      unreadMessages +
+      newDocuments +
+      newVisits +
+      (currentBalance > 0 ? 1 : 0) +
+      (preCheckinAvailable ? 1 : 0);
+
     return res.json({
       dashboard: {
         upcomingAppointments: parseInt(appointmentsResult.rows[0].count),
         nextAppointment: nextAppointmentResult.rows[0] || null,
-        newDocuments: parseInt(documentsResult.rows[0].count),
-        newVisits: parseInt(visitsResult.rows[0].count),
-        activePrescriptions: parseInt(prescriptionsResult.rows[0].count)
+        newDocuments,
+        newVisits,
+        activePrescriptions: parseInt(prescriptionsResult.rows[0].count),
+        unreadMessages,
+        currentBalance,
+        preCheckinAvailable,
+        nextCheckinAppointment: preCheckinResult.rows[0] || null,
+        actionNeededCount,
       }
     });
   } catch (error) {

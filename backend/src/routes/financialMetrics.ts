@@ -3,6 +3,12 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { logger } from "../lib/logger";
 import { getFinancialSnapshots } from "../services/financialSnapshotService";
+import {
+  classifyRevenueCategory,
+  revenueCategoryLabel,
+  type RevenueCategoryKey,
+  type RevenueCategorySummary,
+} from "../services/financialRevenueCategories";
 
 export const financialMetricsRouter = Router();
 const LATE_FEE_NOTE_PREFIX = "[LATE_FEE]";
@@ -17,6 +23,17 @@ type TrendPoint = {
   payerPaymentsCents: number;
   paymentCount: number;
   billCount: number;
+  revenueCategories?: RevenueCategorySummary[];
+};
+
+type RevenueCategoryDetailRow = {
+  day: string;
+  total_charges_cents: string | number | null;
+  notes: string | null;
+  appointment_type_name: string | null;
+  cpt_codes: string | null;
+  line_descriptions: string | null;
+  encounter_id: string | null;
 };
 
 function toSafeErrorMessage(error: unknown): string {
@@ -77,6 +94,38 @@ function bucketDate(isoDate: string, granularity: TrendGranularity): string {
   }
 
   return isoDate;
+}
+
+function createRevenueCategoryAccumulator(): Record<RevenueCategoryKey, RevenueCategorySummary> {
+  return {
+    office_visit: { key: "office_visit", label: revenueCategoryLabel("office_visit"), revenueCents: 0, itemCount: 0 },
+    procedure: { key: "procedure", label: revenueCategoryLabel("procedure"), revenueCents: 0, itemCount: 0 },
+    cosmetic: { key: "cosmetic", label: revenueCategoryLabel("cosmetic"), revenueCents: 0, itemCount: 0 },
+    late_fee: { key: "late_fee", label: revenueCategoryLabel("late_fee"), revenueCents: 0, itemCount: 0 },
+    no_show_fee: { key: "no_show_fee", label: revenueCategoryLabel("no_show_fee"), revenueCents: 0, itemCount: 0 },
+    product_sale: { key: "product_sale", label: revenueCategoryLabel("product_sale"), revenueCents: 0, itemCount: 0 },
+    other: { key: "other", label: revenueCategoryLabel("other"), revenueCents: 0, itemCount: 0 },
+  };
+}
+
+function addRevenueCategory(
+  accumulator: Record<RevenueCategoryKey, RevenueCategorySummary>,
+  categoryKey: RevenueCategoryKey,
+  revenueCents: number,
+): void {
+  if (revenueCents <= 0) {
+    return;
+  }
+  accumulator[categoryKey].revenueCents += revenueCents;
+  accumulator[categoryKey].itemCount += 1;
+}
+
+function summarizeRevenueCategories(
+  accumulator: Record<RevenueCategoryKey, RevenueCategorySummary>,
+): RevenueCategorySummary[] {
+  return Object.values(accumulator)
+    .filter((entry) => entry.revenueCents > 0)
+    .sort((left, right) => right.revenueCents - left.revenueCents);
 }
 
 // Get financial dashboard metrics
@@ -281,7 +330,8 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
   }
 
   try {
-    const trendResult = await pool.query(
+    const [trendResult, revenueCategoryResult] = await Promise.all([
+      pool.query(
       `with days as (
          select generate_series($2::date, $3::date, interval '1 day')::date as day
        ),
@@ -333,7 +383,35 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
        left join revenue r on r.day = d.day
        order by d.day asc`,
       [tenantId, startDate, endDate],
-    );
+      ),
+      pool.query(
+        `select
+           b.bill_date::date::text as day,
+           b.total_charges_cents,
+           b.notes,
+           max(at.name) as appointment_type_name,
+           string_agg(distinct coalesce(bli.cpt_code, ''), ',') as cpt_codes,
+           string_agg(distinct coalesce(bli.description, ''), ' | ') as line_descriptions,
+           b.encounter_id::text as encounter_id
+         from bills b
+         left join bill_line_items bli
+           on bli.bill_id = b.id
+          and bli.tenant_id = b.tenant_id
+         left join encounters e
+           on e.id = b.encounter_id
+          and e.tenant_id = b.tenant_id
+         left join appointments a
+           on a.id = e.appointment_id
+          and a.tenant_id = b.tenant_id
+         left join appointment_types at
+           on at.id = a.appointment_type_id
+         where b.tenant_id = $1
+           and b.bill_date >= $2
+           and b.bill_date <= $3
+         group by b.id, b.bill_date, b.total_charges_cents, b.notes, b.encounter_id`,
+        [tenantId, startDate, endDate],
+      ),
+    ]);
 
     const dailyPoints: TrendPoint[] = trendResult.rows.map((row: any) => ({
       bucketStartDate: row.date,
@@ -346,15 +424,51 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
       billCount: Number(row.bill_count || 0),
     }));
 
+    const categoryRows = Array.isArray(revenueCategoryResult.rows)
+      ? (revenueCategoryResult.rows as RevenueCategoryDetailRow[])
+      : [];
+    const dailyCategoryAccumulators = new Map<string, Record<RevenueCategoryKey, RevenueCategorySummary>>();
+
+    categoryRows.forEach((row) => {
+      const day = String(row.day || "");
+      const amountCents = Number(row.total_charges_cents || 0);
+      if (!day || amountCents <= 0) {
+        return;
+      }
+
+      const categoryKey = classifyRevenueCategory({
+        appointmentTypeName: row.appointment_type_name,
+        notes: row.notes,
+        cptCodes: row.cpt_codes,
+        lineDescriptions: row.line_descriptions,
+        encounterBacked: Boolean(row.encounter_id),
+      });
+      const accumulator = dailyCategoryAccumulators.get(day) || createRevenueCategoryAccumulator();
+      addRevenueCategory(accumulator, categoryKey, amountCents);
+      dailyCategoryAccumulators.set(day, accumulator);
+    });
+
+    dailyPoints.forEach((point) => {
+      const accumulator = dailyCategoryAccumulators.get(point.bucketStartDate);
+      point.revenueCategories = accumulator ? summarizeRevenueCategories(accumulator) : [];
+    });
+
     let trendData: TrendPoint[] = dailyPoints;
     if (granularity !== "day") {
       const bucketed = new Map<string, TrendPoint>();
+      const bucketedCategories = new Map<string, Record<RevenueCategoryKey, RevenueCategorySummary>>();
 
       dailyPoints.forEach((point) => {
         const key = bucketDate(point.bucketStartDate, granularity);
         const existing = bucketed.get(key);
         if (!existing) {
           bucketed.set(key, { ...point, bucketStartDate: key, bucketEndDate: point.bucketEndDate });
+          const accumulator = createRevenueCategoryAccumulator();
+          (point.revenueCategories || []).forEach((category) => {
+            addRevenueCategory(accumulator, category.key, category.revenueCents);
+            accumulator[category.key].itemCount = category.itemCount;
+          });
+          bucketedCategories.set(key, accumulator);
           return;
         }
 
@@ -365,9 +479,22 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
         existing.payerPaymentsCents += point.payerPaymentsCents;
         existing.paymentCount += point.paymentCount;
         existing.billCount += point.billCount;
+        const accumulator = bucketedCategories.get(key) || createRevenueCategoryAccumulator();
+        (point.revenueCategories || []).forEach((category) => {
+          addRevenueCategory(accumulator, category.key, category.revenueCents);
+          accumulator[category.key].itemCount += Math.max(0, category.itemCount - 1);
+        });
+        bucketedCategories.set(key, accumulator);
       });
 
-      trendData = Array.from(bucketed.values()).sort((a, b) => a.bucketStartDate.localeCompare(b.bucketStartDate));
+      trendData = Array.from(bucketed.values())
+        .sort((a, b) => a.bucketStartDate.localeCompare(b.bucketStartDate))
+        .map((point) => ({
+          ...point,
+          revenueCategories: summarizeRevenueCategories(
+            bucketedCategories.get(point.bucketStartDate) || createRevenueCategoryAccumulator(),
+          ),
+        }));
     }
 
     const summary = dailyPoints.reduce(
@@ -389,6 +516,21 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
         totalBillCount: 0,
       },
     );
+    const summaryCategoryAccumulator = createRevenueCategoryAccumulator();
+    categoryRows.forEach((row) => {
+      const amountCents = Number(row.total_charges_cents || 0);
+      if (amountCents <= 0) {
+        return;
+      }
+      const categoryKey = classifyRevenueCategory({
+        appointmentTypeName: row.appointment_type_name,
+        notes: row.notes,
+        cptCodes: row.cpt_codes,
+        lineDescriptions: row.line_descriptions,
+        encounterBacked: Boolean(row.encounter_id),
+      });
+      addRevenueCategory(summaryCategoryAccumulator, categoryKey, amountCents);
+    });
 
     const collectionRate =
       summary.totalRevenueEarnedCents > 0
@@ -403,6 +545,7 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
         avgDailyPaymentsCollectedCents: daySpan > 0 ? Math.round(summary.totalPaymentsCollectedCents / daySpan) : 0,
         avgDailyRevenueEarnedCents: daySpan > 0 ? Math.round(summary.totalRevenueEarnedCents / daySpan) : 0,
         collectionRate,
+        revenueCategories: summarizeRevenueCategories(summaryCategoryAccumulator),
       },
       period: {
         startDate,

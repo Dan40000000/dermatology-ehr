@@ -4,9 +4,69 @@ import { login as apiLogin, fetchMe } from '../api';
 import { API_BASE_URL } from '../utils/apiBase';
 import { buildEffectiveRoles, normalizeRoleArray } from '../utils/roles';
 
+// ── Demo credential bypass (no backend needed) ───────────────────────────────
+const DEMO_OFFICE_CREDS: Record<string, { role: string; fullName: string }> = {
+  'admin@demo.practice':    { role: 'admin',             fullName: 'Dr. Rachel Kim, Owner' },
+  'provider@demo.practice': { role: 'provider',          fullName: 'Dr. James Whitfield, MD' },
+  'nurse@demo.practice':    { role: 'nurse',             fullName: 'Nurse Sarah Okafor, RN' },
+  'manager@demo.practice':  { role: 'manager',           fullName: 'Lisa Nguyen, Office Manager' },
+  'frontdesk@demo.practice':{ role: 'front_desk',        fullName: 'Tyler Brooks, Front Desk' },
+  'ma@demo.practice':       { role: 'medical_assistant', fullName: 'Maria Santos, Medical Assistant' },
+  'billing@demo.practice':  { role: 'billing',           fullName: 'David Chen, Billing Specialist' },
+};
+const DEMO_OFFLINE_PASSWORD = 'Password123!';
+
+function isLocalDemoEnabled(): boolean {
+  return import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
+}
+
+function makeDemoToken(payload: object): string {
+  const b64u = (obj: object) =>
+    btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  return `${b64u({ alg: 'none' })}.${b64u({ ...payload, exp: 9_999_999_999, iat: Math.floor(Date.now() / 1000) })}.demo`;
+}
+
+function shouldUseLocalDemoFallback(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error || '').toLowerCase();
+  return (
+    message.includes('failed to fetch') ||
+    message.includes('networkerror') ||
+    message.includes('load failed') ||
+    message.includes('login failed')
+  );
+}
+
+function buildLocalDemoSession(tenantId: string, email: string, demo: { role: string; fullName: string }): Session {
+  const token = makeDemoToken({ sub: email, role: demo.role });
+  const roles = buildEffectiveRoles(demo.role as User['role'], [demo.role]);
+  return {
+    tenantId: tenantId || 'tenant-demo',
+    accessToken: token,
+    refreshToken: 'demo-refresh',
+    user: {
+      id: `demo-${email}`,
+      email,
+      fullName: demo.fullName,
+      role: demo.role as User['role'],
+      secondaryRoles: [],
+      roles,
+    },
+  };
+}
+
+function isLocalDemoTokenShape(token: string | undefined | null): boolean {
+  return typeof token === 'string' && token.endsWith('.demo');
+}
+
+function isLocalDemoAccessToken(token: string | undefined | null): boolean {
+  return isLocalDemoEnabled() && isLocalDemoTokenShape(token);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 interface AuthContextValue {
   session: Session | null;
   user: User | null;
+  headers: Record<string, string>;
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (tenantId: string, email: string, password: string) => Promise<void>;
@@ -53,6 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as Session;
+        if (isLocalDemoTokenShape(parsed.accessToken) && !isLocalDemoEnabled()) return null;
         const user = normalizeUser(parsed.user);
         if (!user) return null;
         return { ...parsed, user };
@@ -100,10 +161,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!session || !isLocalDemoAccessToken(session.accessToken)) return;
+
+    const normalizedEmail = session.user.email.trim().toLowerCase();
+    if (!DEMO_OFFICE_CREDS[normalizedEmail]) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const resp = await apiLogin(session.tenantId, normalizedEmail, DEMO_OFFLINE_PASSWORD);
+        const normalizedUser = normalizeUser(resp.user);
+        if (!normalizedUser || cancelled) return;
+
+        const upgradedSession: Session = {
+          tenantId: resp.tenantId,
+          accessToken: resp.tokens.accessToken,
+          refreshToken: resp.tokens.refreshToken,
+          user: normalizedUser,
+        };
+
+        setSession(upgradedSession);
+        setUser(upgradedSession.user);
+      } catch {
+        // Keep the offline demo session when the API is still unavailable.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
   const login = useCallback(async (tenantId: string, email: string, password: string) => {
     setIsLoading(true);
     try {
-      const resp = await apiLogin(tenantId, email, password);
+      const normalizedEmail = email.trim().toLowerCase();
+      let resp: Awaited<ReturnType<typeof apiLogin>>;
+      try {
+        resp = await apiLogin(tenantId, normalizedEmail, password);
+      } catch (error) {
+        // Demo users should use real backend tokens when available. The local token
+        // is only for static/offline demos where no API can issue a valid JWT.
+        const demo = DEMO_OFFICE_CREDS[normalizedEmail];
+        if (!isLocalDemoEnabled() || !demo || password !== DEMO_OFFLINE_PASSWORD || !shouldUseLocalDemoFallback(error)) {
+          throw error;
+        }
+
+        const demoSession = buildLocalDemoSession(tenantId, normalizedEmail, demo);
+        setSession(demoSession);
+        setUser(demoSession.user);
+        return;
+      }
+
       const normalizedUser = normalizeUser(resp.user);
       if (!normalizedUser) {
         throw new Error('Invalid user payload');
@@ -198,11 +309,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [session]);
 
+  const headers = session
+    ? {
+        Authorization: `Bearer ${session.accessToken}`,
+        [TENANT_HEADER]: session.tenantId,
+      }
+    : {};
+
   return (
     <AuthContext.Provider
       value={{
         session,
         user,
+        headers,
         isAuthenticated: !!session,
         isLoading,
         login,

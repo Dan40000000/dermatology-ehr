@@ -457,8 +457,15 @@ export function DocumentsPage() {
   };
 
   const openTemplateLibrary = (instructionType?: string) => {
-    const query = instructionType ? `?instructionType=${encodeURIComponent(instructionType)}` : '';
-    navigate(`/handouts${query}`);
+    const params = new URLSearchParams();
+    if (instructionType) {
+      params.set('instructionType', instructionType);
+    }
+    if (selectedPatient !== 'all') {
+      params.set('patientId', selectedPatient);
+    }
+    const query = params.toString();
+    navigate(`/handouts${query ? `?${query}` : ''}`);
   };
 
   const openFormsWorkspace = () => {

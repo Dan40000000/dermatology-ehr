@@ -38,7 +38,8 @@ type ExternalIntegrationType =
   | "eprescribe"
   | "lab"
   | "payment"
-  | "fax";
+  | "fax"
+  | "ambient_transcription";
 
 interface ExternalIntegrationStatus {
   type: ExternalIntegrationType;
@@ -103,6 +104,7 @@ const externalTypeOrder: ExternalIntegrationType[] = [
   "eligibility",
   "eprescribe",
   "lab",
+  "ambient_transcription",
   "payment",
   "fax",
 ];
@@ -112,6 +114,7 @@ const externalTypeLabels: Record<ExternalIntegrationType, string> = {
   eligibility: "Eligibility",
   eprescribe: "E-Prescribing",
   lab: "Labs",
+  ambient_transcription: "AI Scribe Transcription",
   payment: "Payments",
   fax: "Fax",
 };
@@ -121,8 +124,58 @@ const defaultExternalProviders: Record<ExternalIntegrationType, string> = {
   eligibility: "availity",
   eprescribe: "surescripts",
   lab: "labcorp",
+  ambient_transcription: "wispr_flow",
   payment: "stripe",
   fax: "phaxio",
+};
+
+const externalDocsLinks: Partial<Record<ExternalIntegrationType, string>> = {
+  eligibility: "https://developer.availity.com/blog/2025/3/25/hipaa-transactions",
+  ambient_transcription: "https://api-docs.wisprflow.ai/rest_api_quickstart",
+};
+
+const buildDefaultConfigTemplate = (type: ExternalIntegrationType): Record<string, any> => {
+  switch (type) {
+    case "eligibility":
+      return {
+        baseUrl: "https://api.availity.com",
+        tokenPath: "/v1/token",
+        coveragesPath: "/v1/coverages",
+        tokenAuthMethod: "client_secret_post",
+        scope: "healthcare-hipaa-transactions-demo-demo healthcare-hipaa-transactions-demo",
+        amountUnit: "dollars",
+        environment: "production",
+        defaultServiceType: "30",
+      };
+    case "ambient_transcription":
+      return {
+        baseUrl: "https://api.wisprflow.ai",
+        transcribePath: "/api/v1/voice-dictation/transcribe",
+        language: "en",
+        workflowId: "",
+        translateTo: "",
+        enableLiveChunks: true,
+        environment: "production",
+      };
+    default:
+      return {};
+  }
+};
+
+const buildDefaultCredentialsTemplate = (type: ExternalIntegrationType): Record<string, any> => {
+  switch (type) {
+    case "eligibility":
+      return {
+        clientId: "",
+        clientSecret: "",
+      };
+    case "ambient_transcription":
+      return {
+        apiKey: "",
+      };
+    default:
+      return {};
+  }
 };
 
 const parseError = (err: any, fallback: string): string => {
@@ -169,43 +222,50 @@ const seedExternalStatus = (
 const buildDefaultExternalForms = (): Record<ExternalIntegrationType, ExternalIntegrationForm> => ({
   clearinghouse: {
     provider: defaultExternalProviders.clearinghouse,
-    configJson: "{}",
-    credentialsJson: "{}",
+    configJson: JSON.stringify(buildDefaultConfigTemplate("clearinghouse"), null, 2),
+    credentialsJson: JSON.stringify(buildDefaultCredentialsTemplate("clearinghouse"), null, 2),
     isActive: false,
     syncFrequencyMinutes: "60",
   },
   eligibility: {
     provider: defaultExternalProviders.eligibility,
-    configJson: "{}",
-    credentialsJson: "{}",
+    configJson: JSON.stringify(buildDefaultConfigTemplate("eligibility"), null, 2),
+    credentialsJson: JSON.stringify(buildDefaultCredentialsTemplate("eligibility"), null, 2),
     isActive: false,
     syncFrequencyMinutes: "60",
   },
   eprescribe: {
     provider: defaultExternalProviders.eprescribe,
-    configJson: "{}",
-    credentialsJson: "{}",
+    configJson: JSON.stringify(buildDefaultConfigTemplate("eprescribe"), null, 2),
+    credentialsJson: JSON.stringify(buildDefaultCredentialsTemplate("eprescribe"), null, 2),
     isActive: false,
     syncFrequencyMinutes: "60",
   },
   lab: {
     provider: defaultExternalProviders.lab,
-    configJson: "{}",
-    credentialsJson: "{}",
+    configJson: JSON.stringify(buildDefaultConfigTemplate("lab"), null, 2),
+    credentialsJson: JSON.stringify(buildDefaultCredentialsTemplate("lab"), null, 2),
+    isActive: false,
+    syncFrequencyMinutes: "60",
+  },
+  ambient_transcription: {
+    provider: defaultExternalProviders.ambient_transcription,
+    configJson: JSON.stringify(buildDefaultConfigTemplate("ambient_transcription"), null, 2),
+    credentialsJson: JSON.stringify(buildDefaultCredentialsTemplate("ambient_transcription"), null, 2),
     isActive: false,
     syncFrequencyMinutes: "60",
   },
   payment: {
     provider: defaultExternalProviders.payment,
-    configJson: "{}",
-    credentialsJson: "{}",
+    configJson: JSON.stringify(buildDefaultConfigTemplate("payment"), null, 2),
+    credentialsJson: JSON.stringify(buildDefaultCredentialsTemplate("payment"), null, 2),
     isActive: false,
     syncFrequencyMinutes: "60",
   },
   fax: {
     provider: defaultExternalProviders.fax,
-    configJson: "{}",
-    credentialsJson: "{}",
+    configJson: JSON.stringify(buildDefaultConfigTemplate("fax"), null, 2),
+    credentialsJson: JSON.stringify(buildDefaultCredentialsTemplate("fax"), null, 2),
     isActive: false,
     syncFrequencyMinutes: "60",
   },
@@ -668,6 +728,14 @@ export default function IntegrationsSettingsPage() {
         </p>
       </div>
 
+      <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+        <div className="font-semibold">Professional review mode: not live-linked</div>
+        <div className="mt-1 text-sm">
+          Insurance, Rx/eRx, text messaging, and payments are available for demo workflow testing only.
+          Do not use real patient data or expect live payer, pharmacy, SMS carrier, or card network activity from this environment.
+        </div>
+      </div>
+
       {error && (
         <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
           {error}
@@ -804,6 +872,23 @@ export default function IntegrationsSettingsPage() {
                     </div>
                   )}
 
+                  {integration.type === "eligibility" && (
+                    <div className="bg-sky-50 border border-sky-200 text-sky-900 px-4 py-3 rounded-lg text-sm space-y-1">
+                      <p className="font-medium">Availity setup</p>
+                      <p>Use your Availity client credentials here. The app will exchange them for an OAuth token and run live coverages checks through the configured endpoint.</p>
+                      <p>Keep <code>amountUnit</code> set to <code>dollars</code> unless your Availity payload is already returning cents.</p>
+                    </div>
+                  )}
+
+                  {integration.type === "ambient_transcription" && (
+                    <div className="bg-violet-50 border border-violet-200 text-violet-900 px-4 py-3 rounded-lg text-sm space-y-1">
+                      <p className="font-medium">Wispr Flow setup</p>
+                      <p>This powers the AI scribe transcription layer. Final recording transcription and optional live chunk transcription will use Wispr when this integration is active.</p>
+                      <p>Use an API key from the Wispr Flow platform. The backend sends audio as a multipart <code>file</code> upload with <code>language</code>, optional <code>workflowId</code>, and optional <code>translateTo</code>.</p>
+                      <p>You can also provide the key through backend environment variable <code>WISPR_FLOW_API_KEY</code> for server-side setup.</p>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
@@ -933,6 +1018,19 @@ export default function IntegrationsSettingsPage() {
                   <div className="text-xs text-gray-500">
                     Last sync: {integration.lastSyncAt ? new Date(integration.lastSyncAt).toLocaleString() : "Never"}
                   </div>
+
+                  {externalDocsLinks[integration.type] && (
+                    <div className="text-xs">
+                      <a
+                        href={externalDocsLinks[integration.type]}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-600 hover:text-blue-700"
+                      >
+                        Open provider docs
+                      </a>
+                    </div>
+                  )}
 
                   <div className="flex flex-wrap gap-3">
                     {integration.type === "payment" ? (

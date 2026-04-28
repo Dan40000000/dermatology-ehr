@@ -5,7 +5,9 @@ import { canAccessModule, type ModuleKey } from '../../config/moduleAccess';
 import { HelpModal } from '../HelpModal';
 import { LanguageSwitcher } from '../LanguageSwitcher';
 import { Modal } from '../ui';
+import { FeedbackScreenshotEditor } from '../feedback/FeedbackScreenshotEditor';
 import type { Patient } from '../../types';
+import { API_BASE_URL } from '../../utils/apiBase';
 import {
   getActiveEncounter,
   clearActiveEncounter,
@@ -26,7 +28,11 @@ type UserPreferences = {
   showTooltips: boolean;
 };
 
+type FeedbackType = 'issue' | 'suggestion';
+type FeedbackSeverity = 'blocker' | 'annoying' | 'suggestion' | 'question';
+
 const USER_PREFERENCES_KEY = 'ui:userPreferences';
+const CLINICAL_COPILOT_URL = import.meta.env.VITE_CLINICAL_COPILOT_URL || 'http://127.0.0.1:4178';
 
 function getDefaultPreferences(): UserPreferences {
   return {
@@ -70,16 +76,49 @@ const DEFAULT_PAGE_MODULES: Partial<Record<UserPreferences['defaultPage'], Modul
   '/financials': 'financials',
 };
 
+async function capturePageScreenshot(): Promise<File | null> {
+  const html2canvasModule = await import('html2canvas');
+  const html2canvas = html2canvasModule.default;
+  const target = document.querySelector('#main-content') || document.body;
+  const canvas = await html2canvas(target as HTMLElement, {
+    backgroundColor: '#ffffff',
+    logging: false,
+    scale: Math.min(window.devicePixelRatio || 1, 1.5),
+    useCORS: true,
+  });
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        resolve(null);
+        return;
+      }
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      resolve(new File([blob], `page-capture-${timestamp}.png`, { type: 'image/png' }));
+    }, 'image/png');
+  });
+}
+
 export function TopBar({ patients = [], onRefresh }: TopBarProps) {
-  const { user, logout } = useAuth();
+  const { user, session, logout } = useAuth();
   const navigate = useNavigate();
   const [searchValue, setSearchValue] = useState('');
   const [showHelpModal, setShowHelpModal] = useState(false);
+  const [showFeedbackMarkupModal, setShowFeedbackMarkupModal] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [showPreferencesModal, setShowPreferencesModal] = useState(false);
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [feedbackType, setFeedbackType] = useState<FeedbackType>('issue');
+  const [feedbackSeverity, setFeedbackSeverity] = useState<FeedbackSeverity>('annoying');
   const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackFiles, setFeedbackFiles] = useState<File[]>([]);
+  const [feedbackRawPageCapture, setFeedbackRawPageCapture] = useState<File | null>(null);
+  const [feedbackPageCapture, setFeedbackPageCapture] = useState<File | null>(null);
+  const [feedbackPageCapturePreviewUrl, setFeedbackPageCapturePreviewUrl] = useState<string | null>(null);
+  const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
+  const [capturingFeedbackPage, setCapturingFeedbackPage] = useState(false);
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
+  const [resumeFeedbackFormAfterMarkup, setResumeFeedbackFormAfterMarkup] = useState(false);
   const [preferences, setPreferences] = useState<UserPreferences>(() => loadStoredPreferences());
   const [preferencesSavedAt, setPreferencesSavedAt] = useState<string | null>(null);
   const [activeEncounter, setActiveEncounterState] = useState(() => getActiveEncounter());
@@ -108,6 +147,17 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
     }));
   }, [defaultPageOptions, preferences.defaultPage]);
 
+  useEffect(() => {
+    if (!feedbackPageCapture) {
+      setFeedbackPageCapturePreviewUrl(null);
+      return;
+    }
+
+    const previewUrl = URL.createObjectURL(feedbackPageCapture);
+    setFeedbackPageCapturePreviewUrl(previewUrl);
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [feedbackPageCapture]);
+
   const handlePatientSelect = (patientId: string) => {
     if (patientId) {
       navigate(`/patients/${patientId}`);
@@ -115,18 +165,155 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
     }
   };
 
+  const resetFeedbackDraft = (type: FeedbackType) => {
+    setFeedbackType(type);
+    setFeedbackSeverity(type === 'issue' ? 'annoying' : 'suggestion');
+    setFeedbackText('');
+    setFeedbackFiles([]);
+    setFeedbackRawPageCapture(null);
+    setFeedbackPageCapture(null);
+    setFeedbackStatus(null);
+    setResumeFeedbackFormAfterMarkup(false);
+  };
+
+  const handleFeedbackCaptureFailure = () => {
+    setFeedbackStatus('Page screenshot unavailable. Add a photo if helpful.');
+    setShowFeedbackMarkupModal(false);
+    setShowFeedbackModal(true);
+  };
+
+  const handleOpenFeedback = async (type: FeedbackType = 'issue') => {
+    resetFeedbackDraft(type);
+    setShowFeedbackModal(false);
+    setShowFeedbackMarkupModal(false);
+    setCapturingFeedbackPage(true);
+    try {
+      const capture = await capturePageScreenshot();
+      if (!capture) {
+        handleFeedbackCaptureFailure();
+        return;
+      }
+
+      setFeedbackRawPageCapture(capture);
+      setFeedbackPageCapture(capture);
+      setShowFeedbackMarkupModal(true);
+    } catch {
+      handleFeedbackCaptureFailure();
+    } finally {
+      setCapturingFeedbackPage(false);
+    }
+  };
+
+  const handleRefreshPageCapture = async () => {
+    setCapturingFeedbackPage(true);
+    setFeedbackStatus(null);
+    setResumeFeedbackFormAfterMarkup(true);
+    setShowFeedbackModal(false);
+    try {
+      const capture = await capturePageScreenshot();
+      if (!capture) {
+        handleFeedbackCaptureFailure();
+        return;
+      }
+
+      setFeedbackRawPageCapture(capture);
+      setFeedbackPageCapture(capture);
+      setShowFeedbackMarkupModal(true);
+    } catch {
+      handleFeedbackCaptureFailure();
+    } finally {
+      setCapturingFeedbackPage(false);
+    }
+  };
+
+  const handleOpenFeedbackMarkup = () => {
+    if (!feedbackRawPageCapture) return;
+    setFeedbackStatus(null);
+    setResumeFeedbackFormAfterMarkup(true);
+    setShowFeedbackModal(false);
+    setShowFeedbackMarkupModal(true);
+  };
+
+  const handleCancelFeedbackMarkup = () => {
+    setShowFeedbackMarkupModal(false);
+    if (resumeFeedbackFormAfterMarkup) {
+      setShowFeedbackModal(true);
+    }
+    setResumeFeedbackFormAfterMarkup(false);
+  };
+
+  const handleUseOriginalFeedbackCapture = () => {
+    if (!feedbackRawPageCapture) {
+      handleFeedbackCaptureFailure();
+      return;
+    }
+
+    setFeedbackPageCapture(feedbackRawPageCapture);
+    setFeedbackStatus('Attached current page screenshot.');
+    setShowFeedbackMarkupModal(false);
+    setShowFeedbackModal(true);
+    setResumeFeedbackFormAfterMarkup(false);
+  };
+
+  const handleConfirmFeedbackMarkup = (annotatedCapture: File) => {
+    setFeedbackPageCapture(annotatedCapture);
+    setFeedbackStatus('Attached marked-up page screenshot.');
+    setShowFeedbackMarkupModal(false);
+    setShowFeedbackModal(true);
+    setResumeFeedbackFormAfterMarkup(false);
+  };
+
+  const handleFeedbackFilesChange = (files: FileList | null) => {
+    setFeedbackFiles(files ? Array.from(files).slice(0, 6) : []);
+  };
+
   const handleSubmitFeedback = async () => {
-    if (!feedbackText.trim()) return;
+    if (!feedbackText.trim() || !session) return;
 
     setSubmittingFeedback(true);
+    setFeedbackStatus(null);
     try {
-      // Preserve async behavior without timer-driven state updates.
-      await Promise.resolve();
+      const form = new FormData();
+      form.append('type', feedbackType);
+      form.append('severity', feedbackSeverity);
+      form.append('message', feedbackText.trim());
+      form.append('pageUrl', window.location.href);
+      form.append('pathname', window.location.pathname + window.location.search);
+      form.append('userAgent', navigator.userAgent);
+      form.append('viewport', `${window.innerWidth}x${window.innerHeight}`);
+      form.append('capturedAt', new Date().toISOString());
+
+      if (feedbackPageCapture) {
+        form.append('attachments', feedbackPageCapture);
+      }
+
+      feedbackFiles.forEach((file) => {
+        form.append('attachments', file);
+      });
+
+      const response = await fetch(`${API_BASE_URL}/api/professional-feedback`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+          'x-tenant-id': session.tenantId,
+        },
+        body: form,
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to submit feedback');
+      }
+
       setFeedbackText('');
+      setFeedbackFiles([]);
+      setFeedbackRawPageCapture(null);
+      setFeedbackPageCapture(null);
+      setResumeFeedbackFormAfterMarkup(false);
       setShowFeedbackModal(false);
-      alert('Thank you for your feedback!');
-    } catch {
-      alert('Failed to submit feedback. Please try again.');
+      alert('Issue/suggestion sent to Dan.');
+    } catch (error) {
+      setFeedbackStatus(error instanceof Error ? error.message : 'Failed to submit feedback. Please try again.');
     } finally {
       setSubmittingFeedback(false);
     }
@@ -188,7 +375,7 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
       <header className="ema-header" role="banner">
         <div className="ema-header-left">
           <h1 className="ema-brand">
-            Mountain Pine<br />Dermatology PLLC
+            Dermatology DEMO<br />Office
           </h1>
         </div>
 
@@ -280,10 +467,13 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
             <button
               type="button"
               className="ema-link-btn"
-              onClick={() => setShowFeedbackModal(true)}
-              aria-label="Open feedback dialog"
+              onClick={() => {
+                void handleOpenFeedback('issue');
+              }}
+              aria-label="Report issue or suggestion"
+              disabled={capturingFeedbackPage}
             >
-              Feedback
+              {capturingFeedbackPage ? 'Capturing...' : 'Issue / Suggestion'}
             </button>
             <span className="ema-separator" aria-hidden="true">•</span>
             <a
@@ -292,6 +482,17 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
               aria-label="Customer Portal"
             >
               Customer Portal
+            </a>
+            <span className="ema-separator" aria-hidden="true">•</span>
+            <a
+              href={CLINICAL_COPILOT_URL}
+              className="ema-link"
+              aria-label="Open clinical evidence copilot in a new window"
+              target="_blank"
+              rel="noreferrer"
+              title="Opens the standalone evidence copilot in a new window"
+            >
+              Evidence Copilot
             </a>
             <span className="ema-separator" aria-hidden="true">•</span>
             <button
@@ -330,18 +531,76 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
         isOpen={showHelpModal}
         onClose={() => setShowHelpModal(false)}
         onNavigate={(path) => navigate(path)}
-        onOpenFeedback={() => setShowFeedbackModal(true)}
+        onOpenFeedback={() => {
+          void handleOpenFeedback('suggestion');
+        }}
       />
 
-      <Modal isOpen={showFeedbackModal} title="Send Feedback" onClose={() => setShowFeedbackModal(false)}>
+      <Modal isOpen={showFeedbackMarkupModal} title="Mark Up Screenshot" onClose={handleCancelFeedbackMarkup}>
+        {feedbackRawPageCapture ? (
+          <FeedbackScreenshotEditor
+            imageFile={feedbackRawPageCapture}
+            onConfirm={handleConfirmFeedbackMarkup}
+            onUseOriginal={handleUseOriginalFeedbackCapture}
+            onCancel={handleCancelFeedbackMarkup}
+          />
+        ) : (
+          <div style={{ fontSize: '0.9rem', color: '#4b5563' }}>
+            Screenshot unavailable. Continue without markup.
+          </div>
+        )}
+      </Modal>
+
+      <Modal isOpen={showFeedbackModal} title="Report Issue / Suggestion" onClose={() => setShowFeedbackModal(false)}>
         <div className="modal-form">
+          <div
+            style={{
+              background: '#fff7ed',
+              border: '1px solid #fed7aa',
+              borderRadius: '8px',
+              padding: '0.75rem',
+              color: '#7c2d12',
+              fontSize: '0.8rem',
+              lineHeight: 1.4,
+            }}
+          >
+            This sends the current page, your note, and any attached photos to Dan for professional testing review.
+            Use synthetic/demo patient data only.
+          </div>
+
           <div className="form-field">
-            <label htmlFor="feedback-text">Your Feedback</label>
+            <label htmlFor="feedback-type">Type</label>
+            <select
+              id="feedback-type"
+              value={feedbackType}
+              onChange={(e) => setFeedbackType(e.target.value as FeedbackType)}
+            >
+              <option value="issue">Issue</option>
+              <option value="suggestion">Suggestion</option>
+            </select>
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="feedback-severity">Severity</label>
+            <select
+              id="feedback-severity"
+              value={feedbackSeverity}
+              onChange={(e) => setFeedbackSeverity(e.target.value as FeedbackSeverity)}
+            >
+              <option value="blocker">Blocker</option>
+              <option value="annoying">Annoying / Workflow Friction</option>
+              <option value="suggestion">Suggestion</option>
+              <option value="question">Question</option>
+            </select>
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="feedback-text">What happened or what should improve?</label>
             <textarea
               id="feedback-text"
               value={feedbackText}
               onChange={(e) => setFeedbackText(e.target.value)}
-              placeholder="Tell us about your experience, report a bug, or suggest a feature..."
+              placeholder="Example: I clicked Add Procedure from Sarah Johnson's visit, expected Botox to appear, but it did not show up."
               rows={6}
               style={{
                 width: '100%',
@@ -355,8 +614,96 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
               required
             />
           </div>
+
+          <div className="form-field">
+            <label>Current page screenshot</label>
+            <div
+              style={{
+                display: 'grid',
+                gap: '0.75rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '8px',
+                padding: '0.75rem',
+                background: '#f9fafb',
+              }}
+            >
+              {feedbackPageCapturePreviewUrl ? (
+                <img
+                  src={feedbackPageCapturePreviewUrl}
+                  alt="Current page screenshot preview"
+                  style={{
+                    width: '100%',
+                    maxHeight: '14rem',
+                    objectFit: 'contain',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '8px',
+                    background: '#ffffff',
+                  }}
+                />
+              ) : null}
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
+                <span style={{ fontSize: '0.82rem', color: feedbackPageCapture ? '#166534' : '#6b7280' }}>
+                  {feedbackPageCapture ? feedbackPageCapture.name : 'No page screenshot attached'}
+                </span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleOpenFeedbackMarkup}
+                    disabled={!feedbackRawPageCapture || capturingFeedbackPage}
+                  >
+                    Mark Up Screenshot
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      void handleRefreshPageCapture();
+                    }}
+                    disabled={capturingFeedbackPage}
+                  >
+                    {capturingFeedbackPage ? 'Capturing...' : 'Re-capture'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="feedback-photos">Attach photos/screenshots</label>
+            <input
+              id="feedback-photos"
+              type="file"
+              accept="image/*"
+              multiple
+              capture="environment"
+              onChange={(e) => handleFeedbackFilesChange(e.target.files)}
+            />
+            {feedbackFiles.length > 0 && (
+              <div style={{ marginTop: '0.5rem', fontSize: '0.78rem', color: '#374151' }}>
+                {feedbackFiles.length} photo{feedbackFiles.length === 1 ? '' : 's'} attached
+              </div>
+            )}
+          </div>
+
+          {feedbackStatus && (
+            <div
+              role="status"
+              style={{
+                border: '1px solid #dbeafe',
+                borderRadius: '8px',
+                background: '#eff6ff',
+                color: '#1e3a8a',
+                padding: '0.65rem 0.75rem',
+                fontSize: '0.8rem',
+              }}
+            >
+              {feedbackStatus}
+            </div>
+          )}
+
           <p id="feedback-help" style={{ fontSize: '0.75rem', color: '#6b7280', margin: '0.5rem 0 0' }}>
-            Your feedback helps us improve the system. Thank you for taking the time to share your thoughts!
+            Page URL, role, browser, and viewport are included automatically.
           </p>
         </div>
         <div className="modal-footer">
@@ -367,10 +714,10 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
             type="button"
             className="btn-primary"
             onClick={handleSubmitFeedback}
-            disabled={!feedbackText.trim() || submittingFeedback}
+            disabled={!feedbackText.trim() || submittingFeedback || !session}
             aria-busy={submittingFeedback}
           >
-            {submittingFeedback ? 'Submitting...' : 'Submit Feedback'}
+            {submittingFeedback ? 'Sending...' : 'Send to Dan'}
           </button>
         </div>
       </Modal>

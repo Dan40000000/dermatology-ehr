@@ -7,6 +7,7 @@
  */
 
 import { pool } from '../db/pool';
+import { getPatientAllergySummaries } from './patientHealthRecord';
 
 // ============================================================================
 // Types and Interfaces
@@ -103,7 +104,7 @@ export async function addAllergy(
     // Insert the allergy record
     const allergyResult = await client.query(
       `INSERT INTO patient_allergies (
-        tenant_id, patient_id, allergen_type, allergen_name, rxcui,
+        tenant_id, patient_id, allergen_type, allergen, rxcui,
         reaction_type, severity, onset_date, notes, source,
         status, created_by, updated_by
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active', $11, $11)
@@ -169,7 +170,7 @@ export async function updateAllergy(
     values.push(updates.allergenType);
   }
   if (updates.allergenName !== undefined) {
-    updateFields.push(`allergen_name = $${paramIndex++}`);
+    updateFields.push(`allergen = $${paramIndex++}`);
     values.push(updates.allergenName);
   }
   if (updates.rxcui !== undefined) {
@@ -229,9 +230,9 @@ export async function getPatientAllergies(
       pa.id,
       pa.patient_id as "patientId",
       pa.allergen_type as "allergenType",
-      pa.allergen_name as "allergenName",
+      pa.allergen as "allergenName",
       pa.rxcui,
-      pa.reaction_type as "reactionType",
+      COALESCE(NULLIF(pa.reaction_type, ''), NULLIF(pa.reaction, '')) as "reactionType",
       pa.severity,
       pa.onset_date as "onsetDate",
       pa.verified_by as "verifiedBy",
@@ -259,10 +260,34 @@ export async function getPatientAllergies(
       WHEN 'moderate' THEN 3
       WHEN 'mild' THEN 4
     END,
-    pa.allergen_name`;
+    pa.allergen`;
 
   const result = await pool.query(query, params);
   const allergies = result.rows as PatientAllergy[];
+
+  if (!options?.status || options.status === 'active') {
+    const existingAllergens = new Set(allergies.map((allergy) => allergy.allergenName.toLowerCase()));
+    const legacyAllergies = await getPatientAllergySummaries(tenantId, patientId, pool, {
+      includeStructured: false,
+    });
+
+    for (const legacyAllergy of legacyAllergies) {
+      if (existingAllergens.has(legacyAllergy.allergenName.toLowerCase())) continue;
+      allergies.push({
+        id: legacyAllergy.id,
+        patientId,
+        allergenType: 'drug',
+        allergenName: legacyAllergy.allergenName,
+        reactionType: legacyAllergy.reaction !== 'Unknown' ? legacyAllergy.reaction : undefined,
+        severity: 'mild',
+        status: 'active',
+        notes: legacyAllergy.notes || undefined,
+        source: legacyAllergy.source || 'patient_record',
+        createdAt: '',
+        updatedAt: '',
+      });
+    }
+  }
 
   // Optionally include detailed reactions
   if (options?.includeReactions && allergies.length > 0) {
@@ -309,21 +334,14 @@ export async function checkDrugAllergy(
   let directMatch = false;
   let crossReactivityMatch = false;
 
-  // Get patient's active drug allergies
-  const allergiesResult = await pool.query(
-    `SELECT id, allergen_name, rxcui, severity, reaction_type, notes
-     FROM patient_allergies
-     WHERE patient_id = $1 AND tenant_id = $2
-       AND status = 'active'
-       AND allergen_type = 'drug'`,
-    [patientId, tenantId]
-  );
+  const allergies = (await getPatientAllergies(patientId, tenantId, { status: 'active' }))
+    .filter((allergy) => allergy.allergenType === 'drug');
 
   const drugNameLower = drugName.toLowerCase();
 
   // Check for direct matches
-  for (const allergy of allergiesResult.rows) {
-    const allergenLower = (allergy.allergen_name as string).toLowerCase();
+  for (const allergy of allergies) {
+    const allergenLower = allergy.allergenName.toLowerCase();
 
     // Check if drug name matches allergy
     if (
@@ -333,19 +351,19 @@ export async function checkDrugAllergy(
     ) {
       directMatch = true;
 
-      const alertSeverity = mapAllergySeverityToAlertSeverity(allergy.severity as AllergySeverity);
+      const alertSeverity = mapAllergySeverityToAlertSeverity(allergy.severity);
 
       alerts.push({
         alertType: 'drug_allergy',
         alertSeverity,
-        allergyId: allergy.id as string,
-        allergenName: allergy.allergen_name as string,
+        allergyId: allergy.id,
+        allergenName: allergy.allergenName,
         triggerDrug: drugName,
         triggerRxcui: rxcui,
-        message: `Patient is allergic to ${allergy.allergen_name}. ` +
+        message: `Patient is allergic to ${allergy.allergenName}. ` +
                  `Severity: ${allergy.severity}. ` +
-                 (allergy.reaction_type ? `Reaction: ${allergy.reaction_type}.` : ''),
-        reactions: allergy.notes ? [allergy.notes as string] : []
+                 (allergy.reactionType ? `Reaction: ${allergy.reactionType}.` : ''),
+        reactions: allergy.notes ? [allergy.notes] : []
       });
     }
   }
@@ -381,18 +399,11 @@ export async function checkCrossReactivity(
   const alerts: AllergyAlert[] = [];
   const drugNameLower = drugName.toLowerCase();
 
-  // Get patient's active allergies
-  const allergiesResult = await pool.query(
-    `SELECT pa.id, pa.allergen_name, pa.severity
-     FROM patient_allergies pa
-     WHERE pa.patient_id = $1 AND pa.tenant_id = $2
-       AND pa.status = 'active'
-       AND pa.allergen_type = 'drug'`,
-    [patientId, tenantId]
-  );
+  const allergies = (await getPatientAllergies(patientId, tenantId, { status: 'active' }))
+    .filter((allergy) => allergy.allergenType === 'drug');
 
-  for (const allergy of allergiesResult.rows) {
-    const allergenLower = (allergy.allergen_name as string).toLowerCase();
+  for (const allergy of allergies) {
+    const allergenLower = allergy.allergenName.toLowerCase();
 
     // Check cross-reactivity table
     const crossResult = await pool.query(
@@ -433,15 +444,15 @@ export async function checkCrossReactivity(
         alerts.push({
           alertType: 'cross_reactivity',
           alertSeverity,
-          allergyId: allergy.id as string,
-          allergenName: allergy.allergen_name as string,
+          allergyId: allergy.id,
+          allergenName: allergy.allergenName,
           triggerDrug: drugName,
-          message: `Patient is allergic to ${allergy.allergen_name}. ` +
+          message: `Patient is allergic to ${allergy.allergenName}. ` +
                    `${drugName} may have cross-reactivity ` +
                    (crossRow.cross_reactivity_rate
                      ? `(~${crossRow.cross_reactivity_rate}% of patients react).`
                      : '.'),
-          crossReactiveWith: allergy.allergen_name as string,
+          crossReactiveWith: allergy.allergenName,
           crossReactivityRate: crossRow.cross_reactivity_rate as number | undefined,
           recommendations: crossRow.recommendations as string | undefined
         });
@@ -459,40 +470,29 @@ export async function checkLatexAllergy(
   patientId: string,
   tenantId: string
 ): Promise<AllergyAlert | null> {
-  const result = await pool.query(
-    `SELECT id, allergen_name, severity, notes, reaction_type
-     FROM patient_allergies
-     WHERE patient_id = $1 AND tenant_id = $2
-       AND status = 'active'
-       AND (allergen_type = 'latex'
-         OR LOWER(allergen_name) LIKE '%latex%'
-         OR LOWER(allergen_name) LIKE '%rubber%')
-     LIMIT 1`,
-    [patientId, tenantId]
-  );
+  const allergies = await getPatientAllergies(patientId, tenantId, { status: 'active' });
+  const allergy = allergies.find((item) => {
+    const name = item.allergenName.toLowerCase();
+    return item.allergenType === 'latex' || name.includes('latex') || name.includes('rubber');
+  });
 
-  if (result.rows.length === 0) {
+  if (!allergy) {
     return null;
   }
 
-  const allergy = result.rows[0];
-  const alertSeverity = mapAllergySeverityToAlertSeverity(allergy.severity as AllergySeverity);
+  const alertSeverity = mapAllergySeverityToAlertSeverity(allergy.severity);
 
   // Also check for latex-fruit syndrome
-  const fruitAllergyResult = await pool.query(
-    `SELECT allergen_name FROM patient_allergies
-     WHERE patient_id = $1 AND tenant_id = $2
-       AND status = 'active'
-       AND allergen_type = 'food'
-       AND LOWER(allergen_name) IN ('banana', 'avocado', 'kiwi', 'chestnut')`,
-    [patientId, tenantId]
+  const fruitAllergies = allergies.filter(
+    (item) =>
+      item.allergenType === 'food' &&
+      ['banana', 'avocado', 'kiwi', 'chestnut'].includes(item.allergenName.toLowerCase())
   );
 
   let message = `LATEX ALLERGY: Patient has documented latex allergy (${allergy.severity}).`;
 
-  if (fruitAllergyResult.rows.length > 0) {
-    const fruitAllergies = fruitAllergyResult.rows.map(r => r.allergen_name as string).join(', ');
-    message += ` Also allergic to: ${fruitAllergies} (latex-fruit syndrome).`;
+  if (fruitAllergies.length > 0) {
+    message += ` Also allergic to: ${fruitAllergies.map((item) => item.allergenName).join(', ')} (latex-fruit syndrome).`;
   }
 
   message += ' Use non-latex gloves and equipment.';
@@ -500,11 +500,11 @@ export async function checkLatexAllergy(
   return {
     alertType: 'latex',
     alertSeverity,
-    allergyId: allergy.id as string,
+    allergyId: allergy.id,
     allergenName: 'Latex',
     message,
     recommendations: 'Use nitrile, vinyl, or neoprene gloves. Ensure all equipment is latex-free.',
-    reactions: allergy.reaction_type ? [allergy.reaction_type as string] : []
+    reactions: allergy.reactionType ? [allergy.reactionType] : []
   };
 }
 
@@ -515,37 +515,32 @@ export async function checkAdhesiveAllergy(
   patientId: string,
   tenantId: string
 ): Promise<AllergyAlert | null> {
-  const result = await pool.query(
-    `SELECT id, allergen_name, severity, notes, reaction_type
-     FROM patient_allergies
-     WHERE patient_id = $1 AND tenant_id = $2
-       AND status = 'active'
-       AND (allergen_type = 'contact'
-         OR LOWER(allergen_name) LIKE '%adhesive%'
-         OR LOWER(allergen_name) LIKE '%tape%'
-         OR LOWER(allergen_name) LIKE '%bandage%'
-         OR LOWER(allergen_name) LIKE '%acrylate%'
-         OR LOWER(allergen_name) LIKE '%colophony%')
-     LIMIT 1`,
-    [patientId, tenantId]
-  );
+  const allergies = await getPatientAllergies(patientId, tenantId, { status: 'active' });
+  const allergy = allergies.find((item) => {
+    const name = item.allergenName.toLowerCase();
+    return item.allergenType === 'contact' ||
+      name.includes('adhesive') ||
+      name.includes('tape') ||
+      name.includes('bandage') ||
+      name.includes('acrylate') ||
+      name.includes('colophony');
+  });
 
-  if (result.rows.length === 0) {
+  if (!allergy) {
     return null;
   }
 
-  const allergy = result.rows[0];
-  const alertSeverity = mapAllergySeverityToAlertSeverity(allergy.severity as AllergySeverity);
+  const alertSeverity = mapAllergySeverityToAlertSeverity(allergy.severity);
 
   return {
     alertType: 'adhesive',
     alertSeverity,
-    allergyId: allergy.id as string,
-    allergenName: allergy.allergen_name as string,
-    message: `ADHESIVE ALLERGY: Patient is allergic to ${allergy.allergen_name}. ` +
+    allergyId: allergy.id,
+    allergenName: allergy.allergenName,
+    message: `ADHESIVE ALLERGY: Patient is allergic to ${allergy.allergenName}. ` +
              `Use hypoallergenic or silicone-based alternatives.`,
     recommendations: 'Use paper tape, silicone adhesive dressings, or gauze wrapping.',
-    reactions: allergy.reaction_type ? [allergy.reaction_type as string] : []
+    reactions: allergy.reactionType ? [allergy.reactionType] : []
   };
 }
 

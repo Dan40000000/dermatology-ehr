@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
-import { fetchPortalProfile, updatePortalProfile } from '../../portalApi';
+import { changePortalPassword, fetchPortalProfile, updatePortalProfile } from '../../portalApi';
 import { formatPhoneDisplay } from '../../utils/phone';
 
 interface PatientProfile {
@@ -22,6 +22,10 @@ interface PatientProfile {
   emergencyContactPhone: string;
   preferredLanguage: string;
   preferredPharmacy: string;
+  portalEmail?: string;
+  lastLogin?: string | null;
+  emailVerified?: boolean;
+  passwordUpdatedAt?: string | null;
 }
 
 export function PortalProfilePage() {
@@ -32,6 +36,13 @@ export function PortalProfilePage() {
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState<Partial<PatientProfile>>({});
   const [activeTab, setActiveTab] = useState<'info' | 'contact' | 'preferences' | 'security'>('info');
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
 
   useEffect(() => {
     fetchProfile();
@@ -44,6 +55,7 @@ export function PortalProfilePage() {
     }
 
     try {
+      setProfileError(null);
       const data = await fetchPortalProfile(tenantId, sessionToken);
       const portalPatient = data.patient;
       const fullName = [portalPatient.firstName, portalPatient.lastName].filter(Boolean).join(' ') || patient?.fullName || '';
@@ -65,9 +77,14 @@ export function PortalProfilePage() {
         emergencyContactPhone: portalPatient.emergencyContactPhone || '',
         preferredLanguage: 'English',
         preferredPharmacy: '',
+        portalEmail: portalPatient.portalEmail || portalPatient.email || '',
+        lastLogin: portalPatient.lastLogin || null,
+        emailVerified: portalPatient.emailVerified ?? true,
+        passwordUpdatedAt: portalPatient.passwordUpdatedAt || null,
       });
     } catch (error) {
       console.error('Failed to fetch profile:', error);
+      setProfileError(error instanceof Error ? error.message : 'Failed to load your profile');
     } finally {
       setLoading(false);
     }
@@ -85,6 +102,7 @@ export function PortalProfilePage() {
 
   const handleSave = async () => {
     setSaving(true);
+    setNotice(null);
     try {
       if (sessionToken && tenantId) {
         const updates: Record<string, any> = {};
@@ -114,10 +132,52 @@ export function PortalProfilePage() {
       setProfile(prev => prev ? { ...prev, ...editForm } : null);
       setEditing(false);
       setEditForm({});
+      setNotice({ type: 'success', message: 'Profile updated successfully.' });
     } catch (error) {
       console.error('Failed to save profile:', error);
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Failed to save profile.' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const resetPasswordForm = () => {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setShowPasswordForm(false);
+  };
+
+  const handlePasswordChange = async () => {
+    setNotice(null);
+
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+      setNotice({ type: 'error', message: 'Enter your current password and confirm the new password.' });
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      setNotice({ type: 'error', message: 'New passwords do not match.' });
+      return;
+    }
+
+    if (newPassword.length < 12 || !/[A-Z]/.test(newPassword) || !/[a-z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[^a-zA-Z0-9]/.test(newPassword)) {
+      setNotice({ type: 'error', message: 'New password must be at least 12 characters and include uppercase, lowercase, number, and special character.' });
+      return;
+    }
+
+    if (!sessionToken || !tenantId) return;
+
+    setPasswordSaving(true);
+    try {
+      await changePortalPassword(tenantId, sessionToken, { currentPassword, newPassword });
+      setProfile(prev => prev ? { ...prev, passwordUpdatedAt: new Date().toISOString() } : prev);
+      resetPasswordForm();
+      setNotice({ type: 'success', message: 'Password changed successfully.' });
+    } catch (error) {
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Failed to change password.' });
+    } finally {
+      setPasswordSaving(false);
     }
   };
 
@@ -127,6 +187,19 @@ export function PortalProfilePage() {
       month: 'long',
       day: 'numeric',
       year: 'numeric',
+    });
+  };
+
+  const formatDateTime = (dateString?: string | null) => {
+    if (!dateString) return 'Not available';
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return 'Not available';
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
     });
   };
 
@@ -529,6 +602,79 @@ export function PortalProfilePage() {
           left: 24px;
         }
 
+        .profile-alert {
+          border-radius: 10px;
+          padding: 0.875rem 1rem;
+          margin-bottom: 1rem;
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 1rem;
+          font-size: 0.9rem;
+          line-height: 1.5;
+        }
+
+        .profile-alert.success {
+          background: #ecfdf5;
+          border: 1px solid #a7f3d0;
+          color: #047857;
+        }
+
+        .profile-alert.error {
+          background: #fef2f2;
+          border: 1px solid #fecaca;
+          color: #b91c1c;
+        }
+
+        .profile-alert button {
+          border: 0;
+          background: transparent;
+          color: inherit;
+          font-weight: 700;
+          cursor: pointer;
+          padding: 0;
+        }
+
+        .security-form {
+          margin: 1rem 0;
+          padding: 1rem;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+        }
+
+        .security-form-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 1rem;
+        }
+
+        .security-note {
+          margin: 0.75rem 0 0;
+          font-size: 0.8rem;
+          color: #64748b;
+          line-height: 1.5;
+        }
+
+        .security-status {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+          font-size: 0.78rem;
+          font-weight: 700;
+          color: #047857;
+          background: #ecfdf5;
+          border: 1px solid #a7f3d0;
+          border-radius: 999px;
+          padding: 0.25rem 0.6rem;
+        }
+
+        .security-status.warning {
+          color: #92400e;
+          background: #fffbeb;
+          border-color: #fde68a;
+        }
+
         .loading-skeleton {
           background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
           background-size: 200% 100%;
@@ -563,6 +709,10 @@ export function PortalProfilePage() {
 
           .form-group.full-width {
             grid-column: span 1;
+          }
+
+          .security-form-grid {
+            grid-template-columns: 1fr;
           }
         }
       `}</style>
@@ -611,6 +761,20 @@ export function PortalProfilePage() {
             </button>
           )}
         </div>
+
+        {profileError && !loading && (
+          <div className="profile-alert error">
+            <span>We could not load your profile. {profileError}</span>
+            <button type="button" onClick={fetchProfile}>Retry</button>
+          </div>
+        )}
+
+        {notice && (
+          <div className={`profile-alert ${notice.type}`}>
+            <span>{notice.message}</span>
+            <button type="button" onClick={() => setNotice(null)}>Dismiss</button>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="tabs">
@@ -947,30 +1111,77 @@ export function PortalProfilePage() {
                 <div className="security-item">
                   <div className="security-info">
                     <h4>Password</h4>
-                    <p>Last changed: Never</p>
+                    <p>Last changed: {formatDateTime(profile?.passwordUpdatedAt)}</p>
                   </div>
-                  <button className="security-action">Change Password</button>
+                  <button className="security-action" onClick={() => setShowPasswordForm(prev => !prev)}>
+                    {showPasswordForm ? 'Cancel' : 'Change Password'}
+                  </button>
+                </div>
+                {showPasswordForm && (
+                  <div className="security-form">
+                    <div className="security-form-grid">
+                      <div className="form-group">
+                        <label className="form-label">Current Password</label>
+                        <input
+                          className="form-input"
+                          type="password"
+                          autoComplete="current-password"
+                          value={currentPassword}
+                          onChange={e => setCurrentPassword(e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">New Password</label>
+                        <input
+                          className="form-input"
+                          type="password"
+                          autoComplete="new-password"
+                          value={newPassword}
+                          onChange={e => setNewPassword(e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Confirm New Password</label>
+                        <input
+                          className="form-input"
+                          type="password"
+                          autoComplete="new-password"
+                          value={confirmNewPassword}
+                          onChange={e => setConfirmNewPassword(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <p className="security-note">Use at least 12 characters with uppercase, lowercase, a number, and a special character.</p>
+                    <div className="form-actions">
+                      <button className="btn btn-secondary" onClick={resetPasswordForm}>Cancel</button>
+                      <button className="btn btn-primary" onClick={handlePasswordChange} disabled={passwordSaving}>
+                        {passwordSaving ? 'Updating...' : 'Update Password'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="security-item">
+                  <div className="security-info">
+                    <h4>Email Verification</h4>
+                    <p>{profile?.portalEmail || profile?.email || 'No portal email on file'}</p>
+                  </div>
+                  <span className={`security-status ${profile?.emailVerified === false ? 'warning' : ''}`}>
+                    {profile?.emailVerified === false ? 'Unverified' : 'Verified'}
+                  </span>
+                </div>
+                <div className="security-item">
+                  <div className="security-info">
+                    <h4>Last Login</h4>
+                    <p>{formatDateTime(profile?.lastLogin)}</p>
+                  </div>
+                  <button className="security-action" onClick={() => setNotice({ type: 'success', message: 'Recent login details are shown here. Full audit history is retained by the practice for security review.' })}>Details</button>
                 </div>
                 <div className="security-item">
                   <div className="security-info">
                     <h4>Two-Factor Authentication</h4>
-                    <p>Add an extra layer of security to your account</p>
+                    <p>Additional verification is ready for a future SMS/email code workflow.</p>
                   </div>
-                  <button className="security-action">Enable</button>
-                </div>
-                <div className="security-item">
-                  <div className="security-info">
-                    <h4>Login History</h4>
-                    <p>View your recent login activity</p>
-                  </div>
-                  <button className="security-action">View History</button>
-                </div>
-                <div className="security-item">
-                  <div className="security-info">
-                    <h4>Connected Devices</h4>
-                    <p>Manage devices logged into your account</p>
-                  </div>
-                  <button className="security-action">Manage</button>
+                  <button className="security-action" onClick={() => setNotice({ type: 'success', message: 'Two-factor setup is not enabled for this demo tenant yet.' })}>Setup Status</button>
                 </div>
               </div>
             </>

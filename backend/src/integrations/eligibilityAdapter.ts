@@ -141,6 +141,157 @@ const MOCK_PLANS = [
   { name: 'EPO Select', type: 'EPO' },
 ];
 
+function firstNonEmptyString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function normalizeDate(value: unknown): string | undefined {
+  if (!value) return undefined;
+  const raw = typeof value === 'string' ? value : value instanceof Date ? value.toISOString() : String(value);
+  if (!raw.trim()) return undefined;
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match?.[1] || undefined;
+}
+
+function normalizeMoney(value: unknown, amountUnit: 'dollars' | 'cents'): number | undefined {
+  if (value === null || value === undefined || value === '') {
+    return undefined;
+  }
+
+  const numeric = typeof value === 'number'
+    ? value
+    : Number.parseFloat(String(value).replace(/[$,]/g, '').trim());
+
+  if (!Number.isFinite(numeric)) {
+    return undefined;
+  }
+
+  return amountUnit === 'cents' ? Math.round(numeric) : Math.round(numeric * 100);
+}
+
+function walkEntries(
+  input: unknown,
+  visit: (path: string, key: string, value: unknown) => void,
+  path = ''
+): void {
+  if (!input || typeof input !== 'object') {
+    return;
+  }
+
+  if (Array.isArray(input)) {
+    input.forEach((item, index) => walkEntries(item, visit, `${path}[${index}]`));
+    return;
+  }
+
+  for (const [key, value] of Object.entries(input)) {
+    const nextPath = path ? `${path}.${key}` : key;
+    visit(nextPath, key, value);
+    walkEntries(value, visit, nextPath);
+  }
+}
+
+function findStringByPatterns(input: unknown, patterns: RegExp[]): string | undefined {
+  let match: string | undefined;
+
+  walkEntries(input, (path, key, value) => {
+    if (match || typeof value !== 'string' || !value.trim()) {
+      return;
+    }
+
+    const haystack = `${path}.${key}`;
+    if (patterns.some((pattern) => pattern.test(haystack))) {
+      match = value.trim();
+    }
+  });
+
+  return match;
+}
+
+function findBooleanByPatterns(input: unknown, patterns: RegExp[]): boolean | undefined {
+  let match: boolean | undefined;
+
+  walkEntries(input, (path, key, value) => {
+    if (match !== undefined) {
+      return;
+    }
+
+    const haystack = `${path}.${key}`;
+    if (!patterns.some((pattern) => pattern.test(haystack))) {
+      return;
+    }
+
+    if (typeof value === 'boolean') {
+      match = value;
+      return;
+    }
+
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['true', 'yes', 'required', 'active', 'covered'].includes(normalized)) {
+        match = true;
+      } else if (['false', 'no', 'not required', 'inactive', 'not covered'].includes(normalized)) {
+        match = false;
+      }
+    }
+  });
+
+  return match;
+}
+
+function findMoneyByPatterns(
+  input: unknown,
+  patterns: RegExp[],
+  amountUnit: 'dollars' | 'cents'
+): number | undefined {
+  let match: number | undefined;
+
+  walkEntries(input, (path, key, value) => {
+    if (match !== undefined) {
+      return;
+    }
+
+    const haystack = `${path}.${key}`;
+    if (patterns.some((pattern) => pattern.test(haystack))) {
+      match = normalizeMoney(value, amountUnit);
+    }
+  });
+
+  return match;
+}
+
+function findCoverageStatus(rawCoverage: any): 'active' | 'inactive' | 'unknown' {
+  const planStatuses: string[] = Array.isArray(rawCoverage?.plans)
+    ? rawCoverage.plans
+        .map((plan: any) => firstNonEmptyString(plan?.status, plan?.statusCode))
+        .filter((status: string | undefined): status is string => Boolean(status))
+        .map((status: string) => status.toLowerCase())
+    : [];
+
+  if (planStatuses.some((status) => status.includes('active'))) {
+    return 'active';
+  }
+
+  if (planStatuses.some((status) => status.includes('inactive') || status.includes('terminated'))) {
+    return 'inactive';
+  }
+
+  const generic = findStringByPatterns(rawCoverage, [
+    /coverage.*status/i,
+    /plan.*status/i,
+    /eligib.*status/i,
+  ])?.toLowerCase();
+
+  if (generic?.includes('active')) return 'active';
+  if (generic?.includes('inactive') || generic?.includes('terminated')) return 'inactive';
+
+  return 'unknown';
+}
+
 // ============================================================================
 // Eligibility Adapter
 // ============================================================================
@@ -175,12 +326,12 @@ export class EligibilityAdapter extends BaseAdapter {
 
     const startTime = Date.now();
     try {
-      await this.sleep(500);
+      await this.fetchAvailityAccessToken();
 
       await this.logIntegration({
         direction: 'outbound',
-        endpoint: '/api/v1/eligibility/test',
-        method: 'GET',
+        endpoint: `${this.getTokenPath()}`,
+        method: 'POST',
         status: 'success',
         durationMs: Date.now() - startTime,
       });
@@ -538,11 +689,14 @@ export class EligibilityAdapter extends BaseAdapter {
     request: EligibilityRequest,
     requestId: string
   ): Promise<EligibilityResponse> {
-    // In production, this would call the actual Availity/Change Healthcare API
-    // Example for Availity:
-    // POST /availity-api/v1/eligibility
-    // With X12 270 transaction or JSON payload
-    throw new Error('Real API not implemented - use mock mode');
+    if (this.provider !== 'availity') {
+      throw new Error(`Unsupported live eligibility provider: ${this.provider}`);
+    }
+
+    const token = await this.fetchAvailityAccessToken();
+    const coverageResponse = await this.requestAvailityCoverage(token, request, requestId);
+
+    return this.parseAvailityCoverageResponse(coverageResponse, request, requestId);
   }
 
   // ============================================================================
@@ -589,6 +743,362 @@ export class EligibilityAdapter extends BaseAdapter {
     } catch (error) {
       logger.error('Failed to store eligibility check', { error });
     }
+  }
+
+  private getBaseUrl(): string {
+    return String(this.config?.config?.baseUrl || 'https://api.availity.com').replace(/\/+$/, '');
+  }
+
+  private getTokenPath(): string {
+    return String(this.config?.config?.tokenPath || '/v1/token');
+  }
+
+  private getCoveragesPath(): string {
+    return String(this.config?.config?.coveragesPath || '/v1/coverages');
+  }
+
+  private getAmountUnit(): 'dollars' | 'cents' {
+    const configured = String(this.config?.config?.amountUnit || 'dollars').trim().toLowerCase();
+    return configured === 'cents' ? 'cents' : 'dollars';
+  }
+
+  private getTokenAuthMethod(): 'basic' | 'client_secret_post' {
+    const configured = String(this.config?.config?.tokenAuthMethod || '').trim().toLowerCase();
+    return configured === 'basic' ? 'basic' : 'client_secret_post';
+  }
+
+  private getScopes(): string | undefined {
+    const configured = this.config?.config?.scope ?? this.config?.config?.scopes;
+    if (Array.isArray(configured)) {
+      const scopes = configured
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter(Boolean);
+      return scopes.length > 0 ? scopes.join(' ') : undefined;
+    }
+    if (typeof configured === 'string' && configured.trim()) {
+      return configured.trim();
+    }
+    return undefined;
+  }
+
+  private async fetchAvailityAccessToken(): Promise<string> {
+    const credentials = this.getCredentials();
+    const clientId = credentials.clientId || credentials.client_id || credentials.apiKey || credentials.api_key;
+    const clientSecret = credentials.clientSecret || credentials.client_secret || credentials.apiSecret || credentials.api_secret;
+
+    if (!clientId || !clientSecret) {
+      throw new Error('Missing Availity client credentials');
+    }
+
+    const endpoint = `${this.getBaseUrl()}${this.getTokenPath()}`;
+    const authMethod = this.getTokenAuthMethod();
+    const scope = this.getScopes();
+    const body = new URLSearchParams({
+      grant_type: 'client_credentials',
+    });
+    if (scope) {
+      body.set('scope', scope);
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    };
+
+    if (authMethod === 'basic') {
+      headers.Authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`;
+    } else {
+      body.set('client_id', clientId);
+      body.set('client_secret', clientSecret);
+    }
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: body.toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Availity auth failed: ${response.status} ${errorText}`);
+    }
+
+    const payload = await response.json() as { access_token?: string };
+    if (!payload.access_token) {
+      throw new Error('Availity auth response did not include an access token');
+    }
+
+    return payload.access_token;
+  }
+
+  private buildAvailityCoverageBody(request: EligibilityRequest): URLSearchParams {
+    const config = this.config?.config || {};
+    const serviceDate = request.serviceDate || new Date().toISOString().split('T')[0]!;
+    const providerNpi = request.providerNpi || config.providerNpi;
+    const providerFirstName = config.providerFirstName;
+    const providerLastName = config.providerLastName;
+    const providerType = config.providerType;
+    const patientGender = config.patientGender;
+    const patientState = config.patientState;
+    const requestedSearchOption =
+      config.requestedPatientSearchOption ||
+      (patientState ? 'memberId,patientBirthDate,patientState' : 'memberId,patientBirthDate');
+    const serviceType = request.serviceType || config.defaultServiceType || '30';
+
+    const body = new URLSearchParams();
+    body.set('payerId', request.payerId);
+    body.set('memberId', request.memberId);
+    body.set('patientBirthDate', request.patientDob);
+    body.set('patientLastName', request.patientLastName);
+    body.set('patientFirstName', request.patientFirstName);
+    body.set('asOfDate', serviceDate);
+    body.append('serviceType[]', serviceType);
+    body.set('subscriberRelationship', '18');
+    body.set('requestedPatientSearchOption', requestedSearchOption);
+
+    if (providerNpi) body.set('providerNpi', providerNpi);
+    if (providerFirstName) body.set('providerFirstName', providerFirstName);
+    if (providerLastName) body.set('providerLastName', providerLastName);
+    if (providerType) body.set('providerType', providerType);
+    if (patientGender) body.set('patientGender', patientGender);
+    if (patientState) body.set('patientState', patientState);
+
+    return body;
+  }
+
+  private async requestAvailityCoverage(
+    token: string,
+    request: EligibilityRequest,
+    requestId: string
+  ): Promise<any> {
+    const endpoint = `${this.getBaseUrl()}${this.getCoveragesPath()}`;
+    const body = this.buildAvailityCoverageBody(request);
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+      },
+      body: body.toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Availity eligibility request failed: ${response.status} ${errorText}`);
+    }
+
+    let payload: any = await response.json();
+    const coverage = this.extractCoverageRecord(payload);
+    const statusCode = firstNonEmptyString(coverage?.statusCode, payload?.statusCode);
+    const status = firstNonEmptyString(coverage?.status, payload?.status);
+
+    if (statusCode === '0' || status?.toLowerCase() === 'in progress') {
+      const pollId = firstNonEmptyString(coverage?.id, payload?.id);
+      const selfHref = firstNonEmptyString(coverage?.links?.self?.href, payload?.links?.self?.href);
+
+      if (pollId || selfHref) {
+        payload = await this.pollAvailityCoverage(token, pollId, selfHref, requestId);
+      }
+    }
+
+    return payload;
+  }
+
+  private async pollAvailityCoverage(
+    token: string,
+    coverageId?: string,
+    selfHref?: string,
+    requestId?: string
+  ): Promise<any> {
+    const attempts = Number(this.config?.config?.pollAttempts || 5);
+    const delayMs = Number(this.config?.config?.pollDelayMs || 1500);
+    const fallbackEndpoint = coverageId
+      ? `${this.getBaseUrl()}${this.getCoveragesPath()}/${coverageId}`
+      : null;
+    const endpoint = selfHref || fallbackEndpoint;
+
+    if (!endpoint) {
+      throw new Error('Availity returned an in-progress response without a coverage ID');
+    }
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await this.sleep(delayMs);
+
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Availity eligibility poll failed: ${response.status} ${errorText}`);
+      }
+
+      const payload: any = await response.json();
+      const coverage = this.extractCoverageRecord(payload);
+      const statusCode = firstNonEmptyString(coverage?.statusCode, payload?.statusCode);
+      const status = firstNonEmptyString(coverage?.status, payload?.status);
+
+      if (statusCode !== '0' && status?.toLowerCase() !== 'in progress') {
+        return payload;
+      }
+
+      logger.info('Availity eligibility still in progress', {
+        requestId,
+        attempt: attempt + 1,
+        attempts,
+        coverageId,
+      });
+    }
+
+    throw new Error('Availity eligibility response remained in progress after polling');
+  }
+
+  private extractCoverageRecord(rawResponse: any): any {
+    if (Array.isArray(rawResponse?.coverages) && rawResponse.coverages.length > 0) {
+      return rawResponse.coverages[0];
+    }
+    if (Array.isArray(rawResponse?.data) && rawResponse.data.length > 0) {
+      return rawResponse.data[0];
+    }
+    return rawResponse;
+  }
+
+  private parseAvailityCoverageResponse(
+    rawResponse: any,
+    request: EligibilityRequest,
+    requestId: string
+  ): EligibilityResponse {
+    const coverage = this.extractCoverageRecord(rawResponse);
+    const amountUnit = this.getAmountUnit();
+    const coverageStatus = findCoverageStatus(coverage);
+
+    const payerId = firstNonEmptyString(coverage?.payer?.payerId, coverage?.payer?.responsePayerId, request.payerId) || request.payerId;
+    const payerName = firstNonEmptyString(coverage?.payer?.name, coverage?.payer?.responseName, rawResponse?.payer?.name, 'Unknown Payer') || 'Unknown Payer';
+
+    const memberId = firstNonEmptyString(
+      coverage?.subscriber?.memberId,
+      coverage?.patient?.memberId,
+      request.memberId
+    ) || request.memberId;
+
+    const plan = Array.isArray(coverage?.plans) && coverage.plans.length > 0 ? coverage.plans[0] : null;
+
+    const benefitsSource = {
+      coverage,
+      plan,
+      rawResponse,
+    };
+
+    const priorAuthRequired = findBooleanByPatterns(benefitsSource, [
+      /prior.*auth/i,
+      /pre[-_ ]?auth/i,
+      /authorization.*required/i,
+    ]) || false;
+
+    const referralRequired = findBooleanByPatterns(benefitsSource, [
+      /referral.*required/i,
+      /requires?.*referral/i,
+    ]) || false;
+
+    const validationMessages = Array.isArray(coverage?.validationMessages)
+      ? coverage.validationMessages
+      : Array.isArray(rawResponse?.validationMessages)
+        ? rawResponse.validationMessages
+        : [];
+
+    const messages = validationMessages
+      .filter((item: any) => item && item.errorMessage)
+      .map((item: any) => ({
+        type: item.field ? 'warning' as const : 'info' as const,
+        message: String(item.errorMessage),
+      }));
+
+    return {
+      success: coverageStatus !== 'unknown',
+      requestId,
+      status: coverageStatus === 'unknown' && messages.length > 0 ? 'error' : coverageStatus,
+      payer: {
+        payerId,
+        payerName,
+      },
+      patient: {
+        memberId,
+        firstName: firstNonEmptyString(coverage?.patient?.firstName, request.patientFirstName) || request.patientFirstName,
+        lastName: firstNonEmptyString(coverage?.patient?.lastName, request.patientLastName) || request.patientLastName,
+        dob: normalizeDate(coverage?.patient?.birthDate) || request.patientDob,
+        groupNumber: firstNonEmptyString(
+          plan?.groupNumber,
+          coverage?.subscriber?.caseNumber,
+          coverage?.patient?.familyUnitNumber
+        ),
+      },
+      subscriber: {
+        firstName: firstNonEmptyString(coverage?.subscriber?.firstName, coverage?.patient?.firstName, request.patientFirstName) || request.patientFirstName,
+        lastName: firstNonEmptyString(coverage?.subscriber?.lastName, coverage?.patient?.lastName, request.patientLastName) || request.patientLastName,
+        dob: normalizeDate(coverage?.subscriber?.birthDate) || request.patientDob,
+        relationship: firstNonEmptyString(
+          coverage?.patient?.subscriberRelationship,
+          coverage?.patient?.subscriberRelationshipCode,
+          'self'
+        ) || 'self',
+      },
+      coverage: {
+        status: coverageStatus,
+        effectiveDate: normalizeDate(plan?.effectiveDate || coverage?.effectiveDate),
+        terminationDate: normalizeDate(plan?.terminationDate || coverage?.terminationDate),
+        planName: firstNonEmptyString(plan?.groupName, plan?.name, coverage?.payer?.name),
+        planType: firstNonEmptyString(plan?.type, plan?.category),
+        coverageLevel: firstNonEmptyString(plan?.coverageLevel, coverage?.coverageLevel),
+        coordinationOfBenefits: firstNonEmptyString(coverage?.coordinationOfBenefits, coverage?.cob),
+      },
+      benefits: {
+        copays: {
+          specialist: findMoneyByPatterns(benefitsSource, [/special.*copay/i, /copay.*special/i], amountUnit),
+          primaryCare: findMoneyByPatterns(benefitsSource, [/primary.*care.*copay/i, /pcp.*copay/i], amountUnit),
+          emergency: findMoneyByPatterns(benefitsSource, [/emergency.*copay/i, /er.*copay/i], amountUnit),
+          urgentCare: findMoneyByPatterns(benefitsSource, [/urgent.*care.*copay/i], amountUnit),
+        },
+        deductible: {
+          individual: {
+            total: findMoneyByPatterns(benefitsSource, [/deductible.*total/i], amountUnit) || 0,
+            met: findMoneyByPatterns(benefitsSource, [/deductible.*met/i], amountUnit) || 0,
+            remaining: findMoneyByPatterns(benefitsSource, [/deductible.*remaining/i], amountUnit) || 0,
+          },
+        },
+        coinsurance: (() => {
+          const percentage = normalizeMoney(findStringByPatterns(benefitsSource, [/coinsurance/i]), 'cents');
+          if (percentage === undefined) return undefined;
+          return { percentage: percentage > 100 ? Math.round(percentage / 100) : percentage };
+        })(),
+        outOfPocketMax: {
+          individual: {
+            total: findMoneyByPatterns(benefitsSource, [/out.*of.*pocket.*total/i, /oop.*max/i], amountUnit) || 0,
+            met: findMoneyByPatterns(benefitsSource, [/out.*of.*pocket.*met/i], amountUnit) || 0,
+            remaining: findMoneyByPatterns(benefitsSource, [/out.*of.*pocket.*remaining/i], amountUnit) || 0,
+          },
+        },
+        priorAuth: {
+          required: priorAuthRequired,
+          phone: findStringByPatterns(benefitsSource, [/prior.*auth.*phone/i, /authorization.*phone/i]),
+        },
+        referral: {
+          required: referralRequired,
+          phone: findStringByPatterns(benefitsSource, [/referral.*phone/i]),
+        },
+      },
+      network: {
+        inNetwork: findBooleanByPatterns(benefitsSource, [/in.*network/i]) ?? true,
+        networkName: firstNonEmptyString(plan?.networkName, coverage?.networkName),
+      },
+      messages,
+      rawResponse,
+    };
   }
 }
 

@@ -7,6 +7,7 @@ const authMocks = vi.hoisted(() => ({
 
 const toastMocks = vi.hoisted(() => ({
   showError: vi.fn(),
+  showSuccess: vi.fn(),
 }));
 
 const navigateMock = vi.hoisted(() => vi.fn());
@@ -28,6 +29,9 @@ const apiMocks = vi.hoisted(() => ({
   fetchPrescriptionsEnhanced: vi.fn(),
   fetchEligibilityHistory: vi.fn(),
   verifyPatientEligibility: vi.fn(),
+  fetchPatientClinicalSummary: vi.fn(),
+  fetchRecallCampaigns: vi.fn(),
+  createPatientRecall: vi.fn(),
   default: {
     get: vi.fn(),
   },
@@ -202,6 +206,22 @@ describe('PatientDetailPage', () => {
     apiMocks.fetchPrescriptionsEnhanced.mockResolvedValue({ prescriptions: [] });
     apiMocks.fetchEligibilityHistory.mockResolvedValue({ history: [] });
     apiMocks.verifyPatientEligibility.mockResolvedValue({ success: true });
+    apiMocks.fetchPatientClinicalSummary.mockResolvedValue({ diagnoses: [], recalls: [] });
+    apiMocks.fetchRecallCampaigns.mockResolvedValue({
+      campaigns: [
+        {
+          id: 'campaign-melanoma',
+          tenantId: 'tenant-1',
+          name: 'Melanoma Surveillance',
+          recallType: 'Melanoma Surveillance',
+          intervalMonths: 3,
+          isActive: true,
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    apiMocks.createPatientRecall.mockResolvedValue({ id: 'recall-1' });
     apiMocks.default.get.mockResolvedValue({ data: { prescriptions: [] } });
 
     vi.spyOn(window, 'open').mockImplementation(() => null);
@@ -346,6 +366,35 @@ describe('PatientDetailPage', () => {
 
     expect(screen.getAllByTestId('skeleton')).toHaveLength(3);
     expect(apiMocks.fetchPatient).not.toHaveBeenCalled();
+  });
+
+  it('adds the patient to a recall campaign from the chart', async () => {
+    render(<PatientDetailPage />);
+
+    await screen.findByText('Patient Chart - Derm, Ana');
+
+    fireEvent.click(screen.getByRole('button', { name: /Add to Recall/i }));
+    const modal = await screen.findByTestId('modal-add-recall-surveillance');
+
+    expect(await within(modal).findByText(/Melanoma Surveillance \(3 mo\)/i)).toBeInTheDocument();
+    fireEvent.change(within(modal).getByLabelText(/Staff \/ doctor note/i), {
+      target: { value: 'Quarterly melanoma surveillance full-body skin exam.' },
+    });
+    fireEvent.click(within(modal).getByRole('button', { name: 'Add Recall' }));
+
+    await waitFor(() => {
+      expect(apiMocks.createPatientRecall).toHaveBeenCalledWith(
+        'tenant-1',
+        'token-1',
+        expect.objectContaining({
+          patientId: 'patient-1',
+          campaignId: 'campaign-melanoma',
+          recallType: 'Melanoma Surveillance',
+          notes: 'Quarterly melanoma surveillance full-body skin exam.',
+        })
+      );
+    });
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith(expect.stringContaining('Melanoma Surveillance'));
   });
 
   it('handles patient not found errors during load', async () => {

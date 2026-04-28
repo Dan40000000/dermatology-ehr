@@ -5,6 +5,7 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { CLINICAL_ROLES } from "../lib/roles";
+import { ensureMelanomaRecallForDiagnosis } from "../services/melanomaRecallService";
 
 const diagnosisSchema = z.object({
   encounterId: z.string(),
@@ -54,7 +55,15 @@ diagnosesRouter.post("/", requireAuth, requireRoles(["provider", "admin"]), asyn
     [id, tenantId, payload.encounterId, payload.icd10Code, payload.description, payload.isPrimary || false],
   );
 
-  res.status(201).json({ id });
+  const recall = await ensureMelanomaRecallForDiagnosis({
+    tenantId,
+    encounterId: payload.encounterId,
+    icd10Code: payload.icd10Code,
+    description: payload.description,
+    userId: req.user!.id,
+  });
+
+  res.status(201).json({ id, recall: recall.triggered ? recall : undefined });
 });
 
 // Update diagnosis (primarily for changing primary status)

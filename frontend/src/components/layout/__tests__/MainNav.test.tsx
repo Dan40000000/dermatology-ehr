@@ -42,7 +42,8 @@ describe('MainNav role-based visibility', () => {
     renderNav();
     expect(screen.getByText('Admin')).toBeInTheDocument();
     expect(screen.queryByText('Quality')).not.toBeInTheDocument();
-    expect(screen.getByText('Reminders & Recalls')).toBeInTheDocument();
+    expect(screen.getByText('Registry & Recalls')).toBeInTheDocument();
+    expect(screen.queryByText('Registry')).not.toBeInTheDocument();
   });
 
   it('hides Admin and removed Quality nav for provider', () => {
@@ -51,7 +52,8 @@ describe('MainNav role-based visibility', () => {
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
     expect(screen.queryByText('Analytics')).not.toBeInTheDocument();
     expect(screen.queryByText('Quality')).not.toBeInTheDocument();
-    expect(screen.getByText('Reminders & Recalls')).toBeInTheDocument();
+    expect(screen.getByText('Registry & Recalls')).toBeInTheDocument();
+    expect(screen.queryByText('Registry')).not.toBeInTheDocument();
   });
 
   it('hides Admin and removed Quality nav for front desk', () => {
@@ -61,7 +63,8 @@ describe('MainNav role-based visibility', () => {
     expect(screen.queryByText('Financials')).not.toBeInTheDocument();
     expect(screen.getByText('Claims')).toBeInTheDocument();
     expect(screen.queryByText('Quality')).not.toBeInTheDocument();
-    expect(screen.getByText('Reminders & Recalls')).toBeInTheDocument();
+    expect(screen.getByText('Registry & Recalls')).toBeInTheDocument();
+    expect(screen.queryByText('Registry')).not.toBeInTheDocument();
   });
 
   it('shows billing revenue-cycle nav but hides analytics', () => {

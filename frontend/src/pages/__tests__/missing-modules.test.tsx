@@ -73,6 +73,11 @@ vi.mock('../../api', () => ({
   updateReferral: vi.fn(),
   fetchDueRecalls: vi.fn().mockResolvedValue({ recalls: [] }),
   fetchRecallCampaigns: vi.fn().mockResolvedValue({ campaigns: [] }),
+  createRecallCampaign: vi.fn(),
+  updateRecallCampaign: vi.fn(),
+  deleteRecallCampaign: vi.fn(),
+  generateRecalls: vi.fn(),
+  fetchRecallHistory: vi.fn().mockResolvedValue({ history: [] }),
   fetchRecallStats: vi.fn().mockResolvedValue({
     overall: {
       total_recalls: 0,
@@ -100,7 +105,7 @@ describe('Missing module placeholder pages', () => {
     { Component: FormsPage, heading: 'Forms', emptyTitle: 'No forms configured' },
     { Component: ProtocolsPage, heading: 'Treatment Protocols', emptyTitle: 'No protocols found' },
     { Component: HelpPage, heading: 'Role-Based Training Center', emptyTitle: 'First-time user onboarding with role-specific workflows, visual snapshots, and step-by-step checklists.' },
-    { Component: RecallsPage, heading: 'Recall Worklist', emptyTitle: 'No recalls match this view' },
+    { Component: RecallsPage, heading: 'Registry, Reminders & Recalls', emptyTitle: 'No campaigns yet' },
   ];
 
   cases.forEach(({ Component, heading, emptyTitle }) => {

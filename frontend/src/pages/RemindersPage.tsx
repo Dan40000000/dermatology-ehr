@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
+import { RegistryPage } from './RegistryPage';
 import {
   fetchRecallCampaigns,
   createRecallCampaign,
@@ -34,7 +35,7 @@ const RECALL_TYPES = [
 
 const STATUS_OPTIONS = ['pending', 'contacted', 'scheduled', 'completed', 'dismissed'];
 const CONTACT_METHODS = ['email', 'sms', 'phone', 'mail', 'portal'];
-const TAB_OPTIONS = ['campaigns', 'due', 'history', 'stats'] as const;
+const TAB_OPTIONS = ['campaigns', 'due', 'registry', 'history', 'stats'] as const;
 type ReminderTab = (typeof TAB_OPTIONS)[number];
 
 function isInteractiveCampaignTarget(target: EventTarget | null): boolean {
@@ -203,6 +204,10 @@ export function RemindersPage() {
 
     if (!tabParam && campaignParam && activeTab !== 'due') {
       setActiveTab('due');
+    }
+
+    if (!tabParam && searchParams.has('registryTab') && activeTab !== 'registry') {
+      setActiveTab('registry');
     }
 
     if (campaignParam !== recallFilters.campaignId) {
@@ -443,7 +448,7 @@ export function RemindersPage() {
     return (
       <div className="reminders-page">
         <div className="page-header">
-          <h1>Reminders & Recalls</h1>
+          <h1>Registry, Reminders & Recalls</h1>
         </div>
         <Skeleton variant="card" height={60} />
         <Skeleton variant="card" height={400} />
@@ -461,7 +466,7 @@ export function RemindersPage() {
   return (
     <div className="reminders-page">
       <div className="page-header">
-        <h1>Reminders & Recalls</h1>
+        <h1>Registry, Reminders & Recalls</h1>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           {activeTab === 'campaigns' && (
             <>
@@ -543,6 +548,13 @@ export function RemindersPage() {
         </button>
         <button
           type="button"
+          className={`tab ${activeTab === 'registry' ? 'active' : ''}`}
+          onClick={() => handleTabChange('registry')}
+        >
+          Disease Registry
+        </button>
+        <button
+          type="button"
           className={`tab ${activeTab === 'history' ? 'active' : ''}`}
           onClick={() => handleTabChange('history')}
         >
@@ -583,8 +595,16 @@ export function RemindersPage() {
                   <div
                     key={campaign.id}
                     className="campaign-card"
+                    role="button"
+                    tabIndex={0}
                     onClick={(event) => {
                       if (!isInteractiveCampaignTarget(event.target)) {
+                        handleViewCampaignPatients(campaign);
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      if ((event.key === 'Enter' || event.key === ' ') && !isInteractiveCampaignTarget(event.target)) {
+                        event.preventDefault();
                         handleViewCampaignPatients(campaign);
                       }
                     }}
@@ -927,6 +947,13 @@ export function RemindersPage() {
             )}
           </Panel>
         </div>
+      )}
+
+      {/* Disease Registry Tab */}
+      {activeTab === 'registry' && (
+        <Panel title="">
+          <RegistryPage embedded queryParamName="registryTab" />
+        </Panel>
       )}
 
       {/* Contact History Tab */}

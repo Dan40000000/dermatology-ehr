@@ -15,7 +15,12 @@ import {
 import { Link, useSearchParams } from 'react-router-dom';
 import { formatPhoneDisplay } from '../utils/phone';
 
-type RegistryType = 'dashboard' | 'melanoma' | 'psoriasis' | 'acne' | 'chronic_therapy' | 'alerts';
+export type RegistryType = 'dashboard' | 'melanoma' | 'psoriasis' | 'acne' | 'chronic_therapy' | 'alerts';
+
+type RegistryPageProps = {
+  embedded?: boolean;
+  queryParamName?: string;
+};
 
 type MelanomaRegistryPatient = {
   id: string;
@@ -60,7 +65,7 @@ const REGISTRY_TAB_QUERY_MAP: Record<string, RegistryType> = {
   alerts: 'alerts',
 };
 
-export function RegistryPage() {
+export function RegistryPage({ embedded = false, queryParamName = 'tab' }: RegistryPageProps = {}) {
   const { session } = useAuth();
   const { showError, showSuccess } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -171,7 +176,7 @@ export function RegistryPage() {
   }, [session, showError]);
 
   useEffect(() => {
-    const requestedTab = searchParams.get('tab');
+    const requestedTab = searchParams.get(queryParamName);
     if (!requestedTab) return;
 
     const normalized = requestedTab.toLowerCase();
@@ -184,17 +189,20 @@ export function RegistryPage() {
 
     if (mappedTab !== normalized) {
       const params = new URLSearchParams(searchParams);
-      params.set('tab', mappedTab);
+      params.set(queryParamName, mappedTab);
       setSearchParams(params, { replace: true });
     }
-  }, [activeTab, searchParams, setSearchParams]);
+  }, [activeTab, queryParamName, searchParams, setSearchParams]);
 
   const setRegistryTab = useCallback((tab: RegistryType) => {
     setActiveTab(tab);
     const params = new URLSearchParams(searchParams);
-    params.set('tab', tab);
+    params.set(queryParamName, tab);
+    if (embedded) {
+      params.set('tab', 'registry');
+    }
     setSearchParams(params, { replace: true });
-  }, [searchParams, setSearchParams]);
+  }, [embedded, queryParamName, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (activeTab === 'dashboard') {
@@ -445,11 +453,11 @@ export function RegistryPage() {
   }, [loadMelanoma, session, showError, showSuccess]);
 
   return (
-    <div className="content-card">
+    <div className={embedded ? 'registry-embedded' : 'content-card'}>
       <div className="section-header">
         <div>
           <div className="eyebrow">Disease Registry System</div>
-          <h1>Patient Registries</h1>
+          {embedded ? <h2>Patient Registries</h2> : <h1>Patient Registries</h1>}
           <p className="muted">
             Track disease-specific cohorts, outcomes, and quality metrics for dermatology conditions.
           </p>

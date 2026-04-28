@@ -18,12 +18,25 @@ const toastMocks = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   bulkNotifyRecalls: vi.fn(),
+  createRecallCampaign: vi.fn(),
+  deleteRecallCampaign: vi.fn(),
   exportRecalls: vi.fn(),
+  fetchAcneRegistry: vi.fn(),
+  fetchChronicTherapyRegistry: vi.fn(),
   fetchDueRecalls: vi.fn(),
+  fetchMelanomaRegistry: vi.fn(),
+  fetchPasiHistory: vi.fn(),
+  fetchPatients: vi.fn(),
   fetchRecallCampaigns: vi.fn(),
+  fetchRecallHistory: vi.fn(),
   fetchRecallStats: vi.fn(),
+  fetchRegistryAlerts: vi.fn(),
+  fetchRegistryDashboard: vi.fn(),
+  fetchPsoriasisRegistry: vi.fn(),
+  generateRecalls: vi.fn(),
   generateAllRecalls: vi.fn(),
   recordRecallContact: vi.fn(),
+  updateRecallCampaign: vi.fn(),
   updateRecallStatus: vi.fn(),
 }));
 
@@ -98,6 +111,15 @@ describe('RecallsPage', () => {
         },
       ],
     });
+    apiMocks.fetchPatients.mockResolvedValue({ patients: [] });
+    apiMocks.fetchRecallHistory.mockResolvedValue({ history: [] });
+    apiMocks.fetchRegistryDashboard.mockResolvedValue(null);
+    apiMocks.fetchMelanomaRegistry.mockResolvedValue({ data: [] });
+    apiMocks.fetchPsoriasisRegistry.mockResolvedValue({ data: [] });
+    apiMocks.fetchAcneRegistry.mockResolvedValue({ data: [] });
+    apiMocks.fetchChronicTherapyRegistry.mockResolvedValue({ data: [] });
+    apiMocks.fetchRegistryAlerts.mockResolvedValue({ alerts: [] });
+    apiMocks.fetchPasiHistory.mockResolvedValue({ data: [] });
 
     apiMocks.fetchDueRecalls.mockImplementation((_tenantId: string, _accessToken: string, filters?: { campaignId?: string }) => {
       if (filters?.campaignId === 'campaign-melanoma') {
@@ -178,12 +200,14 @@ describe('RecallsPage', () => {
     await waitFor(() =>
       expect(apiMocks.fetchDueRecalls).toHaveBeenLastCalledWith('tenant-1', 'token-1', {
         campaignId: 'campaign-melanoma',
+        status: '',
+        startDate: '',
+        endDate: '',
       }),
     );
 
-    expect(await screen.findByText('Melanoma Surveillance patients (3)')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'All patients' })).toBeInTheDocument();
-    expect(screen.getByText(/Showing every patient enrolled in/i)).toBeInTheDocument();
+    expect(await screen.findByText('Melanoma Surveillance Patients (3)')).toBeInTheDocument();
+    expect(screen.getByText(/Showing the patient list for/i)).toBeInTheDocument();
 
     const table = screen.getByRole('table');
     expect(within(table).getByText('Mole, Mila')).toBeInTheDocument();

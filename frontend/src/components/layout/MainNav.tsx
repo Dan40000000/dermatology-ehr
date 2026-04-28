@@ -196,14 +196,20 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Reminders & Recalls',
+    label: 'Registry & Recalls',
     path: '/reminders',
     module: 'reminders',
     dropdown: [
-      { label: 'Campaigns', path: '/reminders?tab=campaigns' },
-      { label: 'Due for Recall', path: '/reminders?tab=due' },
-      { label: 'Contact History', path: '/reminders?tab=history' },
-      { label: 'Statistics', path: '/reminders?tab=stats' },
+      { label: 'Recall Campaigns', path: '/reminders?tab=campaigns', section: 'Recalls' },
+      { label: 'Due for Recall', path: '/reminders?tab=due', section: 'Recalls' },
+      { label: 'Contact History', path: '/reminders?tab=history', section: 'Recalls' },
+      { label: 'Statistics', path: '/reminders?tab=stats', section: 'Recalls' },
+      { label: 'Registry Dashboard', path: '/reminders?tab=registry&registryTab=dashboard', section: 'Disease Registry' },
+      { label: 'Melanoma', path: '/reminders?tab=registry&registryTab=melanoma', section: 'Disease Registry' },
+      { label: 'Psoriasis', path: '/reminders?tab=registry&registryTab=psoriasis', section: 'Disease Registry' },
+      { label: 'Acne/Isotretinoin', path: '/reminders?tab=registry&registryTab=acne', section: 'Disease Registry' },
+      { label: 'Chronic Therapy', path: '/reminders?tab=registry&registryTab=chronic_therapy', section: 'Disease Registry' },
+      { label: 'Registry Alerts', path: '/reminders?tab=registry&registryTab=alerts', section: 'Disease Registry' },
     ]
   },
   {
@@ -223,19 +229,6 @@ const navItems: NavItem[] = [
       { label: 'Clinical', path: '/reports?type=clinical', section: 'Patient Reports' },
       { label: 'Patients', path: '/reports?type=patients', section: 'Patient Reports' },
       { label: 'No-Shows', path: '/reports?type=no-shows', section: 'Patient Reports' },
-    ]
-  },
-  {
-    label: 'Registry',
-    path: '/registry',
-    module: 'registry',
-    dropdown: [
-      { label: 'Dashboard', path: '/registry' },
-      { label: 'Melanoma', path: '/registry?tab=melanoma' },
-      { label: 'Psoriasis', path: '/registry?tab=psoriasis' },
-      { label: 'Acne/Isotretinoin', path: '/registry?tab=acne' },
-      { label: 'Chronic Therapy', path: '/registry?tab=chronic_therapy' },
-      { label: 'Alerts', path: '/registry?tab=alerts' },
     ]
   },
   {

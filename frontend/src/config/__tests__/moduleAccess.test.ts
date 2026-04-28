@@ -38,6 +38,11 @@ describe('moduleAccess', () => {
     expect(getModuleForPath('/patients/123')).toBe('patients');
   });
 
+  it('maps legacy registry and recall routes into reminders access', () => {
+    expect(getModuleForPath('/registry')).toBe('reminders');
+    expect(getModuleForPath('/recalls')).toBe('reminders');
+  });
+
   it('maps ambient scribe route and blocks front desk role', () => {
     expect(getModuleForPath('/ambient-scribe')).toBe('ambient_scribe');
     expect(canAccessModule('front_desk', 'ambient_scribe')).toBe(false);

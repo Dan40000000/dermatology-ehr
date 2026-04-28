@@ -89,7 +89,6 @@ const ClearinghousePage = lazy(() => import('../pages/ClearinghousePage').then(m
 const AdminPage = lazy(() => import('../pages/AdminPage').then(m => ({ default: m.AdminPage })));
 const IntegrationsSettingsPage = lazy(() => import('../pages/IntegrationsSettingsPage'));
 const AIAgentConfigsPage = lazy(() => import('../pages/AIAgentConfigsPage').then(m => ({ default: m.AIAgentConfigsPage })));
-const RegistryPage = lazy(() => import('../pages/RegistryPage').then(m => ({ default: m.RegistryPage })));
 const ReferralsPage = lazy(() => import('../pages/ReferralsPage').then(m => ({ default: m.ReferralsPage })));
 const ProtocolsPage = lazy(() => import('../pages/ProtocolsPage').then(m => ({ default: m.ProtocolsPage })));
 const FrontDeskDashboard = lazy(() => import('../pages/FrontDeskDashboard').then(m => ({ default: m.default })));
@@ -119,6 +118,23 @@ function RecallsRedirect() {
   if (!params.has('tab')) {
     params.set('tab', 'due');
   }
+  const search = params.toString();
+  return <Navigate to={`/reminders${search ? `?${search}` : ''}${location.hash}`} replace />;
+}
+
+function RegistryRedirect() {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  const legacyRegistryTab = params.get('tab');
+
+  params.set('tab', 'registry');
+  if (legacyRegistryTab && legacyRegistryTab !== 'registry') {
+    params.set('registryTab', legacyRegistryTab);
+  }
+  if (!params.has('registryTab')) {
+    params.set('registryTab', 'dashboard');
+  }
+
   const search = params.toString();
   return <Navigate to={`/reminders${search ? `?${search}` : ''}${location.hash}`} replace />;
 }
@@ -274,7 +290,7 @@ export const routes: RouteObject[] = [
       { path: 'analytics', element: lazyWithSuspense(AnalyticsPage) },
       { path: 'reports', element: lazyWithSuspense(ReportsPage) },
       { path: 'quality/*', element: <Navigate to="/analytics?tab=operational" replace /> },
-      { path: 'registry', element: lazyWithSuspense(RegistryPage) },
+      { path: 'registry', element: <RegistryRedirect /> },
       { path: 'referrals', element: lazyWithSuspense(ReferralsPage) },
       { path: 'forms', element: <Navigate to="/documents?section=forms" replace /> },
       { path: 'protocols', element: lazyWithSuspense(ProtocolsPage) },

@@ -42,6 +42,13 @@ const apiMocks = vi.hoisted(() => ({
   updateRecallStatus: vi.fn(),
   recordRecallContact: vi.fn(),
   exportRecalls: vi.fn(),
+  fetchRegistryDashboard: vi.fn(),
+  fetchMelanomaRegistry: vi.fn(),
+  fetchPsoriasisRegistry: vi.fn(),
+  fetchAcneRegistry: vi.fn(),
+  fetchChronicTherapyRegistry: vi.fn(),
+  fetchRegistryAlerts: vi.fn(),
+  fetchPasiHistory: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -56,6 +63,12 @@ vi.mock('../../api', () => apiMocks);
 
 vi.mock('../../components/ui', () => ({
   Panel: ({ children }: { children: React.ReactNode }) => <div data-testid="panel">{children}</div>,
+  EmptyState: ({ title, description }: { title: string; description?: string }) => (
+    <div>
+      <h3>{title}</h3>
+      {description && <p>{description}</p>}
+    </div>
+  ),
   Skeleton: ({ height }: { height?: number }) => <div data-testid="skeleton" data-height={height ?? 0} />,
   Modal: ({
     isOpen,
@@ -329,6 +342,13 @@ describe('RemindersPage', () => {
       ],
     });
     apiMocks.fetchPatients.mockResolvedValue({ patients: [] });
+    apiMocks.fetchRegistryDashboard.mockResolvedValue(null);
+    apiMocks.fetchMelanomaRegistry.mockResolvedValue({ data: [] });
+    apiMocks.fetchPsoriasisRegistry.mockResolvedValue({ data: [] });
+    apiMocks.fetchAcneRegistry.mockResolvedValue({ data: [] });
+    apiMocks.fetchChronicTherapyRegistry.mockResolvedValue({ data: [] });
+    apiMocks.fetchRegistryAlerts.mockResolvedValue({ alerts: [] });
+    apiMocks.fetchPasiHistory.mockResolvedValue({ data: [] });
     apiMocks.generateAllRecalls.mockResolvedValue({ created: 2 });
     apiMocks.generateRecalls.mockResolvedValue({ created: 1 });
     apiMocks.createRecallCampaign.mockResolvedValue({ id: 'camp-2' });
@@ -354,7 +374,7 @@ describe('RemindersPage', () => {
       </MemoryRouter>
     );
 
-    await screen.findByText('Reminders & Recalls');
+    await screen.findByText('Registry, Reminders & Recalls');
     fireEvent.click(screen.getByRole('button', { name: 'Generate All Recalls' }));
     await waitFor(() =>
       expect(apiMocks.generateAllRecalls).toHaveBeenCalledWith('tenant-1', 'token-1'),
@@ -401,7 +421,7 @@ describe('RemindersPage', () => {
         <RemindersPage />
       </MemoryRouter>
     );
-    await screen.findByText('Reminders & Recalls');
+    await screen.findByText('Registry, Reminders & Recalls');
 
     const campaignCard = screen.getByRole('heading', { name: 'Annual Skin Check' }).closest('.campaign-card');
     expect(campaignCard).toBeTruthy();
@@ -427,7 +447,7 @@ describe('RemindersPage', () => {
         <RemindersPage />
       </MemoryRouter>
     );
-    await screen.findByText('Reminders & Recalls');
+    await screen.findByText('Registry, Reminders & Recalls');
 
     fireEvent.click(screen.getByRole('button', { name: /Due for Recall/i }));
     await screen.findByText('Derm, Ana');
@@ -471,5 +491,19 @@ describe('RemindersPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Statistics' }));
     await screen.findByText('Total Recalls');
+  });
+
+  it('shows disease registry inside the reminders workspace', async () => {
+    render(
+      <MemoryRouter>
+        <RemindersPage />
+      </MemoryRouter>
+    );
+    await screen.findByText('Registry, Reminders & Recalls');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Disease Registry' }));
+
+    expect(await screen.findByRole('heading', { name: 'Patient Registries' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Melanoma' })).toBeInTheDocument();
   });
 });

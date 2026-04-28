@@ -44,7 +44,9 @@ export class BillingService {
       // Get encounter details
       const encounterResult = await client.query(
         `SELECT e.id, e.patient_id, e.provider_id,
-                p.insurance_details
+                p.insurance_details,
+                p.insurance_plan_name,
+                p.insurance_payer_id
          FROM encounters e
          JOIN patients p ON p.id = e.patient_id
          WHERE e.id = $1 AND e.tenant_id = $2`,
@@ -66,6 +68,9 @@ export class BillingService {
         payer = insuranceDetails.primary.planName;
         payerId = insuranceDetails.primary.payerId;
       }
+
+      payer = payer || encounter.insurance_plan_name || undefined;
+      payerId = payerId || encounter.insurance_payer_id || undefined;
 
       // Check if claim already exists for this encounter
       const existingClaimResult = await client.query(

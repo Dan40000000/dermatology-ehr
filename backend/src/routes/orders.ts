@@ -7,6 +7,7 @@ import { requireRoles } from "../middleware/rbac";
 import { CLINICAL_ROLES } from "../lib/roles";
 import { auditLog } from "../services/audit";
 import { logger } from "../lib/logger";
+import { createChargeForOrder } from "../services/orderChargeService";
 
 const orderSchema = z.object({
   encounterId: z.string().optional(),
@@ -17,6 +18,12 @@ const orderSchema = z.object({
   priority: z.enum(['normal', 'high', 'stat', 'routine', 'urgent']).optional(),
   details: z.string().max(500).optional(),
   notes: z.string().max(1000).optional(),
+  billable: z.boolean().optional(),
+  cptCode: z.string().trim().min(3).max(20).optional(),
+  icdCodes: z.array(z.string().trim().min(3).max(10)).optional(),
+  quantity: z.number().int().min(1).max(100).optional(),
+  feeCents: z.number().int().min(0).max(500000).optional(),
+  amountCents: z.number().int().min(0).max(500000).optional(),
 });
 
 const orderStatusSchema = z.object({
@@ -197,7 +204,33 @@ ordersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]), a
       ],
     );
     await auditLog(tenantId, req.user!.id, "order_create", "order", id);
-    res.status(201).json({ id });
+
+    let charge = null;
+    try {
+      charge = await createChargeForOrder({
+        tenantId,
+        orderId: id,
+        encounterId: o.encounterId,
+        type: o.type,
+        details: o.details,
+        notes: o.notes,
+        billable: o.billable,
+        cptCode: o.cptCode,
+        icdCodes: o.icdCodes,
+        quantity: o.quantity,
+        feeCents: o.feeCents,
+        amountCents: o.amountCents,
+      });
+    } catch (chargeError: any) {
+      logger.error("Failed to create financial charge from order", {
+        tenantId,
+        orderId: id,
+        encounterId: o.encounterId,
+        error: chargeError?.message || "Unknown error",
+      });
+    }
+
+    res.status(201).json({ id, charge });
   } catch (error: any) {
     logger.error("Create order error", {
       tenantId,

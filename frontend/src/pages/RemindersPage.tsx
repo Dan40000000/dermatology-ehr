@@ -41,6 +41,41 @@ function isInteractiveCampaignTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest('button, a, input, select, textarea, label'));
 }
 
+function formatDate(value?: string | null): string {
+  if (!value) return '-';
+  return new Date(value).toLocaleDateString();
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) return '-';
+  return new Date(value).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatTitle(value?: string | null): string {
+  if (!value) return '';
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function buildTelHref(phone?: string | null): string | null {
+  const digits = (phone || '').replace(/\D/g, '');
+  return digits ? `tel:${digits}` : null;
+}
+
+function getPatientName(recall: PatientRecall): string {
+  const last = recall.lastName || '';
+  const first = recall.firstName || '';
+  const name = [last, first].filter(Boolean).join(', ');
+  return name || 'Unknown patient';
+}
+
 export function RemindersPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
@@ -355,6 +390,28 @@ export function RemindersPage() {
       loadStats();
     } catch (err: any) {
       showError(err.message || 'Failed to update status');
+    }
+  };
+
+  const handleSendRecallSms = async (recall: PatientRecall) => {
+    if (!session) return;
+    if (!recall.phone) {
+      showError('Patient does not have a phone number for SMS outreach');
+      return;
+    }
+
+    try {
+      await recordRecallContact(session.tenantId, session.accessToken, recall.id, {
+        contactMethod: 'sms',
+        notes: `Recall SMS sent from reminders worklist for ${recall.campaignName || 'recall campaign'}`,
+        messageContent: `Reminder: please contact our office to schedule your ${recall.recallType || 'recall'} visit.`,
+      });
+      showSuccess('Recall SMS sent and logged');
+      loadDueRecalls();
+      loadHistory();
+      loadStats();
+    } catch (err: any) {
+      showError(err.message || 'Failed to send recall SMS');
     }
   };
 
@@ -737,74 +794,133 @@ export function RemindersPage() {
                       <th>Campaign</th>
                       <th>Due Date</th>
                       <th>Status</th>
-                      <th>Last Contact</th>
+                      <th>Outreach</th>
                       <th>Attempts</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {dueRecalls.map((recall) => (
-                      <tr key={recall.id}>
-                        <td>
-                          <div>
-                            {recall.patientId ? (
-                              <Link to={`/patients/${recall.patientId}?tab=clinical-summary`}>
-                                <strong>
-                                  {recall.lastName}, {recall.firstName}
-                                </strong>
-                              </Link>
-                            ) : (
-                              <strong>
-                                {recall.lastName}, {recall.firstName}
-                              </strong>
+                    {dueRecalls.map((recall) => {
+                      const telHref = buildTelHref(recall.phone);
+                      const patientName = getPatientName(recall);
+
+                      return (
+                        <tr key={recall.id}>
+                          <td>
+                            <div>
+                              {recall.patientId ? (
+                                <Link to={`/patients/${recall.patientId}?tab=clinical-summary`}>
+                                  <strong>{patientName}</strong>
+                                </Link>
+                              ) : (
+                                <strong>{patientName}</strong>
+                              )}
+                            </div>
+                            <div className="muted tiny">
+                              {recall.phone || recall.email || 'No contact on file'}
+                            </div>
+                            {recall.preferredContactMethod && (
+                              <div className="muted tiny">
+                                Preferred: {formatTitle(recall.preferredContactMethod)}
+                              </div>
                             )}
-                          </div>
-                          <div className="muted tiny">
-                            {recall.phone || recall.email || 'No contact'}
-                          </div>
-                        </td>
-                        <td>
-                          <div>{recall.campaignName || 'N/A'}</div>
-                          <div className="muted tiny">{recall.recallType || ''}</div>
-                        </td>
-                        <td>{new Date(recall.dueDate).toLocaleDateString()}</td>
-                        <td>
-                          <span className={`pill ${recall.status}`}>{recall.status}</span>
-                        </td>
-                        <td>
-                          {recall.lastContactDate
-                            ? new Date(recall.lastContactDate).toLocaleDateString()
-                            : '-'}
-                          {recall.contactMethod && (
-                            <div className="muted tiny">{recall.contactMethod}</div>
-                          )}
-                        </td>
-                        <td>{recall.contactAttempts || 0}</td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
-                            <button
-                              type="button"
-                              className="btn-sm btn-primary"
-                              onClick={() => handleContactPatient(recall)}
-                            >
-                              Contact
-                            </button>
-                            <select
-                              className="btn-sm"
-                              value={recall.status}
-                              onChange={(e) => handleUpdateStatus(recall.id, e.target.value)}
-                              style={{ minWidth: '100px' }}
-                            >
-                              {STATUS_OPTIONS.map((s) => (
-                                <option key={s} value={s}>
-                                  {s.charAt(0).toUpperCase() + s.slice(1)}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td>
+                            <div>{recall.campaignName || 'N/A'}</div>
+                            <div className="muted tiny">{recall.recallType || ''}</div>
+                          </td>
+                          <td>{formatDate(recall.dueDate)}</td>
+                          <td>
+                            <span className={`pill ${recall.status}`}>{recall.status}</span>
+                          </td>
+                          <td>
+                            {recall.lastReminderType ? (
+                              <div>
+                                <strong>{formatTitle(recall.lastReminderType)}</strong>
+                                {recall.lastReminderDeliveryStatus && (
+                                  <span className={`pill ${recall.lastReminderDeliveryStatus}`} style={{ marginLeft: '0.35rem' }}>
+                                    {formatTitle(recall.lastReminderDeliveryStatus)}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <div>{recall.lastContactDate ? 'Manual contact' : 'No outreach yet'}</div>
+                            )}
+                            <div className="muted tiny">Last contact: {formatDate(recall.lastContactDate)}</div>
+                            {recall.contactMethod && (
+                              <div className="muted tiny">Method: {formatTitle(recall.contactMethod)}</div>
+                            )}
+                            {recall.lastReminderSentAt && (
+                              <div className="muted tiny">Last text/email: {formatDateTime(recall.lastReminderSentAt)}</div>
+                            )}
+                            {recall.textThreadStatus && (
+                              <div className="muted tiny">Thread: {formatTitle(recall.textThreadStatus)}</div>
+                            )}
+                          </td>
+                          <td>{recall.contactAttempts || recall.notificationCount || 0}</td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+                              {recall.patientId ? (
+                                <Link
+                                  className="btn-sm btn-primary"
+                                  to={`/text-messages?patientId=${encodeURIComponent(recall.patientId)}`}
+                                >
+                                  {recall.textThreadId ? 'Open Text' : 'Text Patient'}
+                                </Link>
+                              ) : (
+                                <button type="button" className="btn-sm btn-secondary" disabled>
+                                  Text Patient
+                                </button>
+                              )}
+                              {telHref ? (
+                                <a className="btn-sm btn-secondary" href={telHref}>
+                                  Call Patient
+                                </a>
+                              ) : (
+                                <button type="button" className="btn-sm btn-secondary" disabled>
+                                  No Phone
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="btn-sm btn-secondary"
+                                onClick={() => handleSendRecallSms(recall)}
+                                disabled={!recall.phone}
+                              >
+                                Send Recall SMS
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-sm btn-primary"
+                                onClick={() => handleContactPatient(recall)}
+                              >
+                                Contact
+                              </button>
+                              <select
+                                className="btn-sm"
+                                value={recall.status}
+                                onChange={(e) => handleUpdateStatus(recall.id, e.target.value)}
+                                style={{ minWidth: '100px' }}
+                              >
+                                {STATUS_OPTIONS.map((s) => (
+                                  <option key={s} value={s}>
+                                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                                  </option>
+                                ))}
+                              </select>
+                              {recall.patientId && (
+                                <Link
+                                  className="btn-sm btn-secondary"
+                                  to={`/patients/${recall.patientId}?tab=clinical-summary`}
+                                >
+                                  Chart
+                                </Link>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

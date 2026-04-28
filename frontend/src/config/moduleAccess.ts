@@ -147,7 +147,7 @@ export const MODULE_PATHS: Array<{ path: string; module: ModuleKey }> = [
   { path: '/text-messages', module: 'text_messages' },
   { path: '/tasks', module: 'tasks' },
   { path: '/reminders', module: 'reminders' },
-  { path: '/recalls', module: 'recalls' },
+  { path: '/recalls', module: 'reminders' },
   { path: '/labs', module: 'labs' },
   { path: '/radiology', module: 'radiology' },
   { path: '/prior-auth', module: 'epa' },

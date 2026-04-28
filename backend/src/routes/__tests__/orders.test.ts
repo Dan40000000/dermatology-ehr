@@ -2,6 +2,7 @@ import request from "supertest";
 import express from "express";
 import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
+import { createChargeForOrder } from "../../services/orderChargeService";
 
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
@@ -25,6 +26,10 @@ jest.mock("../../services/audit", () => ({
   auditLog: jest.fn(),
 }));
 
+jest.mock("../../services/orderChargeService", () => ({
+  createChargeForOrder: jest.fn(),
+}));
+
 jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),
@@ -39,10 +44,13 @@ app.use("/orders", ordersRouter);
 
 const queryMock = pool.query as jest.Mock;
 const auditMock = auditLog as jest.Mock;
+const createChargeForOrderMock = createChargeForOrder as jest.Mock;
 
 beforeEach(() => {
   queryMock.mockReset();
   auditMock.mockReset();
+  createChargeForOrderMock.mockReset();
+  createChargeForOrderMock.mockResolvedValue(null);
   authUser = { id: "user-1", tenantId: "tenant-1", role: "provider" };
 });
 
@@ -85,6 +93,44 @@ describe("Orders routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.id).toBe("order-1");
     expect(auditMock).toHaveBeenCalled();
+  });
+
+  it("POST /orders creates a financial charge for billable procedure orders", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "prov-1", full_name: "Dr. Demo" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    createChargeForOrderMock.mockResolvedValueOnce({
+      chargeId: "charge-1",
+      cptCode: "11102",
+      description: "Tangential skin biopsy",
+      quantity: 1,
+      feeCents: 17500,
+      amountCents: 17500,
+      status: "ready",
+    });
+
+    const res = await request(app).post("/orders").send({
+      encounterId: "enc-1",
+      patientId: "p1",
+      providerId: "prov-1",
+      type: "biopsy",
+      details: "Shave biopsy left shoulder",
+      billable: true,
+      cptCode: "11102",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.charge.chargeId).toBe("charge-1");
+    expect(createChargeForOrderMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "tenant-1",
+        orderId: "order-1",
+        encounterId: "enc-1",
+        type: "biopsy",
+        cptCode: "11102",
+        billable: true,
+      }),
+    );
   });
 
   it("POST /orders falls back to encounter provider when provided provider is invalid", async () => {

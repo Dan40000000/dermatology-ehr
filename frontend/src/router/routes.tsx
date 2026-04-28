@@ -55,7 +55,6 @@ const RadiologyPage = lazy(() => import('../pages/RadiologyPage').then(m => ({ d
 const MessagingPage = lazy(() => import('../pages/MessagingPage').then(m => ({ default: m.MessagingPage })));
 const TasksPage = lazy(() => import('../pages/TasksPage').then(m => ({ default: m.TasksPage })));
 const RemindersPage = lazy(() => import('../pages/RemindersPage').then(m => ({ default: m.RemindersPage })));
-const RecallsPage = lazy(() => import('../pages/RecallsPage').then(m => ({ default: m.RecallsPage })));
 const TextMessagesPage = lazy(() =>
   import('../pages/TextMessagesPage').then((module) => ({
     default: module.default || (module as any).TextMessagesPage,
@@ -112,6 +111,16 @@ function lazyWithSuspense(Component: React.LazyExoticComponent<any>) {
       <Component />
     </Suspense>
   );
+}
+
+function RecallsRedirect() {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  if (!params.has('tab')) {
+    params.set('tab', 'due');
+  }
+  const search = params.toString();
+  return <Navigate to={`/reminders${search ? `?${search}` : ''}${location.hash}`} replace />;
 }
 
 export function RequirePortalAuth() {
@@ -247,7 +256,7 @@ export const routes: RouteObject[] = [
       { path: 'fax', element: lazyWithSuspense(FaxPage) },
       { path: 'tasks', element: lazyWithSuspense(TasksPage) },
       { path: 'reminders', element: lazyWithSuspense(RemindersPage) },
-      { path: 'recalls', element: lazyWithSuspense(RecallsPage) },
+      { path: 'recalls', element: <RecallsRedirect /> },
 
       // Documents
       { path: 'documents', element: lazyWithSuspense(DocumentsPage) },

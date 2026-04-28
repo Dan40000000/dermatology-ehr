@@ -121,7 +121,10 @@ describe("Tasks routes - List", () => {
     const res = await request(app).get("/tasks?priority=high");
 
     expect(res.status).toBe(200);
-    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining("t.priority = $2"), expect.arrayContaining(["high"]));
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("LOWER(COALESCE(t.priority, '')) = ANY($2)"),
+      ["tenant-1", ["high"]],
+    );
   });
 
   it("GET /tasks searches by text", async () => {

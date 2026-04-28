@@ -3,4 +3,4 @@ builder = "nixpacks"
 buildCommand = "npm run build"
 
 [deploy]
-startCommand = "npx serve -s dist -l tcp://0.0.0.0:$PORT"
+startCommand = "sh -c 'npx serve -s dist -l tcp://0.0.0.0:${PORT:-3000}'"

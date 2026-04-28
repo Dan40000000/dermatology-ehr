@@ -5,7 +5,7 @@ test.describe('Financials Write Smoke', () => {
     await authenticatedPage.goto('/claims');
     await expect(authenticatedPage).toHaveURL(/\/claims/i);
 
-    const claimRow = authenticatedPage.locator('tr', { hasText: 'CLM-SMOKE-001' });
+    const claimRow = authenticatedPage.locator('.claims-table tbody tr', { hasText: 'CLM-SMOKE-001' });
     await expect(claimRow).toBeVisible();
     await expect(claimRow).toContainText(/submitted/i);
 
@@ -42,7 +42,7 @@ test.describe('Financials Write Smoke', () => {
     expect(mutationResult.paymentCode).toBe(200);
 
     await authenticatedPage.goto('/claims');
-    const paidClaimRow = authenticatedPage.locator('tr', { hasText: 'CLM-SMOKE-001' });
+    const paidClaimRow = authenticatedPage.locator('.claims-table tbody tr', { hasText: 'CLM-SMOKE-001' });
     await expect(paidClaimRow).toContainText(/paid/i);
     await expect(paidClaimRow.getByRole('button', { name: /post payment/i })).toHaveCount(0);
   });

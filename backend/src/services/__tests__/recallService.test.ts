@@ -510,7 +510,7 @@ describe('RecallService', () => {
       });
 
       expect(queryMock).toHaveBeenCalledWith(
-        expect.stringContaining('ON CONFLICT'),
+        expect.stringContaining('UPDATE patient_communication_preferences'),
         expect.any(Array)
       );
       expect(result.preferredMethod).toBe('sms');

@@ -499,6 +499,7 @@ appointmentsRouter.post("/", requireAuth, requireRoles(["admin", "front_desk", "
   }
   const tenantId = req.user!.tenantId;
   const id = crypto.randomUUID();
+  const actorId = req.user?.id || "unknown";
   const payload = parsed.data;
   if (!isWithinAppointmentWindow(payload.scheduledStart, payload.scheduledEnd)) {
     return res.status(400).json({
@@ -524,7 +525,7 @@ appointmentsRouter.post("/", requireAuth, requireRoles(["admin", "front_desk", "
       payload.status || "scheduled",
     ],
   );
-  await auditLog(tenantId, req.user ? req.user.id : "unknown", "appointment_create", "appointment", id);
+  await auditLog(tenantId, actorId, "appointment_create", "appointment", id);
 
   // Send integration notification for new appointment
   try {
@@ -579,7 +580,7 @@ appointmentsRouter.post("/", requireAuth, requireRoles(["admin", "front_desk", "
       await workflowOrchestrator.processEvent({
         type: 'appointment_scheduled',
         tenantId,
-        userId: req.user!.id,
+        userId: actorId,
         entityType: 'appointment',
         entityId: id,
         data: {

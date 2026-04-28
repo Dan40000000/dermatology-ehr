@@ -5,7 +5,7 @@ test.describe('Schedule Write Smoke', () => {
     await authenticatedPage.goto('/schedule');
     await expect(authenticatedPage).toHaveURL(/\/schedule/i);
 
-    const appointmentRow = authenticatedPage.locator('tr', { hasText: 'Smoke Patient' });
+    const appointmentRow = authenticatedPage.locator('.ema-table tbody tr', { hasText: 'Smoke Patient' });
     await expect(appointmentRow).toBeVisible();
     await expect(appointmentRow).toContainText(/scheduled/i);
 
@@ -59,7 +59,7 @@ test.describe('Schedule Write Smoke', () => {
     expect(updatedResult.formattedLabel).not.toBe('');
 
     await authenticatedPage.goto('/schedule');
-    const updatedRow = authenticatedPage.locator('tr', { hasText: 'Smoke Patient' });
+    const updatedRow = authenticatedPage.locator('.ema-table tbody tr', { hasText: 'Smoke Patient' });
     await expect(updatedRow).toBeVisible();
     await expect(updatedRow).toContainText(/checked in|checked_in/i);
     await expect(updatedRow).toContainText(updatedResult.formattedLabel);

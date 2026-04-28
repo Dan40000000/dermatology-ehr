@@ -9,6 +9,12 @@ jest.mock('../../db/pool', () => ({
 
 const queryMock = pool.query as jest.Mock;
 
+function latestAuditInsertValues() {
+  const insertCall = queryMock.mock.calls.find((call) => String(call[0]).includes('INSERT INTO audit_log'));
+  expect(insertCall).toBeTruthy();
+  return insertCall![1];
+}
+
 describe('audit service', () => {
   beforeEach(() => {
     queryMock.mockReset();
@@ -27,12 +33,12 @@ describe('audit service', () => {
       status: 'success',
     });
 
-    const values = queryMock.mock.calls[0][1];
+    const values = latestAuditInsertValues();
     expect(values[0]).toEqual(expect.any(String));
     expect(values[1]).toBe('tenant-1');
-    expect(values[2]).toBeNull();
-    expect(values[3]).toBe('test_action');
-    expect(values[4]).toBe('resource');
+    expect(values[2]).toBe('test_action');
+    expect(values[3]).toBe('resource');
+    expect(values[4]).toBeNull();
 
     const changes = JSON.parse(values[8]);
     expect(changes.firstName).toBe('[REDACTED]');
@@ -52,11 +58,11 @@ describe('audit service', () => {
       ipAddress: '1.1.1.1',
     });
 
-    const values = queryMock.mock.calls[0][1];
+    const values = latestAuditInsertValues();
     const metadata = JSON.parse(values[9]);
 
-    expect(values[3]).toBe('fax_send');
-    expect(values[4]).toBe('fax');
+    expect(values[2]).toBe('fax_send');
+    expect(values[3]).toBe('fax');
     expect(values[10]).toBe('warning');
     expect(metadata.recipientNumber).toBe('4567');
     expect(metadata.patientId).toBe('patient-1');
@@ -72,10 +78,10 @@ describe('audit service', () => {
       userAgent: 'agent',
     });
 
-    const values = queryMock.mock.calls[0][1];
+    const values = latestAuditInsertValues();
     const metadata = JSON.parse(values[9]);
 
-    expect(values[3]).toBe('patient_data_delete');
+    expect(values[2]).toBe('patient_data_delete');
     expect(values[10]).toBe('warning');
     expect(metadata.phi_access).toBe(true);
   });

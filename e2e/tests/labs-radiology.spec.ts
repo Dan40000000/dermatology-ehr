@@ -55,12 +55,12 @@ async function mockApi(
     eligibilityHistory?: Record<string, any | null>;
   }
 ) {
-  await page.route('**/api/**', async (route: Route) => {
+  await page.route('**/*', async (route: Route) => {
     const url = new URL(route.request().url());
     const method = route.request().method();
 
     if (!url.pathname.startsWith('/api/')) {
-      return route.continue();
+      return route.fallback();
     }
 
     if (url.pathname === '/api/orders' && method === 'GET') {

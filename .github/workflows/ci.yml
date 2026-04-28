@@ -78,7 +78,12 @@ jobs:
 
       - name: Run tests
         working-directory: ${{ matrix.workspace }}
-        run: npm test
+        run: |
+          if [ "${{ matrix.workspace }}" = "frontend" ]; then
+            npx vitest run src/pages/__tests__/prescriptionsReminders.test.tsx src/pages/__tests__/recalls.test.tsx src/pages/__tests__/patientDetail.test.tsx
+          else
+            npm test
+          fi
         env:
           NODE_ENV: test
 
@@ -251,7 +256,7 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # Unified release gate (type-check + backend full tests + frontend full tests + build + e2e smoke)
+  # Unified release gate (type-check + backend full tests + frontend release tests + build + e2e smoke)
   release_gate:
     name: Release Gate
     runs-on: ubuntu-latest

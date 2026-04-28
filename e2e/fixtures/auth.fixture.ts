@@ -33,10 +33,20 @@ const SEEDED_PATIENT = {
   mrn: 'SMK001',
 };
 
+function getNewYorkScheduleDate(hourUtc: number, minute = 0): Date {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return new Date(Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day), hourUtc, minute, 0, 0));
+}
+
 async function installMockDataRoutes(page: Page) {
   const seededAppointmentId = 'appointment-smoke-1';
-  const seededAppointmentStart = new Date();
-  seededAppointmentStart.setHours(9, 0, 0, 0);
+  const seededAppointmentStart = getNewYorkScheduleDate(14);
   const seededAppointmentEnd = new Date(
     seededAppointmentStart.getTime() + SEEDED_APPOINTMENT_TYPE.durationMinutes * 60 * 1000
   );
@@ -887,11 +897,16 @@ async function installMockDataRoutes(page: Page) {
   let ambientTranscriptCounter = 1;
   let ambientNoteCounter = 1;
 
-  await page.route('**/api/**', async (route) => {
+  await page.route('**/*', async (route) => {
     const request = route.request();
     const method = request.method();
     const url = new URL(request.url());
     const path = url.pathname;
+
+    if (!path.startsWith('/api/')) {
+      await route.fallback();
+      return;
+    }
 
     if (path.startsWith('/api/auth/')) {
       await route.fallback();

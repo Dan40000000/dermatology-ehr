@@ -19,6 +19,10 @@ jest.mock("../../websocket/emitter", () => ({
   emitPatientUpdated: jest.fn(),
 }));
 
+jest.mock("../../services/audit", () => ({
+  auditPatientDataAccess: jest.fn(),
+}));
+
 jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),
@@ -221,7 +225,6 @@ describe("Patients routes", () => {
   it("PUT /patients/:id emits patient update when data available", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ id: "patient-1" }] })
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [
           {

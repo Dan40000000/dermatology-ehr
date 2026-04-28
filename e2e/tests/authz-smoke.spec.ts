@@ -14,10 +14,15 @@ async function installMockSession(page: Page, options: MockSessionOptions) {
   const { role, secondaryRoles = [] } = options;
   const effectiveRoles = [role, ...secondaryRoles.filter((candidate) => candidate !== role)];
 
-  await page.route('**/api/**', async (route) => {
+  await page.route('**/*', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
+
+    if (!path.startsWith('/api/')) {
+      await route.fallback();
+      return;
+    }
 
     if (path === '/api/auth/refresh') {
       await route.fulfill({
@@ -145,12 +150,15 @@ test.describe('AuthZ Smoke', () => {
     await expect(page).toHaveURL(/\/home/i);
   });
 
-  test('front desk role can access financials', async ({ page }) => {
+  test('front desk role can access claims but not financial dashboard', async ({ page }) => {
     await installMockSession(page, { role: 'front_desk' });
     await page.goto('/financials');
 
-    await expect(page).toHaveURL(/\/financials/i);
-    await expect(page.getByRole('heading', { name: /financial management/i })).toBeVisible();
+    await expect(page).toHaveURL(/\/home/i);
+
+    await page.goto('/claims');
+    await expect(page).toHaveURL(/\/claims/i);
+    await expect(page.getByRole('heading', { name: /claims management/i })).toBeVisible();
   });
 
   test('front desk role is blocked from ambient scribe', async ({ page }) => {

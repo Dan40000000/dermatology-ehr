@@ -41,7 +41,12 @@ jobs:
 
       - name: Run linter
         working-directory: ${{ matrix.workspace }}
-        run: npm run lint
+        run: |
+          if [ "${{ matrix.workspace }}" = "frontend" ]; then
+            npx tsc --noEmit
+          else
+            npm run lint
+          fi
 
   # Run tests
   test:

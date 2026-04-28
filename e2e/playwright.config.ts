@@ -103,7 +103,7 @@ export default defineConfig({
 
   // Run local dev server before starting tests (only if not already running)
   webServer: process.env.SKIP_SERVER ? undefined : {
-    command: 'cd frontend && npm run dev',
+    command: 'if [ -d frontend ]; then npm --prefix frontend run dev; else npm --prefix ../frontend run dev; fi',
     url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,

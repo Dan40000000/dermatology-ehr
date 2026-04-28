@@ -2,6 +2,14 @@ import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import { pool } from "./pool";
 import { seedProtocols } from "./seed-protocols";
+import {
+  addDaysToDateKey,
+  getDateKeyInTimeZone,
+  getPracticeTimeZone,
+  getUtcInstantForPracticeDateTime,
+  getUtcRangeForPracticeDate,
+  getWeekdayForDateKey,
+} from "../lib/practiceTimeZone";
 
 async function seed() {
   await pool.query("begin");
@@ -1901,6 +1909,21 @@ async function seed() {
     await pool.query(`DELETE FROM appointments WHERE tenant_id = $1`, [tenantId]);
 
     const now = new Date();
+    const practiceTimeZone = getPracticeTimeZone();
+    const todayDateKey = getDateKeyInTimeZone(now, practiceTimeZone);
+    const getSeedDateKey = (dayOffset: number) => addDaysToDateKey(todayDateKey, dayOffset);
+    const buildPracticeInstant = (dateKey: string, hour: number, minute: number) =>
+      getUtcInstantForPracticeDateTime(dateKey, hour, minute, practiceTimeZone);
+    const buildPracticeWindow = (
+      dateKey: string,
+      hour: number,
+      minute: number,
+      durationMinutes: number,
+    ) => {
+      const startTime = buildPracticeInstant(dateKey, hour, minute);
+      const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+      return { startTime, endTime };
+    };
     const scheduleHorizonDays = 180;
     const generalPatientIds = patients
       .filter((patient) => !String(patient.id).startsWith("demo-patient-"))
@@ -1960,8 +1983,8 @@ async function seed() {
     };
 
     for (let dayOffset = 0; dayOffset <= scheduleHorizonDays; dayOffset++) {
-      const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
-      const dayOfWeek = apptDate.getDay();
+      const apptDateKey = getSeedDateKey(dayOffset);
+      const dayOfWeek = getWeekdayForDateKey(apptDateKey);
       if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip weekends
       if (skinSeededRandom() < 0.15) continue; // Skip some days
 
@@ -1975,8 +1998,7 @@ async function seed() {
         while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
         if (currentHour >= 16) break;
 
-        const apptStart = new Date(apptDate);
-        apptStart.setHours(currentHour, currentMinute, 0, 0);
+        const apptStart = buildPracticeInstant(apptDateKey, currentHour, currentMinute);
 
         const typeRoll = skinSeededRandom();
         let duration = typeRoll < 0.5 ? 20 : (typeRoll < 0.8 ? 30 : 45);
@@ -2030,8 +2052,8 @@ async function seed() {
     };
 
     for (let dayOffset = 0; dayOffset <= scheduleHorizonDays; dayOffset++) {
-      const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
-      const dayOfWeek = apptDate.getDay();
+      const apptDateKey = getSeedDateKey(dayOffset);
+      const dayOfWeek = getWeekdayForDateKey(apptDateKey);
       if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip weekends
       if (rileySeededRandom() < 0.12) continue; // Skip some days
 
@@ -2045,8 +2067,7 @@ async function seed() {
         while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
         if (currentHour >= 17) break; // PA works until 6pm
 
-        const apptStart = new Date(apptDate);
-        apptStart.setHours(currentHour, currentMinute, 0, 0);
+        const apptStart = buildPracticeInstant(apptDateKey, currentHour, currentMinute);
 
         const typeRoll = rileySeededRandom();
         let duration = typeRoll < 0.6 ? 20 : (typeRoll < 0.9 ? 30 : 45);
@@ -2109,8 +2130,8 @@ async function seed() {
     };
 
     for (let dayOffset = 0; dayOffset <= scheduleHorizonDays; dayOffset++) {
-      const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
-      const dayOfWeek = apptDate.getDay();
+      const apptDateKey = getSeedDateKey(dayOffset);
+      const dayOfWeek = getWeekdayForDateKey(apptDateKey);
       if (dayOfWeek === 0 || dayOfWeek === 6) continue;
       if (philSeededRandom() < 0.12) continue;
 
@@ -2124,8 +2145,7 @@ async function seed() {
         while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
         if (currentHour >= 17) break;
 
-        const apptStart = new Date(apptDate);
-        apptStart.setHours(currentHour, currentMinute, 0, 0);
+        const apptStart = buildPracticeInstant(apptDateKey, currentHour, currentMinute);
 
         const typeRoll = philSeededRandom();
         let apptType: { id: string; duration: number };
@@ -2231,8 +2251,8 @@ async function seed() {
 
     // Create appointments for next 6 months (weekdays only) - start from today
     for (let dayOffset = 0; dayOffset <= scheduleHorizonDays; dayOffset++) {
-      const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
-      const dayOfWeek = apptDate.getDay();
+      const apptDateKey = getSeedDateKey(dayOffset);
+      const dayOfWeek = getWeekdayForDateKey(apptDateKey);
 
       // Skip weekends (0 = Sunday, 6 = Saturday)
       if (dayOfWeek === 0 || dayOfWeek === 6) continue;
@@ -2265,8 +2285,7 @@ async function seed() {
         // Don't schedule past 4pm (leave time for paperwork)
         if (currentHour >= 16) break;
 
-        const apptStart = new Date(apptDate);
-        apptStart.setHours(currentHour, currentMinute, 0, 0);
+        const apptStart = buildPracticeInstant(apptDateKey, currentHour, currentMinute);
 
         // Weighted random appointment type distribution
         const typeRoll = seededRandom();
@@ -2388,8 +2407,8 @@ async function seed() {
     };
 
     for (let dayOffset = 0; dayOffset <= scheduleHorizonDays; dayOffset++) {
-      const apptDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
-      const dayOfWeek = apptDate.getDay();
+      const apptDateKey = getSeedDateKey(dayOffset);
+      const dayOfWeek = getWeekdayForDateKey(apptDateKey);
       if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip weekends
       if (sarahSeededRandom() < 0.1) continue; // Skip some days (PTO, etc.)
 
@@ -2405,8 +2424,7 @@ async function seed() {
         while (currentMinute >= 60) { currentMinute -= 60; currentHour++; }
         if (currentHour >= 18) break; // Sarah works until 6pm
 
-        const apptStart = new Date(apptDate);
-        apptStart.setHours(currentHour, currentMinute, 0, 0);
+        const apptStart = buildPracticeInstant(apptDateKey, currentHour, currentMinute);
 
         // Weighted random cosmetic appointment type distribution
         const typeRoll = sarahSeededRandom();
@@ -2491,11 +2509,7 @@ async function seed() {
       minute: number,
       durationMinutes: number,
     ) => {
-      const startTime = new Date(now);
-      startTime.setDate(startTime.getDate() + dayOffset);
-      startTime.setHours(hour, minute, 0, 0);
-      const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
-      return { startTime, endTime };
+      return buildPracticeWindow(getSeedDateKey(dayOffset), hour, minute, durationMinutes);
     };
 
     const overlapsAppointmentWindow = (
@@ -2507,14 +2521,11 @@ async function seed() {
 
     const findOpenTelehealthWindow = async (
       providerId: string,
-      telehealthDate: Date,
+      telehealthDateKey: string,
       durationMinutes: number,
       candidates: ReadonlyArray<{ hour: number; minute: number }>,
     ) => {
-      const dayStart = new Date(telehealthDate);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(dayStart);
-      dayEnd.setDate(dayEnd.getDate() + 1);
+      const { start: dayStart, end: dayEnd } = getUtcRangeForPracticeDate(telehealthDateKey, practiceTimeZone);
 
       const existingAppointments = await pool.query(
         `select scheduled_start, scheduled_end
@@ -2528,8 +2539,7 @@ async function seed() {
       );
 
       for (const candidate of candidates) {
-        const startTime = new Date(telehealthDate);
-        startTime.setHours(candidate.hour, candidate.minute, 0, 0);
+        const startTime = buildPracticeInstant(telehealthDateKey, candidate.hour, candidate.minute);
         const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
         const hasConflict = existingAppointments.rows.some((row) => {
           const existingStart = new Date(row.scheduled_start);
@@ -3240,10 +3250,8 @@ async function seed() {
     };
 
     for (let dayOffset = 1; dayOffset <= 60; dayOffset += 1) {
-      const telehealthDate = new Date(now);
-      telehealthDate.setDate(telehealthDate.getDate() + dayOffset);
-      telehealthDate.setHours(0, 0, 0, 0);
-      const dayOfWeek = telehealthDate.getDay();
+      const telehealthDateKey = getSeedDateKey(dayOffset);
+      const dayOfWeek = getWeekdayForDateKey(telehealthDateKey);
       if (dayOfWeek === 0 || dayOfWeek === 6) continue;
 
       for (let providerAttempt = 0; providerAttempt < telehealthProviderConfigs.length; providerAttempt += 1) {
@@ -3253,7 +3261,7 @@ async function seed() {
 
         const window = await findOpenTelehealthWindow(
           config.providerId,
-          telehealthDate,
+          telehealthDateKey,
           20,
           config.slotCandidates,
         );

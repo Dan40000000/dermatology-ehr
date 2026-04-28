@@ -10,7 +10,7 @@ import { waitlistAutoFillService } from "../services/waitlistAutoFillService";
 import { notificationService } from "../services/integrations/notificationService";
 import { workflowOrchestrator } from "../services/workflowOrchestrator";
 import { logger } from "../lib/logger";
-import { getPracticeTimeZone } from "../lib/practiceTimeZone";
+import { getPracticeTimeZone, getUtcRangeForPracticeDate } from "../lib/practiceTimeZone";
 import {
   emitAppointmentCreated,
   emitAppointmentUpdated,
@@ -413,23 +413,28 @@ appointmentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
     paramIndex++;
   }
 
-  // Filter by specific date (returns appointments for that day)
+  // Filter date keys in the practice timezone so Railway/server UTC does not shift clinic days.
   if (date) {
-    query += ` and DATE(a.scheduled_start) = $${paramIndex}::date`;
-    params.push(date);
+    const { start, end } = getUtcRangeForPracticeDate(date, APPOINTMENT_WINDOW_TIME_ZONE);
+    query += ` and a.scheduled_start >= $${paramIndex}::timestamptz`;
+    params.push(start.toISOString());
+    paramIndex++;
+    query += ` and a.scheduled_start < $${paramIndex}::timestamptz`;
+    params.push(end.toISOString());
     paramIndex++;
   } else if (startDate && endDate) {
-    // Filter by date range
-    query += ` and DATE(a.scheduled_start) >= $${paramIndex}::date`;
-    params.push(startDate);
+    const { start } = getUtcRangeForPracticeDate(startDate, APPOINTMENT_WINDOW_TIME_ZONE);
+    const { end } = getUtcRangeForPracticeDate(endDate, APPOINTMENT_WINDOW_TIME_ZONE);
+    query += ` and a.scheduled_start >= $${paramIndex}::timestamptz`;
+    params.push(start.toISOString());
     paramIndex++;
-    query += ` and DATE(a.scheduled_start) <= $${paramIndex}::date`;
-    params.push(endDate);
+    query += ` and a.scheduled_start < $${paramIndex}::timestamptz`;
+    params.push(end.toISOString());
     paramIndex++;
   } else if (startDate) {
-    // Just start date - get everything from that date forward
-    query += ` and DATE(a.scheduled_start) >= $${paramIndex}::date`;
-    params.push(startDate);
+    const { start } = getUtcRangeForPracticeDate(startDate, APPOINTMENT_WINDOW_TIME_ZONE);
+    query += ` and a.scheduled_start >= $${paramIndex}::timestamptz`;
+    params.push(start.toISOString());
     paramIndex++;
   }
 

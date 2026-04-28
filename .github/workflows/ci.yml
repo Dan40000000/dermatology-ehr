@@ -32,7 +32,12 @@ jobs:
 
       - name: Install dependencies
         working-directory: ${{ matrix.workspace }}
-        run: npm ci
+        run: |
+          if [ "${{ matrix.workspace }}" = "frontend" ]; then
+            npm ci --legacy-peer-deps
+          else
+            npm ci
+          fi
 
       - name: Run linter
         working-directory: ${{ matrix.workspace }}
@@ -59,7 +64,12 @@ jobs:
 
       - name: Install dependencies
         working-directory: ${{ matrix.workspace }}
-        run: npm ci
+        run: |
+          if [ "${{ matrix.workspace }}" = "frontend" ]; then
+            npm ci --legacy-peer-deps
+          else
+            npm ci
+          fi
 
       - name: Run tests
         working-directory: ${{ matrix.workspace }}
@@ -89,7 +99,7 @@ jobs:
         run: npm ci
 
       - name: Install frontend dependencies
-        run: npm ci --prefix frontend
+        run: npm --prefix frontend ci --legacy-peer-deps
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
@@ -262,7 +272,7 @@ jobs:
         run: npm ci --prefix backend
 
       - name: Install frontend dependencies
-        run: npm ci --prefix frontend
+        run: npm --prefix frontend ci --legacy-peer-deps
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
@@ -340,7 +350,12 @@ jobs:
 
       - name: Install dependencies
         working-directory: ${{ matrix.workspace }}
-        run: npm ci
+        run: |
+          if [ "${{ matrix.workspace }}" = "frontend" ]; then
+            npm ci --legacy-peer-deps
+          else
+            npm ci
+          fi
 
       - name: Build application
         working-directory: ${{ matrix.workspace }}

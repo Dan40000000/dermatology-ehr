@@ -2,6 +2,15 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
+ARG VITE_API_BASE_URL=https://derm-api-production.up.railway.app
+ARG VITE_WS_URL=https://derm-api-production.up.railway.app
+ARG VITE_USE_PRESIGN=true
+ARG VITE_ENABLE_LOCAL_DEMO=false
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_WS_URL=$VITE_WS_URL
+ENV VITE_USE_PRESIGN=$VITE_USE_PRESIGN
+ENV VITE_ENABLE_LOCAL_DEMO=$VITE_ENABLE_LOCAL_DEMO
+
 COPY package*.json ./
 RUN npm ci --legacy-peer-deps
 

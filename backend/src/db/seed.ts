@@ -3861,7 +3861,7 @@ async function seed() {
 
     await pool.query(
       `update appointments
-       set status = 'scheduled',
+       set status = 'scheduled'
        where tenant_id = $1
          and status = 'completed'
          and (scheduled_start at time zone 'America/Denver')::date = (now() at time zone 'America/Denver')::date

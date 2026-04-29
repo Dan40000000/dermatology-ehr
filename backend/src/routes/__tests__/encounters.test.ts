@@ -6,6 +6,7 @@ import { auditLog } from "../../services/audit";
 import { recordEncounterLearning } from "../../services/learningService";
 import { encounterService } from "../../services/encounterService";
 import { billingService } from "../../services/billingService";
+import { ensureEncounterBill } from "../../services/encounterFinancialsService";
 import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
@@ -42,6 +43,10 @@ jest.mock("../../services/billingService", () => ({
   },
 }));
 
+jest.mock("../../services/encounterFinancialsService", () => ({
+  ensureEncounterBill: jest.fn(),
+}));
+
 jest.mock("../../websocket/emitter", () => ({
   emitEncounterCreated: jest.fn(),
   emitEncounterUpdated: jest.fn(),
@@ -73,6 +78,7 @@ const auditMock = auditLog as jest.Mock;
 const learningMock = recordEncounterLearning as jest.Mock;
 const encounterServiceMock = encounterService as jest.Mocked<typeof encounterService>;
 const billingServiceMock = billingService as jest.Mocked<typeof billingService>;
+const ensureEncounterBillMock = ensureEncounterBill as jest.Mock;
 const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
@@ -81,8 +87,20 @@ beforeEach(() => {
   learningMock.mockReset();
   Object.values(encounterServiceMock).forEach((fn) => fn.mockReset());
   Object.values(billingServiceMock).forEach((fn) => fn.mockReset());
+  ensureEncounterBillMock.mockReset();
   loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+  billingServiceMock.createClaimFromCharges.mockRejectedValue(new Error("No charges found"));
+  ensureEncounterBillMock.mockResolvedValue({
+    billId: null,
+    billNumber: null,
+    totalChargesCents: 0,
+    insuranceResponsibilityCents: 0,
+    patientResponsibilityCents: 0,
+    balanceCents: 0,
+    chargeCount: 0,
+    payerName: null,
+  });
 });
 
 describe("Encounters routes", () => {

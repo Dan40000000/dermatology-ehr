@@ -10,6 +10,7 @@ import { logger } from '../lib/logger';
 import crypto from 'crypto';
 import { encounterService } from './encounterService';
 import { billingService } from './billingService';
+import { ensureEncounterBill } from './encounterFinancialsService';
 import { scrubClaim, applyAutoFixes } from './claimScrubber';
 import { notificationService } from './integrations/notificationService';
 import { smsWorkflowService } from './smsWorkflowService';
@@ -401,6 +402,31 @@ export class WorkflowOrchestrator {
       });
     }
 
+    if (encounterResult.rowCount) {
+      const encounterId = encounterResult.rows[0].id as string;
+      try {
+        await encounterService.generateChargesFromEncounter(tenantId, encounterId);
+        await billingService.createClaimFromCharges(tenantId, encounterId, userId || 'system');
+      } catch (error: any) {
+        if (!String(error?.message || '').includes('No charges found')) {
+          logger.error('Failed checkout claim creation', {
+            encounterId,
+            appointmentId,
+            error: error?.message || 'Unknown error',
+          });
+        }
+        try {
+          await ensureEncounterBill(tenantId, encounterId, userId || 'system');
+        } catch (billError: any) {
+          logger.error('Failed checkout bill creation', {
+            encounterId,
+            appointmentId,
+            error: billError?.message || 'Unknown error',
+          });
+        }
+      }
+    }
+
     // 2. Schedule follow-up if specified
     if (data.followUpDays) {
       await this.scheduleFollowUp(tenantId, appointmentId, data.followUpDays, data.followUpType);
@@ -571,6 +597,8 @@ export class WorkflowOrchestrator {
           timestamp: new Date(),
         });
       }
+
+      await ensureEncounterBill(tenantId, encounterId, userId || 'system', client);
 
       // 7. Check for follow-up scheduling
       await this.checkFollowUpNeeded(tenantId, encounterId, encounter);

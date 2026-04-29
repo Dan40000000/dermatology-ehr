@@ -1255,6 +1255,8 @@ patientsRouter.get("/:id/balance", requireAuth, requireRoles(REVENUE_CYCLE_ROLES
          li.description,
          li.service_date as "serviceDate",
          li.total_cents / 100.0 as amount,
+         b.insurance_responsibility_cents as "insuranceResponsibilityCents",
+         b.patient_responsibility_cents as "patientResponsibilityCents",
          b.balance_cents / 100.0 as "billBalance",
          b.due_date as "dueDate",
          b.status as "billStatus",

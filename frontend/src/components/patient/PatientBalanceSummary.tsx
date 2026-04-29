@@ -34,6 +34,8 @@ interface PatientCharge {
   description?: string;
   serviceDate?: string;
   amount?: number;
+  insuranceResponsibilityCents?: number;
+  patientResponsibilityCents?: number;
   billBalance?: number;
   dueDate?: string;
   billStatus?: string;
@@ -287,6 +289,11 @@ export function PatientBalanceSummary({ patientId }: PatientBalanceSummaryProps)
                     {charge.serviceDate ? formatDate(charge.serviceDate) : 'Service date unavailable'}
                     {charge.billNumber ? ' • ' + charge.billNumber : ''}
                   </div>
+                  {(charge.insuranceResponsibilityCents || charge.patientResponsibilityCents) && (
+                    <div style={{ fontSize: '0.72rem', color: '#4b5563', marginTop: '0.25rem' }}>
+                      Insurance {formatCurrency((charge.insuranceResponsibilityCents || 0) / 100)} • Patient {formatCurrency((charge.patientResponsibilityCents || 0) / 100)}
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#111827' }}>

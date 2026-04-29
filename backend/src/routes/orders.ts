@@ -211,6 +211,7 @@ ordersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]), a
         tenantId,
         orderId: id,
         encounterId: o.encounterId,
+        patientId: o.patientId,
         type: o.type,
         details: o.details,
         notes: o.notes,

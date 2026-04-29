@@ -50,7 +50,7 @@ describe("encounterService", () => {
     connectMock.mockResolvedValueOnce(client);
     client.query
       .mockResolvedValueOnce({}) // BEGIN
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "enc-1" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "enc-1", patient_id: "patient-1", service_date: "2025-01-01" }] })
       .mockResolvedValueOnce({
         rows: [
           {
@@ -173,7 +173,6 @@ describe("encounterService", () => {
       .mockResolvedValueOnce({
         rows: [{ id: "charge-1", cpt_code: "11100", description: "Biopsy", quantity: 2 }],
       })
-      .mockResolvedValueOnce({ rows: [{ id: "fs-1" }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ fee_cents: 500 }] })
       .mockResolvedValueOnce({}) // UPDATE
       .mockResolvedValueOnce({}); // COMMIT
@@ -193,12 +192,11 @@ describe("encounterService", () => {
     connectMock.mockResolvedValueOnce(client);
     client.query
       .mockResolvedValueOnce({}) // BEGIN
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "enc-1" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "enc-1", patient_id: "patient-1", service_date: "2025-01-01" }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [{ id: "charge-1", cpt_code: "11100", description: "Biopsy", quantity: 1 }],
       })
-      .mockResolvedValueOnce({ rows: [{ id: "fs-1" }] })
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ default_fee_cents: 250 }] })
       .mockResolvedValueOnce({}) // UPDATE

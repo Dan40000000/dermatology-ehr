@@ -16,6 +16,20 @@ jest.mock("../../lib/logger", () => ({
   },
 }));
 
+jest.mock("../encounterFinancialsService", () => ({
+  ensureEncounterBill: jest.fn().mockResolvedValue({
+    billId: "bill-1",
+    billNumber: "BILL-1",
+    totalChargesCents: 200,
+    insuranceResponsibilityCents: 0,
+    patientResponsibilityCents: 200,
+    balanceCents: 200,
+    chargeCount: 2,
+    payerName: "ACME",
+  }),
+  normalizeEncounterCharges: jest.fn().mockResolvedValue([]),
+}));
+
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
   randomUUID: jest.fn(() => "uuid-1"),

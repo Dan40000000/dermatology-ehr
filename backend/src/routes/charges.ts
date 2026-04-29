@@ -63,9 +63,28 @@ chargesRouter.post("/", requireAuth, requireRoles(["admin", "billing", "provider
   const id = crypto.randomUUID();
   const tenantId = req.user!.tenantId;
   const payload = parsed.data;
+  let patientId: string | null = null;
+  let serviceDate: string | null = null;
+  if (payload.encounterId) {
+    const encounterResult = await pool.query(
+      `select e.patient_id as "patientId",
+              coalesce(a.scheduled_start::date, e.created_at::date, current_date) as "serviceDate"
+       from encounters e
+       left join appointments a on a.id = e.appointment_id and a.tenant_id = e.tenant_id
+       where e.id = $1 and e.tenant_id = $2
+       limit 1`,
+      [payload.encounterId, tenantId],
+    );
+    patientId = encounterResult.rows[0]?.patientId || null;
+    serviceDate = encounterResult.rows[0]?.serviceDate || null;
+  }
   await pool.query(
-    `insert into charges(id, tenant_id, encounter_id, cpt_code, description, icd_codes, linked_diagnosis_ids, quantity, fee_cents, amount_cents, status)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    `insert into charges(
+       id, tenant_id, encounter_id, cpt_code, description, icd_codes,
+       linked_diagnosis_ids, quantity, fee_cents, amount_cents, status,
+       patient_id, service_date, amount
+     )
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::int,$11,$12,$13,round(($10::numeric / 100), 2))`,
     [
       id,
       tenantId,
@@ -78,6 +97,8 @@ chargesRouter.post("/", requireAuth, requireRoles(["admin", "billing", "provider
       payload.feeCents || null,
       payload.amountCents,
       payload.status || "pending",
+      patientId,
+      serviceDate,
     ],
   );
   res.status(201).json({ id });

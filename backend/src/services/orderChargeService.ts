@@ -6,6 +6,7 @@ export interface OrderChargeInput {
   tenantId: string;
   orderId: string;
   encounterId?: string;
+  patientId?: string;
   type: string;
   details?: string;
   notes?: string;
@@ -171,6 +172,18 @@ export async function createChargeForOrder(input: OrderChargeInput): Promise<Ord
     return null;
   }
 
+  const encounterResult = await pool.query(
+    `select e.patient_id as "patientId",
+            coalesce(a.scheduled_start::date, e.created_at::date, current_date) as "serviceDate"
+     from encounters e
+     left join appointments a on a.id = e.appointment_id and a.tenant_id = e.tenant_id
+     where e.id = $1 and e.tenant_id = $2
+     limit 1`,
+    [input.encounterId, input.tenantId],
+  );
+  const encounterPatientId = encounterResult.rows[0]?.patientId as string | undefined;
+  const serviceDate = encounterResult.rows[0]?.serviceDate || new Date().toISOString().slice(0, 10);
+
   const existingCharge = await pool.query(
     `select id, cpt_code as "cptCode", description, quantity, fee_cents as "feeCents",
             amount_cents as "amountCents", status
@@ -208,8 +221,9 @@ export async function createChargeForOrder(input: OrderChargeInput): Promise<Ord
     `insert into charges(
        id, tenant_id, encounter_id, cpt_code, description, icd_codes,
        linked_diagnosis_ids, quantity, fee_cents, amount_cents, status
+       , patient_id, service_date, amount
      )
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::int,$11,$12,$13,round(($10::numeric / 100), 2))`,
     [
       chargeId,
       input.tenantId,
@@ -222,6 +236,8 @@ export async function createChargeForOrder(input: OrderChargeInput): Promise<Ord
       feeCents,
       amountCents,
       "ready",
+      input.patientId || encounterPatientId || null,
+      serviceDate,
     ],
   );
 

@@ -6,9 +6,7 @@ import { registerMessageHandlers } from "./handlers/messageHandlers";
 import { registerPresenceHandlers } from "./handlers/presenceHandlers";
 import { registerAmbientScribeHandlers } from "./handlers/ambientScribeHandlers";
 import { registerPatientFlowHandlers } from "./handlers/patientFlowHandlers";
-import { loadEnv } from "../config/validate";
-
-const envVars = loadEnv();
+import { config } from "../config";
 
 // Export the io instance for use in other parts of the application
 let io: Server | null = null;
@@ -19,8 +17,8 @@ let io: Server | null = null;
 export function initializeWebSocket(httpServer: HTTPServer): Server {
   const socketOptions: Partial<ServerOptions> = {
     cors: {
-      origin: envVars.FRONTEND_URL,
-      credentials: true,
+      origin: config.cors.origin,
+      credentials: config.cors.credentials,
       methods: ["GET", "POST"],
     },
     // Connection state recovery (helps with reconnections)

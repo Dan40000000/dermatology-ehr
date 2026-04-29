@@ -65,6 +65,7 @@ billsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   let query = `
     select
       b.id, b.patient_id as "patientId", b.bill_number as "billNumber",
+      b.encounter_id as "encounterId",
       b.bill_date as "billDate", b.due_date as "dueDate",
       b.total_charges_cents as "totalChargesCents",
       b.insurance_responsibility_cents as "insuranceResponsibilityCents",
@@ -76,6 +77,7 @@ billsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
       b.service_date_end as "serviceDateEnd",
       b.created_at as "createdAt", b.updated_at as "updatedAt",
       p.first_name as "patientFirstName", p.last_name as "patientLastName",
+      coalesce(p.insurance_plan_name, p.insurance) as "payerName",
       u.full_name as "createdByName"
     from bills b
     join patients p on p.id = b.patient_id

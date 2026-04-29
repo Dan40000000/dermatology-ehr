@@ -9,6 +9,7 @@ import { PremiumAnalytics } from '../components/financials/PremiumAnalytics';
 import { FeeSchedulePage } from './FeeSchedulePage';
 import {
   fetchARAging,
+  fetchBills,
   fetchBillsSummary,
   fetchClaims,
   fetchCollectionsTrend,
@@ -87,6 +88,22 @@ interface DashboardAraBucket {
   count: number;
   percentage: number;
   color: string;
+}
+
+interface FinancialBill {
+  id: string;
+  billNumber?: string;
+  patientFirstName?: string;
+  patientLastName?: string;
+  payerName?: string;
+  billDate?: string;
+  totalChargesCents?: number;
+  insuranceResponsibilityCents?: number;
+  patientResponsibilityCents?: number;
+  paidAmountCents?: number;
+  balanceCents?: number;
+  dueDate?: string;
+  status?: string;
 }
 
 function toIsoDate(date: Date): string {
@@ -204,6 +221,7 @@ export function FinancialsHub() {
     pendingAppeals: 0,
   });
   const [dashboardARAging, setDashboardARAging] = useState<DashboardAraBucket[]>([]);
+  const [recentBills, setRecentBills] = useState<FinancialBill[]>([]);
 
   // Get active tab from URL, default to 'dashboard' if not specified
   const tabFromUrl = searchParams.get('tab') as TabType | null;
@@ -234,7 +252,7 @@ export function FinancialsHub() {
     try {
       const today = toIsoDate(new Date());
       const monthRange = getSnapshotRange('monthly');
-      const [dashboard, paymentsSummary, agingSummary, claimsResponse] = await Promise.all([
+      const [dashboard, paymentsSummary, agingSummary, claimsResponse, billsResponse] = await Promise.all([
         fetchFinancialMetrics({
           tenantId: session.tenantId,
           accessToken: session.accessToken,
@@ -259,9 +277,16 @@ export function FinancialsHub() {
             accessToken: session.accessToken,
           },
         ),
+        fetchBills(
+          {
+            tenantId: session.tenantId,
+            accessToken: session.accessToken,
+          },
+        ),
       ]);
       const snapshots = dashboard?.snapshots || {};
       const claims = Array.isArray(claimsResponse?.claims) ? claimsResponse.claims : [];
+      setRecentBills(Array.isArray(billsResponse?.bills) ? billsResponse.bills : []);
       const agingBuckets = Array.isArray(agingSummary?.buckets) ? agingSummary.buckets : [];
       const totalArCents = agingBuckets.reduce((sum: number, bucket: any) => sum + Number(bucket.totalBalanceCents || 0), 0);
       const patientPaymentsTotal = Array.isArray(paymentsSummary?.patientPaymentsByMethod)
@@ -523,6 +548,22 @@ export function FinancialsHub() {
   const snapshotCalculated = snapshotPaymentsSummary?.calculated || {};
   const snapshotReceivables = snapshotPaymentsSummary?.receivables || {};
   const snapshotPayerSummary = snapshotPaymentsSummary?.payerPaymentsSummary || {};
+  const openBills = recentBills.filter((bill) => !['paid', 'written_off', 'cancelled'].includes(String(bill.status || '')));
+  const overdueBills = openBills.filter((bill) => {
+    if (!bill.dueDate) return false;
+    return bill.dueDate < toIsoDate(new Date()) && (bill.balanceCents || 0) > 0;
+  });
+  const paidBills = recentBills.filter((bill) => String(bill.status || '') === 'paid');
+  const outstandingBillCents = openBills.reduce((sum, bill) => sum + Number(bill.balanceCents || 0), 0);
+  const overdueBillCents = overdueBills.reduce((sum, bill) => sum + Number(bill.balanceCents || 0), 0);
+  const paidBillCents = paidBills.reduce((sum, bill) => sum + Number(bill.paidAmountCents || 0), 0);
+  const formatBillDate = (date?: string) => {
+    if (!date) return '--';
+    const parsed = new Date(`${date}T00:00:00Z`);
+    return Number.isNaN(parsed.getTime())
+      ? date
+      : parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  };
 
   // ─── Tab label map for sidebar ───────────────────────────────────────────
   const tabIcons: Record<TabType, string> = {
@@ -1330,10 +1371,10 @@ export function FinancialsHub() {
                       Outstanding
                     </h3>
                     <div style={{ fontSize: '1.75rem', fontWeight: '700', color: '#059669' }}>
-                      $42,500
+                      {formatCurrency(outstandingBillCents)}
                     </div>
                     <p style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.5rem' }}>
-                      127 bills pending
+                      {openBills.length} bills pending patient or payer payment
                     </p>
                   </div>
                   <div style={{
@@ -1346,10 +1387,10 @@ export function FinancialsHub() {
                       Overdue
                     </h3>
                     <div style={{ fontSize: '1.75rem', fontWeight: '700', color: '#f59e0b' }}>
-                      $18,500
+                      {formatCurrency(overdueBillCents)}
                     </div>
                     <p style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.5rem' }}>
-                      34 bills overdue
+                      {overdueBills.length} bills overdue
                     </p>
                   </div>
                   <div style={{
@@ -1362,10 +1403,10 @@ export function FinancialsHub() {
                       Paid This Month
                     </h3>
                     <div style={{ fontSize: '1.75rem', fontWeight: '700', color: '#0ea5e9' }}>
-                      $32,450
+                      {formatCurrency(paidBillCents)}
                     </div>
                     <p style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.5rem' }}>
-                      89 bills paid
+                      {paidBills.length} bills paid
                     </p>
                   </div>
                 </div>
@@ -1379,29 +1420,43 @@ export function FinancialsHub() {
                     <tr style={{ borderBottom: '2px solid #e5e7eb', background: '#f9fafb' }}>
                       <th style={{ padding: '0.75rem', textAlign: 'left' }}>Bill ID</th>
                       <th style={{ padding: '0.75rem', textAlign: 'left' }}>Patient</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Payer</th>
                       <th style={{ padding: '0.75rem', textAlign: 'left' }}>Date</th>
                       <th style={{ padding: '0.75rem', textAlign: 'right' }}>Amount</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'right' }}>Insurance</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'right' }}>Patient</th>
                       <th style={{ padding: '0.75rem', textAlign: 'right' }}>Balance</th>
                       <th style={{ padding: '0.75rem', textAlign: 'center' }}>Status</th>
                       <th style={{ padding: '0.75rem', textAlign: 'center' }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {[
-                      { id: 'BILL-2026-001', patient: 'John Smith', date: '2026-01-14', amount: 25000, balance: 25000, status: 'outstanding' },
-                      { id: 'BILL-2026-002', patient: 'Sarah Johnson', date: '2026-01-14', amount: 18500, balance: 0, status: 'paid' },
-                      { id: 'BILL-2026-003', patient: 'Mike Davis', date: '2026-01-13', amount: 32000, balance: 15000, status: 'partial' },
-                      { id: 'BILL-2025-089', patient: 'Emily Brown', date: '2025-12-28', amount: 22000, balance: 22000, status: 'overdue' },
-                    ].map(bill => (
-                      <tr key={bill.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                        <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{bill.id}</td>
-                        <td style={{ padding: '0.75rem', fontWeight: '600' }}>{bill.patient}</td>
-                        <td style={{ padding: '0.75rem', color: '#6b7280' }}>{bill.date}</td>
-                        <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600' }}>
-                          ${(bill.amount / 100).toLocaleString()}
+                    {recentBills.length === 0 && (
+                      <tr>
+                        <td colSpan={10} style={{ padding: '1.5rem', textAlign: 'center', color: '#6b7280' }}>
+                          No bills posted yet. Completed encounter charges will appear here automatically.
                         </td>
-                        <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600', color: bill.balance === 0 ? '#059669' : '#374151' }}>
-                          ${(bill.balance / 100).toLocaleString()}
+                      </tr>
+                    )}
+                    {recentBills.map(bill => (
+                      <tr key={bill.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{bill.billNumber || bill.id}</td>
+                        <td style={{ padding: '0.75rem', fontWeight: '600' }}>
+                          {[bill.patientFirstName, bill.patientLastName].filter(Boolean).join(' ') || 'Unknown patient'}
+                        </td>
+                        <td style={{ padding: '0.75rem', color: '#374151' }}>{bill.payerName || 'Self-pay'}</td>
+                        <td style={{ padding: '0.75rem', color: '#6b7280' }}>{formatBillDate(bill.billDate)}</td>
+                        <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600' }}>
+                          {formatCurrency(bill.totalChargesCents || 0)}
+                        </td>
+                        <td style={{ padding: '0.75rem', textAlign: 'right', color: '#1d4ed8', fontWeight: 600 }}>
+                          {formatCurrency(bill.insuranceResponsibilityCents || 0)}
+                        </td>
+                        <td style={{ padding: '0.75rem', textAlign: 'right', color: '#92400e', fontWeight: 600 }}>
+                          {formatCurrency(bill.patientResponsibilityCents || 0)}
+                        </td>
+                        <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: '600', color: (bill.balanceCents || 0) === 0 ? '#059669' : '#374151' }}>
+                          {formatCurrency(bill.balanceCents || 0)}
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'center' }}>
                           <span style={{
@@ -1409,10 +1464,10 @@ export function FinancialsHub() {
                             borderRadius: '20px',
                             fontSize: '0.75rem',
                             fontWeight: '600',
-                            background: bill.status === 'paid' ? '#dcfce7' : bill.status === 'overdue' ? '#fee2e2' : bill.status === 'partial' ? '#fef3c7' : '#f3f4f6',
-                            color: bill.status === 'paid' ? '#166534' : bill.status === 'overdue' ? '#991b1b' : bill.status === 'partial' ? '#92400e' : '#374151',
+                            background: bill.status === 'paid' ? '#dcfce7' : bill.status === 'overdue' ? '#fee2e2' : bill.status === 'partial' ? '#fef3c7' : '#dbeafe',
+                            color: bill.status === 'paid' ? '#166534' : bill.status === 'overdue' ? '#991b1b' : bill.status === 'partial' ? '#92400e' : '#1d4ed8',
                           }}>
-                            {bill.status}
+                            {bill.status || 'new'}
                           </span>
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'center' }}>

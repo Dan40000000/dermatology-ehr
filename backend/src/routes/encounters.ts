@@ -9,6 +9,7 @@ import { auditLog } from "../services/audit";
 import { recordEncounterLearning } from "../services/learningService";
 import { encounterService } from "../services/encounterService";
 import { billingService } from "../services/billingService";
+import { ensureEncounterBill } from "../services/encounterFinancialsService";
 import { workflowOrchestrator } from "../services/workflowOrchestrator";
 import {
   emitEncounterCreated,
@@ -812,6 +813,25 @@ encountersRouter.post("/:id/complete", requireAuth, requireRoles(["provider", "a
 
   try {
     await encounterService.completeEncounter(tenantId, encId);
+    let financials = null;
+    try {
+      const claim = await billingService.createClaimFromCharges(tenantId, encId, req.user!.id);
+      financials = await ensureEncounterBill(tenantId, encId, req.user!.id, undefined, claim.id);
+    } catch (financialError: any) {
+      if (!String(financialError?.message || '').includes('No charges found')) {
+        logger.error("Failed to post encounter financials on complete", {
+          encounterId: encId,
+          error: financialError?.message || "Unknown error",
+        });
+      }
+      financials = await ensureEncounterBill(tenantId, encId, req.user!.id).catch((billError: any) => {
+        logger.error("Failed to create encounter bill on complete", {
+          encounterId: encId,
+          error: billError?.message || "Unknown error",
+        });
+        return null;
+      });
+    }
     await auditLog(tenantId, req.user!.id, "encounter_completed", "encounter", encId);
 
     try {
@@ -832,6 +852,7 @@ encountersRouter.post("/:id/complete", requireAuth, requireRoles(["provider", "a
 
     return res.status(200).json({
       encounterId: encId,
+      financials,
       message: "Encounter completed and charges generated"
     });
   } catch (error: any) {

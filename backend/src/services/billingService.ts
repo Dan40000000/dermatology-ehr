@@ -1,6 +1,7 @@
 import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import crypto from 'crypto';
+import { ensureEncounterBill, normalizeEncounterCharges } from './encounterFinancialsService';
 
 export interface Claim {
   id: string;
@@ -84,17 +85,20 @@ export class BillingService {
           `SELECT * FROM claims WHERE id = $1`,
           [existingClaimResult.rows[0].id]
         );
+        await ensureEncounterBill(tenantId, encounterId, userId, client, existingClaimResult.rows[0].id);
         await client.query('COMMIT');
         return this.mapClaim(claimResult.rows[0]);
       }
 
+      await normalizeEncounterCharges(tenantId, encounterId, client);
+
       // Get all pending/ready charges for this encounter
       const chargesResult = await client.query(
-        `SELECT id, cpt_code, description, quantity, fee_cents, icd_codes
+        `SELECT id, cpt_code, description, quantity, fee_cents, amount_cents, icd_codes, service_date
          FROM charges
          WHERE encounter_id = $1 AND tenant_id = $2
            AND status IN ('pending', 'ready')
-           AND fee_cents IS NOT NULL`,
+           AND COALESCE(amount_cents, fee_cents * COALESCE(quantity, 1)) IS NOT NULL`,
         [encounterId, tenantId]
       );
 
@@ -104,9 +108,18 @@ export class BillingService {
 
       const charges = chargesResult.rows;
       const totalCents = charges.reduce(
-        (sum, charge) => sum + (charge.fee_cents * (charge.quantity || 1)),
+        (sum, charge) => sum + (charge.amount_cents || (charge.fee_cents * (charge.quantity || 1))),
         0
       );
+      const lineItems = charges.map((charge) => ({
+        cpt: charge.cpt_code,
+        modifiers: [],
+        dx: charge.icd_codes || [],
+        units: charge.quantity || 1,
+        charge: (charge.amount_cents || (charge.fee_cents * (charge.quantity || 1))) / 100,
+        description: charge.description,
+      }));
+      const serviceDate = charges[0]?.service_date || new Date().toISOString().split('T')[0];
 
       // Generate claim number
       const claimNumber = await this.generateClaimNumber(tenantId);
@@ -116,8 +129,9 @@ export class BillingService {
       const claimResult = await client.query(
         `INSERT INTO claims (
           id, tenant_id, encounter_id, patient_id, claim_number,
-          total_cents, status, payer, payer_id, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+          total_cents, total_charges, status, payer, payer_id, payer_name,
+          service_date, line_items, created_by, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
         RETURNING *`,
         [
           claimId,
@@ -126,9 +140,14 @@ export class BillingService {
           encounter.patient_id,
           claimNumber,
           totalCents,
+          totalCents / 100,
           'draft',
           payer || null,
           payerId || null,
+          payer || null,
+          serviceDate,
+          JSON.stringify(lineItems),
+          userId,
         ]
       );
 
@@ -148,7 +167,7 @@ export class BillingService {
             charge.description,
             charge.icd_codes || [],
             charge.quantity || 1,
-            charge.fee_cents,
+            charge.amount_cents || (charge.fee_cents * (charge.quantity || 1)),
           ]
         );
 
@@ -158,6 +177,8 @@ export class BillingService {
           [charge.id]
         );
       }
+
+      await ensureEncounterBill(tenantId, encounterId, userId, client, claimId);
 
       // Log audit event
       await client.query(
@@ -361,7 +382,7 @@ export class BillingService {
       encounterId: row.encounter_id,
       patientId: row.patient_id,
       claimNumber: row.claim_number,
-      totalCents: row.total_cents,
+      totalCents: row.total_cents ?? Math.round(Number(row.total_charges || 0) * 100),
       status: row.status,
       payer: row.payer,
       payerId: row.payer_id,

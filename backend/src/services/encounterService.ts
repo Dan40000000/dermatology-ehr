@@ -52,6 +52,7 @@ export interface Charge {
   description: string;
   quantity: number;
   feeCents: number;
+  amountCents?: number;
   linkedDiagnosisIds: string[];
   icdCodes: string[];
   status: string;
@@ -129,7 +130,11 @@ export class EncounterService {
 
       // Get encounter details
       const encounterResult = await client.query(
-        `SELECT id, patient_id, provider_id FROM encounters WHERE id = $1 AND tenant_id = $2`,
+        `SELECT e.id, e.patient_id, e.provider_id,
+                COALESCE(a.scheduled_start::date, e.created_at::date, CURRENT_DATE) as service_date
+         FROM encounters e
+         LEFT JOIN appointments a ON a.id = e.appointment_id AND a.tenant_id = e.tenant_id
+         WHERE e.id = $1 AND e.tenant_id = $2`,
         [encounterId, tenantId]
       );
 
@@ -157,60 +162,63 @@ export class EncounterService {
         [encounterId, tenantId]
       );
 
-      // Get default fee schedule for this tenant
-      const feeScheduleResult = await client.query(
-        `SELECT fs.id
-         FROM fee_schedules fs
-         WHERE fs.tenant_id = $1 AND fs.is_default = true
-         LIMIT 1`,
-        [tenantId]
-      );
-
-      const feeScheduleId = feeScheduleResult.rows[0]?.id;
-
       const charges: Charge[] = [];
 
       // Process each procedure and apply pricing
       for (const proc of proceduresResult.rows) {
         let feeCents = 0;
 
-        if (feeScheduleId) {
-          // Look up fee from fee schedule
-          const feeResult = await client.query(
-            `SELECT fsi.fee_cents
-             FROM fee_schedule_items fsi
-             JOIN cpt_codes cpt ON cpt.id = fsi.cpt_code_id
-             WHERE fsi.fee_schedule_id = $1 AND cpt.code = $2`,
-            [feeScheduleId, proc.cpt_code]
-          );
+        const feeResult = await client.query(
+          `SELECT COALESCE(fsi.fee_cents, ROUND(fsi.fee_amount * 100)::int, 0) as fee_cents
+           FROM fee_schedule_items fsi
+           JOIN fee_schedules fs ON fs.id = fsi.fee_schedule_id
+           WHERE fs.tenant_id = $1
+             AND UPPER(fsi.cpt_code) = UPPER($2)
+           ORDER BY fs.is_default DESC, fsi.updated_at DESC NULLS LAST, fsi.created_at DESC
+           LIMIT 1`,
+          [tenantId, proc.cpt_code]
+        );
 
-          if (feeResult.rowCount) {
-            feeCents = feeResult.rows[0].fee_cents;
-          } else {
-            // Use default fee from CPT code
-            const cptResult = await client.query(
-              `SELECT default_fee_cents FROM cpt_codes WHERE code = $1`,
-              [proc.cpt_code]
-            );
-            if (cptResult.rowCount) {
-              feeCents = cptResult.rows[0].default_fee_cents || 0;
-            }
+        if (feeResult.rowCount) {
+          feeCents = feeResult.rows[0].fee_cents || 0;
+        } else {
+          // Use default fee from CPT code
+          const cptResult = await client.query(
+            `SELECT default_fee_cents FROM cpt_codes WHERE UPPER(code) = UPPER($1)`,
+            [proc.cpt_code]
+          );
+          if (cptResult.rowCount) {
+            feeCents = cptResult.rows[0].default_fee_cents || 0;
           }
         }
 
         // Update charge with fee and link to diagnoses
         const diagnosisIds = diagnoses.map(d => d.id);
         const icdCodes = diagnoses.map(d => d.icd10_code);
+        const quantity = proc.quantity || 1;
+        const amountCents = feeCents * quantity;
 
         await client.query(
           `UPDATE charges
            SET fee_cents = $1,
                linked_diagnosis_ids = $2,
                icd_codes = $3,
-               status = 'pending',
-               updated_at = NOW()
-           WHERE id = $4 AND tenant_id = $5`,
-          [feeCents, diagnosisIds, icdCodes, proc.id, tenantId]
+               amount_cents = $4::int,
+               amount = ROUND(($4::numeric / 100), 2),
+               patient_id = $5,
+               service_date = $6,
+               status = 'pending'
+           WHERE id = $7 AND tenant_id = $8`,
+          [
+            feeCents,
+            diagnosisIds,
+            icdCodes,
+            amountCents,
+            encounterResult.rows[0].patient_id,
+            encounterResult.rows[0].service_date,
+            proc.id,
+            tenantId,
+          ]
         );
 
         charges.push({
@@ -219,8 +227,9 @@ export class EncounterService {
           encounterId,
           cptCode: proc.cpt_code,
           description: proc.description,
-          quantity: proc.quantity || 1,
+          quantity,
           feeCents,
+          amountCents,
           linkedDiagnosisIds: diagnosisIds,
           icdCodes,
           status: 'pending',

@@ -900,6 +900,9 @@ function AdminSettingsPanel() {
           <Link to="/admin/ai-agents" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
             AI Agents
           </Link>
+          <Link to="/admin/feedback" style={{ textDecoration: 'none', color: '#1d4ed8', border: '1px solid #dbeafe', borderRadius: '8px', padding: '0.75rem' }}>
+            Feedback Inbox
+          </Link>
         </div>
       </div>
 

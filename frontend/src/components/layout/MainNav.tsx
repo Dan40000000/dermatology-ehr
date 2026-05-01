@@ -367,6 +367,7 @@ const navItems: NavItem[] = [
       { label: 'Fee Schedules', path: '/admin/fee-schedules' },
       { label: 'AI Agents', path: '/admin/ai-agents' },
       { label: 'Audit Log', path: '/admin/audit-log' },
+      { label: 'Feedback Inbox', path: '/admin/feedback' },
     ]
   },
 ];

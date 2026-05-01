@@ -11650,6 +11650,60 @@ Consider age-appropriate treatments and include family counseling points.',
     $$ LANGUAGE plpgsql;
     `,
   },
+  {
+    name: "163_professional_feedback_inbox",
+    sql: `
+    CREATE TABLE IF NOT EXISTS professional_feedback (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      user_id TEXT,
+      user_name TEXT,
+      user_email TEXT,
+      user_role TEXT,
+      type TEXT NOT NULL CHECK (type IN ('issue', 'suggestion')),
+      severity TEXT NOT NULL CHECK (severity IN ('blocker', 'annoying', 'suggestion', 'question')),
+      status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'reviewed', 'resolved', 'archived')),
+      message TEXT NOT NULL,
+      page_url TEXT,
+      pathname TEXT,
+      user_agent TEXT,
+      viewport TEXT,
+      captured_at TIMESTAMPTZ,
+      email_recipient TEXT,
+      email_status TEXT NOT NULL DEFAULT 'pending' CHECK (email_status IN ('pending', 'sent', 'failed', 'skipped')),
+      email_message_id TEXT,
+      email_error TEXT,
+      attachment_count INTEGER NOT NULL DEFAULT 0,
+      admin_notes TEXT,
+      reviewed_by TEXT,
+      reviewed_at TIMESTAMPTZ,
+      resolved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS professional_feedback_attachments (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      feedback_id TEXT NOT NULL REFERENCES professional_feedback(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      content_type TEXT,
+      size_bytes INTEGER NOT NULL DEFAULT 0,
+      content BYTEA NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_professional_feedback_tenant_created
+      ON professional_feedback(tenant_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_professional_feedback_tenant_status
+      ON professional_feedback(tenant_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_professional_feedback_tenant_type
+      ON professional_feedback(tenant_id, type, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_professional_feedback_email_status
+      ON professional_feedback(tenant_id, email_status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_professional_feedback_attachments_feedback
+      ON professional_feedback_attachments(feedback_id);
+    `,
+  },
 
 ];
 

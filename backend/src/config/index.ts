@@ -88,7 +88,7 @@ export const config = {
       port: envVars.SMTP_PORT,
       secure: envVars.SMTP_SECURE,
       user: envVars.SMTP_USER || envVars.SENDGRID_SMTP_USERNAME || '',
-      password: envVars.SMTP_PASSWORD || envVars.SENDGRID_SMTP_API_KEY || envVars.TWILIO_SENDGRID_API_KEY || '',
+      password: envVars.SMTP_PASSWORD || envVars.SENDGRID_API_KEY || envVars.SENDGRID_SMTP_API_KEY || envVars.TWILIO_SENDGRID_API_KEY || '',
     },
     ses: {
       region: envVars.AWS_SES_REGION || envVars.AWS_REGION,

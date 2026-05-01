@@ -29,6 +29,11 @@ export interface SmtpConfig {
   fromName?: string;
 }
 
+type SendGridAddress = {
+  email: string;
+  name?: string;
+};
+
 /**
  * Console-based email adapter for development
  *
@@ -37,9 +42,10 @@ export interface SmtpConfig {
  */
 export class SmtpEmailAdapter implements IEmailService {
   private defaultFrom: string;
+  private sendGridApiKey: string | null;
   private smtpTransporter: Transporter | null;
   private sesClient: SESClient | null;
-  private sendMode: "console" | "smtp" | "ses";
+  private sendMode: "console" | "sendgrid" | "smtp" | "ses";
   private templates: Map<string, (variables: Record<string, unknown>) => { subject: string; html: string; text?: string }> =
     new Map();
 
@@ -50,13 +56,15 @@ export class SmtpEmailAdapter implements IEmailService {
     const fromName = smtpConfig?.fromName || emailConfig.from.name;
 
     this.defaultFrom = fromName ? `${fromName} <${from}>` : from;
+    this.sendGridApiKey = this.getSendGridApiKey();
     this.smtpTransporter = this.createSmtpTransporter(smtpConfig);
     this.sesClient = this.createSesClient();
-    this.sendMode = this.smtpTransporter ? "smtp" : this.sesClient ? "ses" : "console";
+    this.sendMode = this.sendGridApiKey ? "sendgrid" : this.smtpTransporter ? "smtp" : this.sesClient ? "ses" : "console";
 
     logger.info("SmtpEmailAdapter initialized", {
       from,
       mode: this.sendMode,
+      sendGridConfigured: !!this.sendGridApiKey,
       smtpConfigured: !!this.smtpTransporter,
       sesRegion: process.env.AWS_SES_REGION || process.env.AWS_REGION || null,
     });
@@ -67,6 +75,10 @@ export class SmtpEmailAdapter implements IEmailService {
   async sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
     const to = Array.isArray(params.to) ? params.to : [params.to];
     const fallbackMessageId = `<${Date.now()}-${Math.random().toString(36).substring(2)}@dermatologyehr.local>`;
+
+    if (this.sendMode === "sendgrid" && this.sendGridApiKey) {
+      return this.sendViaSendGrid(params, to, fallbackMessageId);
+    }
 
     if (this.sendMode === "smtp" && this.smtpTransporter) {
       const response = await this.smtpTransporter.sendMail({
@@ -201,6 +213,11 @@ export class SmtpEmailAdapter implements IEmailService {
   }
 
   async verifyConnection(): Promise<boolean> {
+    if (this.sendMode === "sendgrid" && this.sendGridApiKey) {
+      logger.info("Email connection configured (SendGrid API mode)");
+      return true;
+    }
+
     if (this.sendMode === "smtp" && this.smtpTransporter) {
       try {
         await this.smtpTransporter.verify();
@@ -347,6 +364,122 @@ This is an automated message. Please do not reply to this email.
     }));
   }
 
+  private getSendGridApiKey(): string | null {
+    const explicitKey = (
+      process.env.SENDGRID_API_KEY ||
+      process.env.SENDGRID_SMTP_API_KEY ||
+      process.env.TWILIO_SENDGRID_API_KEY ||
+      ""
+    ).trim();
+
+    if (explicitKey && !/^CHANGE_ME/i.test(explicitKey)) {
+      return explicitKey;
+    }
+
+    const smtpHost = (
+      process.env.SMTP_HOST ||
+      process.env.SENDGRID_SMTP_HOST ||
+      config.email.smtp.host ||
+      ""
+    ).trim();
+    const smtpPassword = (process.env.SMTP_PASSWORD || config.email.smtp.password || "").trim();
+
+    if (/sendgrid/i.test(smtpHost) && smtpPassword && !/^CHANGE_ME/i.test(smtpPassword)) {
+      return smtpPassword;
+    }
+
+    return null;
+  }
+
+  private async sendViaSendGrid(
+    params: SendEmailParams,
+    acceptedRecipients: string[],
+    fallbackMessageId: string
+  ): Promise<SendEmailResult> {
+    const subject = params.subject || "Message from Dermatology EHR";
+    const text = params.text || this.stripHtml(params.html || "");
+    const timeoutMs = this.getPositiveNumber(process.env.SENDGRID_TIMEOUT_MS, 15000);
+    const toRecipients = this.normalizeAddressList(params.to);
+    const ccRecipients = this.normalizeAddressList(params.cc);
+    const bccRecipients = this.normalizeAddressList(params.bcc);
+    const replyTo = this.normalizeAddressList(params.replyTo)[0];
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.sendGridApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          personalizations: [
+            {
+              to: toRecipients.map((email) => ({ email })),
+              ...(ccRecipients.length ? { cc: ccRecipients.map((email) => ({ email })) } : {}),
+              ...(bccRecipients.length ? { bcc: bccRecipients.map((email) => ({ email })) } : {}),
+            },
+          ],
+          from: this.parseEmailAddress(params.from || this.defaultFrom),
+          ...(replyTo ? { reply_to: this.parseEmailAddress(replyTo) } : {}),
+          subject,
+          content: [
+            { type: "text/plain", value: text || subject },
+            ...(params.html ? [{ type: "text/html", value: params.html }] : []),
+          ],
+          ...(params.attachments?.length
+            ? {
+                attachments: params.attachments.map((attachment) => ({
+                  content: Buffer.isBuffer(attachment.content)
+                    ? attachment.content.toString("base64")
+                    : Buffer.from(attachment.content).toString("base64"),
+                  filename: attachment.filename,
+                  ...(attachment.contentType ? { type: attachment.contentType } : {}),
+                  disposition: "attachment",
+                })),
+              }
+            : {}),
+        }),
+        signal: controller.signal,
+      });
+
+      const messageId = response.headers.get("x-message-id") || fallbackMessageId;
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        const reason = this.extractSendGridError(errorText) || response.statusText || "unknown provider error";
+
+        logger.error("Email send via SendGrid API failed", {
+          statusCode: response.status,
+          error: reason,
+          subject,
+        });
+
+        throw new Error(`SendGrid email send failed (${response.status}): ${reason}`);
+      }
+
+      logger.info("Email sent via SendGrid API", {
+        messageId,
+        acceptedCount: acceptedRecipients.length,
+        subject,
+      });
+
+      return {
+        messageId,
+        accepted: acceptedRecipients,
+        rejected: [],
+      };
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(`SendGrid email send timed out after ${timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private createSmtpTransporter(smtpConfig?: Partial<SmtpConfig>): Transporter | null {
     const host = (
       smtpConfig?.host ||
@@ -384,6 +517,9 @@ This is an automated message. Please do not reply to this email.
       host,
       port,
       secure,
+      connectionTimeout: this.getPositiveNumber(process.env.SMTP_CONNECTION_TIMEOUT_MS, 10000),
+      greetingTimeout: this.getPositiveNumber(process.env.SMTP_GREETING_TIMEOUT_MS, 10000),
+      socketTimeout: this.getPositiveNumber(process.env.SMTP_SOCKET_TIMEOUT_MS, 15000),
       auth: {
         user,
         pass,
@@ -426,6 +562,32 @@ This is an automated message. Please do not reply to this email.
 
   private stripHtml(value: string): string {
     return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  private parseEmailAddress(value: string): SendGridAddress {
+    const match = value.match(/^(.*?)\s*<([^>]+)>$/);
+    if (match) {
+      const name = (match[1] || "").trim().replace(/^"|"$/g, "");
+      const email = (match[2] || "").trim();
+      return name ? { email, name } : { email };
+    }
+
+    return { email: value.trim() };
+  }
+
+  private extractSendGridError(errorText: string): string | null {
+    try {
+      const parsed = JSON.parse(errorText) as { errors?: Array<{ message?: string }> };
+      const message = parsed.errors?.map((error) => error.message).filter(Boolean).join("; ");
+      return message || null;
+    } catch {
+      return errorText.trim() || null;
+    }
+  }
+
+  private getPositiveNumber(value: string | undefined, fallback: number): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
 
   private toSmtpAttachment(attachment: EmailAttachment): {

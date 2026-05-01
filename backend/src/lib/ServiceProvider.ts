@@ -222,6 +222,7 @@ function registerEmailService(container: ServiceContainer): void {
   const smtpHost = (process.env.SMTP_HOST || process.env.SENDGRID_SMTP_HOST || config.email.smtp.host || "").trim();
   const smtpPassword = (
     process.env.SMTP_PASSWORD ||
+    process.env.SENDGRID_API_KEY ||
     process.env.SENDGRID_SMTP_API_KEY ||
     process.env.TWILIO_SENDGRID_API_KEY ||
     config.email.smtp.password ||
@@ -230,12 +231,18 @@ function registerEmailService(container: ServiceContainer): void {
   const explicitSmtpUser = (process.env.SMTP_USER || process.env.SENDGRID_SMTP_USERNAME || config.email.smtp.user || "").trim();
   const smtpUser = explicitSmtpUser || (/sendgrid/i.test(smtpHost) && smtpPassword ? "apikey" : "");
   const hasSmtpConfig = !!(smtpHost && smtpUser && smtpPassword);
+  const hasSendGridApiConfig = !!(
+    process.env.SENDGRID_API_KEY ||
+    process.env.SENDGRID_SMTP_API_KEY ||
+    process.env.TWILIO_SENDGRID_API_KEY ||
+    (/sendgrid/i.test(smtpHost) && smtpPassword)
+  );
   const hasSesConfig =
     hasCredentials(["AWS_SES_REGION"]) ||
     (hasCredentials(["AWS_REGION"]) &&
       (hasCredentials(["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]) ||
         process.env.AWS_PROFILE !== undefined));
-  const hasEmailConfig = hasSmtpConfig || hasSesConfig;
+  const hasEmailConfig = hasSendGridApiConfig || hasSmtpConfig || hasSesConfig;
 
   if (useMock || !hasEmailConfig) {
     if (!useMock && !hasEmailConfig) {

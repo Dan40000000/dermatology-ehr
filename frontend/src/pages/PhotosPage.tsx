@@ -18,6 +18,7 @@ import type { Photo, Patient, PhotoType } from '../types';
 import { PhotoAnnotator } from '../components/clinical/PhotoAnnotator';
 import { PhotoComparison } from '../components/clinical/PhotoComparison';
 import { PhotoTimeline } from '../components/clinical/PhotoTimeline';
+import { ClinicalPhotoImage } from '../components/clinical/ClinicalPhotoImage';
 
 type ViewMode = 'grid' | 'list' | 'timeline' | 'comparison';
 type PhotoCategory = 'all' | 'clinical' | 'dermoscopy' | 'before-after' | 'other';
@@ -661,7 +662,7 @@ export function PhotosPage() {
                     setShowViewModal(true);
                   }}
                 >
-                  <img
+                  <ClinicalPhotoImage
                     src={getPhotoUrl(photo)}
                     alt={photo.description || 'Clinical photo'}
                     loading="lazy"
@@ -719,7 +720,7 @@ export function PhotosPage() {
               }}
             >
               <div className="photo-list-thumb">
-                <img
+                <ClinicalPhotoImage
                   src={getPhotoUrl(photo)}
                   alt={photo.description || 'Clinical photo'}
                   loading="lazy"
@@ -944,9 +945,10 @@ export function PhotosPage() {
         {selectedPhoto && (
           <div className="photo-view-modal">
             <div className="photo-view-image">
-              <img
+              <ClinicalPhotoImage
                 src={getPhotoUrl(selectedPhoto)}
                 alt={selectedPhoto.description || 'Clinical photo'}
+                loading="eager"
               />
             </div>
             <div className="photo-view-details">

@@ -56,6 +56,13 @@ async function canAccessUploadKey(tenantId: string, key: string): Promise<boolea
 
 export const serveUploadsRouter = Router();
 
+serveUploadsRouter.use((_req, res, next) => {
+  // Signed image URLs are embedded by the separate Railway frontend origin.
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader("Cache-Control", "private, max-age=300");
+  next();
+});
+
 serveUploadsRouter.post("/sign", requireAuth, async (req: AuthedRequest, res) => {
   const rawKey = req.body?.key;
   const key = normalizeUploadKey(rawKey);
@@ -86,6 +93,8 @@ serveUploadsRouter.get("/:key", async (req, res) => {
   const filePath = path.join(uploadRoot, safeKey);
   if (!filePath.startsWith(uploadRoot)) return res.status(400).json({ error: "Invalid path" });
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Not found" });
+  res.type(path.extname(filePath) || "application/octet-stream");
+  res.setHeader("Content-Disposition", `inline; filename="${safeKey.replace(/"/g, "")}"`);
   const stream = fs.createReadStream(filePath);
   stream.on("open", () => {
     stream.pipe(res);

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Photo } from '../../types';
+import { ClinicalPhotoImage } from './ClinicalPhotoImage';
 
 interface PhotoTimelineProps {
   photos: Photo[];
@@ -126,7 +127,7 @@ export function PhotoTimeline({ photos, getPhotoUrl, onPhotoClick }: PhotoTimeli
                     onClick={() => handlePhotoClick(photo)}
                   >
                     <div className="photo-thumbnail">
-                      <img src={getPhotoUrl(photo)} alt={photo.description || 'Photo'} />
+                      <ClinicalPhotoImage src={getPhotoUrl(photo)} alt={photo.description || 'Photo'} />
                       <span className={`photo-type-badge ${photo.photoType || 'clinical'}`}>
                         {getPhotoTypeLabel(photo)}
                       </span>

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import type { Photo } from '../../types';
+import { ClinicalPhotoImage } from './ClinicalPhotoImage';
 
 interface PhotoComparisonProps {
   photos: Photo[];
@@ -135,16 +136,20 @@ export function PhotoComparison({ photos, getPhotoUrl }: PhotoComparisonProps) {
           onMouseLeave={handleMouseUp}
         >
           <div className="comparison-image-container">
-            <img
+            <ClinicalPhotoImage
               src={getPhotoUrl(beforePhoto)}
               alt="Before"
+              className="comparison-photo-image"
+              loading="eager"
               style={imageStyle}
             />
           </div>
           <div className="comparison-image-container">
-            <img
+            <ClinicalPhotoImage
               src={getPhotoUrl(afterPhoto)}
               alt="After"
+              className="comparison-photo-image"
+              loading="eager"
               style={imageStyle}
             />
           </div>
@@ -162,19 +167,22 @@ export function PhotoComparison({ photos, getPhotoUrl }: PhotoComparisonProps) {
             onMouseLeave={handleMouseUp}
           >
             <div className="slider-images">
-              <img
+              <ClinicalPhotoImage
                 src={getPhotoUrl(afterPhoto)}
                 alt="After"
                 className="slider-image-full"
+                loading="eager"
                 style={imageStyle}
               />
               <div
                 className="slider-image-clipped"
                 style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
               >
-                <img
+                <ClinicalPhotoImage
                   src={getPhotoUrl(beforePhoto)}
                   alt="Before"
+                  className="comparison-photo-image"
+                  loading="eager"
                   style={imageStyle}
                 />
               </div>
@@ -218,16 +226,18 @@ export function PhotoComparison({ photos, getPhotoUrl }: PhotoComparisonProps) {
           onMouseLeave={handleMouseUp}
         >
           <div className="overlay-container">
-            <img
+            <ClinicalPhotoImage
               src={getPhotoUrl(afterPhoto)}
               alt="After"
               className="overlay-base"
+              loading="eager"
               style={imageStyle}
             />
-            <img
+            <ClinicalPhotoImage
               src={getPhotoUrl(beforePhoto)}
               alt="Before"
               className="overlay-top"
+              loading="eager"
               style={{
                 ...imageStyle,
                 opacity: overlayOpacity / 100,
@@ -254,7 +264,7 @@ export function PhotoComparison({ photos, getPhotoUrl }: PhotoComparisonProps) {
           <div className="timeline-photos">
             {photos.map((photo, index) => (
               <div key={photo.id} className="timeline-photo">
-                <img src={getPhotoUrl(photo)} alt={`Photo ${index + 1}`} />
+                <ClinicalPhotoImage src={getPhotoUrl(photo)} alt={`Photo ${index + 1}`} />
                 <div className="timeline-photo-info">
                   <span className="photo-number">#{index + 1}</span>
                   <span className="photo-date">

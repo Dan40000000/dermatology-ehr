@@ -165,12 +165,13 @@ export class SMSWorkflowService {
     }
 
     const row = result.rows[0];
+    const forceTestMode = process.env.NODE_ENV !== 'production';
     return {
       tenantId: row.tenant_id,
       twilioAccountSid: row.twilio_account_sid,
       twilioAuthToken: row.twilio_auth_token,
       twilioPhoneNumber: row.twilio_phone_number,
-      isTestMode: row.is_test_mode === true,
+      isTestMode: forceTestMode || row.is_test_mode === true,
       clinicName: row.clinic_name || 'Our Clinic',
       clinicPhone: row.clinic_phone || '',
       portalUrl: row.portal_url || '',

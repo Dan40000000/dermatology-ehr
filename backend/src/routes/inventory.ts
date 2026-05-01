@@ -72,6 +72,17 @@ function formatDateOnly(value: Date): string {
   return dateOnly || value.toISOString().slice(0, 10);
 }
 
+function coerceDateOnly(value: unknown): string {
+  if (value instanceof Date) {
+    return formatDateOnly(value);
+  }
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+  const parsed = value ? new Date(String(value)) : new Date();
+  return Number.isNaN(parsed.getTime()) ? formatDateOnly(new Date()) : formatDateOnly(parsed);
+}
+
 function addDays(baseDate: string, days: number): string {
   const date = new Date(`${baseDate}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
@@ -95,7 +106,7 @@ async function resolveUsageServiceDate(
   );
 
   if (appointmentResult.rowCount && appointmentResult.rows[0]?.serviceDate) {
-    return appointmentResult.rows[0].serviceDate;
+    return coerceDateOnly(appointmentResult.rows[0].serviceDate);
   }
 
   return formatDateOnly(new Date());
@@ -108,6 +119,8 @@ async function appendInventoryChargeToBill(params: {
   patientId: string;
   encounterId?: string;
   appointmentId?: string;
+  chargeId?: string;
+  serviceDate?: string;
   itemName: string;
   quantityUsed: number;
   sellPriceCents: number;
@@ -119,13 +132,14 @@ async function appendInventoryChargeToBill(params: {
     patientId,
     encounterId,
     appointmentId,
+    chargeId,
     itemName,
     quantityUsed,
     sellPriceCents,
   } = params;
 
   const lineTotalCents = sellPriceCents * quantityUsed;
-  const serviceDate = await resolveUsageServiceDate(client, tenantId, appointmentId);
+  const serviceDate = params.serviceDate || await resolveUsageServiceDate(client, tenantId, appointmentId);
 
   let billId: string | null = null;
 
@@ -213,11 +227,12 @@ async function appendInventoryChargeToBill(params: {
     `INSERT INTO bill_line_items(
       id, tenant_id, bill_id, charge_id, service_date, cpt_code, description, quantity,
       unit_price_cents, total_cents, icd_codes
-    ) VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8, $9, ARRAY[]::text[])`,
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ARRAY[]::text[])`,
     [
       billLineItemId,
       tenantId,
       billId,
+      chargeId || null,
       serviceDate,
       INVENTORY_BILL_LINE_CPT_CODE,
       `Inventory item: ${itemName}`,
@@ -829,7 +844,31 @@ inventoryRouter.post("/usage", requireAuth, requireRoles(["admin", "provider", "
     );
 
     let billId: string | null = null;
+    let inventoryChargeId: string | null = null;
     if (!givenAsSample && lineTotalCents > 0) {
+      const serviceDate = await resolveUsageServiceDate(client, tenantId, payload.appointmentId);
+      inventoryChargeId = crypto.randomUUID();
+
+      await client.query(
+        `INSERT INTO charges(
+          id, tenant_id, encounter_id, patient_id, service_date, cpt_code,
+          description, icd_codes, linked_diagnosis_ids, quantity,
+          fee_cents, amount_cents, amount, status, transaction_type, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, ARRAY[]::text[], ARRAY[]::text[], $8::integer, $9::integer, $10::integer, ROUND(($10::numeric / 100), 2), 'self_pay', 'charge', NOW())`,
+        [
+          inventoryChargeId,
+          tenantId,
+          payload.encounterId || null,
+          payload.patientId,
+          serviceDate,
+          INVENTORY_BILL_LINE_CPT_CODE,
+          `Inventory item: ${item.name}`,
+          payload.quantityUsed,
+          sellPriceCents,
+          lineTotalCents,
+        ]
+      );
+
       const billResult = await appendInventoryChargeToBill({
         client,
         tenantId,
@@ -837,6 +876,8 @@ inventoryRouter.post("/usage", requireAuth, requireRoles(["admin", "provider", "
         patientId: payload.patientId,
         encounterId: payload.encounterId,
         appointmentId: payload.appointmentId,
+        chargeId: inventoryChargeId,
+        serviceDate,
         itemName: item.name,
         quantityUsed: payload.quantityUsed,
         sellPriceCents,
@@ -851,6 +892,7 @@ inventoryRouter.post("/usage", requireAuth, requireRoles(["admin", "provider", "
       id: result.rows[0].id,
       usedAt: result.rows[0].used_at,
       billId,
+      chargeId: inventoryChargeId,
       patientChargeCents: lineTotalCents,
       message: `${payload.quantityUsed} units of ${item.name} recorded`
     });

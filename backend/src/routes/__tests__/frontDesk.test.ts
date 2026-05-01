@@ -167,9 +167,9 @@ describe("Front desk routes", () => {
     expect(res.body.paymentConfirmationEmailAddress).toBe("patient@example.com");
   });
 
-  it("POST /front-desk/check-out returns success", async () => {
+  it("POST /front-desk/check-out returns checkout review state without payment due", async () => {
     serviceMock.checkOutPatient.mockResolvedValueOnce({
-      status: "completed",
+      status: "checkout",
       requiresPayment: false,
       paymentDueCents: 0,
     } as any);
@@ -178,7 +178,8 @@ describe("Front desk routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.status).toBe("completed");
+    expect(res.body.status).toBe("checkout");
+    expect(res.body.requiresPayment).toBe(false);
     expect(auditLog).toHaveBeenCalled();
   });
 

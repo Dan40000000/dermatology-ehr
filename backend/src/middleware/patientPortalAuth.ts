@@ -167,13 +167,13 @@ async function logPatientAccess(
       [
         auditId,
         tenantId,
-        accountId, // Use account ID as user_id for patient portal
+        null,
         `patient_portal_${method.toLowerCase()}`,
         'patient_portal_access',
         patientId,
         ipAddress || null,
         userAgent || null,
-        JSON.stringify({ path, timestamp: new Date().toISOString() }),
+        JSON.stringify({ accountId, path, timestamp: new Date().toISOString() }),
         'info',
         'success'
       ]

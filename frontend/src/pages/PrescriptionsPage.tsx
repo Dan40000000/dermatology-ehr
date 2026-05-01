@@ -19,12 +19,66 @@ import {
   getLastPDMPCheck,
   fetchPatientMedicationHistory,
   checkFormulary,
+  fetchPrescriptionsEnhanced,
 } from '../api';
 import type { Order, Patient } from '../types';
 import { PARequestModal, PAStatusBadge, PADetailModal, DrugInteractionChecker } from '../components/prescriptions';
 
 type RxFilter = 'all' | 'pending' | 'ordered' | 'completed' | 'cancelled';
 type TabType = 'prescriptions' | 'refills';
+type PrescriptionApiRecord = Record<string, any>;
+
+const toDisplayString = (value: unknown) => {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
+};
+
+const readRxField = (rx: PrescriptionApiRecord, camelKey: string, snakeKey: string) =>
+  rx[camelKey] ?? rx[snakeKey];
+
+const normalizePrescriptionStatus = (status: unknown): Order['status'] => {
+  const normalized = toDisplayString(status).toLowerCase();
+  if (normalized === 'sent' || normalized === 'transmitted') return 'ordered';
+  if (normalized === 'discontinued') return 'cancelled';
+  if (['pending', 'ordered', 'completed', 'cancelled', 'draft', 'open', 'closed', 'canceled', 'in-progress'].includes(normalized)) {
+    return normalized as Order['status'];
+  }
+  return 'pending';
+};
+
+const buildPrescriptionDetails = (rx: PrescriptionApiRecord) => {
+  const medicationName = toDisplayString(readRxField(rx, 'medicationName', 'medication_name'));
+  const strength = toDisplayString(rx.strength);
+  const quantity = toDisplayString(rx.quantity);
+  const quantityUnit = toDisplayString(readRxField(rx, 'quantityUnit', 'quantity_unit'));
+  const sig = toDisplayString(rx.sig);
+  const refills = toDisplayString(rx.refills);
+  const pharmacyName = toDisplayString(readRxField(rx, 'pharmacyName', 'pharmacy_name'));
+  const indication = toDisplayString(rx.indication);
+
+  return [
+    [medicationName, strength].filter(Boolean).join(' '),
+    [quantity, quantityUnit].filter(Boolean).join(' ') && `Qty: ${[quantity, quantityUnit].filter(Boolean).join(' ')}`,
+    sig && `Sig: ${sig}`,
+    refills && `Refills: ${refills}`,
+    pharmacyName && `Pharmacy: ${pharmacyName}`,
+    indication && `Indication: ${indication}`,
+  ].filter(Boolean).join('\n');
+};
+
+const normalizeClinicalPrescription = (rx: PrescriptionApiRecord): Order => ({
+  id: toDisplayString(rx.id),
+  tenantId: toDisplayString(readRxField(rx, 'tenantId', 'tenant_id')),
+  encounterId: toDisplayString(readRxField(rx, 'encounterId', 'encounter_id')) || undefined,
+  patientId: toDisplayString(readRxField(rx, 'patientId', 'patient_id')),
+  providerId: toDisplayString(readRxField(rx, 'providerId', 'provider_id')),
+  providerName: toDisplayString(rx.providerName) || undefined,
+  type: 'rx',
+  status: normalizePrescriptionStatus(rx.status),
+  details: buildPrescriptionDetails(rx),
+  notes: toDisplayString(rx.notes) || undefined,
+  createdAt: toDisplayString(readRxField(rx, 'createdAt', 'created_at') ?? readRxField(rx, 'writtenDate', 'written_date')) || new Date().toISOString(),
+});
 
 const DERM_MEDICATIONS = [
   // TOPICAL CORTICOSTEROIDS - Class 1 (Super Potent)
@@ -295,6 +349,7 @@ export function PrescriptionsPage() {
     try {
       const promises = [
         fetchOrders(session.tenantId, session.accessToken),
+        fetchPrescriptionsEnhanced(session.tenantId, session.accessToken),
         fetchPatients(session.tenantId, session.accessToken),
         fetchPARequests(session.tenantId, session.accessToken),
       ];
@@ -305,16 +360,24 @@ export function PrescriptionsPage() {
 
       const results = await Promise.all(promises);
       const ordersRes = results[0];
-      const patientsRes = results[1];
-      const paRequestsRes = results[2];
+      const prescriptionsRes = results[1];
+      const patientsRes = results[2];
+      const paRequestsRes = results[3];
 
       const rxOrders = (ordersRes.orders || []).filter((o: Order) => o.type === 'rx');
-      setPrescriptions(rxOrders);
+      const clinicalPrescriptions = (prescriptionsRes.prescriptions || [])
+        .map(normalizeClinicalPrescription)
+        .filter((rx: Order) => rx.id && rx.patientId);
+      const mergedRxById = new Map<string, Order>();
+      [...clinicalPrescriptions, ...rxOrders].forEach((rx) => {
+        mergedRxById.set(rx.id, rx);
+      });
+      setPrescriptions(Array.from(mergedRxById.values()));
       setPatients(patientsRes.data || patientsRes.patients || []);
       setPaRequests(paRequestsRes || []);
 
-      if (activeTab === 'refills' && results[3]) {
-        setRefillRequests((results[3] as any).refillRequests || []);
+      if (activeTab === 'refills' && results[4]) {
+        setRefillRequests((results[4] as any).refillRequests || []);
       }
     } catch (err: any) {
       showError(err.message || 'Failed to load prescriptions');

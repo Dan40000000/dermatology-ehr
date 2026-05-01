@@ -290,7 +290,7 @@ patientPortalRouter.post(
         [
           crypto.randomUUID(),
           tenantId,
-          accountId,
+          null,
           'patient_portal_register',
           'patient_portal_account',
           accountId,
@@ -395,14 +395,14 @@ patientPortalRouter.post(
           [
             crypto.randomUUID(),
             tenantId,
-            account.id,
+            null,
             'patient_portal_failed_login',
             'patient_portal_account',
             req.ip,
             req.get('user-agent'),
             'warning',
             'failure',
-            JSON.stringify({ attempts: newFailedAttempts, locked: lockAccount })
+            JSON.stringify({ accountId: account.id, attempts: newFailedAttempts, locked: lockAccount })
           ]
         );
 
@@ -523,7 +523,7 @@ patientPortalRouter.post("/logout", requirePatientAuth, async (req: PatientPorta
       [
         crypto.randomUUID(),
         req.patient!.tenantId,
-        req.patient!.accountId,
+        null,
         'patient_portal_logout',
         'patient_portal_account',
         'info',
@@ -684,7 +684,7 @@ patientPortalRouter.post(
         [
           crypto.randomUUID(),
           tenantId,
-          account.id,
+          null,
           'patient_portal_password_reset',
           'patient_portal_account',
           account.patient_id,
@@ -787,13 +787,13 @@ patientPortalRouter.post("/security/change-password", requirePatientAuth, async 
       [
         crypto.randomUUID(),
         req.patient!.tenantId,
-        req.patient!.accountId,
+        null,
         'patient_portal_password_change',
         'patient_portal_account',
         req.patient!.accountId,
         'info',
         'success',
-        JSON.stringify({ patientId: req.patient!.patientId })
+        JSON.stringify({ accountId: req.patient!.accountId, patientId: req.patient!.patientId })
       ]
     );
 
@@ -857,7 +857,7 @@ patientPortalRouter.put("/me", requirePatientAuth, async (req: PatientPortalRequ
       [
         crypto.randomUUID(),
         req.patient!.tenantId,
-        req.patient!.accountId,
+        null,
         'patient_portal_profile_update',
         'patient',
         req.patient!.patientId,

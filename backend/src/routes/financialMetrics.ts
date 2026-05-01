@@ -358,16 +358,54 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
            and payment_date <= $3
          group by payment_date::date
        ),
-       revenue as (
+       appointment_revenue as (
+         select
+           coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date as day,
+           coalesce(sum(
+             case
+               when c.status is null or c.status <> 'void' then coalesce(c.amount_cents, 0)
+               else 0
+             end
+           ), 0) as revenue_earned_cents
+         from appointments a
+         left join encounters e
+           on e.appointment_id = a.id
+          and e.tenant_id = a.tenant_id
+         left join charges c
+           on c.encounter_id = e.id
+          and c.tenant_id = a.tenant_id
+         where a.tenant_id = $1
+           and a.status = 'completed'
+           and coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date >= $2::date
+           and coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date <= $3::date
+         group by a.id, coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date
+       ),
+       standalone_bill_revenue as (
          select
            bill_date::date as day,
-           coalesce(sum(total_charges_cents), 0) as revenue_earned_cents,
-           count(*) as bill_count
+           coalesce(total_charges_cents, 0) as revenue_earned_cents
          from bills
          where tenant_id = $1
+           and encounter_id is null
            and bill_date >= $2
            and bill_date <= $3
-         group by bill_date::date
+       ),
+       revenue_items as (
+         select day, revenue_earned_cents
+         from appointment_revenue
+         where revenue_earned_cents > 0
+         union all
+         select day, revenue_earned_cents
+         from standalone_bill_revenue
+         where revenue_earned_cents > 0
+       ),
+       revenue as (
+         select
+           day,
+           coalesce(sum(revenue_earned_cents), 0) as revenue_earned_cents,
+           count(*) as bill_count
+         from revenue_items
+         group by day
        )
        select
          d.day::text as date,
@@ -385,30 +423,69 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
       [tenantId, startDate, endDate],
       ),
       pool.query(
-        `select
-           b.bill_date::date::text as day,
-           b.total_charges_cents,
-           b.notes,
-           max(at.name) as appointment_type_name,
-           string_agg(distinct coalesce(bli.cpt_code, ''), ',') as cpt_codes,
-           string_agg(distinct coalesce(bli.description, ''), ' | ') as line_descriptions,
-           b.encounter_id::text as encounter_id
-         from bills b
-         left join bill_line_items bli
-           on bli.bill_id = b.id
-          and bli.tenant_id = b.tenant_id
-         left join encounters e
-           on e.id = b.encounter_id
-          and e.tenant_id = b.tenant_id
-         left join appointments a
-           on a.id = e.appointment_id
-          and a.tenant_id = b.tenant_id
-         left join appointment_types at
-           on at.id = a.appointment_type_id
-         where b.tenant_id = $1
-           and b.bill_date >= $2
-           and b.bill_date <= $3
-         group by b.id, b.bill_date, b.total_charges_cents, b.notes, b.encounter_id`,
+        `with appointment_revenue as (
+           select
+             coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date::text as day,
+             coalesce(sum(
+               case
+                 when c.status is null or c.status <> 'void' then coalesce(c.amount_cents, 0)
+                 else 0
+               end
+             ), 0) as total_charges_cents,
+             null::text as notes,
+             max(at.name) as appointment_type_name,
+             string_agg(distinct coalesce(c.cpt_code, ''), ',') as cpt_codes,
+             string_agg(distinct coalesce(c.description, ''), ' | ') as line_descriptions,
+             max(e.id)::text as encounter_id
+           from appointments a
+           join appointment_types at
+             on at.id = a.appointment_type_id
+           left join encounters e
+             on e.appointment_id = a.id
+            and e.tenant_id = a.tenant_id
+           left join charges c
+             on c.encounter_id = e.id
+            and c.tenant_id = a.tenant_id
+           where a.tenant_id = $1
+             and a.status = 'completed'
+             and coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date >= $2::date
+             and coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date <= $3::date
+           group by a.id, coalesce(a.completed_at, a.scheduled_end, a.scheduled_start)::date
+         ),
+         standalone_bill_revenue as (
+           select
+             b.bill_date::date::text as day,
+             b.total_charges_cents,
+             b.notes,
+             max(at.name) as appointment_type_name,
+             string_agg(distinct coalesce(bli.cpt_code, ''), ',') as cpt_codes,
+             string_agg(distinct coalesce(bli.description, ''), ' | ') as line_descriptions,
+             b.encounter_id::text as encounter_id
+           from bills b
+           left join bill_line_items bli
+             on bli.bill_id = b.id
+            and bli.tenant_id = b.tenant_id
+           left join encounters e
+             on e.id = b.encounter_id
+            and e.tenant_id = b.tenant_id
+           left join appointments a
+             on a.id = e.appointment_id
+            and a.tenant_id = b.tenant_id
+           left join appointment_types at
+             on at.id = a.appointment_type_id
+           where b.tenant_id = $1
+             and b.encounter_id is null
+             and b.bill_date >= $2
+             and b.bill_date <= $3
+           group by b.id, b.bill_date, b.total_charges_cents, b.notes, b.encounter_id
+         )
+         select *
+         from appointment_revenue
+         where total_charges_cents > 0
+         union all
+         select *
+         from standalone_bill_revenue
+         where total_charges_cents > 0`,
         [tenantId, startDate, endDate],
       ),
     ]);

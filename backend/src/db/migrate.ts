@@ -10801,6 +10801,855 @@ Consider age-appropriate treatments and include family counseling points.',
       WHERE downtime_primary_device_id IS NOT NULL;
     `,
   },
+  {
+    name: "154_prescription_schema_alignment",
+    sql: `
+    -- Align older text-id demo databases with the current prescriptions API.
+    -- Some standalone SQL migrations used UUID foreign keys, but this app's
+    -- active schema stores tenant/patient/provider/user identifiers as text.
+    CREATE TABLE IF NOT EXISTS medications (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      name TEXT NOT NULL,
+      generic_name TEXT,
+      brand_name TEXT,
+      strength TEXT,
+      dosage_form TEXT,
+      route TEXT,
+      dea_schedule TEXT,
+      is_controlled BOOLEAN DEFAULT false,
+      category TEXT,
+      rxcui TEXT,
+      ndc TEXT,
+      manufacturer TEXT,
+      typical_sig TEXT,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS pharmacies (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
+      ncpdp_id TEXT UNIQUE,
+      name TEXT NOT NULL,
+      phone TEXT,
+      fax TEXT,
+      email TEXT,
+      street TEXT,
+      city TEXT,
+      state TEXT,
+      zip TEXT,
+      is_preferred BOOLEAN DEFAULT false,
+      is_24_hour BOOLEAN DEFAULT false,
+      accepts_erx BOOLEAN DEFAULT true,
+      notes TEXT,
+      chain TEXT,
+      hours JSONB DEFAULT '{}'::jsonb,
+      latitude NUMERIC(10, 8),
+      longitude NUMERIC(11, 8),
+      surescripts_enabled BOOLEAN DEFAULT true,
+      capabilities JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    ALTER TABLE prescriptions
+      ADD COLUMN IF NOT EXISTS encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS medication_id TEXT,
+      ADD COLUMN IF NOT EXISTS generic_name TEXT,
+      ADD COLUMN IF NOT EXISTS dosage_form TEXT,
+      ADD COLUMN IF NOT EXISTS pharmacy_phone TEXT,
+      ADD COLUMN IF NOT EXISTS pharmacy_address TEXT,
+      ADD COLUMN IF NOT EXISTS daw BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS is_controlled BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS dea_schedule TEXT,
+      ADD COLUMN IF NOT EXISTS indication TEXT,
+      ADD COLUMN IF NOT EXISTS notes TEXT,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now(),
+      ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS updated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS transmitted_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS surescripts_message_id TEXT,
+      ADD COLUMN IF NOT EXISTS surescripts_transaction_id TEXT,
+      ADD COLUMN IF NOT EXISTS error_message TEXT,
+      ADD COLUMN IF NOT EXISTS error_code TEXT,
+      ADD COLUMN IF NOT EXISTS filled_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS fill_pharmacy TEXT,
+      ADD COLUMN IF NOT EXISTS last_filled_date TIMESTAMPTZ;
+
+    UPDATE prescriptions
+    SET refills_remaining = COALESCE(refills_remaining, refills, 0)
+    WHERE refills_remaining IS NULL;
+
+    ALTER TABLE prescriptions
+      ALTER COLUMN daw SET DEFAULT false,
+      ALTER COLUMN is_controlled SET DEFAULT false,
+      ALTER COLUMN updated_at SET DEFAULT now();
+
+    CREATE TABLE IF NOT EXISTS prescription_audit_log (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      prescription_id TEXT NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ip_address TEXT,
+      metadata JSONB,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS prescription_refills (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      prescription_id TEXT NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      fill_number INTEGER NOT NULL,
+      filled_date TIMESTAMPTZ NOT NULL DEFAULT now(),
+      quantity_filled NUMERIC(10,2) NOT NULL,
+      pharmacy_id TEXT,
+      pharmacy_name TEXT,
+      pharmacy_ncpdp TEXT,
+      filled_by_provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+      filled_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      refill_method TEXT DEFAULT 'erx',
+      refill_request_date TIMESTAMPTZ,
+      cost_to_patient_cents INTEGER,
+      insurance_paid_cents INTEGER,
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS derm_medication_tracking (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      prescription_id TEXT NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE,
+      medication_category TEXT,
+      ipledge_enrollment_id TEXT,
+      ipledge_risk_category TEXT,
+      pregnancy_test_required BOOLEAN DEFAULT false,
+      last_pregnancy_test_date DATE,
+      next_pregnancy_test_due DATE,
+      contraception_method TEXT,
+      ipledge_survey_completed_date DATE,
+      biologic_name TEXT,
+      loading_dose_completed BOOLEAN DEFAULT false,
+      maintenance_dose_frequency TEXT,
+      last_injection_date DATE,
+      next_injection_due DATE,
+      injection_location TEXT,
+      lot_number TEXT,
+      expiration_date DATE,
+      prior_auth_required BOOLEAN DEFAULT false,
+      prior_auth_number TEXT,
+      prior_auth_approved_date DATE,
+      prior_auth_expiration_date DATE,
+      prior_auth_status TEXT,
+      requires_lab_monitoring BOOLEAN DEFAULT false,
+      last_lab_date DATE,
+      next_lab_due DATE,
+      lab_type TEXT,
+      max_monthly_quantity NUMERIC(10,2),
+      specialty_pharmacy_required BOOLEAN DEFAULT false,
+      specialty_pharmacy_name TEXT,
+      clinical_notes TEXT,
+      status TEXT DEFAULT 'active',
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now(),
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      updated_by TEXT REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pharmacies_tenant ON pharmacies(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_pharmacies_ncpdp ON pharmacies(ncpdp_id);
+    CREATE INDEX IF NOT EXISTS idx_pharmacies_name ON pharmacies(name);
+    CREATE INDEX IF NOT EXISTS idx_prescriptions_encounter ON prescriptions(tenant_id, encounter_id);
+    CREATE INDEX IF NOT EXISTS idx_prescriptions_patient_created ON prescriptions(tenant_id, patient_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_prescriptions_controlled ON prescriptions(tenant_id, is_controlled) WHERE is_controlled = true;
+    CREATE INDEX IF NOT EXISTS idx_prescription_audit_prescription ON prescription_audit_log(prescription_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_prescription_refills_prescription ON prescription_refills(prescription_id, filled_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_prescription_refills_patient ON prescription_refills(patient_id, filled_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_derm_medication_tracking_patient ON derm_medication_tracking(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_derm_medication_tracking_prescription ON derm_medication_tracking(prescription_id);
+
+    CREATE OR REPLACE FUNCTION set_refills_remaining()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF NEW.refills_remaining IS NULL THEN
+        NEW.refills_remaining := COALESCE(NEW.refills, 0);
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_set_refills_remaining ON prescriptions;
+    CREATE TRIGGER trigger_set_refills_remaining
+      BEFORE INSERT ON prescriptions
+      FOR EACH ROW
+      EXECUTE FUNCTION set_refills_remaining();
+
+    CREATE OR REPLACE FUNCTION update_prescription_updated_at()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.updated_at := now();
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_update_prescription_updated_at ON prescriptions;
+    CREATE TRIGGER trigger_update_prescription_updated_at
+      BEFORE UPDATE ON prescriptions
+      FOR EACH ROW
+      EXECUTE FUNCTION update_prescription_updated_at();
+    `,
+  },
+  {
+    name: "155_fee_schedule_amount_compat",
+    sql: `
+    ALTER TABLE fee_schedule_items
+      ADD COLUMN IF NOT EXISTS fee_amount NUMERIC(10,2);
+
+    UPDATE fee_schedule_items
+    SET fee_amount = ROUND((fee_cents::numeric / 100), 2)
+    WHERE fee_amount IS NULL
+      AND fee_cents IS NOT NULL;
+    `,
+  },
+  {
+    name: "156_claims_portal_workflow_compat",
+    sql: `
+    -- Compatibility for local/demo databases that predate the encounter billing chain.
+    ALTER TABLE claims
+      ADD COLUMN IF NOT EXISTS line_items JSONB DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS paid_cents INT DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'unpaid';
+
+    CREATE TABLE IF NOT EXISTS claim_line_items (
+      id TEXT PRIMARY KEY,
+      claim_id TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+      charge_id TEXT REFERENCES charges(id),
+      cpt_code TEXT NOT NULL,
+      description TEXT,
+      diagnosis_codes TEXT[],
+      modifiers TEXT[],
+      quantity INT DEFAULT 1,
+      amount_cents INT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_claim_line_items_claim ON claim_line_items(claim_id);
+    CREATE INDEX IF NOT EXISTS idx_claim_line_items_charge ON claim_line_items(charge_id);
+
+    -- Appointment booking workflows expect these operational tables even when
+    -- no external integrations are configured.
+    CREATE TABLE IF NOT EXISTS integrations (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      webhook_url TEXT,
+      channel_name TEXT,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      notification_types TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (tenant_id, type)
+    );
+
+    CREATE TABLE IF NOT EXISTS integration_notification_logs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      integration_id TEXT REFERENCES integrations(id) ON DELETE SET NULL,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      notification_type TEXT NOT NULL,
+      success BOOLEAN NOT NULL DEFAULT false,
+      error_message TEXT,
+      payload JSONB,
+      sent_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_integrations_tenant_enabled ON integrations(tenant_id, enabled);
+    CREATE INDEX IF NOT EXISTS idx_integration_notification_logs_tenant ON integration_notification_logs(tenant_id, sent_at DESC);
+
+    CREATE TABLE IF NOT EXISTS workflow_events (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      data JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_errors (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      error_message TEXT NOT NULL,
+      stack_trace TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS eligibility_check_queue (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      appointment_id TEXT REFERENCES appointments(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      processed_at TIMESTAMPTZ
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workflow_events_tenant_created ON workflow_events(tenant_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_workflow_errors_tenant_created ON workflow_errors(tenant_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_eligibility_check_queue_pending ON eligibility_check_queue(tenant_id, status, created_at);
+    `,
+  },
+  {
+    name: "157_prior_auth_rules_text_compat",
+    sql: `
+    CREATE TABLE IF NOT EXISTS prior_auth_rules (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      payer_id TEXT,
+      appointment_type TEXT,
+      cpt_code TEXT,
+      lab_code TEXT,
+      medication_id TEXT,
+      diagnosis_codes TEXT[],
+      is_active BOOLEAN DEFAULT TRUE,
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_prior_auth_rules_lookup
+      ON prior_auth_rules(tenant_id, is_active);
+    CREATE INDEX IF NOT EXISTS idx_prior_auth_rules_appointment_type
+      ON prior_auth_rules(tenant_id, appointment_type)
+      WHERE appointment_type IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_prior_auth_rules_cpt_code
+      ON prior_auth_rules(tenant_id, cpt_code)
+      WHERE cpt_code IS NOT NULL;
+    `,
+  },
+  {
+    name: "158_appointment_legacy_time_and_analytics_compat",
+    sql: `
+    ALTER TABLE appointments
+      ADD COLUMN IF NOT EXISTS start_time TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ;
+
+    UPDATE appointments
+    SET start_time = COALESCE(start_time, scheduled_start),
+        end_time = COALESCE(end_time, scheduled_end)
+    WHERE start_time IS NULL
+       OR end_time IS NULL;
+
+    CREATE OR REPLACE FUNCTION sync_appointment_legacy_times()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.start_time := COALESCE(NEW.start_time, NEW.scheduled_start);
+      NEW.end_time := COALESCE(NEW.end_time, NEW.scheduled_end);
+      NEW.scheduled_start := COALESCE(NEW.scheduled_start, NEW.start_time);
+      NEW.scheduled_end := COALESCE(NEW.scheduled_end, NEW.end_time);
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_sync_appointment_legacy_times ON appointments;
+    CREATE TRIGGER trigger_sync_appointment_legacy_times
+      BEFORE INSERT OR UPDATE ON appointments
+      FOR EACH ROW
+      EXECUTE FUNCTION sync_appointment_legacy_times();
+
+    CREATE INDEX IF NOT EXISTS idx_appointments_start_time
+      ON appointments(tenant_id, start_time);
+
+    CREATE TABLE IF NOT EXISTS daily_analytics (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      date DATE NOT NULL,
+      metric TEXT NOT NULL,
+      value INTEGER NOT NULL DEFAULT 0,
+      metadata JSONB DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (tenant_id, date, metric)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_daily_analytics_lookup
+      ON daily_analytics(tenant_id, date, metric);
+    CREATE INDEX IF NOT EXISTS idx_daily_analytics_recent
+      ON daily_analytics(tenant_id, date DESC);
+    `,
+  },
+  {
+    name: "159_scheduled_reminders_workflow_compat",
+    sql: `
+    ALTER TABLE scheduled_reminders
+      ADD COLUMN IF NOT EXISTS scheduled_time TIMESTAMPTZ;
+
+    ALTER TABLE scheduled_reminders
+      ALTER COLUMN patient_id DROP NOT NULL,
+      ALTER COLUMN channel DROP NOT NULL,
+      ALTER COLUMN scheduled_for DROP NOT NULL;
+
+    UPDATE scheduled_reminders
+    SET scheduled_time = COALESCE(scheduled_time, scheduled_for),
+        scheduled_for = COALESCE(scheduled_for, scheduled_time)
+    WHERE scheduled_time IS NULL
+       OR scheduled_for IS NULL;
+
+    CREATE OR REPLACE FUNCTION sync_scheduled_reminder_times()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.scheduled_time := COALESCE(NEW.scheduled_time, NEW.scheduled_for);
+      NEW.scheduled_for := COALESCE(NEW.scheduled_for, NEW.scheduled_time);
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_sync_scheduled_reminder_times ON scheduled_reminders;
+    CREATE TRIGGER trigger_sync_scheduled_reminder_times
+      BEFORE INSERT OR UPDATE ON scheduled_reminders
+      FOR EACH ROW
+      EXECUTE FUNCTION sync_scheduled_reminder_times();
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_reminders_appointment_type
+      ON scheduled_reminders(appointment_id, reminder_type);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_reminders_scheduled_time
+      ON scheduled_reminders(scheduled_time);
+    `,
+  },
+  {
+    name: "160_scheduled_reminders_status_compat",
+    sql: `
+    ALTER TABLE scheduled_reminders
+      DROP CONSTRAINT IF EXISTS scheduled_reminders_status_check;
+
+    ALTER TABLE scheduled_reminders
+      ADD CONSTRAINT scheduled_reminders_status_check
+      CHECK (status IN ('pending', 'scheduled', 'sent', 'failed', 'cancelled', 'canceled'));
+    `,
+  },
+  {
+    name: "161_sms_workflow_runtime_compat",
+    sql: `
+    ALTER TABLE sms_settings
+      ADD COLUMN IF NOT EXISTS clinic_name TEXT,
+      ADD COLUMN IF NOT EXISTS clinic_phone TEXT,
+      ADD COLUMN IF NOT EXISTS portal_url TEXT;
+
+    UPDATE sms_settings ss
+    SET clinic_name = COALESCE(ss.clinic_name, t.practice_name, 'Demo Dermatology'),
+        clinic_phone = COALESCE(ss.clinic_phone, t.practice_phone, '(555) 123-4567'),
+        portal_url = COALESCE(ss.portal_url, 'http://localhost:5173/portal/login')
+    FROM tenants t
+    WHERE t.id = ss.tenant_id;
+
+    ALTER TABLE patient_sms_preferences
+      ADD COLUMN IF NOT EXISTS lab_results BOOLEAN DEFAULT true,
+      ADD COLUMN IF NOT EXISTS billing_notifications BOOLEAN DEFAULT true,
+      ADD COLUMN IF NOT EXISTS marketing BOOLEAN DEFAULT false;
+
+    UPDATE patient_sms_preferences
+    SET marketing = COALESCE(marketing, marketing_messages, false)
+    WHERE marketing IS NULL;
+
+    ALTER TABLE sms_messages
+      ALTER COLUMN content DROP NOT NULL;
+
+    CREATE OR REPLACE FUNCTION sync_sms_message_body_fields()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.message_body := COALESCE(NEW.message_body, NEW.body, NEW.content);
+      NEW.body := COALESCE(NEW.body, NEW.message_body, NEW.content);
+      NEW.content := COALESCE(NEW.content, NEW.message_body, NEW.body, '');
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_sync_sms_message_body_fields ON sms_messages;
+    CREATE TRIGGER trigger_sync_sms_message_body_fields
+      BEFORE INSERT OR UPDATE ON sms_messages
+      FOR EACH ROW
+      EXECUTE FUNCTION sync_sms_message_body_fields();
+    `,
+  },
+  {
+    name: "162_insurance_verification_runtime_compat",
+    sql: `
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    ALTER TABLE patients
+      ADD COLUMN IF NOT EXISTS eligibility_status TEXT DEFAULT 'unknown',
+      ADD COLUMN IF NOT EXISTS eligibility_checked_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS copay_amount_cents INTEGER,
+      ADD COLUMN IF NOT EXISTS latest_verification_id TEXT;
+
+    ALTER TABLE appointments
+      ADD COLUMN IF NOT EXISTS scheduled_time TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS appointment_date DATE;
+
+    UPDATE appointments
+    SET scheduled_time = COALESCE(scheduled_time, scheduled_start, start_time),
+        appointment_date = COALESCE(appointment_date, scheduled_start::date, start_time::date)
+    WHERE scheduled_time IS NULL
+       OR appointment_date IS NULL;
+
+    CREATE OR REPLACE FUNCTION sync_appointment_legacy_times()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.scheduled_start := COALESCE(NEW.scheduled_start, NEW.scheduled_time, NEW.start_time);
+      NEW.start_time := COALESCE(NEW.start_time, NEW.scheduled_start, NEW.scheduled_time);
+      NEW.scheduled_time := COALESCE(NEW.scheduled_time, NEW.scheduled_start, NEW.start_time);
+      NEW.scheduled_end := COALESCE(
+        NEW.scheduled_end,
+        NEW.end_time,
+        CASE WHEN NEW.scheduled_start IS NOT NULL THEN NEW.scheduled_start + INTERVAL '30 minutes' END
+      );
+      NEW.end_time := COALESCE(NEW.end_time, NEW.scheduled_end);
+      NEW.appointment_date := COALESCE(NEW.appointment_date, NEW.scheduled_time::date, NEW.scheduled_start::date);
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_sync_appointment_legacy_times ON appointments;
+    CREATE TRIGGER trigger_sync_appointment_legacy_times
+      BEFORE INSERT OR UPDATE ON appointments
+      FOR EACH ROW
+      EXECUTE FUNCTION sync_appointment_legacy_times();
+
+    CREATE INDEX IF NOT EXISTS idx_appointments_scheduled_time
+      ON appointments(tenant_id, scheduled_time);
+    CREATE INDEX IF NOT EXISTS idx_appointments_appointment_date
+      ON appointments(tenant_id, appointment_date);
+
+    CREATE TABLE IF NOT EXISTS patient_insurance (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      insurance_type TEXT DEFAULT 'primary',
+      is_primary BOOLEAN NOT NULL DEFAULT true,
+      payer_id TEXT,
+      payer_name TEXT,
+      plan_name TEXT,
+      plan_type TEXT,
+      member_id TEXT,
+      group_number TEXT,
+      subscriber_first_name TEXT,
+      subscriber_last_name TEXT,
+      subscriber_dob DATE,
+      relationship_to_subscriber TEXT DEFAULT 'self',
+      effective_date DATE,
+      termination_date DATE,
+      copay_pcp_cents INTEGER,
+      copay_specialist_cents INTEGER,
+      copay_er_cents INTEGER,
+      copay_urgent_care_cents INTEGER,
+      claims_phone TEXT,
+      prior_auth_phone TEXT,
+      member_services_phone TEXT,
+      front_card_image_url TEXT,
+      back_card_image_url TEXT,
+      rx_bin TEXT,
+      rx_pcn TEXT,
+      rx_group TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_patient_insurance_primary
+      ON patient_insurance(tenant_id, patient_id)
+      WHERE is_primary = true;
+    CREATE INDEX IF NOT EXISTS idx_patient_insurance_tenant
+      ON patient_insurance(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_insurance_patient
+      ON patient_insurance(patient_id);
+
+    INSERT INTO patient_insurance (
+      tenant_id, patient_id, payer_id, payer_name, plan_name, member_id, group_number, is_primary
+    )
+    SELECT
+      p.tenant_id,
+      p.id,
+      NULLIF(p.insurance_payer_id, ''),
+      COALESCE(NULLIF(p.insurance, ''), NULLIF(p.insurance_plan_name, ''), 'Unknown'),
+      NULLIF(p.insurance_plan_name, ''),
+      NULLIF(p.insurance_member_id, ''),
+      NULLIF(p.insurance_group_number, ''),
+      true
+    FROM patients p
+    WHERE NULLIF(p.insurance_member_id, '') IS NOT NULL
+       OR NULLIF(p.insurance, '') IS NOT NULL
+       OR NULLIF(p.insurance_plan_name, '') IS NOT NULL
+    ON CONFLICT DO NOTHING;
+
+    CREATE TABLE IF NOT EXISTS insurance_verifications (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      payer_id TEXT,
+      payer_name TEXT,
+      member_id TEXT,
+      group_number TEXT,
+      plan_name TEXT,
+      plan_type TEXT,
+      verification_status TEXT NOT NULL DEFAULT 'pending',
+      coverage_details JSONB DEFAULT '{}'::jsonb,
+      effective_date DATE,
+      termination_date DATE,
+      pcp_required BOOLEAN DEFAULT false,
+      pcp_name TEXT,
+      copay_specialist_cents INTEGER,
+      copay_pcp_cents INTEGER,
+      copay_er_cents INTEGER,
+      copay_urgent_care_cents INTEGER,
+      copay_amount_cents INTEGER,
+      copay_amount INTEGER,
+      specialist_copay INTEGER,
+      deductible_total_cents INTEGER,
+      deductible_met_cents INTEGER,
+      deductible_remaining_cents INTEGER,
+      deductible_family_total_cents INTEGER,
+      deductible_family_met_cents INTEGER,
+      deductible_total INTEGER,
+      deductible_met INTEGER,
+      deductible_remaining INTEGER,
+      coinsurance_pct NUMERIC(5,2),
+      coinsurance_percent NUMERIC(5,2),
+      oop_max_cents INTEGER,
+      oop_met_cents INTEGER,
+      oop_remaining_cents INTEGER,
+      oop_family_max_cents INTEGER,
+      oop_family_met_cents INTEGER,
+      out_of_pocket_max_cents INTEGER,
+      out_of_pocket_met_cents INTEGER,
+      out_of_pocket_remaining_cents INTEGER,
+      oop_max INTEGER,
+      oop_met INTEGER,
+      oop_remaining INTEGER,
+      prior_auth_required BOOLEAN DEFAULT false,
+      prior_auth_phone TEXT,
+      referral_required BOOLEAN DEFAULT false,
+      in_network BOOLEAN DEFAULT true,
+      network_name TEXT,
+      coverage_level TEXT,
+      coordination_of_benefits TEXT,
+      subscriber_relationship TEXT,
+      subscriber_name TEXT,
+      subscriber_dob DATE,
+      verified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      verified_by TEXT,
+      verification_source TEXT DEFAULT 'manual',
+      verification_method TEXT,
+      raw_response JSONB,
+      has_issues BOOLEAN DEFAULT false,
+      issue_type TEXT,
+      issue_notes TEXT,
+      issue_resolved_at TIMESTAMPTZ,
+      issue_resolved_by TEXT,
+      appointment_id TEXT REFERENCES appointments(id) ON DELETE SET NULL,
+      next_verification_date DATE,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE OR REPLACE FUNCTION sync_insurance_verification_aliases()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.copay_specialist_cents := COALESCE(NEW.copay_specialist_cents, NEW.copay_amount_cents, NEW.copay_amount, NEW.specialist_copay);
+      NEW.copay_amount_cents := COALESCE(NEW.copay_amount_cents, NEW.copay_specialist_cents, NEW.copay_amount, NEW.specialist_copay);
+      NEW.copay_amount := COALESCE(NEW.copay_amount, NEW.copay_amount_cents, NEW.copay_specialist_cents, NEW.specialist_copay);
+      NEW.specialist_copay := COALESCE(NEW.specialist_copay, NEW.copay_specialist_cents, NEW.copay_amount_cents, NEW.copay_amount);
+      NEW.deductible_total := COALESCE(NEW.deductible_total, NEW.deductible_total_cents);
+      NEW.deductible_met := COALESCE(NEW.deductible_met, NEW.deductible_met_cents);
+      NEW.deductible_remaining := COALESCE(NEW.deductible_remaining, NEW.deductible_remaining_cents);
+      NEW.oop_max := COALESCE(NEW.oop_max, NEW.oop_max_cents, NEW.out_of_pocket_max_cents);
+      NEW.oop_met := COALESCE(NEW.oop_met, NEW.oop_met_cents, NEW.out_of_pocket_met_cents);
+      NEW.oop_remaining := COALESCE(NEW.oop_remaining, NEW.oop_remaining_cents, NEW.out_of_pocket_remaining_cents);
+      NEW.out_of_pocket_max_cents := COALESCE(NEW.out_of_pocket_max_cents, NEW.oop_max_cents, NEW.oop_max);
+      NEW.out_of_pocket_met_cents := COALESCE(NEW.out_of_pocket_met_cents, NEW.oop_met_cents, NEW.oop_met);
+      NEW.out_of_pocket_remaining_cents := COALESCE(NEW.out_of_pocket_remaining_cents, NEW.oop_remaining_cents, NEW.oop_remaining);
+      NEW.coinsurance_percent := COALESCE(NEW.coinsurance_percent, NEW.coinsurance_pct);
+      NEW.coverage_details := COALESCE(NEW.coverage_details, '{}'::jsonb);
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_sync_insurance_verification_aliases ON insurance_verifications;
+    CREATE TRIGGER trigger_sync_insurance_verification_aliases
+      BEFORE INSERT OR UPDATE ON insurance_verifications
+      FOR EACH ROW
+      EXECUTE FUNCTION sync_insurance_verification_aliases();
+
+    CREATE OR REPLACE FUNCTION update_patient_eligibility_snapshot()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      UPDATE patients
+      SET eligibility_status = NEW.verification_status,
+          eligibility_checked_at = NEW.verified_at,
+          copay_amount_cents = COALESCE(NEW.copay_amount_cents, NEW.copay_specialist_cents, copay_amount_cents),
+          insurance_plan_name = COALESCE(NULLIF(NEW.plan_name, ''), NULLIF(NEW.payer_name, ''), insurance_plan_name),
+          latest_verification_id = NEW.id
+      WHERE id = NEW.patient_id
+        AND tenant_id = NEW.tenant_id;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_update_patient_eligibility_snapshot ON insurance_verifications;
+    CREATE TRIGGER trigger_update_patient_eligibility_snapshot
+      AFTER INSERT OR UPDATE ON insurance_verifications
+      FOR EACH ROW
+      EXECUTE FUNCTION update_patient_eligibility_snapshot();
+
+    CREATE INDEX IF NOT EXISTS idx_insurance_verifications_patient
+      ON insurance_verifications(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_insurance_verifications_tenant
+      ON insurance_verifications(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_insurance_verifications_recent
+      ON insurance_verifications(tenant_id, patient_id, verified_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_insurance_verifications_status
+      ON insurance_verifications(tenant_id, verification_status);
+    CREATE INDEX IF NOT EXISTS idx_insurance_verifications_issues
+      ON insurance_verifications(tenant_id, has_issues)
+      WHERE has_issues = true;
+    CREATE INDEX IF NOT EXISTS idx_insurance_verifications_appointment
+      ON insurance_verifications(appointment_id)
+      WHERE appointment_id IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS eligibility_batch_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      batch_name TEXT,
+      batch_type TEXT DEFAULT 'scheduled',
+      total_patients INTEGER DEFAULT 0,
+      verified_count INTEGER DEFAULT 0,
+      active_count INTEGER DEFAULT 0,
+      inactive_count INTEGER DEFAULT 0,
+      error_count INTEGER DEFAULT 0,
+      issue_count INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'pending',
+      started_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      results_summary JSONB,
+      error_details JSONB,
+      initiated_by TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_eligibility_batch_runs_tenant
+      ON eligibility_batch_runs(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_eligibility_batch_runs_status
+      ON eligibility_batch_runs(status);
+    CREATE INDEX IF NOT EXISTS idx_eligibility_batch_runs_started
+      ON eligibility_batch_runs(started_at DESC);
+
+    CREATE TABLE IF NOT EXISTS eligibility_batch_verifications (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      batch_run_id TEXT NOT NULL REFERENCES eligibility_batch_runs(id) ON DELETE CASCADE,
+      verification_id TEXT NOT NULL REFERENCES insurance_verifications(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_eligibility_batch_verifications_batch
+      ON eligibility_batch_verifications(batch_run_id);
+    CREATE INDEX IF NOT EXISTS idx_eligibility_batch_verifications_verification
+      ON eligibility_batch_verifications(verification_id);
+
+    ALTER TABLE insurance_payers
+      ADD COLUMN IF NOT EXISTS payer_name TEXT,
+      ADD COLUMN IF NOT EXISTS eligibility_check_enabled BOOLEAN DEFAULT true,
+      ADD COLUMN IF NOT EXISTS prior_auth_phone TEXT,
+      ADD COLUMN IF NOT EXISTS claims_phone TEXT,
+      ADD COLUMN IF NOT EXISTS website TEXT,
+      ADD COLUMN IF NOT EXISTS typical_referral_required BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS notes TEXT;
+
+    UPDATE insurance_payers
+    SET payer_name = COALESCE(payer_name, name, payer_id);
+
+    CREATE OR REPLACE FUNCTION get_latest_insurance_verification(p_patient_id TEXT)
+    RETURNS TABLE (
+      verification_id TEXT,
+      verification_status TEXT,
+      verified_at TIMESTAMPTZ,
+      payer_name TEXT,
+      has_issues BOOLEAN
+    ) AS $$
+    BEGIN
+      RETURN QUERY
+      SELECT iv.id, iv.verification_status, iv.verified_at, iv.payer_name, iv.has_issues
+      FROM insurance_verifications iv
+      WHERE iv.patient_id = p_patient_id
+      ORDER BY iv.verified_at DESC
+      LIMIT 1;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE OR REPLACE FUNCTION get_patients_needing_verification(
+      p_tenant_id TEXT,
+      p_days_threshold INTEGER DEFAULT 30
+    )
+    RETURNS TABLE (
+      patient_id TEXT,
+      patient_name TEXT,
+      last_verified_at TIMESTAMPTZ,
+      days_since_verification INTEGER,
+      upcoming_appointment_date TIMESTAMPTZ
+    ) AS $$
+    BEGIN
+      RETURN QUERY
+      WITH latest_verifications AS (
+        SELECT DISTINCT ON (iv.patient_id)
+          iv.patient_id,
+          iv.verified_at
+        FROM insurance_verifications iv
+        WHERE iv.tenant_id = p_tenant_id
+        ORDER BY iv.patient_id, iv.verified_at DESC
+      ),
+      upcoming_appointments AS (
+        SELECT DISTINCT ON (a.patient_id)
+          a.patient_id,
+          COALESCE(a.scheduled_time, a.scheduled_start, a.start_time) AS scheduled_at
+        FROM appointments a
+        WHERE a.tenant_id = p_tenant_id
+          AND COALESCE(a.scheduled_time, a.scheduled_start, a.start_time) > NOW()
+          AND a.status NOT IN ('cancelled', 'no_show')
+        ORDER BY a.patient_id, COALESCE(a.scheduled_time, a.scheduled_start, a.start_time) ASC
+      )
+      SELECT
+        p.id,
+        trim(p.first_name || ' ' || p.last_name),
+        lv.verified_at,
+        CASE WHEN lv.verified_at IS NULL THEN NULL ELSE EXTRACT(DAY FROM NOW() - lv.verified_at)::INTEGER END,
+        ua.scheduled_at
+      FROM patients p
+      LEFT JOIN latest_verifications lv ON lv.patient_id = p.id
+      LEFT JOIN upcoming_appointments ua ON ua.patient_id = p.id
+      WHERE p.tenant_id = p_tenant_id
+        AND (
+          lv.verified_at IS NULL
+          OR lv.verified_at < NOW() - INTERVAL '1 day' * p_days_threshold
+          OR (ua.scheduled_at IS NOT NULL AND ua.scheduled_at < NOW() + INTERVAL '1 day')
+        )
+      ORDER BY
+        CASE
+          WHEN ua.scheduled_at IS NOT NULL AND ua.scheduled_at < NOW() + INTERVAL '1 day' THEN 1
+          WHEN lv.verified_at IS NULL THEN 2
+          ELSE 3
+        END,
+        ua.scheduled_at ASC NULLS LAST;
+    END;
+    $$ LANGUAGE plpgsql;
+    `,
+  },
 
 ];
 

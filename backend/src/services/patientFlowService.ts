@@ -431,7 +431,11 @@ export class PatientFlowService {
         SET status = $3,
             roomed_at = CASE WHEN $3 IN ('rooming', 'vitals_complete', 'ready_for_provider', 'with_provider')
                              THEN COALESCE(roomed_at, NOW()) ELSE roomed_at END,
-            completed_at = CASE WHEN $3 = 'completed' THEN NOW() ELSE completed_at END
+            completed_at = CASE
+              WHEN $3 = 'completed' THEN COALESCE(completed_at, NOW())
+              WHEN $3 = 'checkout' THEN NULL
+              ELSE completed_at
+            END
         WHERE tenant_id = $1 AND id = $2
         `,
         [tenantId, appointmentId, this.mapFlowStatusToAppointmentStatus(newStatus)]
@@ -868,7 +872,7 @@ export class PatientFlowService {
       vitals_complete: 'in_room',
       ready_for_provider: 'in_room',
       with_provider: 'with_provider',
-      checkout: 'completed',
+      checkout: 'checkout',
       completed: 'completed',
     };
     return mapping[status];

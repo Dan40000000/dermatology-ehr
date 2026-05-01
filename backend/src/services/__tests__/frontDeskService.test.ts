@@ -385,6 +385,7 @@ describe("frontDeskService", () => {
   it("checkOutPatient routes unpaid self-pay visits to checkout", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ payment_due_cents: "12500" }] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
     const result = await frontDeskService.checkOutPatient("tenant-1", "appt-1");
@@ -401,21 +402,22 @@ describe("frontDeskService", () => {
     );
   });
 
-  it("checkOutPatient completes appointment when no self-pay balance exists", async () => {
+  it("checkOutPatient still routes zero-balance visits to checkout for front desk review", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ payment_due_cents: "0" }] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
     const result = await frontDeskService.checkOutPatient("tenant-1", "appt-1");
 
     expect(result).toEqual({
-      status: "completed",
+      status: "checkout",
       requiresPayment: false,
       paymentDueCents: 0,
     });
     expect(queryMock).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining("SET status = 'completed'"),
+      expect.stringContaining("SET status = 'checkout'"),
       ["tenant-1", "appt-1"]
     );
   });

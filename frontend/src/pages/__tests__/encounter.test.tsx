@@ -39,6 +39,7 @@ const apiMocks = vi.hoisted(() => ({
   updateEncounterStatus: vi.fn(),
   updateAppointmentStatus: vi.fn(),
   checkOutFrontDeskAppointment: vi.fn(),
+  updatePatientFlowStatus: vi.fn(),
   fetchVitals: vi.fn(),
   createVitals: vi.fn(),
   fetchOrders: vi.fn(),
@@ -374,6 +375,7 @@ describe('EncounterPage', () => {
     apiMocks.updateEncounterStatus.mockResolvedValue({ ok: true });
     apiMocks.updateAppointmentStatus.mockResolvedValue({ ok: true });
     apiMocks.checkOutFrontDeskAppointment.mockResolvedValue({ ok: true });
+    apiMocks.updatePatientFlowStatus.mockResolvedValue({ ok: true });
     apiMocks.fetchNoteTemplates.mockResolvedValue({ templates: [] });
     apiMocks.fetchEncounterAmbientNotes.mockResolvedValue({ notes: [] });
     apiMocks.generateAiNoteDraft.mockResolvedValue({
@@ -590,14 +592,14 @@ describe('EncounterPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'End Appointment' }));
 
     await waitFor(() =>
-      expect(apiMocks.checkOutFrontDeskAppointment).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1'),
+      expect(apiMocks.updatePatientFlowStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', 'checkout'),
     );
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Appointment ended');
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Appointment sent to checkout');
     expect(navigateMock).toHaveBeenCalledWith('/office-flow');
   });
 
-  it('falls back to appointment status update when checkout endpoint fails', async () => {
-    apiMocks.checkOutFrontDeskAppointment.mockRejectedValueOnce(new Error('not allowed'));
+  it('falls back to appointment status update when patient-flow checkout fails', async () => {
+    apiMocks.updatePatientFlowStatus.mockRejectedValueOnce(new Error('not allowed'));
 
     render(<EncounterPage />);
 
@@ -605,9 +607,9 @@ describe('EncounterPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'End Appointment' }));
 
     await waitFor(() =>
-      expect(apiMocks.updateAppointmentStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', 'completed'),
+      expect(apiMocks.updateAppointmentStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', 'checkout'),
     );
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Appointment ended');
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Appointment sent to checkout');
     expect(navigateMock).toHaveBeenCalledWith('/office-flow');
   });
 

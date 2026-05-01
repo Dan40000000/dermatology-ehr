@@ -331,17 +331,11 @@ frontDeskRouter.post(
         logger.error('Check-out audit log failed:', auditError);
       }
 
-      if (result.requiresPayment) {
-        return res.json({
-          success: true,
-          message: 'Visit moved to checkout. Payment is due at front desk.',
-          ...result,
-        });
-      }
-
       res.json({
         success: true,
-        message: 'Patient checked out successfully',
+        message: result.requiresPayment
+          ? 'Visit moved to checkout. Payment is due at front desk.'
+          : 'Visit moved to checkout. Front desk review required.',
         ...result,
       });
     } catch (error) {

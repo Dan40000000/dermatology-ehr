@@ -129,7 +129,7 @@ afterEach(() => {
 });
 
 describe('OfficeFlowPage', () => {
-  it('rooms patients and updates statuses through completion', async () => {
+  it('rooms patients and sends provider-complete visits to checkout first', async () => {
     render(<OfficeFlowPage />);
 
     await screen.findByText('Office Flow');
@@ -171,10 +171,16 @@ describe('OfficeFlowPage', () => {
       })
     );
 
-    const checkoutButtons = await screen.findAllByRole('button', { name: 'Check Out' });
+    const checkoutButtons = await screen.findAllByRole('button', { name: 'Send to Checkout' });
     fireEvent.click(checkoutButtons[0]);
     await waitFor(() =>
-      expect(toastMocks.showSuccess).toHaveBeenCalledWith('Status updated to completed')
+      expect(toastMocks.showSuccess).toHaveBeenCalledWith('Status updated to checkout')
+    );
+    expect(apiMocks.updatePatientFlowStatus).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      'appt-1',
+      'checkout'
     );
   });
 
@@ -342,7 +348,8 @@ describe('OfficeFlowPage', () => {
 
     await screen.findByText('Office Flow');
     expect(await screen.findByText('Patient, Checkout')).toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: 'Collect Payment' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Check Out' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Submit Complete' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Review Payment' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send to Checkout' })).not.toBeInTheDocument();
   });
 });

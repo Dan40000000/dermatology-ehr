@@ -74,7 +74,7 @@ export interface CheckInCopayOptions {
 }
 
 export interface CheckOutResult {
-  status: 'checkout' | 'completed';
+  status: 'checkout';
   requiresPayment: boolean;
   paymentDueCents: number;
 }
@@ -791,40 +791,35 @@ export class FrontDeskService {
       );
 
       const paymentDueCents = Number(paymentDueResult.rows[0]?.payment_due_cents || 0);
-      if (paymentDueCents > 0) {
-        await pool.query(
-          `
-          UPDATE appointments
-          SET status = 'checkout',
-              completed_at = NULL
-          WHERE tenant_id = $1
-            AND id = $2
-          `,
-          [tenantId, appointmentId]
-        );
-
-        return {
-          status: 'checkout',
-          requiresPayment: true,
-          paymentDueCents,
-        };
-      }
-
       await pool.query(
         `
         UPDATE appointments
-        SET status = 'completed',
-            completed_at = NOW()
+        SET status = 'checkout',
+            completed_at = NULL
         WHERE tenant_id = $1
           AND id = $2
         `,
         [tenantId, appointmentId]
       );
 
+      await pool.query(
+        `
+        UPDATE patient_flow
+        SET status = 'checkout',
+            checkout_at = COALESCE(checkout_at, NOW()),
+            status_changed_at = NOW(),
+            updated_at = NOW()
+        WHERE tenant_id = $1
+          AND appointment_id = $2
+          AND status <> 'completed'
+        `,
+        [tenantId, appointmentId]
+      );
+
       return {
-        status: 'completed',
-        requiresPayment: false,
-        paymentDueCents: 0,
+        status: 'checkout',
+        requiresPayment: paymentDueCents > 0,
+        paymentDueCents,
       };
     } catch (error) {
       logger.error('Error checking out patient:', error);
@@ -861,6 +856,22 @@ export class FrontDeskService {
       `;
 
       await pool.query(query, [tenantId, appointmentId, status]);
+
+      if (status === 'checkout' || status === 'completed') {
+        const timestampColumn = status === 'checkout' ? 'checkout_at' : 'completed_at';
+        await pool.query(
+          `
+          UPDATE patient_flow
+          SET status = $3,
+              ${timestampColumn} = COALESCE(${timestampColumn}, NOW()),
+              status_changed_at = NOW(),
+              updated_at = NOW()
+          WHERE tenant_id = $1
+            AND appointment_id = $2
+          `,
+          [tenantId, appointmentId, status]
+        );
+      }
     } catch (error) {
       logger.error('Error updating appointment status:', error);
       throw error;

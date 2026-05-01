@@ -231,6 +231,10 @@ describe("Financial metrics routes", () => {
         expect.objectContaining({ key: "office_visit", revenueCents: 6000 }),
       ]),
     );
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("appointment_revenue"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("left join charges c"));
+    expect(queryMock.mock.calls[0][0]).toEqual(expect.stringContaining("encounter_id is null"));
+    expect(queryMock.mock.calls[1][0]).toEqual(expect.stringContaining("from appointment_revenue"));
   });
 
   it("GET /financial-metrics/collections-trend rejects invalid date range", async () => {

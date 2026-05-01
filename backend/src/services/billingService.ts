@@ -182,9 +182,17 @@ export class BillingService {
 
       // Log audit event
       await client.query(
-        `INSERT INTO audit_log (id, tenant_id, actor_id, action, entity, entity_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-        [crypto.randomUUID(), tenantId, userId, 'claim_created', 'claim', claimId]
+        `INSERT INTO audit_log (id, tenant_id, user_id, action, resource_type, resource_id, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+        [
+          crypto.randomUUID(),
+          tenantId,
+          userId,
+          'claim_created',
+          'claim',
+          claimId,
+          JSON.stringify({ encounterId, claimNumber }),
+        ]
       );
 
       await client.query('COMMIT');

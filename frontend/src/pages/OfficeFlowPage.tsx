@@ -303,7 +303,7 @@ export function OfficeFlowPage() {
     checked_in: 'checked in',
     in_room: 'in room',
     with_provider: 'with provider',
-    checkout: 'checkout (payment due)',
+    checkout: 'checkout',
     completed: 'completed',
     cancelled: 'cancelled',
     no_show: 'no show',
@@ -371,11 +371,20 @@ export function OfficeFlowPage() {
       let resolvedStatus: PatientFlowStatus = newStatus;
       let paymentDueCents = Number(flow.paymentDueCents || 0);
 
-      if (newStatus === 'completed') {
+      if (newStatus === 'checkout') {
         try {
-          await updatePatientFlowStatus(session.tenantId, session.accessToken, flow.appointmentId, 'completed');
+          await updatePatientFlowStatus(session.tenantId, session.accessToken, flow.appointmentId, 'checkout');
         } catch {
-          await checkOutFrontDeskAppointment(session.tenantId, session.accessToken, flow.appointmentId);
+          try {
+            const checkoutResult = await checkOutFrontDeskAppointment(
+              session.tenantId,
+              session.accessToken,
+              flow.appointmentId
+            );
+            paymentDueCents = Number(checkoutResult?.paymentDueCents ?? paymentDueCents);
+          } catch {
+            await updateFrontDeskStatus(session.tenantId, session.accessToken, flow.appointmentId, 'checkout');
+          }
         }
         setRoomAssignments((prev) => {
           if (!prev[flow.appointmentId]) return prev;
@@ -383,6 +392,12 @@ export function OfficeFlowPage() {
           delete next[flow.appointmentId];
           return next;
         });
+      } else if (newStatus === 'completed') {
+        try {
+          await updatePatientFlowStatus(session.tenantId, session.accessToken, flow.appointmentId, 'completed');
+        } catch {
+          await updateFrontDeskStatus(session.tenantId, session.accessToken, flow.appointmentId, 'completed');
+        }
       } else if (newStatus === 'with_provider') {
         try {
           await updatePatientFlowStatus(session.tenantId, session.accessToken, flow.appointmentId, 'with_provider');
@@ -404,7 +419,7 @@ export function OfficeFlowPage() {
               updates.paymentDueCents = 0;
             } else if (resolvedStatus === 'checkout') {
               updates.paymentDueCents = paymentDueCents;
-              updates.checkoutTime = undefined;
+              updates.checkoutTime = new Date().toISOString();
             }
             return { ...f, ...updates };
           }
@@ -814,7 +829,7 @@ export function OfficeFlowPage() {
                 <option value="checked_in">Checked In</option>
                 <option value="in_room">In Room</option>
                 <option value="with_provider">With Provider</option>
-                <option value="checkout">Checkout (Payment Due)</option>
+                <option value="checkout">Checkout</option>
                 <option value="completed">Completed</option>
               </select>
             </div>
@@ -878,7 +893,7 @@ export function OfficeFlowPage() {
         </div>
         <div className="flow-stat" style={{ background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)', color: '#ffffff', padding: '1.25rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
           <span className="stat-value" style={{ display: 'block', fontSize: '2rem', fontWeight: 700, marginBottom: '0.25rem' }}>{checkoutPatients.length}</span>
-          <span className="stat-label" style={{ fontSize: '0.875rem', fontWeight: 500 }}>Checkout Due</span>
+          <span className="stat-label" style={{ fontSize: '0.875rem', fontWeight: 500 }}>Ready for Checkout</span>
         </div>
         <div className="flow-stat" style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: '#ffffff', padding: '1.25rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
           <span className="stat-value" style={{ display: 'block', fontSize: '2rem', fontWeight: 700, marginBottom: '0.25rem' }}>{completedPatients.length}</span>
@@ -1041,9 +1056,9 @@ export function OfficeFlowPage() {
                         <button
                           type="button"
                           className="btn-sm btn-primary"
-                          onClick={() => handleStatusChange(flow, 'completed')}
+                          onClick={() => handleStatusChange(flow, 'checkout')}
                         >
-                          Check Out
+                          Send to Checkout
                         </button>
                       )}
                     </div>
@@ -1062,7 +1077,7 @@ export function OfficeFlowPage() {
           {/* Checkout / Payment */}
           <div className="flow-column">
             <div className="column-header checkout">
-              <span className="column-title">Checkout / Payment</span>
+              <span className="column-title">Checkout Review</span>
               <span className="column-count">{checkoutPatients.length}</span>
             </div>
             <div className="column-content">
@@ -1080,10 +1095,19 @@ export function OfficeFlowPage() {
                     <button
                       type="button"
                       className="btn-sm btn-primary"
-                      onClick={() => handleCollectPayment(flow)}
+                      onClick={() => handleStatusChange(flow, 'completed')}
                     >
-                      Collect Payment
+                      Submit Complete
                     </button>
+                    {Number(flow.paymentDueCents || 0) > 0 && (
+                      <button
+                        type="button"
+                        className="btn-sm btn-secondary"
+                        onClick={() => navigate(`/financials?tab=payments&patientId=${flow.patientId}`)}
+                      >
+                        Review Payment
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn-sm btn-secondary"
@@ -1097,7 +1121,7 @@ export function OfficeFlowPage() {
               {checkoutPatients.length === 0 && (
                 <div className="empty-column" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '3rem 1rem', color: '#9ca3af' }}>
                   <div style={{ fontSize: '4rem', marginBottom: '1rem', opacity: 0.3 }}>💳</div>
-                  <span className="empty-text" style={{ fontSize: '0.875rem', fontWeight: 500 }}>No payment due</span>
+                  <span className="empty-text" style={{ fontSize: '0.875rem', fontWeight: 500 }}>No patients in checkout</span>
                 </div>
               )}
             </div>

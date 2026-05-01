@@ -558,9 +558,9 @@ prescriptionsRouter.post(
 
       // Also log to main audit log
       await pool.query(
-        `insert into audit_log(tenant_id, user_id, action, resource_type, resource_id, ip_address)
-         values ($1, $2, $3, $4, $5, $6)`,
-        [tenantId, userId, 'create', 'prescription', id, req.ip]
+        `insert into audit_log(id, tenant_id, user_id, action, resource_type, resource_id, ip_address)
+         values ($1, $2, $3, $4, $5, $6, $7)`,
+        [crypto.randomUUID(), tenantId, userId, 'create', 'prescription', id, req.ip]
       );
 
       return res.status(201).json({

@@ -17,6 +17,7 @@ import {
   updateEncounterStatus,
   updateAppointmentStatus,
   checkOutFrontDeskAppointment,
+  updatePatientFlowStatus,
   fetchVitals,
   createVitals,
   fetchOrders,
@@ -409,12 +410,15 @@ export function EncounterPage() {
     setEndingAppointment(true);
     try {
       try {
-        await checkOutFrontDeskAppointment(session.tenantId, session.accessToken, encounter.appointmentId);
+        await updatePatientFlowStatus(session.tenantId, session.accessToken, encounter.appointmentId, 'checkout');
       } catch {
-        // Fallback for non-front-desk roles
-        await updateAppointmentStatus(session.tenantId, session.accessToken, encounter.appointmentId, 'completed');
+        try {
+          await updateAppointmentStatus(session.tenantId, session.accessToken, encounter.appointmentId, 'checkout');
+        } catch {
+          await checkOutFrontDeskAppointment(session.tenantId, session.accessToken, encounter.appointmentId);
+        }
       }
-      showSuccess('Appointment ended');
+      showSuccess('Appointment sent to checkout');
       clearActiveEncounter();
       navigate('/office-flow');
     } catch (err: any) {

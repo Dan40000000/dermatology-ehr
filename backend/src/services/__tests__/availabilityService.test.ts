@@ -229,6 +229,7 @@ describe('availabilityService', () => {
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
     await expect(
@@ -283,6 +284,57 @@ describe('availabilityService', () => {
           },
         ],
       })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ durationMinutes: 30 }] });
+
+    const slots = await calculateAvailableSlots({
+      tenantId: 'tenant-1',
+      providerId: 'provider-1',
+      appointmentTypeId: 'type-1',
+      date: dateKey,
+    });
+
+    expect(slots.map(slot => slot.startTime)).toEqual([
+      buildPracticeDate(dateKey, 9, 0),
+      buildPracticeDate(dateKey, 10, 0),
+    ]);
+  });
+
+  it('filters provider time blocks', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
+    const dateKey = '2024-01-02';
+
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            isEnabled: true,
+            minAdvanceHours: 0,
+            maxAdvanceDays: 30,
+            bookingWindowDays: 60,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            startTime: '09:00',
+            endTime: '10:30',
+            slotDuration: 30,
+            allowOnlineBooking: true,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            startTime: buildPracticeDate(dateKey, 9, 30),
+            endTime: buildPracticeDate(dateKey, 10, 0),
+          },
+        ],
+      })
       .mockResolvedValueOnce({ rows: [{ durationMinutes: 30 }] });
 
     const slots = await calculateAvailableSlots({
@@ -323,6 +375,7 @@ describe('availabilityService', () => {
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ durationMinutes: 120 }] });
 
     const slots = await calculateAvailableSlots({
@@ -360,6 +413,7 @@ describe('availabilityService', () => {
           },
         ],
       })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ durationMinutes: 45 }] });
@@ -468,6 +522,7 @@ describe('availabilityService', () => {
           },
         ],
       })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ durationMinutes: 30 }] });

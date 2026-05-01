@@ -184,6 +184,22 @@ export async function calculateAvailableSlots(params: AvailabilityParams): Promi
 
   const existingAppointments = appointmentsResult.rows;
 
+  // Staff-created blocks (lunch, admin, meetings, etc.) must be enforced by
+  // the server too; client-side blocking alone is not enough for portal booking.
+  const timeBlocksResult = await pool.query(
+    `SELECT start_time as "startTime",
+            end_time as "endTime"
+     FROM time_blocks
+     WHERE tenant_id = $1
+       AND provider_id = $2
+       AND status = 'active'
+       AND start_time < $4
+       AND end_time > $3`,
+    [tenantId, providerId, dateStart, dateEnd]
+  );
+
+  const timeBlocks = timeBlocksResult.rows;
+
   // 4. Get appointment type duration
   const appointmentTypeResult = await pool.query(
     `SELECT duration_minutes as "durationMinutes"
@@ -280,6 +296,16 @@ export async function calculateAvailableSlots(params: AvailabilityParams): Promi
     });
 
     if (overlapsAppointment) {
+      return false;
+    }
+
+    const overlapsTimeBlock = timeBlocks.some((block) => {
+      const blockStart = new Date(block.startTime);
+      const blockEnd = new Date(block.endTime);
+      return slotStart < blockEnd && appointmentEnd > blockStart;
+    });
+
+    if (overlapsTimeBlock) {
       return false;
     }
 

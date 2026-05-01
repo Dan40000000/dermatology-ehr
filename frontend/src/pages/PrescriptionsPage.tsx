@@ -349,13 +349,13 @@ export function PrescriptionsPage() {
     try {
       const promises = [
         fetchOrders(session.tenantId, session.accessToken),
-        fetchPrescriptionsEnhanced(session.tenantId, session.accessToken),
+        fetchPrescriptionsEnhanced(session.tenantId, session.accessToken).catch(() => ({ prescriptions: [] })),
         fetchPatients(session.tenantId, session.accessToken),
         fetchPARequests(session.tenantId, session.accessToken),
       ];
 
       if (activeTab === 'refills') {
-        promises.push(fetchRefillRequests(session.tenantId, session.accessToken));
+        promises.push(fetchRefillRequests(session.tenantId, session.accessToken).catch(() => ({ refillRequests: [] })));
       }
 
       const results = await Promise.all(promises);

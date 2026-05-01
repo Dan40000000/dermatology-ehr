@@ -107,6 +107,7 @@ export function EncounterPage() {
 
   // Check if encounter is locked/read-only
   const isLocked = encounter.status === 'signed' || encounter.status === 'locked';
+  const isClosedEncounter = ['signed', 'locked', 'finalized', 'completed'].includes(String(encounter.status || '').toLowerCase());
 
   const [activeSection, setActiveSection] = useState<EncounterSection>('note');
   const [bodyDiagramMarkers, setBodyDiagramMarkers] = useState<BodyMarker[]>([]);
@@ -375,13 +376,10 @@ export function EncounterPage() {
     }
   };
 
-  // Sign encounter
-  const handleSign = async () => {
+  const saveAndSignEncounter = async () => {
     if (!session || !encounterId || isNew) return;
 
-    setSaving(true);
-    try {
-      // First save any pending changes
+    if (!isLocked) {
       await updateEncounter(session.tenantId, session.accessToken, encounterId, {
         chiefComplaint: encounter.chiefComplaint ?? '',
         hpi: encounter.hpi ?? '',
@@ -389,14 +387,46 @@ export function EncounterPage() {
         exam: encounter.exam ?? '',
         assessmentPlan: encounter.assessmentPlan ?? '',
       });
+    }
 
-      // Then update status to signed (locked)
+    if (!isClosedEncounter) {
       await updateEncounterStatus(session.tenantId, session.accessToken, encounterId, 'signed');
+      setEncounter((prev) => ({ ...prev, status: 'signed' }));
+    }
+  };
 
-      showSuccess('Encounter signed and locked');
+  const sendAppointmentToCheckout = async () => {
+    if (!session || !encounter.appointmentId) return;
+
+    try {
+      await updatePatientFlowStatus(session.tenantId, session.accessToken, encounter.appointmentId, 'checkout');
+    } catch {
+      try {
+        await updateAppointmentStatus(session.tenantId, session.accessToken, encounter.appointmentId, 'checkout');
+      } catch {
+        await checkOutFrontDeskAppointment(session.tenantId, session.accessToken, encounter.appointmentId);
+      }
+    }
+  };
+
+  // Sign encounter
+  const handleSign = async () => {
+    if (!session || !encounterId || isNew) return;
+
+    setSaving(true);
+    try {
+      await saveAndSignEncounter();
+
       setShowSignModal(false);
       clearActiveEncounter();
-      navigate(`/patients/${patientId}`);
+      if (encounter.appointmentId) {
+        await sendAppointmentToCheckout();
+        showSuccess('Encounter signed and appointment sent to checkout');
+        navigate('/office-flow');
+      } else {
+        showSuccess('Encounter signed and locked');
+        navigate(`/patients/${patientId}`);
+      }
     } catch (err: any) {
       showError(err.message || 'Failed to sign encounter');
     } finally {
@@ -409,16 +439,9 @@ export function EncounterPage() {
 
     setEndingAppointment(true);
     try {
-      try {
-        await updatePatientFlowStatus(session.tenantId, session.accessToken, encounter.appointmentId, 'checkout');
-      } catch {
-        try {
-          await updateAppointmentStatus(session.tenantId, session.accessToken, encounter.appointmentId, 'checkout');
-        } catch {
-          await checkOutFrontDeskAppointment(session.tenantId, session.accessToken, encounter.appointmentId);
-        }
-      }
-      showSuccess('Appointment sent to checkout');
+      await saveAndSignEncounter();
+      await sendAppointmentToCheckout();
+      showSuccess('Encounter signed and appointment sent to checkout');
       clearActiveEncounter();
       navigate('/office-flow');
     } catch (err: any) {
@@ -950,7 +973,7 @@ export function EncounterPage() {
             style={{ background: '#10b981', color: '#ffffff' }}
           >
             <span className="icon"></span>
-            Sign & Lock
+            {encounter.appointmentId ? 'Sign & Checkout' : 'Sign & Lock'}
           </button>
         )}
         {!isNew && encounter.appointmentId && (
@@ -964,7 +987,7 @@ export function EncounterPage() {
             <span className="icon"></span>
             {endingAppointment
               ? (isLaserVisit ? 'Completing...' : 'Ending...')
-              : (isLaserVisit ? 'Complete Laser Visit' : 'End Appointment')}
+              : (isLaserVisit ? 'Complete & Checkout' : 'End to Checkout')}
           </button>
         )}
         <button
@@ -2264,7 +2287,7 @@ export function EncounterPage() {
             disabled={saving}
             style={{ background: '#10b981', color: '#ffffff', fontWeight: 600 }}
           >
-            {saving ? 'Signing...' : 'Sign & Lock Encounter'}
+            {saving ? 'Signing...' : (encounter.appointmentId ? 'Sign & Send to Checkout' : 'Sign & Lock Encounter')}
           </button>
         </div>
       </Modal>

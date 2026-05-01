@@ -1,14 +1,15 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
+import { useToast } from '../../contexts/ToastContext';
+import { createPatientPayment, fetchBills, fetchPatientPayments } from '../../api/financials';
 import { Modal } from '../ui';
 import { PaymentsPerformancePanel } from './PaymentsPerformancePanel';
 
 interface PaymentMethod {
-  id: string;
-  type: 'credit' | 'debit' | 'ach' | 'hsa' | 'fsa';
-  last4: string;
-  brand?: string;
-  isDefault: boolean;
-  expiry?: string;
+  id: 'cash' | 'credit' | 'debit' | 'check' | 'ach' | 'other';
+  label: string;
+  description: string;
 }
 
 interface PaymentPlan {
@@ -36,14 +37,31 @@ interface PendingPayment {
   status: 'pending' | 'overdue' | 'partial';
 }
 
+interface FinancialBill {
+  id: string;
+  patientId: string;
+  patientFirstName?: string;
+  patientLastName?: string;
+  billNumber?: string;
+  billDate?: string;
+  dueDate?: string;
+  serviceDateStart?: string;
+  totalChargesCents?: number;
+  balanceCents?: number;
+  status?: string;
+}
+
 interface Props {
   onPaymentSuccess?: (paymentId: string) => void;
 }
 
-const MOCK_PAYMENT_METHODS: PaymentMethod[] = [
-  { id: '1', type: 'credit', last4: '4242', brand: 'Visa', isDefault: true, expiry: '12/26' },
-  { id: '2', type: 'credit', last4: '5555', brand: 'Mastercard', isDefault: false, expiry: '03/27' },
-  { id: '3', type: 'ach', last4: '6789', isDefault: false },
+const PAYMENT_METHODS: PaymentMethod[] = [
+  { id: 'cash', label: 'Cash', description: 'Post a cash collection at checkout' },
+  { id: 'check', label: 'Check', description: 'Post a check received at checkout' },
+  { id: 'credit', label: 'Card Terminal', description: 'Record a card payment captured outside this app' },
+  { id: 'debit', label: 'Debit Terminal', description: 'Record a debit payment captured outside this app' },
+  { id: 'ach', label: 'ACH', description: 'Record an ACH payment' },
+  { id: 'other', label: 'Other', description: 'Record another manual payment method' },
 ];
 
 const MOCK_PAYMENT_PLANS: PaymentPlan[] = [
@@ -73,47 +91,18 @@ const MOCK_PAYMENT_PLANS: PaymentPlan[] = [
   },
 ];
 
-const MOCK_PENDING_PAYMENTS: PendingPayment[] = [
-  {
-    id: 'pend-1',
-    patientId: '3',
-    patientName: 'Robert Wilson',
-    amountCents: 35000,
-    balanceCents: 35000,
-    dueDate: '2026-01-25',
-    serviceDate: '2026-01-08',
-    description: 'Dermatology consultation & biopsy',
-    status: 'pending',
-  },
-  {
-    id: 'pend-2',
-    patientId: '4',
-    patientName: 'Maria Garcia',
-    amountCents: 28000,
-    balanceCents: 28000,
-    dueDate: '2026-01-10',
-    serviceDate: '2025-12-15',
-    description: 'Office visit - skin exam',
-    status: 'overdue',
-  },
-  {
-    id: 'pend-3',
-    patientId: '5',
-    patientName: 'James Anderson',
-    amountCents: 45000,
-    balanceCents: 22500,
-    dueDate: '2026-02-01',
-    serviceDate: '2026-01-09',
-    description: 'Mohs surgery consultation',
-    status: 'partial',
-  },
-];
-
 export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
+  const { session } = useAuth();
+  const { showError, showSuccess } = useToast();
+  const [searchParams] = useSearchParams();
+  const patientFilterId = searchParams.get('patientId') || undefined;
   const [activeTab, setActiveTab] = useState<'collect' | 'plans' | 'text-pay' | 'quick-pay'>('collect');
-  const [paymentMethods] = useState<PaymentMethod[]>(MOCK_PAYMENT_METHODS);
+  const [paymentMethods] = useState<PaymentMethod[]>(PAYMENT_METHODS);
   const [paymentPlans, setPaymentPlans] = useState<PaymentPlan[]>(MOCK_PAYMENT_PLANS);
-  const [pendingPayments] = useState<PendingPayment[]>(MOCK_PENDING_PAYMENTS);
+  const [pendingPayments, setPendingPayments] = useState<PendingPayment[]>([]);
+  const [recentPaymentsTotalCents, setRecentPaymentsTotalCents] = useState(0);
+  const [loadingPayments, setLoadingPayments] = useState(false);
+  const [processingPayment, setProcessingPayment] = useState(false);
 
   // Modal states
   const [showAddCardModal, setShowAddCardModal] = useState(false);
@@ -139,17 +128,97 @@ export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
     return new Date(dateStr).toLocaleDateString();
   };
 
-  const handleProcessPayment = () => {
-    if (!selectedPayment || !paymentAmount || !selectedMethod) return;
+  const loadPaymentData = useCallback(async () => {
+    if (!session) return;
 
-    // Simulate payment processing
-    setTimeout(() => {
-      onPaymentSuccess?.(selectedPayment.id);
+    setLoadingPayments(true);
+    try {
+      const [billsRes, paymentsRes] = await Promise.all([
+        fetchBills(
+          { tenantId: session.tenantId, accessToken: session.accessToken },
+          patientFilterId ? { patientId: patientFilterId } : undefined,
+        ),
+        fetchPatientPayments(
+          { tenantId: session.tenantId, accessToken: session.accessToken },
+          patientFilterId ? { patientId: patientFilterId, status: 'posted' } : { status: 'posted' },
+        ),
+      ]);
+
+      const today = new Date().toISOString().slice(0, 10);
+      const pending = (billsRes.bills || [])
+        .filter((bill: FinancialBill) => Number(bill.balanceCents || 0) > 0)
+        .map((bill: FinancialBill): PendingPayment => {
+          const dueDate = String(bill.dueDate || bill.billDate || today).slice(0, 10);
+          const status = String(bill.status || '').toLowerCase() === 'partial'
+            ? 'partial'
+            : dueDate < today
+              ? 'overdue'
+              : 'pending';
+
+          return {
+            id: bill.id,
+            patientId: bill.patientId,
+            patientName: [bill.patientFirstName, bill.patientLastName].filter(Boolean).join(' ') || 'Unknown patient',
+            amountCents: Number(bill.totalChargesCents || 0),
+            balanceCents: Number(bill.balanceCents || 0),
+            dueDate,
+            serviceDate: String(bill.serviceDateStart || bill.billDate || today).slice(0, 10),
+            description: bill.billNumber ? `Bill ${bill.billNumber}` : 'Patient balance',
+            status,
+          };
+        });
+
+      const payments = paymentsRes.payments || paymentsRes.data || [];
+      setPendingPayments(pending);
+      setRecentPaymentsTotalCents(
+        payments.reduce((sum: number, payment: any) => sum + Number(payment.amountCents || 0), 0),
+      );
+    } catch (error: any) {
+      showError(error?.message || 'Failed to load patient balances');
+    } finally {
+      setLoadingPayments(false);
+    }
+  }, [patientFilterId, session, showError]);
+
+  useEffect(() => {
+    loadPaymentData();
+  }, [loadPaymentData]);
+
+  const handleProcessPayment = async () => {
+    if (!session || !selectedPayment || !paymentAmount || !selectedMethod) return;
+
+    const amountCents = Math.round(Number(paymentAmount) * 100);
+    if (!Number.isFinite(amountCents) || amountCents <= 0) {
+      showError('Enter a valid payment amount');
+      return;
+    }
+
+    setProcessingPayment(true);
+    try {
+      const payment = await createPatientPayment(
+        { tenantId: session.tenantId, accessToken: session.accessToken },
+        {
+          patientId: selectedPayment.patientId,
+          paymentDate: new Date().toISOString().slice(0, 10),
+          amountCents,
+          paymentMethod: selectedMethod as PaymentMethod['id'],
+          appliedToInvoiceId: selectedPayment.id,
+          notes: `Checkout payment applied to ${selectedPayment.description}`,
+        },
+      );
+
+      showSuccess('Payment posted to patient ledger');
+      onPaymentSuccess?.(payment.id || selectedPayment.id);
       setShowPaymentModal(false);
       setSelectedPayment(null);
       setPaymentAmount('');
       setSelectedMethod('');
-    }, 1000);
+      await loadPaymentData();
+    } catch (error: any) {
+      showError(error?.message || 'Failed to post payment');
+    } finally {
+      setProcessingPayment(false);
+    }
   };
 
   const handleSendTextPay = () => {
@@ -239,10 +308,10 @@ export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
           border: '2px solid #bbf7d0',
         }}>
           <div style={{ fontSize: '0.8rem', color: '#065f46', marginBottom: '0.5rem', fontWeight: '600' }}>
-            Collected Today
+            Posted Payments
           </div>
           <div style={{ fontSize: '1.75rem', fontWeight: '800', color: '#059669' }}>
-            $1,245.00
+            {formatCurrency(recentPaymentsTotalCents)}
           </div>
         </div>
         <div style={{
@@ -278,10 +347,10 @@ export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
           border: '2px solid #bae6fd',
         }}>
           <div style={{ fontSize: '0.8rem', color: '#0369a1', marginBottom: '0.5rem', fontWeight: '600' }}>
-            Text-to-Pay Sent
+            Text-to-Pay Mode
           </div>
           <div style={{ fontSize: '1.75rem', fontWeight: '800', color: '#0ea5e9' }}>
-            12
+            Demo
           </div>
         </div>
       </div>
@@ -337,7 +406,7 @@ export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
               marginBottom: '1rem',
             }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#374151' }}>
-                Saved Payment Methods
+                Manual Posting Methods
               </h3>
               <button
                 onClick={() => setShowAddCardModal(true)}
@@ -352,7 +421,7 @@ export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
                   cursor: 'pointer',
                 }}
               >
-                + Add Card
+                Configure Terminal
               </button>
             </div>
             <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
@@ -363,9 +432,8 @@ export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
                     background: 'white',
                     borderRadius: '8px',
                     padding: '1rem 1.25rem',
-                    border: method.isDefault ? '2px solid #059669' : '2px solid #e5e7eb',
+                    border: '2px solid #e5e7eb',
                     minWidth: '200px',
-                    cursor: 'pointer',
                   }}
                 >
                   <div style={{
@@ -375,24 +443,11 @@ export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
                     marginBottom: '0.5rem',
                   }}>
                     <span style={{ fontWeight: '600', color: '#374151' }}>
-                      {method.brand || method.type.toUpperCase()}
+                      {method.label}
                     </span>
-                    {method.isDefault && (
-                      <span style={{
-                        padding: '0.2rem 0.5rem',
-                        background: '#dcfce7',
-                        color: '#166534',
-                        borderRadius: '4px',
-                        fontSize: '0.7rem',
-                        fontWeight: '600',
-                      }}>
-                        DEFAULT
-                      </span>
-                    )}
                   </div>
                   <div style={{ fontSize: '0.9rem', color: '#6b7280' }}>
-                    **** {method.last4}
-                    {method.expiry && ` | Exp: ${method.expiry}`}
+                    {method.description}
                   </div>
                 </div>
               ))}
@@ -418,6 +473,20 @@ export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
                 </tr>
               </thead>
               <tbody>
+                {loadingPayments && (
+                  <tr>
+                    <td colSpan={8} style={{ padding: '1.5rem', textAlign: 'center', color: '#6b7280' }}>
+                      Loading patient balances...
+                    </td>
+                  </tr>
+                )}
+                {!loadingPayments && pendingPayments.length === 0 && (
+                  <tr>
+                    <td colSpan={8} style={{ padding: '1.5rem', textAlign: 'center', color: '#6b7280' }}>
+                      No open patient balances found.
+                    </td>
+                  </tr>
+                )}
                 {pendingPayments.map(payment => (
                   <tr key={payment.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                     <td style={{ padding: '0.75rem', fontWeight: '600', color: '#111827' }}>
@@ -986,11 +1055,9 @@ export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
                 <option value="">Select a payment method</option>
                 {paymentMethods.map(method => (
                   <option key={method.id} value={method.id}>
-                    {method.brand || method.type.toUpperCase()} **** {method.last4}
-                    {method.isDefault ? ' (Default)' : ''}
+                    {method.label}
                   </option>
                 ))}
-                <option value="new">+ Add new card</option>
               </select>
             </div>
 
@@ -1011,17 +1078,18 @@ export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
               </button>
               <button
                 onClick={handleProcessPayment}
+                disabled={processingPayment}
                 style={{
                   padding: '0.75rem 1.5rem',
-                  background: '#059669',
+                  background: processingPayment ? '#9ca3af' : '#059669',
                   color: 'white',
                   border: 'none',
                   borderRadius: '8px',
                   fontWeight: '600',
-                  cursor: 'pointer',
+                  cursor: processingPayment ? 'not-allowed' : 'pointer',
                 }}
               >
-                Process Payment
+                {processingPayment ? 'Posting...' : 'Post Manual Payment'}
               </button>
             </div>
           </div>

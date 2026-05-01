@@ -52,8 +52,8 @@ export const PatientCheckOut: React.FC<PatientCheckOutProps> = ({
     }
   };
 
-  // Placeholder values - would come from encounter/charges
-  const todaysCharges = 0; // Would be calculated from actual charges
+  // The current visit charge total is finalized from the encounter bill in Financials.
+  const todaysCharges = 0;
   const patientResponsibility = appointment.copayAmount || 0;
   const hasBalance = (appointment.outstandingBalance || 0) > 0;
 
@@ -63,7 +63,7 @@ export const PatientCheckOut: React.FC<PatientCheckOutProps> = ({
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200">
           <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold text-gray-900">Patient Check-Out</h2>
+            <h2 className="text-2xl font-bold text-gray-900">Patient Check-Out Review</h2>
             <button
               onClick={onClose}
               className="text-gray-400 hover:text-gray-600 transition-colors"
@@ -113,19 +113,19 @@ export const PatientCheckOut: React.FC<PatientCheckOutProps> = ({
           {/* Step 1: Today's Charges Summary */}
           <div className="border border-gray-200 rounded-lg p-4">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              1. Today's Charges
+              1. Today's Charges Review
             </h3>
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Total Charges</span>
                 <span className="font-medium text-gray-900">
-                  ${todaysCharges.toFixed(2)}
+                  Review in Financials
                 </span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Insurance Coverage (Est.)</span>
                 <span className="font-medium text-gray-900">
-                  ${(todaysCharges - patientResponsibility).toFixed(2)}
+                  Pending billing review
                 </span>
               </div>
               <div className="pt-2 border-t border-gray-200 flex justify-between">
@@ -306,7 +306,7 @@ export const PatientCheckOut: React.FC<PatientCheckOutProps> = ({
                 : 'bg-gray-300 text-gray-500 cursor-not-allowed'
             }`}
           >
-            {isSubmitting ? 'Processing...' : 'Complete Check-Out'}
+            {isSubmitting ? 'Processing...' : 'Complete Front Desk Review'}
           </button>
         </div>
       </div>

@@ -398,10 +398,10 @@ appointmentsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
             at.duration_minutes as "durationMinutes",
             a.appointment_type_id as "appointmentTypeId"
      from appointments a
-     join patients p on p.id = a.patient_id
-     join providers pr on pr.id = a.provider_id
-     join locations l on l.id = a.location_id
-     join appointment_types at on at.id = a.appointment_type_id
+     join patients p on p.id = a.patient_id and p.tenant_id = a.tenant_id
+     join providers pr on pr.id = a.provider_id and pr.tenant_id = a.tenant_id
+     join locations l on l.id = a.location_id and l.tenant_id = a.tenant_id
+     join appointment_types at on at.id = a.appointment_type_id and at.tenant_id = a.tenant_id
      where a.tenant_id = $1`;
 
   const params: any[] = [tenantId];
@@ -515,6 +515,19 @@ appointmentsRouter.post("/", requireAuth, requireRoles(["admin", "front_desk", "
   const conflict = await hasConflict(tenantId, payload.providerId, payload.scheduledStart, payload.scheduledEnd, id);
   if (conflict) return res.status(409).json({ error: "Time conflict for provider" });
 
+  const referenceCheck = await pool.query(
+    `select
+       exists(select 1 from patients where id = $1 and tenant_id = $5) as "patientOk",
+       exists(select 1 from providers where id = $2 and tenant_id = $5) as "providerOk",
+       exists(select 1 from locations where id = $3 and tenant_id = $5) as "locationOk",
+       exists(select 1 from appointment_types where id = $4 and tenant_id = $5) as "appointmentTypeOk"`,
+    [payload.patientId, payload.providerId, payload.locationId, payload.appointmentTypeId, tenantId],
+  );
+  const refs = referenceCheck.rows[0];
+  if (!refs?.patientOk || !refs?.providerOk || !refs?.locationOk || !refs?.appointmentTypeOk) {
+    return res.status(400).json({ error: "Appointment references must belong to this tenant" });
+  }
+
   await pool.query(
     `insert into appointments(id, tenant_id, patient_id, provider_id, location_id, appointment_type_id, scheduled_start, scheduled_end, status)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
@@ -541,12 +554,12 @@ appointmentsRouter.post("/", requireAuth, requireRoles(["admin", "front_desk", "
               l.name as location_name,
               at.name as appointment_type
        FROM appointments a
-       JOIN patients p ON p.id = a.patient_id
-       JOIN providers pr ON pr.id = a.provider_id
-       JOIN locations l ON l.id = a.location_id
-       JOIN appointment_types at ON at.id = a.appointment_type_id
-       WHERE a.id = $1`,
-      [id]
+       JOIN patients p ON p.id = a.patient_id AND p.tenant_id = a.tenant_id
+       JOIN providers pr ON pr.id = a.provider_id AND pr.tenant_id = a.tenant_id
+       JOIN locations l ON l.id = a.location_id AND l.tenant_id = a.tenant_id
+       JOIN appointment_types at ON at.id = a.appointment_type_id AND at.tenant_id = a.tenant_id
+       WHERE a.id = $1 AND a.tenant_id = $2`,
+      [id, tenantId]
     );
 
     if (appointmentDetails.rows.length > 0) {

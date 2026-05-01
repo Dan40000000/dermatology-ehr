@@ -84,6 +84,34 @@ export async function fetchPatientPayments(options: FetchOptions, filters?: {
   return res.json();
 }
 
+export async function createPatientPayment(options: FetchOptions, data: {
+  patientId: string;
+  paymentDate: string;
+  amountCents: number;
+  paymentMethod: 'cash' | 'credit' | 'debit' | 'check' | 'ach' | 'other';
+  cardLastFour?: string;
+  checkNumber?: string;
+  referenceNumber?: string;
+  appliedToClaimId?: string;
+  appliedToInvoiceId?: string;
+  notes?: string;
+}) {
+  const res = await fetch(`${API_BASE}/api/patient-payments`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${options.accessToken}`,
+      [TENANT_HEADER]: options.tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to create patient payment");
+  }
+  return res.json();
+}
+
 // Statements
 export async function fetchStatements(options: FetchOptions, filters?: {
   patientId?: string;

@@ -166,6 +166,14 @@ patientPaymentsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "
   const payload = parsed.data;
   const paymentId = crypto.randomUUID();
   let patientContact: { first_name: string | null; last_name: string | null; email: string | null } | null = null;
+  let appliedBill: {
+    id: string;
+    patient_id: string;
+    patient_responsibility_cents: number;
+    paid_amount_cents: number;
+    adjustment_amount_cents: number;
+    balance_cents: number;
+  } | null = null;
 
   const client = await pool.connect();
   try {
@@ -177,6 +185,41 @@ patientPaymentsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "
       [tenantId],
     );
     const receiptNumber = `RCP-${new Date().getFullYear()}-${String(parseInt(receiptResult.rows[0].count) + 1).padStart(6, '0')}`;
+
+    if (payload.appliedToInvoiceId) {
+      const billResult = await client.query(
+        `select id, patient_id, patient_responsibility_cents, paid_amount_cents,
+                adjustment_amount_cents, balance_cents
+         from bills
+         where id = $1 and tenant_id = $2
+         for update`,
+        [payload.appliedToInvoiceId, tenantId],
+      );
+
+      if (!billResult.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: "Bill not found" });
+      }
+
+      const bill = billResult.rows[0] as {
+        id: string;
+        patient_id: string;
+        patient_responsibility_cents: number;
+        paid_amount_cents: number;
+        adjustment_amount_cents: number;
+        balance_cents: number;
+      };
+      appliedBill = bill;
+      if (bill.patient_id !== payload.patientId) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: "Payment patient does not match bill patient" });
+      }
+
+      if (payload.amountCents > Number(bill.balance_cents || 0)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: "Payment exceeds bill balance" });
+      }
+    }
 
     // Create payment
     await client.query(
@@ -205,6 +248,24 @@ patientPaymentsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "
         req.user!.id,
       ],
     );
+
+    if (appliedBill) {
+      const paidAmountCents = Number(appliedBill.paid_amount_cents || 0) + payload.amountCents;
+      const adjustmentAmountCents = Number(appliedBill.adjustment_amount_cents || 0);
+      const patientResponsibilityCents = Number(appliedBill.patient_responsibility_cents || 0);
+      const balanceCents = Math.max(0, patientResponsibilityCents - paidAmountCents - adjustmentAmountCents);
+      const nextStatus = balanceCents === 0 ? 'paid' : 'partial';
+
+      await client.query(
+        `update bills
+         set paid_amount_cents = $1,
+             balance_cents = $2,
+             status = $3,
+             updated_at = now()
+         where id = $4 and tenant_id = $5`,
+        [paidAmountCents, balanceCents, nextStatus, appliedBill.id, tenantId],
+      );
+    }
 
     // Update claim if payment applied to claim
     if (payload.appliedToClaimId) {
@@ -378,7 +439,7 @@ patientPaymentsRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async
 
     // Get payment info before voiding
     const paymentInfo = await client.query(
-      `select batch_id, applied_to_claim_id, amount_cents
+      `select batch_id, applied_to_claim_id, applied_to_invoice_id, amount_cents
        from patient_payments
        where id = $1 and tenant_id = $2`,
       [paymentId, tenantId],
@@ -389,7 +450,12 @@ patientPaymentsRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async
       return res.status(404).json({ error: "Patient payment not found" });
     }
 
-    const { batch_id: batchId, applied_to_claim_id: claimId } = paymentInfo.rows[0];
+    const {
+      batch_id: batchId,
+      applied_to_claim_id: claimId,
+      applied_to_invoice_id: invoiceId,
+      amount_cents: amountCents,
+    } = paymentInfo.rows[0];
 
     // Void the payment instead of deleting
     await client.query(
@@ -408,6 +474,37 @@ patientPaymentsRouter.delete("/:id", requireAuth, requireRoles(["admin"]), async
          where id = $1 and tenant_id = $2`,
         [batchId, tenantId],
       );
+    }
+
+    if (invoiceId) {
+      const billResult = await client.query(
+        `select patient_responsibility_cents, paid_amount_cents, adjustment_amount_cents
+         from bills
+         where id = $1 and tenant_id = $2
+         for update`,
+        [invoiceId, tenantId],
+      );
+
+      if (billResult.rowCount) {
+        const bill = billResult.rows[0];
+        const paidAmountCents = Math.max(0, Number(bill.paid_amount_cents || 0) - Number(amountCents || 0));
+        const adjustmentAmountCents = Number(bill.adjustment_amount_cents || 0);
+        const patientResponsibilityCents = Number(bill.patient_responsibility_cents || 0);
+        const balanceCents = Math.max(0, patientResponsibilityCents - paidAmountCents - adjustmentAmountCents);
+        const nextStatus = balanceCents === 0
+          ? (paidAmountCents > 0 ? 'paid' : 'new')
+          : (paidAmountCents > 0 ? 'partial' : 'new');
+
+        await client.query(
+          `update bills
+           set paid_amount_cents = $1,
+               balance_cents = $2,
+               status = $3,
+               updated_at = now()
+           where id = $4 and tenant_id = $5`,
+          [paidAmountCents, balanceCents, nextStatus, invoiceId, tenantId],
+        );
+      }
     }
 
     // Recalculate claim status if payment was applied to claim

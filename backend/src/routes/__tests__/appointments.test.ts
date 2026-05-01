@@ -80,6 +80,11 @@ const basePayload = {
   scheduledEnd: "2024-01-02T16:30:00.000Z",
 };
 
+const tenantReferencesOk = {
+  rows: [{ patientOk: true, providerOk: true, locationOk: true, appointmentTypeOk: true }],
+  rowCount: 1,
+};
+
 beforeEach(() => {
   authUser = { id: "user-1", tenantId: "tenant-1", role: "admin" };
   allowMissingUser = false;
@@ -132,6 +137,8 @@ describe("Appointments routes", () => {
   it("POST /appointments creates appointment", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce(tenantReferencesOk)
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).post("/appointments").send(basePayload);
@@ -145,6 +152,8 @@ describe("Appointments routes", () => {
     const uuidSpy = jest.spyOn(crypto, "randomUUID").mockReturnValueOnce("");
     queryMock
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce(tenantReferencesOk)
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).post("/appointments").send(basePayload);
@@ -157,6 +166,8 @@ describe("Appointments routes", () => {
   it("POST /appointments honors provided status", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce(tenantReferencesOk)
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).post("/appointments").send({
@@ -165,13 +176,15 @@ describe("Appointments routes", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(queryMock.mock.calls[1][1][8]).toBe("cancelled");
+    expect(queryMock.mock.calls[2][1][8]).toBe("cancelled");
   });
 
   it("POST /appointments uses the authenticated actor when auth state is unstable", async () => {
     allowMissingUser = true;
     queryMock
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce(tenantReferencesOk)
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app).post("/appointments").send(basePayload);

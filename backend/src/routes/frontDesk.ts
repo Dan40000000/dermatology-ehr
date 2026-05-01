@@ -5,6 +5,7 @@ import { requireRoles } from '../middleware/rbac';
 import { frontDeskService } from '../services/frontDeskService';
 import { auditLog } from '../services/audit';
 import { logger } from '../lib/logger';
+import { workflowOrchestrator } from '../services/workflowOrchestrator';
 
 const updateStatusSchema = z.object({
   status: z.enum(['scheduled', 'checked_in', 'in_room', 'with_provider', 'checkout', 'completed', 'cancelled', 'no_show']),
@@ -393,6 +394,22 @@ frontDeskRouter.put(
       const { status } = validation.data;
 
       await frontDeskService.updateAppointmentStatus(tenantId, appointmentId!, status);
+
+      if (status === 'completed') {
+        try {
+          await workflowOrchestrator.processEvent({
+            type: 'appointment_checkout',
+            tenantId,
+            userId,
+            entityType: 'appointment',
+            entityId: appointmentId!,
+            data: {},
+            timestamp: new Date(),
+          });
+        } catch (workflowError) {
+          logger.error('Failed to run checkout workflow from front desk status:', workflowError);
+        }
+      }
 
       try {
         await auditLog(tenantId, userId, 'update_status', 'appointment', appointmentId!);

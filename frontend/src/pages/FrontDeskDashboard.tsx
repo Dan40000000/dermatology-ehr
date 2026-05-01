@@ -173,9 +173,17 @@ export const FrontDeskDashboard: React.FC = () => {
     try {
       await api.post(`/api/front-desk/check-out/${appointmentId}`, data);
 
-      // If payment was collected, would also call payment endpoint
       if (data.paymentCollected && data.paymentCollected > 0) {
-        // await api.post('/api/patient-payments', { ... });
+        const appointment = appointments.find((appt) => appt.id === appointmentId);
+        if (appointment?.patientId) {
+          await api.post('/api/patient-payments', {
+            patientId: appointment.patientId,
+            paymentDate: new Date().toISOString().slice(0, 10),
+            amountCents: Math.round(data.paymentCollected * 100),
+            paymentMethod: 'cash',
+            notes: data.notes || `Front desk checkout payment for appointment ${appointmentId}`,
+          });
+        }
       }
 
       // If follow-up was scheduled, would create appointment
@@ -183,6 +191,7 @@ export const FrontDeskDashboard: React.FC = () => {
         // await api.post('/api/appointments', { ... });
       }
 
+      await api.put(`/api/front-desk/status/${appointmentId}`, { status: 'completed' });
       await fetchAllData();
       setCheckOutModalOpen(false);
       setSelectedAppointment(null);

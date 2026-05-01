@@ -161,7 +161,7 @@ async function appendInventoryChargeToBill(params: {
     }
   }
 
-  if (!billId) {
+  if (!billId && !encounterId) {
     const existingOpenBill = await client.query(
       `SELECT id
        FROM bills

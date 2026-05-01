@@ -497,6 +497,7 @@ export function FinancialsHub() {
 
   const handlePaymentSuccess = (paymentId: string) => {
     showSuccess('Payment processed successfully!');
+    loadData();
   };
 
   const handleExportReport = (reportType: string) => {

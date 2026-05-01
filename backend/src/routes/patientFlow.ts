@@ -5,6 +5,7 @@ import { requireRoles } from '../middleware/rbac';
 import { patientFlowService, FlowStatus } from '../services/patientFlowService';
 import { auditLog } from '../services/audit';
 import { logger } from '../lib/logger';
+import { workflowOrchestrator } from '../services/workflowOrchestrator';
 
 // ============================================
 // VALIDATION SCHEMAS
@@ -171,6 +172,22 @@ patientFlowRouter.put(
 
       // Audit log
       await auditLog(tenantId, userId, 'update_flow_status', 'patient_flow', flow.id);
+
+      if (status === 'completed') {
+        try {
+          await workflowOrchestrator.processEvent({
+            type: 'appointment_checkout',
+            tenantId,
+            userId,
+            entityType: 'appointment',
+            entityId: appointmentId!,
+            data: { notes },
+            timestamp: new Date(),
+          });
+        } catch (workflowError) {
+          logger.error('Failed to run checkout workflow from patient flow status:', workflowError);
+        }
+      }
 
       res.json({
         success: true,

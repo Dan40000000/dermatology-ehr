@@ -17,6 +17,7 @@ const toastMocks = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   fetchOrders: vi.fn(),
+  fetchPrescriptionsEnhanced: vi.fn(),
   fetchPatients: vi.fn(),
   createOrder: vi.fn(),
   sendErx: vi.fn(),
@@ -139,6 +140,7 @@ describe('PrescriptionsPage', () => {
         },
       ],
     });
+    apiMocks.fetchPrescriptionsEnhanced.mockResolvedValue({ prescriptions: [] });
     apiMocks.fetchPatients.mockResolvedValue({
       patients: [{ id: 'patient-1', firstName: 'Ana', lastName: 'Derm' }],
     });

@@ -16,6 +16,9 @@ import {
 import { getPracticeTimeZone } from "../lib/practiceTimeZone";
 import { logger } from "../lib/logger";
 import { env } from "../config/env";
+import { notificationService } from "../services/integrations/notificationService";
+import { workflowOrchestrator } from "../services/workflowOrchestrator";
+import { emitAppointmentCreated } from "../websocket/emitter";
 
 // ============================================================================
 // PATIENT PORTAL ROUTES (Public-facing for patients)
@@ -525,6 +528,89 @@ const guestBookingSchema = z.object({
   }),
 });
 
+type BookingSideEffectSource = "patient_portal" | "guest_booking";
+
+async function getAppointmentDetailsForSideEffects(tenantId: string, appointmentId: string) {
+  const result = await pool.query(
+    `SELECT a.*,
+            p.first_name || ' ' || p.last_name as patient_name,
+            pr.full_name as provider_name,
+            l.name as location_name,
+            at.name as appointment_type
+     FROM appointments a
+     JOIN patients p ON p.id = a.patient_id AND p.tenant_id = a.tenant_id
+     JOIN providers pr ON pr.id = a.provider_id AND pr.tenant_id = a.tenant_id
+     JOIN locations l ON l.id = a.location_id AND l.tenant_id = a.tenant_id
+     JOIN appointment_types at ON at.id = a.appointment_type_id AND at.tenant_id = a.tenant_id
+     WHERE a.id = $1 AND a.tenant_id = $2
+     LIMIT 1`,
+    [appointmentId, tenantId],
+  );
+
+  return result.rows[0] || null;
+}
+
+async function runBookingSideEffects(params: {
+  tenantId: string;
+  appointmentId: string;
+  userId?: string | null;
+  source: BookingSideEffectSource;
+}) {
+  try {
+    const appt = await getAppointmentDetailsForSideEffects(params.tenantId, params.appointmentId);
+    if (!appt) {
+      return;
+    }
+
+    await notificationService.sendNotification({
+      tenantId: params.tenantId,
+      notificationType: "appointment_booked",
+      data: {
+        patientName: appt.patient_name,
+        appointmentType: appt.appointment_type,
+        scheduledStart: appt.scheduled_start,
+        scheduledEnd: appt.scheduled_end,
+        providerName: appt.provider_name,
+        locationName: appt.location_name,
+        source: params.source,
+      },
+    });
+
+    emitAppointmentCreated(params.tenantId, {
+      id: appt.id,
+      patientId: appt.patient_id,
+      patientName: appt.patient_name,
+      providerId: appt.provider_id,
+      providerName: appt.provider_name,
+      locationId: appt.location_id,
+      locationName: appt.location_name,
+      scheduledStart: appt.scheduled_start,
+      scheduledEnd: appt.scheduled_end,
+      status: appt.status,
+      appointmentTypeId: appt.appointment_type_id,
+      appointmentTypeName: appt.appointment_type,
+    });
+
+    await workflowOrchestrator.processEvent({
+      type: "appointment_scheduled",
+      tenantId: params.tenantId,
+      userId: params.userId || "patient_portal",
+      entityType: "appointment",
+      entityId: params.appointmentId,
+      data: {
+        patientId: appt.patient_id,
+        providerId: appt.provider_id,
+        appointmentType: appt.appointment_type,
+        scheduledStart: appt.scheduled_start,
+        source: params.source,
+      },
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    logPatientSchedulingError("Portal booking side effects failed", error);
+  }
+}
+
 patientSchedulingRouter.post(
   "/book",
   requirePatientAuth,
@@ -535,7 +621,7 @@ patientSchedulingRouter.post(
       return res.status(400).json({ error: parsed.error.format() });
     }
 
-    const { providerId, appointmentTypeId, scheduledStart, scheduledEnd, reason, notes } =
+    const { providerId, appointmentTypeId, scheduledStart, reason, notes } =
       parsed.data;
 
     const client = await pool.connect();
@@ -557,6 +643,8 @@ patientSchedulingRouter.post(
         await client.query("ROLLBACK");
         return res.status(409).json({ error: "Time slot is no longer available" });
       }
+
+      const scheduledEnd = requestedSlot.endTime;
 
       // Check for double-booking (race condition protection)
       const conflictCheck = await client.query(
@@ -593,8 +681,8 @@ patientSchedulingRouter.post(
       await client.query(
         `INSERT INTO appointments (
           id, tenant_id, patient_id, provider_id, location_id,
-          appointment_type_id, scheduled_start, scheduled_end, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          appointment_type_id, scheduled_start, scheduled_end, status, reason, notes
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           appointmentId,
           req.patient!.tenantId,
@@ -605,6 +693,8 @@ patientSchedulingRouter.post(
           scheduledStart,
           scheduledEnd,
           "scheduled",
+          reason || null,
+          notes || null,
         ]
       );
 
@@ -658,10 +748,17 @@ patientSchedulingRouter.post(
 
       await client.query("COMMIT");
 
-      // TODO: Send confirmation email
+      await runBookingSideEffects({
+        tenantId: req.patient!.tenantId,
+        appointmentId,
+        userId: req.patient!.accountId,
+        source: "patient_portal",
+      });
 
       return res.status(201).json({
         appointmentId,
+        scheduledStart,
+        scheduledEnd,
         message: "Appointment booked successfully",
       });
     } catch (error) {
@@ -688,7 +785,7 @@ patientSchedulingRouter.post(
       return res.status(400).json({ error: parsed.error.format() });
     }
 
-    const { providerId, appointmentTypeId, scheduledStart, scheduledEnd, reason, notes, guest, paymentMethod, policy } =
+    const { providerId, appointmentTypeId, scheduledStart, reason, notes, guest, paymentMethod, policy } =
       parsed.data;
 
     const client = await pool.connect();
@@ -725,6 +822,8 @@ patientSchedulingRouter.post(
         await client.query("ROLLBACK");
         return res.status(409).json({ error: "Time slot is no longer available" });
       }
+
+      const scheduledEnd = requestedSlot.endTime;
 
       const conflictCheck = await client.query(
         `SELECT 1 FROM appointments
@@ -765,8 +864,8 @@ patientSchedulingRouter.post(
       await client.query(
         `INSERT INTO appointments (
           id, tenant_id, patient_id, provider_id, location_id,
-          appointment_type_id, scheduled_start, scheduled_end, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          appointment_type_id, scheduled_start, scheduled_end, status, reason, notes
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           appointmentId,
           tenantId,
@@ -777,6 +876,8 @@ patientSchedulingRouter.post(
           scheduledStart,
           scheduledEnd,
           "scheduled",
+          reason,
+          notes || null,
         ]
       );
 
@@ -871,8 +972,17 @@ patientSchedulingRouter.post(
 
       await client.query("COMMIT");
 
+      await runBookingSideEffects({
+        tenantId,
+        appointmentId,
+        userId: null,
+        source: "guest_booking",
+      });
+
       return res.status(201).json({
         appointmentId,
+        scheduledStart,
+        scheduledEnd,
         message: "Appointment booked successfully",
         guestBooking: {
           patientId,
@@ -911,7 +1021,7 @@ patientSchedulingRouter.put(
     }
 
     const appointmentId = req.params.appointmentId;
-    const { scheduledStart, scheduledEnd, reason } = parsed.data;
+    const { scheduledStart, reason } = parsed.data;
 
     const client = await pool.connect();
 
@@ -960,6 +1070,8 @@ patientSchedulingRouter.put(
         await client.query("ROLLBACK");
         return res.status(409).json({ error: "New time slot is not available" });
       }
+
+      const scheduledEnd = requestedSlot.endTime;
 
       // Check for double-booking
       const conflictCheck = await client.query(

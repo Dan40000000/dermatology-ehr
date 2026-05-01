@@ -2,10 +2,10 @@ import { Router } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
-import { requireRoles } from "../middleware/rbac";
 import { getEmailService } from "../lib/container";
 import { logger } from "../lib/logger";
 import { pool } from "../db/pool";
+import { buildEffectiveRoles } from "../lib/roles";
 
 const router = Router();
 
@@ -64,6 +64,44 @@ function getFeedbackRecipient(): string {
     process.env.DEMO_FEEDBACK_EMAIL ||
     "dan@perrysoftwarellc.com"
   ).trim();
+}
+
+function getFeedbackViewerEmails(): Set<string> {
+  const raw =
+    process.env.PROFESSIONAL_FEEDBACK_VIEWER_EMAILS ||
+    process.env.PROFESSIONAL_FEEDBACK_VIEWER_EMAIL ||
+    "";
+
+  return new Set(
+    raw
+      .split(",")
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function requireFeedbackInboxAccess(req: AuthedRequest, res: any, next: any) {
+  const user = req.user;
+  if (!user) {
+    return res.status(401).json({ error: "Unauthenticated" });
+  }
+
+  const roles = buildEffectiveRoles(user.role, user.roles || user.secondaryRoles);
+  if (!roles.includes("admin")) {
+    return res.status(403).json({ error: "Insufficient role" });
+  }
+
+  const allowedEmails = getFeedbackViewerEmails();
+  if (allowedEmails.size === 0) {
+    logger.error("Feedback inbox viewer allowlist is not configured");
+    return res.status(403).json({ error: "Feedback inbox is not configured" });
+  }
+
+  if (!allowedEmails.has(String(user.email || "").trim().toLowerCase())) {
+    return res.status(403).json({ error: "Feedback inbox access is restricted" });
+  }
+
+  return next();
 }
 
 function toSafeErrorMessage(error: unknown): string {
@@ -205,7 +243,7 @@ async function updateFeedbackEmailStatus(
   }
 }
 
-router.get("/", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
+router.get("/", requireAuth, requireFeedbackInboxAccess, async (req: AuthedRequest, res) => {
   try {
     const parsed = listFeedbackQuerySchema.safeParse(req.query);
     if (!parsed.success) {
@@ -285,7 +323,7 @@ router.get("/", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest,
   }
 });
 
-router.patch("/:id", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
+router.patch("/:id", requireAuth, requireFeedbackInboxAccess, async (req: AuthedRequest, res) => {
   try {
     const parsed = feedbackStatusSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -331,7 +369,7 @@ router.patch("/:id", requireAuth, requireRoles(["admin"]), async (req: AuthedReq
   }
 });
 
-router.get("/:id/attachments/:attachmentId", requireAuth, requireRoles(["admin"]), async (req: AuthedRequest, res) => {
+router.get("/:id/attachments/:attachmentId", requireAuth, requireFeedbackInboxAccess, async (req: AuthedRequest, res) => {
   try {
     const result = await pool.query(
       `SELECT pfa.filename, pfa.content_type, pfa.content

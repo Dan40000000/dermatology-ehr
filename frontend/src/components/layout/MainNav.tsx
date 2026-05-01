@@ -4,12 +4,14 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchUnreadCount } from '../../api';
 import { canAccessModule, type ModuleKey } from '../../config/moduleAccess';
+import { canViewProfessionalFeedback } from '../../utils/feedbackAccess';
 import { getEffectiveRoles } from '../../utils/roles';
 
 interface DropdownItem {
   label: string;
   path: string;
   section?: string;
+  requiresFeedbackAccess?: boolean;
 }
 
 interface NavItem {
@@ -367,7 +369,7 @@ const navItems: NavItem[] = [
       { label: 'Fee Schedules', path: '/admin/fee-schedules' },
       { label: 'AI Agents', path: '/admin/ai-agents' },
       { label: 'Audit Log', path: '/admin/audit-log' },
-      { label: 'Feedback Inbox', path: '/admin/feedback' },
+      { label: 'Feedback Inbox', path: '/admin/feedback', requiresFeedbackAccess: true },
     ]
   },
 ];
@@ -513,6 +515,10 @@ export function MainNav() {
       {hoveredItem && dropdownPos && (() => {
         const item = filteredNavItems.find(i => i.path === hoveredItem);
         if (!item?.dropdown) return null;
+        const visibleDropdown = item.dropdown.filter((dropdownItem) => {
+          return !dropdownItem.requiresFeedbackAccess || canViewProfessionalFeedback(user);
+        });
+        if (visibleDropdown.length === 0) return null;
 
         return createPortal(
           <div
@@ -523,12 +529,12 @@ export function MainNav() {
             role="menu"
           >
             {(() => {
-              const sections = new Set(item.dropdown.map(d => d.section).filter(Boolean));
+              const sections = new Set(visibleDropdown.map(d => d.section).filter(Boolean));
               if (sections.size > 0) {
                 return Array.from(sections).map((section) => (
                   <div key={section} className="ema-nav-dropdown-section">
                     <div className="ema-nav-dropdown-section-title">{section}</div>
-                    {item.dropdown!
+                    {visibleDropdown
                       .filter(d => d.section === section)
                       .map((dropdownItem) => (
                         <NavLink
@@ -544,7 +550,7 @@ export function MainNav() {
                   </div>
                 ));
               } else {
-                return item.dropdown.map((dropdownItem) => (
+                return visibleDropdown.map((dropdownItem) => (
                   <NavLink
                     key={dropdownItem.path}
                     to={dropdownItem.path}

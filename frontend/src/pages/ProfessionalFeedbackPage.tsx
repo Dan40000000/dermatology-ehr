@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties, type Rea
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { API_BASE_URL } from '../utils/apiBase';
-import { hasRole } from '../utils/roles';
+import { canViewProfessionalFeedback } from '../utils/feedbackAccess';
 
 type FeedbackStatus = 'new' | 'reviewed' | 'resolved' | 'archived';
 type FeedbackType = 'issue' | 'suggestion';
@@ -190,7 +190,7 @@ export function ProfessionalFeedbackPage() {
     return <Navigate to="/login" replace />;
   }
 
-  if (!hasRole(user, 'admin')) {
+  if (!canViewProfessionalFeedback(user)) {
     return <Navigate to="/home" replace />;
   }
 

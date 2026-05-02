@@ -9,7 +9,8 @@ export function LoginPage() {
   const { isAuthenticated, user, login, logout, isLoading } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/home';
+  const locationState = location.state;
+  const from = (locationState as { from?: { pathname: string } })?.from?.pathname || '/home';
   const forceFreshLogin = new URLSearchParams(location.search).get('fresh') === '1';
 
   const [tenantId, setTenantId] = useState('tenant-demo');
@@ -37,10 +38,12 @@ export function LoginPage() {
   }, [sessionNotice]);
 
   useEffect(() => {
-    if (forceFreshLogin && isAuthenticated) {
+    if (!forceFreshLogin) return;
+    if (isAuthenticated) {
       logout();
     }
-  }, [forceFreshLogin, isAuthenticated, logout]);
+    navigate('/login', { replace: true, state: locationState });
+  }, [forceFreshLogin, isAuthenticated, locationState, logout, navigate]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();

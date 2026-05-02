@@ -5,11 +5,14 @@ import { BrowserRouter } from 'react-router-dom';
 
 const mockNavigate = vi.fn();
 const mockLogin = vi.hoisted(() => vi.fn());
+const mockLogout = vi.hoisted(() => vi.fn());
 const locationMock = vi.hoisted(() => vi.fn(() => ({ state: {} })));
 
 const authMocks = vi.hoisted(() => ({
   isAuthenticated: false,
+  user: null as null | { fullName?: string; email?: string },
   login: mockLogin,
+  logout: mockLogout,
   isLoading: false,
 }));
 
@@ -31,9 +34,11 @@ describe('LoginPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     authMocks.isAuthenticated = false;
+    authMocks.user = null;
     authMocks.isLoading = false;
     mockLogin.mockResolvedValue(undefined);
     locationMock.mockReturnValue({ state: {} });
+    sessionStorage.clear();
   });
 
   it('should render login form', () => {
@@ -110,6 +115,7 @@ describe('LoginPage', () => {
     await waitFor(() => {
       expect(mockLogin).toHaveBeenCalledWith('tenant-demo', 'admin@demo.practice', 'Password123!');
     });
+    expect(mockNavigate).toHaveBeenCalledWith('/home', { replace: true });
   });
 
   it('should fill and submit the physician demo credentials', async () => {
@@ -200,8 +206,9 @@ describe('LoginPage', () => {
     expect(submitButton).toBeDisabled();
   });
 
-  it('should redirect to home when authenticated', () => {
+  it('should show an active session warning instead of auto-entering the app', () => {
     authMocks.isAuthenticated = true;
+    authMocks.user = { fullName: 'Dr. Existing User', email: 'provider@demo.practice' };
 
     render(
       <BrowserRouter>
@@ -209,11 +216,14 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByTestId('navigate')).toHaveTextContent('/home');
+    expect(screen.getByText('Active session detected')).toBeInTheDocument();
+    expect(screen.getByText(/Dr. Existing User/)).toBeInTheDocument();
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  it('should redirect to previous location when specified', () => {
+  it('should continue to previous location from the active session warning', () => {
     authMocks.isAuthenticated = true;
+    authMocks.user = { fullName: 'Dr. Existing User', email: 'provider@demo.practice' };
 
     locationMock.mockReturnValue({ state: { from: { pathname: '/patients' } } });
 
@@ -223,7 +233,24 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByTestId('navigate')).toHaveTextContent('/patients');
+    fireEvent.click(screen.getByRole('button', { name: /Continue to app/i }));
+
+    expect(mockNavigate).toHaveBeenCalledWith('/patients', { replace: true });
+  });
+
+  it('should allow signing out from the active session warning', () => {
+    authMocks.isAuthenticated = true;
+    authMocks.user = { fullName: 'Dr. Existing User', email: 'provider@demo.practice' };
+
+    render(
+      <BrowserRouter>
+        <LoginPage />
+      </BrowserRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Sign out first/i }));
+
+    expect(mockLogout).toHaveBeenCalled();
   });
 
   it('should have proper input types', () => {

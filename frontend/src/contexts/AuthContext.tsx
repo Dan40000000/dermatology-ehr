@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import type { Session, User } from '../types';
 import { login as apiLogin, fetchMe } from '../api';
 import { API_BASE_URL } from '../utils/apiBase';
@@ -74,11 +74,23 @@ interface AuthContextValue {
   refreshUser: () => Promise<void>;
 }
 
+// This context intentionally lives with the provider so tests can mount it directly.
+// eslint-disable-next-line react-refresh/only-export-components
 export const AuthContext = createContext<AuthContextValue | null>(null);
 
 const STORAGE_KEY = 'derm_session';
 const TENANT_HEADER = 'x-tenant-id';
 const API_BASE = API_BASE_URL || '';
+const DEFAULT_IDLE_TIMEOUT_MINUTES = 15;
+const idleTimeoutMinutes = Number(import.meta.env.VITE_SESSION_IDLE_TIMEOUT_MINUTES);
+const SESSION_IDLE_TIMEOUT_MS =
+  (Number.isFinite(idleTimeoutMinutes) && idleTimeoutMinutes > 0
+    ? idleTimeoutMinutes
+    : DEFAULT_IDLE_TIMEOUT_MINUTES) * 60 * 1000;
+const SESSION_IDLE_CHECK_INTERVAL_MS = 15_000;
+const ACTIVITY_WRITE_THROTTLE_MS = 30_000;
+const SESSION_TIMEOUT_REASON_KEY = 'derm_session_timeout_reason';
+const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'touchstart', 'wheel', 'scroll'] as const;
 
 type SessionUserLike = Partial<User> & {
   secondaryRoles?: unknown;
@@ -88,6 +100,17 @@ type SessionUserLike = Partial<User> & {
 type RefreshPayload = {
   user?: SessionUserLike & { tenantId?: string };
   tokens: { accessToken: string; refreshToken: string };
+};
+
+type PersistedSession = Session & {
+  lastActivityAt?: number;
+  sessionStartedAt?: number;
+};
+
+type RestoredSession = {
+  session: Session;
+  lastActivityAt: number;
+  sessionStartedAt: number;
 };
 
 function normalizeUser(userData: SessionUserLike | null | undefined, fallback?: User | null): User | null {
@@ -106,31 +129,119 @@ function normalizeUser(userData: SessionUserLike | null | undefined, fallback?: 
   };
 }
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(() => {
-    // Try to restore session from localStorage
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as Session;
-        if (isLocalDemoTokenShape(parsed.accessToken) && !isLocalDemoEnabled()) return null;
-        const user = normalizeUser(parsed.user);
-        if (!user) return null;
-        return { ...parsed, user };
-      }
-    } catch {
-      // Invalid stored session
+function readPersistedSession(): RestoredSession | null {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return null;
+
+    const parsed = JSON.parse(stored) as PersistedSession;
+    if (isLocalDemoTokenShape(parsed.accessToken) && !isLocalDemoEnabled()) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
     }
+
+    const user = normalizeUser(parsed.user);
+    if (!user) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+
+    const now = Date.now();
+    const lastActivityAt = typeof parsed.lastActivityAt === 'number' ? parsed.lastActivityAt : now;
+    if (now - lastActivityAt >= SESSION_IDLE_TIMEOUT_MS) {
+      localStorage.removeItem(STORAGE_KEY);
+      try {
+        sessionStorage.setItem(SESSION_TIMEOUT_REASON_KEY, 'idle_timeout');
+      } catch {
+        // Ignore browsers that block sessionStorage.
+      }
+      return null;
+    }
+
+    const sessionStartedAt = typeof parsed.sessionStartedAt === 'number' ? parsed.sessionStartedAt : now;
+    const session: Session = {
+      tenantId: parsed.tenantId,
+      accessToken: parsed.accessToken,
+      refreshToken: parsed.refreshToken,
+      user,
+    };
+
+    return {
+      session,
+      lastActivityAt,
+      sessionStartedAt,
+    };
+  } catch {
+    localStorage.removeItem(STORAGE_KEY);
     return null;
-  });
-  const [user, setUser] = useState<User | null>(session?.user || null);
+  }
+}
+
+function readPersistedLastActivityAt(): number | null {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as PersistedSession;
+    return typeof parsed.lastActivityAt === 'number' ? parsed.lastActivityAt : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistSession(session: Session, lastActivityAt: number, sessionStartedAt: number) {
+  const persistedSession: PersistedSession = {
+    ...session,
+    lastActivityAt,
+    sessionStartedAt,
+  };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedSession));
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const restoredSessionRef = useRef<RestoredSession | null | undefined>(undefined);
+  if (restoredSessionRef.current === undefined) {
+    restoredSessionRef.current = readPersistedSession();
+  }
+
+  const [session, setSession] = useState<Session | null>(() => restoredSessionRef.current?.session || null);
+  const [user, setUser] = useState<User | null>(() => restoredSessionRef.current?.session.user || null);
   const [isLoading, setIsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const lastActivityAtRef = useRef(restoredSessionRef.current?.lastActivityAt || Date.now());
+  const sessionStartedAtRef = useRef(restoredSessionRef.current?.sessionStartedAt || Date.now());
+  const lastActivityWriteAtRef = useRef(lastActivityAtRef.current);
+
+  const clearSession = useCallback((reason?: 'idle_timeout') => {
+    setSession(null);
+    setUser(null);
+    localStorage.removeItem(STORAGE_KEY);
+    if (reason === 'idle_timeout') {
+      try {
+        sessionStorage.setItem(SESSION_TIMEOUT_REASON_KEY, 'idle_timeout');
+      } catch {
+        // Ignore browsers that block sessionStorage.
+      }
+    }
+  }, []);
+
+  const startSession = useCallback((nextSession: Session) => {
+    const now = Date.now();
+    lastActivityAtRef.current = now;
+    sessionStartedAtRef.current = now;
+    lastActivityWriteAtRef.current = 0;
+    setSession(nextSession);
+    setUser(nextSession.user);
+    try {
+      sessionStorage.removeItem(SESSION_TIMEOUT_REASON_KEY);
+    } catch {
+      // Ignore browsers that block sessionStorage.
+    }
+  }, []);
 
   // Persist session to localStorage
   useEffect(() => {
     if (session) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+      persistSession(session, lastActivityAtRef.current, sessionStartedAtRef.current);
     } else {
       localStorage.removeItem(STORAGE_KEY);
     }
@@ -148,8 +259,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const handleSessionCleared = () => {
-      setSession(null);
-      setUser(null);
+      clearSession();
     };
 
     window.addEventListener('derm_session_updated', handleSessionUpdated as EventListener);
@@ -159,7 +269,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('derm_session_updated', handleSessionUpdated as EventListener);
       window.removeEventListener('derm_session_cleared', handleSessionCleared);
     };
-  }, []);
+  }, [clearSession]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    const markActivity = (forceWrite = false) => {
+      const now = Date.now();
+      lastActivityAtRef.current = now;
+
+      if (forceWrite || now - lastActivityWriteAtRef.current >= ACTIVITY_WRITE_THROTTLE_MS) {
+        persistSession(session, now, sessionStartedAtRef.current);
+        lastActivityWriteAtRef.current = now;
+      }
+    };
+
+    const handleActivity = () => markActivity(false);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        markActivity(false);
+      }
+    };
+
+    ACTIVITY_EVENTS.forEach((eventName) => {
+      window.addEventListener(eventName, handleActivity, { passive: true });
+    });
+    window.addEventListener('focus', handleActivity);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    const idleCheck = window.setInterval(() => {
+      const persistedLastActivityAt = readPersistedLastActivityAt();
+      if (persistedLastActivityAt && persistedLastActivityAt > lastActivityAtRef.current) {
+        lastActivityAtRef.current = persistedLastActivityAt;
+      }
+
+      if (Date.now() - lastActivityAtRef.current >= SESSION_IDLE_TIMEOUT_MS) {
+        clearSession('idle_timeout');
+      }
+    }, SESSION_IDLE_CHECK_INTERVAL_MS);
+
+    return () => {
+      ACTIVITY_EVENTS.forEach((eventName) => {
+        window.removeEventListener(eventName, handleActivity);
+      });
+      window.removeEventListener('focus', handleActivity);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearInterval(idleCheck);
+    };
+  }, [clearSession, session]);
 
   useEffect(() => {
     if (!session || !isLocalDemoAccessToken(session.accessToken)) return;
@@ -210,8 +367,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         const demoSession = buildLocalDemoSession(tenantId, normalizedEmail, demo);
-        setSession(demoSession);
-        setUser(demoSession.user);
+        startSession(demoSession);
         return;
       }
 
@@ -225,12 +381,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshToken: resp.tokens.refreshToken,
         user: normalizedUser,
       };
-      setSession(newSession);
-      setUser(newSession.user);
+      startSession(newSession);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [startSession]);
 
   const refreshSession = useCallback(async () => {
     if (!session?.refreshToken || !session?.tenantId) return;
@@ -262,13 +417,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(updated);
       setUser(updated.user);
     } catch {
-      setSession(null);
-      setUser(null);
-      localStorage.removeItem(STORAGE_KEY);
+      clearSession();
     } finally {
       setRefreshing(false);
     }
-  }, [session]);
+  }, [clearSession, session]);
 
   useEffect(() => {
     if (!session?.accessToken || refreshing) return;
@@ -287,10 +440,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [session?.accessToken, refreshSession, refreshing]);
 
   const logout = useCallback(() => {
-    setSession(null);
-    setUser(null);
-    localStorage.removeItem(STORAGE_KEY);
-  }, []);
+    clearSession();
+  }, [clearSession]);
 
   const refreshUser = useCallback(async () => {
     if (!session) return;
@@ -334,6 +485,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) {

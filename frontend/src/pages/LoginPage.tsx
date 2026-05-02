@@ -1,13 +1,14 @@
-import { useState, type FormEvent } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
 import { LanguageSwitcher } from '../components/LanguageSwitcher';
 
 export function LoginPage() {
   const { t } = useTranslation(['auth', 'common']);
-  const { isAuthenticated, login, isLoading } = useAuth();
+  const { isAuthenticated, user, login, logout, isLoading } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/home';
 
   const [tenantId, setTenantId] = useState('tenant-demo');
@@ -15,18 +16,33 @@ export function LoginPage() {
   const [password, setPassword] = useState('Password123!');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionNotice] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem('derm_session_timeout_reason') === 'idle_timeout'
+        ? 'For security, you were signed out after 15 minutes of inactivity.'
+        : null;
+    } catch {
+      return null;
+    }
+  });
 
-  if (isAuthenticated) {
-    return <Navigate to={from} replace />;
-  }
+  useEffect(() => {
+    if (!sessionNotice) return;
+    try {
+      sessionStorage.removeItem('derm_session_timeout_reason');
+    } catch {
+      // Ignore browsers that block sessionStorage.
+    }
+  }, [sessionNotice]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
     try {
       await login(tenantId, email, password);
-    } catch (err: any) {
-      setError(err.message || t('auth:errors.invalidCredentials'));
+      navigate(from, { replace: true });
+    } catch (err: unknown) {
+      setError(err instanceof Error && err.message ? err.message : t('auth:errors.invalidCredentials'));
     }
   };
 
@@ -103,6 +119,79 @@ export function LoginPage() {
           }}>{t('common:appName')}</h1>
           <p style={{ color: '#6b7280', fontSize: '1rem' }}>{t('auth:login.subtitle')}</p>
         </div>
+
+        {sessionNotice && (
+          <div
+            role="alert"
+            style={{
+              marginBottom: '1.5rem',
+              padding: '0.9rem 1rem',
+              background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(251, 191, 36, 0.08))',
+              border: '1px solid rgba(217, 119, 6, 0.28)',
+              borderRadius: '14px',
+              color: '#92400e',
+              fontSize: '0.85rem',
+              fontWeight: 700,
+            }}
+          >
+            {sessionNotice}
+          </div>
+        )}
+
+        {isAuthenticated && (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              marginBottom: '1.5rem',
+              padding: '1rem',
+              background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(20, 184, 166, 0.08))',
+              border: '1px solid rgba(16, 185, 129, 0.28)',
+              borderRadius: '14px',
+              color: '#065f46',
+            }}
+          >
+            <p style={{ margin: '0 0 0.35rem', fontWeight: 800, fontSize: '0.9rem' }}>
+              Active session detected
+            </p>
+            <p style={{ margin: '0 0 0.85rem', fontSize: '0.82rem', lineHeight: 1.45 }}>
+              {user?.fullName || user?.email || 'A staff member'} is already signed in on this browser.
+              Continue only if this is your workstation session, or sign out before switching users.
+            </p>
+            <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => navigate(from, { replace: true })}
+                style={{
+                  border: 'none',
+                  borderRadius: '999px',
+                  background: '#047857',
+                  color: '#ffffff',
+                  padding: '0.5rem 0.85rem',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                Continue to app
+              </button>
+              <button
+                type="button"
+                onClick={logout}
+                style={{
+                  border: '1px solid rgba(5, 150, 105, 0.35)',
+                  borderRadius: '999px',
+                  background: '#ffffff',
+                  color: '#047857',
+                  padding: '0.5rem 0.85rem',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                Sign out first
+              </button>
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="login-form">
           <label className="form-field" style={{ display: 'block', marginBottom: '1.5rem' }}>

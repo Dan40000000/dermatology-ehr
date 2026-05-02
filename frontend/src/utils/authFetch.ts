@@ -5,6 +5,8 @@ type StoredSession = {
   tenantId: string;
   accessToken: string;
   refreshToken: string;
+  lastActivityAt?: number;
+  sessionStartedAt?: number;
   user?: {
     id: string;
     email: string;
@@ -38,6 +40,10 @@ const API_BASE = API_BASE_URL || '';
 let originalFetchRef: typeof window.fetch | null = null;
 
 let refreshPromise: Promise<StoredSession | null> | null = null;
+
+type AuthFetchWindow = typeof window & {
+  __authFetchInstalled?: boolean;
+};
 
 function isApiRequest(url: string) {
   if (API_BASE && url.startsWith(API_BASE)) return true;
@@ -100,6 +106,8 @@ async function refreshSession(originalFetch: typeof window.fetch): Promise<Store
       tenantId: data.user?.tenantId || current.tenantId,
       accessToken: data.tokens.accessToken,
       refreshToken: data.tokens.refreshToken,
+      lastActivityAt: current.lastActivityAt,
+      sessionStartedAt: current.sessionStartedAt,
       user: {
         id: data.user?.id || current.user?.id || '',
         email: data.user?.email || current.user?.email || '',
@@ -128,14 +136,15 @@ export async function refreshSessionNow() {
 
 export function installAuthFetch() {
   if (typeof window === 'undefined') return;
-  if ((window as any).__authFetchInstalled) return;
-  (window as any).__authFetchInstalled = true;
+  const authWindow = window as AuthFetchWindow;
+  if (authWindow.__authFetchInstalled) return;
+  authWindow.__authFetchInstalled = true;
 
   const originalFetch = window.fetch.bind(window);
   originalFetchRef = originalFetch;
 
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    let request = new Request(input, init);
+    const request = new Request(input, init);
     let retryRequest: Request | null = null;
 
     if (isApiRequest(request.url) && !isAuthEndpoint(request.url)) {

@@ -42,17 +42,22 @@ const providerUserWithRoles = {
   roles: ['provider'] as string[],
 };
 
+const SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+
 describe('AuthContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    sessionStorage.clear();
     apiMocks.login.mockResolvedValue(mockLoginResponse);
     apiMocks.fetchMe.mockResolvedValue(mockMeResponse);
   });
 
   afterEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   it('should throw error when useAuth is used outside AuthProvider', () => {
@@ -113,6 +118,112 @@ describe('AuthContext', () => {
       roles: ['provider'],
     });
     expect(result.current.isAuthenticated).toBe(true);
+  });
+
+  it('should not restore office sessions past the idle timeout', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T12:00:00Z'));
+
+    const storedSession = {
+      tenantId: 'tenant-1',
+      accessToken: 'stored-token',
+      refreshToken: 'stored-refresh',
+      lastActivityAt: Date.now() - SESSION_IDLE_TIMEOUT_MS - 1,
+      sessionStartedAt: Date.now() - SESSION_IDLE_TIMEOUT_MS - 60_000,
+      user: {
+        id: 'user-1',
+        email: 'stored@example.com',
+        fullName: 'Stored User',
+        role: 'provider',
+      },
+    };
+
+    localStorage.setItem('derm_session', JSON.stringify(storedSession));
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <AuthProvider>{children}</AuthProvider>
+      ),
+    });
+
+    expect(result.current.session).toBeNull();
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(localStorage.getItem('derm_session')).toBeNull();
+    expect(sessionStorage.getItem('derm_session_timeout_reason')).toBe('idle_timeout');
+  });
+
+  it('should automatically logout an idle office session', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T12:00:00Z'));
+
+    const storedSession = {
+      tenantId: 'tenant-1',
+      accessToken: 'stored-token',
+      refreshToken: 'stored-refresh',
+      lastActivityAt: Date.now(),
+      sessionStartedAt: Date.now(),
+      user: {
+        id: 'user-1',
+        email: 'stored@example.com',
+        fullName: 'Stored User',
+        role: 'provider',
+      },
+    };
+
+    localStorage.setItem('derm_session', JSON.stringify(storedSession));
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <AuthProvider>{children}</AuthProvider>
+      ),
+    });
+
+    expect(result.current.isAuthenticated).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(SESSION_IDLE_TIMEOUT_MS + 15_000);
+    });
+
+    expect(result.current.session).toBeNull();
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(localStorage.getItem('derm_session')).toBeNull();
+    expect(sessionStorage.getItem('derm_session_timeout_reason')).toBe('idle_timeout');
+  });
+
+  it('should keep an office session active when workstation activity occurs before timeout', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T12:00:00Z'));
+
+    const storedSession = {
+      tenantId: 'tenant-1',
+      accessToken: 'stored-token',
+      refreshToken: 'stored-refresh',
+      lastActivityAt: Date.now(),
+      sessionStartedAt: Date.now(),
+      user: {
+        id: 'user-1',
+        email: 'stored@example.com',
+        fullName: 'Stored User',
+        role: 'provider',
+      },
+    };
+
+    localStorage.setItem('derm_session', JSON.stringify(storedSession));
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <AuthProvider>{children}</AuthProvider>
+      ),
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(SESSION_IDLE_TIMEOUT_MS - 60_000);
+      window.dispatchEvent(new KeyboardEvent('keydown'));
+      vi.advanceTimersByTime(SESSION_IDLE_TIMEOUT_MS - 60_000);
+    });
+
+    expect(result.current.isAuthenticated).toBe(true);
+    expect(localStorage.getItem('derm_session')).not.toBeNull();
   });
 
   it('should upgrade a stored offline demo session when the backend is available again', async () => {
@@ -317,12 +428,14 @@ describe('AuthContext', () => {
 
     const storedSession = JSON.parse(localStorage.getItem('derm_session')!);
 
-    expect(storedSession).toEqual({
+    expect(storedSession).toMatchObject({
       tenantId: 'tenant-1',
       accessToken: 'access-token-123',
       refreshToken: 'refresh-token-123',
       user: providerUserWithRoles,
     });
+    expect(typeof storedSession.lastActivityAt).toBe('number');
+    expect(typeof storedSession.sessionStartedAt).toBe('number');
   });
 
   it('should handle login errors', async () => {
@@ -346,8 +459,8 @@ describe('AuthContext', () => {
   });
 
   it('should set isLoading during login', async () => {
-    let resolveLogin: (value: any) => void;
-    const loginPromise = new Promise((resolve) => {
+    let resolveLogin: (value: typeof mockLoginResponse) => void;
+    const loginPromise = new Promise<typeof mockLoginResponse>((resolve) => {
       resolveLogin = resolve;
     });
 
@@ -446,8 +559,8 @@ describe('AuthContext', () => {
       await result.current.login('tenant-1', 'test@example.com', 'password123');
     });
 
-    let resolveRefresh: (value: any) => void;
-    const refreshPromise = new Promise((resolve) => {
+    let resolveRefresh: (value: typeof mockMeResponse) => void;
+    const refreshPromise = new Promise<typeof mockMeResponse>((resolve) => {
       resolveRefresh = resolve;
     });
 

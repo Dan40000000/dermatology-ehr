@@ -7,6 +7,8 @@ export function BetaLandingPage() {
     localStorage.removeItem('patientPortalToken');
     localStorage.removeItem('patientPortalTenantId');
     localStorage.removeItem('patientPortalPatient');
+    localStorage.removeItem('derm_session');
+    window.dispatchEvent(new Event('derm_session_cleared'));
   }, []);
 
   return (

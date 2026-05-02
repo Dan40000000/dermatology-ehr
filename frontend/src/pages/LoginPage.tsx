@@ -10,6 +10,7 @@ export function LoginPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/home';
+  const forceFreshLogin = new URLSearchParams(location.search).get('fresh') === '1';
 
   const [tenantId, setTenantId] = useState('tenant-demo');
   const [email, setEmail] = useState('admin@demo.practice');
@@ -34,6 +35,12 @@ export function LoginPage() {
       // Ignore browsers that block sessionStorage.
     }
   }, [sessionNotice]);
+
+  useEffect(() => {
+    if (forceFreshLogin && isAuthenticated) {
+      logout();
+    }
+  }, [forceFreshLogin, isAuthenticated, logout]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -138,7 +145,7 @@ export function LoginPage() {
           </div>
         )}
 
-        {isAuthenticated && (
+        {isAuthenticated && !forceFreshLogin && (
           <div
             role="status"
             aria-live="polite"

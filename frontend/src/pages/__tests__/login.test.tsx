@@ -37,7 +37,7 @@ describe('LoginPage', () => {
     authMocks.user = null;
     authMocks.isLoading = false;
     mockLogin.mockResolvedValue(undefined);
-    locationMock.mockReturnValue({ state: {} });
+    locationMock.mockReturnValue({ state: {}, search: '' });
     sessionStorage.clear();
   });
 
@@ -251,6 +251,23 @@ describe('LoginPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Sign out first/i }));
 
     expect(mockLogout).toHaveBeenCalled();
+  });
+
+  it('should force sign out when opened as a fresh provider login from the landing page', async () => {
+    authMocks.isAuthenticated = true;
+    authMocks.user = { fullName: 'Dr. Existing User', email: 'provider@demo.practice' };
+    locationMock.mockReturnValue({ state: {}, search: '?fresh=1' });
+
+    render(
+      <BrowserRouter>
+        <LoginPage />
+      </BrowserRouter>
+    );
+
+    expect(screen.queryByText('Active session detected')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockLogout).toHaveBeenCalled();
+    });
   });
 
   it('should have proper input types', () => {

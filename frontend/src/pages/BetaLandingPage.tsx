@@ -82,7 +82,7 @@ export function BetaLandingPage() {
           </Link>
 
           {/* Provider Login */}
-          <Link to="/login" className="lp-card lp-card--indigo">
+          <Link to="/login?fresh=1" className="lp-card lp-card--indigo">
             <div className="lp-card-bg" />
             <div className="lp-card-shimmer" />
             <div className="lp-card-inner">

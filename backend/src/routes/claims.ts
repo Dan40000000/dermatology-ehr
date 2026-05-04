@@ -53,8 +53,12 @@ const claimUpdateSchema = z.object({
 });
 
 const claimStatusSchema = z.object({
-  status: z.enum(["draft", "scrubbed", "ready", "submitted", "accepted", "denied", "paid", "appealed"]),
+  status: z.enum(["draft", "coding_review", "scrubbed", "ready", "submitted", "accepted", "rejected", "denied", "paid", "appealed"]),
   notes: z.string().optional(),
+});
+
+const claimReleaseSchema = z.object({
+  notes: z.string().max(1000).optional(),
 });
 
 const paymentSchema = z.object({
@@ -278,6 +282,10 @@ claimsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
       c.payer, c.payer_id as "payerId", c.payer_name as "payerName",
       c.submitted_at as "submittedAt", c.service_date as "serviceDate",
       c.scrub_status as "scrubStatus", c.is_cosmetic as "isCosmetic",
+      c.coding_review_status as "codingReviewStatus",
+      c.coding_reviewed_by as "codingReviewedBy",
+      c.coding_reviewed_at as "codingReviewedAt",
+      c.coding_review_notes as "codingReviewNotes",
       c.denial_reason as "denialReason", c.denial_date as "denialDate",
       c.appeal_status as "appealStatus",
       c.created_at as "createdAt", c.updated_at as "updatedAt",
@@ -352,9 +360,20 @@ claimsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "front_des
     // Load from encounter
     const chargesResult = await pool.query(
       `select cpt_code as cpt, quantity as units, fee_cents / 100.0 as charge, description,
-              linked_diagnosis_ids as dx
+              case
+                when cardinality(coalesce(icd_codes, array[]::text[])) > 0 then icd_codes
+                else coalesce((
+                  select array_agg(ed.icd10_code order by ed.is_primary desc, ed.created_at asc)
+                  from encounter_diagnoses ed
+                  where ed.tenant_id = charges.tenant_id
+                    and ed.encounter_id = charges.encounter_id
+                    and ed.id = any(coalesce(charges.linked_diagnosis_ids, array[]::text[]))
+                ), array[]::text[])
+              end as dx
        from charges
-       where encounter_id = $1 and tenant_id = $2`,
+       where encounter_id = $1
+         and tenant_id = $2
+         and coalesce(nullif(to_jsonb(charges)->>'billing_route', ''), 'insurance') = 'insurance'`,
       [payload.encounterId, tenantId],
     );
 
@@ -400,18 +419,63 @@ claimsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "front_des
 
   await pool.query(
     `insert into claims(id, tenant_id, encounter_id, patient_id, claim_number, total_charges,
-                        service_date, status, payer, payer_id, payer_name, line_items, created_by)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+                        total_cents, service_date, status, payer, payer_id, payer_name, line_items, created_by)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
     [claimId, tenantId, payload.encounterId || null, payload.patientId, claimNumber, totalCharges,
-     serviceDate, "draft", payerName, payerId, payerName,
+     Math.round(totalCharges * 100), serviceDate, "coding_review", payerName, payerId, payerName,
      JSON.stringify(lineItems), req.user!.id],
   );
+
+  const diagnosisCodes = Array.from(new Set(lineItems.flatMap((item) => item.dx || [])));
+  for (const [index, code] of diagnosisCodes.entries()) {
+    await pool.query(
+      `insert into claim_diagnoses(id, tenant_id, claim_id, icd10_code, description, is_primary, sequence_number)
+       values ($1, $2, $3, $4, $5, $6, $7)
+       on conflict (id) do nothing`,
+      [crypto.randomUUID(), tenantId, claimId, code, code, index === 0, index + 1],
+    );
+  }
+
+  for (const [index, item] of lineItems.entries()) {
+    const lineTotalCents = Math.round(item.charge * item.units * 100);
+    const unitFeeCents = Math.round(item.charge * 100);
+    await pool.query(
+      `insert into claim_line_items(id, claim_id, cpt_code, description, diagnosis_codes, modifiers, quantity, amount_cents, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
+      [
+        crypto.randomUUID(),
+        claimId,
+        item.cpt,
+        item.description || null,
+        item.dx || [],
+        item.modifiers || [],
+        item.units,
+        lineTotalCents,
+      ],
+    );
+    await pool.query(
+      `insert into claim_charges(id, tenant_id, claim_id, cpt_code, description, modifiers, quantity, fee_cents, linked_diagnosis_ids, sequence_number)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        crypto.randomUUID(),
+        tenantId,
+        claimId,
+        item.cpt,
+        item.description || null,
+        item.modifiers || [],
+        item.units,
+        unitFeeCents,
+        item.dx || [],
+        index + 1,
+      ],
+    );
+  }
 
   // Create initial status history
   await pool.query(
     `insert into claim_status_history(id, tenant_id, claim_id, status, changed_by, changed_at)
      values ($1, $2, $3, $4, $5, now())`,
-    [crypto.randomUUID(), tenantId, claimId, "draft", req.user!.id],
+    [crypto.randomUUID(), tenantId, claimId, "coding_review", req.user!.id],
   );
 
   await auditLog(tenantId, req.user!.id, "claim_create", "claim", claimId);
@@ -428,7 +492,7 @@ claimsRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "front_d
   const payload = parsed.data;
 
   // Check if claim exists
-  const existing = await pool.query(`select id from claims where id = $1 and tenant_id = $2`, [claimId, tenantId]);
+  const existing = await pool.query(`select id, status from claims where id = $1 and tenant_id = $2`, [claimId, tenantId]);
   if (!existing.rowCount) {
     return res.status(404).json({ error: "Claim not found" });
   }
@@ -485,9 +549,17 @@ claimsRouter.put("/:id/status", requireAuth, requireRoles(["admin", "billing", "
   const { status, notes } = parsed.data;
 
   // Check if claim exists
-  const existing = await pool.query(`select id from claims where id = $1 and tenant_id = $2`, [claimId, tenantId]);
+  const existing = await pool.query(`select id, status from claims where id = $1 and tenant_id = $2`, [claimId, tenantId]);
   if (!existing.rowCount) {
     return res.status(404).json({ error: "Claim not found" });
+  }
+
+  if (status === "submitted" && existing.rows[0].status !== "ready") {
+    return res.status(400).json({ error: "Claim must be released from coding review before submission" });
+  }
+
+  if (status === "ready" && ["draft", "coding_review"].includes(String(existing.rows[0].status))) {
+    return res.status(400).json({ error: "Use coding review release before marking this claim ready" });
   }
 
   // Update claim status
@@ -520,6 +592,61 @@ claimsRouter.put("/:id/status", requireAuth, requireRoles(["admin", "billing", "
 
   await auditLog(tenantId, req.user!.id, `claim_status_${status}`, "claim", claimId);
   res.json({ ok: true });
+});
+
+// POST /api/claims/:id/release - Release claim from coding review to submission-ready
+claimsRouter.post("/:id/release", requireAuth, requireRoles(["admin", "billing"]), async (req: AuthedRequest, res) => {
+  const parsed = claimReleaseSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
+  const tenantId = req.user!.tenantId;
+  const claimId = String(req.params.id);
+  const notes = parsed.data.notes || "Released from coding review.";
+
+  const existing = await pool.query(
+    `select id, status, scrub_status, payer, payer_id, payer_name
+     from claims
+     where id = $1 and tenant_id = $2`,
+    [claimId, tenantId],
+  );
+
+  if (!existing.rowCount) {
+    return res.status(404).json({ error: "Claim not found" });
+  }
+
+  const claim = existing.rows[0];
+  if (["submitted", "accepted", "paid", "denied", "appealed"].includes(String(claim.status))) {
+    return res.status(400).json({ error: `Claim cannot be released from status ${claim.status}` });
+  }
+
+  if (claim.scrub_status === "errors") {
+    return res.status(400).json({ error: "Claim has unresolved scrubber errors" });
+  }
+
+  if (!claim.payer && !claim.payer_id && !claim.payer_name) {
+    return res.status(400).json({ error: "Claim missing payer information" });
+  }
+
+  await pool.query(
+    `update claims
+     set status = 'ready',
+         coding_review_status = 'released',
+         coding_reviewed_by = $1,
+         coding_reviewed_at = now(),
+         coding_review_notes = $2,
+         updated_at = now()
+     where id = $3 and tenant_id = $4`,
+    [req.user!.id, notes, claimId, tenantId],
+  );
+
+  await pool.query(
+    `insert into claim_status_history(id, tenant_id, claim_id, status, notes, changed_by, changed_at)
+     values ($1, $2, $3, $4, $5, $6, now())`,
+    [crypto.randomUUID(), tenantId, claimId, "ready", notes, req.user!.id],
+  );
+
+  await auditLog(tenantId, req.user!.id, "claim_coding_review_released", "claim", claimId);
+  res.json({ ok: true, status: "ready" });
 });
 
 // POST /api/claims/scrub - Run claim scrubber
@@ -644,7 +771,7 @@ claimsRouter.post("/submit", requireAuth, requireRoles(["admin", "billing", "fro
     try {
       // Check scrub status
       const claimResult = await pool.query(
-        `select scrub_status from claims where id = $1 and tenant_id = $2`,
+        `select status, scrub_status from claims where id = $1 and tenant_id = $2`,
         [claimId, tenantId]
       );
 
@@ -653,7 +780,13 @@ claimsRouter.post("/submit", requireAuth, requireRoles(["admin", "billing", "fro
         continue;
       }
 
-      const scrubStatus = claimResult.rows[0].scrub_status;
+      const claim = claimResult.rows[0];
+      if (claim.status !== "ready") {
+        results.errors.push({ claimId, error: `Claim must be released from coding review before submission (status: ${claim.status})` });
+        continue;
+      }
+
+      const scrubStatus = claim.scrub_status;
       if (scrubStatus === "errors") {
         results.errors.push({ claimId, error: "Claim has unresolved errors" });
         continue;
@@ -997,6 +1130,7 @@ claimsRouter.get("/metrics", requireAuth, async (req: AuthedRequest, res) => {
   const countsResult = await pool.query(
     `select
       count(*) filter (where status = 'draft') as "draftCount",
+      count(*) filter (where status = 'coding_review') as "codingReviewCount",
       count(*) filter (where status = 'ready') as "readyCount",
       count(*) filter (where status = 'submitted' or status = 'accepted') as "pendingCount",
       count(*) filter (where status = 'denied') as "deniedCount",
@@ -2120,6 +2254,10 @@ claimsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
       c.scrub_errors as "scrubErrors", c.scrub_warnings as "scrubWarnings",
       c.scrub_info as "scrubInfo", c.last_scrubbed_at as "lastScrubbedAt",
       c.is_cosmetic as "isCosmetic", c.cosmetic_reason as "cosmeticReason",
+      c.coding_review_status as "codingReviewStatus",
+      c.coding_reviewed_by as "codingReviewedBy",
+      c.coding_reviewed_at as "codingReviewedAt",
+      c.coding_review_notes as "codingReviewNotes",
       c.denial_reason as "denialReason", c.denial_code as "denialCode",
       c.denial_date as "denialDate", c.denial_category as "denialCategory",
       c.appeal_status as "appealStatus", c.appeal_notes as "appealNotes",
@@ -2171,6 +2309,28 @@ claimsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
      order by is_primary desc, sequence_number asc`,
     [claimId, tenantId],
   );
+  let diagnoses = diagnosesResult.rows;
+
+  if (diagnoses.length === 0) {
+    const fallbackDiagnosesResult = await pool.query(
+      `with dx_codes as (
+         select distinct unnest(coalesce(diagnosis_codes, array[]::text[])) as code
+         from claim_line_items
+         where claim_id = $1
+       )
+       select
+         dx_codes.code as id,
+         dx_codes.code as "icd10Code",
+         coalesce(i.description, dx_codes.code) as description,
+         row_number() over (order by dx_codes.code) = 1 as "isPrimary",
+         row_number() over (order by dx_codes.code) as "sequenceNumber"
+       from dx_codes
+       left join icd10_codes i on i.code = dx_codes.code
+       order by dx_codes.code`,
+      [claimId],
+    );
+    diagnoses = fallbackDiagnosesResult.rows;
+  }
 
   // Fetch charges
   const chargesResult = await pool.query(
@@ -2182,12 +2342,32 @@ claimsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
      order by sequence_number asc`,
     [claimId, tenantId],
   );
+  let charges = chargesResult.rows;
+
+  if (charges.length === 0) {
+    const fallbackChargesResult = await pool.query(
+      `select
+         id,
+         cpt_code as "cptCode",
+         description,
+         modifiers,
+         quantity,
+         case when coalesce(quantity, 1) > 0 then round(amount_cents::numeric / coalesce(quantity, 1))::int else amount_cents end as "feeCents",
+         diagnosis_codes as "linkedDiagnosisIds",
+         row_number() over (order by created_at, id) as "sequenceNumber"
+       from claim_line_items
+       where claim_id = $1
+       order by created_at, id`,
+      [claimId],
+    );
+    charges = fallbackChargesResult.rows;
+  }
 
   res.json({
     claim,
     payments: paymentsResult.rows,
     statusHistory: historyResult.rows,
-    diagnoses: diagnosesResult.rows,
-    charges: chargesResult.rows,
+    diagnoses,
+    charges,
   });
 });

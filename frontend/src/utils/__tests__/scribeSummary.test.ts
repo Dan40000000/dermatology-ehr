@@ -4,7 +4,8 @@ import {
   buildDiagnoses,
   buildTests,
   buildSummaryText,
-  coerceSummaryList
+  coerceSummaryList,
+  stripStructuredNoteContent
 } from '../scribeSummary';
 
 const baseNote: AmbientGeneratedNote = {
@@ -116,5 +117,27 @@ describe('scribeSummary helpers', () => {
     });
 
     expect(symptoms).toEqual(['Rash', 'Itching']);
+  });
+
+  it('can ignore stale structured content after clinician edits and infer from edited note text', () => {
+    const editedNote = stripStructuredNoteContent({
+      ...baseNote,
+      chiefComplaint: 'Changing pigmented lesion on left shoulder',
+      hpi: 'Mole is darker, larger, and catches on shirt. Scalp is itchy and flaky.',
+      noteContent: {
+        formalAppointmentSummary: {
+          symptoms: ['Old rash symptom']
+        }
+      }
+    });
+
+    expect(buildSymptoms(editedNote)).toEqual(
+      expect.arrayContaining([
+        'Changing mole / pigmented lesion',
+        'Growth or color change',
+        'Irritated/catching lesion',
+        'Scalp itching/flaking',
+      ])
+    );
   });
 });

@@ -96,6 +96,160 @@ const mockStripe = {
 // PATIENT BALANCE
 // ============================================================================
 
+export async function getLivePortalBalance(tenantId: string, patientId: string) {
+  const summaryResult = await pool.query(
+    `WITH bill_summary AS (
+       SELECT
+         COALESCE(SUM(CASE WHEN status <> 'cancelled' THEN total_charges_cents ELSE 0 END), 0)::int AS bill_total_charges_cents,
+         COALESCE(SUM(CASE WHEN status <> 'cancelled' THEN patient_responsibility_cents ELSE 0 END), 0)::int AS bill_patient_responsibility_cents,
+         COALESCE(SUM(CASE WHEN status <> 'cancelled' THEN insurance_responsibility_cents ELSE 0 END), 0)::int AS bill_insurance_responsibility_cents,
+         COALESCE(SUM(CASE WHEN status <> 'cancelled' THEN paid_amount_cents ELSE 0 END), 0)::int AS bill_paid_cents,
+         COALESCE(SUM(CASE WHEN status <> 'cancelled' THEN adjustment_amount_cents ELSE 0 END), 0)::int AS bill_adjustment_cents,
+         COALESCE(SUM(
+           CASE
+             WHEN status NOT IN ('paid', 'written_off', 'cancelled')
+               THEN GREATEST(COALESCE(balance_cents, 0), 0)
+             ELSE 0
+           END
+         ), 0)::int AS bill_balance_cents
+       FROM bills
+       WHERE tenant_id = $1 AND patient_id = $2
+     ),
+     unbilled_summary AS (
+       SELECT
+         COALESCE(SUM(c.amount_cents), 0)::int AS unbilled_total_charges_cents,
+         COALESCE(SUM(
+           COALESCE(
+             NULLIF(to_jsonb(c)->>'patient_responsibility_cents', '')::int,
+             CASE
+               WHEN COALESCE(NULLIF(to_jsonb(c)->>'billing_route', ''), CASE WHEN c.status = 'self_pay' THEN 'self_pay' ELSE 'insurance' END) = 'self_pay'
+                 THEN COALESCE(c.amount_cents, 0)
+               ELSE 0
+             END
+           )
+         ), 0)::int AS unbilled_patient_responsibility_cents,
+         COALESCE(SUM(
+           COALESCE(
+             NULLIF(to_jsonb(c)->>'insurance_responsibility_cents', '')::int,
+             CASE
+               WHEN COALESCE(NULLIF(to_jsonb(c)->>'billing_route', ''), CASE WHEN c.status = 'self_pay' THEN 'self_pay' ELSE 'insurance' END) = 'insurance'
+                 THEN COALESCE(c.amount_cents, 0)
+               ELSE 0
+             END
+           )
+         ), 0)::int AS unbilled_insurance_responsibility_cents
+       FROM charges c
+       LEFT JOIN bill_line_items li
+         ON li.tenant_id = c.tenant_id
+        AND li.charge_id = c.id
+       WHERE c.tenant_id = $1
+         AND c.patient_id = $2
+         AND COALESCE(c.status, 'pending') <> 'voided'
+         AND li.id IS NULL
+     ),
+     payment_summary AS (
+       SELECT
+         COALESCE(SUM(amount_cents), 0)::int AS patient_payment_cents,
+         MAX(payment_date) AS last_payment_date
+       FROM patient_payments
+       WHERE tenant_id = $1
+         AND patient_id = $2
+         AND status NOT IN ('failed', 'voided')
+     ),
+     portal_payment_summary AS (
+       SELECT
+         COALESCE(SUM((amount * 100)::int), 0)::int AS portal_payment_cents,
+         MAX(completed_at) AS last_portal_payment_date
+       FROM portal_payment_transactions
+       WHERE tenant_id = $1
+         AND patient_id = $2
+         AND status = 'completed'
+     ),
+     last_payment AS (
+       SELECT amount_cents, payment_date
+       FROM patient_payments
+       WHERE tenant_id = $1
+         AND patient_id = $2
+         AND status NOT IN ('failed', 'voided')
+       ORDER BY payment_date DESC NULLS LAST, created_at DESC
+       LIMIT 1
+     )
+     SELECT
+       bs.bill_total_charges_cents,
+       bs.bill_patient_responsibility_cents,
+       bs.bill_insurance_responsibility_cents,
+       bs.bill_paid_cents,
+       bs.bill_adjustment_cents,
+       bs.bill_balance_cents,
+       us.unbilled_total_charges_cents,
+       us.unbilled_patient_responsibility_cents,
+       us.unbilled_insurance_responsibility_cents,
+       ps.patient_payment_cents,
+       pps.portal_payment_cents,
+       lp.amount_cents AS last_payment_cents,
+       COALESCE(lp.payment_date, ps.last_payment_date, pps.last_portal_payment_date) AS last_payment_date
+     FROM bill_summary bs
+     CROSS JOIN unbilled_summary us
+     CROSS JOIN payment_summary ps
+     CROSS JOIN portal_payment_summary pps
+     LEFT JOIN last_payment lp ON TRUE`,
+    [tenantId, patientId],
+  );
+
+  const row = summaryResult.rows[0] || {};
+  const toCents = (value: unknown) => Math.max(0, Number(value || 0));
+  const totalChargesCents = toCents(row.bill_total_charges_cents) + toCents(row.unbilled_total_charges_cents);
+  const totalPaymentsCents = Math.max(
+    toCents(row.bill_paid_cents),
+    toCents(row.patient_payment_cents),
+    toCents(row.portal_payment_cents),
+  );
+  const totalAdjustmentsCents = toCents(row.bill_adjustment_cents);
+  const currentBalanceCents = Math.max(
+    0,
+    toCents(row.bill_balance_cents) + toCents(row.unbilled_patient_responsibility_cents),
+  );
+  const lastPaymentCents = row.last_payment_cents == null ? null : toCents(row.last_payment_cents);
+
+  const result = {
+    totalCharges: totalChargesCents / 100,
+    totalPayments: totalPaymentsCents / 100,
+    totalAdjustments: totalAdjustmentsCents / 100,
+    currentBalance: currentBalanceCents / 100,
+    lastPaymentDate: row.last_payment_date || null,
+    lastPaymentAmount: lastPaymentCents == null ? null : lastPaymentCents / 100,
+  };
+
+  // current_balance is generated as total_charges - total_payments - total_adjustments.
+  const portalLedgerChargesCents = currentBalanceCents + totalPaymentsCents + totalAdjustmentsCents;
+  await pool.query(
+    `INSERT INTO portal_patient_balances (
+       tenant_id, patient_id, total_charges, total_payments, total_adjustments,
+       last_payment_date, last_payment_amount, last_updated
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+     ON CONFLICT (patient_id)
+     DO UPDATE SET
+       tenant_id = EXCLUDED.tenant_id,
+       total_charges = EXCLUDED.total_charges,
+       total_payments = EXCLUDED.total_payments,
+       total_adjustments = EXCLUDED.total_adjustments,
+       last_payment_date = EXCLUDED.last_payment_date,
+       last_payment_amount = EXCLUDED.last_payment_amount,
+       last_updated = CURRENT_TIMESTAMP`,
+    [
+      tenantId,
+      patientId,
+      portalLedgerChargesCents / 100,
+      result.totalPayments,
+      result.totalAdjustments,
+      result.lastPaymentDate,
+      result.lastPaymentAmount,
+    ],
+  );
+
+  return result;
+}
+
 /**
  * GET /api/patient-portal/billing/balance
  * Get patient's current balance and statement
@@ -106,41 +260,7 @@ portalBillingRouter.get(
   async (req: PatientPortalRequest, res) => {
     try {
       const { patientId, tenantId } = req.patient!;
-
-      // Get balance summary
-      const balanceResult = await pool.query(
-        `SELECT
-          total_charges as "totalCharges",
-          total_payments as "totalPayments",
-          total_adjustments as "totalAdjustments",
-          current_balance as "currentBalance",
-          last_payment_date as "lastPaymentDate",
-          last_payment_amount as "lastPaymentAmount"
-         FROM portal_patient_balances
-         WHERE patient_id = $1 AND tenant_id = $2`,
-        [patientId, tenantId]
-      );
-
-      if (balanceResult.rows.length === 0) {
-        // Initialize balance if doesn't exist
-        await pool.query(
-          `INSERT INTO portal_patient_balances (tenant_id, patient_id, total_charges, total_payments, total_adjustments)
-           VALUES ($1, $2, 0, 0, 0)
-           ON CONFLICT (patient_id) DO NOTHING`,
-          [tenantId, patientId]
-        );
-
-        return res.json({
-          totalCharges: 0,
-          totalPayments: 0,
-          totalAdjustments: 0,
-          currentBalance: 0,
-          lastPaymentDate: null,
-          lastPaymentAmount: null,
-        });
-      }
-
-      return res.json(balanceResult.rows[0]);
+      return res.json(await getLivePortalBalance(tenantId, patientId));
     } catch (error) {
       logPortalBillingError("Get balance error", error);
       return res.status(500).json({ error: "Failed to get balance" });
@@ -165,6 +285,16 @@ portalBillingRouter.get(
           c.service_date as "serviceDate",
           c.description,
           c.amount,
+          c.amount_cents as "amountCents",
+          COALESCE(NULLIF(to_jsonb(c)->>'insurance_responsibility_cents', '')::int, 0) / 100.0 as "insurancePaid",
+          COALESCE(
+            NULLIF(to_jsonb(c)->>'patient_responsibility_cents', '')::int,
+            CASE
+              WHEN COALESCE(NULLIF(to_jsonb(c)->>'billing_route', ''), CASE WHEN c.status = 'self_pay' THEN 'self_pay' ELSE 'insurance' END) = 'self_pay'
+                THEN COALESCE(c.amount_cents, 0)
+              ELSE 0
+            END
+          ) / 100.0 as "patientResponsibility",
           c.transaction_type as "transactionType",
           c.created_at as "createdAt",
           e.chief_complaint as "chiefComplaint",

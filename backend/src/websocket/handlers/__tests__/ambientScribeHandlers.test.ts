@@ -17,6 +17,10 @@ jest.mock("../../../services/ambientAI", () => ({
   transcribeLiveAudioChunk: jest.fn(),
 }));
 
+jest.mock("../../../services/ambientLiveInsightsAI", () => ({
+  generateAmbientLiveInsightsWithAI: jest.fn(),
+}));
+
 const loadAmbientModule = () => {
   let registerAmbientScribeHandlers: any;
 
@@ -104,5 +108,81 @@ describe("ambientScribeHandlers", () => {
         ]),
       })
     );
+  });
+
+  it("does not call external live AI insights unless explicitly enabled", async () => {
+    const originalLiveAIEnabled = process.env.AMBIENT_LIVE_AI_ENABLED;
+    const originalOpenAIKey = process.env.OPENAI_API_KEY;
+    delete process.env.AMBIENT_LIVE_AI_ENABLED;
+    process.env.OPENAI_API_KEY = "test-key";
+
+    const { pool } = require("../../../db/pool");
+    const { transcribeLiveAudioChunk } = require("../../../services/ambientAI");
+    const { generateAmbientLiveInsightsWithAI } = require("../../../services/ambientLiveInsightsAI");
+    const queryMock = pool.query as jest.Mock;
+    const transcribeMock = transcribeLiveAudioChunk as jest.Mock;
+    const liveAIMock = generateAmbientLiveInsightsWithAI as jest.Mock;
+
+    queryMock.mockReset();
+    transcribeMock.mockReset();
+    liveAIMock.mockReset();
+
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "rec-1" }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    transcribeMock.mockResolvedValue({
+      text: [
+        "Patient reports a changing dark mole on the upper back for two months with bleeding last week.",
+        "Doctor notes an asymmetric irregularly pigmented papule and recommends shave biopsy with pathology review.",
+        "Provider also documents seborrheic dermatitis symptoms on the scalp with scaling and itch.",
+      ].join(" "),
+      confidence: 0.92,
+      source: "live",
+    });
+
+    const handlers: Record<string, (data?: any) => Promise<void> | void> = {};
+    const socket = {
+      user: { id: "user-1", fullName: "Provider Example" },
+      tenantId: "tenant-1",
+      data: {},
+      on: jest.fn((event: string, cb: any) => {
+        handlers[event] = cb;
+      }),
+      emit: jest.fn(),
+      join: jest.fn(),
+      leave: jest.fn(),
+    };
+    const io = {
+      to: jest.fn(() => ({ emit: jest.fn() })),
+    };
+
+    try {
+      const { registerAmbientScribeHandlers } = loadAmbientModule();
+      registerAmbientScribeHandlers(io as any, socket as any);
+
+      await handlers["ambient:join"]({ recordingId: "rec-1" });
+      await handlers["ambient:audio-chunk"]({
+        recordingId: "rec-1",
+        chunkIndex: 0,
+        mimeType: "audio/webm",
+        data: Buffer.from("audio"),
+      });
+
+      expect(liveAIMock).not.toHaveBeenCalled();
+    } finally {
+      if (originalLiveAIEnabled === undefined) {
+        delete process.env.AMBIENT_LIVE_AI_ENABLED;
+      } else {
+        process.env.AMBIENT_LIVE_AI_ENABLED = originalLiveAIEnabled;
+      }
+
+      if (originalOpenAIKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = originalOpenAIKey;
+      }
+    }
   });
 });

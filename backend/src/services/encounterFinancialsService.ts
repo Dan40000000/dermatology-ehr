@@ -25,6 +25,8 @@ interface EncounterBillingContext {
 interface NormalizedCharge {
   id: string;
   cptCode: string;
+  codeType: string;
+  billingRoute: "insurance" | "self_pay" | "non_billable";
   description: string;
   quantity: number;
   feeCents: number;
@@ -32,6 +34,7 @@ interface NormalizedCharge {
   status: string;
   serviceDate: string;
   icdCodes: string[];
+  modifierCodes: string[];
 }
 
 export interface EncounterFinancialsResult {
@@ -256,6 +259,11 @@ export async function normalizeEncounterCharges(
        c.fee_cents as "feeCents",
        coalesce(c.amount_cents, round(c.amount * 100)::int) as "amountCents",
        coalesce(c.status, 'pending') as status,
+       coalesce(nullif(to_jsonb(c)->>'code_type', ''), 'CPT') as "codeType",
+       coalesce(nullif(to_jsonb(c)->>'billing_route', ''),
+         case when c.status = 'self_pay' then 'self_pay' else 'insurance' end
+       ) as "billingRoute",
+       coalesce(c.modifier_codes, array[]::text[]) as "modifierCodes",
        coalesce(c.service_date, $3::date) as "serviceDate",
        c.icd_codes as "icdCodes"
      from charges c
@@ -263,6 +271,7 @@ export async function normalizeEncounterCharges(
        and c.encounter_id = $2
        and c.cpt_code is not null
        and coalesce(c.status, 'pending') <> 'voided'
+       and coalesce(nullif(to_jsonb(c)->>'billing_route', ''), 'insurance') <> 'non_billable'
      order by c.created_at asc`,
     [tenantId, encounterId, context.serviceDate],
   );
@@ -281,8 +290,12 @@ export async function normalizeEncounterCharges(
     const serviceDate = toIsoDate(row.serviceDate || context.serviceDate);
     const currentStatus = String(row.status || "pending");
     const nextStatus = currentStatus === "draft" ? "pending" : currentStatus;
+    const billingRoute = ["insurance", "self_pay", "non_billable"].includes(String(row.billingRoute))
+      ? row.billingRoute as "insurance" | "self_pay" | "non_billable"
+      : nextStatus === "self_pay" ? "self_pay" : "insurance";
     const description = coerceString(row.description) || `CPT ${cptCode}`;
     const icdCodes = parseTextArray(row.icdCodes);
+    const modifierCodes = parseTextArray(row.modifierCodes);
 
     await queryable.query(
       `update charges
@@ -291,14 +304,19 @@ export async function normalizeEncounterCharges(
            amount = round(($2::numeric / 100), 2),
            patient_id = $3,
            service_date = $4,
-           status = $5
-       where id = $6 and tenant_id = $7`,
-      [feeCents, amountCents, context.patientId, serviceDate, nextStatus, row.id, tenantId],
+           status = $5,
+           billing_route = $6,
+           patient_responsibility_cents = case when $6 = 'self_pay' then $2::int else 0 end,
+           insurance_responsibility_cents = case when $6 = 'insurance' then $2::int else 0 end
+       where id = $7 and tenant_id = $8`,
+      [feeCents, amountCents, context.patientId, serviceDate, nextStatus, billingRoute, row.id, tenantId],
     );
 
     charges.push({
       id: row.id,
       cptCode,
+      codeType: String(row.codeType || "CPT"),
+      billingRoute,
       description,
       quantity,
       feeCents,
@@ -306,6 +324,7 @@ export async function normalizeEncounterCharges(
       status: nextStatus,
       serviceDate,
       icdCodes,
+      modifierCodes,
     });
   }
 
@@ -410,7 +429,7 @@ export async function ensureEncounterBill(
 
   const totalChargesCents = charges.reduce((sum, charge) => sum + charge.amountCents, 0);
   const selfPayCents = charges
-    .filter((charge) => charge.status === "self_pay")
+    .filter((charge) => charge.billingRoute === "self_pay" || charge.status === "self_pay")
     .reduce((sum, charge) => sum + charge.amountCents, 0);
   const insuranceEligibleCents = hasBillableInsurance(context)
     ? Math.max(0, totalChargesCents - selfPayCents)
@@ -534,8 +553,9 @@ export async function ensureEncounterBill(
     await queryable.query(
       `insert into bill_line_items(
         id, tenant_id, bill_id, charge_id, service_date, cpt_code,
+        code_type, billing_route, modifier_codes,
         description, quantity, unit_price_cents, total_cents, icd_codes
-      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
         crypto.randomUUID(),
         tenantId,
@@ -543,6 +563,9 @@ export async function ensureEncounterBill(
         charge.id,
         charge.serviceDate,
         charge.cptCode,
+        charge.codeType,
+        charge.billingRoute,
+        charge.modifierCodes,
         charge.description,
         charge.quantity,
         charge.feeCents,

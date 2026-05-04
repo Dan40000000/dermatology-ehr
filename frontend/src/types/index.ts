@@ -224,6 +224,8 @@ export interface Patient {
   emergencyContactPhone?: string;
 
   // Pharmacy (existing)
+  pharmacyId?: string;
+  pharmacyNcpdp?: string;
   pharmacyName?: string;
   pharmacyPhone?: string;
   pharmacyAddress?: string;
@@ -735,25 +737,38 @@ export interface Charge {
   tenantId: string;
   encounterId?: string;
   cptCode: string;
+  codeType?: 'CPT' | 'HCPCS' | 'INTERNAL';
+  billingRoute?: 'insurance' | 'self_pay' | 'non_billable';
   description?: string;
   icdCodes?: string[];
   linkedDiagnosisIds?: string[];
   quantity?: number;
   feeCents?: number;
   amountCents: number;
-  status: 'draft' | 'pending' | 'ready' | 'submitted' | 'claimed' | 'self_pay' | 'paid' | 'denied';
+  modifierCodes?: string[];
+  source?: string;
+  chargeGroup?: string;
+  lineNote?: string;
+  status: 'draft' | 'pending' | 'ready' | 'submitted' | 'claimed' | 'self_pay' | 'paid' | 'denied' | 'voided';
   createdAt: string;
 }
 
 export interface CreateChargeData {
   encounterId?: string;
   cptCode: string;
+  codeType?: 'CPT' | 'HCPCS' | 'INTERNAL';
+  billingRoute?: 'insurance' | 'self_pay' | 'non_billable';
   description?: string;
   icdCodes?: string[];
   linkedDiagnosisIds?: string[];
   quantity?: number;
   feeCents?: number;
-  amountCents: number;
+  amountCents?: number;
+  modifierCodes?: string[];
+  source?: string;
+  chargeGroup?: string;
+  lineNote?: string;
+  status?: 'draft' | 'pending' | 'ready' | 'submitted' | 'claimed' | 'self_pay' | 'paid' | 'denied' | 'voided';
 }
 
 export interface UpdateChargeData {
@@ -762,7 +777,14 @@ export interface UpdateChargeData {
   linkedDiagnosisIds?: string[];
   quantity?: number;
   feeCents?: number;
-  status?: 'draft' | 'pending' | 'ready' | 'submitted' | 'claimed' | 'self_pay' | 'paid' | 'denied';
+  amountCents?: number;
+  codeType?: 'CPT' | 'HCPCS' | 'INTERNAL';
+  billingRoute?: 'insurance' | 'self_pay' | 'non_billable';
+  modifierCodes?: string[];
+  source?: string;
+  chargeGroup?: string;
+  lineNote?: string;
+  status?: 'draft' | 'pending' | 'ready' | 'submitted' | 'claimed' | 'self_pay' | 'paid' | 'denied' | 'voided';
 }
 
 // Diagnosis Types
@@ -794,8 +816,14 @@ export interface CPTCode {
   code: string;
   description: string;
   category?: string;
+  subcategory?: string;
   defaultFeeCents?: number;
   isCommon?: boolean;
+  codeType?: 'CPT' | 'HCPCS' | 'INTERNAL';
+  billingRoute?: 'insurance' | 'self_pay' | 'non_billable';
+  requiresDiagnosis?: boolean;
+  isCosmetic?: boolean;
+  notes?: string;
 }
 
 // Document Types
@@ -992,6 +1020,14 @@ export interface CPTCode {
   code: string;
   description: string;
   category?: string;
+  subcategory?: string;
+  defaultFeeCents?: number;
+  isCommon?: boolean;
+  codeType?: 'CPT' | 'HCPCS' | 'INTERNAL';
+  billingRoute?: 'insurance' | 'self_pay' | 'non_billable';
+  requiresDiagnosis?: boolean;
+  isCosmetic?: boolean;
+  notes?: string;
 }
 
 export interface FeeScheduleItem {
@@ -1000,7 +1036,18 @@ export interface FeeScheduleItem {
   cptCode: string;
   cptDescription?: string;
   category?: string;
+  subcategory?: string;
+  units?: string;
+  minPriceCents?: number;
+  maxPriceCents?: number;
+  typicalUnits?: number;
+  packageSessions?: number;
   feeCents: number;
+  codeType?: 'CPT' | 'HCPCS' | 'INTERNAL';
+  billingRoute?: 'insurance' | 'self_pay' | 'non_billable';
+  requiresDiagnosis?: boolean;
+  isCosmetic?: boolean;
+  notes?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -1044,7 +1091,7 @@ export interface ImportFeeData {
 }
 
 // Claims Management Types
-export type ClaimStatus = 'draft' | 'ready' | 'submitted' | 'accepted' | 'rejected' | 'paid';
+export type ClaimStatus = 'draft' | 'coding_review' | 'ready' | 'submitted' | 'accepted' | 'rejected' | 'paid';
 
 export interface Claim {
   id: string;
@@ -1059,6 +1106,10 @@ export interface Claim {
   submittedAt?: string;
   createdAt: string;
   updatedAt: string;
+  codingReviewStatus?: 'not_reviewed' | 'released' | 'returned' | 'not_required';
+  codingReviewedBy?: string;
+  codingReviewedAt?: string;
+  codingReviewNotes?: string;
   // Joined fields
   patientFirstName?: string;
   patientLastName?: string;

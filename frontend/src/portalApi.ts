@@ -133,6 +133,7 @@ export interface PortalPatientProfile {
   id: string;
   firstName?: string;
   lastName?: string;
+  dob?: string;
   phone?: string;
   email?: string;
   address?: string;
@@ -142,10 +143,31 @@ export interface PortalPatientProfile {
   emergencyContactName?: string;
   emergencyContactRelationship?: string;
   emergencyContactPhone?: string;
+  pharmacyId?: string | null;
+  pharmacyNcpdp?: string | null;
+  pharmacyName?: string | null;
+  pharmacyPhone?: string | null;
+  pharmacyAddress?: string | null;
   portalEmail?: string;
   lastLogin?: string | null;
   emailVerified?: boolean;
   passwordUpdatedAt?: string | null;
+}
+
+export interface PortalPharmacy {
+  id: string;
+  ncpdpId?: string | null;
+  name: string;
+  phone?: string | null;
+  fax?: string | null;
+  street?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  isPreferred?: boolean;
+  is24Hour?: boolean;
+  acceptsErx?: boolean;
+  chain?: string | null;
 }
 
 export async function fetchPortalProfile(
@@ -176,6 +198,11 @@ export async function updatePortalProfile(
     emergencyContactName?: string;
     emergencyContactRelationship?: string;
     emergencyContactPhone?: string;
+    pharmacyId?: string | null;
+    pharmacyNcpdp?: string | null;
+    pharmacyName?: string | null;
+    pharmacyPhone?: string | null;
+    pharmacyAddress?: string | null;
   }
 ): Promise<{ id: string }> {
   const res = await fetch(`${API_BASE}/api/patient-portal/me`, {
@@ -189,6 +216,37 @@ export async function updatePortalProfile(
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Failed to update patient profile');
+  return res.json();
+}
+
+export async function searchPortalPharmacies(
+  tenantId: string,
+  portalToken: string,
+  params: {
+    query?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    ncpdpId?: string;
+    preferred?: boolean;
+  }
+): Promise<{ pharmacies: PortalPharmacy[]; total: number }> {
+  const queryParams = new URLSearchParams();
+  if (params.query) queryParams.set('query', params.query);
+  if (params.city) queryParams.set('city', params.city);
+  if (params.state) queryParams.set('state', params.state);
+  if (params.zip) queryParams.set('zip', params.zip);
+  if (params.ncpdpId) queryParams.set('ncpdpId', params.ncpdpId);
+  if (params.preferred) queryParams.set('preferred', 'true');
+
+  const res = await fetch(`${API_BASE}/api/patient-portal-data/pharmacies/search?${queryParams.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${portalToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to search pharmacies');
   return res.json();
 }
 

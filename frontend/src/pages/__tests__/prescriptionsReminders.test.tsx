@@ -21,6 +21,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchPatients: vi.fn(),
   createOrder: vi.fn(),
   sendErx: vi.fn(),
+  sendPrescriptionWorkflow: vi.fn(),
   getLastPDMPCheck: vi.fn(),
   checkFormulary: vi.fn(),
   checkPDMP: vi.fn(),
@@ -75,10 +76,12 @@ vi.mock('../../components/ui', () => ({
     isOpen,
     title,
     children,
+    footer,
   }: {
     isOpen: boolean;
     title?: string;
     children: React.ReactNode;
+    footer?: React.ReactNode;
   }) => {
     if (!isOpen) return null;
     const key = String(title || 'modal')
@@ -89,6 +92,7 @@ vi.mock('../../components/ui', () => ({
       <div data-testid={`modal-${key}`}>
         <div>{title}</div>
         {children}
+        {footer}
       </div>
     );
   },
@@ -152,6 +156,10 @@ describe('PrescriptionsPage', () => {
     apiMocks.fetchPatientMedicationHistory.mockResolvedValue([]);
     apiMocks.createOrder.mockResolvedValue({ id: 'rx-2' });
     apiMocks.sendErx.mockResolvedValue({ ok: true });
+    apiMocks.sendPrescriptionWorkflow.mockResolvedValue({
+      success: true,
+      result: { provider: 'mock', mode: 'mock', messageId: 'RX-1' },
+    });
     apiMocks.fetchRefillRequests.mockResolvedValue({
       refillRequests: [
         {
@@ -213,10 +221,19 @@ describe('PrescriptionsPage', () => {
     const rxRow = screen.getByText('Derm, Ana').closest('tr');
     expect(rxRow).toBeTruthy();
     fireEvent.click(within(rxRow as HTMLElement).getByRole('button', { name: 'Send eRx' }));
+    const sendModal = within(await screen.findByTestId('modal-send-electronic-prescription'));
+    fireEvent.click(sendModal.getByRole('button', { name: 'Send through provider' }));
     await waitFor(() =>
-      expect(apiMocks.sendErx).toHaveBeenCalledWith('tenant-1', 'token-1', {
+      expect(apiMocks.sendPrescriptionWorkflow).toHaveBeenCalledWith('tenant-1', 'token-1', {
+        prescriptionId: 'rx-1',
         orderId: 'rx-1',
         patientId: 'patient-1',
+        medicationName: 'Tretinoin 0.025% cream',
+        sig: 'Twice daily',
+        quantity: '30g',
+        refills: '0',
+        pharmacyName: undefined,
+        pharmacyNcpdp: undefined,
       }),
     );
 

@@ -10,6 +10,7 @@ import {
   updatePortalProfile,
   type ConsentForm,
 } from '../../portalApi';
+import { PortalPharmacyLookup, type PortalPharmacySelection } from '../../components/patient-portal/PortalPharmacyLookup';
 
 interface ECheckInPageProps {
   tenantId: string;
@@ -338,6 +339,13 @@ function NewPatientCheckin({ tenantId, portalToken, appointmentId }: { tenantId:
   const [phone, setPhone] = useState('');
   const [ecName, setEcName] = useState('');
   const [ecPhone, setEcPhone] = useState('');
+  const [pharmacy, setPharmacy] = useState<PortalPharmacySelection>({
+    pharmacyId: null,
+    pharmacyNcpdp: null,
+    pharmacyName: '',
+    pharmacyPhone: '',
+    pharmacyAddress: '',
+  });
   const [confirmed, setConfirmed] = useState(false);
 
   // Step 1: Insurance
@@ -370,6 +378,13 @@ function NewPatientCheckin({ tenantId, portalToken, appointmentId }: { tenantId:
           setPhone(p.phone || '');
           setEcName(p.emergencyContactName || '');
           setEcPhone(p.emergencyContactPhone || '');
+          setPharmacy({
+            pharmacyId: p.pharmacyId || null,
+            pharmacyNcpdp: p.pharmacyNcpdp || null,
+            pharmacyName: p.pharmacyName || '',
+            pharmacyPhone: p.pharmacyPhone || '',
+            pharmacyAddress: p.pharmacyAddress || '',
+          });
           const name = [p.firstName, p.lastName].filter(Boolean).join(' ');
           if (name) setSignerName(name);
         }
@@ -391,6 +406,11 @@ function NewPatientCheckin({ tenantId, portalToken, appointmentId }: { tenantId:
       await updatePortalProfile(tenantId, portalToken, {
         address: address || undefined, phone: phone || undefined,
         emergencyContactName: ecName || undefined, emergencyContactPhone: ecPhone || undefined,
+        pharmacyId: pharmacy.pharmacyId || null,
+        pharmacyNcpdp: pharmacy.pharmacyNcpdp || null,
+        pharmacyName: pharmacy.pharmacyName || undefined,
+        pharmacyPhone: pharmacy.pharmacyPhone || undefined,
+        pharmacyAddress: pharmacy.pharmacyAddress || undefined,
       });
       await updatePortalCheckinSession(tenantId, portalToken, sessionId, { demographicsConfirmed: true });
     } else if (stepIdx === 1) {
@@ -490,6 +510,16 @@ function NewPatientCheckin({ tenantId, portalToken, appointmentId }: { tenantId:
             <FieldGroup label="Emergency Contact Phone">
               <Input value={ecPhone} onChange={setEcPhone} placeholder="(555) 987-6543" />
             </FieldGroup>
+            <div style={{ gridColumn: '1/-1' }}>
+              <FieldGroup label="Preferred Pharmacy">
+                <PortalPharmacyLookup
+                  tenantId={tenantId}
+                  portalToken={portalToken}
+                  selected={pharmacy}
+                  onSelect={setPharmacy}
+                />
+              </FieldGroup>
+            </div>
           </div>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '1rem', cursor: 'pointer' }}>
             <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} style={{ width: 16, height: 16, accentColor: '#6366f1' }} />
@@ -803,6 +833,14 @@ function FollowUpCheckin({ tenantId, portalToken, appointmentId }: { tenantId: s
   const [confirmed, setConfirmed] = useState(false);
   const [infoChanged, setInfoChanged] = useState<string | null>(null);
   const [changeDetail, setChangeDetail] = useState('');
+  const [pharmacyChanged, setPharmacyChanged] = useState<string | null>(null);
+  const [pharmacy, setPharmacy] = useState<PortalPharmacySelection>({
+    pharmacyId: null,
+    pharmacyNcpdp: null,
+    pharmacyName: '',
+    pharmacyPhone: '',
+    pharmacyAddress: '',
+  });
 
   // Step 1: Today's visit
   const [visitConcernType, setVisitConcernType] = useState('');
@@ -844,6 +882,17 @@ function FollowUpCheckin({ tenantId, portalToken, appointmentId }: { tenantId: s
         setSessionId(sid);
         const sessionData = await fetchPortalCheckinSession(tenantId, portalToken, sid);
         setCopay(sessionData.copayAmount || 0);
+        const profileData = await fetchPortalProfile(tenantId, portalToken);
+        const p = profileData.patient;
+        if (p) {
+          setPharmacy({
+            pharmacyId: p.pharmacyId || null,
+            pharmacyNcpdp: p.pharmacyNcpdp || null,
+            pharmacyName: p.pharmacyName || '',
+            pharmacyPhone: p.pharmacyPhone || '',
+            pharmacyAddress: p.pharmacyAddress || '',
+          });
+        }
       } catch {
         // demo — continue
       } finally {
@@ -857,6 +906,9 @@ function FollowUpCheckin({ tenantId, portalToken, appointmentId }: { tenantId: s
     intakeKind: 'follow_up',
     contactInfoChanged: infoChanged,
     contactInfoChangeDetail: changeDetail.trim(),
+    pharmacyChanged,
+    preferredPharmacyName: pharmacy.pharmacyName,
+    preferredPharmacyNcpdp: pharmacy.pharmacyNcpdp,
     visitConcernType,
     chiefComplaint: chiefComplaint.trim(),
     affectedAreas,
@@ -889,6 +941,15 @@ function FollowUpCheckin({ tenantId, portalToken, appointmentId }: { tenantId: s
     setError(null);
     try {
       if (sessionId && step === 0) {
+        if (pharmacyChanged === 'Yes, update my pharmacy') {
+          await updatePortalProfile(tenantId, portalToken, {
+            pharmacyId: pharmacy.pharmacyId || null,
+            pharmacyNcpdp: pharmacy.pharmacyNcpdp || null,
+            pharmacyName: pharmacy.pharmacyName || undefined,
+            pharmacyPhone: pharmacy.pharmacyPhone || undefined,
+            pharmacyAddress: pharmacy.pharmacyAddress || undefined,
+          });
+        }
         await updatePortalCheckinSession(tenantId, portalToken, sessionId, { demographicsConfirmed: true });
       } else if (sessionId && step === 1) {
         await updatePortalCheckinSession(tenantId, portalToken, sessionId, { visitDetails: buildVisitDetails() });
@@ -948,12 +1009,36 @@ function FollowUpCheckin({ tenantId, portalToken, appointmentId }: { tenantId: s
             </FieldGroup>
           )}
 
+          <SelectRow
+            label="Is your preferred pharmacy still correct?"
+            options={['Yes, keep it the same', 'Yes, update my pharmacy']}
+            value={pharmacyChanged ?? ''}
+            onChange={setPharmacyChanged}
+          />
+
+          {pharmacy.pharmacyName && pharmacyChanged !== 'Yes, update my pharmacy' && (
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '0.85rem 1rem', color: '#475569', fontSize: '0.84rem' }}>
+              Current pharmacy: {[pharmacy.pharmacyName, pharmacy.pharmacyAddress, pharmacy.pharmacyNcpdp ? `NCPDP ${pharmacy.pharmacyNcpdp}` : ''].filter(Boolean).join(' • ')}
+            </div>
+          )}
+
+          {pharmacyChanged === 'Yes, update my pharmacy' && (
+            <FieldGroup label="Preferred Pharmacy">
+              <PortalPharmacyLookup
+                tenantId={tenantId}
+                portalToken={portalToken}
+                selected={pharmacy}
+                onSelect={setPharmacy}
+              />
+            </FieldGroup>
+          )}
+
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '1rem', cursor: 'pointer' }}>
             <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} style={{ width: 16, height: 16, accentColor: '#6366f1' }} />
             <span style={{ fontSize: '0.875rem', color: '#374151' }}>I confirm my information is up to date</span>
           </label>
 
-          <NavButtons onBack={() => {}} backDisabled onNext={handleNext} nextDisabled={!confirmed || infoChanged === null} loading={loading} />
+          <NavButtons onBack={() => {}} backDisabled onNext={handleNext} nextDisabled={!confirmed || infoChanged === null || pharmacyChanged === null} loading={loading} />
         </SectionCard>
       )}
 

@@ -27,11 +27,13 @@ import {
 } from '../api';
 import { ScribeSummaryCard } from './ScribeSummaryCard';
 import {
-  buildConcerns,
   buildDiagnoses,
+  buildNextSteps,
   buildSummaryText,
   buildSymptoms,
-  buildTests
+  buildTests,
+  buildTreatmentPlan,
+  stripStructuredNoteContent
 } from '../utils/scribeSummary';
 
 interface NoteReviewEditorProps {
@@ -58,16 +60,17 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
   const [showTranscript, setShowTranscript] = useState(true);
   const [showSuggestions, setShowSuggestions] = useState(true);
 
-  useEffect(() => {
-    loadData();
-  }, [noteId]);
-
   const loadData = async () => {
+    if (!session) {
+      setLoading(true);
+      return;
+    }
+
     try {
       setLoading(true);
       const [noteData, editsData] = await Promise.all([
-        fetchAmbientNote(session!.tenantId, session!.accessToken, noteId),
-        fetchAmbientNoteEdits(session!.tenantId, session!.accessToken, noteId)
+        fetchAmbientNote(session.tenantId, session.accessToken, noteId),
+        fetchAmbientNoteEdits(session.tenantId, session.accessToken, noteId)
       ]);
 
       setNote(noteData.note);
@@ -76,8 +79,8 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
       // Load transcript
       if (noteData.note.transcriptId) {
         const transcriptData = await fetchAmbientTranscript(
-          session!.tenantId,
-          session!.accessToken,
+          session.tenantId,
+          session.accessToken,
           noteData.note.transcriptId
         );
         setTranscript(transcriptData.transcript);
@@ -89,6 +92,10 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
     }
   };
 
+  useEffect(() => {
+    void loadData();
+  }, [noteId, session?.tenantId, session?.accessToken]);
+
   const handleEdit = (section: Section) => {
     setEditMode(section);
     setEditValue(note?.[section] || '');
@@ -96,13 +103,13 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
   };
 
   const handleSaveEdit = async () => {
-    if (!editMode || !note) return;
+    if (!editMode || !note || !session) return;
 
     try {
       setSaving(true);
       await updateAmbientNote(
-        session!.tenantId,
-        session!.accessToken,
+        session.tenantId,
+        session.accessToken,
         noteId,
         {
           [editMode]: editValue,
@@ -122,11 +129,17 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
   };
 
   const handleReview = async (action: 'approve' | 'reject' | 'request_regeneration') => {
+    if (!session) return;
+    if (editMode) {
+      showError('Save or cancel the current edit before reviewing the note');
+      return;
+    }
+
     try {
       setSaving(true);
       const result = await reviewAmbientNote(
-        session!.tenantId,
-        session!.accessToken,
+        session.tenantId,
+        session.accessToken,
         noteId,
         action
       );
@@ -135,8 +148,8 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
       if (action === 'approve') {
         try {
           const summaryResult = await generatePatientSummary(
-            session!.tenantId,
-            session!.accessToken,
+            session.tenantId,
+            session.accessToken,
             noteId
           );
           successMessage = `Note approved - ${summaryResult.message}`;
@@ -161,16 +174,68 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
     }
   };
 
+  const handleApproveAndPostToAppointment = async () => {
+    if (!note || !session) return;
+
+    if (!note.encounterId) {
+      showError('No encounter or appointment is linked to this AI note');
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      if (editMode) {
+        await updateAmbientNote(
+          session.tenantId,
+          session.accessToken,
+          noteId,
+          {
+            [editMode]: editValue,
+            editReason: editReason || 'Clinician edit before posting to appointment'
+          }
+        );
+        setEditMode(null);
+      }
+
+      if (note.reviewStatus !== 'approved') {
+        await reviewAmbientNote(session.tenantId, session.accessToken, noteId, 'approve');
+      }
+
+      await applyAmbientNoteToEncounter(session.tenantId, session.accessToken, noteId);
+
+      let summaryMessage = 'patient summary saved';
+      try {
+        const summaryResult = await generatePatientSummary(
+          session.tenantId,
+          session.accessToken,
+          noteId
+        );
+        summaryMessage = summaryResult.existing ? 'existing patient summary kept' : 'patient summary saved';
+      } catch (summaryError: any) {
+        summaryMessage = 'patient summary needs review';
+        showError(summaryError.message || 'Note posted, but patient summary publishing failed');
+      }
+
+      showSuccess(`AI note posted to appointment; ${summaryMessage}`);
+      await loadData();
+    } catch (error: any) {
+      showError(error.message || 'Failed to post AI note to appointment');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handlePublishSummary = async () => {
-    if (!note) return;
+    if (!note || !session) return;
     try {
       setSaving(true);
       if (note.reviewStatus !== 'approved') {
-        await reviewAmbientNote(session!.tenantId, session!.accessToken, noteId, 'approve');
+        await reviewAmbientNote(session.tenantId, session.accessToken, noteId, 'approve');
       }
       const summaryResult = await generatePatientSummary(
-        session!.tenantId,
-        session!.accessToken,
+        session.tenantId,
+        session.accessToken,
         noteId
       );
       showSuccess(summaryResult.message || 'Patient summary saved to profile');
@@ -180,29 +245,6 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleApplyToEncounter = async () => {
-    if (!note?.encounterId) {
-      showError('No encounter associated with this note');
-      return;
-    }
-
-    try {
-      setSaving(true);
-      await applyAmbientNoteToEncounter(session!.tenantId, session!.accessToken, noteId);
-      showSuccess('Note applied to encounter successfully');
-    } catch (error: any) {
-      showError(error.message || 'Failed to apply note');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 0.9) return 'text-green-600 bg-green-50';
-    if (confidence >= 0.75) return 'text-yellow-600 bg-yellow-50';
-    return 'text-red-600 bg-red-50';
   };
 
   const getConfidenceTone = (confidence: number) => {
@@ -234,11 +276,21 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
     { key: 'plan', label: 'Plan', field: 'plan' }
   ];
 
-  const summarySymptoms = buildSymptoms(note, null);
-  const summaryConcerns = buildConcerns(note);
-  const summaryDiagnoses = buildDiagnoses(note, null);
-  const summaryTests = buildTests(note, null);
-  const summaryText = buildSummaryText(note, null);
+  const clinicalEditSections = new Set(['chief_complaint', 'hpi', 'ros', 'physical_exam', 'assessment', 'plan']);
+  const noteForPreview: AmbientGeneratedNote = editMode ? { ...note, [editMode]: editValue } : note;
+  const hasClinicalEdits = Boolean(editMode) || edits.some((edit) => clinicalEditSections.has(edit.section));
+  const summaryNote = hasClinicalEdits ? stripStructuredNoteContent(noteForPreview) : noteForPreview;
+  const summarySymptoms = buildSymptoms(summaryNote, null);
+  const summaryDiagnoses = buildDiagnoses(summaryNote, null);
+  const summaryTests = buildTests(summaryNote, null);
+  const summaryText = buildSummaryText(summaryNote, null);
+  const summaryTreatmentPlan = buildTreatmentPlan(summaryNote, null);
+  const summaryNextSteps = buildNextSteps(summaryNote, null);
+  const postingActionLabel = !note.encounterId
+    ? 'No Linked Appointment'
+    : note.reviewStatus === 'approved'
+      ? 'Post to Appointment'
+      : 'Approve & Post to Appointment';
 
   return (
     <div style={{ background: 'white', borderRadius: '0.5rem', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}>
@@ -266,35 +318,33 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
         </div>
 
         {/* Controls */}
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <div className="scribe-review-controls">
           <button
             onClick={() => setShowTranscript(!showTranscript)}
-            style={{ padding: '0.5rem 1rem', border: '1px solid #d1d5db', borderRadius: '0.5rem', fontSize: '0.875rem', background: 'white', cursor: 'pointer' }}
-            className="hover-bg-gray"
+            className="scribe-review-toggle"
           >
             {showTranscript ? 'Hide' : 'Show'} Transcript
           </button>
           <button
             onClick={() => setShowSuggestions(!showSuggestions)}
-            style={{ padding: '0.5rem 1rem', border: '1px solid #d1d5db', borderRadius: '0.5rem', fontSize: '0.875rem', background: 'white', cursor: 'pointer' }}
-            className="hover-bg-gray"
+            className="scribe-review-toggle"
           >
             {showSuggestions ? 'Hide' : 'Show'} Suggestions
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-12 gap-6 p-6">
+      <div className={`scribe-review-layout ${showTranscript ? '' : 'scribe-review-layout--single'}`}>
         {/* Main Note Content */}
-        <div className={showTranscript ? 'col-span-8' : 'col-span-12'}>
+        <div className="scribe-review-main">
           <div className="space-y-6">
             {/* Overall Confidence */}
-            <div className={`p-4 rounded-lg border ${getConfidenceColor(note.overallConfidence)}`}>
-              <div className="flex justify-between items-center">
-                <span className="font-semibold">Overall Confidence</span>
-                <span className="text-2xl font-bold">{(note.overallConfidence * 100).toFixed(0)}%</span>
+            <div className={`scribe-review-confidence-card scribe-review-confidence-card--${getConfidenceTone(note.overallConfidence)}`}>
+              <div className="scribe-review-confidence-row">
+                <span>Overall Confidence</span>
+                <span className="scribe-review-confidence-value">{(note.overallConfidence * 100).toFixed(0)}%</span>
               </div>
-              <p className="text-xs mt-1">
+              <p>
                 {getConfidenceLabel(note.overallConfidence)} confidence - Review carefully
               </p>
             </div>
@@ -302,13 +352,13 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
             <ScribeSummaryCard
               title="Patient Summary Preview"
               visitDate={note.completedAt || note.createdAt}
-              statusLabel={note.reviewStatus === 'approved' ? 'Ready to share' : 'Draft'}
+              statusLabel={editMode ? 'Editing draft' : hasClinicalEdits ? 'Edited draft' : note.reviewStatus === 'approved' ? 'Ready to share' : 'Draft'}
               symptoms={summarySymptoms}
-              concerns={summaryConcerns}
               potentialDiagnoses={summaryDiagnoses}
               suggestedTests={summaryTests}
+              treatmentPlan={summaryTreatmentPlan}
+              nextSteps={summaryNextSteps}
               summaryText={summaryText}
-              summaryLabel="Summary of Appointment"
               showDetails
             />
 
@@ -442,26 +492,42 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
             )}
 
             {/* Action Buttons */}
+            <div className="scribe-review-workflow-card">
+              <div>
+                <div className="scribe-review-workflow-title">Doctor posting workflow</div>
+                <div className="scribe-review-workflow-copy">
+                  Edit any section above, save the edit, then post the approved note into the linked appointment encounter.
+                </div>
+              </div>
+              <button
+                onClick={handleApproveAndPostToAppointment}
+                disabled={saving || !note.encounterId || note.reviewStatus === 'rejected'}
+                className="scribe-review-action-button scribe-review-action-button--primary"
+              >
+                {postingActionLabel}
+              </button>
+            </div>
+
             {note.reviewStatus === 'pending' && (
-              <div className="flex space-x-3 pt-4 border-t">
+              <div className="scribe-review-action-row">
                 <button
                   onClick={() => handleReview('approve')}
                   disabled={saving}
-                  className="flex-1 px-6 py-3 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 disabled:bg-gray-300"
+                  className="scribe-review-action-button scribe-review-action-button--success"
                 >
-                  Approve Note
+                  Approve Note Only
                 </button>
                 <button
                   onClick={() => handleReview('request_regeneration')}
                   disabled={saving}
-                  className="px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:bg-gray-300"
+                  className="scribe-review-action-button scribe-review-action-button--primary"
                 >
                   Regenerate
                 </button>
                 <button
                   onClick={() => handleReview('reject')}
                   disabled={saving}
-                  className="px-6 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 disabled:bg-gray-300"
+                  className="scribe-review-action-button scribe-review-action-button--danger"
                 >
                   Reject
                 </button>
@@ -469,20 +535,11 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
             )}
 
             {note.reviewStatus === 'approved' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {note.encounterId && (
-                  <button
-                    onClick={handleApplyToEncounter}
-                    disabled={saving}
-                    className="px-6 py-3 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 disabled:bg-gray-300"
-                  >
-                    Apply to Encounter
-                  </button>
-                )}
+              <div className="scribe-review-action-row">
                 <button
                   onClick={handlePublishSummary}
                   disabled={saving}
-                  className="px-6 py-3 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 disabled:bg-gray-300"
+                  className="scribe-review-action-button scribe-review-action-button--success"
                 >
                   Publish to Patient Profile
                 </button>
@@ -493,23 +550,23 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
 
         {/* Sidebar */}
         {showTranscript && (
-          <div className="col-span-4 space-y-4">
+          <div className="scribe-review-sidebar">
             {/* Transcript */}
             {transcript && (
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                <h4 className="font-semibold text-gray-900 mb-3">Transcript</h4>
-                <div className="space-y-2 max-h-96 overflow-y-auto text-sm">
+              <div className="scribe-review-sidebar-card">
+                <h4 className="scribe-review-sidebar-title">Transcript</h4>
+                <div className="scribe-review-transcript-list">
                   {transcript.transcriptSegments.map((segment, idx) => (
-                    <div key={idx} className={`p-2 rounded ${
+                    <div key={idx} className={`scribe-review-transcript-segment ${
                       segment.speaker === 'speaker_0' ? 'bg-blue-50' : 'bg-green-50'
                     }`}>
-                      <div className="flex justify-between text-xs text-gray-500 mb-1">
-                        <span className="font-medium">
+                      <div className="scribe-review-transcript-meta">
+                        <span>
                           {segment.speaker === 'speaker_0' ? 'Doctor' : 'Patient'}
                         </span>
                         <span>{Math.floor(segment.start)}s</span>
                       </div>
-                      <p className="text-gray-800">{segment.text}</p>
+                      <p className="scribe-review-transcript-text">{segment.text}</p>
                     </div>
                   ))}
                 </div>
@@ -521,16 +578,16 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
               <>
                 {/* ICD-10 Codes */}
                 {note.suggestedIcd10Codes && note.suggestedIcd10Codes.length > 0 && (
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <h4 className="font-semibold text-gray-900 mb-3">Suggested ICD-10 Codes</h4>
-                    <div className="space-y-2">
+                  <div className="scribe-review-sidebar-card">
+                    <h4 className="scribe-review-sidebar-title">Suggested ICD-10 Codes</h4>
+                    <div className="scribe-review-code-list">
                       {note.suggestedIcd10Codes.map((code, idx) => (
-                        <div key={idx} className="flex justify-between items-start text-sm">
+                        <div key={idx} className="scribe-review-code-row">
                           <div>
-                            <span className="font-medium text-purple-600">{code.code}</span>
-                            <p className="text-gray-600 text-xs">{code.description}</p>
+                            <span className="scribe-review-code-code">{code.code}</span>
+                            <p className="scribe-review-code-description">{code.description}</p>
                           </div>
-                          <span className={`text-xs px-2 py-1 rounded ${getConfidenceColor(code.confidence)}`}>
+                          <span className={`scribe-review-confidence scribe-review-confidence--${getConfidenceTone(code.confidence)}`}>
                             {(code.confidence * 100).toFixed(0)}%
                           </span>
                         </div>
@@ -566,13 +623,13 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
 
                 {/* Medications */}
                 {note.mentionedMedications && note.mentionedMedications.length > 0 && (
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <h4 className="font-semibold text-gray-900 mb-3">Mentioned Medications</h4>
-                    <div className="space-y-2">
+                  <div className="scribe-review-sidebar-card">
+                    <h4 className="scribe-review-sidebar-title">Mentioned Medications</h4>
+                    <div className="scribe-review-code-list">
                       {note.mentionedMedications.map((med, idx) => (
-                        <div key={idx} className="text-sm">
-                          <div className="font-medium text-gray-800">{med.name}</div>
-                          <div className="text-gray-600 text-xs">{med.dosage} - {med.frequency}</div>
+                        <div key={idx} className="scribe-review-med-row">
+                          <div className="scribe-review-med-name">{med.name}</div>
+                          <div className="scribe-review-med-detail">{med.dosage} - {med.frequency}</div>
                         </div>
                       ))}
                     </div>
@@ -607,17 +664,17 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
 
             {/* Edit History */}
             {edits.length > 0 && (
-              <div className="bg-white border border-gray-200 rounded-lg p-4">
-                <h4 className="font-semibold text-gray-900 mb-3">Edit History</h4>
-                <div className="space-y-2 max-h-64 overflow-y-auto text-xs">
+              <div className="scribe-review-sidebar-card">
+                <h4 className="scribe-review-sidebar-title">Edit History</h4>
+                <div className="scribe-review-edit-list">
                   {edits.map((edit) => (
-                    <div key={edit.id} className="border-l-2 border-purple-300 pl-2 pb-2">
-                      <div className="font-medium text-gray-800">{edit.section.replace(/_/g, ' ')}</div>
-                      <div className="text-gray-600">{edit.changeType}</div>
+                    <div key={edit.id} className="scribe-review-edit-row">
+                      <div className="scribe-review-edit-section">{edit.section.replace(/_/g, ' ')}</div>
+                      <div className="scribe-review-edit-meta">{edit.changeType}</div>
                       {edit.editReason && (
-                        <div className="text-gray-500 italic">Reason: {edit.editReason}</div>
+                        <div className="scribe-review-edit-meta">Reason: {edit.editReason}</div>
                       )}
-                      <div className="text-gray-400">{new Date(edit.createdAt).toLocaleString()}</div>
+                      <div className="scribe-review-edit-time">{new Date(edit.createdAt).toLocaleString()}</div>
                     </div>
                   ))}
                 </div>

@@ -52,7 +52,7 @@ export interface LiveSafetyFlagInsight {
 }
 
 export interface AmbientLiveInsights {
-  source: 'heuristic';
+  source: 'heuristic' | 'openai';
   updatedAt: string;
   visitSummary: LiveVisitSummaryInsight;
   symptoms: LiveSymptomInsight[];
@@ -78,16 +78,42 @@ type DiagnosisRule = {
 };
 
 const symptomRules: Array<{ label: string; patterns: RegExp[] }> = [
+  {
+    label: 'Changing mole / pigmented lesion',
+    patterns: [
+      /\bchanging mole\b/i,
+      /\bmole\b.{0,60}\bchang(?:ing|ed|es)\b/i,
+      /\bchang(?:ing|ed|es)\b.{0,60}\bmole\b/i,
+      /\bmole\b.{0,60}\b(darker|larger|bigger|growing|color|catch(?:es|ing|ed)?)\b/i,
+      /\bpigmented lesion\b/i,
+      /\birregular\b.{0,40}\b(mole|lesion|spot|papule)\b/i,
+      /\b(mole|lesion|spot|papule)\b.{0,40}\birregular\b/i,
+    ],
+  },
+  {
+    label: 'Growth or color change',
+    patterns: [/\bgrowing\b/i, /\b(larger|bigger|increased size)\b/i, /\b(darker|changed color|color change|multiple shades)\b/i],
+  },
+  {
+    label: 'Bleeding / crusting',
+    patterns: [/\bbleed(?:ing)?\b/i, /\bbled\b/i, /\bcrust(?:ing|ed)?\b/i, /\bscab(?:bed|bing)?\b/i],
+  },
+  {
+    label: 'Irritated/catching lesion',
+    patterns: [/\bcatch(?:es|ing)?\b/i, /\bgets caught\b/i, /\bclothing\b/i, /\bshirt\b/i, /\bscratch(?:ed|ing)?\b/i, /\birritated\b/i],
+  },
+  {
+    label: 'Scalp itching/flaking',
+    patterns: [/\bscalp\b.{0,60}\b(itch|flak|scale|dandruff)\b/i, /\b(itch|flak|scale|dandruff)\b.{0,60}\bscalp\b/i, /\bseborrheic\b/i],
+  },
   { label: 'Itching / pruritus', patterns: [/\bitch(?:y|ing)?\b/i, /\bprurit/i] },
   { label: 'Rash / eruption', patterns: [/\brash\b/i, /\beruption\b/i, /\bspots?\b/i] },
   { label: 'Pain / tenderness', patterns: [/\bpain(?:ful)?\b/i, /\btender(?:ness)?\b/i, /\bsore\b/i, /\bburning\b/i] },
   { label: 'Redness / erythema', patterns: [/\bred(?:ness)?\b/i, /\berythema/i, /\bflushing\b/i] },
   { label: 'Scaling / flaking', patterns: [/\bscal(?:e|ing|y)\b/i, /\bflak(?:e|ing|y)\b/i, /\bdry\b/i] },
-  { label: 'Drainage / crusting', patterns: [/\booz(?:e|ing)\b/i, /\bdrain(?:age)?\b/i, /\bcrust(?:ing)?\b/i] },
-  { label: 'Bleeding', patterns: [/\bbleed(?:ing)?\b/i, /\bscab\b/i, /\bwon'?t heal\b/i] },
+  { label: 'Drainage / oozing', patterns: [/\booz(?:e|ing)\b/i, /\bdrain(?:age)?\b/i, /\bdischarge\b/i, /\bpus\b/i] },
   { label: 'Hair loss / shedding', patterns: [/\bhair loss\b/i, /\bshedding\b/i, /\bthinning hair\b/i, /\balopecia\b/i] },
   { label: 'Hives / welts', patterns: [/\bhives?\b/i, /\bwelts?\b/i, /\burticaria\b/i] },
-  { label: 'Changing lesion / mole concern', patterns: [/\bchanging mole\b/i, /\bmole\b/i, /\bgrowth\b/i, /\blesion\b/i] },
   { label: 'Joint pain / stiffness', patterns: [/\bjoint pain\b/i, /\bstiff(?:ness)?\b/i, /\bswollen joints?\b/i] },
   { label: 'Fatigue / systemic symptoms', patterns: [/\bfatigue\b/i, /\btired\b/i, /\bfever\b/i] },
 ];
@@ -366,6 +392,29 @@ function splitSentences(transcript: string): string[] {
     .filter(Boolean);
 }
 
+function isNegatedOrSafetyNetSymptomSentence(sentence: string): boolean {
+  const normalized = stripSpeakerPrefix(sentence).toLowerCase();
+  const symptomWord = /\b(pain|hurt|tender|sore|itch|bleed|bled|crust|scab|drain|ooz|pus|discharge|fever|blister|rash|redness|swelling)\b/;
+
+  if (/\b(denies?|denied|no|not|without|doesn'?t|does not|didn'?t|did not|isn'?t|is not)\b.{0,70}\b(pain|hurt|tender|sore|itch|bleed|bled|crust|scab|drain|ooz|pus|discharge|fever|blister|rash|redness|swelling)\b/i.test(normalized)) {
+    return true;
+  }
+
+  if (/\b(pain|hurt|tender|sore|itch|bleed|bled|crust|scab|drain|ooz|pus|discharge|fever|blister|rash|redness|swelling)\b.{0,50}\b(absent|denied|none)\b/i.test(normalized)) {
+    return true;
+  }
+
+  if (/\b(call|return|watch for|seek care|come back sooner|follow up sooner|if you (notice|develop|have)|if it (starts|gets|becomes)|warning signs|wound care|after (the )?(biopsy|procedure))\b/i.test(normalized) && symptomWord.test(normalized)) {
+    return true;
+  }
+
+  if (/\b(any|do you have|have you had)\b.{0,55}\b(fever|pain|drainage|bleeding|itch|rash|pus|redness)\b\??/i.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
 function stripSpeakerPrefix(text: string): string {
   return text
     .replace(/^\s*(doctor|provider|physician|clinician|dr\.?|patient|pt|nurse|ma)\s*:\s*/i, '')
@@ -383,10 +432,18 @@ function truncateText(text: string, maxLength = 180): string {
 function findSentences(sentences: string[], patterns: RegExp[], limit: number): string[] {
   return uniqueByText(
     sentences
-      .filter((sentence) => patterns.some((pattern) => pattern.test(sentence)))
+      .filter((sentence) => !isNegatedOrSafetyNetSymptomSentence(sentence) && patterns.some((pattern) => pattern.test(sentence)))
       .map((sentence) => truncateText(sentence)),
     limit
   );
+}
+
+function extractSupportedEvidenceSnippet(sentences: string[], patterns: RegExp[]): string | undefined {
+  const sentence = sentences.find((candidate) =>
+    !isNegatedOrSafetyNetSymptomSentence(candidate) && patterns.some((pattern) => pattern.test(candidate))
+  );
+
+  return sentence ? truncateText(sentence) : undefined;
 }
 
 export function inferLiveSpeakerRole(text: string): LiveSpeakerRole {
@@ -723,7 +780,9 @@ export function generateAmbientLiveInsights(input: string | string[]): AmbientLi
 
   const symptoms = symptomRules
     .map((rule) => {
-      const matches = rule.patterns.filter((pattern) => pattern.test(normalized));
+      const matches = rule.patterns.filter((pattern) =>
+        sentences.some((sentence) => !isNegatedOrSafetyNetSymptomSentence(sentence) && pattern.test(sentence))
+      );
       if (matches.length === 0) {
         return null;
       }
@@ -731,7 +790,7 @@ export function generateAmbientLiveInsights(input: string | string[]): AmbientLi
       return {
         label: rule.label,
         confidence: confidenceFromWeight(matches.length / Math.max(rule.patterns.length, 1), 0.58),
-        evidence: extractEvidenceSnippet(transcript, rule.patterns),
+        evidence: extractSupportedEvidenceSnippet(sentences, rule.patterns) || extractEvidenceSnippet(transcript, rule.patterns),
       } satisfies LiveSymptomInsight;
     }) as Array<LiveSymptomInsight | null>;
 

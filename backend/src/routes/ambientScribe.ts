@@ -23,6 +23,7 @@ import {
   TranscriptionResult
 } from '../services/ambientAI';
 import { AgentConfiguration, agentConfigService } from '../services/agentConfigService';
+import { askClinicalCopilot, type ClinicalCopilotContext } from '../services/clinicalCopilot';
 
 const router = Router();
 
@@ -91,9 +92,43 @@ const reviewActionSchema = z.object({
   reason: z.string().optional()
 });
 
+const clinicalCopilotRequestSchema = z.object({
+  prompt: z.string().min(1).max(4000),
+  patientId: z.string().optional(),
+  encounterId: z.string().optional(),
+  noteId: z.string().optional(),
+  recordingId: z.string().optional(),
+  history: z.array(
+    z.object({
+      role: z.enum(['user', 'assistant']),
+      content: z.string().min(1).max(4000),
+    })
+  ).max(8).optional(),
+});
+
+const clinicalCopilotVisitSummarySchema = z.object({
+  patientId: z.string().optional(),
+  encounterId: z.string().optional(),
+  noteId: z.string().optional(),
+  recordingId: z.string().optional(),
+  prompt: z.string().min(1).max(4000).optional(),
+  history: z.array(
+    z.object({
+      role: z.enum(['user', 'assistant']),
+      content: z.string().min(1).max(4000),
+    })
+  ).max(8).optional(),
+});
+
 const AMBIENT_CLINICAL_ROLES = ['provider', 'ma', 'admin'] as const;
 const AMBIENT_REVIEW_ROLES = ['provider', 'admin'] as const;
 const AMBIENT_SCRIBE_PROMPT_VERSION = 'ambient-scribe-contextual-v1';
+const COPILOT_VISIT_SUMMARY_PROMPT = [
+  'Summarize this dermatology visit for the patient history.',
+  'Use the linked encounter, ambient note, transcript, orders, diagnoses, medications, and follow-up context when available.',
+  'Return a clean clinician-facing summary of what happened, the likely assessment, plan, patient instructions, and follow-up items.',
+  'Keep it concise enough to be useful in the patient chart history.',
+].join(' ');
 
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -111,6 +146,616 @@ function logAmbientError(message: string, error: unknown): void {
   logger.error(message, {
     error: toSafeErrorMessage(error),
   });
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function calculateAgeFromDob(dob: unknown): number | undefined {
+  const normalizedDob = normalizeOptionalString(dob);
+  if (!normalizedDob) {
+    return undefined;
+  }
+
+  const birthDate = new Date(normalizedDob);
+  if (Number.isNaN(birthDate.getTime())) {
+    return undefined;
+  }
+
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDelta = today.getMonth() - birthDate.getMonth();
+  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < birthDate.getDate())) {
+    age -= 1;
+  }
+
+  return age >= 0 ? age : undefined;
+}
+
+function toTranscriptExcerpt(value: unknown, maxLength = 3500): string | undefined {
+  const normalized = normalizeOptionalString(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `…${normalized.slice(-maxLength)}`;
+}
+
+async function fetchClinicalCopilotNoteContext(
+  tenantId: string,
+  identifiers: { noteId?: string; encounterId?: string; patientId?: string; recordingId?: string }
+): Promise<{
+  noteId?: string;
+  recordingId?: string;
+  encounterId?: string;
+  patientId?: string;
+  providerId?: string;
+  transcriptText?: string;
+  note?: ClinicalCopilotContext['note'];
+}> {
+  const { noteId, encounterId, patientId, recordingId } = identifiers;
+
+  if (noteId) {
+    const result = await pool.query(
+      `SELECT
+         n.id as "noteId",
+         n.encounter_id as "encounterId",
+         n.chief_complaint as "chiefComplaint",
+         n.hpi,
+         n.ros,
+         n.physical_exam as "physicalExam",
+         n.assessment,
+         n.plan,
+         n.suggested_icd10_codes as "suggestedIcd10Codes",
+         n.suggested_cpt_codes as "suggestedCptCodes",
+         n.follow_up_tasks as "followUpTasks",
+         n.recommended_tests as "recommendedTests",
+         n.note_content as "noteContent",
+         t.transcript_text as "transcriptText",
+         r.id as "recordingId",
+         r.patient_id as "patientId",
+         r.provider_id as "providerId"
+       FROM ambient_generated_notes n
+       JOIN ambient_transcripts t ON t.id = n.transcript_id
+       JOIN ambient_recordings r ON r.id = t.recording_id
+       WHERE n.id = $1 AND n.tenant_id = $2`,
+      [noteId, tenantId]
+    );
+
+    if (result.rowCount && result.rows[0]) {
+      const row = result.rows[0];
+      return {
+        noteId: row.noteId,
+        recordingId: row.recordingId,
+        encounterId: row.encounterId,
+        patientId: row.patientId,
+        providerId: row.providerId,
+        transcriptText: row.transcriptText,
+        note: {
+          chiefComplaint: row.chiefComplaint,
+          hpi: row.hpi,
+          ros: row.ros,
+          physicalExam: row.physicalExam,
+          assessment: row.assessment,
+          plan: row.plan,
+          suggestedIcd10Codes: Array.isArray(row.suggestedIcd10Codes) ? row.suggestedIcd10Codes : [],
+          suggestedCptCodes: Array.isArray(row.suggestedCptCodes) ? row.suggestedCptCodes : [],
+          followUpTasks: Array.isArray(row.followUpTasks) ? row.followUpTasks : [],
+          recommendedTests: Array.isArray(row.recommendedTests) ? row.recommendedTests : [],
+          patientSummary: row.noteContent?.patientSummary || undefined,
+        },
+      };
+    }
+  }
+
+  let query = '';
+  let params: any[] = [];
+  if (encounterId) {
+    query = `SELECT
+        n.id as "noteId",
+        n.encounter_id as "encounterId",
+        n.chief_complaint as "chiefComplaint",
+        n.hpi,
+        n.ros,
+        n.physical_exam as "physicalExam",
+        n.assessment,
+        n.plan,
+        n.suggested_icd10_codes as "suggestedIcd10Codes",
+        n.suggested_cpt_codes as "suggestedCptCodes",
+        n.follow_up_tasks as "followUpTasks",
+        n.recommended_tests as "recommendedTests",
+        n.note_content as "noteContent",
+        t.transcript_text as "transcriptText",
+        r.id as "recordingId",
+        r.patient_id as "patientId",
+        r.provider_id as "providerId"
+      FROM ambient_generated_notes n
+      JOIN ambient_transcripts t ON t.id = n.transcript_id
+      JOIN ambient_recordings r ON r.id = t.recording_id
+      WHERE n.encounter_id = $1 AND n.tenant_id = $2
+      ORDER BY n.created_at DESC
+      LIMIT 1`;
+    params = [encounterId, tenantId];
+  } else if (recordingId) {
+    query = `SELECT
+        n.id as "noteId",
+        n.encounter_id as "encounterId",
+        n.chief_complaint as "chiefComplaint",
+        n.hpi,
+        n.ros,
+        n.physical_exam as "physicalExam",
+        n.assessment,
+        n.plan,
+        n.suggested_icd10_codes as "suggestedIcd10Codes",
+        n.suggested_cpt_codes as "suggestedCptCodes",
+        n.follow_up_tasks as "followUpTasks",
+        n.recommended_tests as "recommendedTests",
+        n.note_content as "noteContent",
+        t.transcript_text as "transcriptText",
+        r.id as "recordingId",
+        r.patient_id as "patientId",
+        r.provider_id as "providerId"
+      FROM ambient_transcripts t
+      JOIN ambient_recordings r ON r.id = t.recording_id
+      LEFT JOIN ambient_generated_notes n ON n.transcript_id = t.id AND n.tenant_id = t.tenant_id
+      WHERE r.id = $1 AND r.tenant_id = $2
+      ORDER BY n.created_at DESC NULLS LAST
+      LIMIT 1`;
+    params = [recordingId, tenantId];
+  } else if (patientId) {
+    query = `SELECT
+        n.id as "noteId",
+        n.encounter_id as "encounterId",
+        n.chief_complaint as "chiefComplaint",
+        n.hpi,
+        n.ros,
+        n.physical_exam as "physicalExam",
+        n.assessment,
+        n.plan,
+        n.suggested_icd10_codes as "suggestedIcd10Codes",
+        n.suggested_cpt_codes as "suggestedCptCodes",
+        n.follow_up_tasks as "followUpTasks",
+        n.recommended_tests as "recommendedTests",
+        n.note_content as "noteContent",
+        t.transcript_text as "transcriptText",
+        r.id as "recordingId",
+        r.patient_id as "patientId",
+        r.provider_id as "providerId"
+      FROM ambient_recordings r
+      JOIN ambient_transcripts t ON t.recording_id = r.id AND t.tenant_id = r.tenant_id
+      LEFT JOIN ambient_generated_notes n ON n.transcript_id = t.id AND n.tenant_id = r.tenant_id
+      WHERE r.patient_id = $1 AND r.tenant_id = $2
+      ORDER BY COALESCE(n.created_at, t.created_at) DESC
+      LIMIT 1`;
+    params = [patientId, tenantId];
+  }
+
+  if (!query) {
+    return {};
+  }
+
+  const result = await pool.query(query, params);
+  if (!result.rowCount || !result.rows[0]) {
+    return {};
+  }
+
+  const row = result.rows[0];
+  return {
+    noteId: row.noteId || undefined,
+    recordingId: row.recordingId || undefined,
+    encounterId: row.encounterId || undefined,
+    patientId: row.patientId || undefined,
+    providerId: row.providerId || undefined,
+    transcriptText: row.transcriptText || undefined,
+    note: row.noteId ? {
+      chiefComplaint: row.chiefComplaint,
+      hpi: row.hpi,
+      ros: row.ros,
+      physicalExam: row.physicalExam,
+      assessment: row.assessment,
+      plan: row.plan,
+      suggestedIcd10Codes: Array.isArray(row.suggestedIcd10Codes) ? row.suggestedIcd10Codes : [],
+      suggestedCptCodes: Array.isArray(row.suggestedCptCodes) ? row.suggestedCptCodes : [],
+      followUpTasks: Array.isArray(row.followUpTasks) ? row.followUpTasks : [],
+      recommendedTests: Array.isArray(row.recommendedTests) ? row.recommendedTests : [],
+      patientSummary: row.noteContent?.patientSummary || undefined,
+    } : undefined,
+  };
+}
+
+async function resolveClinicalCopilotContext(
+  tenantId: string,
+  identifiers: { noteId?: string; encounterId?: string; patientId?: string; recordingId?: string }
+): Promise<ClinicalCopilotContext> {
+  const noteContext = await fetchClinicalCopilotNoteContext(tenantId, identifiers);
+  const effectiveEncounterId = identifiers.encounterId || noteContext.encounterId;
+  const effectivePatientId = identifiers.patientId || noteContext.patientId;
+
+  let encounterContext: ClinicalCopilotContext['encounter'];
+  let patientAge: number | undefined;
+
+  if (effectiveEncounterId) {
+    const encounterResult = await pool.query(
+      `SELECT
+         e.id,
+         e.chief_complaint as "chiefComplaint",
+         e.hpi,
+         e.ros,
+         e.exam,
+         e.assessment_plan as "assessmentPlan",
+         p.dob
+       FROM encounters e
+       LEFT JOIN patients p ON p.id = e.patient_id AND p.tenant_id = e.tenant_id
+       WHERE e.id = $1 AND e.tenant_id = $2`,
+      [effectiveEncounterId, tenantId]
+    );
+
+    if (encounterResult.rowCount && encounterResult.rows[0]) {
+      const row = encounterResult.rows[0];
+      encounterContext = {
+        chiefComplaint: row.chiefComplaint,
+        hpi: row.hpi,
+        ros: row.ros,
+        exam: row.exam,
+        assessmentPlan: row.assessmentPlan,
+      };
+      patientAge = calculateAgeFromDob(row.dob);
+    }
+  }
+
+  if (!patientAge && effectivePatientId) {
+    const patientResult = await pool.query(
+      `SELECT dob FROM patients WHERE id = $1 AND tenant_id = $2`,
+      [effectivePatientId, tenantId]
+    );
+    if (patientResult.rowCount && patientResult.rows[0]) {
+      patientAge = calculateAgeFromDob(patientResult.rows[0].dob);
+    }
+  }
+
+  return {
+    patientId: effectivePatientId,
+    encounterId: effectiveEncounterId,
+    noteId: identifiers.noteId || noteContext.noteId,
+    recordingId: identifiers.recordingId || noteContext.recordingId,
+    patientAge,
+    encounter: encounterContext,
+    note: noteContext.note,
+    transcriptExcerpt: toTranscriptExcerpt(noteContext.transcriptText),
+  };
+}
+
+type CopilotVisitSummaryTarget = {
+  patientId: string;
+  encounterId: string | null;
+  providerId: string | null;
+  providerName: string | null;
+  visitDate: Date | string;
+  ambientNoteId: string | null;
+};
+
+async function resolveCopilotVisitSummaryTarget(
+  tenantId: string,
+  identifiers: { noteId?: string; encounterId?: string; patientId?: string; recordingId?: string },
+  context: ClinicalCopilotContext
+): Promise<CopilotVisitSummaryTarget | null> {
+  if (context.encounterId) {
+    const result = await pool.query(
+      `SELECT
+         e.id as "encounterId",
+         e.patient_id as "patientId",
+         e.provider_id as "providerId",
+         pr.full_name as "providerName",
+         COALESCE(a.scheduled_start, e.created_at, NOW()) as "visitDate"
+       FROM encounters e
+       LEFT JOIN appointments a ON a.id = e.appointment_id AND a.tenant_id = e.tenant_id
+       LEFT JOIN providers pr ON pr.id = e.provider_id AND pr.tenant_id = e.tenant_id
+       WHERE e.id = $1 AND e.tenant_id = $2`,
+      [context.encounterId, tenantId]
+    );
+
+    if (result.rowCount && result.rows[0]) {
+      const row = result.rows[0];
+      return {
+        patientId: row.patientId,
+        encounterId: row.encounterId,
+        providerId: row.providerId || null,
+        providerName: row.providerName || null,
+        visitDate: row.visitDate || new Date(),
+        ambientNoteId: context.noteId || null,
+      };
+    }
+  }
+
+  if (context.noteId) {
+    const result = await pool.query(
+      `SELECT
+         r.patient_id as "patientId",
+         COALESCE(n.encounter_id, r.encounter_id) as "encounterId",
+         r.provider_id as "providerId",
+         pr.full_name as "providerName",
+         COALESCE(a.scheduled_start, e.created_at, n.created_at, NOW()) as "visitDate"
+       FROM ambient_generated_notes n
+       JOIN ambient_transcripts t ON t.id = n.transcript_id AND t.tenant_id = n.tenant_id
+       JOIN ambient_recordings r ON r.id = t.recording_id AND r.tenant_id = n.tenant_id
+       LEFT JOIN encounters e ON e.id = COALESCE(n.encounter_id, r.encounter_id) AND e.tenant_id = n.tenant_id
+       LEFT JOIN appointments a ON a.id = e.appointment_id AND a.tenant_id = n.tenant_id
+       LEFT JOIN providers pr ON pr.id = r.provider_id AND pr.tenant_id = n.tenant_id
+       WHERE n.id = $1 AND n.tenant_id = $2`,
+      [context.noteId, tenantId]
+    );
+
+    if (result.rowCount && result.rows[0]) {
+      const row = result.rows[0];
+      return {
+        patientId: row.patientId,
+        encounterId: row.encounterId || null,
+        providerId: row.providerId || null,
+        providerName: row.providerName || null,
+        visitDate: row.visitDate || new Date(),
+        ambientNoteId: context.noteId,
+      };
+    }
+  }
+
+  if (context.recordingId) {
+    const result = await pool.query(
+      `SELECT
+         r.patient_id as "patientId",
+         r.encounter_id as "encounterId",
+         r.provider_id as "providerId",
+         pr.full_name as "providerName",
+         COALESCE(a.scheduled_start, e.created_at, r.started_at, NOW()) as "visitDate"
+       FROM ambient_recordings r
+       LEFT JOIN encounters e ON e.id = r.encounter_id AND e.tenant_id = r.tenant_id
+       LEFT JOIN appointments a ON a.id = e.appointment_id AND a.tenant_id = r.tenant_id
+       LEFT JOIN providers pr ON pr.id = r.provider_id AND pr.tenant_id = r.tenant_id
+       WHERE r.id = $1 AND r.tenant_id = $2`,
+      [context.recordingId, tenantId]
+    );
+
+    if (result.rowCount && result.rows[0]) {
+      const row = result.rows[0];
+      return {
+        patientId: row.patientId,
+        encounterId: row.encounterId || null,
+        providerId: row.providerId || null,
+        providerName: row.providerName || null,
+        visitDate: row.visitDate || new Date(),
+        ambientNoteId: context.noteId || null,
+      };
+    }
+  }
+
+  const patientId = identifiers.patientId || context.patientId;
+  if (patientId) {
+    const result = await pool.query(
+      `SELECT id as "patientId" FROM patients WHERE id = $1 AND tenant_id = $2`,
+      [patientId, tenantId]
+    );
+
+    if (result.rowCount && result.rows[0]) {
+      return {
+        patientId: result.rows[0].patientId,
+        encounterId: null,
+        providerId: null,
+        providerName: null,
+        visitDate: new Date(),
+        ambientNoteId: context.noteId || null,
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildCopilotSummarySymptoms(
+  result: Awaited<ReturnType<typeof askClinicalCopilot>>,
+  context: ClinicalCopilotContext
+): string[] {
+  const symptoms = extractSymptomsForSummary({
+    chiefComplaint: context.note?.chiefComplaint || context.encounter?.chiefComplaint,
+    hpi: context.note?.hpi || context.encounter?.hpi,
+    physicalExam: context.note?.physicalExam || context.encounter?.exam,
+    assessment: context.note?.assessment || context.encounter?.assessmentPlan,
+    plan: context.note?.plan || context.encounter?.assessmentPlan,
+    patientSummary: context.note?.patientSummary,
+  });
+
+  const seen = new Set(symptoms.map((item) => item.toLowerCase()));
+  const pushUnique = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed.toLowerCase())) return;
+    seen.add(trimmed.toLowerCase());
+    symptoms.push(trimmed);
+  };
+
+  const sourceText = [
+    result.visitSummary,
+    result.answer,
+    result.chartEvidence.join(' '),
+    result.patientInstructions.join(' '),
+    result.followUpTasks.join(' '),
+    context.note?.patientSummary?.diagnosis,
+    context.note?.assessment,
+    context.encounter?.assessmentPlan,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  for (const symptom of SYMPTOM_PATTERNS) {
+    if (symptom.pattern.test(sourceText)) {
+      pushUnique(symptom.label);
+    }
+  }
+
+  if (/seborrheic dermatitis|ketoconazole|scalp|shampoo/.test(sourceText)) {
+    pushUnique('Scalp scaling / flaking');
+    pushUnique('Itching');
+  }
+
+  if (/\bacne|breakouts?|pimples?|comedones?\b/.test(sourceText)) {
+    pushUnique('Acne / breakouts');
+  }
+
+  if (/\bpsoriasis|plaque|silvery scale\b/.test(sourceText)) {
+    pushUnique('Psoriasis plaques / scaling');
+  }
+
+  return symptoms.slice(0, 8);
+}
+
+function buildCopilotSummaryDiagnosis(
+  result: Awaited<ReturnType<typeof askClinicalCopilot>>,
+  context: ClinicalCopilotContext
+): string {
+  const icd10 = result.suggestedCodes.find((code) => code.type === 'icd10');
+  if (icd10?.description) {
+    return icd10.description;
+  }
+
+  return (
+    toTrimmedString(context.note?.patientSummary?.diagnosis) ||
+    toTrimmedString(context.note?.assessment).split('\n')[0] ||
+    toTrimmedString(context.encounter?.assessmentPlan).split('\n')[0] ||
+    ''
+  );
+}
+
+async function upsertCopilotVisitSummary(
+  tenantId: string,
+  userId: string | undefined,
+  target: CopilotVisitSummaryTarget,
+  result: Awaited<ReturnType<typeof askClinicalCopilot>>,
+  context: ClinicalCopilotContext
+): Promise<{ summaryId: string; created: boolean }> {
+  let existingSummaryId: string | null = null;
+
+  if (target.ambientNoteId) {
+    const existing = await pool.query(
+      `SELECT id FROM visit_summaries WHERE ambient_note_id = $1 AND tenant_id = $2 ORDER BY created_at DESC LIMIT 1`,
+      [target.ambientNoteId, tenantId]
+    );
+    existingSummaryId = existing.rows[0]?.id || null;
+  }
+
+  if (!existingSummaryId && target.encounterId) {
+    const existing = await pool.query(
+      `SELECT id FROM visit_summaries WHERE encounter_id = $1 AND tenant_id = $2 ORDER BY created_at DESC LIMIT 1`,
+      [target.encounterId, tenantId]
+    );
+    existingSummaryId = existing.rows[0]?.id || null;
+  }
+
+  const summaryId = existingSummaryId || crypto.randomUUID();
+  const summaryText =
+    toTrimmedString(result.visitSummary) ||
+    toTrimmedString(result.answer) ||
+    'Visit summary generated by Encounter Copilot; clinician review required.';
+  const symptomsDiscussed = JSON.stringify(buildCopilotSummarySymptoms(result, context));
+  const diagnosisShared = buildCopilotSummaryDiagnosis(result, context);
+  const treatmentPlan = result.patientInstructions.length
+    ? result.patientInstructions.join('\n')
+    : toTrimmedString(context.note?.plan || context.encounter?.assessmentPlan);
+  const nextSteps = result.followUpTasks.join('\n');
+  const chiefComplaint = toTrimmedString(context.note?.chiefComplaint || context.encounter?.chiefComplaint);
+  const diagnoses = result.suggestedCodes
+    .filter((code) => code.type === 'icd10')
+    .map((code) => ({
+      code: code.code,
+      description: code.description,
+      confidence: code.confidence,
+      rationale: code.rationale,
+    }));
+  const procedures = result.suggestedCodes
+    .filter((code) => code.type === 'cpt' && !/^99\d{3}$/.test(code.code))
+    .map((code) => ({
+      code: code.code,
+      description: code.description,
+      type: code.type,
+      confidence: code.confidence,
+      rationale: code.rationale,
+    }));
+
+  if (existingSummaryId) {
+    await pool.query(
+      `UPDATE visit_summaries
+       SET patient_id = $1,
+           encounter_id = $2,
+           provider_id = $3,
+           ambient_note_id = COALESCE($4, ambient_note_id),
+           visit_date = $5,
+           provider_name = $6,
+           summary_text = $7,
+           symptoms_discussed = $8,
+           diagnosis_shared = $9,
+           treatment_plan = $10,
+           next_steps = $11,
+           chief_complaint = $12,
+           diagnoses = $13,
+           procedures = $14,
+           follow_up_instructions = $15,
+           generated_by = $16,
+           updated_at = NOW()
+       WHERE id = $17 AND tenant_id = $18`,
+      [
+        target.patientId,
+        target.encounterId,
+        target.providerId,
+        target.ambientNoteId,
+        target.visitDate,
+        target.providerName,
+        summaryText,
+        symptomsDiscussed,
+        diagnosisShared || null,
+        treatmentPlan || null,
+        nextSteps || null,
+        chiefComplaint || null,
+        JSON.stringify(diagnoses),
+        JSON.stringify(procedures),
+        treatmentPlan || null,
+        userId || null,
+        summaryId,
+        tenantId,
+      ]
+    );
+    return { summaryId, created: false };
+  }
+
+  await pool.query(
+    `INSERT INTO visit_summaries (
+      id, tenant_id, patient_id, encounter_id, provider_id, ambient_note_id,
+      visit_date, provider_name, summary_text, symptoms_discussed,
+      diagnosis_shared, treatment_plan, next_steps, chief_complaint,
+      diagnoses, procedures, follow_up_instructions, generated_by,
+      is_released
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, false)`,
+    [
+      summaryId,
+      tenantId,
+      target.patientId,
+      target.encounterId,
+      target.providerId,
+      target.ambientNoteId,
+      target.visitDate,
+      target.providerName,
+      summaryText,
+      symptomsDiscussed,
+      diagnosisShared || null,
+      treatmentPlan || null,
+      nextSteps || null,
+      chiefComplaint || null,
+      JSON.stringify(diagnoses),
+      JSON.stringify(procedures),
+      treatmentPlan || null,
+      userId || null,
+    ]
+  );
+
+  return { summaryId, created: true };
 }
 
 // ============================================================================
@@ -879,6 +1524,130 @@ router.post('/notes/:id/review', requireAuth, requireRoles([...AMBIENT_REVIEW_RO
 });
 
 /**
+ * POST /api/ambient/copilot/respond
+ * Ask the clinical copilot a chart-grounded question
+ */
+router.post('/copilot/respond', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
+  try {
+    const parsed = clinicalCopilotRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const { prompt, history, patientId, encounterId, noteId, recordingId } = parsed.data;
+
+    const context = await resolveClinicalCopilotContext(tenantId, {
+      patientId,
+      encounterId,
+      noteId,
+      recordingId,
+    });
+
+    const result = await askClinicalCopilot({
+      question: prompt,
+      history,
+      context,
+    });
+
+    await auditLog(
+      tenantId,
+      userId || null,
+      'ambient_copilot_query',
+      'ambient_copilot',
+      noteId || encounterId || patientId || recordingId || 'copilot'
+    );
+
+    res.json({
+      ...result,
+      context: {
+        patientId: context.patientId,
+        encounterId: context.encounterId,
+        noteId: context.noteId,
+        recordingId: context.recordingId,
+        hasTranscript: Boolean(context.transcriptExcerpt),
+        hasAmbientNote: Boolean(context.note),
+      },
+    });
+  } catch (error: any) {
+    logAmbientError('Clinical copilot error', error);
+    res.status(500).json({ error: 'Failed to get clinical copilot response' });
+  }
+});
+
+/**
+ * POST /api/ambient/copilot/visit-summary
+ * Generate a copilot visit summary and save it to the patient's visit history
+ */
+router.post('/copilot/visit-summary', requireAuth, requireRoles([...AMBIENT_CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
+  try {
+    const parsed = clinicalCopilotVisitSummarySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const { prompt, history, patientId, encounterId, noteId, recordingId } = parsed.data;
+
+    const context = await resolveClinicalCopilotContext(tenantId, {
+      patientId,
+      encounterId,
+      noteId,
+      recordingId,
+    });
+
+    const target = await resolveCopilotVisitSummaryTarget(
+      tenantId,
+      { patientId, encounterId, noteId, recordingId },
+      context
+    );
+    if (!target) {
+      return res.status(404).json({ error: 'Could not find a patient or encounter to save this summary to' });
+    }
+    if (patientId && target.patientId !== patientId) {
+      return res.status(400).json({ error: 'Summary target does not match the selected patient' });
+    }
+
+    const result = await askClinicalCopilot({
+      question: prompt || COPILOT_VISIT_SUMMARY_PROMPT,
+      history,
+      context,
+    });
+    const saved = await upsertCopilotVisitSummary(tenantId, userId, target, result, context);
+
+    await auditLog(
+      tenantId,
+      userId || null,
+      saved.created ? 'ambient_copilot_visit_summary_created' : 'ambient_copilot_visit_summary_updated',
+      'visit_summary',
+      saved.summaryId
+    );
+
+    res.status(saved.created ? 201 : 200).json({
+      summaryId: saved.summaryId,
+      created: saved.created,
+      message: saved.created
+        ? 'Encounter Copilot summary saved to patient history'
+        : 'Encounter Copilot summary updated in patient history',
+      response: result,
+      context: {
+        patientId: target.patientId,
+        encounterId: target.encounterId,
+        noteId: context.noteId,
+        recordingId: context.recordingId,
+        hasTranscript: Boolean(context.transcriptExcerpt),
+        hasAmbientNote: Boolean(context.note),
+      },
+    });
+  } catch (error: any) {
+    logAmbientError('Clinical copilot visit summary save error', error);
+    res.status(500).json({ error: 'Failed to save clinical copilot visit summary' });
+  }
+});
+
+/**
  * POST /api/ambient/notes/:id/apply-to-encounter
  * Apply approved note to encounter
  */
@@ -1039,6 +1808,41 @@ const SYMPTOM_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   { label: 'Fever', pattern: /\bfever|febrile/ },
 ];
 
+const HISTORY_ONLY_SYMPTOM_CONTEXT =
+  /\b(family history|personal history|history of|father|mother|parent|sibling|sun exposure|sunburn|tanning bed|in the past|previously|prior)\b/;
+
+const NEGATED_OR_SAFETY_NET_SYMPTOM_CONTEXT =
+  /\b(denies?|denied|no|not|without|doesn'?t|does not|didn'?t|did not|isn'?t|is not|call|return|watch for|seek care|come back sooner|follow up sooner|if you (notice|develop|have)|if it (starts|gets|becomes)|warning signs|wound care|after (the )?(biopsy|procedure))\b/;
+
+function isUnsupportedSymptomSentence(sentence: string): boolean {
+  const normalized = sentence.toLowerCase();
+  const symptomWord = /\b(pain|hurt|tender|sore|itch|bleed|bled|crust|scab|drain|ooz|pus|discharge|fever|blister|rash|redness|swelling)\b/;
+
+  if (HISTORY_ONLY_SYMPTOM_CONTEXT.test(normalized)) {
+    return true;
+  }
+
+  if (NEGATED_OR_SAFETY_NET_SYMPTOM_CONTEXT.test(normalized) && symptomWord.test(normalized)) {
+    return true;
+  }
+
+  if (/\b(any|do you have|have you had)\b.{0,55}\b(fever|pain|drainage|bleeding|itch|rash|pus|redness)\b\??/i.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+const LOW_VALUE_CONCERN_PATTERNS = [
+  /\bconcern about potential skin cancer\b/i,
+  /\bskin cancer concern\b/i,
+  /\bcancer concern\b/i,
+  /\bfamily history\b/i,
+  /\bsun exposure\b/i,
+  /\bsunburn\b/i,
+  /\btanning bed\b/i,
+];
+
 type FormalAppointmentSummary = {
   symptoms: string[];
   probableDiagnoses: Array<{
@@ -1145,6 +1949,28 @@ function serializeAgentConfigSnapshot(agentConfig: AgentConfiguration | null): s
   return JSON.stringify(agentConfig);
 }
 
+function shouldUsePersistedAgentConfig(
+  agentConfig: AgentConfiguration | null,
+  derivedSpecialtyFocus: string | undefined
+): agentConfig is AgentConfiguration {
+  if (!agentConfig) {
+    return false;
+  }
+
+  const persistedFocus = toTrimmedString(agentConfig.specialtyFocus).toLowerCase();
+  const derivedFocus = toTrimmedString(derivedSpecialtyFocus).toLowerCase();
+
+  if (!derivedFocus || derivedFocus === 'cosmetic' || persistedFocus !== 'cosmetic') {
+    return true;
+  }
+
+  logger.info('Ignoring stale cosmetic ambient agent config for non-cosmetic visit context', {
+    agentConfigId: agentConfig.id,
+    derivedSpecialtyFocus: derivedFocus,
+  });
+  return false;
+}
+
 async function resolveNoteGenerationContext(
   tenantId: string,
   transcriptId: string,
@@ -1201,16 +2027,33 @@ async function resolveNoteGenerationContext(
   const appointmentTypeId = toTrimmedString(row.appointment_type_id) || null;
   const appointmentTypeName = toTrimmedString(row.appointment_type_name) || undefined;
   const appointmentTypeCategory = toTrimmedString(row.appointment_type_category) || undefined;
+  const derivedSpecialtyFocus =
+    deriveSpecialtyFocus(appointmentTypeCategory, appointmentTypeName) || undefined;
 
   let agentConfig: AgentConfiguration | null = null;
   const persistedAgentConfigId = toTrimmedString(row.recording_agent_config_id) || null;
 
   if (persistedAgentConfigId) {
-    agentConfig = await agentConfigService.getConfiguration(persistedAgentConfigId, tenantId);
+    const persistedAgentConfig = await agentConfigService.getConfiguration(persistedAgentConfigId, tenantId);
+    if (shouldUsePersistedAgentConfig(persistedAgentConfig, derivedSpecialtyFocus)) {
+      agentConfig = persistedAgentConfig;
+    }
   }
 
   if (!agentConfig && appointmentTypeId) {
-    agentConfig = await agentConfigService.getConfigurationForAppointmentType(tenantId, appointmentTypeId);
+    agentConfig = await agentConfigService.getConfigurationForAppointmentType(
+      tenantId,
+      appointmentTypeId,
+      { includeDefault: false }
+    );
+  }
+
+  if (!agentConfig && derivedSpecialtyFocus) {
+    agentConfig = await agentConfigService.getConfigurationForSpecialtyFocus(tenantId, derivedSpecialtyFocus);
+  }
+
+  if (!agentConfig && derivedSpecialtyFocus !== 'cosmetic') {
+    agentConfig = await agentConfigService.getConfigurationForSpecialtyFocus(tenantId, 'medical_derm');
   }
 
   if (!agentConfig) {
@@ -1230,7 +2073,7 @@ async function resolveNoteGenerationContext(
 
   const specialtyFocus =
     agentConfig?.specialtyFocus ||
-    deriveSpecialtyFocus(appointmentTypeCategory, appointmentTypeName);
+    derivedSpecialtyFocus;
 
   const patientName = [toTrimmedString(row.patient_first_name), toTrimmedString(row.patient_last_name)]
     .filter(Boolean)
@@ -1328,8 +2171,16 @@ function normalizeProbabilityPercents(weights: number[]): number[] {
 function extractSymptomsForSummary(note: {
   chiefComplaint?: string;
   hpi?: string;
+  physicalExam?: string;
   assessment?: string;
-  patientSummary?: { yourConcerns?: string[] };
+  plan?: string;
+  patientSummary?: {
+    whatWeDiscussed?: string;
+    yourConcerns?: string[];
+    diagnosis?: string;
+    treatmentPlan?: string;
+    followUp?: string;
+  };
 }): string[] {
   const symptoms: string[] = [];
   const seen = new Set<string>();
@@ -1342,13 +2193,129 @@ function extractSymptomsForSummary(note: {
     symptoms.push(trimmed);
   };
 
-  for (const concern of note.patientSummary?.yourConcerns || []) {
-    pushUnique(String(concern));
+  const sourceText = [
+    note.chiefComplaint,
+    note.hpi,
+    note.physicalExam,
+    note.assessment,
+    note.plan,
+    note.patientSummary?.whatWeDiscussed,
+    note.patientSummary?.diagnosis,
+    note.patientSummary?.treatmentPlan,
+    note.patientSummary?.followUp,
+  ].filter(Boolean).join(' ');
+  const normalizedSource = sourceText.toLowerCase();
+  const sentences = sourceText
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((sentence) => sentence.trim().toLowerCase())
+    .filter(Boolean);
+
+  const hasCurrentEvidence = (pattern: RegExp) => {
+    if (sentences.length === 0) {
+      return pattern.test(normalizedSource) && !isUnsupportedSymptomSentence(normalizedSource);
+    }
+
+    return sentences.some((sentence) => pattern.test(sentence) && !isUnsupportedSymptomSentence(sentence));
+  };
+
+  const hasLesionContext =
+    /\b(mole|nevus|pigmented lesion|skin lesion|papule|neoplasm|melanoma|biopsy)\b/.test(normalizedSource);
+  const hasScalpDermContext =
+    /\b(scalp|seborrheic|dandruff|ketoconazole|shampoo|hairline)\b/.test(normalizedSource);
+
+  if (hasCurrentEvidence(/\b(changing mole|mole[^.]*changed|changed[^.]*mole|pigmented lesion|dark brown papule|irregular border|multiple shades|asymmetric|suspicious lesion)\b/)) {
+    pushUnique('Changing mole / pigmented lesion');
   }
 
-  const sourceText = `${note.chiefComplaint || ''} ${note.hpi || ''} ${note.assessment || ''}`.toLowerCase();
+  if (
+    hasLesionContext &&
+    hasCurrentEvidence(/\b(growing|growth|larger|bigger|increased size|darker|changed color|color change|multiple shades)\b/)
+  ) {
+    pushUnique('Growth or color change');
+  }
+
+  if (hasLesionContext && hasCurrentEvidence(/\b(bleed|bleeding|bled|crust|crusted|scab)\b/)) {
+    pushUnique('Bleeding / crusting');
+  }
+
+  if (hasLesionContext && hasCurrentEvidence(/\b(catches|catching|clothing|shirt|scratch|scratched|irritated)\b/)) {
+    pushUnique('Irritated/catching lesion');
+  }
+
+  if (
+    hasScalpDermContext &&
+    hasCurrentEvidence(/\b(itch|pruritus|scale|scaly|flak|dandruff|redness|erythema|seborrheic|ketoconazole|shampoo)\b/)
+  ) {
+    pushUnique('Scalp itching/flaking');
+  }
+
+  const normalizeConcern = (rawConcern: unknown): string | null => {
+    const concern = String(rawConcern || '').trim();
+    if (!concern) {
+      return null;
+    }
+
+    if (LOW_VALUE_CONCERN_PATTERNS.some((pattern) => pattern.test(concern))) {
+      return null;
+    }
+
+    const normalizedConcern = concern.toLowerCase();
+    if (isUnsupportedSymptomSentence(concern)) {
+      return null;
+    }
+    if (/\b(pain|hurt|tender)\b/.test(normalizedConcern) && !hasCurrentEvidence(/\b(pain|hurt|tender|sore)\b/)) {
+      return null;
+    }
+    if (/\b(drain|ooz|pus|discharge)\b/.test(normalizedConcern) && !hasCurrentEvidence(/\b(drain|ooz|pus|discharge)\b/)) {
+      return null;
+    }
+    if (/\b(fever|febrile)\b/.test(normalizedConcern) && !hasCurrentEvidence(/\b(fever|febrile)\b/)) {
+      return null;
+    }
+    if (/\bbleed|crust|scab/.test(normalizedConcern) && hasLesionContext) {
+      return 'Bleeding / crusting';
+    }
+    if (/\b(changing|growth|larger|darker|mole|pigmented lesion|lesion)\b/.test(normalizedConcern) && hasLesionContext) {
+      return 'Changing mole / pigmented lesion';
+    }
+    if (/\bitch|scale|scal|flak|redness|dandruff|rash/.test(normalizedConcern) && hasScalpDermContext) {
+      return 'Scalp itching/flaking';
+    }
+    if (/\bblister/.test(normalizedConcern) && !hasCurrentEvidence(/\bblister|vesicle|bulla\b/)) {
+      return null;
+    }
+    if (normalizedConcern === 'rash' && (hasLesionContext || hasScalpDermContext)) {
+      return null;
+    }
+
+    return concern;
+  };
+
+  for (const concern of note.patientSummary?.yourConcerns || []) {
+    const normalizedConcern = normalizeConcern(concern);
+    if (normalizedConcern) {
+      pushUnique(normalizedConcern);
+    }
+  }
+
   for (const symptom of SYMPTOM_PATTERNS) {
-    if (symptom.pattern.test(sourceText)) {
+    if (!hasCurrentEvidence(symptom.pattern)) {
+      continue;
+    }
+    if (symptom.label === 'Rash' && (hasLesionContext || hasScalpDermContext)) {
+      continue;
+    }
+    if (['Itching', 'Redness', 'Scaling'].includes(symptom.label) && hasScalpDermContext) {
+      continue;
+    }
+    if (symptom.label === 'Bleeding' && hasLesionContext) {
+      continue;
+    }
+    if (symptom.label === 'Blistering' && !hasCurrentEvidence(/\b(blister|vesicle|bulla)\b/)) {
+      continue;
+    }
+
+    if (symptom.pattern.test(normalizedSource)) {
       pushUnique(symptom.label);
     }
   }
@@ -1479,7 +2446,9 @@ function buildFormalAppointmentSummary(result: Awaited<ReturnType<typeof generat
     symptoms: extractSymptomsForSummary({
       chiefComplaint: result.chiefComplaint,
       hpi: result.hpi,
+      physicalExam: result.physicalExam,
       assessment: result.assessment,
+      plan: result.plan,
       patientSummary: result.patientSummary || undefined,
     }),
     probableDiagnoses,
@@ -1796,6 +2765,9 @@ router.post('/notes/:noteId/generate-patient-summary', requireAuth, requireRoles
     const symptomsDiscussed = extractSymptomsForSummary({
       chiefComplaint: note.chief_complaint || '',
       hpi: note.hpi || '',
+      physicalExam: note.physical_exam || '',
+      assessment: note.assessment || '',
+      plan: note.plan || '',
       patientSummary: note.note_content?.patientSummary
     });
 
@@ -1901,6 +2873,10 @@ router.get('/patient-summaries/:patientId', requireAuth, requireRoles([...AMBIEN
         vs.diagnosis_shared as "diagnosisShared",
         vs.treatment_plan as "treatmentPlan",
         vs.next_steps as "nextSteps",
+        vs.chief_complaint as "chiefComplaint",
+        vs.diagnoses,
+        vs.procedures,
+        vs.follow_up_instructions as "followUpInstructions",
         vs.follow_up_date as "followUpDate",
         vs.shared_at as "sharedAt",
         vs.created_at as "createdAt",

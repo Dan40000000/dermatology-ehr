@@ -2033,7 +2033,7 @@ Include precise measurements and staging details.',
       }'::jsonb,
       '["margin assessment", "tissue processing", "reconstruction options", "wound healing"]'::jsonb,
       '[{"code": "17311", "description": "Mohs, head/neck/hands/feet/genitalia, first stage"}, {"code": "17312", "description": "Mohs, each additional stage"}]'::jsonb,
-      '[{"code": "C44.31", "description": "BCC skin of face"}, {"code": "C44.41", "description": "SCC skin of scalp/neck"}]'::jsonb,
+      '[{"code": "C44.319", "description": "BCC skin of other parts of face"}, {"code": "C44.41", "description": "BCC skin of scalp/neck"}]'::jsonb,
       '1-2 weeks',
       '[{"task": "Pathology report review", "priority": "high", "daysFromVisit": 3}, {"task": "Wound check appointment", "priority": "high", "daysFromVisit": 7}, {"task": "Suture removal", "priority": "high", "daysFromVisit": 10}]'::jsonb
     ),
@@ -11702,6 +11702,594 @@ Consider age-appropriate treatments and include family counseling points.',
       ON professional_feedback(tenant_id, email_status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_professional_feedback_attachments_feedback
       ON professional_feedback_attachments(feedback_id);
+    `,
+  },
+  {
+    name: "164_charge_code_billing_model",
+    sql: `
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS code_type TEXT DEFAULT 'CPT';
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS billing_route TEXT DEFAULT 'insurance';
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS modifier_codes TEXT[] DEFAULT ARRAY[]::TEXT[];
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS source TEXT;
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS charge_group TEXT;
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS line_note TEXT;
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS insurance_responsibility_cents INTEGER DEFAULT 0;
+    ALTER TABLE charges ADD COLUMN IF NOT EXISTS patient_responsibility_cents INTEGER DEFAULT 0;
+
+    UPDATE charges
+    SET code_type = CASE
+      WHEN cpt_code ~ '^[0-9]{5}$' THEN 'CPT'
+      WHEN cpt_code ~ '^[A-Z][0-9]{4}$' THEN 'HCPCS'
+      ELSE 'INTERNAL'
+    END
+    WHERE code_type IS NULL OR code_type = '';
+
+    UPDATE charges
+    SET billing_route = CASE
+      WHEN status = 'self_pay' THEN 'self_pay'
+      ELSE COALESCE(NULLIF(billing_route, ''), 'insurance')
+    END
+    WHERE billing_route IS NULL OR billing_route = '';
+
+    ALTER TABLE fee_schedule_items ADD COLUMN IF NOT EXISTS code_type VARCHAR(20) DEFAULT 'CPT';
+    ALTER TABLE fee_schedule_items ADD COLUMN IF NOT EXISTS billing_route TEXT DEFAULT 'insurance';
+    ALTER TABLE fee_schedule_items ADD COLUMN IF NOT EXISTS is_cosmetic BOOLEAN DEFAULT FALSE;
+    ALTER TABLE fee_schedule_items ADD COLUMN IF NOT EXISTS requires_diagnosis BOOLEAN DEFAULT TRUE;
+    ALTER TABLE fee_schedule_items ADD COLUMN IF NOT EXISTS subcategory TEXT;
+    ALTER TABLE fee_schedule_items ADD COLUMN IF NOT EXISTS notes TEXT;
+
+    UPDATE fee_schedule_items
+    SET code_type = CASE
+      WHEN cpt_code ~ '^[0-9]{5}$' THEN 'CPT'
+      WHEN cpt_code ~ '^[A-Z][0-9]{4}$' THEN 'HCPCS'
+      ELSE 'INTERNAL'
+    END
+    WHERE code_type IS NULL OR code_type = '';
+
+    UPDATE fee_schedule_items
+    SET billing_route = CASE
+      WHEN COALESCE(is_cosmetic, false) = true
+        OR cpt_code ILIKE 'COS%'
+        OR cpt_code ILIKE 'LHR%'
+        OR cpt_code ILIKE 'BOTOX%'
+        OR cpt_code ILIKE 'FILLER%'
+        OR category ILIKE 'Cosmetic%'
+      THEN 'self_pay'
+      ELSE COALESCE(NULLIF(billing_route, ''), 'insurance')
+    END;
+
+    UPDATE fee_schedule_items
+    SET requires_diagnosis = CASE WHEN billing_route = 'insurance' THEN true ELSE false END
+    WHERE requires_diagnosis IS NULL;
+
+    ALTER TABLE cpt_codes ADD COLUMN IF NOT EXISTS code_type VARCHAR(20) DEFAULT 'CPT';
+    ALTER TABLE cpt_codes ADD COLUMN IF NOT EXISTS billing_route TEXT DEFAULT 'insurance';
+    ALTER TABLE cpt_codes ADD COLUMN IF NOT EXISTS requires_diagnosis BOOLEAN DEFAULT TRUE;
+    ALTER TABLE cpt_codes ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'practice_seed';
+
+    ALTER TABLE bill_line_items ADD COLUMN IF NOT EXISTS code_type TEXT DEFAULT 'CPT';
+    ALTER TABLE bill_line_items ADD COLUMN IF NOT EXISTS billing_route TEXT DEFAULT 'insurance';
+    ALTER TABLE bill_line_items ADD COLUMN IF NOT EXISTS modifier_codes TEXT[] DEFAULT ARRAY[]::TEXT[];
+
+    CREATE INDEX IF NOT EXISTS idx_charges_code_type ON charges(tenant_id, code_type);
+    CREATE INDEX IF NOT EXISTS idx_charges_billing_route ON charges(tenant_id, billing_route, service_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_fee_schedule_items_code_type ON fee_schedule_items(fee_schedule_id, code_type);
+    CREATE INDEX IF NOT EXISTS idx_fee_schedule_items_billing_route ON fee_schedule_items(fee_schedule_id, billing_route);
+
+    WITH derm_catalog (
+      code, code_type, description, category, subcategory, fee_cents,
+      billing_route, is_cosmetic, requires_diagnosis, notes, is_common
+    ) AS (
+      VALUES
+        ('99202','CPT','New patient office visit level 2','Evaluation & Management','New Patient',15000,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',true),
+        ('99203','CPT','New patient office visit level 3','Evaluation & Management','New Patient',22500,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',true),
+        ('99204','CPT','New patient office visit level 4','Evaluation & Management','New Patient',32500,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',true),
+        ('99205','CPT','New patient office visit level 5','Evaluation & Management','New Patient',42500,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',false),
+        ('99212','CPT','Established patient office visit level 2','Evaluation & Management','Established Patient',12000,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',true),
+        ('99213','CPT','Established patient office visit level 3','Evaluation & Management','Established Patient',17500,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',true),
+        ('99214','CPT','Established patient office visit level 4','Evaluation & Management','Established Patient',25000,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',true),
+        ('99215','CPT','Established patient office visit level 5','Evaluation & Management','Established Patient',35000,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',false),
+        ('11102','CPT','Tangential skin biopsy, first lesion','Biopsies','Tangential',17500,'insurance',false,true,'Add additional lesion code when appropriate.',true),
+        ('11103','CPT','Tangential skin biopsy, each additional lesion','Biopsies','Tangential',9000,'insurance',false,true,'Use for each additional tangential biopsy lesion.',true),
+        ('11104','CPT','Punch skin biopsy, first lesion','Biopsies','Punch',19500,'insurance',false,true,'Add additional lesion code when appropriate.',true),
+        ('11105','CPT','Punch skin biopsy, each additional lesion','Biopsies','Punch',9500,'insurance',false,true,'Use for each additional punch biopsy lesion.',true),
+        ('11106','CPT','Incisional skin biopsy, first lesion','Biopsies','Incisional',22500,'insurance',false,true,'Add additional lesion code when appropriate.',false),
+        ('11107','CPT','Incisional skin biopsy, each additional lesion','Biopsies','Incisional',10500,'insurance',false,true,'Use for each additional incisional biopsy lesion.',false),
+        ('17000','CPT','Destruction premalignant lesion, first lesion','Destruction','Premalignant',17500,'insurance',false,true,'Commonly used for first actinic keratosis destruction line.',true),
+        ('17003','CPT','Destruction premalignant lesions, each additional lesion','Destruction','Premalignant',2500,'insurance',false,true,'Use quantity for additional lesions when supported.',true),
+        ('17004','CPT','Destruction premalignant lesions, 15 or more','Destruction','Premalignant',27500,'insurance',false,true,'Use instead of first/additional lines when 15 or more lesions are treated.',false),
+        ('17110','CPT','Destruction benign lesions, up to 14 lesions','Destruction','Benign',20000,'insurance',false,true,'Commonly used for wart, inflamed seborrheic keratosis, or benign lesion destruction.',true),
+        ('17111','CPT','Destruction benign lesions, 15 or more lesions','Destruction','Benign',30000,'insurance',false,true,'Use when 15 or more benign lesions are destroyed.',false),
+        ('11300','CPT','Shave removal lesion, trunk/arms/legs up to 0.5 cm','Shave Removals','Trunk/Extremity',16500,'insurance',false,true,'Use size and location-specific code when billing live.',false),
+        ('11301','CPT','Shave removal lesion, trunk/arms/legs 0.6 to 1.0 cm','Shave Removals','Trunk/Extremity',20500,'insurance',false,true,'Use size and location-specific code when billing live.',false),
+        ('11305','CPT','Shave removal lesion, scalp/neck/hands/feet/genitalia up to 0.5 cm','Shave Removals','Special Area',18500,'insurance',false,true,'Use size and location-specific code when billing live.',false),
+        ('11306','CPT','Shave removal lesion, scalp/neck/hands/feet/genitalia 0.6 to 1.0 cm','Shave Removals','Special Area',23000,'insurance',false,true,'Use size and location-specific code when billing live.',false),
+        ('11400','CPT','Excision benign lesion, trunk/arms/legs up to 0.5 cm','Excisions - Benign','Trunk/Extremity',22500,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',true),
+        ('11401','CPT','Excision benign lesion, trunk/arms/legs 0.6 to 1.0 cm','Excisions - Benign','Trunk/Extremity',27500,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',true),
+        ('11402','CPT','Excision benign lesion, trunk/arms/legs 1.1 to 2.0 cm','Excisions - Benign','Trunk/Extremity',35000,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',true),
+        ('11420','CPT','Excision benign lesion, scalp/neck/hands/feet/genitalia up to 0.5 cm','Excisions - Benign','Special Area',25500,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',false),
+        ('11421','CPT','Excision benign lesion, scalp/neck/hands/feet/genitalia 0.6 to 1.0 cm','Excisions - Benign','Special Area',31000,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',false),
+        ('11422','CPT','Excision benign lesion, scalp/neck/hands/feet/genitalia 1.1 to 2.0 cm','Excisions - Benign','Special Area',39500,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',false),
+        ('11600','CPT','Excision malignant lesion, trunk/arms/legs up to 0.5 cm','Excisions - Malignant','Trunk/Extremity',35000,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',true),
+        ('11601','CPT','Excision malignant lesion, trunk/arms/legs 0.6 to 1.0 cm','Excisions - Malignant','Trunk/Extremity',42500,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',true),
+        ('11602','CPT','Excision malignant lesion, trunk/arms/legs 1.1 to 2.0 cm','Excisions - Malignant','Trunk/Extremity',52500,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',true),
+        ('11620','CPT','Excision malignant lesion, scalp/neck/hands/feet/genitalia up to 0.5 cm','Excisions - Malignant','Special Area',38500,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',false),
+        ('11621','CPT','Excision malignant lesion, scalp/neck/hands/feet/genitalia 0.6 to 1.0 cm','Excisions - Malignant','Special Area',46000,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',false),
+        ('11622','CPT','Excision malignant lesion, scalp/neck/hands/feet/genitalia 1.1 to 2.0 cm','Excisions - Malignant','Special Area',56000,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',false),
+        ('11640','CPT','Excision malignant lesion, face/ears/eyelids/nose/lips up to 0.5 cm','Excisions - Malignant','Face',45000,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',false),
+        ('11641','CPT','Excision malignant lesion, face/ears/eyelids/nose/lips 0.6 to 1.0 cm','Excisions - Malignant','Face',55000,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',false),
+        ('11642','CPT','Excision malignant lesion, face/ears/eyelids/nose/lips 1.1 to 2.0 cm','Excisions - Malignant','Face',68500,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',false),
+        ('12001','CPT','Simple repair, superficial wound up to 2.5 cm','Repairs','Simple',17500,'insurance',false,true,'Use repair type, location, and length-specific code when billing live.',true),
+        ('12002','CPT','Simple repair, superficial wound 2.6 to 7.5 cm','Repairs','Simple',24000,'insurance',false,true,'Use repair type, location, and length-specific code when billing live.',false),
+        ('12031','CPT','Intermediate repair, trunk/scalp/arms/legs up to 2.5 cm','Repairs','Intermediate',32500,'insurance',false,true,'Use repair type, location, and length-specific code when billing live.',true),
+        ('12032','CPT','Intermediate repair, trunk/scalp/arms/legs 2.6 to 7.5 cm','Repairs','Intermediate',42500,'insurance',false,true,'Use repair type, location, and length-specific code when billing live.',false),
+        ('13100','CPT','Complex repair, trunk up to 2.5 cm','Repairs','Complex',52500,'insurance',false,true,'Use repair type, location, and length-specific code when billing live.',false),
+        ('13101','CPT','Complex repair, trunk 2.6 to 7.5 cm','Repairs','Complex',67500,'insurance',false,true,'Use repair type, location, and length-specific code when billing live.',false),
+        ('13120','CPT','Complex repair, scalp/arms/legs up to 2.5 cm','Repairs','Complex',57500,'insurance',false,true,'Use repair type, location, and length-specific code when billing live.',false),
+        ('13121','CPT','Complex repair, scalp/arms/legs 2.6 to 7.5 cm','Repairs','Complex',72500,'insurance',false,true,'Use repair type, location, and length-specific code when billing live.',false),
+        ('17311','CPT','Mohs surgery first stage, head/neck/hands/feet/genitalia','Mohs Surgery','Stage',136700,'insurance',false,true,'Demo fee taken from the provided billing reference image.',true),
+        ('17312','CPT','Mohs surgery additional stage, head/neck/hands/feet/genitalia','Mohs Surgery','Stage',80300,'insurance',false,true,'Demo fee taken from the provided billing reference image.',true),
+        ('17313','CPT','Mohs surgery first stage, trunk/arms/legs','Mohs Surgery','Stage',118500,'insurance',false,true,'Use site-specific Mohs coding rules when billing live.',false),
+        ('17314','CPT','Mohs surgery additional stage, trunk/arms/legs','Mohs Surgery','Stage',71000,'insurance',false,true,'Use site-specific Mohs coding rules when billing live.',false),
+        ('17315','CPT','Mohs surgery additional tissue block','Mohs Surgery','Tissue Block',22500,'insurance',false,true,'Use when additional tissue blocks are documented.',false),
+        ('11900','CPT','Intralesional injection, up to 7 lesions','Injections','Intralesional',15000,'insurance',false,true,'Medication/supply may require separate HCPCS line depending on payer.',true),
+        ('11901','CPT','Intralesional injection, more than 7 lesions','Injections','Intralesional',22000,'insurance',false,true,'Medication/supply may require separate HCPCS line depending on payer.',false),
+        ('J3301','HCPCS','Triamcinolone acetonide injection supply, 10 mg','Injections','Medication Supply',250,'insurance',false,true,'HCPCS supply example; verify NDC/unit requirements with payer.',false),
+        ('88305','CPT','Surgical pathology, gross and microscopic exam','Pathology','Dermatopathology',12500,'insurance',false,true,'May be billed by outside lab/pathology group instead of practice.',true),
+        ('95044','CPT','Patch/allergy test, per allergen','Patch Testing','Allergy',1500,'insurance',false,true,'Use units for number of allergens when supported by payer.',true),
+        ('96900','CPT','Actinotherapy treatment','Phototherapy','Light Therapy',9500,'insurance',false,true,'Verify modality, frequency, and coverage rules.',false),
+        ('96910','CPT','Photochemotherapy or UVB phototherapy','Phototherapy','Light Therapy',12500,'insurance',false,true,'Verify modality, frequency, and coverage rules.',true),
+        ('96912','CPT','Photochemotherapy with psoralens and UV-A','Phototherapy','Light Therapy',14500,'insurance',false,true,'Verify modality, frequency, and coverage rules.',false),
+        ('COS-CONS','INTERNAL','Cosmetic consultation','Consultations','Cosmetic Consult',10000,'self_pay',true,false,'Internal self-pay service. Do not put on an insurance claim by default.',true),
+        ('LHR-SMALL','INTERNAL','Laser hair removal, small area','Laser Hair Removal','Small Area',12500,'self_pay',true,false,'Internal self-pay service. Use practice fee schedule rather than insurance claim by default.',true),
+        ('LHR-MED','INTERNAL','Laser hair removal, medium area','Laser Hair Removal','Medium Area',22000,'self_pay',true,false,'Internal self-pay service. Use practice fee schedule rather than insurance claim by default.',true),
+        ('LHR-LARGE','INTERNAL','Laser hair removal, large area','Laser Hair Removal','Large Area',45000,'self_pay',true,false,'Internal self-pay service. Use practice fee schedule rather than insurance claim by default.',true),
+        ('BOTOXUNIT','INTERNAL','Cosmetic neurotoxin, per unit','Neurotoxins','Per Unit',1300,'self_pay',true,false,'Internal self-pay service. Track units and product inventory separately.',true),
+        ('FILLERSYR','INTERNAL','Dermal filler, per syringe','Dermal Fillers','Per Syringe',67500,'self_pay',true,false,'Internal self-pay service. Track product inventory separately.',true),
+        ('HYDRAFAC','INTERNAL','HydraFacial treatment','Laser Skin Treatments','Facial Treatment',25000,'self_pay',true,false,'Internal self-pay service. Do not put on an insurance claim by default.',true),
+        ('PEEL','INTERNAL','Chemical peel treatment','Chemical Peels','Peel',18000,'self_pay',true,false,'Internal self-pay service. Do not put on an insurance claim by default.',true),
+        ('MICRONEED','INTERNAL','Microneedling treatment','Microneedling & RF','Microneedling',30000,'self_pay',true,false,'Internal self-pay service. Do not put on an insurance claim by default.',true),
+        ('IPL-FACE','INTERNAL','IPL photofacial treatment','Laser Skin Treatments','IPL',32000,'self_pay',true,false,'Internal self-pay service. Do not put on an insurance claim by default.',true)
+    )
+    INSERT INTO cpt_codes (
+      id, code, description, category, default_fee_cents, is_common,
+      code_type, billing_route, requires_diagnosis, source
+    )
+    SELECT
+      gen_random_uuid()::text,
+      code,
+      description,
+      category,
+      fee_cents,
+      is_common,
+      code_type,
+      billing_route,
+      requires_diagnosis,
+      'dermatology_starter_catalog'
+    FROM derm_catalog
+    WHERE code_type <> 'INTERNAL'
+    ON CONFLICT (code)
+    DO UPDATE SET
+      description = COALESCE(NULLIF(cpt_codes.description, ''), EXCLUDED.description),
+      category = COALESCE(NULLIF(cpt_codes.category, ''), EXCLUDED.category),
+      default_fee_cents = CASE
+        WHEN cpt_codes.default_fee_cents IS NULL OR cpt_codes.default_fee_cents = 0
+          THEN EXCLUDED.default_fee_cents
+        ELSE cpt_codes.default_fee_cents
+      END,
+      is_common = COALESCE(cpt_codes.is_common, false) OR EXCLUDED.is_common,
+      code_type = EXCLUDED.code_type,
+      billing_route = EXCLUDED.billing_route,
+      requires_diagnosis = EXCLUDED.requires_diagnosis,
+      source = COALESCE(NULLIF(cpt_codes.source, ''), EXCLUDED.source);
+
+    DO $$
+    DECLARE
+      tenant_record RECORD;
+      v_medical_schedule_id TEXT;
+      v_cosmetic_schedule_id TEXT;
+    BEGIN
+      FOR tenant_record IN SELECT id FROM tenants LOOP
+        SELECT id
+        INTO v_medical_schedule_id
+        FROM fee_schedules
+        WHERE tenant_id = tenant_record.id
+          AND COALESCE(is_default, false) = true
+          AND name NOT ILIKE '%cosmetic%'
+          AND COALESCE(description, '') NOT ILIKE '%cosmetic%'
+        ORDER BY created_at ASC
+        LIMIT 1;
+
+        IF v_medical_schedule_id IS NULL THEN
+          v_medical_schedule_id := gen_random_uuid()::text;
+          INSERT INTO fee_schedules (id, tenant_id, name, is_default, description)
+          VALUES (
+            v_medical_schedule_id,
+            tenant_record.id,
+            'Standard Medical Fee Schedule',
+            true,
+            'Default insurance-routed dermatology fee schedule.'
+          )
+          ON CONFLICT (id) DO NOTHING;
+        END IF;
+
+        SELECT id
+        INTO v_cosmetic_schedule_id
+        FROM fee_schedules
+        WHERE tenant_id = tenant_record.id
+          AND (name ILIKE '%cosmetic%' OR name ILIKE '%self-pay%' OR COALESCE(description, '') ILIKE '%cosmetic%')
+        ORDER BY is_default DESC, created_at ASC
+        LIMIT 1;
+
+        IF v_cosmetic_schedule_id IS NULL THEN
+          v_cosmetic_schedule_id := gen_random_uuid()::text;
+          INSERT INTO fee_schedules (id, tenant_id, name, is_default, description)
+          VALUES (
+            v_cosmetic_schedule_id,
+            tenant_record.id,
+            'Cosmetic / Self-Pay Fee Schedule',
+            false,
+            'Patient-responsible cosmetic and non-insurance services.'
+          )
+          ON CONFLICT (id) DO NOTHING;
+        END IF;
+
+        WITH derm_catalog (
+          code, code_type, description, category, subcategory, fee_cents,
+          billing_route, is_cosmetic, requires_diagnosis, notes, is_common
+        ) AS (
+          VALUES
+            ('99202','CPT','New patient office visit level 2','Evaluation & Management','New Patient',15000,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',true),
+            ('99203','CPT','New patient office visit level 3','Evaluation & Management','New Patient',22500,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',true),
+            ('99204','CPT','New patient office visit level 4','Evaluation & Management','New Patient',32500,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',true),
+            ('99205','CPT','New patient office visit level 5','Evaluation & Management','New Patient',42500,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',false),
+            ('99212','CPT','Established patient office visit level 2','Evaluation & Management','Established Patient',12000,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',true),
+            ('99213','CPT','Established patient office visit level 3','Evaluation & Management','Established Patient',17500,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',true),
+            ('99214','CPT','Established patient office visit level 4','Evaluation & Management','Established Patient',25000,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',true),
+            ('99215','CPT','Established patient office visit level 5','Evaluation & Management','Established Patient',35000,'insurance',false,true,'Demo practice fee. Verify payer-specific documentation and coverage rules.',false),
+            ('11102','CPT','Tangential skin biopsy, first lesion','Biopsies','Tangential',17500,'insurance',false,true,'Add additional lesion code when appropriate.',true),
+            ('11103','CPT','Tangential skin biopsy, each additional lesion','Biopsies','Tangential',9000,'insurance',false,true,'Use for each additional tangential biopsy lesion.',true),
+            ('11104','CPT','Punch skin biopsy, first lesion','Biopsies','Punch',19500,'insurance',false,true,'Add additional lesion code when appropriate.',true),
+            ('11105','CPT','Punch skin biopsy, each additional lesion','Biopsies','Punch',9500,'insurance',false,true,'Use for each additional punch biopsy lesion.',true),
+            ('11106','CPT','Incisional skin biopsy, first lesion','Biopsies','Incisional',22500,'insurance',false,true,'Add additional lesion code when appropriate.',false),
+            ('11107','CPT','Incisional skin biopsy, each additional lesion','Biopsies','Incisional',10500,'insurance',false,true,'Use for each additional incisional biopsy lesion.',false),
+            ('17000','CPT','Destruction premalignant lesion, first lesion','Destruction','Premalignant',17500,'insurance',false,true,'Commonly used for first actinic keratosis destruction line.',true),
+            ('17003','CPT','Destruction premalignant lesions, each additional lesion','Destruction','Premalignant',2500,'insurance',false,true,'Use quantity for additional lesions when supported.',true),
+            ('17004','CPT','Destruction premalignant lesions, 15 or more','Destruction','Premalignant',27500,'insurance',false,true,'Use instead of first/additional lines when 15 or more lesions are treated.',false),
+            ('17110','CPT','Destruction benign lesions, up to 14 lesions','Destruction','Benign',20000,'insurance',false,true,'Commonly used for wart, inflamed seborrheic keratosis, or benign lesion destruction.',true),
+            ('17111','CPT','Destruction benign lesions, 15 or more lesions','Destruction','Benign',30000,'insurance',false,true,'Use when 15 or more benign lesions are destroyed.',false),
+            ('11400','CPT','Excision benign lesion, trunk/arms/legs up to 0.5 cm','Excisions - Benign','Trunk/Extremity',22500,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',true),
+            ('11401','CPT','Excision benign lesion, trunk/arms/legs 0.6 to 1.0 cm','Excisions - Benign','Trunk/Extremity',27500,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',true),
+            ('11402','CPT','Excision benign lesion, trunk/arms/legs 1.1 to 2.0 cm','Excisions - Benign','Trunk/Extremity',35000,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',true),
+            ('11600','CPT','Excision malignant lesion, trunk/arms/legs up to 0.5 cm','Excisions - Malignant','Trunk/Extremity',35000,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',true),
+            ('11601','CPT','Excision malignant lesion, trunk/arms/legs 0.6 to 1.0 cm','Excisions - Malignant','Trunk/Extremity',42500,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',true),
+            ('11602','CPT','Excision malignant lesion, trunk/arms/legs 1.1 to 2.0 cm','Excisions - Malignant','Trunk/Extremity',52500,'insurance',false,true,'Use size/location-specific code and add repair when separately billable.',true),
+            ('12001','CPT','Simple repair, superficial wound up to 2.5 cm','Repairs','Simple',17500,'insurance',false,true,'Use repair type, location, and length-specific code when billing live.',true),
+            ('12031','CPT','Intermediate repair, trunk/scalp/arms/legs up to 2.5 cm','Repairs','Intermediate',32500,'insurance',false,true,'Use repair type, location, and length-specific code when billing live.',true),
+            ('17311','CPT','Mohs surgery first stage, head/neck/hands/feet/genitalia','Mohs Surgery','Stage',136700,'insurance',false,true,'Demo fee taken from the provided billing reference image.',true),
+            ('17312','CPT','Mohs surgery additional stage, head/neck/hands/feet/genitalia','Mohs Surgery','Stage',80300,'insurance',false,true,'Demo fee taken from the provided billing reference image.',true),
+            ('17313','CPT','Mohs surgery first stage, trunk/arms/legs','Mohs Surgery','Stage',118500,'insurance',false,true,'Use site-specific Mohs coding rules when billing live.',false),
+            ('17314','CPT','Mohs surgery additional stage, trunk/arms/legs','Mohs Surgery','Stage',71000,'insurance',false,true,'Use site-specific Mohs coding rules when billing live.',false),
+            ('17315','CPT','Mohs surgery additional tissue block','Mohs Surgery','Tissue Block',22500,'insurance',false,true,'Use when additional tissue blocks are documented.',false),
+            ('11900','CPT','Intralesional injection, up to 7 lesions','Injections','Intralesional',15000,'insurance',false,true,'Medication/supply may require separate HCPCS line depending on payer.',true),
+            ('11901','CPT','Intralesional injection, more than 7 lesions','Injections','Intralesional',22000,'insurance',false,true,'Medication/supply may require separate HCPCS line depending on payer.',false),
+            ('J3301','HCPCS','Triamcinolone acetonide injection supply, 10 mg','Injections','Medication Supply',250,'insurance',false,true,'HCPCS supply example; verify NDC/unit requirements with payer.',false),
+            ('88305','CPT','Surgical pathology, gross and microscopic exam','Pathology','Dermatopathology',12500,'insurance',false,true,'May be billed by outside lab/pathology group instead of practice.',true),
+            ('95044','CPT','Patch/allergy test, per allergen','Patch Testing','Allergy',1500,'insurance',false,true,'Use units for number of allergens when supported by payer.',true),
+            ('96900','CPT','Actinotherapy treatment','Phototherapy','Light Therapy',9500,'insurance',false,true,'Verify modality, frequency, and coverage rules.',false),
+            ('96910','CPT','Photochemotherapy or UVB phototherapy','Phototherapy','Light Therapy',12500,'insurance',false,true,'Verify modality, frequency, and coverage rules.',true),
+            ('96912','CPT','Photochemotherapy with psoralens and UV-A','Phototherapy','Light Therapy',14500,'insurance',false,true,'Verify modality, frequency, and coverage rules.',false),
+            ('COS-CONS','INTERNAL','Cosmetic consultation','Consultations','Cosmetic Consult',10000,'self_pay',true,false,'Internal self-pay service. Do not put on an insurance claim by default.',true),
+            ('LHR-SMALL','INTERNAL','Laser hair removal, small area','Laser Hair Removal','Small Area',12500,'self_pay',true,false,'Internal self-pay service. Use practice fee schedule rather than insurance claim by default.',true),
+            ('LHR-MED','INTERNAL','Laser hair removal, medium area','Laser Hair Removal','Medium Area',22000,'self_pay',true,false,'Internal self-pay service. Use practice fee schedule rather than insurance claim by default.',true),
+            ('LHR-LARGE','INTERNAL','Laser hair removal, large area','Laser Hair Removal','Large Area',45000,'self_pay',true,false,'Internal self-pay service. Use practice fee schedule rather than insurance claim by default.',true),
+            ('BOTOXUNIT','INTERNAL','Cosmetic neurotoxin, per unit','Neurotoxins','Per Unit',1300,'self_pay',true,false,'Internal self-pay service. Track units and product inventory separately.',true),
+            ('FILLERSYR','INTERNAL','Dermal filler, per syringe','Dermal Fillers','Per Syringe',67500,'self_pay',true,false,'Internal self-pay service. Track product inventory separately.',true),
+            ('HYDRAFAC','INTERNAL','HydraFacial treatment','Laser Skin Treatments','Facial Treatment',25000,'self_pay',true,false,'Internal self-pay service. Do not put on an insurance claim by default.',true),
+            ('PEEL','INTERNAL','Chemical peel treatment','Chemical Peels','Peel',18000,'self_pay',true,false,'Internal self-pay service. Do not put on an insurance claim by default.',true),
+            ('MICRONEED','INTERNAL','Microneedling treatment','Microneedling & RF','Microneedling',30000,'self_pay',true,false,'Internal self-pay service. Do not put on an insurance claim by default.',true),
+            ('IPL-FACE','INTERNAL','IPL photofacial treatment','Laser Skin Treatments','IPL',32000,'self_pay',true,false,'Internal self-pay service. Do not put on an insurance claim by default.',true)
+        )
+        INSERT INTO fee_schedule_items (
+          id, fee_schedule_id, cpt_code, cpt_description, category, fee_cents,
+          code_type, billing_route, is_cosmetic, requires_diagnosis, subcategory, notes
+        )
+        SELECT
+          gen_random_uuid()::text,
+          CASE WHEN billing_route = 'self_pay' THEN v_cosmetic_schedule_id ELSE v_medical_schedule_id END,
+          code,
+          description,
+          category,
+          fee_cents,
+          code_type,
+          billing_route,
+          is_cosmetic,
+          requires_diagnosis,
+          subcategory,
+          notes
+        FROM derm_catalog
+        ON CONFLICT (fee_schedule_id, cpt_code)
+        DO UPDATE SET
+          cpt_description = COALESCE(NULLIF(fee_schedule_items.cpt_description, ''), EXCLUDED.cpt_description),
+          category = COALESCE(NULLIF(fee_schedule_items.category, ''), EXCLUDED.category),
+          fee_cents = CASE
+            WHEN fee_schedule_items.fee_cents IS NULL OR fee_schedule_items.fee_cents = 0
+              THEN EXCLUDED.fee_cents
+            ELSE fee_schedule_items.fee_cents
+          END,
+          code_type = EXCLUDED.code_type,
+          billing_route = EXCLUDED.billing_route,
+          is_cosmetic = EXCLUDED.is_cosmetic,
+          requires_diagnosis = EXCLUDED.requires_diagnosis,
+          subcategory = COALESCE(NULLIF(fee_schedule_items.subcategory, ''), EXCLUDED.subcategory),
+          notes = COALESCE(NULLIF(fee_schedule_items.notes, ''), EXCLUDED.notes),
+          updated_at = CURRENT_TIMESTAMP;
+      END LOOP;
+    END $$;
+
+    COMMENT ON COLUMN charges.code_type IS 'Billing code set: CPT, HCPCS, or INTERNAL for practice/self-pay services.';
+    COMMENT ON COLUMN charges.billing_route IS 'How this line should route financially: insurance, self_pay, or non_billable.';
+    COMMENT ON COLUMN fee_schedule_items.billing_route IS 'Default route when this fee schedule item is added to an encounter.';
+    COMMENT ON COLUMN fee_schedule_items.requires_diagnosis IS 'True when an ICD-10 diagnosis link is required before insurance billing.';
+    `,
+  },
+  {
+    name: "165_align_demo_mohs_reference_fees",
+    sql: `
+    WITH reference_fees (code, fee_cents, description) AS (
+      VALUES
+        ('17311', 136700, 'Mohs surgery first stage, head/neck/hands/feet/genitalia'),
+        ('17312', 80300, 'Mohs surgery additional stage, head/neck/hands/feet/genitalia')
+    )
+    UPDATE cpt_codes c
+    SET
+      description = reference_fees.description,
+      default_fee_cents = reference_fees.fee_cents,
+      category = 'Mohs Surgery',
+      code_type = 'CPT',
+      billing_route = 'insurance',
+      requires_diagnosis = true,
+      source = COALESCE(NULLIF(c.source, ''), 'dermatology_starter_catalog')
+    FROM reference_fees
+    WHERE c.code = reference_fees.code;
+
+    WITH reference_fees (code, fee_cents, description) AS (
+      VALUES
+        ('17311', 136700, 'Mohs surgery first stage, head/neck/hands/feet/genitalia'),
+        ('17312', 80300, 'Mohs surgery additional stage, head/neck/hands/feet/genitalia')
+    )
+    UPDATE fee_schedule_items fsi
+    SET
+      cpt_description = reference_fees.description,
+      category = 'Mohs Surgery',
+      subcategory = 'Stage',
+      fee_cents = reference_fees.fee_cents,
+      code_type = 'CPT',
+      billing_route = 'insurance',
+      is_cosmetic = false,
+      requires_diagnosis = true,
+      notes = 'Demo fee taken from the provided billing reference image.',
+      updated_at = CURRENT_TIMESTAMP
+    FROM reference_fees
+    CROSS JOIN fee_schedules fs
+    WHERE fsi.cpt_code = reference_fees.code
+      AND fs.id = fsi.fee_schedule_id
+      AND fs.name NOT ILIKE '%cosmetic%'
+      AND COALESCE(fs.description, '') NOT ILIKE '%cosmetic%';
+    `,
+  },
+  {
+    name: "166_seed_mohs_skin_cancer_icd10_codes",
+    sql: `
+    INSERT INTO icd10_codes(id, code, description, category, is_common)
+    VALUES
+      ('icd10_c43_4', 'C43.4', 'Malignant melanoma of scalp and neck', 'Skin cancer - Melanoma', true),
+      ('icd10_c43_9', 'C43.9', 'Malignant melanoma of skin, unspecified', 'Skin cancer - Melanoma', true),
+      ('icd10_d03_4', 'D03.4', 'Melanoma in situ of scalp and neck', 'Skin cancer - Melanoma in situ', true),
+      ('icd10_d03_9', 'D03.9', 'Melanoma in situ, unspecified', 'Skin cancer - Melanoma in situ', true),
+      ('icd10_c44_01', 'C44.01', 'Basal cell carcinoma of skin of lip', 'Skin cancer - BCC', false),
+      ('icd10_c44_211', 'C44.211', 'Basal cell carcinoma of skin of unspecified ear and external auricular canal', 'Skin cancer - BCC', false),
+      ('icd10_c44_310', 'C44.310', 'Basal cell carcinoma of skin of unspecified parts of face', 'Skin cancer - BCC', true),
+      ('icd10_c44_319', 'C44.319', 'Basal cell carcinoma of skin of other parts of face', 'Skin cancer - BCC', true),
+      ('icd10_c44_41', 'C44.41', 'Basal cell carcinoma of skin of scalp and neck', 'Skin cancer - BCC', true),
+      ('icd10_c44_510', 'C44.510', 'Basal cell carcinoma of anal skin', 'Skin cancer - BCC', false),
+      ('icd10_c44_511', 'C44.511', 'Basal cell carcinoma of skin of breast', 'Skin cancer - BCC', false),
+      ('icd10_c44_519', 'C44.519', 'Basal cell carcinoma of skin of other part of trunk', 'Skin cancer - BCC', true),
+      ('icd10_c44_611', 'C44.611', 'Basal cell carcinoma of skin of unspecified upper limb, including shoulder', 'Skin cancer - BCC', true),
+      ('icd10_c44_711', 'C44.711', 'Basal cell carcinoma of skin of unspecified lower limb, including hip', 'Skin cancer - BCC', true),
+      ('icd10_c44_91', 'C44.91', 'Basal cell carcinoma of skin, unspecified', 'Skin cancer - BCC', true),
+      ('icd10_c44_02', 'C44.02', 'Squamous cell carcinoma of skin of lip', 'Skin cancer - SCC', false),
+      ('icd10_c44_221', 'C44.221', 'Squamous cell carcinoma of skin of unspecified ear and external auricular canal', 'Skin cancer - SCC', false),
+      ('icd10_c44_320', 'C44.320', 'Squamous cell carcinoma of skin of unspecified parts of face', 'Skin cancer - SCC', true),
+      ('icd10_c44_329', 'C44.329', 'Squamous cell carcinoma of skin of other parts of face', 'Skin cancer - SCC', true),
+      ('icd10_c44_42', 'C44.42', 'Squamous cell carcinoma of skin of scalp and neck', 'Skin cancer - SCC', true),
+      ('icd10_c44_520', 'C44.520', 'Squamous cell carcinoma of anal skin', 'Skin cancer - SCC', false),
+      ('icd10_c44_521', 'C44.521', 'Squamous cell carcinoma of skin of breast', 'Skin cancer - SCC', false),
+      ('icd10_c44_529', 'C44.529', 'Squamous cell carcinoma of skin of other part of trunk', 'Skin cancer - SCC', true),
+      ('icd10_c44_621', 'C44.621', 'Squamous cell carcinoma of skin of unspecified upper limb, including shoulder', 'Skin cancer - SCC', true),
+      ('icd10_c44_721', 'C44.721', 'Squamous cell carcinoma of skin of unspecified lower limb, including hip', 'Skin cancer - SCC', true),
+      ('icd10_c44_92', 'C44.92', 'Squamous cell carcinoma of skin, unspecified', 'Skin cancer - SCC', true)
+    ON CONFLICT (code) DO UPDATE SET
+      description = EXCLUDED.description,
+      category = EXCLUDED.category,
+      is_common = icd10_codes.is_common OR EXCLUDED.is_common;
+
+    UPDATE ai_agent_config_templates
+    SET
+      default_icd10_codes = '[{"code": "C44.319", "description": "BCC skin of other parts of face"}, {"code": "C44.41", "description": "BCC skin of scalp/neck"}]'::jsonb,
+      updated_at = NOW()
+    WHERE id = 'tpl-mohs';
+    `,
+  },
+  {
+    name: "167_claim_coding_review_gate",
+    sql: `
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS coding_review_status TEXT DEFAULT 'not_reviewed';
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS coding_reviewed_by TEXT REFERENCES users(id);
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS coding_reviewed_at TIMESTAMPTZ;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS coding_review_notes TEXT;
+
+    UPDATE claims
+    SET
+      coding_review_status = CASE
+        WHEN status = 'ready' THEN 'released'
+        WHEN status IN ('submitted', 'accepted', 'paid', 'denied', 'appealed') THEN 'not_required'
+        ELSE COALESCE(coding_review_status, 'not_reviewed')
+      END
+    WHERE coding_review_status IS NULL;
+
+    UPDATE claims
+    SET
+      status = 'coding_review',
+      coding_review_status = 'not_reviewed',
+      updated_at = NOW()
+    WHERE status = 'draft'
+      AND encounter_id IS NOT NULL
+      AND submitted_at IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_claims_coding_review_status
+      ON claims(tenant_id, coding_review_status, created_at DESC);
+
+    COMMENT ON COLUMN claims.coding_review_status IS 'Pre-submission coding review state: not_reviewed, released, returned, or not_required.';
+    COMMENT ON COLUMN claims.coding_reviewed_at IS 'Timestamp when billing/coding released the claim for submission.';
+    `,
+  },
+  {
+    name: "168_claim_review_runtime_compat",
+    sql: `
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS scrub_status TEXT;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS scrub_errors JSONB DEFAULT '[]'::jsonb;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS scrub_warnings JSONB DEFAULT '[]'::jsonb;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS scrub_info JSONB DEFAULT '[]'::jsonb;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS last_scrubbed_at TIMESTAMPTZ;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS is_cosmetic BOOLEAN DEFAULT false;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS cosmetic_reason TEXT;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS denial_code TEXT;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS denial_date TIMESTAMPTZ;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS denial_category TEXT;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS appeal_status TEXT;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS appeal_notes TEXT;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS appeal_submitted_at TIMESTAMPTZ;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(10,2) DEFAULT 0;
+    ALTER TABLE claims ADD COLUMN IF NOT EXISTS updated_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+
+    CREATE TABLE IF NOT EXISTS claim_diagnoses (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      claim_id TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+      icd10_code TEXT NOT NULL,
+      description TEXT,
+      is_primary BOOLEAN DEFAULT false,
+      sequence_number INTEGER DEFAULT 1,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS claim_charges (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      claim_id TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+      cpt_code TEXT NOT NULL,
+      description TEXT,
+      modifiers TEXT[] DEFAULT ARRAY[]::TEXT[],
+      quantity INTEGER DEFAULT 1,
+      fee_cents INTEGER DEFAULT 0,
+      linked_diagnosis_ids TEXT[] DEFAULT ARRAY[]::TEXT[],
+      sequence_number INTEGER DEFAULT 1,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_claim_diagnoses_claim ON claim_diagnoses(claim_id);
+    CREATE INDEX IF NOT EXISTS idx_claim_diagnoses_tenant ON claim_diagnoses(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_claim_charges_claim ON claim_charges(claim_id);
+    CREATE INDEX IF NOT EXISTS idx_claim_charges_tenant ON claim_charges(tenant_id);
+    `,
+  },
+  {
+    name: "169_icd10_search_and_derm_defaults",
+    sql: `
+    CREATE INDEX IF NOT EXISTS idx_icd10_codes_code_nodot
+      ON icd10_codes ((replace(upper(code), '.', '')));
+
+    CREATE INDEX IF NOT EXISTS idx_charges_linked_diagnosis_ids
+      ON charges USING gin (linked_diagnosis_ids);
+
+    INSERT INTO icd10_codes(id, code, description, category, is_common)
+    VALUES
+      ('icd10_d48_5', 'D48.5', 'Neoplasm of uncertain behavior of skin', 'Neoplasm - uncertain behavior', true),
+      ('icd10_d49_2', 'D49.2', 'Neoplasm of unspecified behavior of bone, soft tissue, and skin', 'Neoplasm - unspecified behavior', true),
+      ('icd10_d04_39', 'D04.39', 'Carcinoma in situ of skin of other parts of face', 'Skin cancer - carcinoma in situ', true),
+      ('icd10_d04_4', 'D04.4', 'Carcinoma in situ of skin of scalp and neck', 'Skin cancer - carcinoma in situ', true),
+      ('icd10_d04_5', 'D04.5', 'Carcinoma in situ of skin of trunk', 'Skin cancer - carcinoma in situ', true),
+      ('icd10_l57_8', 'L57.8', 'Other skin changes due to chronic exposure to nonionizing radiation', 'Sun damage', true),
+      ('icd10_l81_1', 'L81.1', 'Chloasma', 'Pigment disorder', true),
+      ('icd10_l81_4', 'L81.4', 'Other melanin hyperpigmentation', 'Pigment disorder', true),
+      ('icd10_l90_8', 'L90.8', 'Other atrophic disorders of skin', 'Cosmetic/skin aging', true),
+      ('icd10_l98_9', 'L98.9', 'Disorder of the skin and subcutaneous tissue, unspecified', 'Skin disorder', true),
+      ('icd10_z12_83', 'Z12.83', 'Encounter for screening for malignant neoplasm of skin', 'Screening', true),
+      ('icd10_z85_820', 'Z85.820', 'Personal history of malignant melanoma of skin', 'History of skin cancer', true),
+      ('icd10_z85_828', 'Z85.828', 'Personal history of other malignant neoplasm of skin', 'History of skin cancer', true),
+      ('icd10_z86_006', 'Z86.006', 'Personal history of melanoma in-situ', 'History of skin cancer', true)
+    ON CONFLICT (code) DO UPDATE SET
+      description = EXCLUDED.description,
+      category = EXCLUDED.category,
+      is_common = icd10_codes.is_common OR EXCLUDED.is_common;
+
+    COMMENT ON TABLE icd10_codes IS 'ICD-10-CM diagnosis code reference. Demo seeds dermatology favorites; full CMS catalog can be loaded with npm run icd10:import.';
+    `,
+  },
+  {
+    name: "170_patient_preferred_pharmacy_lookup",
+    sql: `
+    ALTER TABLE patients
+      ADD COLUMN IF NOT EXISTS pharmacy_id TEXT,
+      ADD COLUMN IF NOT EXISTS pharmacy_ncpdp TEXT;
+
+    CREATE INDEX IF NOT EXISTS idx_patients_preferred_pharmacy
+      ON patients(tenant_id, pharmacy_id)
+      WHERE pharmacy_id IS NOT NULL;
+
+    INSERT INTO pharmacies (
+      id, tenant_id, ncpdp_id, name, phone, fax, street, city, state, zip,
+      is_preferred, is_24_hour, accepts_erx, chain, surescripts_enabled
+    )
+    VALUES
+      ('pharm-demo-walgreens-denver-blake', NULL, '4938162', 'Walgreens Pharmacy', '(720) 555-9200', '(720) 555-9201', '1560 Blake St', 'Denver', 'CO', '80202', true, false, true, 'Walgreens', true),
+      ('pharm-demo-cvs-boulder-28th', NULL, '0629481', 'CVS Pharmacy', '(303) 555-8800', '(303) 555-8801', '1600 28th St', 'Boulder', 'CO', '80301', true, false, true, 'CVS', true),
+      ('pharm-demo-king-soopers-denver-chestnut', NULL, '7142059', 'King Soopers Pharmacy', '(720) 555-7711', '(720) 555-7712', '1950 Chestnut Pl', 'Denver', 'CO', '80202', true, false, true, 'King Soopers', true),
+      ('pharm-demo-cvs-specialty-boulder', NULL, '2176048', 'CVS Specialty Pharmacy', '(303) 555-8899', '(303) 555-8898', '3000 Pearl Pkwy', 'Boulder', 'CO', '80301', true, false, true, 'CVS Specialty', true),
+      ('pharm-demo-walgreens-denver-colfax-24hr', NULL, '5817340', 'Walgreens Pharmacy 24 Hour', '(303) 555-2477', '(303) 555-2478', '801 E Colfax Ave', 'Denver', 'CO', '80218', true, true, true, 'Walgreens', true)
+    ON CONFLICT (ncpdp_id) DO UPDATE SET
+      name = EXCLUDED.name,
+      phone = EXCLUDED.phone,
+      fax = EXCLUDED.fax,
+      street = EXCLUDED.street,
+      city = EXCLUDED.city,
+      state = EXCLUDED.state,
+      zip = EXCLUDED.zip,
+      is_preferred = EXCLUDED.is_preferred,
+      is_24_hour = EXCLUDED.is_24_hour,
+      accepts_erx = EXCLUDED.accepts_erx,
+      chain = EXCLUDED.chain,
+      surescripts_enabled = EXCLUDED.surescripts_enabled,
+      updated_at = CURRENT_TIMESTAMP;
+
+    UPDATE patients p
+    SET pharmacy_id = pharm.id,
+        pharmacy_ncpdp = pharm.ncpdp_id,
+        pharmacy_name = COALESCE(NULLIF(p.pharmacy_name, ''), pharm.name),
+        pharmacy_phone = COALESCE(NULLIF(p.pharmacy_phone, ''), pharm.phone),
+        pharmacy_address = COALESCE(
+          NULLIF(p.pharmacy_address, ''),
+          trim(concat_ws(' ', NULLIF(pharm.street, ''), NULLIF(pharm.city, ''), NULLIF(pharm.state, ''), NULLIF(pharm.zip, '')))
+        )
+    FROM pharmacies pharm
+    WHERE p.pharmacy_id IS NULL
+      AND p.pharmacy_name IS NOT NULL
+      AND (
+        lower(p.pharmacy_name) = lower(pharm.name)
+        OR lower(p.pharmacy_name) = lower(pharm.chain)
+        OR lower(pharm.name) LIKE '%' || lower(p.pharmacy_name) || '%'
+      );
     `,
   },
 

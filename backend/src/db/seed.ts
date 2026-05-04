@@ -3482,8 +3482,11 @@ async function seed() {
       { code: "C44.211", description: "Basal cell carcinoma of skin of unspecified ear and external auricular canal", category: "Malignant Neoplasm", common: true },
       { code: "C44.310", description: "Basal cell carcinoma of skin of unspecified parts of face", category: "Malignant Neoplasm", common: true },
       { code: "C44.311", description: "Basal cell carcinoma of skin of nose", category: "Malignant Neoplasm", common: true },
+      { code: "C44.319", description: "Basal cell carcinoma of skin of other parts of face", category: "Malignant Neoplasm", common: true },
+      { code: "C44.41", description: "Basal cell carcinoma of skin of scalp and neck", category: "Malignant Neoplasm", common: true },
       { code: "C44.510", description: "Basal cell carcinoma of anal skin", category: "Malignant Neoplasm", common: false },
       { code: "C44.511", description: "Basal cell carcinoma of skin of trunk", category: "Malignant Neoplasm", common: true },
+      { code: "C44.519", description: "Basal cell carcinoma of skin of other part of trunk", category: "Malignant Neoplasm", common: true },
       { code: "C44.611", description: "Basal cell carcinoma of skin of upper limb", category: "Malignant Neoplasm", common: true },
       { code: "C44.711", description: "Basal cell carcinoma of skin of lower limb", category: "Malignant Neoplasm", common: true },
 
@@ -3493,7 +3496,10 @@ async function seed() {
       { code: "C44.221", description: "Squamous cell carcinoma of skin of unspecified ear and external auricular canal", category: "Malignant Neoplasm", common: true },
       { code: "C44.320", description: "Squamous cell carcinoma of skin of unspecified parts of face", category: "Malignant Neoplasm", common: true },
       { code: "C44.321", description: "Squamous cell carcinoma of skin of nose", category: "Malignant Neoplasm", common: true },
+      { code: "C44.329", description: "Squamous cell carcinoma of skin of other parts of face", category: "Malignant Neoplasm", common: true },
+      { code: "C44.42", description: "Squamous cell carcinoma of skin of scalp and neck", category: "Malignant Neoplasm", common: true },
       { code: "C44.521", description: "Squamous cell carcinoma of skin of trunk", category: "Malignant Neoplasm", common: true },
+      { code: "C44.529", description: "Squamous cell carcinoma of skin of other part of trunk", category: "Malignant Neoplasm", common: true },
       { code: "C44.621", description: "Squamous cell carcinoma of skin of upper limb", category: "Malignant Neoplasm", common: true },
       { code: "C44.721", description: "Squamous cell carcinoma of skin of lower limb", category: "Malignant Neoplasm", common: true },
 

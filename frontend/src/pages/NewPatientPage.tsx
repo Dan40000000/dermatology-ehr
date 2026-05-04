@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { createPatient } from '../api';
+import { PharmacySearch, type Pharmacy } from '../components/prescriptions/PharmacySearch';
 
 interface PatientFormData {
   firstName: string;
@@ -28,7 +29,11 @@ interface PatientFormData {
   allergies: string;
   primaryCarePhysician: string;
   referralSource: string;
+  pharmacyId: string;
+  pharmacyNcpdp: string;
   preferredPharmacy: string;
+  pharmacyPhone: string;
+  pharmacyAddress: string;
 }
 
 const STATES = [
@@ -48,6 +53,13 @@ const REFERRAL_SOURCES = [
   'Previous Patient',
   'Other',
 ];
+
+function formatPharmacyAddress(pharmacy: Partial<Pharmacy>): string {
+  return [
+    pharmacy.street,
+    [pharmacy.city, pharmacy.state, pharmacy.zip].filter(Boolean).join(', ').replace(', ,', ','),
+  ].filter(Boolean).join(', ');
+}
 
 export function NewPatientPage() {
   const navigate = useNavigate();
@@ -80,7 +92,11 @@ export function NewPatientPage() {
     allergies: '',
     primaryCarePhysician: '',
     referralSource: '',
+    pharmacyId: '',
+    pharmacyNcpdp: '',
     preferredPharmacy: '',
+    pharmacyPhone: '',
+    pharmacyAddress: '',
   });
 
   const updateField = (field: keyof PatientFormData, value: string) => {
@@ -123,7 +139,11 @@ export function NewPatientPage() {
         emergencyContactName: formData.emergencyContactName || undefined,
         emergencyContactRelationship: formData.emergencyContactRelation || undefined,
         emergencyContactPhone: formData.emergencyContactPhone || undefined,
+        pharmacyId: formData.pharmacyId || undefined,
+        pharmacyNcpdp: formData.pharmacyNcpdp || undefined,
         pharmacyName: formData.preferredPharmacy || undefined,
+        pharmacyPhone: formData.pharmacyPhone || undefined,
+        pharmacyAddress: formData.pharmacyAddress || undefined,
         primaryCarePhysician: formData.primaryCarePhysician || undefined,
         referralSource: formData.referralSource || undefined,
         insuranceId: formData.insuranceId || undefined,
@@ -145,6 +165,30 @@ export function NewPatientPage() {
     { id: 'insurance', label: 'Insurance', icon: '' },
     { id: 'medical', label: 'Medical Info', icon: '' },
   ];
+
+  const selectedPharmacy: Pharmacy | undefined = formData.preferredPharmacy
+    ? {
+        id: formData.pharmacyId || formData.pharmacyNcpdp || formData.preferredPharmacy,
+        ncpdpId: formData.pharmacyNcpdp || undefined,
+        name: formData.preferredPharmacy,
+        phone: formData.pharmacyPhone || undefined,
+        street: formData.pharmacyAddress || undefined,
+        isPreferred: false,
+        is24Hour: false,
+        acceptsErx: true,
+      }
+    : undefined;
+
+  const handlePharmacySelect = (pharmacy: Pharmacy) => {
+    setFormData(prev => ({
+      ...prev,
+      pharmacyId: pharmacy.id || '',
+      pharmacyNcpdp: pharmacy.ncpdpId || pharmacy.ncpdp_id || '',
+      preferredPharmacy: pharmacy.name || '',
+      pharmacyPhone: pharmacy.phone || '',
+      pharmacyAddress: formatPharmacyAddress(pharmacy),
+    }));
+  };
 
   return (
     <div className="new-patient-page">
@@ -793,20 +837,31 @@ export function NewPatientPage() {
                   <label htmlFor="preferred-pharmacy" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
                     Preferred Pharmacy
                   </label>
+                  <PharmacySearch selectedPharmacy={selectedPharmacy} onSelect={handlePharmacySelect} />
                   <input
                     id="preferred-pharmacy"
                     type="text"
                     value={formData.preferredPharmacy}
-                    onChange={(e) => updateField('preferredPharmacy', e.target.value)}
-                    placeholder="Pharmacy name and location"
+                    onChange={(e) => {
+                      updateField('preferredPharmacy', e.target.value);
+                      updateField('pharmacyId', '');
+                      updateField('pharmacyNcpdp', '');
+                    }}
+                    placeholder="Or enter manually"
                     style={{
                       width: '100%',
                       padding: '0.5rem 0.75rem',
                       border: '1px solid #d1d5db',
                       borderRadius: '4px',
-                      fontSize: '0.875rem'
+                      fontSize: '0.875rem',
+                      marginTop: '0.5rem'
                     }}
                   />
+                  {formData.pharmacyNcpdp && (
+                    <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#047857' }}>
+                      eRx directory match: NCPDP {formData.pharmacyNcpdp}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -11,6 +11,7 @@ import {
   checkPriorAuthStatus,
   fetchPatients,
 } from '../api';
+import { PAStatusTracker } from '../components/workflows';
 import '../styles/prior-auth.css';
 
 interface PriorAuth {
@@ -1101,6 +1102,12 @@ function DetailPAModal({
           {/* History Tab */}
           {activeTab === 'history' && (
             <div className="epa-history-section">
+              <PAStatusTracker
+                priorAuthId={pa.id}
+                authNumber={pa.auth_number}
+                currentStatus={pa.status}
+              />
+
               {/* Quick Actions */}
               <div className="epa-quick-actions">
                 {canSubmit && (

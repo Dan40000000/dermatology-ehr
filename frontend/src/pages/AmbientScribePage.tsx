@@ -345,12 +345,6 @@ export default function AmbientScribePage() {
 
         <NoteReviewEditor
           noteId={selectedNoteId}
-          onApproved={() => {
-            showSuccess('Note approved successfully');
-            setView('dashboard');
-            setSelectedNoteId(null);
-            setSearchParams({});
-          }}
           onRejected={() => {
             setView('dashboard');
             setSelectedNoteId(null);

@@ -294,7 +294,19 @@ describe("Patient portal data routes", () => {
       .mockResolvedValueOnce({ rows: [{ count: "3" }] })
       .mockResolvedValueOnce({ rows: [{ count: "4" }] })
       .mockResolvedValueOnce({ rows: [{ count: "2" }] })
-      .mockResolvedValueOnce({ rows: [{ currentBalance: "25.00" }] })
+      .mockResolvedValueOnce({
+        rows: [{
+          bill_total_charges_cents: 2500,
+          bill_paid_cents: 0,
+          bill_adjustment_cents: 0,
+          bill_balance_cents: 2500,
+          unbilled_total_charges_cents: 0,
+          unbilled_patient_responsibility_cents: 0,
+          patient_payment_cents: 0,
+          portal_payment_cents: 0,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ appointmentId: "appt-1" }] });
 
     const res = await request(app).get("/patient-portal-data/dashboard");

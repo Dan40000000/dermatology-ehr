@@ -18,6 +18,8 @@ import { AgentConfiguration } from './agentConfigService';
 import { getIntegrationConfig } from '../integrations/baseAdapter';
 import {
   createAmbientTranscriptionAdapter,
+  hasAmbientTranscriptionCredentials,
+  resolveAmbientTranscriptionProviderFromEnv,
   type AmbientTranscriptionResult,
 } from '../integrations/ambientTranscriptionAdapter';
 
@@ -172,6 +174,21 @@ const getOpenAITranscribeModel = () =>
 const getOpenAINoteModel = () => process.env.OPENAI_NOTE_MODEL || 'gpt-4o';
 const getAnthropicNoteModel = () =>
   process.env.ANTHROPIC_NOTE_MODEL || 'claude-3-5-sonnet-20241022';
+type NoteGenerationProvider = 'anthropic' | 'openai';
+
+function getNoteGenerationProviderOrder(): NoteGenerationProvider[] {
+  const configured = (process.env.AMBIENT_NOTE_PROVIDER_PRIORITY || '').trim();
+  if (!configured) {
+    return ['anthropic', 'openai'];
+  }
+
+  const providers = configured
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter((value): value is NoteGenerationProvider => value === 'anthropic' || value === 'openai');
+
+  return providers.length > 0 ? providers : ['anthropic', 'openai'];
+}
 
 // API endpoints
 const OPENAI_TRANSCRIPTION_URL = 'https://api.openai.com/v1/audio/transcriptions';
@@ -341,21 +358,22 @@ export type ClinicalNoteGenerationResult =
   };
 
 /**
- * Transcribe audio using OpenAI transcription API (or mock if not configured)
+ * Transcribe audio using the configured ambient provider, with OpenAI/mock fallback
  */
 export async function transcribeAudio(
   audioFilePath: string,
   durationSeconds: number,
   options?: AmbientTranscriptionOptions
 ): Promise<TranscriptionResult> {
-  const wisprAdapter = await getConfiguredAmbientTranscriptionAdapter(options?.tenantId);
-  if (wisprAdapter) {
+  const ambientAdapter = await getConfiguredAmbientTranscriptionAdapter(options?.tenantId);
+  if (ambientAdapter) {
     try {
-      const result = await wisprAdapter.transcribeFile(audioFilePath);
+      const result = await ambientAdapter.transcribeFile(audioFilePath);
       return buildTranscriptionResultFromAdapter(result, durationSeconds);
     } catch (error) {
-      logger.warn('Wispr Flow transcription failed, falling back to OpenAI/mock', {
+      logger.warn('Ambient transcription provider failed, falling back to OpenAI/mock', {
         error: toSafeErrorMessage(error),
+        provider: ambientAdapter.getProvider(),
       });
     }
   }
@@ -577,19 +595,26 @@ export async function transcribeLiveAudioChunk(
   chunkIndex: number,
   options?: AmbientTranscriptionOptions
 ): Promise<LiveTranscriptionResult> {
-  const wisprAdapter = await getConfiguredAmbientTranscriptionAdapter(options?.tenantId);
-  if (wisprAdapter) {
-    try {
-      const result = await wisprAdapter.transcribeBuffer(audioBuffer, mimeType);
-      return {
-        text: result.text,
-        confidence: result.confidence,
-        source: result.source === 'mock' ? 'mock' : 'live',
-      };
-    } catch (error) {
-      logger.warn('Wispr Flow live transcription failed, falling back to OpenAI/mock', {
-        error: toSafeErrorMessage(error),
+  const ambientAdapter = await getConfiguredAmbientTranscriptionAdapter(options?.tenantId);
+  if (ambientAdapter) {
+    if (!ambientAdapter.supportsLiveChunks()) {
+      logger.info('Ambient live transcription provider does not support live chunks, falling back to OpenAI/mock', {
+        provider: ambientAdapter.getProvider(),
       });
+    } else {
+      try {
+        const result = await ambientAdapter.transcribeBuffer(audioBuffer, mimeType);
+        return {
+          text: result.text,
+          confidence: result.confidence,
+          source: result.source === 'mock' ? 'mock' : 'live',
+        };
+      } catch (error) {
+        logger.warn('Ambient live transcription provider failed, falling back to OpenAI/mock', {
+          error: toSafeErrorMessage(error),
+          provider: ambientAdapter.getProvider(),
+        });
+      }
     }
   }
 
@@ -676,14 +701,14 @@ async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
 
   const config = await getIntegrationConfig(tenantId, 'ambient_transcription');
   if (!config) {
-    const envApiKey = process.env.WISPR_FLOW_API_KEY || process.env.WISPR_API_KEY;
-    if (!envApiKey) {
+    const envProvider = resolveAmbientTranscriptionProviderFromEnv();
+    if (!envProvider || !hasAmbientTranscriptionCredentials(envProvider)) {
       return null;
     }
 
     return createAmbientTranscriptionAdapter(
       tenantId,
-      'wispr_flow',
+      envProvider,
       false
     );
   }
@@ -698,7 +723,7 @@ async function getConfiguredAmbientTranscriptionAdapter(tenantId?: string) {
   const useMock = configuredEnvironment === 'mock' || configuredEnvironment === 'demo' || configuredEnvironment === 'test';
   const adapter = createAmbientTranscriptionAdapter(
     tenantId,
-    config.provider || 'wispr_flow',
+    config.provider || resolveAmbientTranscriptionProviderFromEnv() || 'abridge',
     useMock
   );
   await adapter.loadConfig();
@@ -1343,39 +1368,64 @@ export async function generateClinicalNote(
   const sanitizedPayload = sanitizeOutboundPayload(transcriptText, segments);
 
   if (anthropicKey || openAIKey) {
-    try {
-      if (sanitizedPayload.maskedEntityCount > 0) {
-        logger.info('Applied PHI masking to outbound ambient AI payload', {
-          maskedEntityCount: sanitizedPayload.maskedEntityCount,
-          maskedTypes: sanitizedPayload.maskedTypes,
-        });
+    if (sanitizedPayload.maskedEntityCount > 0) {
+      logger.info('Applied PHI masking to outbound ambient AI payload', {
+        maskedEntityCount: sanitizedPayload.maskedEntityCount,
+        maskedTypes: sanitizedPayload.maskedTypes,
+      });
+    }
+
+    const orderedProviders = getNoteGenerationProviderOrder();
+    const attemptedProviders: NoteGenerationProvider[] = [];
+    const providerErrors: Array<{ provider: NoteGenerationProvider; error: string }> = [];
+
+    for (const provider of orderedProviders) {
+      if (provider === 'anthropic' && anthropicKey) {
+        attemptedProviders.push(provider);
+        try {
+          return await generateNoteWithClaude(
+            sanitizedPayload.transcriptText,
+            sanitizedPayload.segments,
+            agentConfig,
+            patientContext,
+            anthropicKey
+          );
+        } catch (error) {
+          const safeError = toSafeErrorMessage(error);
+          providerErrors.push({ provider, error: safeError });
+          logger.warn('Ambient AI note generation provider failed', {
+            provider,
+            error: safeError,
+          });
+        }
       }
 
-      // Prefer Claude for medical documentation (Anthropic API)
-      if (anthropicKey) {
-        return await generateNoteWithClaude(
-          sanitizedPayload.transcriptText,
-          sanitizedPayload.segments,
-          agentConfig,
-          patientContext,
-          anthropicKey
-        );
+      if (provider === 'openai' && openAIKey) {
+        attemptedProviders.push(provider);
+        try {
+          return await generateNoteWithGPT4(
+            sanitizedPayload.transcriptText,
+            sanitizedPayload.segments,
+            agentConfig,
+            patientContext,
+            openAIKey
+          );
+        } catch (error) {
+          const safeError = toSafeErrorMessage(error);
+          providerErrors.push({ provider, error: safeError });
+          logger.warn('Ambient AI note generation provider failed', {
+            provider,
+            error: safeError,
+          });
+        }
       }
-      // Fall back to OpenAI if key available
-      if (openAIKey) {
-        return await generateNoteWithGPT4(
-          sanitizedPayload.transcriptText,
-          sanitizedPayload.segments,
-          agentConfig,
-          patientContext,
-          openAIKey
-        );
-      }
-    } catch (error) {
+    }
+
+    if (attemptedProviders.length > 0) {
       logger.warn('AI note generation failed, falling back to mock', {
-        error: toSafeErrorMessage(error),
+        attemptedProviders,
+        providerErrors,
       });
-      // Fall through to mock implementation
     }
   }
 
@@ -1693,6 +1743,7 @@ REQUIREMENTS:
 - Provide confidence scores for each section
 - Be thorough but concise
 - Keep unsupported assumptions out of the note
+- Do not invent or change the patient name; use the patient context name when provided, otherwise use "the patient"
 - If the transcript does not support a complete ROS, exam, diagnosis, or code suggestion, return "Not documented" or an empty list as appropriate
 
 DIFFERENTIAL_DIAGNOSES (array of 2-5 possible conditions):
@@ -1709,7 +1760,8 @@ RECOMMENDED_TESTS (array of relevant tests):
 
 PATIENT_SUMMARY (patient-friendly language):
 - Use simple, non-technical terms a patient can understand
-- Clearly list what the patient told you about their symptoms
+- Clearly list only active symptoms or concerns the patient reported or the clinician observed
+- Do not list denied symptoms or wound-care warning symptoms as current concerns
 - Explain the diagnosis in plain language if one was made
 - Provide actionable treatment steps in everyday language
 - Clearly state when they need to come back
@@ -1833,6 +1885,11 @@ OUTPUT FORMAT: ${agentConfig.outputFormat || 'soap'}
 VERBOSITY LEVEL: ${agentConfig.verbosityLevel || 'standard'}
 INCLUDE BILLING CODES: ${agentConfig.includeCodes !== false ? 'Yes' : 'No'}
 
+IDENTITY AND SUMMARY RULES:
+- Do not invent or change the patient name; use the patient context name when provided, otherwise use "the patient".
+- In patientSummary.yourConcerns, include only active symptoms or concerns the patient reported or the clinician observed.
+- Do not list denied symptoms or wound-care warning symptoms as current concerns.
+
 Please return a JSON object with this structure:
 ${JSON.stringify(fullSchema, null, 2)}
 
@@ -1844,7 +1901,7 @@ IMPORTANT: Return ONLY valid JSON, no additional text or markdown formatting.`;
 const SYMPTOM_PATTERN_LIBRARY: Array<{ label: string; pattern: RegExp }> = [
   { label: 'Rash', pattern: /\brash|eruption|lesion/ },
   { label: 'Itching', pattern: /\bitch|pruritus/ },
-  { label: 'Pain', pattern: /\bpain|tender/ },
+  { label: 'Pain', pattern: /\bpain|hurt|tender/ },
   { label: 'Burning', pattern: /\bburn|stinging/ },
   { label: 'Redness', pattern: /\bred|erythema/ },
   { label: 'Swelling', pattern: /\bswell|edema/ },
@@ -1854,6 +1911,43 @@ const SYMPTOM_PATTERN_LIBRARY: Array<{ label: string; pattern: RegExp }> = [
   { label: 'Drainage', pattern: /\bdrain|ooz|discharge/ },
   { label: 'Fever', pattern: /\bfever|febrile/ },
 ];
+
+const NEGATED_OR_HISTORY_SYMPTOM_CONTEXT =
+  /\b(denies?|denied|no|not|without|doesn'?t|does not|didn'?t|did not|isn'?t|is not|family history|personal history|history of|father|mother|parent|sibling|in the past|previously|prior)\b/;
+
+const SAFETY_NET_SYMPTOM_CONTEXT =
+  /\b(call|return|watch for|seek care|come back sooner|follow up sooner|if you (notice|develop|have)|if it (starts|gets|becomes)|warning signs|wound care|after (the )?(biopsy|procedure))\b/;
+
+function splitClinicalSentences(text: string): string[] {
+  return text
+    .replace(/\s+/g, ' ')
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
+
+function isNegatedOrSafetyNetSymptomSentence(sentence: string): boolean {
+  const normalized = sentence.toLowerCase();
+  const symptomWord = /\b(pain|hurt|tender|sore|itch|bleed|bled|crust|scab|drain|ooz|pus|discharge|fever|blister|rash|redness|swelling)\b/;
+
+  if (NEGATED_OR_HISTORY_SYMPTOM_CONTEXT.test(normalized) && symptomWord.test(normalized)) {
+    return true;
+  }
+
+  if (SAFETY_NET_SYMPTOM_CONTEXT.test(normalized) && symptomWord.test(normalized)) {
+    return true;
+  }
+
+  if (/\b(any|do you have|have you had)\b.{0,55}\b(fever|pain|drainage|bleeding|itch|rash|pus|redness)\b\??/i.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+function hasCurrentClinicalEvidence(sentences: string[], pattern: RegExp): boolean {
+  return sentences.some((sentence) => pattern.test(sentence) && !isNegatedOrSafetyNetSymptomSentence(sentence));
+}
 
 function toSafeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -1908,6 +2002,9 @@ function extractSymptomsFromContent(
 ): string[] {
   const symptoms: string[] = [];
   const seen = new Set<string>();
+  const sourceText = `${chiefComplaint} ${hpi} ${transcriptText}`.trim();
+  const normalizedSource = sourceText.toLowerCase();
+  const sentences = splitClinicalSentences(sourceText);
 
   const pushUnique = (value: string) => {
     const trimmed = value.trim();
@@ -1918,13 +2015,90 @@ function extractSymptomsFromContent(
     symptoms.push(trimmed);
   };
 
-  for (const concern of existingConcerns) {
-    pushUnique(concern);
+  const hasCurrentEvidence = (pattern: RegExp) => hasCurrentClinicalEvidence(sentences, pattern);
+  const hasLesionContext =
+    /\b(mole|nevus|pigmented lesion|skin lesion|papule|neoplasm|melanoma|biopsy)\b/.test(normalizedSource);
+  const hasScalpDermContext =
+    /\b(scalp|seborrheic|dandruff|ketoconazole|shampoo|hairline)\b/.test(normalizedSource);
+
+  if (hasCurrentEvidence(/\b(changing mole|mole[^.]*changed|changed[^.]*mole|pigmented lesion|dark brown papule|irregular border|multiple shades|asymmetric|suspicious lesion)\b/i)) {
+    pushUnique('Changing mole / pigmented lesion');
   }
 
-  const source = `${chiefComplaint} ${hpi} ${transcriptText}`.toLowerCase();
+  if (hasLesionContext && hasCurrentEvidence(/\b(growing|growth|larger|bigger|increased size|darker|changed color|color change|multiple shades)\b/i)) {
+    pushUnique('Growth or color change');
+  }
+
+  if (hasLesionContext && hasCurrentEvidence(/\b(bleed|bleeding|bled|crust|crusted|scab)\b/i)) {
+    pushUnique('Bleeding / crusting');
+  }
+
+  if (hasLesionContext && hasCurrentEvidence(/\b(catches|catching|caught|clothing|shirt|scratch|scratched|irritated)\b/i)) {
+    pushUnique('Irritated/catching lesion');
+  }
+
+  if (hasScalpDermContext && hasCurrentEvidence(/\b(itch|pruritus|scale|scaly|flak|dandruff|redness|erythema|seborrheic|ketoconazole|shampoo)\b/i)) {
+    pushUnique('Scalp itching/flaking');
+  }
+
+  const normalizeConcern = (rawConcern: string): string | null => {
+    const concern = rawConcern.trim();
+    if (!concern) return null;
+
+    const normalizedConcern = concern.toLowerCase();
+    if (isNegatedOrSafetyNetSymptomSentence(concern)) {
+      return null;
+    }
+    if (/\b(pain|hurt|tender)\b/.test(normalizedConcern) && !hasCurrentEvidence(/\b(pain|hurt|tender|sore)\b/i)) {
+      return null;
+    }
+    if (/\b(drain|ooz|pus|discharge)\b/.test(normalizedConcern) && !hasCurrentEvidence(/\b(drain|ooz|pus|discharge)\b/i)) {
+      return null;
+    }
+    if (/\b(fever|febrile)\b/.test(normalizedConcern) && !hasCurrentEvidence(/\b(fever|febrile)\b/i)) {
+      return null;
+    }
+    if (/\bbleed|crust|scab/.test(normalizedConcern) && hasLesionContext) {
+      return 'Bleeding / crusting';
+    }
+    if (/\b(changing|growth|larger|bigger|darker|color|mole|pigmented lesion|lesion)\b/.test(normalizedConcern) && hasLesionContext) {
+      return 'Changing mole / pigmented lesion';
+    }
+    if (/\bitch|scale|scal|flak|redness|dandruff|rash/.test(normalizedConcern) && hasScalpDermContext) {
+      return 'Scalp itching/flaking';
+    }
+    if (normalizedConcern === 'rash' && (hasLesionContext || hasScalpDermContext)) {
+      return null;
+    }
+
+    return concern;
+  };
+
+  for (const concern of existingConcerns) {
+    const normalizedConcern = normalizeConcern(concern);
+    if (normalizedConcern) {
+      pushUnique(normalizedConcern);
+    }
+  }
+
   for (const pattern of SYMPTOM_PATTERN_LIBRARY) {
-    if (pattern.pattern.test(source)) {
+    if (!hasCurrentEvidence(pattern.pattern)) {
+      continue;
+    }
+    if (pattern.label === 'Rash' && (hasLesionContext || hasScalpDermContext)) {
+      continue;
+    }
+    if (['Itching', 'Redness', 'Scaling'].includes(pattern.label) && hasScalpDermContext) {
+      continue;
+    }
+    if (pattern.label === 'Bleeding' && hasLesionContext) {
+      continue;
+    }
+    if (pattern.label === 'Drainage' && !hasCurrentEvidence(/\b(drain|ooz|pus|discharge)\b/i)) {
+      continue;
+    }
+
+    if (pattern.pattern.test(normalizedSource)) {
       pushUnique(pattern.label);
     }
   }
@@ -1937,8 +2111,67 @@ function extractSymptomsFromContent(
   return symptoms.slice(0, 8);
 }
 
+function normalizeDueDate(value: unknown): string | undefined {
+  const dueDate = toSafeString(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+    return undefined;
+  }
+
+  const parsed = new Date(`${dueDate}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+
+  const today = new Date();
+  const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  if (parsed < todayUtc) {
+    return undefined;
+  }
+
+  return dueDate;
+}
+
+function shouldKeepFollowUpTask(task: string, clinicalContext: string): boolean {
+  const normalizedTask = task.toLowerCase();
+  const normalizedContext = clinicalContext.toLowerCase();
+  const systemicContext =
+    /\b(biologic|humira|skyrizi|cosentyx|dupixent|taltz|tremfya|enbrel|systemic|isotretinoin|accutane|methotrexate|cyclosporine|acitretin)\b/.test(normalizedContext);
+  const labContext = systemicContext || /\b(lab|labs|cbc|cmp|lipid|hepatic|lft|pregnancy test|tb|hepatitis)\b/.test(normalizedContext);
+
+  if (/\bprior authorization\b.*\bbiologic\b|\bbiologic\b.*\bprior authorization\b/.test(normalizedTask) && !systemicContext) {
+    return false;
+  }
+
+  if (/\bsystemic medications?\b|\bbiologic prescribed\b/.test(normalizedTask) && !systemicContext) {
+    return false;
+  }
+
+  if (/\blab follow-up\b|\breview systemic labs\b/.test(normalizedTask) && !labContext) {
+    return false;
+  }
+
+  return true;
+}
+
+function shouldApplyTaskTemplate(task: string, clinicalContext: string): boolean {
+  const normalizedTask = task.toLowerCase();
+  const normalizedContext = clinicalContext.toLowerCase();
+
+  if (!shouldKeepFollowUpTask(task, clinicalContext)) {
+    return false;
+  }
+
+  if (/\b(biopsy|pathology|specimen|suture|wound)\b/.test(normalizedTask)
+    && !/\b(biopsy|pathology|specimen|shave|punch|excision|closure|suture|wound)\b/.test(normalizedContext)) {
+    return false;
+  }
+
+  return true;
+}
+
 function normalizeFollowUpTasks(
-  raw: unknown
+  raw: unknown,
+  clinicalContext = ''
 ): Array<{ task: string; priority: string; dueDate?: string; confidence: number }> {
   if (!Array.isArray(raw)) {
     return [];
@@ -1950,10 +2183,11 @@ function normalizeFollowUpTasks(
     const candidate = item as Record<string, unknown>;
     const task = toSafeString(candidate.task);
     if (!task) continue;
+    if (!shouldKeepFollowUpTask(task, clinicalContext)) continue;
     tasks.push({
       task,
       priority: toSafeString(candidate.priority) || 'medium',
-      dueDate: toSafeString(candidate.dueDate) || undefined,
+      dueDate: normalizeDueDate(candidate.dueDate),
       confidence: normalizeConfidence(candidate.confidence, 0.8),
     });
   }
@@ -2118,6 +2352,29 @@ function normalizePatientSummary(
   };
 }
 
+function normalizeAssessmentText(
+  raw: unknown,
+  differentialDiagnoses: DifferentialDiagnosis[]
+): string {
+  const provided = toSafeString(raw);
+  if (provided && !/^not documented$/i.test(provided)) {
+    return provided;
+  }
+
+  if (differentialDiagnoses.length === 0) {
+    return '';
+  }
+
+  return differentialDiagnoses
+    .slice(0, 3)
+    .map((diagnosis, index) => {
+      const title = `${index + 1}. ${diagnosis.condition}${diagnosis.icd10Code ? ` (${diagnosis.icd10Code})` : ''}`;
+      const reasoning = diagnosis.reasoning ? `\n   - ${diagnosis.reasoning}` : '';
+      return `${title}${reasoning}`;
+    })
+    .join('\n');
+}
+
 /**
  * Parse AI-generated note text into structured format
  * Handles custom sections from agent configuration
@@ -2144,9 +2401,17 @@ function parseAIGeneratedNote(
     const parsed = JSON.parse(cleanedText);
     const transcriptText = segments.map((segment) => segment.text).join(' ');
     const normalizedSectionConfidence = normalizeSectionConfidence(parsed.sectionConfidence);
-    const followUpTasks = normalizeFollowUpTasks(parsed.followUpTasks);
+    const clinicalContext = [
+      transcriptText,
+      toSafeString(parsed.chiefComplaint),
+      toSafeString(parsed.hpi),
+      toSafeString(parsed.assessment),
+      toSafeString(parsed.plan),
+    ].join(' ');
+    const followUpTasks = normalizeFollowUpTasks(parsed.followUpTasks, clinicalContext);
     const differentialDiagnoses = normalizeDifferentialDiagnoses(parsed.differentialDiagnoses, transcriptText);
     const recommendedTests = normalizeRecommendedTests(parsed.recommendedTests, transcriptText);
+    const assessment = normalizeAssessmentText(parsed.assessment, differentialDiagnoses);
     const patientSummary = normalizePatientSummary(parsed.patientSummary, {
       chiefComplaint: toSafeString(parsed.chiefComplaint),
       hpi: toSafeString(parsed.hpi),
@@ -2168,7 +2433,7 @@ function parseAIGeneratedNote(
       hpi: toSafeString(parsed.hpi),
       ros: toSafeString(parsed.ros),
       physicalExam: toSafeString(parsed.physicalExam),
-      assessment: toSafeString(parsed.assessment),
+      assessment,
       plan: toSafeString(parsed.plan),
       overallConfidence: overallConfidence,
       sectionConfidence: normalizedSectionConfidence,
@@ -2205,6 +2470,10 @@ function parseAIGeneratedNote(
     // Add task templates from config
     if (agentConfig?.taskTemplates && agentConfig.taskTemplates.length > 0) {
       for (const template of agentConfig.taskTemplates) {
+        if (!shouldApplyTaskTemplate(template.task, clinicalContext)) {
+          continue;
+        }
+
         const dueDate = new Date();
         dueDate.setDate(dueDate.getDate() + (template.daysFromVisit || 7));
 
@@ -2267,7 +2536,12 @@ async function mockGenerateClinicalNote(
   agentConfig?: AgentConfiguration | null,
   patientContext?: PatientContext
 ): Promise<ClinicalNoteGenerationResult> {
-  logger.info('Using mock note generation (no API key configured)');
+  const hasConfiguredProvider = Boolean(getAnthropicKey() || getOpenAIKey());
+  logger.info(
+    hasConfiguredProvider
+      ? 'Using mock note generation after provider failure'
+      : 'Using mock note generation (no API key configured)'
+  );
 
   // Simulate AI processing delay
   const delayMs = resolveMockDelayMs(3000 + Math.random() * 2000);

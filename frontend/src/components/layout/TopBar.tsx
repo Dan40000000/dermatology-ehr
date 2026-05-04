@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { canAccessModule, type ModuleKey } from '../../config/moduleAccess';
+import { getEffectiveRoles } from '../../utils/roles';
 import { HelpModal } from '../HelpModal';
 import { LanguageSwitcher } from '../LanguageSwitcher';
 import { Modal } from '../ui';
@@ -32,7 +33,10 @@ type FeedbackType = 'issue' | 'suggestion';
 type FeedbackSeverity = 'blocker' | 'annoying' | 'suggestion' | 'question';
 
 const USER_PREFERENCES_KEY = 'ui:userPreferences';
-const CLINICAL_COPILOT_URL = import.meta.env.VITE_CLINICAL_COPILOT_URL || 'http://127.0.0.1:4178';
+const AI_ASSISTANT_URL =
+  import.meta.env.VITE_AI_ASSISTANT_URL ||
+  import.meta.env.VITE_CLINICAL_COPILOT_URL ||
+  '/ai-assistant';
 
 function getDefaultPreferences(): UserPreferences {
   return {
@@ -102,6 +106,8 @@ async function capturePageScreenshot(): Promise<File | null> {
 export function TopBar({ patients = [], onRefresh }: TopBarProps) {
   const { user, session, logout } = useAuth();
   const navigate = useNavigate();
+  const effectiveRoles = getEffectiveRoles(user || session?.user);
+  const showAiAssistantLink = canAccessModule(effectiveRoles, 'ai_assistant');
   const [searchValue, setSearchValue] = useState('');
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showFeedbackMarkupModal, setShowFeedbackMarkupModal] = useState(false);
@@ -483,17 +489,21 @@ export function TopBar({ patients = [], onRefresh }: TopBarProps) {
             >
               Customer Portal
             </a>
-            <span className="ema-separator" aria-hidden="true">•</span>
-            <a
-              href={CLINICAL_COPILOT_URL}
-              className="ema-link"
-              aria-label="Open clinical evidence copilot in a new window"
-              target="_blank"
-              rel="noreferrer"
-              title="Opens the standalone evidence copilot in a new window"
-            >
-              Evidence Copilot
-            </a>
+            {showAiAssistantLink && (
+              <>
+                <span className="ema-separator" aria-hidden="true">•</span>
+                <a
+                  href={AI_ASSISTANT_URL}
+                  className="ema-link"
+                  aria-label="Open AI assistant in a new window"
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Opens the standalone AI assistant in a new window"
+                >
+                  AI Assistant
+                </a>
+              </>
+            )}
             <span className="ema-separator" aria-hidden="true">•</span>
             <button
               type="button"

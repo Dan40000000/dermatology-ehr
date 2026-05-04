@@ -36,6 +36,7 @@ const COSMETIC_TEXT_MATCHERS = [
 export function isCosmeticProcedure(procedure?: ProcedureDescriptor | null): boolean {
   if (!procedure) return false;
   if (procedure.isCosmetic === true) return true;
+  if (procedure.isCosmetic === false) return false;
 
   const code = procedure.code?.trim() ?? '';
   if (COSMETIC_CODE_PREFIX.test(code)) {

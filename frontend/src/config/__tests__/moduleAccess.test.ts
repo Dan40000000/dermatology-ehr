@@ -49,6 +49,16 @@ describe('moduleAccess', () => {
     expect(canAccessModule('provider', 'ambient_scribe')).toBe(true);
   });
 
+  it('maps AI assistant routes and limits standalone access to admin and providers', () => {
+    expect(getModuleForPath('/ai-assistant')).toBe('ai_assistant');
+    expect(getModuleForPath('/clinical-copilot')).toBe('ai_assistant');
+    expect(canAccessModule('admin', 'ai_assistant')).toBe(true);
+    expect(canAccessModule('provider', 'ai_assistant')).toBe(true);
+    expect(canAccessModule('pa', 'ai_assistant')).toBe(true);
+    expect(canAccessModule('front_desk', 'ai_assistant')).toBe(false);
+    expect(canAccessModule('ma', 'ai_assistant')).toBe(false);
+  });
+
   it('blocks front desk access from clinical modules', () => {
     expect(canAccessModule('front_desk', 'notes')).toBe(false);
     expect(canAccessModule('front_desk', 'orders')).toBe(false);

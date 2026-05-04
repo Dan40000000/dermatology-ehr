@@ -62,6 +62,33 @@ describe("Charges routes", () => {
     expect(res.body.id).toBeTruthy();
   });
 
+  it("POST /charges can price from the charge-code catalog", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{
+        description: "Mohs surgery first stage",
+        category: "Mohs Surgery",
+        feeCents: 136700,
+        codeType: "CPT",
+        billingRoute: "insurance",
+        requiresDiagnosis: true,
+      }],
+    });
+
+    const res = await request(app).post("/charges").send({
+      cptCode: "17311",
+      quantity: 1,
+      icdCodes: ["C44.41"],
+      linkedDiagnosisIds: ["dx-bcc-scalp-neck"],
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBeTruthy();
+    const insertArgs = queryMock.mock.calls[1][1];
+    expect(insertArgs).toEqual(expect.arrayContaining(["17311", "CPT", "insurance"]));
+    expect(insertArgs[7]).toEqual(["C44.41"]);
+    expect(insertArgs[8]).toEqual(["dx-bcc-scalp-neck"]);
+  });
+
   it("POST /charges accepts self_pay status for cosmetic work", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
     const res = await request(app).post("/charges").send({

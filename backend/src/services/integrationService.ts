@@ -25,6 +25,8 @@ import { FaxAdapter, createFaxAdapter } from '../integrations/faxAdapter';
 import {
   AmbientTranscriptionAdapter,
   createAmbientTranscriptionAdapter,
+  hasAmbientTranscriptionCredentials,
+  resolveAmbientTranscriptionProviderFromEnv,
 } from '../integrations/ambientTranscriptionAdapter';
 
 // ============================================================================
@@ -556,19 +558,20 @@ export class IntegrationService {
   async getAmbientTranscriptionAdapter(): Promise<AmbientTranscriptionAdapter> {
     if (!this.adapters.has('ambient_transcription')) {
       const config = await getIntegrationConfig(this.tenantId, 'ambient_transcription');
-      const envApiKey = process.env.WISPR_FLOW_API_KEY || process.env.WISPR_API_KEY;
+      const envProvider = resolveAmbientTranscriptionProviderFromEnv();
       const configuredEnvironment = String(config?.config?.environment || config?.config?.mode || '')
         .trim()
         .toLowerCase();
       const isExplicitDemoMode = configuredEnvironment === 'mock' ||
         configuredEnvironment === 'demo' ||
         configuredEnvironment === 'test';
-      const adapterUseMock = envApiKey && !isExplicitDemoMode
+      const provider = config?.provider || envProvider || 'abridge';
+      const adapterUseMock = envProvider && hasAmbientTranscriptionCredentials(envProvider) && !isExplicitDemoMode
         ? false
         : this.resolveAdapterMockMode(config);
       const adapter = createAmbientTranscriptionAdapter(
         this.tenantId,
-        config?.provider || 'wispr_flow',
+        provider,
         adapterUseMock
       );
       if (config) {
@@ -612,7 +615,7 @@ export class IntegrationService {
       lab: 'labcorp',
       payment: 'stripe',
       fax: 'phaxio',
-      ambient_transcription: 'wispr_flow',
+      ambient_transcription: 'abridge',
     };
     return defaults[type];
   }

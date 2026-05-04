@@ -88,6 +88,11 @@ const navItems: NavItem[] = [
     ]
   },
   {
+    label: 'AI Assistant',
+    path: '/ai-assistant',
+    module: 'ai_assistant',
+  },
+  {
     label: 'Orders',
     path: '/orders',
     module: 'orders',

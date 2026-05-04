@@ -14,7 +14,7 @@ const buildInsights = (): AmbientLiveInsightsPayload => ({
     documentationGaps: ['Confirm medication allergies before prescribing.'],
   },
   symptoms: [
-    { label: 'Changing lesion / mole concern', confidence: 0.91, evidence: 'dark mole on my upper back' },
+    { label: 'Changing mole / pigmented lesion', confidence: 0.91, evidence: 'dark mole on my upper back' },
   ],
   workingDiagnoses: [
     {
@@ -51,11 +51,16 @@ const buildInsights = (): AmbientLiveInsightsPayload => ({
 });
 
 describe('LiveScribeInsightsPanel', () => {
-  it('renders the live clinical snapshot, safety flags, tests, actions, and documentation gaps', () => {
+  it('renders the four-box live summary format with secondary actions', () => {
     render(<LiveScribeInsightsPanel insights={buildInsights()} />);
 
     expect(screen.getByText('Live Clinical Snapshot')).toBeInTheDocument();
+    expect(screen.getByText(/Live draft warming up/i)).toBeInTheDocument();
     expect(screen.getByText(/Clinician review required/i)).toBeInTheDocument();
+    expect(screen.getByText('Live Summary')).toBeInTheDocument();
+    expect(screen.getByText('Live Symptoms')).toBeInTheDocument();
+    expect(screen.getByText('Potential Diagnosis')).toBeInTheDocument();
+    expect(screen.getByText('Potential Testing')).toBeInTheDocument();
     expect(screen.getByText(/Changing dark mole/i)).toBeInTheDocument();
     expect(screen.getByText('Skin cancer warning features')).toBeInTheDocument();
     expect(screen.getByText('Suspicious pigmented lesion / melanoma rule-out')).toBeInTheDocument();
@@ -67,8 +72,9 @@ describe('LiveScribeInsightsPanel', () => {
   it('shows useful empty states before enough audio is captured', () => {
     render(<LiveScribeInsightsPanel insights={null} compact />);
 
-    expect(screen.getByText(/Listening for enough clinical detail/i)).toBeInTheDocument();
-    expect(screen.getByText(/Patient symptom details will appear here/i)).toBeInTheDocument();
+    expect(screen.getByText(/Live draft warming up/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Listening for enough clinical detail/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Listening for symptom language/i)).toBeInTheDocument();
     expect(screen.getByText(/No suggested tests yet/i)).toBeInTheDocument();
   });
 });

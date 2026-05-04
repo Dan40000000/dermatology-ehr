@@ -15,6 +15,11 @@ const ROLE_ALIASES: Record<string, UserRole> = {
   physician: 'provider',
   doctor: 'provider',
   clinician: 'provider',
+  pa: 'provider',
+  pac: 'provider',
+  pa_c: 'provider',
+  physician_assistant: 'provider',
+  physicianassistant: 'provider',
 };
 
 function normalizeRole(value: unknown): UserRole | null {

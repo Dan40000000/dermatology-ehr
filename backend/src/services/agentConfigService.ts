@@ -172,7 +172,8 @@ class AgentConfigService {
    */
   async getConfigurationForAppointmentType(
     tenantId: string,
-    appointmentTypeId: string
+    appointmentTypeId: string,
+    options: { includeDefault?: boolean } = {}
   ): Promise<AgentConfiguration | null> {
     // First try to find one linked to this appointment type
     const result = await pool.query(
@@ -186,8 +187,36 @@ class AgentConfigService {
       return this.mapRowToConfig(result.rows[0]);
     }
 
+    if (options.includeDefault === false) {
+      return null;
+    }
+
     // Fall back to default
     return this.getDefaultConfiguration(tenantId);
+  }
+
+  /**
+   * Get configuration appropriate for a specialty focus
+   */
+  async getConfigurationForSpecialtyFocus(
+    tenantId: string,
+    specialtyFocus: string
+  ): Promise<AgentConfiguration | null> {
+    const result = await pool.query(
+      `SELECT * FROM ai_agent_configurations
+       WHERE tenant_id = $1
+         AND specialty_focus = $2
+         AND is_active = true
+       ORDER BY is_default DESC, created_at ASC
+       LIMIT 1`,
+      [tenantId, specialtyFocus]
+    );
+
+    if (result.rows.length > 0) {
+      return this.mapRowToConfig(result.rows[0]);
+    }
+
+    return null;
   }
 
   /**

@@ -340,7 +340,7 @@ describe("Fee schedules routes", () => {
       .mockResolvedValueOnce({ rows: [{ cpt_code: "11100", cpt_description: "Biopsy", fee_cents: 1000 }] });
     const res = await request(app).get("/fee-schedules/fs-1/export");
     expect(res.status).toBe(200);
-    expect(res.text).toContain("CPT Code,Category,Description,Fee");
+    expect(res.text).toContain("Code,Code Type,Billing Route,Category,Subcategory,Description,Fee");
   });
 
   it("GET /fee-schedules/default/schedule returns 404", async () => {

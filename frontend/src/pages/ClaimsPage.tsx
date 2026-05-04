@@ -9,12 +9,13 @@ import {
   postClaimPayment,
   fetchPatients,
   fetchClaimMetrics,
+  releaseClaimFromCodingReview,
 } from '../api';
 import type { Claim, ClaimWithDetails, ClaimStatus, Patient } from '../types';
 
 type ActiveTab = 'claims' | 'payments';
 type ClaimUiStatus = ClaimStatus | 'denied' | 'appealed' | 'partially_paid';
-type QueueFilter = 'all' | 'ready' | 'pending' | 'denials' | 'payment' | 'appeals' | 'filing_risk';
+type QueueFilter = 'all' | 'coding_review' | 'ready' | 'pending' | 'denials' | 'payment' | 'appeals' | 'filing_risk';
 
 interface ClaimRecord {
   id: string;
@@ -35,6 +36,9 @@ interface ClaimRecord {
   denialCode?: string;
   appealStatus?: string;
   scrubStatus?: string;
+  codingReviewStatus?: string;
+  codingReviewedAt?: string;
+  codingReviewNotes?: string;
 }
 
 interface AgingBucket {
@@ -177,7 +181,7 @@ const DEMO_CLAIMS_RAW: Array<Record<string, unknown>> = [
     id: 'demo-claim-5',
     patientId: 'demo-patient-5',
     claimNumber: 'CLM-DEMO-1005',
-    status: 'draft',
+    status: 'coding_review',
     payer: 'Medicare',
     providerName: 'Dr. Harper Lee',
     serviceDate: daysAgoIso(1),
@@ -347,7 +351,7 @@ function normalizeStatus(raw: unknown): ClaimUiStatus {
   if (value === 'denied') return 'denied';
   if (value === 'appealed') return 'appealed';
   if (value === 'partially_paid' || value === 'partial') return 'partially_paid';
-  if (value === 'draft' || value === 'ready' || value === 'submitted' || value === 'accepted' || value === 'rejected' || value === 'paid') {
+  if (value === 'draft' || value === 'coding_review' || value === 'ready' || value === 'submitted' || value === 'accepted' || value === 'rejected' || value === 'paid') {
     return value;
   }
   return 'draft';
@@ -394,7 +398,10 @@ function formatCurrency(cents: number): string {
 function claimQueue(claim: ClaimRecord): QueueFilter {
   const age = getDaysSince(claim.serviceDate || claim.createdAt);
 
-  if (claim.status === 'draft' || claim.status === 'ready') {
+  if (claim.status === 'draft' || claim.status === 'coding_review') {
+    return 'coding_review';
+  }
+  if (claim.status === 'ready') {
     return 'ready';
   }
   if (claim.status === 'submitted' || claim.status === 'accepted') {
@@ -425,6 +432,8 @@ function getNextAction(claim: ClaimRecord): string {
   switch (claimQueue(claim)) {
     case 'ready':
       return 'Run scrubber and submit';
+    case 'coding_review':
+      return 'Validate coding and release';
     case 'pending':
       return 'Monitor 277/ERA response';
     case 'denials':
@@ -444,6 +453,8 @@ function queueLabel(queue: QueueFilter): string {
   switch (queue) {
     case 'ready':
       return 'Ready';
+    case 'coding_review':
+      return 'Coding Review';
     case 'pending':
       return 'Awaiting Payer';
     case 'denials':
@@ -463,6 +474,8 @@ function getStatusColor(status: ClaimUiStatus): string {
   switch (status) {
     case 'draft':
       return 'gray';
+    case 'coding_review':
+      return 'orange';
     case 'ready':
       return 'blue';
     case 'submitted':
@@ -504,6 +517,9 @@ function normalizeClaimRecord(raw: Record<string, unknown>, patients: Patient[])
   const denialCode = raw.denialCode ? String(raw.denialCode) : undefined;
   const appealStatus = raw.appealStatus ? String(raw.appealStatus) : undefined;
   const scrubStatus = raw.scrubStatus ? String(raw.scrubStatus) : undefined;
+  const codingReviewStatus = raw.codingReviewStatus ? String(raw.codingReviewStatus) : undefined;
+  const codingReviewedAt = raw.codingReviewedAt ? String(raw.codingReviewedAt) : undefined;
+  const codingReviewNotes = raw.codingReviewNotes ? String(raw.codingReviewNotes) : undefined;
 
   const joinedName = raw.patientLastName && raw.patientFirstName
     ? `${String(raw.patientLastName)}, ${String(raw.patientFirstName)}`
@@ -531,6 +547,9 @@ function normalizeClaimRecord(raw: Record<string, unknown>, patients: Patient[])
     denialCode,
     appealStatus,
     scrubStatus,
+    codingReviewStatus,
+    codingReviewedAt,
+    codingReviewNotes,
   };
 }
 
@@ -548,7 +567,7 @@ function computeMetrics(claims: ClaimRecord[]): MetricsSnapshot {
   const firstPassPaidRate = adjudicatedCount ? (paidCount / adjudicatedCount) * 100 : 0;
   const denialRate = adjudicatedCount ? (denialCount / adjudicatedCount) * 100 : 0;
 
-  const openClaims = claims.filter((claim) => claim.balanceCents > 0 && claim.status !== 'draft' && claim.status !== 'ready');
+  const openClaims = claims.filter((claim) => claim.balanceCents > 0 && claim.status !== 'draft' && claim.status !== 'coding_review' && claim.status !== 'ready');
   const avgDaysInAR = openClaims.length
     ? openClaims.reduce((sum, claim) => sum + getDaysSince(claim.serviceDate || claim.createdAt), 0) / openClaims.length
     : 0;
@@ -814,6 +833,10 @@ export function ClaimsPage() {
       patientFirstName: claimRaw.patientFirstName ? String(claimRaw.patientFirstName) : undefined,
       patientLastName: claimRaw.patientLastName ? String(claimRaw.patientLastName) : undefined,
       providerName: claimRaw.providerName ? String(claimRaw.providerName) : fallback.providerName,
+      codingReviewStatus: claimRaw.codingReviewStatus ? String(claimRaw.codingReviewStatus) as Claim['codingReviewStatus'] : undefined,
+      codingReviewedBy: claimRaw.codingReviewedBy ? String(claimRaw.codingReviewedBy) : undefined,
+      codingReviewedAt: claimRaw.codingReviewedAt ? String(claimRaw.codingReviewedAt) : undefined,
+      codingReviewNotes: claimRaw.codingReviewNotes ? String(claimRaw.codingReviewNotes) : undefined,
     };
 
     return {
@@ -914,6 +937,72 @@ export function ClaimsPage() {
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to update claim status';
+      showError(message);
+    }
+  };
+
+  const handleReleaseClaim = async (claimId: string) => {
+    if (!session) return;
+
+    const claim = claims.find((entry) => entry.id === claimId);
+    if (!claim) return;
+
+    const notes = 'Coding review complete. Released for claim submission.';
+
+    if (claim.id.startsWith('demo-') || usingDemoData) {
+      applyLocalClaimPatch(claimId, {
+        status: 'ready',
+        codingReviewStatus: 'released',
+        codingReviewedAt: new Date().toISOString(),
+        codingReviewNotes: notes,
+      });
+
+      setClaimDetailsCache((prev) => {
+        const existing = prev[claimId] || buildDemoClaimDetail(claim);
+        const next: ClaimWithDetails = {
+          ...existing,
+          claim: {
+            ...existing.claim,
+            status: 'ready',
+            codingReviewStatus: 'released',
+            codingReviewedAt: new Date().toISOString(),
+            codingReviewNotes: notes,
+          },
+          statusHistory: [
+            {
+              id: `${claimId}-release-${Date.now()}`,
+              tenantId: existing.claim.tenantId,
+              claimId,
+              status: 'ready',
+              notes,
+              changedAt: new Date().toISOString(),
+            },
+            ...existing.statusHistory,
+          ],
+        };
+        if (selectedClaim?.claim.id === claimId) {
+          setSelectedClaim(next);
+        }
+        return { ...prev, [claimId]: next };
+      });
+
+      showSuccess('Claim released for submission');
+      return;
+    }
+
+    try {
+      await releaseClaimFromCodingReview(session.tenantId, session.accessToken, claimId, { notes });
+      showSuccess('Claim released for submission');
+      await loadData();
+
+      if (selectedClaim?.claim.id === claimId) {
+        const refreshed = await loadClaimDetail({ ...claim, status: 'ready' }, false);
+        if (refreshed) {
+          setSelectedClaim(refreshed);
+        }
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to release claim';
       showError(message);
     }
   };
@@ -1039,6 +1128,7 @@ export function ClaimsPage() {
   const queueCounts = useMemo(() => {
     const counters: Record<QueueFilter, number> = {
       all: claims.length,
+      coding_review: 0,
       ready: 0,
       pending: 0,
       denials: 0,
@@ -1246,6 +1336,7 @@ export function ClaimsPage() {
                 <h3 className="claims-section-heading">Work Queues</h3>
                 <div className="claims-queue-grid">
                   {([
+                    ['coding_review', 'Coding Review'],
                     ['ready', 'Ready to Submit'],
                     ['pending', 'Awaiting Payer'],
                     ['denials', 'Denials/Rejections'],
@@ -1408,6 +1499,7 @@ export function ClaimsPage() {
                   >
                     <option value="all">All Statuses</option>
                     <option value="draft">Draft</option>
+                    <option value="coding_review">Coding Review</option>
                     <option value="ready">Ready</option>
                     <option value="submitted">Submitted</option>
                     <option value="accepted">Accepted</option>
@@ -1484,6 +1576,15 @@ export function ClaimsPage() {
                               >
                                 View
                               </button>
+                              {(claim.status === 'coding_review' || claim.status === 'draft') && (
+                                <button
+                                  type="button"
+                                  className="btn-sm btn-primary"
+                                  onClick={() => void handleReleaseClaim(claim.id)}
+                                >
+                                  Release
+                                </button>
+                              )}
                               {claim.balanceCents > 0 && (
                                 <button
                                   type="button"
@@ -1637,6 +1738,16 @@ export function ClaimsPage() {
                   </span>
                 </div>
                 <div className="field">
+                  <span className="label">Coding Review:</span>
+                  <span className="value">
+                    {selectedClaim.claim.codingReviewStatus === 'released'
+                      ? `Released${selectedClaim.claim.codingReviewedAt ? ` ${new Date(selectedClaim.claim.codingReviewedAt).toLocaleDateString()}` : ''}`
+                      : normalizeStatus(selectedClaim.claim.status) === 'coding_review'
+                        ? 'Needs coder release'
+                        : selectedClaim.claim.codingReviewStatus || '-'}
+                  </span>
+                </div>
+                <div className="field">
                   <span className="label">Total:</span>
                   <span className="value strong">{formatCurrency(selectedClaim.claim.totalCents || 0)}</span>
                 </div>
@@ -1645,7 +1756,23 @@ export function ClaimsPage() {
               <div className="status-actions">
                 <label>Update Status:</label>
                 <div className="status-buttons">
-                  {(['ready', 'submitted', 'accepted', 'rejected'] as ClaimStatus[]).map((status) => (
+                  {(selectedClaim.claim.status === 'coding_review' || selectedClaim.claim.status === 'draft') && (
+                    <button
+                      type="button"
+                      className="btn-sm btn-primary"
+                      onClick={() => void handleReleaseClaim(selectedClaim.claim.id)}
+                    >
+                      Release To Ready
+                    </button>
+                  )}
+                  {(['ready', 'submitted', 'accepted', 'rejected'] as ClaimStatus[])
+                    .filter((status) => {
+                      const current = normalizeStatus(selectedClaim.claim.status);
+                      if ((current === 'coding_review' || current === 'draft') && status === 'ready') return false;
+                      if (status === 'submitted' && current !== 'ready' && current !== 'submitted') return false;
+                      return true;
+                    })
+                    .map((status) => (
                     <button
                       key={status}
                       type="button"

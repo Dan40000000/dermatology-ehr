@@ -92,12 +92,14 @@ export class BillingService {
 
       await normalizeEncounterCharges(tenantId, encounterId, client);
 
-      // Get all pending/ready charges for this encounter
+      // Get all pending/ready insurance-routed charges for this encounter
       const chargesResult = await client.query(
-        `SELECT id, cpt_code, description, quantity, fee_cents, amount_cents, icd_codes, service_date
+        `SELECT id, cpt_code, description, quantity, fee_cents, amount_cents,
+                icd_codes, service_date, coalesce(modifier_codes, array[]::text[]) as modifier_codes
          FROM charges
          WHERE encounter_id = $1 AND tenant_id = $2
            AND status IN ('pending', 'ready')
+           AND coalesce(nullif(to_jsonb(charges)->>'billing_route', ''), 'insurance') = 'insurance'
            AND COALESCE(amount_cents, fee_cents * COALESCE(quantity, 1)) IS NOT NULL`,
         [encounterId, tenantId]
       );
@@ -113,7 +115,7 @@ export class BillingService {
       );
       const lineItems = charges.map((charge) => ({
         cpt: charge.cpt_code,
-        modifiers: [],
+        modifiers: charge.modifier_codes || [],
         dx: charge.icd_codes || [],
         units: charge.quantity || 1,
         charge: (charge.amount_cents || (charge.fee_cents * (charge.quantity || 1))) / 100,
@@ -141,7 +143,7 @@ export class BillingService {
           claimNumber,
           totalCents,
           totalCents / 100,
-          'draft',
+          'coding_review',
           payer || null,
           payerId || null,
           payer || null,
@@ -188,10 +190,10 @@ export class BillingService {
           crypto.randomUUID(),
           tenantId,
           userId,
-          'claim_created',
+          'claim_created_for_coding_review',
           'claim',
           claimId,
-          JSON.stringify({ encounterId, claimNumber }),
+          JSON.stringify({ encounterId, claimNumber, nextStep: 'coding_review' }),
         ]
       );
 
@@ -233,8 +235,8 @@ export class BillingService {
 
       const claim = claimResult.rows[0];
 
-      if (claim.status !== 'draft' && claim.status !== 'ready') {
-        throw new Error(`Claim is not ready for submission (status: ${claim.status})`);
+      if (claim.status !== 'ready') {
+        throw new Error(`Claim must be released from coding review before submission (status: ${claim.status})`);
       }
 
       if (!claim.payer) {

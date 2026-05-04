@@ -7,6 +7,7 @@ import { requireRoles } from '../middleware/rbac';
 import { CLINICAL_ROLES } from '../lib/roles';
 import { validatePrescription, checkDrugInteractions, checkAllergies } from '../services/prescriptionValidator';
 import { sendNewRx, checkFormulary, getPatientBenefits } from '../services/surescriptsService';
+import { getPrescribingService, type PrescriptionSendRequest } from '../services/healthcareWorkflowServices';
 import { logger } from '../lib/logger';
 
 export const prescriptionsRouter = Router();
@@ -65,6 +66,22 @@ const updatePrescriptionSchema = z.object({
   notes: z.string().optional(),
   status: z.enum(['pending', 'sent', 'transmitted', 'error', 'cancelled', 'discontinued']).optional(),
 });
+
+const sendPrescriptionWorkflowSchema = z.object({
+  prescriptionId: z.string().optional(),
+  orderId: z.string().optional(),
+  patientId: z.string().optional(),
+  pharmacyNcpdp: z.string().optional(),
+  pharmacyName: z.string().optional(),
+  medicationName: z.string().optional(),
+  strength: z.string().optional(),
+  sig: z.string().optional(),
+  quantity: z.union([z.string(), z.number()]).optional(),
+  refills: z.union([z.string(), z.number()]).optional(),
+}).refine(
+  (data) => data.prescriptionId || data.orderId || data.medicationName,
+  { message: 'prescriptionId, orderId, or medicationName is required' }
+);
 
 // GET /api/prescriptions - List prescriptions (with optional filters)
 prescriptionsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
@@ -700,6 +717,177 @@ prescriptionsRouter.delete(
     } catch (error) {
       logPrescriptionsError('Error cancelling prescription:', error);
       return res.status(500).json({ error: 'Failed to cancel prescription' });
+    }
+  }
+);
+
+// POST /api/prescriptions/send - Vendor-neutral e-prescribing facade
+prescriptionsRouter.post(
+  '/send',
+  requireAuth,
+  requireRoles(['admin', 'provider']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const parsed = sendPrescriptionWorkflowSchema.parse(req.body || {});
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+      let source: 'prescription' | 'order' | 'payload' = 'payload';
+      let prescriptionRow: any | null = null;
+      let orderRow: any | null = null;
+
+      const sendRequest: PrescriptionSendRequest = {
+        tenantId,
+        prescriptionId: parsed.prescriptionId,
+        orderId: parsed.orderId,
+        patientId: parsed.patientId,
+        medicationName: parsed.medicationName,
+        strength: parsed.strength,
+        sig: parsed.sig,
+        quantity: parsed.quantity,
+        refills: parsed.refills,
+        pharmacyNcpdp: parsed.pharmacyNcpdp,
+        pharmacyName: parsed.pharmacyName,
+      };
+
+      if (parsed.prescriptionId) {
+        const prescriptionResult = await pool.query(
+          `select p.*, pat.first_name, pat.last_name, pat.dob as date_of_birth,
+                  prov.full_name as provider_name, prov.npi as provider_npi
+             from prescriptions p
+             join patients pat on p.patient_id = pat.id
+             left join providers prov on p.provider_id = prov.id
+            where p.id = $1 and p.tenant_id = $2`,
+          [parsed.prescriptionId, tenantId]
+        );
+
+        if (prescriptionResult.rows.length > 0) {
+          prescriptionRow = prescriptionResult.rows[0];
+          source = 'prescription';
+
+          if (prescriptionRow.status === 'cancelled') {
+            return res.status(400).json({ error: 'Cannot send cancelled prescription' });
+          }
+
+          Object.assign(sendRequest, {
+            patientId: prescriptionRow.patient_id,
+            patientName: `${prescriptionRow.first_name || ''} ${prescriptionRow.last_name || ''}`.trim(),
+            medicationName: prescriptionRow.medication_name,
+            strength: prescriptionRow.strength,
+            sig: prescriptionRow.sig,
+            quantity: prescriptionRow.quantity,
+            refills: prescriptionRow.refills,
+            pharmacyNcpdp: parsed.pharmacyNcpdp || prescriptionRow.pharmacy_ncpdp,
+            pharmacyName: parsed.pharmacyName || prescriptionRow.pharmacy_name,
+            providerName: prescriptionRow.provider_name,
+            providerNpi: prescriptionRow.provider_npi,
+          });
+        }
+      }
+
+      if (source === 'payload' && parsed.orderId) {
+        const orderResult = await pool.query(
+          `select o.*, pat.first_name, pat.last_name, prov.full_name as provider_name, prov.npi as provider_npi
+             from orders o
+             join patients pat on o.patient_id = pat.id
+             left join providers prov on o.provider_id = prov.id
+            where o.id = $1 and o.tenant_id = $2 and o.type = 'rx'`,
+          [parsed.orderId, tenantId]
+        );
+
+        if (orderResult.rows.length === 0 && !parsed.prescriptionId) {
+          return res.status(404).json({ error: 'Prescription/order not found' });
+        }
+
+        if (orderResult.rows.length > 0) {
+          orderRow = orderResult.rows[0];
+          source = 'order';
+          const details = String(orderRow.details || '');
+          const lines = details.split('\n').map((line) => line.trim());
+
+          Object.assign(sendRequest, {
+            orderId: parsed.orderId,
+            patientId: orderRow.patient_id,
+            patientName: `${orderRow.first_name || ''} ${orderRow.last_name || ''}`.trim(),
+            medicationName: parsed.medicationName || lines[0] || 'Prescription',
+            sig: parsed.sig || lines.find((line) => line.startsWith('Sig:'))?.replace('Sig:', '').trim(),
+            quantity: parsed.quantity || lines.find((line) => line.startsWith('Qty:'))?.replace('Qty:', '').trim(),
+            pharmacyName: parsed.pharmacyName || lines.find((line) => line.startsWith('Pharmacy:'))?.replace('Pharmacy:', '').trim(),
+            providerName: orderRow.provider_name,
+            providerNpi: orderRow.provider_npi,
+          });
+        }
+      }
+
+      if (parsed.prescriptionId && source === 'payload' && !parsed.orderId) {
+        return res.status(404).json({ error: 'Prescription not found' });
+      }
+
+      const transmissionResult = await getPrescribingService().sendPrescription(sendRequest);
+
+      if (!transmissionResult.success) {
+        return res.status(502).json({
+          error: 'Failed to transmit prescription',
+          result: transmissionResult,
+        });
+      }
+
+      if (source === 'prescription' && prescriptionRow) {
+        await pool.query(
+          `UPDATE prescriptions
+              SET status = 'sent',
+                  pharmacy_ncpdp = COALESCE($1, pharmacy_ncpdp),
+                  sent_at = CURRENT_TIMESTAMP,
+                  surescripts_message_id = $2,
+                  updated_at = CURRENT_TIMESTAMP,
+                  updated_by = $3
+            WHERE id = $4 AND tenant_id = $5`,
+          [transmissionResult.pharmacyNcpdp, transmissionResult.messageId, userId, prescriptionRow.id, tenantId]
+        );
+
+        await pool.query(
+          `INSERT INTO prescription_audit_log(prescription_id, action, user_id, ip_address, metadata)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            prescriptionRow.id,
+            'transmitted',
+            userId,
+            req.ip,
+            JSON.stringify({
+              provider: transmissionResult.provider,
+              mode: transmissionResult.mode,
+              messageId: transmissionResult.messageId,
+              pharmacyNcpdp: transmissionResult.pharmacyNcpdp,
+            }),
+          ]
+        );
+      } else if (source === 'order' && orderRow) {
+        await pool.query(
+          `update orders
+              set status = 'ordered',
+                  details = coalesce(details, '') || $1
+            where id = $2 and tenant_id = $3`,
+          [` | eRx sent via ${transmissionResult.provider}: ${transmissionResult.messageId}`, orderRow.id, tenantId]
+        );
+      }
+
+      return res.json({
+        success: true,
+        provider: transmissionResult.provider,
+        mode: transmissionResult.mode,
+        messageId: transmissionResult.messageId,
+        pharmacyName: transmissionResult.pharmacyName,
+        pharmacyNcpdp: transmissionResult.pharmacyNcpdp,
+        source,
+        result: transmissionResult,
+        message: 'Prescription sent successfully',
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid request data', details: error.issues });
+      }
+
+      logPrescriptionsError('Error sending prescription through workflow facade:', error);
+      return res.status(500).json({ error: 'Failed to send prescription' });
     }
   }
 );

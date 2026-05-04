@@ -310,6 +310,19 @@ describe('AgentConfigService', () => {
       expect(result).not.toBeNull();
       expect(result?.isDefault).toBe(true);
     });
+
+    it('should return null when no appointment-specific config and default fallback is disabled', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+
+      const result = await agentConfigService.getConfigurationForAppointmentType(
+        tenantId,
+        'appt-456',
+        { includeDefault: false }
+      );
+
+      expect(result).toBeNull();
+      expect(queryMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('createConfiguration', () => {

@@ -81,6 +81,7 @@ export interface SuperbillData {
   serviceDate: string;
   totalCharges: number;
   diagnoses: Array<{
+    id?: string;
     code: string;
     description: string;
     isPrimary: boolean;
@@ -501,6 +502,10 @@ export async function submitClaim(
 
   if (claim.status === "submitted" || claim.status === "accepted" || claim.status === "paid") {
     throw new Error(`Claim already ${claim.status}`);
+  }
+
+  if (claim.status !== "ready") {
+    throw new Error(`Claim must be released from coding review before clearinghouse submission (status: ${claim.status})`);
   }
 
   // Generate X12 claim using encounter_id as superbill reference
@@ -1036,7 +1041,7 @@ async function fetchSuperbillData(
 
   // Get diagnoses
   const diagnosesResult = await pool.query(
-    `SELECT icd10_code as code, description, is_primary as "isPrimary"
+    `SELECT id, icd10_code as code, description, is_primary as "isPrimary"
      FROM encounter_diagnoses
      WHERE encounter_id = $1 AND tenant_id = $2
      ORDER BY is_primary DESC`,
@@ -1046,7 +1051,8 @@ async function fetchSuperbillData(
   // Get charges
   const chargesResult = await pool.query(
     `SELECT cpt_code as "cptCode", description, quantity, fee_cents / 100.0 as charge,
-            linked_diagnosis_ids as "linkedDiagnosisIds"
+            linked_diagnosis_ids as "linkedDiagnosisIds",
+            icd_codes as "icdCodes"
      FROM charges
      WHERE encounter_id = $1 AND tenant_id = $2`,
     [superbillId, tenantId]
@@ -1059,6 +1065,34 @@ async function fetchSuperbillData(
   );
 
   const insurance = insuranceResult.rows[0]?.details?.primary || {};
+  const diagnoses = diagnosesResult.rows;
+  const diagnosisPointerById = new Map<string, number>();
+  const diagnosisPointerByCode = new Map<string, number>();
+
+  diagnoses.forEach((diagnosis: Record<string, unknown>, index: number) => {
+    const pointer = index + 1;
+    const id = String(diagnosis.id || "");
+    const code = String(diagnosis.code || "").toUpperCase();
+    if (id) diagnosisPointerById.set(id, pointer);
+    if (code) diagnosisPointerByCode.set(code, pointer);
+  });
+
+  const buildDiagnosisPointers = (charge: Record<string, unknown>): number[] => {
+    const linkedDiagnosisIds = Array.isArray(charge.linkedDiagnosisIds) ? charge.linkedDiagnosisIds : [];
+    const icdCodes = Array.isArray(charge.icdCodes) ? charge.icdCodes : [];
+
+    const pointers = [
+      ...linkedDiagnosisIds
+        .map((id) => diagnosisPointerById.get(String(id)))
+        .filter((pointer): pointer is number => Number.isInteger(pointer)),
+      ...icdCodes
+        .map((code) => diagnosisPointerByCode.get(String(code).toUpperCase()))
+        .filter((pointer): pointer is number => Number.isInteger(pointer)),
+    ];
+
+    const deduped = Array.from(new Set(pointers)).slice(0, 4);
+    return deduped.length > 0 ? deduped : (diagnoses.length > 0 ? [1] : []);
+  };
 
   return {
     id: superbillId,
@@ -1070,13 +1104,13 @@ async function fetchSuperbillData(
       (sum: number, c: { charge: number; quantity: number }) => sum + (c.charge * (c.quantity || 1)),
       0
     ),
-    diagnoses: diagnosesResult.rows,
-    lineItems: chargesResult.rows.map((c: Record<string, unknown>, idx: number) => ({
+    diagnoses,
+    lineItems: chargesResult.rows.map((c: Record<string, unknown>) => ({
       cptCode: c.cptCode as string,
       modifiers: [],
       units: (c.quantity as number) || 1,
       charge: c.charge as number,
-      diagnosisPointers: [idx + 1],
+      diagnosisPointers: buildDiagnosisPointers(c),
     })),
     patient: {
       firstName: encounter.first_name,

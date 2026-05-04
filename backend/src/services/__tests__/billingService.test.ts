@@ -147,7 +147,7 @@ describe("billingService", () => {
             patient_id: "patient-1",
             claim_number: "CLM-2025-000001",
             total_cents: 200,
-            status: "draft",
+            status: "coding_review",
             payer: "ACME",
             payer_id: "P1",
             submitted_at: null,
@@ -162,6 +162,11 @@ describe("billingService", () => {
 
     expect(result.totalCents).toBe(200);
     expect(result.payer).toBe("ACME");
+    expect(result.status).toBe("coding_review");
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO claims"),
+      expect.arrayContaining(["coding_review"])
+    );
     expect(logger.info).toHaveBeenCalled();
   });
 
@@ -186,12 +191,27 @@ describe("billingService", () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rowCount: 1,
-        rows: [{ id: "claim-1", status: "draft", payer: null, payer_id: null }],
+        rows: [{ id: "claim-1", status: "ready", payer: null, payer_id: null }],
       });
 
     await expect(
       billingService.submitClaim("tenant-1", "claim-1", "user-1")
     ).rejects.toThrow("Claim missing payer information");
+  });
+
+  it("submitClaim rejects claims still in coding review", async () => {
+    const client = makeClient();
+    connectMock.mockResolvedValueOnce(client);
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: "claim-1", status: "coding_review", payer: "ACME", payer_id: "P1" }],
+      });
+
+    await expect(
+      billingService.submitClaim("tenant-1", "claim-1", "user-1")
+    ).rejects.toThrow("coding review");
   });
 
   it("submitClaim updates status when ready", async () => {
@@ -201,7 +221,7 @@ describe("billingService", () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rowCount: 1,
-        rows: [{ id: "claim-1", status: "draft", payer: "ACME", payer_id: "P1" }],
+        rows: [{ id: "claim-1", status: "ready", payer: "ACME", payer_id: "P1" }],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })

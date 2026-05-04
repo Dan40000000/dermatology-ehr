@@ -12,6 +12,7 @@ import { randomUUID } from 'crypto';
 import { notificationService } from '../services/integrations/notificationService';
 import { logger } from '../lib/logger';
 import { loadEnv } from '../config/validate';
+import { getPriorAuthService } from '../services/healthcareWorkflowServices';
 
 const router = Router();
 router.use(requireAuth, requireModuleAccess("epa"));
@@ -84,6 +85,27 @@ const statusUpdateSchema = z.object({
   contactedPerson: z.string().optional(),
   contactMethod: z.enum(['phone', 'fax', 'portal', 'email', 'mail']).optional(),
 });
+
+const workflowSubmitSchema = z.object({
+  id: z.string().optional(),
+  priorAuthId: z.string().optional(),
+  patientId: z.string().optional(),
+  patientName: z.string().optional(),
+  medicationName: z.string().optional(),
+  procedureCode: z.string().optional(),
+  diagnosisCode: z.string().optional(),
+  diagnosisCodes: z.array(z.string()).optional(),
+  insuranceName: z.string().optional(),
+  payerName: z.string().optional(),
+  payerId: z.string().optional(),
+  memberId: z.string().optional(),
+  providerNpi: z.string().optional(),
+  clinicalJustification: z.string().optional(),
+  urgency: z.string().optional(),
+}).refine(
+  (data) => data.id || data.priorAuthId || data.patientId,
+  { message: 'priorAuthId or patientId is required' }
+);
 
 const buildNotes = (entries: Array<string | null | undefined>): string | null => {
   const filtered = entries
@@ -604,6 +626,113 @@ router.get('/:id/form', async (req: AuthedRequest, res, next) => {
   }
 });
 
+// POST /api/prior-auth/submit - Vendor-neutral prior authorization submission facade
+router.post('/submit', async (req: AuthedRequest, res, next) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userId = req.user?.id;
+    const validated = workflowSubmitSchema.parse(req.body || {});
+    const priorAuthId = validated.priorAuthId || validated.id;
+
+    if (priorAuthId) {
+      const result = await pool.query(
+        `SELECT pa.*,
+                p.first_name, p.last_name
+           FROM prior_authorizations pa
+           JOIN patients p ON pa.patient_id = p.id
+          WHERE pa.id = $1 AND pa.tenant_id = $2`,
+        [priorAuthId, tenantId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Prior authorization not found' });
+      }
+
+      const pa = result.rows[0];
+      if (!['draft', 'pending', 'more_info_needed'].includes(pa.status)) {
+        return res.status(400).json({ error: 'Prior authorization has already been submitted' });
+      }
+
+      const workflowResult = await getPriorAuthService().submitPriorAuth({
+        tenantId,
+        priorAuthId,
+        patientId: pa.patient_id,
+        patientName: `${pa.first_name || ''} ${pa.last_name || ''}`.trim(),
+        medicationName: pa.medication_name,
+        procedureCode: pa.procedure_code,
+        diagnosisCode: pa.diagnosis_code,
+        diagnosisCodes: pa.diagnosis_codes,
+        payerName: pa.insurance_name || pa.payer_name,
+        payerId: pa.payer_id,
+        memberId: pa.member_id,
+        providerNpi: pa.provider_npi || pa.ordering_provider_npi,
+        clinicalJustification: pa.clinical_justification,
+        urgency: pa.urgency,
+      });
+
+      await pool.query(
+        `UPDATE prior_authorizations
+            SET status = 'submitted',
+                submitted_at = COALESCE(submitted_at, $1),
+                updated_at = $1,
+                updated_by = $2,
+                notes = COALESCE(notes, '') || $3
+          WHERE id = $4 AND tenant_id = $5`,
+        [
+          workflowResult.submittedAt,
+          userId || null,
+          `\n[${workflowResult.submittedAt}] Submitted via ${workflowResult.provider} (${workflowResult.externalReferenceId})`,
+          priorAuthId,
+          tenantId,
+        ]
+      );
+
+      return res.json({
+        success: true,
+        message: 'Prior authorization submitted successfully',
+        status: 'submitted',
+        provider: workflowResult.provider,
+        mode: workflowResult.mode,
+        externalReferenceId: workflowResult.externalReferenceId,
+        estimatedDecisionDate: workflowResult.estimatedDecisionDate,
+        result: workflowResult,
+      });
+    }
+
+    const workflowResult = await getPriorAuthService().submitPriorAuth({
+      tenantId,
+      patientId: validated.patientId,
+      patientName: validated.patientName,
+      medicationName: validated.medicationName,
+      procedureCode: validated.procedureCode,
+      diagnosisCode: validated.diagnosisCode,
+      diagnosisCodes: validated.diagnosisCodes,
+      payerName: validated.payerName || validated.insuranceName,
+      payerId: validated.payerId,
+      memberId: validated.memberId,
+      providerNpi: validated.providerNpi,
+      clinicalJustification: validated.clinicalJustification,
+      urgency: validated.urgency,
+    });
+
+    return res.json({
+      success: true,
+      message: 'Prior authorization submitted successfully',
+      status: workflowResult.status,
+      provider: workflowResult.provider,
+      mode: workflowResult.mode,
+      externalReferenceId: workflowResult.externalReferenceId,
+      estimatedDecisionDate: workflowResult.estimatedDecisionDate,
+      result: workflowResult,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'Validation error', details: error.issues });
+    }
+    next(error);
+  }
+});
+
 // POST /api/prior-auth/:id/submit - Submit PA to payer
 router.post('/:id/submit', async (req: AuthedRequest, res, next) => {
   try {
@@ -832,14 +961,26 @@ router.get('/:id/status', async (req: AuthedRequest, res, next) => {
     }
 
     const pa = result.rows[0];
+    const workflowStatus = await getPriorAuthService().checkPAStatus({
+      tenantId,
+      priorAuthId: id!,
+      externalReferenceId: pa.insurance_auth_number || pa.reference_number || pa.auth_number,
+      currentStatus: pa.status,
+      payerName: pa.insurance_name || pa.payer_name,
+      submittedAt: pa.submitted_at,
+    });
 
     const statusResponse = {
       authNumber: pa.auth_number,
       status: pa.status,
       submittedAt: pa.submitted_at,
       lastUpdated: pa.updated_at,
+      provider: workflowStatus.provider,
+      mode: workflowStatus.mode,
+      externalReferenceId: workflowStatus.externalReferenceId,
+      workflowPayerStatus: workflowStatus.payerStatus,
       payerStatus:
-        pa.status === 'submitted'
+        (pa.status === 'submitted'
           ? 'In Review'
           : pa.status === 'approved'
             ? 'Approved'
@@ -847,13 +988,17 @@ router.get('/:id/status', async (req: AuthedRequest, res, next) => {
               ? 'Denied'
               : pa.status === 'more_info_needed'
                 ? 'Pending Additional Information'
-                : 'Not Submitted',
+                : 'Not Submitted'),
       insuranceAuthNumber: pa.insurance_auth_number,
       denialReason: pa.denial_reason,
       estimatedDecisionDate:
-        pa.status === 'submitted'
+        workflowStatus.estimatedDecisionDate ||
+        (pa.status === 'submitted'
           ? new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
-          : null,
+          : null),
+      requiredNextSteps: workflowStatus.requiredNextSteps,
+      workflow: workflowStatus,
+      workflowTimeline: workflowStatus.timeline,
       timeline: [
         {
           date: pa.created_at,

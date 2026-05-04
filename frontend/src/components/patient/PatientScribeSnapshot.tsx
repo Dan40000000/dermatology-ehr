@@ -11,10 +11,11 @@ import {
 } from '../../api';
 import { ScribeSummaryCard } from '../ScribeSummaryCard';
 import {
-  buildConcerns,
   buildDiagnoses,
+  buildNextSteps,
   buildSummaryText,
   buildSymptoms,
+  buildTreatmentPlan,
   buildTests
 } from '../../utils/scribeSummary';
 
@@ -49,12 +50,16 @@ export function PatientScribeSnapshot({
       const data = await fetchPatientSummaries(session.tenantId, session.accessToken, patientId);
       const latest = data.summaries?.[0] || null;
       setSummary(latest);
+      setNote(null);
 
       if (latest?.ambientNoteId) {
-        const noteData = await fetchAmbientNote(session.tenantId, session.accessToken, latest.ambientNoteId);
-        setNote(noteData.note);
-      } else {
-        setNote(null);
+        try {
+          const noteData = await fetchAmbientNote(session.tenantId, session.accessToken, latest.ambientNoteId);
+          setNote(noteData.note);
+        } catch (noteError: any) {
+          showError(noteError.message || 'AI note details unavailable; showing saved summary');
+          setNote(null);
+        }
       }
     } catch (error: any) {
       showError(error.message || 'Failed to load AI scribe snapshot');
@@ -107,9 +112,10 @@ export function PatientScribeSnapshot({
   }
 
   const symptoms = buildSymptoms(note, summary);
-  const concerns = buildConcerns(note);
   const potentialDiagnoses = buildDiagnoses(note, summary);
   const suggestedTests = buildTests(note, summary);
+  const treatmentPlan = buildTreatmentPlan(note, summary);
+  const nextSteps = buildNextSteps(note, summary);
   const summaryText = buildSummaryText(note, summary);
 
   const hasCptCodes = note?.suggestedCptCodes && note.suggestedCptCodes.length > 0;
@@ -151,11 +157,11 @@ export function PatientScribeSnapshot({
         statusLabel={summary.sharedAt ? 'Shared' : 'Saved to chart'}
         actions={actions}
         symptoms={symptoms}
-        concerns={concerns}
         potentialDiagnoses={potentialDiagnoses}
         suggestedTests={suggestedTests}
+        treatmentPlan={treatmentPlan}
+        nextSteps={nextSteps}
         summaryText={summaryText}
-        summaryLabel="Summary of Appointment"
         showDetails
         compact
         footerNote={`Stored in ${patientName}'s chart`}

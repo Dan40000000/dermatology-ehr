@@ -317,16 +317,13 @@ encountersRouter.post("/:id/status", requireAuth, requireRoles(["provider", "adm
   const encId = String(req.params.id);
   const newStatus = parsed.data.status;
 
-  await pool.query(`update encounters set status = $1, updated_at = now() where id = $2 and tenant_id = $3`, [
+  const updated = await pool.query(`update encounters set status = $1, updated_at = now() where id = $2 and tenant_id = $3`, [
     newStatus,
     encId,
     tenantId,
   ]);
-  await pool.query(
-    `insert into audit_log(id, tenant_id, actor_id, action, entity, entity_id)
-     values ($1,$2,$3,$4,$5,$6)`,
-    [crypto.randomUUID(), tenantId, req.user!.id, `encounter_status_${newStatus}`, "encounter", encId],
-  );
+  if (!updated.rowCount) return res.status(404).json({ error: "Not found" });
+
   await auditLog(tenantId, req.user!.id, `encounter_status_${newStatus}`, "encounter", encId);
 
   if (shouldAutoStopAmbientRecording(newStatus)) {

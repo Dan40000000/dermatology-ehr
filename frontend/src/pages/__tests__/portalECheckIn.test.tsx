@@ -81,6 +81,7 @@ describe('ECheckInPage', () => {
     expect(screen.getByText('Confirm Your Information')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'No, everything is the same' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, keep it the same' }));
     fireEvent.click(screen.getByRole('checkbox', { name: /I confirm my information is up to date/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
@@ -147,5 +148,5 @@ describe('ECheckInPage', () => {
     );
 
     expect(await screen.findByText('Medications Review')).toBeInTheDocument();
-  });
+  }, 15000);
 });

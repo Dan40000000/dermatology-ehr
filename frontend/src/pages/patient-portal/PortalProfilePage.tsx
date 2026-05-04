@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
+import { PortalPharmacyLookup } from '../../components/patient-portal/PortalPharmacyLookup';
 import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
 import { changePortalPassword, fetchPortalProfile, updatePortalProfile } from '../../portalApi';
 import { formatPhoneDisplay } from '../../utils/phone';
@@ -22,6 +23,11 @@ interface PatientProfile {
   emergencyContactPhone: string;
   preferredLanguage: string;
   preferredPharmacy: string;
+  pharmacyId: string | null;
+  pharmacyNcpdp: string | null;
+  pharmacyName: string;
+  pharmacyPhone: string;
+  pharmacyAddress: string;
   portalEmail?: string;
   lastLogin?: string | null;
   emailVerified?: boolean;
@@ -76,7 +82,12 @@ export function PortalProfilePage() {
         emergencyContactRelationship: portalPatient.emergencyContactRelationship || '',
         emergencyContactPhone: portalPatient.emergencyContactPhone || '',
         preferredLanguage: 'English',
-        preferredPharmacy: '',
+        preferredPharmacy: portalPatient.pharmacyName || '',
+        pharmacyId: portalPatient.pharmacyId || null,
+        pharmacyNcpdp: portalPatient.pharmacyNcpdp || null,
+        pharmacyName: portalPatient.pharmacyName || '',
+        pharmacyPhone: portalPatient.pharmacyPhone || '',
+        pharmacyAddress: portalPatient.pharmacyAddress || '',
         portalEmail: portalPatient.portalEmail || portalPatient.email || '',
         lastLogin: portalPatient.lastLogin || null,
         emailVerified: portalPatient.emailVerified ?? true,
@@ -116,6 +127,11 @@ export function PortalProfilePage() {
           'emergencyContactName',
           'emergencyContactRelationship',
           'emergencyContactPhone',
+          'pharmacyId',
+          'pharmacyNcpdp',
+          'pharmacyName',
+          'pharmacyPhone',
+          'pharmacyAddress',
         ] as const;
 
         allowedFields.forEach((field) => {
@@ -1069,6 +1085,76 @@ export function PortalProfilePage() {
                 <h3 className="section-title">Communication Preferences</h3>
               </div>
               <div className="section-content">
+                <div className="preference-item" style={{ alignItems: 'flex-start' }}>
+                  <div className="preference-info" style={{ width: '100%' }}>
+                    <h4>Preferred Pharmacy</h4>
+                    <p>The pharmacy your dermatology prescriptions should be sent to.</p>
+                    {editing && sessionToken && tenantId ? (
+                      <div style={{ marginTop: '1rem' }}>
+                        <PortalPharmacyLookup
+                          tenantId={tenantId}
+                          portalToken={sessionToken}
+                          selected={{
+                            pharmacyId: editForm.pharmacyId ?? profile?.pharmacyId ?? null,
+                            pharmacyNcpdp: editForm.pharmacyNcpdp ?? profile?.pharmacyNcpdp ?? null,
+                            pharmacyName: editForm.pharmacyName ?? profile?.pharmacyName ?? '',
+                            pharmacyPhone: editForm.pharmacyPhone ?? profile?.pharmacyPhone ?? '',
+                            pharmacyAddress: editForm.pharmacyAddress ?? profile?.pharmacyAddress ?? '',
+                          }}
+                          onSelect={(selection) => setEditForm(prev => ({
+                            ...prev,
+                            ...selection,
+                            preferredPharmacy: selection.pharmacyName,
+                          }))}
+                        />
+                        <div className="form-grid" style={{ marginTop: '1rem' }}>
+                          <div className="form-group">
+                            <label className="form-label">Pharmacy Name</label>
+                            <input
+                              className="form-input"
+                              value={editForm.pharmacyName ?? profile?.pharmacyName ?? ''}
+                              onChange={e => setEditForm(prev => ({
+                                ...prev,
+                                pharmacyId: null,
+                                pharmacyNcpdp: null,
+                                pharmacyName: e.target.value,
+                                preferredPharmacy: e.target.value,
+                              }))}
+                              placeholder="Enter manually if not found"
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Phone</label>
+                            <input
+                              className="form-input"
+                              value={editForm.pharmacyPhone ?? profile?.pharmacyPhone ?? ''}
+                              onChange={e => setEditForm(prev => ({ ...prev, pharmacyPhone: e.target.value }))}
+                            />
+                          </div>
+                          <div className="form-group full-width">
+                            <label className="form-label">Address</label>
+                            <input
+                              className="form-input"
+                              value={editForm.pharmacyAddress ?? profile?.pharmacyAddress ?? ''}
+                              onChange={e => setEditForm(prev => ({ ...prev, pharmacyAddress: e.target.value }))}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <p style={{ marginTop: '0.5rem', color: profile?.pharmacyName ? '#0f172a' : '#94a3b8' }}>
+                        {profile?.pharmacyName
+                          ? [
+                              profile.pharmacyName,
+                              profile.pharmacyAddress,
+                              formatPhoneDisplay(profile.pharmacyPhone),
+                              profile.pharmacyNcpdp ? `NCPDP ${profile.pharmacyNcpdp}` : '',
+                            ].filter(Boolean).join(' • ')
+                          : 'No preferred pharmacy on file'}
+                      </p>
+                    )}
+                  </div>
+                </div>
                 <div className="preference-item">
                   <div className="preference-info">
                     <h4>Appointment Reminders</h4>
@@ -1097,6 +1183,14 @@ export function PortalProfilePage() {
                   </div>
                   <div className="toggle" />
                 </div>
+                {editing && (
+                  <div className="form-actions">
+                    <button className="btn btn-secondary" onClick={handleCancel}>Cancel</button>
+                    <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                      {saving ? 'Saving...' : 'Save Changes'}
+                    </button>
+                  </div>
+                )}
               </div>
             </>
           )}

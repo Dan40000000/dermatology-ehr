@@ -7,6 +7,7 @@ import {
   fetchDefaultFeeSchedule,
   fetchFeeForCPT,
   fetchProceduresForDiagnosis,
+  fetchSelfPayProcedureCatalog,
   fetchSuggestedProcedures,
   type AdaptiveProcedureSuggestion,
 } from '../../api';
@@ -18,6 +19,8 @@ interface ProcedureSearchModalProps {
   onClose: () => void;
   onSelect: (procedure: {
     code: string;
+    codeType?: 'CPT' | 'HCPCS' | 'INTERNAL';
+    billingRoute?: 'insurance' | 'self_pay' | 'non_billable';
     description: string;
     quantity: number;
     feeCents: number;
@@ -37,6 +40,9 @@ interface CatalogProcedure extends CPTCode {
   packageSessions?: number;
   typicalUnits?: number;
   isCosmetic?: boolean;
+  codeType?: 'CPT' | 'HCPCS' | 'INTERNAL';
+  billingRoute?: 'insurance' | 'self_pay' | 'non_billable';
+  requiresDiagnosis?: boolean;
 }
 
 interface ProcedureGroup {
@@ -59,6 +65,15 @@ const MEDICAL_GROUP_ORDER = [
   'Injections',
   'Phototherapy',
   'Special Procedures',
+  'Self-Pay Office Visits',
+  'Self-Pay Medical Procedures',
+  'Self-Pay Biopsies',
+  'Self-Pay Shave Removals',
+  'Self-Pay Benign Excisions',
+  'Self-Pay Malignant Excisions',
+  'Self-Pay Mohs Surgery',
+  'Self-Pay Destruction',
+  'Self-Pay Injections & Medications',
   'Other Medical Procedures',
 ] as const;
 
@@ -174,6 +189,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
   const [loadingFrequent, setLoadingFrequent] = useState(false);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [medicalCatalog, setMedicalCatalog] = useState<CatalogProcedure[]>([]);
+  const [selfPayCatalog, setSelfPayCatalog] = useState<CatalogProcedure[]>([]);
   const [cosmeticCatalog, setCosmeticCatalog] = useState<CatalogProcedure[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
@@ -214,9 +230,10 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
 
     Promise.allSettled([
       fetchDefaultFeeSchedule(session.tenantId, session.accessToken),
+      fetchSelfPayProcedureCatalog(session.tenantId, session.accessToken),
       fetchCosmeticProcedureCatalog(session.tenantId, session.accessToken),
     ])
-      .then(([medicalResult, cosmeticResult]) => {
+      .then(([medicalResult, selfPayResult, cosmeticResult]) => {
         if (cancelled) return;
 
         if (medicalResult.status === 'fulfilled') {
@@ -229,6 +246,9 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
                 category: item.category || 'Other Medical Procedures',
                 defaultFeeCents: Number(item.feeCents ?? item.fee_cents ?? 0),
                 isCommon: false,
+                codeType: item.codeType || item.code_type || 'CPT',
+                billingRoute: item.billingRoute || item.billing_route || 'insurance',
+                requiresDiagnosis: item.requiresDiagnosis ?? item.requires_diagnosis ?? true,
                 source: 'medical',
                 groupLabel: getProcedureGroupLabel(item, 'medical'),
                 feeScheduleId: item.feeScheduleId || item.fee_schedule_id || '',
@@ -245,6 +265,36 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
           setMedicalCatalog([]);
         }
 
+        if (selfPayResult.status === 'fulfilled') {
+          const normalizedSelfPay = dedupeProceduresByCode(
+            selfPayResult.value
+              .map((item): CatalogProcedure => ({
+                code: item.cptCode,
+                description: item.cptDescription,
+                category: item.category || 'Self-Pay Medical Procedures',
+                defaultFeeCents: item.feeCents,
+                isCommon: false,
+                codeType: item.codeType || 'INTERNAL',
+                billingRoute: item.billingRoute || 'self_pay',
+                requiresDiagnosis: item.requiresDiagnosis ?? false,
+                source: 'medical',
+                groupLabel: getProcedureGroupLabel(item, 'medical'),
+                feeScheduleId: item.feeScheduleId || '',
+                scheduleName: item.scheduleName || '',
+                subcategory: item.subcategory || '',
+                notes: item.notes || '',
+                packageSessions: item.packageSessions,
+                typicalUnits: item.typicalUnits,
+                isCosmetic: false,
+              }))
+              .filter((item) => item.code)
+          );
+          setSelfPayCatalog(normalizedSelfPay);
+        } else {
+          console.error('Failed to load self-pay catalog:', selfPayResult.reason);
+          setSelfPayCatalog([]);
+        }
+
         if (cosmeticResult.status === 'fulfilled') {
           const normalizedCosmetic = dedupeProceduresByCode(
             cosmeticResult.value
@@ -254,6 +304,9 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
                 category: item.category || 'Other Cosmetic Services',
                 defaultFeeCents: item.feeCents,
                 isCommon: false,
+                codeType: item.codeType || 'INTERNAL',
+                billingRoute: item.billingRoute || 'self_pay',
+                requiresDiagnosis: item.requiresDiagnosis ?? false,
                 source: 'cosmetic',
                 groupLabel: getProcedureGroupLabel(item, 'cosmetic'),
                 feeScheduleId: item.feeScheduleId || '',
@@ -272,7 +325,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
           setCosmeticCatalog([]);
         }
 
-        if (medicalResult.status === 'rejected' && cosmeticResult.status === 'rejected') {
+        if (medicalResult.status === 'rejected' && selfPayResult.status === 'rejected' && cosmeticResult.status === 'rejected') {
           showError('Failed to load procedure catalog');
         }
       })
@@ -291,8 +344,8 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
   const showSmartSuggestions = normalizedQuery.length === 0;
 
   const medicalGroups = useMemo(
-    () => buildProcedureGroups(medicalCatalog, 'medical', normalizedQuery),
-    [medicalCatalog, normalizedQuery]
+    () => buildProcedureGroups([...medicalCatalog, ...selfPayCatalog], 'medical', normalizedQuery),
+    [medicalCatalog, selfPayCatalog, normalizedQuery]
   );
 
   const cosmeticGroups = useMemo(
@@ -302,13 +355,13 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
 
   const catalogByCode = useMemo(() => {
     const procedures = new Map<string, CatalogProcedure>();
-    for (const procedure of [...medicalCatalog, ...cosmeticCatalog]) {
+    for (const procedure of [...medicalCatalog, ...selfPayCatalog, ...cosmeticCatalog]) {
       if (!procedures.has(procedure.code)) {
         procedures.set(procedure.code, procedure);
       }
     }
     return procedures;
-  }, [medicalCatalog, cosmeticCatalog]);
+  }, [medicalCatalog, selfPayCatalog, cosmeticCatalog]);
 
   const visibleProcedureCount = useMemo(
     () => [...medicalGroups, ...cosmeticGroups].reduce((total, group) => total + group.items.length, 0),
@@ -316,7 +369,9 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
   );
 
   const selectedProcedureIsCosmetic = isCosmeticProcedure(selectedCode);
-  const canAddProcedure = Boolean(selectedCode) && (selectedProcedureIsCosmetic || linkedDiagnosisIds.length > 0);
+  const selectedBillingRoute = selectedCode?.billingRoute || (selectedProcedureIsCosmetic ? 'self_pay' : 'insurance');
+  const selectedRequiresDiagnosis = selectedCode?.requiresDiagnosis ?? selectedBillingRoute === 'insurance';
+  const canAddProcedure = Boolean(selectedCode) && (!selectedRequiresDiagnosis || linkedDiagnosisIds.length > 0);
 
   const handleCodeSelect = async (code: CatalogProcedure | CPTCode) => {
     const cosmetic = isCosmeticProcedure(code);
@@ -327,6 +382,9 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
       category: code.category,
       defaultFeeCents: code.defaultFeeCents || 0,
       isCommon: code.isCommon,
+      codeType: code.codeType || (cosmetic ? 'INTERNAL' : 'CPT'),
+      billingRoute: code.billingRoute || (cosmetic ? 'self_pay' : 'insurance'),
+      requiresDiagnosis: code.requiresDiagnosis ?? !cosmetic,
       source: cosmetic ? 'cosmetic' : 'medical',
       groupLabel: getProcedureGroupLabel(code, cosmetic ? 'cosmetic' : 'medical'),
       feeScheduleId,
@@ -350,7 +408,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
       }
     }
 
-    if (cosmetic) {
+    if ((normalizedCode.billingRoute || (cosmetic ? 'self_pay' : 'insurance')) !== 'insurance') {
       setLinkedDiagnosisIds([]);
       return;
     }
@@ -371,6 +429,8 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
 
     onSelect({
       code: selectedCode.code,
+      codeType: selectedCode.codeType,
+      billingRoute: selectedCode.billingRoute,
       description: selectedCode.description,
       quantity,
       feeCents,
@@ -388,6 +448,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
     setFrequentlyUsed([]);
     setPairedProcedures([]);
     setMedicalCatalog([]);
+    setSelfPayCatalog([]);
     setCosmeticCatalog([]);
     setExpandedGroups({});
     onClose();
@@ -422,6 +483,9 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
       category: suggestion.category,
       defaultFeeCents: suggestion.defaultFeeCents,
       isCommon: false,
+      codeType: cosmetic ? 'INTERNAL' : 'CPT',
+      billingRoute: cosmetic ? 'self_pay' : 'insurance',
+      requiresDiagnosis: !cosmetic,
       source: cosmetic ? 'cosmetic' : 'medical',
       groupLabel: getProcedureGroupLabel({ category: suggestion.category }, cosmetic ? 'cosmetic' : 'medical'),
       subcategory: '',
@@ -669,7 +733,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
                                   ${((procedure.defaultFeeCents || 0) / 100).toFixed(2)}
                                 </div>
                                 <div style={{ marginTop: '0.28rem', fontSize: '0.68rem', color: '#64748b' }}>
-                                  {source === 'cosmetic' ? 'Self-pay' : 'Medical billing'}
+                                  {procedure.billingRoute === 'self_pay' ? 'Self-pay' : procedure.billingRoute === 'non_billable' ? 'No bill' : 'Insurance billing'}
                                 </div>
                               </div>
                             </div>
@@ -751,7 +815,7 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
           (procedure) => `${procedure.frequencyCount}x used`
         )}
 
-        {catalogLoading && medicalCatalog.length === 0 && cosmeticCatalog.length === 0 ? (
+        {catalogLoading && medicalCatalog.length === 0 && selfPayCatalog.length === 0 && cosmeticCatalog.length === 0 ? (
           <div style={{
             padding: '1rem',
             borderRadius: '10px',
@@ -765,8 +829,8 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
         ) : (
           <>
             {renderCatalogSection(
-              'Medical Billing Catalog',
-              'Grouped by fee schedule category from the standard fee schedule. Diagnosis link required for insurance/CMS billing.',
+              'Medical / Self-Pay Medical Catalog',
+              'Standard insurance procedures plus workbook-backed self-pay medical services. Diagnosis link is required only for insurance/CMS billing.',
               'medical',
               medicalGroups,
               '#0369a1',
@@ -798,6 +862,14 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
             </div>
             <div style={{ fontWeight: 700, color: selectedProcedureIsCosmetic ? '#6b21a8' : '#047857', marginBottom: '1rem' }}>
               {selectedCode.code} - {selectedCode.description}
+            </div>
+            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+              <span style={{ padding: '0.18rem 0.5rem', borderRadius: '999px', background: '#eef2ff', color: '#3730a3', fontSize: '0.68rem', fontWeight: 800 }}>
+                {selectedCode.codeType || 'CPT'}
+              </span>
+              <span style={{ padding: '0.18rem 0.5rem', borderRadius: '999px', background: selectedBillingRoute === 'self_pay' ? '#ede9fe' : '#dbeafe', color: selectedBillingRoute === 'self_pay' ? '#5b21b6' : '#1e40af', fontSize: '0.68rem', fontWeight: 800 }}>
+                {selectedBillingRoute === 'self_pay' ? 'Patient responsible' : selectedBillingRoute === 'non_billable' ? 'No bill' : 'Insurance claim'}
+              </span>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
@@ -849,9 +921,9 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
                 color: '#334155',
                 marginBottom: '0.5rem'
               }}>
-                {selectedProcedureIsCosmetic
-                  ? 'Diagnosis Links (Optional for cosmetic / self-pay)'
-                  : 'Link to Diagnoses (Required for insurance / CMS billing)'}
+                {selectedRequiresDiagnosis
+                  ? 'Link to Diagnoses (Required for insurance / CMS billing)'
+                  : 'Diagnosis Links (Optional for self-pay / non-claim services)'}
               </label>
 
               {!Array.isArray(diagnoses) || diagnoses.length === 0 ? (
@@ -863,9 +935,9 @@ export function ProcedureSearchModal({ isOpen, onClose, onSelect, diagnoses, pro
                   fontSize: '0.76rem',
                   color: selectedProcedureIsCosmetic ? '#6b21a8' : '#92400e'
                 }}>
-                  {selectedProcedureIsCosmetic
-                    ? 'No diagnosis is required for cosmetic/self-pay procedures. You can add one later if you want a clinical reference.'
-                    : 'No diagnoses added yet. Add a diagnosis first so this medical charge is linked correctly.'}
+                  {selectedRequiresDiagnosis
+                    ? 'No diagnoses added yet. Add a diagnosis first so this medical charge is linked correctly.'
+                    : 'No diagnosis is required for self-pay procedures. You can add one later if you want a clinical reference.'}
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>

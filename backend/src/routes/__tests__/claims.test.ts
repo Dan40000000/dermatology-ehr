@@ -115,6 +115,7 @@ describe("Claims routes", () => {
     });
     expect(res.status).toBe(201);
     expect(res.body.id).toBeTruthy();
+    expect(queryMock.mock.calls[1][1]).toEqual(expect.arrayContaining(["coding_review"]));
     expect(auditMock).toHaveBeenCalled();
   });
 
@@ -131,12 +132,35 @@ describe("Claims routes", () => {
 
   it("PUT /claims/:id/status updates claim", async () => {
     queryMock
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "claim-1" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "claim-1", status: "ready" }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     const res = await request(app).put("/claims/claim-1/status").send({ status: "submitted", notes: "ok" });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
+  });
+
+  it("PUT /claims/:id/status blocks submission before coding release", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "claim-1", status: "coding_review" }] });
+    const res = await request(app).put("/claims/claim-1/status").send({ status: "submitted" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("coding review");
+  });
+
+  it("POST /claims/:id/release releases claim for submission", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: "claim-1", status: "coding_review", scrub_status: "clean", payer: "Payer" }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/claims/claim-1/release").send({ notes: "reviewed" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("ready");
+    expect(auditMock).toHaveBeenCalledWith("tenant-1", "user-1", "claim_coding_review_released", "claim", "claim-1");
   });
 
   it("POST /claims/:id/payments returns 404 when claim missing", async () => {
@@ -298,7 +322,7 @@ describe("Claims routes", () => {
   it("POST /claims/submit returns batch results", async () => {
     queryMock
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ scrub_status: "clean" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: "ready", scrub_status: "clean" }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -307,6 +331,16 @@ describe("Claims routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.submitted).toEqual(["claim-2"]);
     expect(res.body.errors).toHaveLength(1);
+  });
+
+  it("POST /claims/submit rejects unreleased coding review claims", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [{ status: "coding_review", scrub_status: "clean" }] });
+
+    const res = await request(app).post("/claims/submit").send({ claimIds: ["claim-1"] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.submitted).toEqual([]);
+    expect(res.body.errors[0].error).toContain("coding review");
   });
 
   it("GET /claims/denials returns list", async () => {

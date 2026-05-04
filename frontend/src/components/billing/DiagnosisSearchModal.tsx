@@ -2,17 +2,111 @@ import { useState, useEffect } from 'react';
 import { Modal } from '../ui';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import { searchICD10Codes, fetchSuggestedDiagnoses, type AdaptiveDiagnosisSuggestion } from '../../api';
-import type { ICD10Code } from '../../types';
+import { searchICD10Codes, fetchSuggestedDiagnoses, type AdaptiveDiagnosisSuggestion, type PatientDiagnosisSummary } from '../../api';
+import type { EncounterDiagnosis, ICD10Code } from '../../types';
 
 interface DiagnosisSearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSelect: (code: ICD10Code, isPrimary: boolean) => void;
   providerId?: string;
+  patientDiagnoses?: PatientDiagnosisSummary[];
+  currentDiagnoses?: EncounterDiagnosis[];
+  defaultPrimary?: boolean;
+  contextText?: string;
 }
 
-export function DiagnosisSearchModal({ isOpen, onClose, onSelect, providerId }: DiagnosisSearchModalProps) {
+const DOCUMENTATION_DIAGNOSIS_SUGGESTIONS: Array<ICD10Code & { keywords: string[]; reason: string }> = [
+  {
+    code: 'C44.41',
+    description: 'Basal cell carcinoma of skin of scalp and neck',
+    category: 'Skin cancer - BCC',
+    isCommon: true,
+    keywords: ['basal cell', 'bcc', 'neck', 'scalp', 'mohs', 'trapezial'],
+    reason: 'BCC/Mohs documentation',
+  },
+  {
+    code: 'C44.319',
+    description: 'Basal cell carcinoma of skin of other parts of face',
+    category: 'Skin cancer - BCC',
+    isCommon: true,
+    keywords: ['basal cell', 'bcc', 'face', 'cheek', 'forehead', 'temple'],
+    reason: 'facial BCC documentation',
+  },
+  {
+    code: 'C44.42',
+    description: 'Squamous cell carcinoma of skin of scalp and neck',
+    category: 'Skin cancer - SCC',
+    isCommon: true,
+    keywords: ['squamous cell', 'scc', 'neck', 'scalp', 'mohs'],
+    reason: 'SCC/Mohs documentation',
+  },
+  {
+    code: 'D48.5',
+    description: 'Neoplasm of uncertain behavior of skin',
+    category: 'Neoplasm - uncertain behavior',
+    isCommon: true,
+    keywords: ['rule out', 'r/o', 'uncertain behavior', 'biopsy', 'atypical lesion', 'neoplasm'],
+    reason: 'biopsy/uncertain lesion documentation',
+  },
+  {
+    code: 'L57.0',
+    description: 'Actinic keratosis',
+    category: 'Premalignant',
+    isCommon: true,
+    keywords: ['actinic keratosis', 'ak ', 'aks', 'cryotherapy', 'liquid nitrogen'],
+    reason: 'AK/cryotherapy documentation',
+  },
+  {
+    code: 'L82.1',
+    description: 'Other seborrheic keratosis',
+    category: 'Benign Neoplasm',
+    isCommon: true,
+    keywords: ['seborrheic keratosis', 'sk ', 'sks'],
+    reason: 'SK documentation',
+  },
+  {
+    code: 'L70.0',
+    description: 'Acne vulgaris',
+    category: 'Acne',
+    isCommon: true,
+    keywords: ['acne'],
+    reason: 'acne documentation',
+  },
+  {
+    code: 'L40.0',
+    description: 'Psoriasis vulgaris',
+    category: 'Psoriasis',
+    isCommon: true,
+    keywords: ['psoriasis', 'plaque'],
+    reason: 'psoriasis documentation',
+  },
+];
+
+function normalizeDiagnosisCode(code?: string | null): string {
+  return String(code || '').trim().toUpperCase();
+}
+
+function dedupeByCode<T extends { code: string }>(codes: T[]): T[] {
+  const seen = new Set<string>();
+  return codes.filter((item) => {
+    const normalized = normalizeDiagnosisCode(item.code);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
+export function DiagnosisSearchModal({
+  isOpen,
+  onClose,
+  onSelect,
+  providerId,
+  patientDiagnoses = [],
+  currentDiagnoses = [],
+  defaultPrimary = false,
+  contextText = '',
+}: DiagnosisSearchModalProps) {
   const { session } = useAuth();
   const { showError } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
@@ -22,6 +116,25 @@ export function DiagnosisSearchModal({ isOpen, onClose, onSelect, providerId }: 
   const [isPrimary, setIsPrimary] = useState(false);
   const [frequentlyUsed, setFrequentlyUsed] = useState<AdaptiveDiagnosisSuggestion[]>([]);
   const [loadingFrequent, setLoadingFrequent] = useState(false);
+  const currentDiagnosisCodes = new Set(currentDiagnoses.map((dx) => normalizeDiagnosisCode(dx.icd10Code)));
+
+  const patientDiagnosisChoices = dedupeByCode(
+    patientDiagnoses
+      .filter((dx) => dx.icd10Code && !currentDiagnosisCodes.has(normalizeDiagnosisCode(dx.icd10Code)))
+      .map((dx) => ({
+        code: dx.icd10Code,
+        description: dx.description || 'Diagnosis',
+        category: dx.isPrimary ? 'Prior primary diagnosis' : 'Prior patient diagnosis',
+        isCommon: Boolean(dx.isPrimary),
+        encounterDate: dx.encounterDate,
+      }))
+  ).slice(0, 8);
+
+  const normalizedContextText = contextText.toLowerCase();
+  const contextualDiagnosisChoices = DOCUMENTATION_DIAGNOSIS_SUGGESTIONS
+    .filter((dx) => !currentDiagnosisCodes.has(normalizeDiagnosisCode(dx.code)))
+    .filter((dx) => dx.keywords.some((keyword) => normalizedContextText.includes(keyword.toLowerCase())))
+    .slice(0, 6);
 
   // Load frequently used diagnoses when modal opens
   useEffect(() => {
@@ -36,6 +149,12 @@ export function DiagnosisSearchModal({ isOpen, onClose, onSelect, providerId }: 
         .finally(() => setLoadingFrequent(false));
     }
   }, [isOpen, session, providerId]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setIsPrimary(defaultPrimary);
+    }
+  }, [isOpen, defaultPrimary]);
 
   const handleSearch = async () => {
     if (!session || !searchQuery.trim()) return;
@@ -79,7 +198,15 @@ export function DiagnosisSearchModal({ isOpen, onClose, onSelect, providerId }: 
 
   const commonDiagnoses: ICD10Code[] = [
     { code: 'L57.0', description: 'Actinic keratosis', isCommon: true },
+    { code: 'D48.5', description: 'Neoplasm of uncertain behavior of skin', isCommon: true },
+    { code: 'Z12.83', description: 'Encounter for screening for malignant neoplasm of skin', isCommon: true },
+    { code: 'Z85.820', description: 'Personal history of malignant melanoma of skin', isCommon: true },
+    { code: 'Z85.828', description: 'Personal history of other malignant neoplasm of skin', isCommon: true },
+    { code: 'C44.41', description: 'Basal cell carcinoma of skin of scalp and neck', isCommon: true },
+    { code: 'C44.319', description: 'Basal cell carcinoma of skin of other parts of face', isCommon: true },
     { code: 'C44.91', description: 'Basal cell carcinoma of skin, unspecified', isCommon: true },
+    { code: 'C44.42', description: 'Squamous cell carcinoma of skin of scalp and neck', isCommon: true },
+    { code: 'C44.329', description: 'Squamous cell carcinoma of skin of other parts of face', isCommon: true },
     { code: 'C44.92', description: 'Squamous cell carcinoma of skin, unspecified', isCommon: true },
     { code: 'C43.9', description: 'Malignant melanoma of skin, unspecified', isCommon: true },
     { code: 'L82.1', description: 'Seborrheic keratosis', isCommon: true },
@@ -205,6 +332,100 @@ export function DiagnosisSearchModal({ isOpen, onClose, onSelect, providerId }: 
                   </button>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Patient Diagnoses */}
+        {searchResults.length === 0 && patientDiagnosisChoices.length > 0 && (
+          <div>
+            <h4 style={{
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              color: '#0f766e',
+              marginBottom: '0.75rem'
+            }}>
+              Pull From Patient Diagnosis History
+            </h4>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, 1fr)',
+              gap: '0.5rem',
+              marginBottom: '1.5rem'
+            }}>
+              {patientDiagnosisChoices.map((dx) => (
+                <button
+                  key={dx.code}
+                  type="button"
+                  onClick={() => setSelectedCode(dx)}
+                  style={{
+                    padding: '0.75rem',
+                    background: selectedCode?.code === dx.code ? '#ccfbf1' : '#f0fdfa',
+                    border: `1px solid ${selectedCode?.code === dx.code ? '#0f766e' : '#99f6e4'}`,
+                    borderRadius: '8px',
+                    textAlign: 'left',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: '0.875rem', color: '#0f766e' }}>
+                    {dx.code}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#374151', marginTop: '0.25rem' }}>
+                    {dx.description}
+                  </div>
+                  {dx.encounterDate && (
+                    <div style={{ fontSize: '0.68rem', color: '#64748b', marginTop: '0.35rem' }}>
+                      Prior encounter: {new Date(dx.encounterDate).toLocaleDateString()}
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Documentation Suggestions */}
+        {searchResults.length === 0 && contextualDiagnosisChoices.length > 0 && (
+          <div>
+            <h4 style={{
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              color: '#92400e',
+              marginBottom: '0.75rem'
+            }}>
+              Suggested From Appointment Documentation
+            </h4>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, 1fr)',
+              gap: '0.5rem',
+              marginBottom: '1.5rem'
+            }}>
+              {contextualDiagnosisChoices.map((dx) => (
+                <button
+                  key={dx.code}
+                  type="button"
+                  onClick={() => setSelectedCode(dx)}
+                  style={{
+                    padding: '0.75rem',
+                    background: selectedCode?.code === dx.code ? '#fef3c7' : '#fffbeb',
+                    border: `1px solid ${selectedCode?.code === dx.code ? '#d97706' : '#fde68a'}`,
+                    borderRadius: '8px',
+                    textAlign: 'left',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: '0.875rem', color: '#92400e' }}>
+                    {dx.code}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#374151', marginTop: '0.25rem' }}>
+                    {dx.description}
+                  </div>
+                  <div style={{ fontSize: '0.68rem', color: '#92400e', marginTop: '0.35rem', fontWeight: 600 }}>
+                    {dx.reason}
+                  </div>
+                </button>
+              ))}
             </div>
           </div>
         )}

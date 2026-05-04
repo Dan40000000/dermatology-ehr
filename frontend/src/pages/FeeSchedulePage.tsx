@@ -27,7 +27,33 @@ interface EditFeeFormData {
   cptCode: string;
   cptDescription: string;
   fee: string;
+  minPrice: string;
+  maxPrice: string;
+  category: string;
+  subcategory: string;
+  codeType: 'CPT' | 'HCPCS' | 'INTERNAL';
+  billingRoute: 'insurance' | 'self_pay' | 'non_billable';
+  isCosmetic: boolean;
+  requiresDiagnosis: boolean;
+  units: string;
+  notes: string;
 }
+
+const emptyEditFeeForm = (): EditFeeFormData => ({
+  cptCode: '',
+  cptDescription: '',
+  fee: '',
+  minPrice: '',
+  maxPrice: '',
+  category: '',
+  subcategory: '',
+  codeType: 'CPT',
+  billingRoute: 'insurance',
+  isCosmetic: false,
+  requiresDiagnosis: true,
+  units: '',
+  notes: '',
+});
 
 export function FeeSchedulePage() {
   const { session } = useAuth();
@@ -53,11 +79,7 @@ export function FeeSchedulePage() {
     cloneFromId: '',
   });
 
-  const [editFeeForm, setEditFeeForm] = useState<EditFeeFormData>({
-    cptCode: '',
-    cptDescription: '',
-    fee: '',
-  });
+  const [editFeeForm, setEditFeeForm] = useState<EditFeeFormData>(emptyEditFeeForm());
 
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<any[]>([]);
@@ -248,7 +270,7 @@ export function FeeSchedulePage() {
 
   const handleSaveFee = async () => {
     if (!session || !selectedSchedule || !editFeeForm.cptCode.trim() || !editFeeForm.fee) {
-      showError('CPT code and fee are required');
+      showError('Code and fee are required');
       return;
     }
 
@@ -257,6 +279,13 @@ export function FeeSchedulePage() {
       showError('Invalid fee amount');
       return;
     }
+    const toOptionalCents = (value: string) => {
+      if (!value.trim()) return null;
+      const parsed = parseFloat(value);
+      return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed * 100) : null;
+    };
+    const minPriceCents = toOptionalCents(editFeeForm.minPrice);
+    const maxPriceCents = toOptionalCents(editFeeForm.maxPrice);
 
     try {
       const feeCents = Math.round(fee * 100);
@@ -268,12 +297,22 @@ export function FeeSchedulePage() {
         {
           feeCents,
           cptDescription: editFeeForm.cptDescription.trim() || undefined,
+          category: editFeeForm.category.trim() || undefined,
+          subcategory: editFeeForm.subcategory.trim() || undefined,
+          codeType: editFeeForm.codeType,
+          billingRoute: editFeeForm.billingRoute,
+          isCosmetic: editFeeForm.isCosmetic,
+          requiresDiagnosis: editFeeForm.requiresDiagnosis,
+          units: editFeeForm.units.trim() || undefined,
+          minPriceCents,
+          maxPriceCents,
+          notes: editFeeForm.notes.trim() || undefined,
         }
       );
 
       showSuccess('Fee updated successfully');
       setShowEditFeeModal(false);
-      setEditFeeForm({ cptCode: '', cptDescription: '', fee: '' });
+      setEditFeeForm(emptyEditFeeForm());
       refreshScheduleItems();
     } catch (err: any) {
       showError(err.message || 'Failed to update fee');
@@ -294,6 +333,55 @@ export function FeeSchedulePage() {
     }
   };
 
+  const parseCsvLine = (line: string): string[] => {
+    const values: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      const next = line[i + 1];
+      if (char === '"' && next === '"') {
+        current += '"';
+        i++;
+      } else if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        values.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    values.push(current.trim());
+    return values;
+  };
+
+  const normalizeImportRow = (headers: string[], values: string[]) => {
+    const row = headers.reduce<Record<string, string>>((acc, header, index) => {
+      acc[header.toLowerCase().trim()] = values[index] || '';
+      return acc;
+    }, {});
+    const cptCode = row.code || row['cpt code'] || values[0] || '';
+    const description = row.description || values[1] || '';
+    const fee = row.fee || values[2] || '';
+    if (!cptCode || !fee) return null;
+    return {
+      cptCode,
+      description: description || undefined,
+      fee: parseFloat(fee),
+      codeType: row['code type'] || undefined,
+      billingRoute: row['billing route'] || undefined,
+      category: row.category || undefined,
+      subcategory: row.subcategory || undefined,
+      minPriceCents: row['min price'] ? Math.round(parseFloat(row['min price']) * 100) : undefined,
+      maxPriceCents: row['max price'] ? Math.round(parseFloat(row['max price']) * 100) : undefined,
+      units: row.units || undefined,
+      isCosmetic: row.cosmetic ? row.cosmetic.toLowerCase() === 'true' : undefined,
+      requiresDiagnosis: row['requires diagnosis'] ? row['requires diagnosis'].toLowerCase() === 'true' : undefined,
+      notes: row.notes || undefined,
+    };
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -306,20 +394,17 @@ export function FeeSchedulePage() {
       const text = event.target?.result as string;
       const lines = text.split('\n');
       const preview: any[] = [];
+      const headers = parseCsvLine(lines[0] || '');
 
       // Skip header row
       for (let i = 1; i < Math.min(lines.length, 11); i++) {
         const line = lines[i].trim();
         if (!line) continue;
 
-        const [cptCode, description, fee] = line.split(',').map(s => s.trim().replace(/^"|"$/g, ''));
+        const item = normalizeImportRow(headers, parseCsvLine(line));
 
-        if (cptCode && fee) {
-          preview.push({
-            cptCode,
-            description: description || '',
-            fee: parseFloat(fee),
-          });
+        if (item?.cptCode && Number.isFinite(item.fee)) {
+          preview.push(item);
         }
       }
 
@@ -338,20 +423,16 @@ export function FeeSchedulePage() {
         const text = event.target?.result as string;
         const lines = text.split('\n');
         const items: any[] = [];
+        const headers = parseCsvLine(lines[0] || '');
 
         // Skip header row
         for (let i = 1; i < lines.length; i++) {
           const line = lines[i].trim();
           if (!line) continue;
 
-          const [cptCode, description, fee] = line.split(',').map(s => s.trim().replace(/^"|"$/g, ''));
-
-          if (cptCode && fee) {
-            items.push({
-              cptCode,
-              description: description || undefined,
-              fee: parseFloat(fee),
-            });
+          const item = normalizeImportRow(headers, parseCsvLine(line));
+          if (item?.cptCode && Number.isFinite(item.fee)) {
+            items.push(item);
           }
         }
 
@@ -567,7 +648,7 @@ export function FeeSchedulePage() {
                     type="button"
                     className="btn-primary"
                     onClick={() => {
-                      setEditFeeForm({ cptCode: '', cptDescription: '', fee: '' });
+                      setEditFeeForm(emptyEditFeeForm());
                       setShowEditFeeModal(true);
                     }}
                   >
@@ -583,17 +664,19 @@ export function FeeSchedulePage() {
                   <table>
                     <thead>
                       <tr>
-                        <th>CPT Code</th>
+                        <th>Code</th>
+                        <th>Route</th>
                         <th>Category</th>
                         <th>Description</th>
                         <th>Fee</th>
+                        <th>Range / Unit</th>
                         <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filteredItems.length === 0 ? (
                         <tr>
-                          <td colSpan={5} style={{ textAlign: 'center', padding: '40px' }}>
+                          <td colSpan={7} style={{ textAlign: 'center', padding: '40px' }}>
                             <p className="muted">
                               {searchQuery || categoryFilter ? 'No matching CPT codes found' : 'No fees defined yet'}
                             </p>
@@ -602,7 +685,7 @@ export function FeeSchedulePage() {
                               className="btn-sm btn-primary"
                               style={{ marginTop: '12px' }}
                               onClick={() => {
-                                setEditFeeForm({ cptCode: '', cptDescription: '', fee: '' });
+                                setEditFeeForm(emptyEditFeeForm());
                                 setShowEditFeeModal(true);
                               }}
                             >
@@ -615,10 +698,21 @@ export function FeeSchedulePage() {
                           <tr key={item.id}>
                             <td className="strong">{item.cptCode || '-'}</td>
                             <td>
+                              <span className={`pill tiny ${item.billingRoute === 'self_pay' ? 'warning' : item.billingRoute === 'non_billable' ? 'muted' : 'info'}`}>
+                                {item.billingRoute === 'self_pay' ? 'Self-pay' : item.billingRoute === 'non_billable' ? 'No bill' : 'Insurance'}
+                              </span>
+                            </td>
+                            <td>
                               <span className="pill info tiny">{item.category || 'Uncategorized'}</span>
                             </td>
                             <td className="muted">{item.cptDescription || '-'}</td>
                             <td>{formatCurrency(Number(item.feeCents || 0))}</td>
+                            <td className="muted tiny">
+                              {item.minPriceCents || item.maxPriceCents
+                                ? `${item.minPriceCents ? formatCurrency(Number(item.minPriceCents)) : ''}${item.maxPriceCents ? ` - ${formatCurrency(Number(item.maxPriceCents))}` : ''}`
+                                : '-'}
+                              {item.units ? ` / ${item.units}` : ''}
+                            </td>
                             <td>
                               <div className="action-buttons">
                                 <button
@@ -626,10 +720,22 @@ export function FeeSchedulePage() {
                                   className="btn-sm btn-secondary"
                                   onClick={() => {
                                     const itemFeeCents = Number(item.feeCents || 0);
+                                    const minPriceCents = Number(item.minPriceCents || 0);
+                                    const maxPriceCents = Number(item.maxPriceCents || 0);
                                     setEditFeeForm({
                                       cptCode: item.cptCode || '',
                                       cptDescription: item.cptDescription || '',
                                       fee: ((Number.isFinite(itemFeeCents) ? itemFeeCents : 0) / 100).toFixed(2),
+                                      minPrice: minPriceCents ? (minPriceCents / 100).toFixed(2) : '',
+                                      maxPrice: maxPriceCents ? (maxPriceCents / 100).toFixed(2) : '',
+                                      category: item.category || '',
+                                      subcategory: item.subcategory || '',
+                                      codeType: item.codeType || 'CPT',
+                                      billingRoute: item.billingRoute || 'insurance',
+                                      isCosmetic: Boolean(item.isCosmetic),
+                                      requiresDiagnosis: item.requiresDiagnosis !== false,
+                                      units: item.units || '',
+                                      notes: item.notes || '',
                                     });
                                     setShowEditFeeModal(true);
                                   }}
@@ -730,18 +836,50 @@ export function FeeSchedulePage() {
         title={editFeeForm.cptCode ? 'Edit Fee' : 'Add Fee'}
         onClose={() => {
           setShowEditFeeModal(false);
-          setEditFeeForm({ cptCode: '', cptDescription: '', fee: '' });
+          setEditFeeForm(emptyEditFeeForm());
         }}
       >
         <div className="modal-form">
           <div className="form-field">
-            <label>CPT Code *</label>
+            <label>Code *</label>
             <input
               type="text"
               value={editFeeForm.cptCode}
               onChange={(e) => setEditFeeForm({ ...editFeeForm, cptCode: e.target.value })}
-              placeholder="e.g., 99213"
+              placeholder="e.g., 99213 or COS-BOTOX"
             />
+          </div>
+
+          <div className="form-field">
+            <label>Billing Route</label>
+            <select
+              value={editFeeForm.billingRoute}
+              onChange={(e) => {
+                const billingRoute = e.target.value as EditFeeFormData['billingRoute'];
+                setEditFeeForm({
+                  ...editFeeForm,
+                  billingRoute,
+                  codeType: billingRoute === 'self_pay' ? 'INTERNAL' : editFeeForm.codeType,
+                  requiresDiagnosis: billingRoute === 'insurance',
+                });
+              }}
+            >
+              <option value="insurance">Insurance</option>
+              <option value="self_pay">Self-pay / patient responsible</option>
+              <option value="non_billable">Non-billable</option>
+            </select>
+          </div>
+
+          <div className="form-field">
+            <label>Code Type</label>
+            <select
+              value={editFeeForm.codeType}
+              onChange={(e) => setEditFeeForm({ ...editFeeForm, codeType: e.target.value as EditFeeFormData['codeType'] })}
+            >
+              <option value="CPT">CPT</option>
+              <option value="HCPCS">HCPCS</option>
+              <option value="INTERNAL">Internal practice code</option>
+            </select>
           </div>
 
           <div className="form-field">
@@ -755,6 +893,26 @@ export function FeeSchedulePage() {
           </div>
 
           <div className="form-field">
+            <label>Category</label>
+            <input
+              type="text"
+              value={editFeeForm.category}
+              onChange={(e) => setEditFeeForm({ ...editFeeForm, category: e.target.value })}
+              placeholder="e.g., Neurotoxins, Self-Pay Biopsies"
+            />
+          </div>
+
+          <div className="form-field">
+            <label>Subcategory</label>
+            <input
+              type="text"
+              value={editFeeForm.subcategory}
+              onChange={(e) => setEditFeeForm({ ...editFeeForm, subcategory: e.target.value })}
+              placeholder="Optional"
+            />
+          </div>
+
+          <div className="form-field">
             <label>Fee (USD) *</label>
             <input
               type="number"
@@ -763,6 +921,72 @@ export function FeeSchedulePage() {
               value={editFeeForm.fee}
               onChange={(e) => setEditFeeForm({ ...editFeeForm, fee: e.target.value })}
               placeholder="0.00"
+            />
+          </div>
+
+          <div className="form-field">
+            <label>Min Price (USD)</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={editFeeForm.minPrice}
+              onChange={(e) => setEditFeeForm({ ...editFeeForm, minPrice: e.target.value })}
+              placeholder="Optional range min"
+            />
+          </div>
+
+          <div className="form-field">
+            <label>Max Price (USD)</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={editFeeForm.maxPrice}
+              onChange={(e) => setEditFeeForm({ ...editFeeForm, maxPrice: e.target.value })}
+              placeholder="Optional range max"
+            />
+          </div>
+
+          <div className="form-field">
+            <label>Units</label>
+            <input
+              type="text"
+              value={editFeeForm.units}
+              onChange={(e) => setEditFeeForm({ ...editFeeForm, units: e.target.value })}
+              placeholder="service, unit, syringe, add-on"
+            />
+          </div>
+
+          <div className="form-field">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={editFeeForm.isCosmetic}
+                onChange={(e) => setEditFeeForm({ ...editFeeForm, isCosmetic: e.target.checked })}
+              />
+              <span>Cosmetic/self-pay catalog item</span>
+            </label>
+          </div>
+
+          <div className="form-field">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={editFeeForm.requiresDiagnosis}
+                onChange={(e) => setEditFeeForm({ ...editFeeForm, requiresDiagnosis: e.target.checked })}
+              />
+              <span>Requires diagnosis link before claim release</span>
+            </label>
+          </div>
+
+          <div className="form-field">
+            <label>Notes</label>
+            <textarea
+              value={editFeeForm.notes}
+              onChange={(e) => setEditFeeForm({ ...editFeeForm, notes: e.target.value })}
+              placeholder="Optional billing/pricing notes"
+              rows={3}
             />
           </div>
         </div>

@@ -1,0 +1,106 @@
+{
+  "runId": "9fd2799e-73dc-4424-a200-8785e8cfd746",
+  "generatedAt": "2026-05-04T01:46:22.899Z",
+  "environment": {
+    "baseUrl": "http://localhost:4000",
+    "tenantHeader": "x-tenant-id",
+    "tenantIdMasked": "tenant...demo"
+  },
+  "actor": {
+    "role": "admin",
+    "userIdMasked": "u-***in"
+  },
+  "entities": {
+    "providerIdMasked": "prov-d...demo",
+    "patientIdMasked": "115b49...0d92",
+    "encounterIdMasked": "951fb9...5a3d"
+  },
+  "flow": {
+    "recordingIdMasked": "fbad81...c2d0",
+    "transcriptIdMasked": "b6e12c...6a2b",
+    "noteIdMasked": "8b826b...2d54",
+    "transcriptStatus": "completed",
+    "noteGenerationStatus": "completed",
+    "noteReviewStatusAfterApproval": "approved",
+    "noteAppliedToEncounter": true,
+    "patientSummaryGenerated": true,
+    "patientSummaryIdMasked": "937d0e...40b4"
+  },
+  "quality": {
+    "rubricPassed": true,
+    "checks": [
+      {
+        "id": "chief_complaint_present",
+        "label": "Chief complaint is present",
+        "passed": true,
+        "detail": "Length=41"
+      },
+      {
+        "id": "assessment_present",
+        "label": "Assessment is present",
+        "passed": true,
+        "detail": "Length=429"
+      },
+      {
+        "id": "plan_present",
+        "label": "Plan is present",
+        "passed": true,
+        "detail": "Length=1061"
+      },
+      {
+        "id": "summary_symptoms_present",
+        "label": "Formal summary contains symptoms",
+        "passed": true,
+        "detail": "symptoms=8"
+      },
+      {
+        "id": "summary_differential_present",
+        "label": "Formal summary contains probable diagnoses",
+        "passed": true,
+        "detail": "probableDiagnoses=4"
+      },
+      {
+        "id": "summary_differential_fields",
+        "label": "Probable diagnoses include condition + probability",
+        "passed": true,
+        "detail": "validated=4/4"
+      },
+      {
+        "id": "summary_tests_present",
+        "label": "Formal summary contains suggested tests",
+        "passed": true,
+        "detail": "suggestedTests=4"
+      },
+      {
+        "id": "summary_tests_fields",
+        "label": "Suggested tests include name + rationale",
+        "passed": true,
+        "detail": "validated=4/4"
+      },
+      {
+        "id": "patient_summary_present",
+        "label": "Patient-facing summary exists",
+        "passed": true,
+        "detail": "whatWeDiscussedLength=174"
+      }
+    ],
+    "score": {
+      "passed": 9,
+      "total": 9
+    },
+    "noteSignals": {
+      "hasChiefComplaint": true,
+      "hasAssessment": true,
+      "hasPlan": true,
+      "overallConfidence": "0.88",
+      "symptomCount": 8,
+      "probableDiagnosisCount": 4,
+      "suggestedTestCount": 4
+    }
+  },
+  "timingsMs": {
+    "total": 18238,
+    "transcriptionWait": 12022,
+    "noteGenerationWait": 6009
+  }
+}

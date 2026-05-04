@@ -11,19 +11,21 @@ import {
 } from '../../api';
 import { ScribeSummaryCard } from '../ScribeSummaryCard';
 import {
-  buildConcerns,
   buildDiagnoses,
+  buildNextSteps,
   buildSummaryText,
   buildSymptoms,
+  buildTreatmentPlan,
   buildTests
 } from '../../utils/scribeSummary';
 
 interface PatientScribeSummariesProps {
   patientId: string;
   patientName: string;
+  refreshSignal?: number;
 }
 
-export function PatientScribeSummaries({ patientId, patientName }: PatientScribeSummariesProps) {
+export function PatientScribeSummaries({ patientId, patientName, refreshSignal = 0 }: PatientScribeSummariesProps) {
   const { session } = useAuth();
   const { showError } = useToast();
   const navigate = useNavigate();
@@ -32,11 +34,13 @@ export function PatientScribeSummaries({ patientId, patientName }: PatientScribe
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [noteMap, setNoteMap] = useState<Record<string, AmbientGeneratedNote>>({});
   const [noteLoading, setNoteLoading] = useState<Record<string, boolean>>({});
+  const [noteErrors, setNoteErrors] = useState<Record<string, boolean>>({});
 
   const loadSummaries = async () => {
     if (!session) return;
     setLoading(true);
     try {
+      setNoteErrors({});
       const data = await fetchPatientSummaries(session.tenantId, session.accessToken, patientId);
       setSummaries(data.summaries || []);
       if (data.summaries?.length) {
@@ -51,24 +55,26 @@ export function PatientScribeSummaries({ patientId, patientName }: PatientScribe
 
   useEffect(() => {
     loadSummaries();
-  }, [session, patientId]);
+  }, [session, patientId, refreshSignal]);
 
   useEffect(() => {
     if (!session || !expandedId) return;
     const summary = summaries.find((item) => item.id === expandedId);
     const noteId = summary?.ambientNoteId || undefined;
-    if (!noteId || noteMap[noteId] || noteLoading[noteId]) return;
+    if (!noteId || noteMap[noteId] || noteLoading[noteId] || noteErrors[noteId]) return;
 
     setNoteLoading((prev) => ({ ...prev, [noteId]: true }));
     fetchAmbientNote(session.tenantId, session.accessToken, noteId)
       .then((data) => {
         setNoteMap((prev) => ({ ...prev, [noteId]: data.note }));
       })
-      .catch(() => {})
+      .catch(() => {
+        setNoteErrors((prev) => ({ ...prev, [noteId]: true }));
+      })
       .finally(() => {
         setNoteLoading((prev) => ({ ...prev, [noteId]: false }));
       });
-  }, [expandedId, summaries, session, noteMap, noteLoading]);
+  }, [expandedId, summaries, session, noteMap, noteLoading, noteErrors]);
 
   const summaryCards = useMemo(() => {
     return summaries.map((summary) => {
@@ -76,9 +82,10 @@ export function PatientScribeSummaries({ patientId, patientName }: PatientScribe
       const isExpanded = expandedId === summary.id;
       const statusLabel = summary.sharedAt ? 'Shared with patient' : 'Saved to chart';
       const symptoms = buildSymptoms(note, summary);
-      const concerns = buildConcerns(note);
       const potentialDiagnoses = buildDiagnoses(note, summary);
       const suggestedTests = buildTests(note, summary);
+      const treatmentPlan = buildTreatmentPlan(note, summary);
+      const nextSteps = buildNextSteps(note, summary);
       const summaryText = buildSummaryText(note, summary);
 
       const actions = (
@@ -111,8 +118,11 @@ export function PatientScribeSummaries({ patientId, patientName }: PatientScribe
         </>
       );
 
-      const footerNote = noteLoading[summary.ambientNoteId || '']
+      const noteId = summary.ambientNoteId || '';
+      const footerNote = noteLoading[noteId]
         ? 'Loading AI note details...'
+        : noteErrors[noteId]
+          ? 'AI note details unavailable; showing saved summary.'
         : `Stored in ${patientName}'s chart`;
 
       return (
@@ -124,9 +134,10 @@ export function PatientScribeSummaries({ patientId, patientName }: PatientScribe
           statusLabel={statusLabel}
           actions={actions}
           symptoms={symptoms}
-          concerns={concerns}
           potentialDiagnoses={potentialDiagnoses}
           suggestedTests={suggestedTests}
+          treatmentPlan={treatmentPlan}
+          nextSteps={nextSteps}
           summaryText={summaryText}
           showDetails={isExpanded}
           compact={!isExpanded}
@@ -134,7 +145,7 @@ export function PatientScribeSummaries({ patientId, patientName }: PatientScribe
         />
       );
     });
-  }, [summaries, noteMap, expandedId, navigate, patientId, patientName, noteLoading]);
+  }, [summaries, noteMap, expandedId, navigate, patientId, patientName, noteLoading, noteErrors]);
 
   return (
     <div className="scribe-summary-panel">

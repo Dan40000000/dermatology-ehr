@@ -124,17 +124,160 @@ const defaultExternalProviders: Record<ExternalIntegrationType, string> = {
   eligibility: "availity",
   eprescribe: "surescripts",
   lab: "labcorp",
-  ambient_transcription: "wispr_flow",
+  ambient_transcription: "abridge",
   payment: "stripe",
   fax: "phaxio",
 };
 
 const externalDocsLinks: Partial<Record<ExternalIntegrationType, string>> = {
   eligibility: "https://developer.availity.com/blog/2025/3/25/hipaa-transactions",
-  ambient_transcription: "https://api-docs.wisprflow.ai/rest_api_quickstart",
 };
 
-const buildDefaultConfigTemplate = (type: ExternalIntegrationType): Record<string, any> => {
+type AmbientProvider = "abridge" | "nabla" | "aws_healthscribe" | "wispr_flow";
+
+const ambientProviderOptions: Array<{ value: AmbientProvider; label: string }> = [
+  { value: "abridge", label: "Abridge" },
+  { value: "nabla", label: "Nabla" },
+  { value: "aws_healthscribe", label: "AWS HealthScribe" },
+  { value: "wispr_flow", label: "Wispr Flow" },
+];
+
+const ambientDocsLinks: Record<AmbientProvider, string> = {
+  abridge: "https://support.abridge.com/hc/en-us/articles/30287281533715-Get-Started-Using-Abridge",
+  nabla: "https://docs.nabla.com/next/guides/intro",
+  aws_healthscribe: "https://docs.aws.amazon.com/transcribe/latest/dg/health-scribe.html",
+  wispr_flow: "https://api-docs.wisprflow.ai/rest_api_quickstart",
+};
+
+const normalizeAmbientProvider = (provider?: string): AmbientProvider => {
+  const normalized = String(provider || "").trim().toLowerCase();
+  if (normalized === "nabla") return "nabla";
+  if (normalized === "aws" || normalized === "aws_healthscribe" || normalized === "healthscribe") {
+    return "aws_healthscribe";
+  }
+  if (normalized === "wispr" || normalized === "wispr_flow") return "wispr_flow";
+  return "abridge";
+};
+
+const buildAmbientConfigTemplate = (provider: AmbientProvider): Record<string, any> => {
+  switch (provider) {
+    case "nabla":
+      return {
+        baseUrl: "https://us.api.nabla.com",
+        tokenPath: "/oauth/token",
+        transcribePath: "/v1/core/server/transcribe",
+        apiVersion: "2025-05-21",
+        requestParameters: {
+          speech_locale: "ENGLISH_US",
+          split_by_sentence: true,
+        },
+        responseSegmentsPath: "transcript",
+        segmentTextField: "text",
+        segmentSpeakerField: "speaker",
+        segmentStartField: "start_offset_ms",
+        segmentEndField: "end_offset_ms",
+        segmentTimeUnit: "milliseconds",
+        extraFields: {},
+        enableLiveChunks: true,
+        environment: "production",
+      };
+    case "aws_healthscribe":
+      return {
+        region: "us-east-1",
+        inputBucket: "",
+        outputBucket: "",
+        dataAccessRoleArn: "",
+        inputPrefix: "healthscribe/input",
+        outputPrefix: "healthscribe/output",
+        noteTemplate: "PHYSICAL_SOAP",
+        showSpeakerLabels: true,
+        maxSpeakerLabels: 2,
+        pollIntervalMs: 5000,
+        timeoutMs: 300000,
+        responseSegmentsPath: "Conversation.TranscriptSegments",
+        segmentTextField: "Content",
+        segmentSpeakerField: "ParticipantRole",
+        segmentStartField: "BeginOffsetMillis",
+        segmentEndField: "EndOffsetMillis",
+        segmentTimeUnit: "milliseconds",
+        enableLiveChunks: false,
+        environment: "production",
+      };
+    case "wispr_flow":
+      return {
+        baseUrl: "https://api.wisprflow.ai",
+        transcribePath: "/api/v1/voice-dictation/transcribe",
+        language: "en",
+        fileFieldName: "file",
+        languageFieldName: "language",
+        workflowId: "",
+        workflowIdFieldName: "workflowId",
+        translateTo: "",
+        translateToFieldName: "translate_to",
+        responseTextPath: "text",
+        responseSegmentsPath: "segments",
+        segmentTextField: "text",
+        segmentSpeakerField: "speaker",
+        segmentStartField: "start",
+        segmentEndField: "end",
+        segmentConfidenceField: "confidence",
+        extraFields: {},
+        enableLiveChunks: true,
+        environment: "production",
+      };
+    case "abridge":
+    default:
+      return {
+        baseUrl: "https://api.abridge.com",
+        transcribePath: "/v1/transcriptions",
+        language: "en",
+        fileFieldName: "file",
+        languageFieldName: "language",
+        workflowId: "",
+        workflowIdFieldName: "workflowId",
+        translateTo: "",
+        translateToFieldName: "translate_to",
+        responseTextPath: "text",
+        responseSegmentsPath: "segments",
+        segmentTextField: "text",
+        segmentSpeakerField: "speaker",
+        segmentStartField: "start",
+        segmentEndField: "end",
+        segmentConfidenceField: "confidence",
+        extraFields: {},
+        enableLiveChunks: true,
+        environment: "production",
+      };
+  }
+};
+
+const buildAmbientCredentialsTemplate = (provider: AmbientProvider): Record<string, any> => {
+  switch (provider) {
+    case "nabla":
+      return {
+        clientId: "",
+        privateKeyPem: "",
+        keyId: "",
+      };
+    case "aws_healthscribe":
+      return {
+        accessKeyId: "",
+        secretAccessKey: "",
+        sessionToken: "",
+      };
+    case "wispr_flow":
+    case "abridge":
+    default:
+      return {
+        apiKey: "",
+      };
+  }
+};
+
+const buildDefaultConfigTemplate = (
+  type: ExternalIntegrationType,
+  provider?: string
+): Record<string, any> => {
   switch (type) {
     case "eligibility":
       return {
@@ -148,21 +291,16 @@ const buildDefaultConfigTemplate = (type: ExternalIntegrationType): Record<strin
         defaultServiceType: "30",
       };
     case "ambient_transcription":
-      return {
-        baseUrl: "https://api.wisprflow.ai",
-        transcribePath: "/api/v1/voice-dictation/transcribe",
-        language: "en",
-        workflowId: "",
-        translateTo: "",
-        enableLiveChunks: true,
-        environment: "production",
-      };
+      return buildAmbientConfigTemplate(normalizeAmbientProvider(provider));
     default:
       return {};
   }
 };
 
-const buildDefaultCredentialsTemplate = (type: ExternalIntegrationType): Record<string, any> => {
+const buildDefaultCredentialsTemplate = (
+  type: ExternalIntegrationType,
+  provider?: string
+): Record<string, any> => {
   switch (type) {
     case "eligibility":
       return {
@@ -170,11 +308,51 @@ const buildDefaultCredentialsTemplate = (type: ExternalIntegrationType): Record<
         clientSecret: "",
       };
     case "ambient_transcription":
-      return {
-        apiKey: "",
-      };
+      return buildAmbientCredentialsTemplate(normalizeAmbientProvider(provider));
     default:
       return {};
+  }
+};
+
+const getAmbientSetupCopy = (provider: AmbientProvider): { title: string; body: string[] } => {
+  switch (provider) {
+    case "nabla":
+      return {
+        title: "Nabla setup",
+        body: [
+          "This powers the ambient transcription layer. The separate in-chart AI Assistant/chat layer uses OpenAI.",
+          "Nabla uses server-side OAuth credentials, not a simple static API key. Load the Nabla template, then fill in clientId and privateKeyPem or paste a server access token if Nabla issued one.",
+          "The default path uses Nabla's synchronous server transcription endpoint. Live chunk updates stay enabled because the app can post short browser-recorded chunks as files.",
+        ],
+      };
+    case "aws_healthscribe":
+      return {
+        title: "AWS HealthScribe setup",
+        body: [
+          "This powers the ambient transcription layer. The separate in-chart AI Assistant/chat layer uses OpenAI.",
+          "AWS HealthScribe is an S3 + IAM job workflow. You need region, input/output buckets, and a data access role ARN before live testing will work.",
+          "The app uses AWS HealthScribe for recorded encounter uploads. Live chunk updates fall back to OpenAI because HealthScribe is not wired into the browser chunk path here.",
+        ],
+      };
+    case "wispr_flow":
+      return {
+        title: "Wispr Flow setup",
+        body: [
+          "This powers the ambient transcription layer. The separate in-chart AI Assistant/chat layer uses OpenAI.",
+          "The backend records audio locally in-browser, then posts a multipart upload to the configured Wispr endpoint.",
+          "If Wispr gives you different request or response field names, update the config JSON here rather than changing code.",
+        ],
+      };
+    case "abridge":
+    default:
+      return {
+        title: "Abridge setup",
+        body: [
+          "This powers the ambient transcription layer. The separate in-chart AI Assistant/chat layer uses OpenAI.",
+          "The backend records audio locally in-browser, then posts a multipart upload to the configured Abridge endpoint. If your Abridge team gives you different request or response field names, update the config JSON here rather than changing code.",
+          "If you only have Abridge product access and not partner/API credentials yet, keep this integration in demo/mock mode until Abridge provides the endpoint details and API key.",
+        ],
+      };
   }
 };
 
@@ -832,6 +1010,13 @@ export default function IntegrationsSettingsPage() {
             const isSaving = savingExternalType === integration.type;
             const isTesting = testingExternalType === integration.type;
             const isSyncing = syncingExternalType === integration.type;
+            const ambientProvider = integration.type === "ambient_transcription"
+              ? normalizeAmbientProvider(form.provider || integration.provider)
+              : null;
+            const ambientSetup = ambientProvider ? getAmbientSetupCopy(ambientProvider) : null;
+            const docsLink = integration.type === "ambient_transcription" && ambientProvider
+              ? ambientDocsLinks[ambientProvider]
+              : externalDocsLinks[integration.type];
 
             return (
               <div
@@ -880,28 +1065,52 @@ export default function IntegrationsSettingsPage() {
                     </div>
                   )}
 
-                  {integration.type === "ambient_transcription" && (
+                  {integration.type === "ambient_transcription" && ambientSetup && (
                     <div className="bg-violet-50 border border-violet-200 text-violet-900 px-4 py-3 rounded-lg text-sm space-y-1">
-                      <p className="font-medium">Wispr Flow setup</p>
-                      <p>This powers the AI scribe transcription layer. Final recording transcription and optional live chunk transcription will use Wispr when this integration is active.</p>
-                      <p>Use an API key from the Wispr Flow platform. The backend sends audio as a multipart <code>file</code> upload with <code>language</code>, optional <code>workflowId</code>, and optional <code>translateTo</code>.</p>
-                      <p>You can also provide the key through backend environment variable <code>WISPR_FLOW_API_KEY</code> for server-side setup.</p>
+                      <p className="font-medium">{ambientSetup.title}</p>
+                      {ambientSetup.body.map((line) => (
+                        <p key={line}>{line}</p>
+                      ))}
                     </div>
                   )}
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
-                      <input
-                        type="text"
-                        value={form.provider}
-                        onChange={(e) =>
-                          updateExternalForm(integration.type, {
-                            provider: e.target.value,
-                          })
-                        }
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      />
+                      {integration.type === "ambient_transcription" ? (
+                        <div className="space-y-2">
+                          <select
+                            value={ambientProvider || "abridge"}
+                            onChange={(e) => {
+                              const provider = normalizeAmbientProvider(e.target.value);
+                              updateExternalForm(integration.type, {
+                                provider,
+                                configJson: JSON.stringify(buildAmbientConfigTemplate(provider), null, 2),
+                                credentialsJson: JSON.stringify(buildAmbientCredentialsTemplate(provider), null, 2),
+                              });
+                            }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                          >
+                            {ambientProviderOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-gray-500">Changing the provider reloads the config and credential templates for that provider.</p>
+                        </div>
+                      ) : (
+                        <input
+                          type="text"
+                          value={form.provider}
+                          onChange={(e) =>
+                            updateExternalForm(integration.type, {
+                              provider: e.target.value,
+                            })
+                          }
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                        />
+                      )}
                     </div>
 
                     <div>
@@ -1019,10 +1228,10 @@ export default function IntegrationsSettingsPage() {
                     Last sync: {integration.lastSyncAt ? new Date(integration.lastSyncAt).toLocaleString() : "Never"}
                   </div>
 
-                  {externalDocsLinks[integration.type] && (
+                  {docsLink && (
                     <div className="text-xs">
                       <a
-                        href={externalDocsLinks[integration.type]}
+                        href={docsLink}
                         target="_blank"
                         rel="noreferrer"
                         className="text-blue-600 hover:text-blue-700"

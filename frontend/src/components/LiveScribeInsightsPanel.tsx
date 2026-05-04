@@ -53,7 +53,7 @@ export interface AmbientLiveSafetyFlagInsight {
 
 export interface AmbientLiveInsightsPayload {
   recordingId: string;
-  source: 'heuristic';
+  source: 'heuristic' | 'openai';
   updatedAt: string;
   visitSummary: AmbientLiveVisitSummary;
   symptoms: AmbientLiveSymptomInsight[];
@@ -122,6 +122,13 @@ const reviewBadgeStyle: React.CSSProperties = {
   border: '1px solid #fed7aa',
 };
 
+const aiBadgeStyle: React.CSSProperties = {
+  ...metaBadgeStyle,
+  background: '#dcfce7',
+  color: '#166534',
+  border: '1px solid #bbf7d0',
+};
+
 const emptyStyle: React.CSSProperties = {
   fontSize: 13,
   color: '#8290a3',
@@ -179,6 +186,36 @@ function ListBlock({
   );
 }
 
+function SummaryLines({
+  summary,
+}: {
+  summary: AmbientLiveVisitSummary | undefined;
+}) {
+  const lines = [
+    ...(summary?.patientReported || []),
+    ...(summary?.providerObserved || []),
+    ...(summary?.planDraft || []),
+  ].filter(Boolean);
+
+  if (lines.length === 0) {
+    return (
+      <div style={emptyStyle}>
+        Listening for enough clinical detail to build the running summary.
+      </div>
+    );
+  }
+
+  return (
+    <ul style={{ margin: '10px 0 0', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 7 }}>
+      {lines.map((line, index) => (
+        <li key={`${line}-${index}`} style={{ fontSize: 13, color: '#334155', lineHeight: 1.5 }}>
+          {line}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function LiveScribeInsightsPanel({
   insights,
   compact = false,
@@ -197,6 +234,13 @@ export function LiveScribeInsightsPanel({
     gap: 12,
   };
 
+  const primaryGridStyle: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: compact ? '1fr' : 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: 12,
+    marginBottom: 12,
+  };
+
   return (
     <div style={shellStyle} aria-label="Live AI scribe clinical insights">
       <div style={headerStyle}>
@@ -205,63 +249,29 @@ export function LiveScribeInsightsPanel({
             Live Clinical Snapshot
           </div>
           <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
-            Symptoms, working differential, tests, meds, and note gaps update while the visit is being recorded.
+            The assistant listens, builds the visit summary live, and prepares the note for clinician review.
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {insights?.source === 'openai' ? (
+            <span style={aiBadgeStyle}>AI summary active</span>
+          ) : (
+            <span style={metaBadgeStyle}>Live draft warming up</span>
+          )}
           <span style={reviewBadgeStyle}>Clinician review required</span>
           <span style={metaBadgeStyle}>{formatUpdatedAt(insights?.updatedAt)}</span>
         </div>
       </div>
 
-      <section style={{ ...cardStyle, marginBottom: 12, borderColor: '#b8d9d2' }}>
-        <div style={sectionTitleStyle}>Running One-Line Summary</div>
-        <div style={{ fontSize: 15, fontWeight: 800, color: '#102235', lineHeight: 1.45 }}>
-          {summary?.oneLiner || 'Listening for enough clinical detail to build a live visit summary.'}
-        </div>
-      </section>
-
-      {safetyFlags.length > 0 && (
-        <section style={{ ...cardStyle, marginBottom: 12, borderColor: '#fecaca', background: '#fff7f7' }}>
-          <div style={sectionTitleStyle}>Clinical Attention</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {safetyFlags.map((flag) => (
-              <div key={flag.label} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: '#7f1d1d' }}>{flag.label}</div>
-                  <span style={{ ...metaBadgeStyle, ...urgencyColor(flag.severity) }}>
-                    {flag.severity.toUpperCase()}
-                  </span>
-                </div>
-                <div style={{ fontSize: 12, color: '#7f1d1d', lineHeight: 1.45 }}>{flag.rationale}</div>
-                {flag.evidence && (
-                  <div style={{ fontSize: 12, color: '#991b1b', fontStyle: 'italic' }}>{flag.evidence}</div>
-                )}
-              </div>
-            ))}
+      <div style={primaryGridStyle}>
+        <section style={{ ...cardStyle, borderColor: '#b8d9d2' }}>
+          <div style={sectionTitleStyle}>Live Summary</div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: '#102235', lineHeight: 1.45 }}>
+            {summary?.oneLiner || 'Listening for enough clinical detail to build a live visit summary.'}
           </div>
+          <SummaryLines summary={summary} />
         </section>
-      )}
 
-      <div style={{ ...gridStyle, marginBottom: 12 }}>
-        <ListBlock
-          title="Patient Reported"
-          items={summary?.patientReported}
-          empty="Patient symptom details will appear here as the conversation develops."
-        />
-        <ListBlock
-          title="Exam / Provider Observed"
-          items={summary?.providerObserved}
-          empty="Objective skin findings have not been captured yet."
-        />
-        <ListBlock
-          title="Draft Plan"
-          items={summary?.planDraft}
-          empty="Treatment, education, follow-up, and procedure plans will appear here."
-        />
-      </div>
-
-      <div style={{ ...gridStyle, marginBottom: 12 }}>
         <section style={cardStyle}>
           <div style={sectionTitleStyle}>Live Symptoms</div>
           {symptoms.length ? (
@@ -286,7 +296,7 @@ export function LiveScribeInsightsPanel({
         </section>
 
         <section style={cardStyle}>
-          <div style={sectionTitleStyle}>Working Differential</div>
+          <div style={sectionTitleStyle}>Potential Diagnosis</div>
           {topDiagnoses.length ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {topDiagnoses.map((diagnosis) => (
@@ -312,7 +322,7 @@ export function LiveScribeInsightsPanel({
         </section>
 
         <section style={cardStyle}>
-          <div style={sectionTitleStyle}>Suggested Tests / Orders</div>
+          <div style={sectionTitleStyle}>Potential Testing</div>
           {tests.length ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {tests.map((test) => (
@@ -335,6 +345,28 @@ export function LiveScribeInsightsPanel({
           )}
         </section>
       </div>
+
+      {safetyFlags.length > 0 && (
+        <section style={{ ...cardStyle, marginBottom: 12, borderColor: '#fecaca', background: '#fff7f7' }}>
+          <div style={sectionTitleStyle}>Clinical Attention</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {safetyFlags.map((flag) => (
+              <div key={flag.label} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: '#7f1d1d' }}>{flag.label}</div>
+                  <span style={{ ...metaBadgeStyle, ...urgencyColor(flag.severity) }}>
+                    {flag.severity.toUpperCase()}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: '#7f1d1d', lineHeight: 1.45 }}>{flag.rationale}</div>
+                {flag.evidence && (
+                  <div style={{ fontSize: 12, color: '#991b1b', fontStyle: 'italic' }}>{flag.evidence}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div style={gridStyle}>
         <section style={cardStyle}>

@@ -157,8 +157,7 @@ describe("Encounters routes", () => {
 
   it("POST /encounters/:id/status updates status and triggers learning", async () => {
     queryMock
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
     learningMock.mockResolvedValueOnce(undefined);
     const res = await request(app).post("/encounters/enc-1/status").send({ status: "locked" });
     expect(res.status).toBe(200);
@@ -166,10 +165,18 @@ describe("Encounters routes", () => {
     expect(learningMock).toHaveBeenCalledWith("enc-1");
   });
 
+  it("POST /encounters/:id/status returns 404 when encounter is missing", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    const res = await request(app).post("/encounters/missing/status").send({ status: "signed" });
+
+    expect(res.status).toBe(404);
+    expect(auditMock).not.toHaveBeenCalled();
+  });
+
   it("POST /encounters/:id/status auto-stops ambient recordings for closed states", async () => {
     queryMock
-      .mockResolvedValueOnce({ rows: [] }) // encounter status update
-      .mockResolvedValueOnce({ rows: [] }) // audit insert
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // encounter status update
       .mockResolvedValueOnce({ rows: [{ id: "rec-1" }], rowCount: 1 }); // ambient auto-stop update
 
     const res = await request(app).post("/encounters/enc-1/status").send({ status: "closed" });
@@ -184,8 +191,7 @@ describe("Encounters routes", () => {
 
   it("POST /encounters/:id/status ignores learning errors", async () => {
     queryMock
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
     learningMock.mockRejectedValueOnce(new Error("boom"));
     const res = await request(app).post("/encounters/enc-1/status").send({ status: "finalized" });
     expect(res.status).toBe(200);

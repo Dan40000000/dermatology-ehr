@@ -24,6 +24,10 @@ function logIcd10CodesError(message: string, error: unknown): void {
   });
 }
 
+function normalizeIcd10SearchTerm(value: string): string {
+  return value.trim().toUpperCase().replace(/\./g, "");
+}
+
 // GET /api/icd10-codes - List/search ICD-10 codes
 icd10CodesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
   try {
@@ -39,10 +43,11 @@ icd10CodesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
     const params: any[] = [];
     let paramIndex = 1;
 
-    if (search) {
-      query += ` and (code ilike $${paramIndex} or description ilike $${paramIndex})`;
+    if (search && typeof search === "string") {
+      query += ` and (replace(upper(code), '.', '') ilike $${paramIndex} or code ilike $${paramIndex + 1} or description ilike $${paramIndex + 1})`;
+      params.push(`%${normalizeIcd10SearchTerm(search)}%`);
       params.push(`%${search}%`);
-      paramIndex++;
+      paramIndex += 2;
     }
 
     if (category) {
@@ -55,7 +60,7 @@ icd10CodesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
       query += ` and is_common = true`;
     }
 
-    query += ` order by code`;
+    query += ` order by is_common desc, code`;
 
     const result = await pool.query(query, params);
     return res.json({ icd10Codes: result.rows });
@@ -68,15 +73,16 @@ icd10CodesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
 // GET /api/icd10-codes/:code - Get single ICD-10 code by code
 icd10CodesRouter.get("/:code", requireAuth, async (req: AuthedRequest, res) => {
   try {
-    const { code } = req.params;
+    const code = String(req.params.code || "");
 
     const result = await pool.query(
       `select id, code, description, category,
               is_common as "isCommon",
               created_at as "createdAt"
        from icd10_codes
-       where code = $1`,
-      [code]
+       where replace(upper(code), '.', '') = $1
+       limit 1`,
+      [normalizeIcd10SearchTerm(code)]
     );
 
     if (result.rows.length === 0) {

@@ -753,6 +753,9 @@ export function SchedulePage() {
       const canLoadPriorAuths =
         !session.user
         || hasAnyRole(session.user, ['admin', 'provider', 'ma', 'nurse', 'manager', 'compliance_officer']);
+      const canLoadFrontDeskSchedule =
+        !session.user
+        || hasAnyRole(session.user, ['admin', 'front_desk', 'ma', 'provider']);
       const [apptRes, provRes, locRes, typeRes, availRes, patRes, timeBlocksRes, frontDeskRes, priorAuthRes] = await Promise.all([
         fetchAppointments(session.tenantId, session.accessToken, {
           startDate: formatDate(startDate),
@@ -764,7 +767,9 @@ export function SchedulePage() {
         fetchAvailability(session.tenantId, session.accessToken),
         fetchPatients(session.tenantId, session.accessToken),
         fetchTimeBlocks(session.tenantId, session.accessToken).catch(() => []),
-        fetchFrontDeskSchedule(session.tenantId, session.accessToken).catch(() => ({ appointments: [] })),
+        canLoadFrontDeskSchedule
+          ? fetchFrontDeskSchedule(session.tenantId, session.accessToken).catch(() => ({ appointments: [] }))
+          : Promise.resolve({ appointments: [] }),
         canLoadPriorAuths ? fetchPriorAuths(session.tenantId, session.accessToken).catch(() => []) : Promise.resolve([]),
       ]);
       const frontDeskCopayMap: Record<string, number> = {};

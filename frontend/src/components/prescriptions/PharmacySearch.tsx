@@ -6,6 +6,7 @@ import { API_BASE_URL, TENANT_HEADER_NAME } from '../../api';
 
 export interface Pharmacy {
   id: string;
+  ncpdp_id?: string;
   ncpdpId?: string;
   name: string;
   phone?: string;
@@ -14,8 +15,12 @@ export interface Pharmacy {
   city?: string;
   state?: string;
   zip?: string;
+  chain?: string;
+  is_preferred?: boolean;
   isPreferred: boolean;
+  is_24_hour?: boolean;
   is24Hour: boolean;
+  accepts_erx?: boolean;
   acceptsErx: boolean;
 }
 
@@ -43,6 +48,14 @@ export function PharmacySearch({ onSelect, selectedPharmacy }: PharmacySearchPro
     isPreferred: false,
   });
 
+  const normalizePharmacy = (pharmacy: any): Pharmacy => ({
+    ...pharmacy,
+    ncpdpId: pharmacy.ncpdpId ?? pharmacy.ncpdp_id ?? null,
+    isPreferred: Boolean(pharmacy.isPreferred ?? pharmacy.is_preferred),
+    is24Hour: Boolean(pharmacy.is24Hour ?? pharmacy.is_24_hour),
+    acceptsErx: Boolean(pharmacy.acceptsErx ?? pharmacy.accepts_erx ?? true),
+  });
+
   const loadPharmacies = async (search?: string) => {
     if (!session) return;
 
@@ -62,7 +75,7 @@ export function PharmacySearch({ onSelect, selectedPharmacy }: PharmacySearchPro
       if (!res.ok) throw new Error('Failed to load pharmacies');
 
       const data = await res.json();
-      setPharmacies(data.pharmacies || []);
+      setPharmacies((data.pharmacies || []).map(normalizePharmacy));
     } catch (error) {
       console.error('Error loading pharmacies:', error);
       showError('Failed to load pharmacies');

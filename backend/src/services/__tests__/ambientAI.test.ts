@@ -33,11 +33,13 @@ describe('AmbientAI Service', () => {
     delete process.env.OPENAI_TRANSCRIBE_MODEL;
     delete process.env.OPENAI_NOTE_MODEL;
     delete process.env.ANTHROPIC_NOTE_MODEL;
+    delete process.env.AMBIENT_NOTE_PROVIDER_PRIORITY;
     process.env.AMBIENT_AI_MOCK_DELAY_MS = '0';
   });
 
   afterAll(() => {
     delete process.env.AMBIENT_AI_MOCK_DELAY_MS;
+    delete process.env.AMBIENT_NOTE_PROVIDER_PRIORITY;
   });
 
   describe('transcribeAudio', () => {
@@ -372,6 +374,78 @@ describe('AmbientAI Service', () => {
       );
     });
 
+    it('should backfill assessment when the model leaves it blank', async () => {
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+      process.env.OPENAI_NOTE_MODEL = 'gpt-4o';
+
+      const mockGPT4Response = {
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  chiefComplaint: 'Changing pigmented lesion',
+                  hpi: 'Darkening upper-back lesion with one bleeding episode.',
+                  ros: 'Negative except as noted.',
+                  physicalExam: 'Irregular pigmented papule on the upper back.',
+                  assessment: '',
+                  plan: 'Shave biopsy today and ketoconazole shampoo for scalp.',
+                  sectionConfidence: {
+                    chiefComplaint: 0.9,
+                    hpi: 0.86,
+                    ros: 0.82,
+                    physicalExam: 0.88,
+                    assessment: 0.8,
+                    plan: 0.87,
+                  },
+                  suggestedIcd10: [],
+                  suggestedCpt: [],
+                  medications: [],
+                  allergies: [],
+                  followUpTasks: [],
+                  differentialDiagnoses: [
+                    {
+                      condition: 'Suspicious pigmented lesion / melanoma rule-out',
+                      confidence: 0.62,
+                      reasoning: 'Changing dark lesion with asymmetry, irregular pigment, and bleeding history.',
+                      icd10Code: 'D48.5',
+                    },
+                    {
+                      condition: 'Atypical melanocytic nevus',
+                      confidence: 0.38,
+                      reasoning: 'Could represent a dysplastic nevus pending pathology.',
+                      icd10Code: 'D22.9',
+                    },
+                  ],
+                  recommendedTests: [
+                    {
+                      testName: 'Shave biopsy',
+                      rationale: 'Needed for tissue diagnosis of a changing pigmented lesion.',
+                      urgency: 'urgent',
+                    },
+                  ],
+                  patientSummary: {
+                    whatWeDiscussed: 'We discussed a changing spot on your back and the need for a biopsy.',
+                    yourConcerns: ['Changing dark spot'],
+                    treatmentPlan: 'Biopsy and pathology review.',
+                    followUp: 'Return in one week.',
+                  },
+                }),
+              },
+            },
+          ],
+        }),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockGPT4Response);
+
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(result.assessment.trim().length).toBeGreaterThan(0);
+      expect(result.assessment).toContain('1.');
+    });
+
     it('should mask SSN/phone/email before Claude outbound payload while keeping clinical context', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
 
@@ -690,8 +764,15 @@ describe('AmbientAI Service', () => {
 
       expect(result).toHaveProperty('chiefComplaint');
       expect(logger.warn).toHaveBeenCalledWith(
+        'Ambient AI note generation provider failed',
+        expect.objectContaining({ provider: 'anthropic', error: 'API Error' })
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
         'AI note generation failed, falling back to mock',
-        expect.objectContaining({ error: 'API Error' })
+        expect.objectContaining({
+          attemptedProviders: ['anthropic'],
+          providerErrors: [{ provider: 'anthropic', error: 'API Error' }],
+        })
       );
     });
 
@@ -705,29 +786,83 @@ describe('AmbientAI Service', () => {
       await ambientAI.generateClinicalNote(transcriptText, segments);
 
       expect(logger.warn).toHaveBeenCalledWith(
-        'AI note generation failed, falling back to mock',
+        'Ambient AI note generation provider failed',
         expect.objectContaining({
           error: expect.not.stringContaining('123-45-6789'),
         })
       );
       expect(logger.warn).toHaveBeenCalledWith(
-        'AI note generation failed, falling back to mock',
+        'Ambient AI note generation provider failed',
         expect.objectContaining({
           error: expect.not.stringContaining('jane.doe@example.com'),
         })
       );
       expect(logger.warn).toHaveBeenCalledWith(
-        'AI note generation failed, falling back to mock',
+        'Ambient AI note generation provider failed',
         expect.objectContaining({
           error: expect.stringContaining('[SSN-REDACTED]'),
         })
       );
       expect(logger.warn).toHaveBeenCalledWith(
-        'AI note generation failed, falling back to mock',
+        'Ambient AI note generation provider failed',
         expect.objectContaining({
           error: expect.stringContaining('[EMAIL-REDACTED]'),
         })
       );
+    });
+
+    it('should fall back from Anthropic to OpenAI before using mock', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+      process.env.OPENAI_API_KEY = 'test-openai-key';
+
+      (global.fetch as jest.Mock)
+        .mockRejectedValueOnce(new Error('Claude unavailable'))
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    chiefComplaint: 'Changing pigmented lesion',
+                    hpi: 'Patient reports a darkening back lesion for three months with one bleeding episode.',
+                    ros: 'Negative except as documented in HPI.',
+                    physicalExam: 'Seven millimeter asymmetric pigmented papule on the right upper back with irregular border.',
+                    assessment: 'Neoplasm of uncertain behavior; rule out melanoma.',
+                    plan: 'Shave biopsy performed and specimen sent for dermatopathology.',
+                    sectionConfidence: {},
+                    suggestedIcd10: [],
+                    suggestedCpt: [],
+                    medications: [],
+                    allergies: [],
+                    followUpTasks: [],
+                    differentialDiagnoses: [],
+                    recommendedTests: [],
+                    patientSummary: {
+                      whatWeDiscussed: 'We reviewed a changing dark spot on your back and planned a biopsy.',
+                      yourConcerns: ['Changing lesion'],
+                      treatmentPlan: 'Biopsy and pathology review.',
+                      followUp: 'Return in one week for biopsy results.',
+                    },
+                  }),
+                },
+              },
+            ],
+          }),
+        });
+
+      const result = await ambientAI.generateClinicalNote(transcriptText, segments);
+
+      expect(result.chiefComplaint).toBe('Changing pigmented lesion');
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Ambient AI note generation provider failed',
+        expect.objectContaining({ provider: 'anthropic', error: 'Claude unavailable' })
+      );
+      expect(logger.info).toHaveBeenCalledWith(
+        'Generating clinical note with OpenAI',
+        expect.objectContaining({ model: 'gpt-4o' })
+      );
+      expect(logger.info).not.toHaveBeenCalledWith('Using mock note generation after provider failure');
     });
 
     it('should parse AI response with markdown code blocks', async () => {
@@ -810,6 +945,107 @@ describe('AmbientAI Service', () => {
       expect(result.differentialDiagnoses[0].confidence).toBeGreaterThan(result.differentialDiagnoses[1].confidence);
       expect(result.recommendedTests[0]?.urgency).toBe('routine');
       expect(result.patientSummary.yourConcerns.length).toBeGreaterThan(0);
+    });
+
+    it('cleans denied symptoms and irrelevant dermatology template tasks from parsed notes', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+
+      const melanomaTranscript = [
+        'Patient says the mole on my upper back is getting darker and catching on my shirt.',
+        'Patient says it does not hurt and there has been no drainage.',
+        'Patient says my scalp has been itchy and flaky.',
+        'Doctor says exam shows an asymmetric dark papule and we will do a shave biopsy.',
+        'Doctor says start ketoconazole shampoo and call if there is pain, pus, drainage, or fever after the biopsy.',
+      ].join(' ');
+
+      const melanomaSegments = [
+        { speaker: 'patient', text: 'The mole on my upper back is getting darker and catching on my shirt.', start: 0, end: 3, confidence: 0.95 },
+        { speaker: 'patient', text: 'It does not hurt and there has been no drainage.', start: 3, end: 6, confidence: 0.95 },
+        { speaker: 'patient', text: 'My scalp has been itchy and flaky.', start: 6, end: 9, confidence: 0.95 },
+        { speaker: 'doctor', text: 'Exam shows an asymmetric dark papule and we will do a shave biopsy.', start: 9, end: 12, confidence: 0.95 },
+        { speaker: 'doctor', text: 'Start ketoconazole shampoo and call if there is pain, pus, drainage, or fever after the biopsy.', start: 12, end: 15, confidence: 0.95 },
+      ];
+
+      const config = {
+        id: 'config-derm',
+        tenantId: 'tenant-123',
+        name: 'Medical Dermatology',
+        aiModel: 'claude-3-5-sonnet-20241022',
+        temperature: 0.3,
+        maxTokens: 4000,
+        systemPrompt: 'System',
+        promptTemplate: 'Template {{transcript}}',
+        noteSections: ['chiefComplaint', 'hpi', 'assessment', 'plan'],
+        sectionPrompts: {},
+        outputFormat: 'soap',
+        verbosityLevel: 'standard',
+        includeCodes: true,
+        terminologySet: {},
+        focusAreas: [],
+        defaultCptCodes: [],
+        defaultIcd10Codes: [],
+        taskTemplates: [
+          { task: 'Prior authorization if biologic prescribed', priority: 'medium', daysFromVisit: 1 },
+          { task: 'Lab follow-up for systemic medications', priority: 'medium', daysFromVisit: 14 },
+          { task: 'Call patient with biopsy results', priority: 'high', daysFromVisit: 7 },
+        ],
+        isDefault: false,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          content: [
+            {
+              text: JSON.stringify({
+                chiefComplaint: 'Changing mole on upper back and itchy scalp',
+                hpi: 'Mole on upper back is getting darker and catching on shirt. Patient denies pain and drainage. Scalp is itchy and flaky.',
+                ros: 'Negative except as noted.',
+                physicalExam: 'Asymmetric dark papule on upper back with scalp scale.',
+                assessment: 'Suspicious pigmented lesion; seborrheic dermatitis.',
+                plan: 'Shave biopsy today. Start ketoconazole shampoo.',
+                sectionConfidence: {},
+                suggestedIcd10: [],
+                suggestedCpt: [],
+                medications: [],
+                allergies: [],
+                followUpTasks: [
+                  { task: 'Call patient with biopsy results', priority: 'high', dueDate: '2023-11-07', confidence: 0.9 },
+                  { task: 'Prior authorization if biologic prescribed', priority: 'medium', dueDate: '2026-05-05', confidence: 0.8 },
+                  { task: 'Lab follow-up for systemic medications', priority: 'medium', dueDate: '2026-05-18', confidence: 0.8 },
+                ],
+                differentialDiagnoses: [
+                  { condition: 'Suspicious pigmented lesion / melanoma rule-out', confidence: 0.8, reasoning: 'Changing dark lesion', icd10Code: 'D48.5' },
+                  { condition: 'Seborrheic dermatitis', confidence: 0.2, reasoning: 'Scalp itch and scale', icd10Code: 'L21.9' },
+                ],
+                recommendedTests: [
+                  { testName: 'Shave biopsy', rationale: 'Changing pigmented lesion', urgency: 'urgent', cptCode: '11102' },
+                ],
+                patientSummary: {
+                  whatWeDiscussed: 'We discussed a changing mole and itchy scalp.',
+                  yourConcerns: ['Changing mole', 'Pain', 'Drainage', 'Scalp itching/flaking'],
+                  treatmentPlan: 'Biopsy and ketoconazole shampoo.',
+                  followUp: '',
+                },
+              }),
+            },
+          ],
+        }),
+      } as any);
+
+      const result = await ambientAI.generateClinicalNote(melanomaTranscript, melanomaSegments, config);
+
+      expect(result.patientSummary.yourConcerns).toEqual(
+        expect.arrayContaining(['Changing mole / pigmented lesion', 'Scalp itching/flaking'])
+      );
+      expect(result.patientSummary.yourConcerns).not.toEqual(expect.arrayContaining(['Pain', 'Drainage']));
+      expect(result.followUpTasks.some((task) => /prior authorization/i.test(task.task))).toBe(false);
+      expect(result.followUpTasks.some((task) => /systemic medications/i.test(task.task))).toBe(false);
+      expect(result.followUpTasks.some((task) => task.dueDate === '2023-11-07')).toBe(false);
+      expect(result.followUpTasks.some((task) => /biopsy results/i.test(task.task))).toBe(true);
     });
 
     it('should handle malformed JSON from AI', async () => {

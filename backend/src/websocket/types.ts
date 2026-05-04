@@ -93,6 +93,24 @@ export interface AmbientTranscriptEventData {
   confidence: number;
   receivedAt: string;
   source: 'live' | 'mock';
+  speakerRole: 'provider' | 'patient' | 'unknown';
+}
+
+export interface AmbientSavedTranscriptChunkData {
+  chunkIndex: number;
+  text: string;
+  confidence: number;
+  source: 'live' | 'mock';
+  receivedAt: string;
+  speakerRole: 'provider' | 'patient' | 'unknown';
+}
+
+export interface AmbientLiveVisitSummaryData {
+  oneLiner: string;
+  patientReported: string[];
+  providerObserved: string[];
+  planDraft: string[];
+  documentationGaps: string[];
 }
 
 export interface AmbientLiveSymptomData {
@@ -115,13 +133,40 @@ export interface AmbientLiveSuggestedTestData {
   cptCode?: string;
 }
 
+export interface AmbientLiveMedicationData {
+  name: string;
+  confidence: number;
+  context: 'current' | 'recommended' | 'discussed';
+  evidence?: string;
+}
+
+export interface AmbientLiveClinicalActionData {
+  label: string;
+  type: 'medication' | 'procedure' | 'lab' | 'follow_up' | 'education' | 'documentation';
+  urgency: 'routine' | 'soon' | 'urgent';
+  status: 'mentioned' | 'consider' | 'planned';
+  rationale: string;
+  evidence?: string;
+}
+
+export interface AmbientLiveSafetyFlagData {
+  label: string;
+  severity: 'watch' | 'soon' | 'urgent';
+  rationale: string;
+  evidence?: string;
+}
+
 export interface AmbientInsightsEventData {
   recordingId: string;
-  source: 'heuristic';
+  source: 'heuristic' | 'openai';
   updatedAt: string;
+  visitSummary: AmbientLiveVisitSummaryData;
   symptoms: AmbientLiveSymptomData[];
   workingDiagnoses: AmbientLiveDiagnosisData[];
   suggestedTests: AmbientLiveSuggestedTestData[];
+  medications: AmbientLiveMedicationData[];
+  clinicalActions: AmbientLiveClinicalActionData[];
+  safetyFlags: AmbientLiveSafetyFlagData[];
 }
 
 // Patient events
@@ -295,7 +340,15 @@ export interface ServerToClientEvents {
   'patient:viewing': (data: PatientViewingData & { timestamp: string }) => void;
 
   // Ambient scribe events
-  'ambient:joined': (data: { recordingId: string; joinedAt: string }) => void;
+  'ambient:joined': (data: {
+    recordingId: string;
+    joinedAt: string;
+    recovery?: {
+      lastChunkIndex: number;
+      savedChunksCount: number;
+      savedChunks: AmbientSavedTranscriptChunkData[];
+    };
+  }) => void;
   'ambient:left': (data: { recordingId: string; leftAt: string }) => void;
   'ambient:transcript': (data: AmbientTranscriptEventData) => void;
   'ambient:insights': (data: AmbientInsightsEventData) => void;

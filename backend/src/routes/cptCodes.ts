@@ -33,6 +33,9 @@ cptCodesRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
       select id, code, description, category,
              default_fee_cents as "defaultFeeCents",
              is_common as "isCommon",
+             coalesce(nullif(to_jsonb(cpt_codes)->>'code_type', ''), 'CPT') as "codeType",
+             coalesce(nullif(to_jsonb(cpt_codes)->>'billing_route', ''), 'insurance') as "billingRoute",
+             coalesce(nullif(to_jsonb(cpt_codes)->>'requires_diagnosis', '')::boolean, true) as "requiresDiagnosis",
              created_at as "createdAt"
       from cpt_codes
       where 1=1
@@ -75,6 +78,9 @@ cptCodesRouter.get("/:code", requireAuth, async (req: AuthedRequest, res) => {
       `select id, code, description, category,
               default_fee_cents as "defaultFeeCents",
               is_common as "isCommon",
+              coalesce(nullif(to_jsonb(cpt_codes)->>'code_type', ''), 'CPT') as "codeType",
+              coalesce(nullif(to_jsonb(cpt_codes)->>'billing_route', ''), 'insurance') as "billingRoute",
+              coalesce(nullif(to_jsonb(cpt_codes)->>'requires_diagnosis', '')::boolean, true) as "requiresDiagnosis",
               created_at as "createdAt"
        from cpt_codes
        where code = $1`,

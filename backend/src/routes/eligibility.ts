@@ -16,6 +16,7 @@ import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { requireRoles } from '../middleware/rbac';
 import { createAuditLog } from '../services/audit';
 import { logger } from '../lib/logger';
+import { getEligibilityService } from '../services/healthcareWorkflowServices';
 import {
   verifyPatientEligibility,
   batchVerifyEligibility,
@@ -1106,7 +1107,6 @@ eligibilityRouter.get(
  *         description: Server error
  */
 import {
-  checkEligibility,
   getPatientEligibility,
 } from '../services/eligibilityService';
 
@@ -1136,10 +1136,11 @@ eligibilityRouter.post(
         bypassCache: validatedData.bypassCache,
       });
 
-      const result = await checkEligibility(tenantId, {
+      const result = await getEligibilityService().checkEligibility({
+        tenantId,
         patientId: validatedData.patientId,
         payerId: validatedData.payerId,
-        serviceDate: validatedData.serviceDate ? new Date(validatedData.serviceDate) : undefined,
+        serviceDate: validatedData.serviceDate,
         serviceType: validatedData.serviceType,
         bypassCache: validatedData.bypassCache,
       });
@@ -1160,6 +1161,8 @@ eligibilityRouter.post(
 
       res.json({
         success: true,
+        provider: result.provider,
+        mode: result.mode,
         result,
       });
     } catch (error) {

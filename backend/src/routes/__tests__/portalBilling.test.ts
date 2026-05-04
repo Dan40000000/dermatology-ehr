@@ -47,15 +47,19 @@ describe("Portal Billing routes", () => {
       queryMock.mockResolvedValueOnce({
         rows: [
           {
-            totalCharges: 500.0,
-            totalPayments: 200.0,
-            totalAdjustments: 50.0,
-            currentBalance: 250.0,
-            lastPaymentDate: "2024-01-15",
-            lastPaymentAmount: 100.0,
+            bill_total_charges_cents: 50000,
+            bill_paid_cents: 20000,
+            bill_adjustment_cents: 5000,
+            bill_balance_cents: 25000,
+            unbilled_total_charges_cents: 0,
+            unbilled_patient_responsibility_cents: 0,
+            patient_payment_cents: 20000,
+            portal_payment_cents: 0,
+            last_payment_date: "2024-01-15",
+            last_payment_cents: 10000,
           },
         ],
-      });
+      }).mockResolvedValueOnce({ rows: [] });
 
       const res = await request(app).get("/portal-billing/balance");
 
@@ -63,8 +67,8 @@ describe("Portal Billing routes", () => {
       expect(res.body.totalCharges).toBe(500.0);
       expect(res.body.currentBalance).toBe(250.0);
       expect(queryMock).toHaveBeenCalledWith(
-        expect.stringContaining("FROM portal_patient_balances"),
-        ["patient-1", "tenant-1"]
+        expect.stringContaining("WITH bill_summary"),
+        ["tenant-1", "patient-1"]
       );
     });
 
@@ -80,7 +84,7 @@ describe("Portal Billing routes", () => {
       expect(res.body.currentBalance).toBe(0);
       expect(queryMock).toHaveBeenCalledWith(
         expect.stringContaining("INSERT INTO portal_patient_balances"),
-        ["tenant-1", "patient-1"]
+        ["tenant-1", "patient-1", 0, 0, 0, null, null]
       );
     });
 

@@ -7,13 +7,16 @@ import { Skeleton, Modal } from '../components/ui';
 import { PatientBanner } from '../components/clinical';
 import { PatientBodyDiagram } from '../components/body-diagram';
 import { ScribePanel } from '../components/ScribePanel';
+import { ClinicalCopilotPanel } from '../components/ClinicalCopilotPanel';
 import { ClinicalTrendsTab } from '../components/clinical/ClinicalTrendsTab';
 // Lesion type no longer needed - using PatientBodyDiagram with BodyMarker type
 import { TasksTab, PatientBalanceSummary, PatientScribeSummaries, PatientScribeSnapshot } from '../components/patient';
 import { RxHistoryTab } from '../components/RxHistoryTab';
 import { ActiveMedicationsCard } from '../components/prescriptions';
+import { PharmacySearch, type Pharmacy } from '../components/prescriptions/PharmacySearch';
 import { CoverageSummaryCard } from '../components/Insurance/CoverageSummaryCard';
-import { hasRole } from '../utils/roles';
+import { InsuranceLookupPanel } from '../components/workflows';
+import { hasAnyRole, hasRole } from '../utils/roles';
 import { formatPhoneDisplay } from '../utils/phone';
 import {
   fetchPatient,
@@ -49,6 +52,7 @@ import type {
   Task,
   Order,
   PhotoType,
+  UserRole,
 } from '../types';
 
 type TabId = 'overview' | 'demographics' | 'insurance' | 'account' | 'medical-history' | 'clinical-summary' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks' | 'scribe';
@@ -68,6 +72,17 @@ const VALID_PATIENT_DETAIL_TABS = new Set<TabId>([
   'timeline',
   'rx-history',
   'tasks',
+  'scribe',
+]);
+const CLINICAL_PATIENT_ROLES: UserRole[] = ['admin', 'provider', 'ma', 'nurse', 'manager', 'compliance_officer'];
+const CLINICAL_PATIENT_TABS = new Set<TabId>([
+  'medical-history',
+  'clinical-summary',
+  'clinical-trends',
+  'encounters',
+  'orders',
+  'photos',
+  'rx-history',
   'scribe',
 ]);
 
@@ -108,6 +123,13 @@ const ACTIVE_APPOINTMENT_STATUSES = new Set<Appointment['status']>([
   'with_provider',
   'checkout',
 ]);
+
+function formatPharmacyAddress(pharmacy: Partial<Pharmacy>): string {
+  return [
+    pharmacy.street,
+    [pharmacy.city, pharmacy.state, pharmacy.zip].filter(Boolean).join(', ').replace(', ,', ','),
+  ].filter(Boolean).join(', ');
+}
 
 function getAppointmentTimeValue(appointment: Appointment): number {
   const timestamp = new Date(appointment.scheduledStart).getTime();
@@ -272,7 +294,7 @@ export function PatientDetailPage() {
   const autoStartScribe = scribeParam && searchParams.get('auto') === '1';
   const encounterIdParam = searchParams.get('encounterId') || undefined;
   const providerIdParam = searchParams.get('providerId') || undefined;
-  const requestedTab = searchParams.get('tab');
+  const requestedTab = searchParams.get('tab') || (scribeParam && !autoStartScribe ? 'scribe' : null);
 
   const [loading, setLoading] = useState(true);
   const [patient, setPatient] = useState<Patient | null>(null);
@@ -296,6 +318,7 @@ export function PatientDetailPage() {
     notes: '',
   });
   const [activeTab, setActiveTab] = useState<TabId>('overview');
+  const [scribeArchiveRefreshKey, setScribeArchiveRefreshKey] = useState(0);
   // Body diagram state is now managed by the PatientBodyDiagram component
   const [showFaceSheet, setShowFaceSheet] = useState(false);
   const [highlightScribe, setHighlightScribe] = useState(false);
@@ -340,6 +363,8 @@ export function PatientDetailPage() {
   });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const canViewClinicalPatientData =
+    !session?.user || hasAnyRole(session.user, CLINICAL_PATIENT_ROLES);
 
   // Body markers are now managed by PatientBodyDiagram component
 
@@ -348,12 +373,9 @@ export function PatientDetailPage() {
 
     setLoading(true);
     try {
-      // Core data fetches - patient and encounters must succeed
-      const [patientRes, encountersRes, appointmentsRes] = await Promise.all([
-        fetchPatient(session.tenantId, session.accessToken, patientId),
-        fetchEncounters(session.tenantId, session.accessToken),
-        fetchAppointments(session.tenantId, session.accessToken, { patientId }),
-      ]);
+      // Only the patient record is page-fatal. Some roles can view the patient
+      // but are not allowed to load every clinical side panel.
+      const patientRes = await fetchPatient(session.tenantId, session.accessToken, patientId);
 
       if (patientRes.patient) {
         setPatient(patientRes.patient);
@@ -363,27 +385,40 @@ export function PatientDetailPage() {
         return;
       }
 
-      setEncounters(
-        (encountersRes.encounters || []).filter((e: Encounter) => e.patientId === patientId)
-      );
-      // Appointments are already filtered by patientId at the API level
+      const [encountersRes, appointmentsRes] = await Promise.all([
+        canViewClinicalPatientData
+          ? fetchEncounters(session.tenantId, session.accessToken).catch(() => ({ encounters: [] as Encounter[] }))
+          : Promise.resolve({ encounters: [] as Encounter[] }),
+        fetchAppointments(session.tenantId, session.accessToken, { patientId }).catch(() => ({ appointments: [] as Appointment[] })),
+      ]);
+
+      setEncounters((encountersRes.encounters || []).filter((e: Encounter) => e.patientId === patientId));
+      // Appointments are already filtered by patientId at the API level.
       setAppointments(appointmentsRes.appointments || []);
 
       // Non-critical fetches - don't fail the page if these fail
-      try {
-        const clinicalSummaryRes = await fetchPatientClinicalSummary(session.tenantId, session.accessToken, patientId);
-        setClinicalSummary({
-          diagnoses: clinicalSummaryRes.diagnoses || [],
-          recalls: clinicalSummaryRes.recalls || [],
-        });
-      } catch {
+      if (canViewClinicalPatientData) {
+        try {
+          const clinicalSummaryRes = await fetchPatientClinicalSummary(session.tenantId, session.accessToken, patientId);
+          setClinicalSummary({
+            diagnoses: clinicalSummaryRes.diagnoses || [],
+            recalls: clinicalSummaryRes.recalls || [],
+          });
+        } catch {
+          setClinicalSummary({ diagnoses: [], recalls: [] });
+        }
+      } else {
         setClinicalSummary({ diagnoses: [], recalls: [] });
       }
 
-      try {
-        const vitalsRes = await fetchVitals(session.tenantId, session.accessToken, patientId);
-        setVitalsHistory(vitalsRes.vitals || []);
-      } catch {
+      if (canViewClinicalPatientData) {
+        try {
+          const vitalsRes = await fetchVitals(session.tenantId, session.accessToken, patientId);
+          setVitalsHistory(vitalsRes.vitals || []);
+        } catch {
+          setVitalsHistory([]);
+        }
+      } else {
         setVitalsHistory([]);
       }
 
@@ -396,14 +431,18 @@ export function PatientDetailPage() {
         setDocuments([]);
       }
 
-      try {
-        const photosRes = await fetchPhotos(session.tenantId, session.accessToken, { patientId });
-        setPhotos(
-          (photosRes.photos || []).filter(
-            (p: Photo & { patient_id?: string }) => p.patientId === patientId || p.patient_id === patientId
-          )
-        );
-      } catch {
+      if (canViewClinicalPatientData) {
+        try {
+          const photosRes = await fetchPhotos(session.tenantId, session.accessToken, { patientId });
+          setPhotos(
+            (photosRes.photos || []).filter(
+              (p: Photo & { patient_id?: string }) => p.patientId === patientId || p.patient_id === patientId
+            )
+          );
+        } catch {
+          setPhotos([]);
+        }
+      } else {
         setPhotos([]);
       }
 
@@ -416,17 +455,25 @@ export function PatientDetailPage() {
         setTasks([]);
       }
 
-      try {
-        const prescriptionsRes = await fetchPrescriptionsEnhanced(session.tenantId, session.accessToken, { patientId });
-        setPrescriptions(prescriptionsRes.prescriptions || []);
-      } catch {
+      if (canViewClinicalPatientData) {
+        try {
+          const prescriptionsRes = await fetchPrescriptionsEnhanced(session.tenantId, session.accessToken, { patientId });
+          setPrescriptions(prescriptionsRes.prescriptions || []);
+        } catch {
+          setPrescriptions([]);
+        }
+      } else {
         setPrescriptions([]);
       }
 
-      try {
-        const ordersRes = await fetchOrders(session.tenantId, session.accessToken, { patientId });
-        setOrders(ordersRes.orders || []);
-      } catch {
+      if (canViewClinicalPatientData) {
+        try {
+          const ordersRes = await fetchOrders(session.tenantId, session.accessToken, { patientId });
+          setOrders(ordersRes.orders || []);
+        } catch {
+          setOrders([]);
+        }
+      } else {
         setOrders([]);
       }
     } catch (err: any) {
@@ -439,7 +486,7 @@ export function PatientDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [session, patientId, showError, navigate]);
+  }, [session, patientId, showError, navigate, canViewClinicalPatientData]);
 
   const resetPhotoUploadForm = () => {
     setPhotoUploadForm((prev) => {
@@ -594,10 +641,17 @@ export function PatientDetailPage() {
   }, [loadPatientData]);
 
   useEffect(() => {
-    if (requestedTab && VALID_PATIENT_DETAIL_TABS.has(requestedTab as TabId)) {
-      setActiveTab(requestedTab as TabId);
+    const nextTab = requestedTab as TabId | null;
+    if (
+      nextTab
+      && VALID_PATIENT_DETAIL_TABS.has(nextTab)
+      && (canViewClinicalPatientData || !CLINICAL_PATIENT_TABS.has(nextTab))
+    ) {
+      setActiveTab(nextTab);
+    } else if (!canViewClinicalPatientData && CLINICAL_PATIENT_TABS.has(activeTab)) {
+      setActiveTab('overview');
     }
-  }, [requestedTab]);
+  }, [activeTab, canViewClinicalPatientData, requestedTab]);
 
   useEffect(
     () => () => {
@@ -847,7 +901,7 @@ export function PatientDetailPage() {
     { id: 'tasks', label: 'Tasks', icon: '✓', count: tasks.filter(t => t.status !== 'completed').length },
     { id: 'scribe', label: 'AI Scribe', icon: '✨' },
     { id: 'timeline', label: 'Timeline', icon: '', count: encounters.length + appointments.length + documents.length + photos.length },
-  ];
+  ].filter((tab) => canViewClinicalPatientData || !CLINICAL_PATIENT_TABS.has(tab.id));
 
   return (
     <div className="patient-detail-page">
@@ -1100,12 +1154,14 @@ export function PatientDetailPage() {
         {activeTab === 'overview' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
             {/* Body Diagram Section - Enhanced Anatomical View */}
-            <div style={{ gridColumn: '1 / -1' }}>
-              <PatientBodyDiagram
-                patientId={patientId || ''}
-                editable={true}
-              />
-            </div>
+            {canViewClinicalPatientData && (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <PatientBodyDiagram
+                  patientId={patientId || ''}
+                  editable={true}
+                />
+              </div>
+            )}
 
             {/* Right Column */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -1179,12 +1235,14 @@ export function PatientDetailPage() {
                 </button>
               </div>
 
-              <ClinicalSummaryPreview
-                diagnoses={clinicalSummary.diagnoses}
-                recalls={activeRecalls}
-                onOpenSummary={() => setActiveTab('clinical-summary')}
-                onOpenEncounter={handleViewEncounter}
-              />
+              {canViewClinicalPatientData && (
+                <ClinicalSummaryPreview
+                  diagnoses={clinicalSummary.diagnoses}
+                  recalls={activeRecalls}
+                  onOpenSummary={() => setActiveTab('clinical-summary')}
+                  onOpenEncounter={handleViewEncounter}
+                />
+              )}
 
               {/* Recent Activity */}
               <div>
@@ -1268,7 +1326,7 @@ export function PatientDetailPage() {
               </div>
 
               {/* AI Scribe Snapshot */}
-              {patient && (
+              {patient && canViewClinicalPatientData && (
                 <div>
                   <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
                     AI Scribe Snapshot
@@ -1282,7 +1340,7 @@ export function PatientDetailPage() {
               )}
 
               {/* Active Medications */}
-              {patientId && (
+              {patientId && canViewClinicalPatientData && (
                 <div style={{ marginBottom: '1.5rem' }}>
                   <ActiveMedicationsCard
                     patientId={patientId}
@@ -1552,10 +1610,21 @@ export function PatientDetailPage() {
         )}
 
         {activeTab === 'scribe' && patient && (
-          <PatientScribeSummaries
-            patientId={patient.id}
-            patientName={`${patient.firstName} ${patient.lastName}`}
-          />
+          <div style={{ display: 'grid', gap: '1rem' }}>
+            <ClinicalCopilotPanel
+              patientId={patient.id}
+              encounterId={encounterIdParam || undefined}
+              title="Patient AI Assistant"
+              compact
+              showOpenFullButton
+              onVisitSummarySaved={() => setScribeArchiveRefreshKey((current) => current + 1)}
+            />
+            <PatientScribeSummaries
+              patientId={patient.id}
+              patientName={`${patient.firstName} ${patient.lastName}`}
+              refreshSignal={scribeArchiveRefreshKey}
+            />
+          </div>
         )}
 
         {activeTab === 'timeline' && (
@@ -1936,6 +2005,9 @@ function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => 
             <InfoRow label="Pharmacy Name" value={(patient as any).pharmacyName || 'Not specified'} />
             <InfoRow label="Phone" value={(patient as any).pharmacyPhone || 'Not provided'} />
             <InfoRow label="Address" value={(patient as any).pharmacyAddress || 'Not provided'} />
+            {(patient as any).pharmacyNcpdp && (
+              <InfoRow label="NCPDP" value={(patient as any).pharmacyNcpdp} />
+            )}
           </div>
         </div>
       </div>
@@ -2028,6 +2100,13 @@ function PatientEligibilitySummary({
           {error}
         </div>
       )}
+      <InsuranceLookupPanel
+        patientId={patientId}
+        payerId={latest?.payer_id || carrier || ''}
+        payerName={latest?.payer_name || carrier || ''}
+        memberId={latest?.member_id || memberId || ''}
+        onChecked={loadLatest}
+      />
     </div>
   );
 }
@@ -2935,6 +3014,8 @@ function EditDemographicsModal({
     emergencyContactName: '',
     emergencyContactRelationship: '',
     emergencyContactPhone: '',
+    pharmacyId: '',
+    pharmacyNcpdp: '',
     pharmacyName: '',
     pharmacyPhone: '',
     pharmacyAddress: '',
@@ -2957,6 +3038,8 @@ function EditDemographicsModal({
         emergencyContactName: (patient as any).emergencyContactName || '',
         emergencyContactRelationship: (patient as any).emergencyContactRelationship || '',
         emergencyContactPhone: (patient as any).emergencyContactPhone || '',
+        pharmacyId: (patient as any).pharmacyId || '',
+        pharmacyNcpdp: (patient as any).pharmacyNcpdp || '',
         pharmacyName: (patient as any).pharmacyName || '',
         pharmacyPhone: (patient as any).pharmacyPhone || '',
         pharmacyAddress: (patient as any).pharmacyAddress || '',
@@ -2987,6 +3070,30 @@ function EditDemographicsModal({
       console.error('Error updating patient:', error);
       alert('Failed to update patient demographics');
     }
+  };
+
+  const selectedPharmacy: Pharmacy | undefined = formData.pharmacyName
+    ? {
+        id: formData.pharmacyId || formData.pharmacyNcpdp || formData.pharmacyName,
+        ncpdpId: formData.pharmacyNcpdp || undefined,
+        name: formData.pharmacyName,
+        phone: formData.pharmacyPhone || undefined,
+        street: formData.pharmacyAddress || undefined,
+        isPreferred: false,
+        is24Hour: false,
+        acceptsErx: true,
+      }
+    : undefined;
+
+  const handlePharmacySelect = (pharmacy: Pharmacy) => {
+    setFormData({
+      ...formData,
+      pharmacyId: pharmacy.id || '',
+      pharmacyNcpdp: pharmacy.ncpdpId || pharmacy.ncpdp_id || '',
+      pharmacyName: pharmacy.name || '',
+      pharmacyPhone: pharmacy.phone || '',
+      pharmacyAddress: formatPharmacyAddress(pharmacy),
+    });
   };
 
   return (
@@ -3117,6 +3224,52 @@ function EditDemographicsModal({
                 />
               </div>
             </div>
+          </div>
+        </div>
+
+        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '1rem', marginTop: '1rem' }}>
+          <h3 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '1rem', color: '#374151' }}>Preferred Pharmacy</h3>
+          <PharmacySearch selectedPharmacy={selectedPharmacy} onSelect={handlePharmacySelect} />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+                Pharmacy Name
+              </label>
+              <input
+                type="text"
+                value={formData.pharmacyName}
+                onChange={(e) => setFormData({ ...formData, pharmacyName: e.target.value, pharmacyId: '', pharmacyNcpdp: '' })}
+                placeholder="Search above or enter manually"
+                style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+                Pharmacy Phone
+              </label>
+              <input
+                type="tel"
+                value={formData.pharmacyPhone}
+                onChange={(e) => setFormData({ ...formData, pharmacyPhone: e.target.value })}
+                style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
+              />
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>
+                Pharmacy Address
+              </label>
+              <input
+                type="text"
+                value={formData.pharmacyAddress}
+                onChange={(e) => setFormData({ ...formData, pharmacyAddress: e.target.value })}
+                style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
+              />
+            </div>
+            {formData.pharmacyNcpdp && (
+              <div style={{ gridColumn: '1 / -1', fontSize: '0.75rem', color: '#047857', background: '#ecfdf5', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '0.5rem 0.75rem' }}>
+                eRx directory match selected: NCPDP {formData.pharmacyNcpdp}
+              </div>
+            )}
           </div>
         </div>
 

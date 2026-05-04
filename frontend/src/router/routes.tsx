@@ -79,6 +79,7 @@ const AuditLogPage = lazy(() => import('../pages/AuditLogPage').then(m => ({ def
 const ReportsPage = lazy(() => import('../pages/ReportsPage'));
 const BodyDiagramPage = lazy(() => import('../pages/BodyDiagramPage').then(m => ({ default: m.BodyDiagramPage })));
 const AmbientScribePage = lazy(() => import('../pages/AmbientScribePage'));
+const ClinicalCopilotPage = lazy(() => import('../pages/ClinicalCopilotPage'));
 const FaceSheetPage = lazy(() => import('../pages/FaceSheetPage').then(m => ({ default: m.FaceSheetPage })));
 const PriorAuthPage = lazy(() => import('../pages/PriorAuthPage').then(m => ({ default: m.PriorAuthPage })));
 const WaitlistPage = lazy(() => import('../pages/WaitlistPage').then(m => ({ default: m.WaitlistPage })));
@@ -259,6 +260,8 @@ export const routes: RouteObject[] = [
 
       // Clinical
       { path: 'notes', element: lazyWithSuspense(NotesPage) },
+      { path: 'ai-assistant', element: lazyWithSuspense(ClinicalCopilotPage) },
+      { path: 'clinical-copilot', element: <Navigate to="/ai-assistant" replace /> },
       { path: 'ambient-scribe', element: lazyWithSuspense(AmbientScribePage) },
       { path: 'orders', element: lazyWithSuspense(OrdersPage) },
       { path: 'rx', element: lazyWithSuspense(PrescriptionsPage) },

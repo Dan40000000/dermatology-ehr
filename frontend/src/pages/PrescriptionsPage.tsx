@@ -23,6 +23,7 @@ import {
 } from '../api';
 import type { Order, Patient } from '../types';
 import { PARequestModal, PAStatusBadge, PADetailModal, DrugInteractionChecker } from '../components/prescriptions';
+import { PrescribeButtonModal } from '../components/workflows';
 
 type RxFilter = 'all' | 'pending' | 'ordered' | 'completed' | 'cancelled';
 type TabType = 'prescriptions' | 'refills';
@@ -1274,21 +1275,17 @@ export function PrescriptionsPage() {
                       <div style={{ display: 'flex', gap: '0.25rem' }}>
                         {rx.status === 'pending' && (
                           <>
-                            <button
-                              type="button"
-                              onClick={() => handleSendErx(rx)}
-                              style={{
-                                padding: '0.25rem 0.5rem',
-                                background: '#0369a1',
-                                color: '#ffffff',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer',
-                                fontSize: '0.75rem',
-                              }}
-                            >
-                              Send eRx
-                            </button>
+                            <PrescribeButtonModal
+                              prescriptionId={rx.id}
+                              orderId={rx.id}
+                              patientId={rx.patientId}
+                              patientName={getPatientName(rx.patientId)}
+                              medicationName={medication}
+                              sig={sig}
+                              quantity={qty}
+                              refills={refills}
+                              onSent={loadData}
+                            />
                             <button
                               type="button"
                               style={{

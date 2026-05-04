@@ -6,6 +6,8 @@ import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientP
 import path from "path";
 import fs from "fs";
 import { logger } from "../lib/logger";
+import { getPracticeTimeZone } from "../lib/practiceTimeZone";
+import { getLivePortalBalance } from "./portalBilling";
 import { getPatientAllergySummaries, getPatientMedicationSummaries } from "../services/patientHealthRecord";
 
 export const patientPortalDataRouter = Router();
@@ -44,11 +46,90 @@ const checkinDemographicsSchema = z.object({
   emergencyContactName: z.string().optional(),
   emergencyContactRelationship: z.string().optional(),
   emergencyContactPhone: z.string().optional(),
+  pharmacyId: z.string().optional().nullable(),
+  pharmacyNcpdp: z.string().optional().nullable(),
+  pharmacyName: z.string().optional().nullable(),
+  pharmacyPhone: z.string().optional().nullable(),
+  pharmacyAddress: z.string().optional().nullable(),
 });
 
 const portalRefillRequestSchema = z.object({
   prescriptionId: z.string().uuid(),
   notes: z.string().optional(),
+});
+
+/**
+ * GET /api/patient-portal-data/pharmacies/search
+ * Search the pharmacy directory from a patient portal session.
+ */
+patientPortalDataRouter.get("/pharmacies/search", async (req: PatientPortalRequest, res) => {
+  try {
+    const tenantId = req.patient!.tenantId;
+    const { query: searchQuery, city, state, zip, preferred, ncpdpId } = req.query;
+    const params: any[] = [tenantId];
+    let paramIndex = 2;
+    let query = `
+      SELECT
+        id,
+        ncpdp_id as "ncpdpId",
+        name,
+        phone,
+        fax,
+        street,
+        city,
+        state,
+        zip,
+        is_preferred as "isPreferred",
+        is_24_hour as "is24Hour",
+        accepts_erx as "acceptsErx",
+        chain
+      FROM pharmacies
+      WHERE COALESCE(surescripts_enabled, true) = true
+        AND (tenant_id IS NULL OR tenant_id = $1)
+    `;
+
+    if (searchQuery && typeof searchQuery === "string") {
+      query += ` AND (name ILIKE $${paramIndex} OR chain ILIKE $${paramIndex} OR ncpdp_id ILIKE $${paramIndex})`;
+      params.push(`%${searchQuery}%`);
+      paramIndex++;
+    }
+
+    if (ncpdpId && typeof ncpdpId === "string") {
+      query += ` AND ncpdp_id = $${paramIndex}`;
+      params.push(ncpdpId);
+      paramIndex++;
+    }
+
+    if (city && typeof city === "string") {
+      query += ` AND city ILIKE $${paramIndex}`;
+      params.push(`%${city}%`);
+      paramIndex++;
+    }
+
+    if (state && typeof state === "string") {
+      query += ` AND state = $${paramIndex}`;
+      params.push(state.toUpperCase());
+      paramIndex++;
+    }
+
+    if (zip && typeof zip === "string") {
+      query += ` AND zip = $${paramIndex}`;
+      params.push(zip);
+      paramIndex++;
+    }
+
+    if (preferred === "true") {
+      query += ` AND is_preferred = true`;
+    }
+
+    query += ` ORDER BY is_preferred DESC, chain NULLS LAST, name LIMIT 50`;
+
+    const result = await pool.query(query, params);
+    return res.json({ pharmacies: result.rows, total: result.rows.length });
+  } catch (error) {
+    logPatientPortalDataError("Portal pharmacy search error", error);
+    return res.status(500).json({ error: "Failed to search pharmacies" });
+  }
 });
 
 /**
@@ -140,6 +221,11 @@ patientPortalDataRouter.put("/checkin/:sessionId/demographics", async (req: Pati
       emergencyContactName,
       emergencyContactRelationship,
       emergencyContactPhone,
+      pharmacyId,
+      pharmacyNcpdp,
+      pharmacyName,
+      pharmacyPhone,
+      pharmacyAddress,
     } = parsed.data;
 
     await pool.query(
@@ -152,8 +238,13 @@ patientPortalDataRouter.put("/checkin/:sessionId/demographics", async (req: Pati
            emergency_contact_name = COALESCE($6, emergency_contact_name),
            emergency_contact_relationship = COALESCE($7, emergency_contact_relationship),
            emergency_contact_phone = COALESCE($8, emergency_contact_phone),
+           pharmacy_id = COALESCE($9, pharmacy_id),
+           pharmacy_ncpdp = COALESCE($10, pharmacy_ncpdp),
+           pharmacy_name = COALESCE($11, pharmacy_name),
+           pharmacy_phone = COALESCE($12, pharmacy_phone),
+           pharmacy_address = COALESCE($13, pharmacy_address),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $9 AND tenant_id = $10`,
+       WHERE id = $14 AND tenant_id = $15`,
       [
         phone || null,
         address || null,
@@ -163,6 +254,11 @@ patientPortalDataRouter.put("/checkin/:sessionId/demographics", async (req: Pati
         emergencyContactName || null,
         emergencyContactRelationship || null,
         emergencyContactPhone || null,
+        pharmacyId || null,
+        pharmacyNcpdp || null,
+        pharmacyName || null,
+        pharmacyPhone || null,
+        pharmacyAddress || null,
         patientId,
         tenantId,
       ]
@@ -236,11 +332,14 @@ patientPortalDataRouter.get("/appointments", async (req: PatientPortalRequest, r
     const { status = 'upcoming' } = req.query;
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
+    const practiceTimeZone = getPracticeTimeZone();
 
     let query = `
       SELECT a.id,
-             a.scheduled_start::date as "appointmentDate",
-             to_char(a.scheduled_start, 'HH24:MI') as "appointmentTime",
+             to_char(a.scheduled_start AT TIME ZONE $3, 'YYYY-MM-DD') as "appointmentDate",
+             to_char(a.scheduled_start AT TIME ZONE $3, 'HH24:MI') as "appointmentTime",
+             a.scheduled_start as "scheduledStart",
+             a.scheduled_end as "scheduledEnd",
              a.status, at.name as "appointmentType",
              a.notes, a.reason,
              pr.full_name as "providerName",
@@ -265,7 +364,7 @@ patientPortalDataRouter.get("/appointments", async (req: PatientPortalRequest, r
 
     query += ` LIMIT 100`;
 
-    const result = await pool.query(query, [patientId, tenantId]);
+    const result = await pool.query(query, [patientId, tenantId, practiceTimeZone]);
 
     return res.json({ appointments: result.rows });
   } catch (error) {
@@ -814,13 +913,7 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
       [patientId, tenantId]
     );
 
-    const balanceResult = await pool.query(
-      `SELECT COALESCE(current_balance, 0) as "currentBalance"
-       FROM portal_patient_balances
-       WHERE patient_id = $1 AND tenant_id = $2
-       LIMIT 1`,
-      [patientId, tenantId]
-    );
+    const balance = await getLivePortalBalance(tenantId, patientId);
 
     const preCheckinResult = await pool.query(
       `SELECT a.id as "appointmentId",
@@ -851,7 +944,7 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
     const unreadMessages = parseInt(unreadMessagesResult.rows[0]?.count || "0", 10);
     const newDocuments = parseInt(documentsResult.rows[0]?.count || "0", 10);
     const newVisits = parseInt(visitsResult.rows[0]?.count || "0", 10);
-    const currentBalance = Number(balanceResult.rows[0]?.currentBalance || 0);
+    const currentBalance = Number(balance.currentBalance || 0);
     const preCheckinAvailable = preCheckinResult.rows.length > 0;
     const actionNeededCount =
       unreadMessages +

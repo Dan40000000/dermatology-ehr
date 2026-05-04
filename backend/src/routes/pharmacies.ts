@@ -65,7 +65,7 @@ pharmaciesRouter.get('/search', requireAuth, async (req: AuthedRequest, res) => 
     let paramIndex = 1;
 
     if (searchQuery && typeof searchQuery === 'string') {
-      query += ` and (name ilike $${paramIndex} or ncpdp_id = $${paramIndex} or chain ilike $${paramIndex})`;
+      query += ` and (name ilike $${paramIndex} or ncpdp_id ilike $${paramIndex} or chain ilike $${paramIndex})`;
       params.push(`%${searchQuery}%`);
       paramIndex++;
     }
@@ -200,7 +200,7 @@ pharmaciesRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
     let paramIndex = 1;
 
     if (search && typeof search === 'string') {
-      query += ` and (name ilike $${paramIndex} or ncpdp_id = $${paramIndex})`;
+      query += ` and (name ilike $${paramIndex} or ncpdp_id ilike $${paramIndex})`;
       params.push(`%${search}%`);
       paramIndex++;
     }

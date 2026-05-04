@@ -66,6 +66,11 @@ const updateProfileSchema = z.object({
   emergencyContactName: z.string().optional(),
   emergencyContactRelationship: z.string().optional(),
   emergencyContactPhone: z.string().optional(),
+  pharmacyId: z.string().optional().nullable(),
+  pharmacyNcpdp: z.string().optional().nullable(),
+  pharmacyName: z.string().optional().nullable(),
+  pharmacyPhone: z.string().optional().nullable(),
+  pharmacyAddress: z.string().optional().nullable(),
 });
 
 export const patientPortalRouter = Router();
@@ -713,6 +718,11 @@ patientPortalRouter.get("/me", requirePatientAuth, async (req: PatientPortalRequ
               p.emergency_contact_name as "emergencyContactName",
               p.emergency_contact_relationship as "emergencyContactRelationship",
               p.emergency_contact_phone as "emergencyContactPhone",
+              p.pharmacy_id as "pharmacyId",
+              p.pharmacy_ncpdp as "pharmacyNcpdp",
+              p.pharmacy_name as "pharmacyName",
+              p.pharmacy_phone as "pharmacyPhone",
+              p.pharmacy_address as "pharmacyAddress",
               p.insurance, a.email as "portalEmail", a.last_login_at as "lastLogin",
               a.email_verified as "emailVerified", a.updated_at as "passwordUpdatedAt"
        FROM patients p

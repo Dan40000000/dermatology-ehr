@@ -22,6 +22,7 @@ export function PortalAppointmentsPage() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadAppointments();
@@ -41,9 +42,16 @@ export function PortalAppointmentsPage() {
     }
   };
 
+  const parsePortalDate = (dateStr: string) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      return new Date(`${dateStr}T00:00:00`);
+    }
+    return new Date(dateStr);
+  };
+
   const formatDate = (dateStr: string) => {
     if (!dateStr) return '';
-    const d = new Date(dateStr);
+    const d = parsePortalDate(dateStr);
     if (isNaN(d.getTime())) return dateStr;
     return d.toLocaleDateString('en-US', {
       weekday: 'long',
@@ -92,6 +100,26 @@ export function PortalAppointmentsPage() {
       params.set('appointmentType', appointment.appointmentType);
     }
     navigate(`/portal/check-in?${params.toString()}`);
+  };
+
+  const cancelAppointment = async (appointment: Appointment) => {
+    const ok = window.confirm('Cancel this appointment? If this is within the cancellation window, please contact the office.');
+    if (!ok) return;
+
+    setCancellingId(appointment.id);
+    setError(null);
+    try {
+      await patientPortalFetch(`/api/patient-portal/scheduling/cancel/${appointment.id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ reason: 'Cancelled by patient from portal' }),
+      });
+      await loadAppointments();
+    } catch (error) {
+      console.error('Failed to cancel appointment:', error);
+      setError(error instanceof Error ? error.message : 'Failed to cancel appointment');
+    } finally {
+      setCancellingId(null);
+    }
   };
 
   return (
@@ -172,8 +200,8 @@ export function PortalAppointmentsPage() {
                   {/* Main row: date badge + info */}
                   <div className="appt-main">
                     <div className="appt-date-badge">
-                      <span className="appt-date-day">{new Date(apt.appointmentDate).getDate()}</span>
-                      <span className="appt-date-mon">{new Date(apt.appointmentDate).toLocaleDateString('en-US', { month: 'short' })}</span>
+                      <span className="appt-date-day">{parsePortalDate(apt.appointmentDate).getDate()}</span>
+                      <span className="appt-date-mon">{parsePortalDate(apt.appointmentDate).toLocaleDateString('en-US', { month: 'short' })}</span>
                     </div>
                     <div className="appt-info">
                       <h3 className="appt-provider">{apt.providerName}</h3>
@@ -205,6 +233,16 @@ export function PortalAppointmentsPage() {
                       <button className="appt-btn appt-btn--primary" onClick={() => startCheckIn(apt)}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
                         Start Pre-Check-In
+                      </button>
+                      <Link className="appt-btn appt-btn--secondary" to="/portal/book-appointment">
+                        Reschedule
+                      </Link>
+                      <button
+                        className="appt-btn appt-btn--danger"
+                        onClick={() => cancelAppointment(apt)}
+                        disabled={cancellingId === apt.id}
+                      >
+                        {cancellingId === apt.id ? 'Cancelling...' : 'Cancel'}
                       </button>
                     </div>
                   )}
@@ -550,12 +588,30 @@ export function PortalAppointmentsPage() {
           transform: translateY(-1px);
         }
 
+        .appt-btn--danger {
+          flex: 1;
+          background: #fff1f2;
+          border: 1.5px solid #fecdd3;
+          color: #be123c;
+        }
+
+        .appt-btn--danger:hover:not(:disabled) {
+          border-color: #fb7185;
+          color: #9f1239;
+        }
+
+        .appt-btn:disabled {
+          cursor: not-allowed;
+          opacity: 0.65;
+          transform: none;
+        }
+
         @media (max-width: 768px) {
           .appointment-header {
             flex-wrap: wrap;
           }
 
-          .appointment-actions {
+          .appt-actions {
             flex-direction: column;
           }
 

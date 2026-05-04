@@ -17,6 +17,11 @@ const ROLE_ALIASES: Record<string, Role> = {
   physician: 'provider',
   doctor: 'provider',
   clinician: 'provider',
+  pa: 'provider',
+  pac: 'provider',
+  pa_c: 'provider',
+  physician_assistant: 'provider',
+  physicianassistant: 'provider',
 };
 
 export type ModuleKey =
@@ -27,6 +32,7 @@ export type ModuleKey =
   | 'waitlist'
   | 'patients'
   | 'notes'
+  | 'ai_assistant'
   | 'ambient_scribe'
   | 'orders'
   | 'rx'
@@ -84,6 +90,7 @@ export const MODULE_ACCESS: Record<ModuleKey, Role[]> = {
   waitlist: PATIENT_ACCESS_ROLES,
   patients: PATIENT_ACCESS_ROLES,
   notes: CLINICAL_ROLES,
+  ai_assistant: ['admin', 'provider'],
   ambient_scribe: CLINICAL_ROLES,
   orders: CLINICAL_ROLES,
   rx: CLINICAL_ROLES,
@@ -154,6 +161,8 @@ export const MODULE_PATHS: Array<{ path: string; module: ModuleKey }> = [
   { path: '/rx', module: 'rx' },
   { path: '/orders', module: 'orders' },
   { path: '/ambient-scribe', module: 'ambient_scribe' },
+  { path: '/clinical-copilot', module: 'ai_assistant' },
+  { path: '/ai-assistant', module: 'ai_assistant' },
   { path: '/notes', module: 'notes' },
   { path: '/patients', module: 'patients' },
   { path: '/waitlist', module: 'waitlist' },

@@ -25,11 +25,13 @@ export interface OrderChargeResult {
   quantity: number;
   feeCents: number;
   amountCents: number;
-  status: "ready";
+  status: "ready" | "self_pay";
 }
 
 interface ChargeRule {
   cptCode: string;
+  codeType?: "CPT" | "HCPCS" | "INTERNAL";
+  billingRoute?: "insurance" | "self_pay";
   description: string;
   defaultFeeCents: number;
   patterns: RegExp[];
@@ -102,6 +104,20 @@ const ORDER_CHARGE_RULES: ChargeRule[] = [
     defaultFeeCents: 12500,
     patterns: [/\bpathology\b/i, /\bdermpath\b/i],
   },
+  {
+    cptCode: "17311",
+    description: "Mohs surgery, first stage",
+    defaultFeeCents: 136700,
+    patterns: [/\bmohs\b/i],
+  },
+  {
+    cptCode: "LHR-MED",
+    codeType: "INTERNAL",
+    billingRoute: "self_pay",
+    description: "Laser hair removal",
+    defaultFeeCents: 22000,
+    patterns: [/\blaser\s+hair\b/i, /\bhair\s+removal\b/i],
+  },
 ];
 
 function normalizeCptCode(value?: string): string | undefined {
@@ -124,9 +140,17 @@ function detectBillableProcedure(input: OrderChargeInput): ChargeRule | null {
   return ORDER_CHARGE_RULES.find((rule) => rule.patterns.some((pattern) => pattern.test(haystack))) || null;
 }
 
-async function lookupFee(tenantId: string, cptCode: string): Promise<{ feeCents: number; description?: string }> {
+async function lookupFee(tenantId: string, cptCode: string): Promise<{
+  feeCents: number;
+  description?: string;
+  codeType?: "CPT" | "HCPCS" | "INTERNAL";
+  billingRoute?: "insurance" | "self_pay";
+}> {
   const feeScheduleResult = await pool.query(
-    `select fsi.fee_cents as "feeCents", fsi.cpt_description as "description"
+    `select fsi.fee_cents as "feeCents",
+            fsi.cpt_description as "description",
+            nullif(to_jsonb(fsi)->>'code_type', '') as "codeType",
+            nullif(to_jsonb(fsi)->>'billing_route', '') as "billingRoute"
        from fee_schedule_items fsi
        join fee_schedules fs on fs.id = fsi.fee_schedule_id
       where fs.tenant_id = $1
@@ -140,11 +164,16 @@ async function lookupFee(tenantId: string, cptCode: string): Promise<{ feeCents:
     return {
       feeCents: Number(feeScheduleResult.rows[0].feeCents || 0),
       description: feeScheduleResult.rows[0].description || undefined,
+      codeType: feeScheduleResult.rows[0].codeType || undefined,
+      billingRoute: feeScheduleResult.rows[0].billingRoute || undefined,
     };
   }
 
   const cptResult = await pool.query(
-    `select default_fee_cents as "feeCents", description
+    `select default_fee_cents as "feeCents",
+            description,
+            nullif(to_jsonb(cpt_codes)->>'code_type', '') as "codeType",
+            nullif(to_jsonb(cpt_codes)->>'billing_route', '') as "billingRoute"
        from cpt_codes
       where upper(code) = upper($1)
       limit 1`,
@@ -154,6 +183,8 @@ async function lookupFee(tenantId: string, cptCode: string): Promise<{ feeCents:
   return {
     feeCents: Number(cptResult.rows[0]?.feeCents || 0),
     description: cptResult.rows[0]?.description || undefined,
+    codeType: cptResult.rows[0]?.codeType || undefined,
+    billingRoute: cptResult.rows[0]?.billingRoute || undefined,
   };
 }
 
@@ -204,7 +235,7 @@ export async function createChargeForOrder(input: OrderChargeInput): Promise<Ord
       quantity: row.quantity || 1,
       feeCents: row.feeCents || 0,
       amountCents: row.amountCents || row.feeCents || 0,
-      status: "ready",
+      status: row.status === "self_pay" ? "self_pay" : "ready",
     };
   }
 
@@ -213,29 +244,34 @@ export async function createChargeForOrder(input: OrderChargeInput): Promise<Ord
   const feeCents = input.feeCents ?? (fee.feeCents || rule?.defaultFeeCents || 0);
   const amountCents = input.amountCents ?? feeCents * quantity;
   const descriptionBase = fee.description || rule?.description || "Billable order";
+  const codeType = fee.codeType || rule?.codeType || (/^[A-Z][0-9]{4}$/.test(cptCode) ? "HCPCS" : /^\d{5}$/.test(cptCode) ? "CPT" : "INTERNAL");
+  const billingRoute = fee.billingRoute || rule?.billingRoute || (codeType === "INTERNAL" ? "self_pay" : "insurance");
+  const chargeStatus: "ready" | "self_pay" = billingRoute === "self_pay" ? "self_pay" : "ready";
   const orderDetails = input.details ? `: ${input.details}` : "";
   const description = `${descriptionBase}${orderDetails} (Order ${input.orderId})`;
   const chargeId = crypto.randomUUID();
 
   await pool.query(
-    `insert into charges(
-       id, tenant_id, encounter_id, cpt_code, description, icd_codes,
+     `insert into charges(
+       id, tenant_id, encounter_id, cpt_code, code_type, billing_route, description, icd_codes,
        linked_diagnosis_ids, quantity, fee_cents, amount_cents, status
        , patient_id, service_date, amount
      )
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::int,$11,$12,$13,round(($10::numeric / 100), 2))`,
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::int,$13,$14,$15,round(($12::numeric / 100), 2))`,
     [
       chargeId,
       input.tenantId,
       input.encounterId,
       cptCode,
+      codeType,
+      billingRoute,
       description,
       input.icdCodes || [],
       [],
       quantity,
       feeCents,
       amountCents,
-      "ready",
+      chargeStatus,
       input.patientId || encounterPatientId || null,
       serviceDate,
     ],
@@ -257,6 +293,6 @@ export async function createChargeForOrder(input: OrderChargeInput): Promise<Ord
     quantity,
     feeCents,
     amountCents,
-    status: "ready",
+    status: chargeStatus,
   };
 }

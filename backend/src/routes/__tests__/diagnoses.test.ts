@@ -119,7 +119,10 @@ describe("Diagnoses routes", () => {
   });
 
   it("DELETE /diagnoses/:id deletes diagnosis", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ encounter_id: "enc-1", icd10_code: "L40.0" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
     const res = await request(app).delete("/diagnoses/dx-1");
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -130,10 +133,22 @@ describe("Diagnoses routes", () => {
     expect(res.status).toBe(400);
   });
 
-  it("GET /diagnoses/search/icd10 returns codes", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [{ code: "L40.0" }] });
-    const res = await request(app).get("/diagnoses/search/icd10?q=psoriasis");
+  it("GET /diagnoses/search/icd10 returns Mohs skin cancer diagnosis codes", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [{
+        code: "C44.41",
+        description: "Basal cell carcinoma of skin of scalp and neck",
+        category: "Skin cancer - BCC",
+        isCommon: true,
+      }],
+    });
+    const res = await request(app).get("/diagnoses/search/icd10?q=C44.41");
     expect(res.status).toBe(200);
     expect(res.body.codes).toHaveLength(1);
+    expect(res.body.codes[0]).toEqual(expect.objectContaining({
+      code: "C44.41",
+      description: "Basal cell carcinoma of skin of scalp and neck",
+    }));
+    expect(String(queryMock.mock.calls[0]?.[0] ?? "")).toContain("icd10_codes");
   });
 });

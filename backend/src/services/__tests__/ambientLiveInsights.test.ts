@@ -33,7 +33,7 @@ describe('ambientLiveInsights', () => {
     ]);
 
     expect(result.visitSummary.oneLiner).toMatch(/melanoma|pigmented lesion|skin cancer/i);
-    expect(result.symptoms.some((item) => item.label.includes('Changing lesion'))).toBe(true);
+    expect(result.symptoms.some((item) => item.label.includes('Changing mole'))).toBe(true);
     expect(result.workingDiagnoses.some((item) => /melanoma/i.test(item.condition))).toBe(true);
     expect(result.safetyFlags.some((item) => item.label === 'Skin cancer warning features' && item.severity === 'urgent')).toBe(true);
     expect(result.clinicalActions.some((item) => item.label === 'Prepare biopsy workflow' && item.urgency === 'urgent')).toBe(true);
@@ -74,5 +74,16 @@ describe('ambientLiveInsights', () => {
     expect(inferLiveSpeakerRole('Patient: I have an itchy rash on my hands')).toBe('patient');
     expect(inferLiveSpeakerRole('I recommend starting triamcinolone twice daily.')).toBe('provider');
     expect(inferLiveSpeakerRole('Exam shows erythematous plaques along the hairline.')).toBe('provider');
+  });
+
+  it('does not promote denied or wound-care warning symptoms as live symptoms', () => {
+    const result = generateAmbientLiveInsights([
+      'Patient: The mole is getting darker and catching on my shirt.',
+      'Patient: It does not hurt and there has been no pus or drainage.',
+      'Doctor: We will biopsy it today. After the biopsy, call us if you notice pain, pus, drainage, or fever.',
+    ]);
+
+    expect(result.symptoms.some((item) => item.label === 'Changing mole / pigmented lesion')).toBe(true);
+    expect(result.symptoms.some((item) => /pain|drainage|fever/i.test(item.label))).toBe(false);
   });
 });

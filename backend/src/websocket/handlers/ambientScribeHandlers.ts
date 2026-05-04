@@ -9,6 +9,7 @@ import {
   inferLiveSpeakerRole,
   type LiveSpeakerRole,
 } from "../../services/ambientLiveInsights";
+import { generateAmbientLiveInsightsWithAI } from "../../services/ambientLiveInsightsAI";
 
 interface AmbientJoinPayload {
   recordingId: string;
@@ -42,7 +43,7 @@ interface SavedChunk {
 
 interface AmbientInsightsEvent {
   recordingId: string;
-  source: "heuristic";
+  source: "heuristic" | "openai";
   updatedAt: string;
   visitSummary: ReturnType<typeof generateAmbientLiveInsights>["visitSummary"];
   symptoms: Array<{ label: string; confidence: number; evidence?: string }>;
@@ -55,6 +56,10 @@ interface AmbientInsightsEvent {
 
 const LIVE_TRANSCRIBE_ENABLED = process.env.AMBIENT_LIVE_TRANSCRIBE_ENABLED !== "false";
 const MIN_TRANSCRIBE_INTERVAL_MS = Number(process.env.AMBIENT_LIVE_TRANSCRIBE_MIN_INTERVAL_MS || 5000);
+const LIVE_AI_INSIGHTS_ENABLED = process.env.AMBIENT_LIVE_AI_ENABLED === "true";
+const MIN_AI_INSIGHTS_INTERVAL_MS = Number(process.env.AMBIENT_LIVE_AI_MIN_INTERVAL_MS || 15000);
+const MIN_AI_TRANSCRIPT_CHARS = Number(process.env.AMBIENT_LIVE_AI_MIN_CHARS || 180);
+const MIN_AI_TRANSCRIPT_DELTA_CHARS = Number(process.env.AMBIENT_LIVE_AI_MIN_DELTA_CHARS || 80);
 
 /**
  * Save a transcript chunk to the database for persistence and recovery
@@ -198,12 +203,18 @@ function ensureAmbientSessionState(socket: AuthenticatedSocket) {
       lastTranscriptAt: number;
       transcriptHistory: SavedChunk[];
       lastInsightsSignature: string | null;
+      lastAiInsightsAt: number;
+      lastAiTranscriptLength: number;
+      aiInsightsInFlight: boolean;
     }>();
   }
   return socket.data.ambientSessions as Map<string, {
     lastTranscriptAt: number;
     transcriptHistory: SavedChunk[];
     lastInsightsSignature: string | null;
+    lastAiInsightsAt: number;
+    lastAiTranscriptLength: number;
+    aiInsightsInFlight: boolean;
   }>;
 }
 
@@ -229,16 +240,62 @@ function buildAmbientInsightsPayload(recordingId: string, history: SavedChunk[])
   };
 }
 
+function buildAmbientInsightsEventFromInsights(
+  recordingId: string,
+  insights: ReturnType<typeof generateAmbientLiveInsights>
+): AmbientInsightsEvent {
+  return {
+    recordingId,
+    source: insights.source,
+    updatedAt: insights.updatedAt,
+    visitSummary: insights.visitSummary,
+    symptoms: insights.symptoms,
+    workingDiagnoses: insights.workingDiagnoses,
+    suggestedTests: insights.suggestedTests,
+    medications: insights.medications,
+    clinicalActions: insights.clinicalActions,
+    safetyFlags: insights.safetyFlags,
+  };
+}
+
 function buildInsightsSignature(payload: AmbientInsightsEvent): string {
   return JSON.stringify({
+    source: payload.source,
     symptoms: payload.symptoms.map((item) => item.label),
     diagnoses: payload.workingDiagnoses.map((item) => item.condition),
     tests: payload.suggestedTests.map((item) => item.testName),
     summary: payload.visitSummary.oneLiner,
+    patientReported: payload.visitSummary.patientReported,
+    providerObserved: payload.visitSummary.providerObserved,
+    planDraft: payload.visitSummary.planDraft,
+    documentationGaps: payload.visitSummary.documentationGaps,
     meds: payload.medications.map((item) => item.name),
     actions: payload.clinicalActions.map((item) => item.label),
     flags: payload.safetyFlags.map((item) => item.label),
   });
+}
+
+function shouldRequestAIInsights(
+  transcriptHistory: SavedChunk[],
+  sessionState: {
+    lastAiInsightsAt: number;
+    lastAiTranscriptLength: number;
+    aiInsightsInFlight: boolean;
+  }
+): boolean {
+  if (!LIVE_AI_INSIGHTS_ENABLED || sessionState.aiInsightsInFlight) {
+    return false;
+  }
+
+  const transcriptLength = transcriptHistory.reduce((sum, item) => sum + item.text.length, 0);
+  if (transcriptLength < MIN_AI_TRANSCRIPT_CHARS) {
+    return false;
+  }
+
+  const enoughTimeElapsed = Date.now() - sessionState.lastAiInsightsAt >= MIN_AI_INSIGHTS_INTERVAL_MS;
+  const enoughNewTranscript = transcriptLength - sessionState.lastAiTranscriptLength >= MIN_AI_TRANSCRIPT_DELTA_CHARS;
+
+  return enoughTimeElapsed && enoughNewTranscript;
 }
 
 async function verifyRecordingAccess(
@@ -299,6 +356,9 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
         lastTranscriptAt: 0,
         transcriptHistory,
         lastInsightsSignature: null,
+        lastAiInsightsAt: 0,
+        lastAiTranscriptLength: 0,
+        aiInsightsInFlight: false,
       });
 
       socket.emit("ambient:joined", {
@@ -487,6 +547,35 @@ export function registerAmbientScribeHandlers(io: Server, socket: AuthenticatedS
       if (nextSignature !== sessionState.lastInsightsSignature) {
         sessionState.lastInsightsSignature = nextSignature;
         io.to(getAmbientRoom(recordingId)).emit("ambient:insights", insightsPayload);
+      }
+
+      if (shouldRequestAIInsights(sessionState.transcriptHistory, sessionState)) {
+        const transcriptTexts = sessionState.transcriptHistory.map((item) => item.text);
+        const transcriptLength = transcriptTexts.reduce((sum, item) => sum + item.length, 0);
+        sessionState.aiInsightsInFlight = true;
+        sessionState.lastAiInsightsAt = Date.now();
+        sessionState.lastAiTranscriptLength = transcriptLength;
+
+        generateAmbientLiveInsightsWithAI(transcriptTexts, {
+          fallback: generateAmbientLiveInsights(transcriptTexts),
+        })
+          .then((insights) => {
+            const aiPayload = buildAmbientInsightsEventFromInsights(recordingId, insights);
+            const aiSignature = buildInsightsSignature(aiPayload);
+            if (aiSignature !== sessionState.lastInsightsSignature) {
+              sessionState.lastInsightsSignature = aiSignature;
+              io.to(getAmbientRoom(recordingId)).emit("ambient:insights", aiPayload);
+            }
+          })
+          .catch((error: any) => {
+            logger.warn("AI live insights generation failed", {
+              error: error?.message,
+              recordingId,
+            });
+          })
+          .finally(() => {
+            sessionState.aiInsightsInFlight = false;
+          });
       }
     } catch (error: any) {
       logger.warn("Live transcription failed", {

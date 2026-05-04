@@ -8,9 +8,10 @@ interface ScribeSummaryCardProps {
   statusLabel?: string;
   actions?: ReactNode;
   symptoms?: string[];
-  concerns?: string[];
   potentialDiagnoses?: SummaryItem[];
   suggestedTests?: SummaryItem[];
+  treatmentPlan?: string[];
+  nextSteps?: string[];
   summaryText?: string;
   summaryLabel?: string;
   footerNote?: string;
@@ -69,11 +70,12 @@ export function ScribeSummaryCard({
   statusLabel,
   actions,
   symptoms,
-  concerns,
   potentialDiagnoses,
   suggestedTests,
+  treatmentPlan,
+  nextSteps,
   summaryText,
-  summaryLabel = 'Summary of Appointment',
+  summaryLabel = 'Summary of Visit',
   footerNote,
   showDetails = true,
   compact = false,
@@ -107,16 +109,25 @@ export function ScribeSummaryCard({
               {renderTextList(symptoms)}
             </div>
             <div className="scribe-summary-section">
-              <div className="scribe-summary-section__label">Concerns</div>
-              {renderTextList(concerns)}
-            </div>
-            <div className="scribe-summary-section">
               <div className="scribe-summary-section__label">Potential Diagnosis</div>
               {renderItemList(potentialDiagnoses)}
             </div>
             <div className="scribe-summary-section">
-              <div className="scribe-summary-section__label">Suggested Tests</div>
-              {renderItemList(suggestedTests)}
+              <div className="scribe-summary-section__label">Tests Recommended</div>
+              {renderItemList(suggestedTests, 'No tests recommended.')}
+            </div>
+          </div>
+        )}
+
+        {showDetails && ((treatmentPlan?.length || 0) > 0 || (nextSteps?.length || 0) > 0) && (
+          <div className="scribe-summary-grid" style={{ marginTop: '0.85rem' }}>
+            <div className="scribe-summary-section">
+              <div className="scribe-summary-section__label">Treatment / Prescriptions</div>
+              {renderTextList(treatmentPlan, 'No treatment plan documented.')}
+            </div>
+            <div className="scribe-summary-section">
+              <div className="scribe-summary-section__label">Follow-Up / Next Steps</div>
+              {renderTextList(nextSteps, 'No follow-up documented.')}
             </div>
           </div>
         )}

@@ -25,6 +25,17 @@ function logFeeSchedulesError(message: string, error: unknown): void {
   });
 }
 
+const PRACTICE_MEDICAL_SELF_PAY_SCHEDULE = 'Practice Medical Self-Pay Fee Schedule';
+const PRACTICE_COSMETIC_SELF_PAY_SCHEDULE = 'Practice Cosmetic Self-Pay Fee Schedule';
+
+function categoryMatchesSql(columnSql: string, paramSql: string): string {
+  return `(
+    LOWER(COALESCE(${columnSql}, '')) = LOWER(${paramSql})
+    OR regexp_replace(LOWER(COALESCE(${columnSql}, '')), '[^a-z0-9]+', '_', 'g') =
+       regexp_replace(LOWER(${paramSql}), '[^a-z0-9]+', '_', 'g')
+  )`;
+}
+
 // Get all fee schedules
 router.get('/', requireAuth, async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
@@ -109,8 +120,17 @@ router.post('/', requireAuth, requireRoles(['admin', 'billing']), async (req: Au
     // If cloning from another schedule, copy all items
     if (cloneFromId) {
       await client.query(
-        `INSERT INTO fee_schedule_items (id, fee_schedule_id, cpt_code, cpt_description, fee_cents)
-         SELECT gen_random_uuid(), $1, cpt_code, cpt_description, fee_cents
+        `INSERT INTO fee_schedule_items (
+           id, fee_schedule_id, cpt_code, cpt_description, category, fee_cents,
+           code_type, billing_route, is_cosmetic, requires_diagnosis, subcategory, notes
+         )
+         SELECT gen_random_uuid(), $1, cpt_code, cpt_description, category, fee_cents,
+                nullif(to_jsonb(fee_schedule_items)->>'code_type', ''),
+                nullif(to_jsonb(fee_schedule_items)->>'billing_route', ''),
+                coalesce(nullif(to_jsonb(fee_schedule_items)->>'is_cosmetic', '')::boolean, false),
+                coalesce(nullif(to_jsonb(fee_schedule_items)->>'requires_diagnosis', '')::boolean, true),
+                nullif(to_jsonb(fee_schedule_items)->>'subcategory', ''),
+                nullif(to_jsonb(fee_schedule_items)->>'notes', '')
          FROM fee_schedule_items
          WHERE fee_schedule_id = $2`,
         [id, cloneFromId]
@@ -292,7 +312,22 @@ router.get('/:id/items', requireAuth, async (req: AuthedRequest, res: Response) 
 router.put('/:id/items/:cptCode', requireAuth, requireRoles(['admin', 'billing']), async (req: AuthedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const { id, cptCode } = req.params;
-  const { feeCents, cptDescription, category } = req.body;
+  const {
+    feeCents,
+    minPriceCents = null,
+    maxPriceCents = null,
+    cptDescription,
+    category,
+    codeType = 'CPT',
+    billingRoute = 'insurance',
+    isCosmetic = false,
+    requiresDiagnosis = billingRoute === 'insurance',
+    subcategory = null,
+    units = null,
+    typicalUnits = null,
+    packageSessions = null,
+    notes = null,
+  } = req.body;
 
   if (feeCents === undefined || feeCents < 0) {
     return res.status(400).json({ error: 'Valid fee is required' });
@@ -311,12 +346,48 @@ router.put('/:id/items/:cptCode', requireAuth, requireRoles(['admin', 'billing']
 
     // Upsert the item
     const result = await pool.query(
-      `INSERT INTO fee_schedule_items (id, fee_schedule_id, cpt_code, cpt_description, category, fee_cents)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
+      `INSERT INTO fee_schedule_items (
+         id, fee_schedule_id, cpt_code, cpt_description, category, fee_cents,
+         min_price_cents, max_price_cents, units, typical_units, package_sessions,
+         code_type, billing_route, is_cosmetic, requires_diagnosis, subcategory, notes
+       )
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        ON CONFLICT (fee_schedule_id, cpt_code)
-       DO UPDATE SET fee_cents = $5, cpt_description = $3, category = $4, updated_at = CURRENT_TIMESTAMP
+       DO UPDATE SET
+         fee_cents = $5,
+         cpt_description = $3,
+         category = $4,
+         min_price_cents = $6,
+         max_price_cents = $7,
+         units = $8,
+         typical_units = $9,
+         package_sessions = $10,
+         code_type = $11,
+         billing_route = $12,
+         is_cosmetic = $13,
+         requires_diagnosis = $14,
+         subcategory = $15,
+         notes = $16,
+         updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
-      [id, cptCode, cptDescription || null, category || null, feeCents]
+      [
+        id,
+        cptCode,
+        cptDescription || null,
+        category || null,
+        feeCents,
+        minPriceCents,
+        maxPriceCents,
+        units,
+        typicalUnits,
+        packageSessions,
+        codeType,
+        billingRoute,
+        isCosmetic,
+        requiresDiagnosis,
+        subcategory,
+        notes,
+      ]
     );
 
     res.json(result.rows[0]);
@@ -393,11 +464,47 @@ router.post('/:id/items/import', requireAuth, requireRoles(['admin', 'billing'])
         }
 
         await client.query(
-          `INSERT INTO fee_schedule_items (id, fee_schedule_id, cpt_code, cpt_description, category, fee_cents)
-           VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
+          `INSERT INTO fee_schedule_items (
+             id, fee_schedule_id, cpt_code, cpt_description, category, fee_cents,
+             min_price_cents, max_price_cents, units, typical_units, package_sessions,
+             code_type, billing_route, is_cosmetic, requires_diagnosis, subcategory, notes
+           )
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
            ON CONFLICT (fee_schedule_id, cpt_code)
-           DO UPDATE SET fee_cents = $5, cpt_description = $3, category = $4, updated_at = CURRENT_TIMESTAMP`,
-          [id, item.cptCode, item.description || null, item.category || null, feeCents]
+           DO UPDATE SET
+             fee_cents = $5,
+             cpt_description = $3,
+             category = $4,
+             min_price_cents = $6,
+             max_price_cents = $7,
+             units = $8,
+             typical_units = $9,
+             package_sessions = $10,
+             code_type = $11,
+             billing_route = $12,
+             is_cosmetic = $13,
+             requires_diagnosis = $14,
+             subcategory = $15,
+             notes = $16,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            id,
+            item.cptCode,
+            item.description || item.cptDescription || null,
+            item.category || null,
+            feeCents,
+            item.minPriceCents ?? item.min_price_cents ?? null,
+            item.maxPriceCents ?? item.max_price_cents ?? null,
+            item.units || null,
+            item.typicalUnits ?? item.typical_units ?? null,
+            item.packageSessions ?? item.package_sessions ?? null,
+            item.codeType || item.code_type || 'CPT',
+            item.billingRoute || item.billing_route || 'insurance',
+            Boolean(item.isCosmetic || item.is_cosmetic),
+            item.requiresDiagnosis ?? item.requires_diagnosis ?? ((item.billingRoute || item.billing_route || 'insurance') === 'insurance'),
+            item.subcategory || null,
+            item.notes || null,
+          ]
         );
 
         imported++;
@@ -441,18 +548,25 @@ router.get('/:id/export', requireAuth, async (req: AuthedRequest, res: Response)
     const scheduleName = checkResult.rows[0].name;
 
     const result = await pool.query(
-      `SELECT cpt_code, category, cpt_description, fee_cents FROM fee_schedule_items
+      `SELECT cpt_code, code_type, billing_route, category, subcategory, cpt_description,
+              fee_cents, min_price_cents, max_price_cents, units, is_cosmetic,
+              requires_diagnosis, notes
+       FROM fee_schedule_items
        WHERE fee_schedule_id = $1 ORDER BY category ASC, cpt_code ASC`,
       [id]
     );
 
     // Generate CSV
-    let csv = 'CPT Code,Category,Description,Fee\n';
+    let csv = 'Code,Code Type,Billing Route,Category,Subcategory,Description,Fee,Min Price,Max Price,Units,Cosmetic,Requires Diagnosis,Notes\n';
     for (const row of result.rows) {
       const fee = (row.fee_cents / 100).toFixed(2);
+      const minPrice = row.min_price_cents ? (row.min_price_cents / 100).toFixed(2) : '';
+      const maxPrice = row.max_price_cents ? (row.max_price_cents / 100).toFixed(2) : '';
       const category = row.category ? `"${row.category.replace(/"/g, '""')}"` : '';
+      const subcategory = row.subcategory ? `"${row.subcategory.replace(/"/g, '""')}"` : '';
       const description = row.cpt_description ? `"${row.cpt_description.replace(/"/g, '""')}"` : '';
-      csv += `${row.cpt_code},${category},${description},${fee}\n`;
+      const notes = row.notes ? `"${row.notes.replace(/"/g, '""')}"` : '';
+      csv += `${row.cpt_code},${row.code_type || ''},${row.billing_route || ''},${category},${subcategory},${description},${fee},${minPrice},${maxPrice},${row.units || ''},${row.is_cosmetic ? 'true' : 'false'},${row.requires_diagnosis ? 'true' : 'false'},${notes}\n`;
     }
 
     res.setHeader('Content-Type', 'text/csv');
@@ -1078,12 +1192,21 @@ router.get('/cosmetic/procedures', requireAuth, async (req: AuthedRequest, res: 
 
     if (category) {
       params.push(category);
-      filterClauses += ` AND LOWER(COALESCE(fsi.category, '')) = LOWER($${params.length})`;
+      filterClauses += ` AND ${categoryMatchesSql('fsi.category', `$${params.length}`)}`;
     }
 
     if (feeScheduleId) {
       params.push(feeScheduleId);
       filterClauses += ` AND fs.id = $${params.length}`;
+    } else {
+      filterClauses += ` AND (
+        fs.name = '${PRACTICE_COSMETIC_SELF_PAY_SCHEDULE}'
+        OR NOT EXISTS (
+          SELECT 1 FROM fee_schedules preferred
+          WHERE preferred.tenant_id = $1
+            AND preferred.name = '${PRACTICE_COSMETIC_SELF_PAY_SCHEDULE}'
+        )
+      )`;
     }
 
     const result = await pool.query(
@@ -1103,6 +1226,9 @@ router.get('/cosmetic/procedures', requireAuth, async (req: AuthedRequest, res: 
            fsi.typical_units,
            fsi.package_sessions,
            fsi.notes,
+           fsi.code_type,
+           fsi.billing_route,
+           fsi.requires_diagnosis,
            fsi.is_cosmetic,
            fs.name AS schedule_name,
            fs.is_default
@@ -1152,24 +1278,58 @@ router.get('/cosmetic/pricing', requireAuth, async (req: AuthedRequest, res: Res
 
   try {
     let query = `
-      SELECT * FROM v_cosmetic_pricing
-      WHERE schedule_name IN (
-        SELECT name FROM fee_schedules WHERE tenant_id = $1
-      )
+      SELECT
+        fsi.id,
+        fsi.fee_schedule_id as "feeScheduleId",
+        fsi.cpt_code as "cptCode",
+        fsi.cpt_description as description,
+        fsi.cpt_description as "cptDescription",
+        fsi.category,
+        fsi.subcategory,
+        fsi.units,
+        fsi.fee_cents as "feeCents",
+        fsi.fee_cents as "baseFeeCents",
+        fsi.min_price_cents as "minPriceCents",
+        fsi.max_price_cents as "maxPriceCents",
+        fsi.typical_units as "typicalUnits",
+        fsi.package_sessions as "packageSessions",
+        fsi.notes,
+        fsi.code_type as "codeType",
+        fsi.billing_route as "billingRoute",
+        fsi.requires_diagnosis as "requiresDiagnosis",
+        fsi.is_cosmetic as "isCosmetic",
+        fs.name as "scheduleName"
+      FROM fee_schedule_items fsi
+      JOIN fee_schedules fs ON fs.id = fsi.fee_schedule_id
+      WHERE fs.tenant_id = $1
+        AND COALESCE(fsi.is_cosmetic, false) = true
+        AND (
+          fs.name = '${PRACTICE_COSMETIC_SELF_PAY_SCHEDULE}'
+          OR NOT EXISTS (
+            SELECT 1 FROM fee_schedules preferred
+            WHERE preferred.tenant_id = $1
+              AND preferred.name = '${PRACTICE_COSMETIC_SELF_PAY_SCHEDULE}'
+          )
+        )
     `;
     const params: any[] = [tenantId];
 
     if (category && typeof category === 'string') {
       params.push(category);
-      query += ` AND category = $${params.length}`;
+      query += ` AND ${categoryMatchesSql('fsi.category', `$${params.length}`)}`;
     }
 
     if (search && typeof search === 'string') {
       params.push(`%${search.toLowerCase()}%`);
-      query += ` AND (LOWER(cpt_description) LIKE $${params.length} OR LOWER(cpt_code) LIKE $${params.length})`;
+      query += ` AND (
+        LOWER(fsi.cpt_description) LIKE $${params.length}
+        OR LOWER(fsi.cpt_code) LIKE $${params.length}
+        OR LOWER(COALESCE(fsi.category, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(fsi.notes, '')) LIKE $${params.length}
+      )`;
     }
 
-    query += ` ORDER BY category, subcategory, cpt_description`;
+    query += ` ORDER BY fsi.category, fsi.subcategory, fsi.cpt_description`;
 
     const result = await pool.query(query, params);
 
@@ -1256,6 +1416,74 @@ router.put('/cosmetic/procedures/:cptCode', requireAuth, requireRoles(['admin', 
   } catch (error) {
     logFeeSchedulesError('Error updating cosmetic procedure', error);
     res.status(500).json({ error: 'Failed to update cosmetic procedure' });
+  }
+});
+
+// Get workbook-backed medical self-pay procedures with pricing
+router.get('/self-pay/procedures', requireAuth, async (req: AuthedRequest, res: Response) => {
+  const tenantId = req.user!.tenantId;
+  const category = typeof req.query.category === 'string' ? req.query.category : undefined;
+  const feeScheduleId = typeof req.query.feeScheduleId === 'string' ? req.query.feeScheduleId : undefined;
+
+  try {
+    const params: Array<string> = [tenantId];
+    let filterClauses = `
+      WHERE fs.tenant_id = $1
+        AND COALESCE(fsi.billing_route, '') = 'self_pay'
+        AND COALESCE(fsi.is_cosmetic, false) = false
+    `;
+
+    if (category) {
+      params.push(category);
+      filterClauses += ` AND ${categoryMatchesSql('fsi.category', `$${params.length}`)}`;
+    }
+
+    if (feeScheduleId) {
+      params.push(feeScheduleId);
+      filterClauses += ` AND fs.id = $${params.length}`;
+    } else {
+      filterClauses += ` AND (
+        fs.name = '${PRACTICE_MEDICAL_SELF_PAY_SCHEDULE}'
+        OR NOT EXISTS (
+          SELECT 1 FROM fee_schedules preferred
+          WHERE preferred.tenant_id = $1
+            AND preferred.name = '${PRACTICE_MEDICAL_SELF_PAY_SCHEDULE}'
+        )
+      )`;
+    }
+
+    const result = await pool.query(
+      `SELECT
+         fsi.id,
+         fsi.fee_schedule_id,
+         fsi.cpt_code,
+         fsi.cpt_description,
+         fsi.category,
+         fsi.subcategory,
+         fsi.units,
+         fsi.fee_cents,
+         fsi.min_price_cents,
+         fsi.max_price_cents,
+         fsi.typical_units,
+         fsi.package_sessions,
+         fsi.notes,
+         fsi.code_type,
+         fsi.billing_route,
+         fsi.requires_diagnosis,
+         fsi.is_cosmetic,
+         fs.name AS schedule_name,
+         fs.is_default
+       FROM fee_schedule_items fsi
+       JOIN fee_schedules fs ON fsi.fee_schedule_id = fs.id
+       ${filterClauses}
+       ORDER BY fsi.category NULLS LAST, fsi.subcategory NULLS LAST, fsi.cpt_description NULLS LAST, fsi.cpt_code`,
+      params
+    );
+
+    res.json({ procedures: result.rows });
+  } catch (error) {
+    logFeeSchedulesError('Error fetching self-pay procedures', error);
+    res.status(500).json({ error: 'Failed to fetch self-pay procedures' });
   }
 });
 

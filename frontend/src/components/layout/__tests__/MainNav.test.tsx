@@ -41,6 +41,7 @@ describe('MainNav role-based visibility', () => {
     mockRole = 'admin';
     renderNav();
     expect(screen.getByText('Admin')).toBeInTheDocument();
+    expect(screen.getByText('AI Assistant')).toBeInTheDocument();
     expect(screen.queryByText('Quality')).not.toBeInTheDocument();
     expect(screen.getByText('Registry & Recalls')).toBeInTheDocument();
     expect(screen.queryByText('Registry')).not.toBeInTheDocument();
@@ -50,6 +51,7 @@ describe('MainNav role-based visibility', () => {
     mockRole = 'provider';
     renderNav();
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
+    expect(screen.getByText('AI Assistant')).toBeInTheDocument();
     expect(screen.queryByText('Analytics')).not.toBeInTheDocument();
     expect(screen.queryByText('Quality')).not.toBeInTheDocument();
     expect(screen.getByText('Registry & Recalls')).toBeInTheDocument();
@@ -60,6 +62,7 @@ describe('MainNav role-based visibility', () => {
     mockRole = 'front_desk';
     renderNav();
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
+    expect(screen.queryByText('AI Assistant')).not.toBeInTheDocument();
     expect(screen.queryByText('Financials')).not.toBeInTheDocument();
     expect(screen.getByText('Claims')).toBeInTheDocument();
     expect(screen.queryByText('Quality')).not.toBeInTheDocument();

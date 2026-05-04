@@ -209,7 +209,7 @@ Optional inputs:\n  AMBIENT_FLOW_TENANT_HEADER / --tenant-header     (default: x
 
 function buildOptions(): FlowOptions {
   const backendRoot = path.resolve(__dirname, "../..");
-  const defaultAudio = path.resolve(backendRoot, "src/routes/__tests__/fixtures/test-audio.wav");
+  const defaultAudio = path.resolve(backendRoot, "src/scripts/fixtures/ambient-encounter-sample.wav");
 
   return {
     baseUrl: (argValue("--base-url") || process.env.AMBIENT_FLOW_BASE_URL || "").trim(),
@@ -221,7 +221,7 @@ function buildOptions(): FlowOptions {
     providerId: (argValue("--provider-id") || process.env.AMBIENT_FLOW_PROVIDER_ID || "").trim() || undefined,
     encounterId: (argValue("--encounter-id") || process.env.AMBIENT_FLOW_ENCOUNTER_ID || "").trim() || undefined,
     audioPath: path.resolve(argValue("--audio-path") || process.env.AMBIENT_FLOW_AUDIO_PATH || defaultAudio),
-    durationSeconds: parseIntWithDefault(argValue("--duration-seconds") || process.env.AMBIENT_FLOW_DURATION_SECONDS, 90),
+    durationSeconds: parseIntWithDefault(argValue("--duration-seconds") || process.env.AMBIENT_FLOW_DURATION_SECONDS, 120),
     timeoutMs: parseIntWithDefault(argValue("--timeout-ms") || process.env.AMBIENT_FLOW_TIMEOUT_MS, 180000),
     pollIntervalMs: parseIntWithDefault(argValue("--poll-interval-ms") || process.env.AMBIENT_FLOW_POLL_INTERVAL_MS, 2000),
     skipApply: hasFlag("--skip-apply") || parseBool(process.env.AMBIENT_FLOW_SKIP_APPLY, false),
@@ -347,25 +347,6 @@ async function resolveEncounterId(
 ): Promise<string> {
   if (options.encounterId) {
     return options.encounterId;
-  }
-
-  const encountersResponse = await client.get("/api/encounters", { headers });
-  const encounters = (encountersResponse.data?.encounters || []) as Array<{
-    id?: string;
-    patientId?: string;
-    providerId?: string;
-    status?: string;
-  }>;
-
-  const reusableEncounter = encounters.find((encounter) =>
-    encounter.id &&
-    encounter.patientId === patientId &&
-    encounter.providerId === providerId &&
-    !["signed", "completed", "closed", "locked", "finalized"].includes(String(encounter.status || "").toLowerCase()),
-  );
-
-  if (reusableEncounter?.id) {
-    return reusableEncounter.id;
   }
 
   const createResponse = await client.post(

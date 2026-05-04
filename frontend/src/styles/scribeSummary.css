@@ -458,6 +458,302 @@
   border-color: var(--primary-700);
 }
 
+.scribe-review-layout {
+  display: grid;
+  grid-template-columns: minmax(680px, 2fr) minmax(360px, 0.82fr);
+  gap: 1.25rem;
+  padding: 1.5rem;
+  align-items: start;
+}
+
+.scribe-review-layout--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.scribe-review-main,
+.scribe-review-sidebar {
+  min-width: 0;
+}
+
+.scribe-review-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.scribe-review-main .space-y-6 > * + * {
+  margin-top: 1.5rem;
+}
+
+.scribe-review-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.scribe-review-toggle {
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-md);
+  color: var(--gray-700);
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 700;
+  padding: 0.5rem 0.9rem;
+}
+
+.scribe-review-toggle:hover:not(:disabled) {
+  background: var(--gray-50);
+  border-color: var(--primary-300);
+  color: var(--primary-700);
+}
+
+.scribe-review-confidence-card {
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  padding: 1rem;
+}
+
+.scribe-review-confidence-card--high {
+  background: var(--success-50);
+  border-color: var(--success-100);
+  color: var(--success-700);
+}
+
+.scribe-review-confidence-card--medium {
+  background: var(--warning-50);
+  border-color: var(--warning-100);
+  color: var(--warning-700);
+}
+
+.scribe-review-confidence-card--low {
+  background: var(--error-50);
+  border-color: var(--error-100);
+  color: var(--error-700);
+}
+
+.scribe-review-confidence-row {
+  align-items: center;
+  display: flex;
+  font-weight: 800;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.scribe-review-confidence-value {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.scribe-review-confidence-card p {
+  font-size: 0.78rem;
+  margin: 0.35rem 0 0;
+}
+
+.scribe-review-sidebar-card {
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 1rem;
+}
+
+.scribe-review-sidebar-title {
+  margin: 0 0 0.75rem;
+  color: var(--gray-900);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.scribe-review-transcript-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  max-height: 28rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.scribe-review-transcript-segment {
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  padding: 0.75rem;
+  background: var(--gray-50);
+}
+
+.scribe-review-transcript-segment.bg-blue-50 {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.scribe-review-transcript-segment.bg-green-50 {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+}
+
+.scribe-review-transcript-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+  color: var(--gray-500);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.scribe-review-transcript-text {
+  margin: 0;
+  color: var(--gray-800);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.scribe-review-code-list,
+.scribe-review-edit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.scribe-review-edit-list {
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.scribe-review-code-row,
+.scribe-review-med-row,
+.scribe-review-edit-row {
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--gray-50);
+  padding: 0.75rem 0.85rem;
+}
+
+.scribe-review-code-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.scribe-review-code-code {
+  color: var(--primary-700);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.scribe-review-code-description,
+.scribe-review-med-detail,
+.scribe-review-edit-meta,
+.scribe-review-edit-time {
+  margin: 0.25rem 0 0;
+  color: var(--gray-600);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.scribe-review-med-name,
+.scribe-review-edit-section {
+  color: var(--gray-900);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.scribe-review-edit-row {
+  border-left: 3px solid var(--primary-300);
+}
+
+.scribe-review-edit-time {
+  color: var(--gray-400);
+}
+
+.scribe-review-confidence {
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.scribe-review-confidence--high {
+  background: var(--success-100);
+  color: var(--success-700);
+}
+
+.scribe-review-confidence--medium {
+  background: var(--warning-100);
+  color: var(--warning-700);
+}
+
+.scribe-review-confidence--low {
+  background: var(--error-100);
+  color: var(--error-700);
+}
+
+.scribe-review-action-row {
+  border-top: 1px solid var(--gray-200);
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  padding-top: 1rem;
+}
+
+.scribe-review-workflow-card {
+  align-items: center;
+  background: linear-gradient(135deg, var(--primary-50), var(--white));
+  border: 1px solid var(--primary-200);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 1rem;
+}
+
+.scribe-review-workflow-title {
+  color: var(--gray-900);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.scribe-review-workflow-copy {
+  color: var(--gray-600);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin-top: 0.25rem;
+}
+
+.scribe-review-action-button {
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--white);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 800;
+  padding: 0.85rem 1rem;
+}
+
+.scribe-review-action-button--primary {
+  background: var(--primary-600);
+}
+
+.scribe-review-action-button--success {
+  background: var(--success-600);
+}
+
+.scribe-review-action-button--danger {
+  background: var(--error-600);
+}
+
+.scribe-review-action-button:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.scribe-review-action-button:disabled {
+  background: var(--gray-300);
+  cursor: not-allowed;
+}
+
 @media (max-width: 768px) {
   .scribe-summary-panel__header {
     flex-direction: column;
@@ -472,5 +768,15 @@
   .scribe-summary-card__actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .scribe-review-workflow-card {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1180px) {
+  .scribe-review-layout {
+    grid-template-columns: 1fr;
   }
 }

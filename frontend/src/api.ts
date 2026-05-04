@@ -1388,6 +1388,71 @@ const authedPost = async (tenantId: string, accessToken: string, path: string, b
   return res.json();
 };
 
+export interface EligibilityWorkflowPayload {
+  patientId: string;
+  payerId: string;
+  payerName?: string;
+  memberId?: string;
+  serviceDate?: string;
+  serviceType?: string;
+  bypassCache?: boolean;
+}
+
+export interface PrescriptionWorkflowPayload {
+  prescriptionId?: string;
+  orderId?: string;
+  patientId?: string;
+  pharmacyNcpdp?: string;
+  pharmacyName?: string;
+  medicationName?: string;
+  strength?: string;
+  sig?: string;
+  quantity?: string | number;
+  refills?: string | number;
+}
+
+export interface PriorAuthWorkflowPayload {
+  id?: string;
+  priorAuthId?: string;
+  patientId?: string;
+  patientName?: string;
+  medicationName?: string;
+  procedureCode?: string;
+  diagnosisCode?: string;
+  diagnosisCodes?: string[];
+  insuranceName?: string;
+  payerName?: string;
+  payerId?: string;
+  memberId?: string;
+  providerNpi?: string;
+  clinicalJustification?: string;
+  urgency?: string;
+}
+
+export const checkEligibilityWorkflow = (
+  tenantId: string,
+  accessToken: string,
+  payload: EligibilityWorkflowPayload
+) => authedPost(tenantId, accessToken, "/api/eligibility/check", payload);
+
+export const sendPrescriptionWorkflow = (
+  tenantId: string,
+  accessToken: string,
+  payload: PrescriptionWorkflowPayload
+) => authedPost(tenantId, accessToken, "/api/prescriptions/send", payload);
+
+export const submitPriorAuthWorkflow = (
+  tenantId: string,
+  accessToken: string,
+  payload: PriorAuthWorkflowPayload
+) => authedPost(tenantId, accessToken, "/api/prior-auth/submit", payload);
+
+export const checkPriorAuthWorkflowStatus = (
+  tenantId: string,
+  accessToken: string,
+  id: string
+) => authedGet(tenantId, accessToken, `/api/prior-auth/${id}/status`);
+
 export const createPatient = (tenantId: string, accessToken: string, data: any) =>
   authedPost(tenantId, accessToken, "/api/patients", data);
 
@@ -1592,6 +1657,17 @@ const normalizeFeeScheduleItem = (item: any) => {
     feeScheduleId: item.feeScheduleId ?? item.fee_schedule_id ?? "",
     cptCode: item.cptCode ?? item.cpt_code ?? "",
     cptDescription: item.cptDescription ?? item.cpt_description ?? item.description ?? "",
+    codeType: item.codeType ?? item.code_type ?? "CPT",
+    billingRoute: item.billingRoute ?? item.billing_route ?? "insurance",
+    requiresDiagnosis: item.requiresDiagnosis ?? item.requires_diagnosis ?? true,
+    isCosmetic: item.isCosmetic ?? item.is_cosmetic ?? false,
+    subcategory: item.subcategory ?? "",
+    units: item.units ?? "",
+    minPriceCents: toOptionalFiniteNumber(item.minPriceCents ?? item.min_price_cents),
+    maxPriceCents: toOptionalFiniteNumber(item.maxPriceCents ?? item.max_price_cents),
+    typicalUnits: toOptionalFiniteNumber(item.typicalUnits ?? item.typical_units),
+    packageSessions: toOptionalFiniteNumber(item.packageSessions ?? item.package_sessions),
+    notes: item.notes ?? "",
     feeCents,
     createdAt: item.createdAt ?? item.created_at ?? "",
     updatedAt: item.updatedAt ?? item.updated_at ?? "",
@@ -1717,6 +1793,9 @@ export interface CosmeticProcedureCatalogItem {
   cptDescription: string;
   category?: string;
   subcategory?: string;
+  codeType?: 'CPT' | 'HCPCS' | 'INTERNAL';
+  billingRoute?: 'insurance' | 'self_pay' | 'non_billable';
+  requiresDiagnosis?: boolean;
   units?: number;
   feeCents: number;
   minPriceCents?: number;
@@ -1737,6 +1816,7 @@ const toOptionalFiniteNumber = (value: unknown): number | undefined => {
 
 const normalizeCosmeticProcedureCatalogItem = (item: any): CosmeticProcedureCatalogItem => {
   const normalizedFeeItem = normalizeFeeScheduleItem(item);
+  const isCosmetic = Boolean(item?.isCosmetic ?? item?.is_cosmetic ?? true);
   return {
     id: item?.id ?? "",
     feeScheduleId: normalizedFeeItem.feeScheduleId,
@@ -1744,6 +1824,9 @@ const normalizeCosmeticProcedureCatalogItem = (item: any): CosmeticProcedureCata
     cptDescription: normalizedFeeItem.cptDescription,
     category: item?.category ?? "",
     subcategory: item?.subcategory ?? "",
+    codeType: normalizedFeeItem.codeType,
+    billingRoute: item?.billingRoute ?? item?.billing_route ?? (isCosmetic ? "self_pay" : normalizedFeeItem.billingRoute),
+    requiresDiagnosis: item?.requiresDiagnosis ?? item?.requires_diagnosis ?? (isCosmetic ? false : normalizedFeeItem.requiresDiagnosis),
     units: toOptionalFiniteNumber(item?.units),
     feeCents: normalizedFeeItem.feeCents,
     minPriceCents: toOptionalFiniteNumber(item?.minPriceCents ?? item?.min_price_cents),
@@ -1751,7 +1834,7 @@ const normalizeCosmeticProcedureCatalogItem = (item: any): CosmeticProcedureCata
     typicalUnits: toOptionalFiniteNumber(item?.typicalUnits ?? item?.typical_units),
     packageSessions: toOptionalFiniteNumber(item?.packageSessions ?? item?.package_sessions),
     notes: item?.notes ?? "",
-    isCosmetic: Boolean(item?.isCosmetic ?? item?.is_cosmetic ?? true),
+    isCosmetic,
     scheduleName: item?.scheduleName ?? item?.schedule_name ?? "",
     isDefault: Boolean(item?.isDefault ?? item?.is_default ?? false),
   };
@@ -1770,6 +1853,22 @@ export const fetchCosmeticProcedureCatalog = async (
   const data = await authedGet(tenantId, accessToken, `/api/fee-schedules/cosmetic/procedures${suffix}`);
   return Array.isArray(data?.procedures)
     ? data.procedures.map((item: any) => normalizeCosmeticProcedureCatalogItem(item))
+    : [];
+};
+
+export const fetchSelfPayProcedureCatalog = async (
+  tenantId: string,
+  accessToken: string,
+  params?: { category?: string; feeScheduleId?: string }
+): Promise<CosmeticProcedureCatalogItem[]> => {
+  const query = new URLSearchParams();
+  if (params?.category) query.append("category", params.category);
+  if (params?.feeScheduleId) query.append("feeScheduleId", params.feeScheduleId);
+
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const data = await authedGet(tenantId, accessToken, `/api/fee-schedules/self-pay/procedures${suffix}`);
+  return Array.isArray(data?.procedures)
+    ? data.procedures.map((item: any) => normalizeCosmeticProcedureCatalogItem({ ...item, isCosmetic: false, is_cosmetic: false }))
     : [];
 };
 
@@ -1909,6 +2008,15 @@ export async function updateClaimStatus(tenantId: string, accessToken: string, c
   });
   if (!res.ok) throw new Error("Failed to update claim status");
   return res.json();
+}
+
+export async function releaseClaimFromCodingReview(
+  tenantId: string,
+  accessToken: string,
+  claimId: string,
+  data?: { notes?: string }
+) {
+  return authedPost(tenantId, accessToken, `/api/claims/${claimId}/release`, data || {});
 }
 
 export async function postClaimPayment(tenantId: string, accessToken: string, claimId: string, data: any) {
@@ -6220,10 +6328,55 @@ export interface PatientSummary {
   diagnosisShared?: string | null;
   treatmentPlan?: string | null;
   nextSteps?: string | null;
+  chiefComplaint?: string | null;
+  diagnoses?: Array<{ code?: string; description?: string; confidence?: number; rationale?: string }> | null;
+  procedures?: Array<{ code?: string; description?: string; type?: string; confidence?: number; rationale?: string }> | null;
+  followUpInstructions?: string | null;
   followUpDate?: string | null;
   sharedAt?: string | null;
   createdAt: string;
   generatedByName?: string | null;
+}
+
+export interface ClinicalCopilotMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ClinicalCopilotCodeSuggestion {
+  type: 'em' | 'cpt' | 'icd10';
+  code: string;
+  description: string;
+  confidence: number;
+  rationale: string;
+}
+
+export interface ClinicalCopilotResponse {
+  answer: string;
+  visitSummary: string;
+  suggestedCodes: ClinicalCopilotCodeSuggestion[];
+  followUpTasks: string[];
+  patientInstructions: string[];
+  missingData: string[];
+  chartEvidence: string[];
+  provider: 'openai' | 'anthropic' | 'mock';
+  model: string;
+  context?: {
+    patientId?: string;
+    encounterId?: string;
+    noteId?: string;
+    recordingId?: string;
+    hasTranscript?: boolean;
+    hasAmbientNote?: boolean;
+  };
+}
+
+export interface ClinicalCopilotVisitSummarySaveResponse {
+  summaryId: string;
+  created: boolean;
+  message: string;
+  response: ClinicalCopilotResponse;
+  context?: ClinicalCopilotResponse['context'];
 }
 
 /**
@@ -6653,6 +6806,74 @@ export async function deleteAmbientRecording(
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to delete recording');
   }
+  return res.json();
+}
+
+/**
+ * Ask the in-chart clinical copilot a grounded question
+ */
+export async function askClinicalCopilot(
+  tenantId: string,
+  accessToken: string,
+  data: {
+    prompt: string;
+    patientId?: string;
+    encounterId?: string;
+    noteId?: string;
+    recordingId?: string;
+    history?: ClinicalCopilotMessage[];
+  }
+): Promise<ClinicalCopilotResponse> {
+  const res = await fetch(`${API_BASE}/api/ambient/copilot/respond`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to get clinical copilot response');
+  }
+
+  return res.json();
+}
+
+/**
+ * Generate a chart-grounded copilot visit summary and save it to patient history
+ */
+export async function saveClinicalCopilotVisitSummary(
+  tenantId: string,
+  accessToken: string,
+  data: {
+    patientId?: string;
+    encounterId?: string;
+    noteId?: string;
+    recordingId?: string;
+    prompt?: string;
+    history?: ClinicalCopilotMessage[];
+  }
+): Promise<ClinicalCopilotVisitSummarySaveResponse> {
+  const res = await fetch(`${API_BASE}/api/ambient/copilot/visit-summary`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to save clinical copilot visit summary');
+  }
+
   return res.json();
 }
 

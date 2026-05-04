@@ -143,6 +143,84 @@ const PORTAL_EMAILS = [
 
 type DemoItem = Record<string, any>;
 
+const DEMO_PHARMACIES: DemoItem[] = [
+  {
+    id: 'pharm-demo-walgreens-denver-blake',
+    ncpdpId: '4938162',
+    name: 'Walgreens - Blake Street',
+    phone: '(720) 555-9200',
+    fax: '(720) 555-9201',
+    street: '1560 Blake St',
+    city: 'Denver',
+    state: 'CO',
+    zip: '80202',
+    isPreferred: true,
+    is24Hour: false,
+    acceptsErx: true,
+    chain: 'Walgreens',
+  },
+  {
+    id: 'pharm-demo-cvs-boulder-28th',
+    ncpdpId: '0629481',
+    name: 'CVS Pharmacy - Boulder',
+    phone: '(303) 555-8800',
+    fax: '(303) 555-8801',
+    street: '1600 28th St',
+    city: 'Boulder',
+    state: 'CO',
+    zip: '80301',
+    isPreferred: true,
+    is24Hour: false,
+    acceptsErx: true,
+    chain: 'CVS',
+  },
+  {
+    id: 'pharm-demo-king-soopers-denver-chestnut',
+    ncpdpId: '7142059',
+    name: 'King Soopers Pharmacy - Chestnut',
+    phone: '(720) 555-7711',
+    fax: '(720) 555-7712',
+    street: '1950 Chestnut Pl',
+    city: 'Denver',
+    state: 'CO',
+    zip: '80202',
+    isPreferred: true,
+    is24Hour: false,
+    acceptsErx: true,
+    chain: 'King Soopers',
+  },
+  {
+    id: 'pharm-demo-cvs-specialty-boulder',
+    ncpdpId: '2176048',
+    name: 'CVS Specialty - Boulder',
+    phone: '(303) 555-6440',
+    fax: '(303) 555-6441',
+    street: '1881 9th St',
+    city: 'Boulder',
+    state: 'CO',
+    zip: '80302',
+    isPreferred: false,
+    is24Hour: false,
+    acceptsErx: true,
+    chain: 'CVS Specialty',
+  },
+  {
+    id: 'pharm-demo-walgreens-denver-colfax-24hr',
+    ncpdpId: '5817340',
+    name: 'Walgreens - Colfax 24 Hour',
+    phone: '(303) 555-2400',
+    fax: '(303) 555-2401',
+    street: '2000 E Colfax Ave',
+    city: 'Denver',
+    state: 'CO',
+    zip: '80206',
+    isPreferred: false,
+    is24Hour: true,
+    acceptsErx: true,
+    chain: 'Walgreens',
+  },
+];
+
 function isOfficeDemoMode(headers: Record<string, string>): boolean {
   const auth = headers.Authorization || headers.authorization || '';
   return auth.includes('.demo');
@@ -228,6 +306,9 @@ function flattenProfile(profile: DemoItem) {
     emergencyContactRelationship: emergencyContact.relationship || '',
     emergencyContactPhone: emergencyContact.phone || '',
     preferredPharmacy: pharmacy.name || '',
+    pharmacyName: pharmacy.name || '',
+    pharmacyPhone: pharmacy.phone || '',
+    pharmacyAddress: pharmacy.address || '',
     dob: profile.dateOfBirth,
     gender: profile.sex === 'M' ? 'Male' : profile.sex === 'F' ? 'Female' : '',
     portalEmail: profile.email,
@@ -250,6 +331,29 @@ function getParams(url: string): URLSearchParams {
   } catch {
     return new URLSearchParams();
   }
+}
+
+function searchDemoPharmacies(params: URLSearchParams) {
+  const query = (params.get('query') || params.get('search') || '').trim().toLowerCase();
+  const ncpdpId = (params.get('ncpdpId') || '').trim();
+  const city = (params.get('city') || '').trim().toLowerCase();
+  const state = (params.get('state') || '').trim().toUpperCase();
+  const zip = (params.get('zip') || '').trim();
+  const preferredOnly = params.get('preferred') === 'true';
+
+  const pharmacies = DEMO_PHARMACIES.filter((pharmacy) => {
+    if (preferredOnly && !pharmacy.isPreferred) return false;
+    if (ncpdpId && pharmacy.ncpdpId !== ncpdpId) return false;
+    if (city && !String(pharmacy.city || '').toLowerCase().includes(city)) return false;
+    if (state && pharmacy.state !== state) return false;
+    if (zip && pharmacy.zip !== zip) return false;
+    if (!query) return true;
+    return [pharmacy.name, pharmacy.chain, pharmacy.city, pharmacy.zip, pharmacy.ncpdpId]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(query));
+  });
+
+  return { pharmacies, total: pharmacies.length };
 }
 
 function parseRequestBody(init?: RequestInit): DemoItem | null {
@@ -2885,6 +2989,10 @@ function handlePortalRoute(
 
   if (path === '/api/patient-portal-data/refill-requests') {
     return mockResponse({ success: true });
+  }
+
+  if (path === '/api/patient-portal-data/pharmacies/search') {
+    return mockResponse(searchDemoPharmacies(params));
   }
 
   if (path === '/api/patient-portal/billing/balance') return mockResponse(data.billing.balance);

@@ -7,6 +7,7 @@ import { pool } from '../../db/pool';
 import { auditLog } from '../../services/audit';
 import * as ambientAI from '../../services/ambientAI';
 import { agentConfigService } from '../../services/agentConfigService';
+import { askClinicalCopilot } from '../../services/clinicalCopilot';
 
 // Mock auth middleware
 jest.mock('../../middleware/auth', () => ({
@@ -50,8 +51,13 @@ jest.mock('../../services/agentConfigService', () => ({
   agentConfigService: {
     getConfiguration: jest.fn(),
     getConfigurationForAppointmentType: jest.fn(),
+    getConfigurationForSpecialtyFocus: jest.fn(),
     getDefaultConfiguration: jest.fn(),
   },
+}));
+
+jest.mock('../../services/clinicalCopilot', () => ({
+  askClinicalCopilot: jest.fn(),
 }));
 
 // Mock multer
@@ -106,7 +112,9 @@ const generateClinicalNoteMock = ambientAI.generateClinicalNote as jest.Mock;
 const unlinkMock = fsPromises.unlink as jest.Mock;
 const getConfigurationMock = agentConfigService.getConfiguration as jest.Mock;
 const getConfigurationForAppointmentTypeMock = agentConfigService.getConfigurationForAppointmentType as jest.Mock;
+const getConfigurationForSpecialtyFocusMock = agentConfigService.getConfigurationForSpecialtyFocus as jest.Mock;
 const getDefaultConfigurationMock = agentConfigService.getDefaultConfiguration as jest.Mock;
+const askClinicalCopilotMock = askClinicalCopilot as jest.Mock;
 
 const flushPromises = () => new Promise(resolve => setImmediate(resolve));
 
@@ -118,12 +126,41 @@ beforeEach(() => {
   unlinkMock.mockReset();
   getConfigurationMock.mockReset();
   getConfigurationForAppointmentTypeMock.mockReset();
+  getConfigurationForSpecialtyFocusMock.mockReset();
   getDefaultConfigurationMock.mockReset();
+  askClinicalCopilotMock.mockReset();
   unlinkMock.mockResolvedValue(undefined);
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
   getConfigurationMock.mockResolvedValue(null);
   getConfigurationForAppointmentTypeMock.mockResolvedValue(null);
+  getConfigurationForSpecialtyFocusMock.mockResolvedValue(null);
   getDefaultConfigurationMock.mockResolvedValue(null);
+  askClinicalCopilotMock.mockResolvedValue({
+    answer: 'Visit summarized from chart context.',
+    visitSummary: 'Patient was evaluated for an itchy rash and started on topical therapy with follow-up as needed.',
+    suggestedCodes: [
+      {
+        type: 'icd10',
+        code: 'L30.9',
+        description: 'Dermatitis, unspecified',
+        confidence: 0.86,
+        rationale: 'Assessment supports dermatitis.',
+      },
+      {
+        type: 'em',
+        code: '99213',
+        description: 'Established patient office visit',
+        confidence: 0.72,
+        rationale: 'Low complexity visit.',
+      },
+    ],
+    followUpTasks: ['Return if symptoms worsen'],
+    patientInstructions: ['Use medication as directed'],
+    missingData: [],
+    chartEvidence: ['Itchy rash on hands'],
+    provider: 'mock',
+    model: 'test-copilot',
+  });
 });
 
 describe('Ambient Scribe Routes - Recording Endpoints', () => {
@@ -819,6 +856,103 @@ describe('Ambient Scribe Routes - Transcription Endpoints', () => {
 });
 
 describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
+  describe('POST /api/ambient/copilot/visit-summary', () => {
+    it('should summarize an encounter and save it to patient visit history', async () => {
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{
+            noteId: 'note-1',
+            encounterId: 'enc-1',
+            chiefComplaint: 'Itchy rash on hands',
+            hpi: 'Patient reports itchy hand rash after new detergent.',
+            ros: 'Skin positive for rash.',
+            physicalExam: 'Erythematous patches on dorsal hands.',
+            assessment: 'Dermatitis flare.',
+            plan: 'Start topical steroid and avoidance counseling.',
+            suggestedIcd10Codes: [{ code: 'L30.9', description: 'Dermatitis, unspecified', confidence: 0.86 }],
+            suggestedCptCodes: [{ code: '99213', description: 'Established patient office visit', confidence: 0.72 }],
+            followUpTasks: [{ task: 'Return if symptoms worsen', priority: 'medium' }],
+            recommendedTests: [],
+            noteContent: {
+              patientSummary: {
+                whatWeDiscussed: 'Discussed itchy rash.',
+                yourConcerns: ['Itchy rash'],
+                diagnosis: 'Dermatitis',
+                treatmentPlan: 'Use topical steroid.',
+                followUp: 'Return as needed.',
+              },
+            },
+            transcriptText: 'Patient reports an itchy hand rash after new detergent.',
+            recordingId: 'rec-1',
+            patientId: 'patient-1',
+            providerId: 'provider-1',
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'enc-1',
+            chiefComplaint: 'Itchy rash on hands',
+            hpi: 'Patient reports itchy hand rash after new detergent.',
+            ros: 'Skin positive for rash.',
+            exam: 'Erythematous patches on dorsal hands.',
+            assessmentPlan: 'Dermatitis flare. Start topical steroid.',
+            dob: '1989-04-11',
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            encounterId: 'enc-1',
+            patientId: 'patient-1',
+            providerId: 'provider-1',
+            providerName: 'Dr. David Skin, MD, FAAD',
+            visitDate: new Date('2026-05-04T15:00:00.000Z'),
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+      const res = await request(app)
+        .post('/api/ambient/copilot/visit-summary')
+        .send({ patientId: 'patient-1', encounterId: 'enc-1' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.summaryId).toBe('mock-uuid-1234');
+      expect(res.body.created).toBe(true);
+      expect(res.body.message).toMatch(/saved to patient history/i);
+      expect(askClinicalCopilotMock).toHaveBeenCalledWith(expect.objectContaining({
+        question: expect.stringMatching(/Summarize this dermatology visit/i),
+        context: expect.objectContaining({
+          patientId: 'patient-1',
+          encounterId: 'enc-1',
+          noteId: 'note-1',
+        }),
+      }));
+
+      const insertCall = queryMock.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('INSERT INTO visit_summaries')
+      );
+      expect(insertCall).toBeTruthy();
+      const params = insertCall?.[1] as any[];
+      expect(params[0]).toBe('mock-uuid-1234');
+      expect(params[2]).toBe('patient-1');
+      expect(params[3]).toBe('enc-1');
+      expect(params[5]).toBe('note-1');
+      expect(params[8]).toMatch(/itchy rash/i);
+      expect(JSON.parse(params[9])).toEqual(expect.arrayContaining(['Rash', 'Itching']));
+      expect(params[10]).toBe('Dermatitis, unspecified');
+      expect(params[11]).toMatch(/Use medication as directed/i);
+      expect(params[12]).toMatch(/Return if symptoms worsen/i);
+      expect(JSON.parse(params[14])).toEqual([
+        expect.objectContaining({ code: 'L30.9', description: 'Dermatitis, unspecified' }),
+      ]);
+      expect(JSON.parse(params[15])).toEqual([]);
+    });
+  });
+
   describe('POST /api/ambient/transcripts/:id/generate-note', () => {
     it('should return 404 when transcript not found', async () => {
       queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
@@ -962,7 +1096,11 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       await flushPromises();
       await flushPromises();
 
-      expect(getConfigurationForAppointmentTypeMock).toHaveBeenCalledWith('tenant-1', 'appt-type-1');
+      expect(getConfigurationForAppointmentTypeMock).toHaveBeenCalledWith(
+        'tenant-1',
+        'appt-type-1',
+        { includeDefault: false }
+      );
       expect(generateClinicalNoteMock).toHaveBeenCalledWith(
         'Patient says the rash is itchy and spreading.',
         [{ speaker: 'patient', text: 'Patient says the rash is itchy and spreading.' }],
@@ -997,6 +1135,294 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
       expect(noteUpdateParams[18]).toBe('claude-3-5-sonnet-20241022');
       expect(noteUpdateParams[19]).toBe('ambient-scribe-contextual-v1');
       expect(noteUpdateParams[20]).toBe('Resolved prompt');
+    });
+
+    it('should prefer medical dermatology over default cosmetic config for unspecialized visits', async () => {
+      const medicalAgentConfig = {
+        id: 'config-medical-default',
+        tenantId: 'tenant-1',
+        name: 'Medical Dermatology',
+        description: 'Medical derm fallback config',
+        isDefault: false,
+        isActive: true,
+        specialtyFocus: 'medical_derm',
+        aiModel: 'claude-3-5-sonnet-20241022',
+        temperature: 0.2,
+        maxTokens: 4000,
+        systemPrompt: 'You are a medical dermatology scribe.',
+        promptTemplate: 'Medical derm {{transcript}}',
+        noteSections: ['chiefComplaint', 'hpi', 'assessment', 'plan'],
+        sectionPrompts: {},
+        outputFormat: 'soap',
+        verbosityLevel: 'detailed',
+        includeCodes: true,
+        terminologySet: {},
+        focusAreas: ['medical dermatology'],
+        defaultCptCodes: [],
+        defaultIcd10Codes: [],
+        taskTemplates: [],
+        createdAt: new Date('2026-03-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-03-01T00:00:00.000Z'),
+      };
+
+      getConfigurationForAppointmentTypeMock.mockResolvedValue(null);
+      getConfigurationForSpecialtyFocusMock
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(medicalAgentConfig);
+      generateClinicalNoteMock.mockResolvedValue({
+        chiefComplaint: 'Changing spot on upper back',
+        hpi: 'Patient reports changing spot.',
+        ros: 'Skin positive for changing lesion.',
+        physicalExam: 'Pigmented lesion.',
+        assessment: 'Atypical nevus, rule out melanoma.',
+        plan: 'Biopsy recommended.',
+        suggestedIcd10: [],
+        suggestedCpt: [],
+        medications: [],
+        allergies: [],
+        followUpTasks: [],
+        overallConfidence: 0.9,
+        sectionConfidence: {},
+        differentialDiagnoses: [],
+        recommendedTests: [],
+        patientSummary: {
+          whatWeDiscussed: 'Changing spot.',
+          yourConcerns: ['Changing lesion'],
+          diagnosis: 'Atypical nevus, rule out melanoma',
+          treatmentPlan: 'Biopsy',
+        },
+        generationMetadata: {
+          provider: 'anthropic',
+          model: 'claude-3-5-sonnet-20241022',
+          prompt: 'Resolved prompt',
+          systemPrompt: 'You are a medical dermatology scribe.',
+          agentConfigId: 'config-medical-default',
+          appointmentTypeName: 'Annual Skin Check',
+          specialtyFocus: 'medical_derm',
+        },
+      });
+
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{
+            transcript_text: 'Patient reports a changing spot on the upper back.',
+            transcript_segments: [{ speaker: 'patient', text: 'Patient reports a changing spot on the upper back.' }],
+            encounter_id: 'enc-1',
+            recording_id: 'rec-1',
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{ recording_id: 'rec-1', encounter_id: 'enc-1' }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            recording_id: 'rec-1',
+            effective_encounter_id: 'enc-1',
+            recording_provider_id: 'provider-1',
+            recording_agent_config_id: null,
+            patient_first_name: 'Emily',
+            patient_last_name: 'Rodriguez',
+            patient_dob: '1989-04-11',
+            patient_allergies: null,
+            patient_medications: null,
+            encounter_provider_id: 'provider-1',
+            encounter_chief_complaint: 'Changing spot on upper back',
+            encounter_hpi: null,
+            encounter_ros: null,
+            encounter_exam: null,
+            encounter_assessment_plan: null,
+            provider_name: 'Dr. David Skin, MD, FAAD',
+            appointment_type_id: 'appt-general-1',
+            appointment_type_name: 'Annual Skin Check',
+            appointment_type_category: 'General',
+          }],
+          rowCount: 1,
+        });
+
+      const res = await request(app).post('/api/ambient/transcripts/transcript-1/generate-note');
+
+      expect(res.status).toBe(200);
+      await flushPromises();
+      await flushPromises();
+
+      expect(getConfigurationForAppointmentTypeMock).toHaveBeenCalledWith(
+        'tenant-1',
+        'appt-general-1',
+        { includeDefault: false }
+      );
+      expect(getConfigurationForSpecialtyFocusMock).toHaveBeenNthCalledWith(1, 'tenant-1', 'general');
+      expect(getConfigurationForSpecialtyFocusMock).toHaveBeenNthCalledWith(2, 'tenant-1', 'medical_derm');
+      expect(getDefaultConfigurationMock).not.toHaveBeenCalled();
+      expect(generateClinicalNoteMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        medicalAgentConfig,
+        expect.objectContaining({
+          appointmentTypeName: 'Annual Skin Check',
+          specialtyFocus: 'medical_derm',
+        })
+      );
+    });
+
+    it('should not let a stale persisted cosmetic config override a non-cosmetic visit', async () => {
+      const cosmeticAgentConfig = {
+        id: 'config-cosmetic-stale',
+        tenantId: 'tenant-1',
+        name: 'Cosmetic Consultation',
+        description: 'Stale cosmetic config',
+        isDefault: true,
+        isActive: true,
+        specialtyFocus: 'cosmetic',
+        aiModel: 'claude-3-5-sonnet-20241022',
+        temperature: 0.2,
+        maxTokens: 4000,
+        systemPrompt: 'You are a cosmetic scribe.',
+        promptTemplate: 'Cosmetic {{transcript}}',
+        noteSections: ['chiefComplaint', 'hpi', 'assessment', 'plan'],
+        sectionPrompts: {},
+        outputFormat: 'soap',
+        verbosityLevel: 'detailed',
+        includeCodes: true,
+        terminologySet: {},
+        focusAreas: ['cosmetic'],
+        defaultCptCodes: [],
+        defaultIcd10Codes: [],
+        taskTemplates: [],
+        createdAt: new Date('2026-03-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-03-01T00:00:00.000Z'),
+      };
+      const medicalAgentConfig = {
+        id: 'config-medical-default',
+        tenantId: 'tenant-1',
+        name: 'Medical Dermatology',
+        description: 'Medical derm fallback config',
+        isDefault: false,
+        isActive: true,
+        specialtyFocus: 'medical_derm',
+        aiModel: 'claude-3-5-sonnet-20241022',
+        temperature: 0.2,
+        maxTokens: 4000,
+        systemPrompt: 'You are a medical dermatology scribe.',
+        promptTemplate: 'Medical derm {{transcript}}',
+        noteSections: ['chiefComplaint', 'hpi', 'assessment', 'plan'],
+        sectionPrompts: {},
+        outputFormat: 'soap',
+        verbosityLevel: 'detailed',
+        includeCodes: true,
+        terminologySet: {},
+        focusAreas: ['medical dermatology'],
+        defaultCptCodes: [],
+        defaultIcd10Codes: [],
+        taskTemplates: [],
+        createdAt: new Date('2026-03-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-03-01T00:00:00.000Z'),
+      };
+
+      getConfigurationMock.mockResolvedValue(cosmeticAgentConfig);
+      getConfigurationForAppointmentTypeMock.mockResolvedValue(null);
+      getConfigurationForSpecialtyFocusMock
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(medicalAgentConfig);
+      generateClinicalNoteMock.mockResolvedValue({
+        chiefComplaint: 'Changing spot on upper back',
+        hpi: 'Patient reports changing spot.',
+        ros: 'Skin positive for changing lesion.',
+        physicalExam: 'Pigmented lesion.',
+        assessment: 'Atypical nevus, rule out melanoma.',
+        plan: 'Biopsy recommended.',
+        suggestedIcd10: [],
+        suggestedCpt: [],
+        medications: [],
+        allergies: [],
+        followUpTasks: [],
+        overallConfidence: 0.9,
+        sectionConfidence: {},
+        differentialDiagnoses: [],
+        recommendedTests: [],
+        patientSummary: {
+          whatWeDiscussed: 'Changing spot.',
+          yourConcerns: ['Changing lesion'],
+          diagnosis: 'Atypical nevus, rule out melanoma',
+          treatmentPlan: 'Biopsy',
+        },
+        generationMetadata: {
+          provider: 'anthropic',
+          model: 'claude-3-5-sonnet-20241022',
+          prompt: 'Resolved prompt',
+          systemPrompt: 'You are a medical dermatology scribe.',
+          agentConfigId: 'config-medical-default',
+          appointmentTypeName: 'Annual Skin Check',
+          specialtyFocus: 'medical_derm',
+        },
+      });
+
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{
+            transcript_text: 'Patient reports a changing spot on the upper back.',
+            transcript_segments: [{ speaker: 'patient', text: 'Patient reports a changing spot on the upper back.' }],
+            encounter_id: 'enc-1',
+            recording_id: 'rec-1',
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{ recording_id: 'rec-1', encounter_id: 'enc-1' }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            recording_id: 'rec-1',
+            effective_encounter_id: 'enc-1',
+            recording_provider_id: 'provider-1',
+            recording_agent_config_id: 'config-cosmetic-stale',
+            patient_first_name: 'Emily',
+            patient_last_name: 'Rodriguez',
+            patient_dob: '1989-04-11',
+            patient_allergies: null,
+            patient_medications: null,
+            encounter_provider_id: 'provider-1',
+            encounter_chief_complaint: 'Changing spot on upper back',
+            encounter_hpi: null,
+            encounter_ros: null,
+            encounter_exam: null,
+            encounter_assessment_plan: null,
+            provider_name: 'Dr. David Skin, MD, FAAD',
+            appointment_type_id: 'appt-general-1',
+            appointment_type_name: 'Annual Skin Check',
+            appointment_type_category: 'General',
+          }],
+          rowCount: 1,
+        });
+
+      const res = await request(app).post('/api/ambient/transcripts/transcript-1/generate-note');
+
+      expect(res.status).toBe(200);
+      await flushPromises();
+      await flushPromises();
+
+      expect(getConfigurationMock).toHaveBeenCalledWith('config-cosmetic-stale', 'tenant-1');
+      expect(getConfigurationForAppointmentTypeMock).toHaveBeenCalledWith(
+        'tenant-1',
+        'appt-general-1',
+        { includeDefault: false }
+      );
+      expect(generateClinicalNoteMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        medicalAgentConfig,
+        expect.objectContaining({
+          appointmentTypeName: 'Annual Skin Check',
+          specialtyFocus: 'medical_derm',
+        })
+      );
+
+      const recordingUpdateCall = queryMock.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('UPDATE ambient_recordings')
+      );
+      expect(recordingUpdateCall?.[1]).toEqual(['config-medical-default', 'rec-1', 'tenant-1']);
     });
 
     it('should handle database errors', async () => {

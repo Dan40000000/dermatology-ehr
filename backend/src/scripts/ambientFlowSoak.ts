@@ -142,7 +142,7 @@ Optional inputs:\n  AMBIENT_SOAK_TENANT_HEADER / --tenant-header     (default: x
 function buildOptions(): SoakOptions {
   const backendRoot = path.resolve(__dirname, "../..");
   const repoRoot = path.resolve(__dirname, "../../..");
-  const defaultAudio = path.resolve(backendRoot, "src/routes/__tests__/fixtures/test-audio.wav");
+  const defaultAudio = path.resolve(backendRoot, "src/scripts/fixtures/ambient-encounter-sample.wav");
   const rawAudioPath = argValue("--audio-path") || process.env.AMBIENT_SOAK_AUDIO_PATH || process.env.AMBIENT_FLOW_AUDIO_PATH || defaultAudio;
 
   const flow = {

@@ -12292,6 +12292,17 @@ Consider age-appropriate treatments and include family counseling points.',
       );
     `,
   },
+  {
+    name: "171_procedure_charge_amount_analytics_compat",
+    sql: `
+    ALTER TABLE procedures
+      ADD COLUMN IF NOT EXISTS charges_cents INTEGER DEFAULT 0;
+
+    UPDATE procedures
+    SET charges_cents = 0
+    WHERE charges_cents IS NULL;
+    `,
+  },
 
 ];
 

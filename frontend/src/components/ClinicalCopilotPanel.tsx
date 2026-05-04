@@ -308,6 +308,8 @@ export function ClinicalCopilotPanel({
             }
 
             const response = message.response;
+            const hasMissingData = Boolean(response?.missingData?.length);
+            const hasChartEvidence = Boolean(response?.chartEvidence?.length);
             return (
               <div key={`${message.role}-${index}`} style={assistantBubbleStyle}>
                 <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: 6 }}>Answer</div>
@@ -371,7 +373,7 @@ export function ClinicalCopilotPanel({
                   </div>
                 </div>
 
-                {(response?.missingData?.length || response?.chartEvidence?.length) && (
+                {(hasMissingData || hasChartEvidence) && (
                   <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginTop: 14 }}>
                     <div>
                       <div style={{ fontSize: '0.78rem', fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#64748b', marginBottom: 6 }}>

@@ -1897,6 +1897,12 @@ async function seed() {
     if (await tableExists("checkin_sessions")) {
       await pool.query(`DELETE FROM checkin_sessions WHERE tenant_id = $1`, [tenantId]);
     }
+    if (await tableExists("scheduled_reminders")) {
+      await pool.query(`DELETE FROM scheduled_reminders WHERE tenant_id = $1`, [tenantId]);
+    }
+    if (await tableExists("patient_flow")) {
+      await pool.query(`DELETE FROM patient_flow WHERE tenant_id = $1`, [tenantId]);
+    }
     if (await columnExists("encounters", "appointment_id")) {
       await pool.query(`UPDATE encounters SET appointment_id = null WHERE tenant_id = $1`, [tenantId]);
     }
@@ -3886,6 +3892,37 @@ async function seed() {
            id like 'appt-martinez-%' or
            id like 'appt-sarah-%'
          )`,
+      [tenantId],
+    );
+
+    await pool.query(
+      `update appointments
+       set status = 'scheduled',
+           arrived_at = null,
+           checked_in_at = null,
+           roomed_at = null,
+           completed_at = null,
+           updated_at = now()
+       where tenant_id = $1
+         and status in ('checked_in', 'in_room', 'with_provider', 'checkout')
+         and (
+           id like 'appt-skin-%' or
+           id like 'appt-riley-%' or
+           id like 'appt-phil-%' or
+           id like 'appt-martinez-%' or
+           id like 'appt-sarah-%'
+         )`,
+      [tenantId],
+    );
+
+    await pool.query(
+      `update patient_flow
+       set status = 'completed',
+           completed_at = coalesce(completed_at, now()),
+           status_changed_at = now(),
+           updated_at = now()
+       where tenant_id = $1
+         and status <> 'completed'`,
       [tenantId],
     );
 

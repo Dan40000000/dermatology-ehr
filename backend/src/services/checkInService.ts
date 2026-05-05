@@ -258,9 +258,36 @@ export async function completeCheckIn(
     if (data.appointmentId) {
       await client.query(
         `UPDATE appointments
-         SET status = 'checked_in', checked_in_at = NOW(), updated_at = NOW()
+         SET status = 'checked_in',
+             checked_in_at = COALESCE(checked_in_at, NOW()),
+             arrived_at = COALESCE(arrived_at, NOW()),
+             updated_at = NOW()
          WHERE id = $1 AND tenant_id = $2`,
         [data.appointmentId, data.tenantId]
+      );
+
+      await client.query(
+        `
+        INSERT INTO patient_flow (
+          id, tenant_id, appointment_id, patient_id,
+          status, status_changed_at, checked_in_at,
+          assigned_provider_id, created_at, updated_at
+        )
+        SELECT
+          $3, a.tenant_id, a.id, a.patient_id,
+          'checked_in', NOW(), NOW(),
+          a.provider_id, NOW(), NOW()
+        FROM appointments a
+        WHERE a.id = $1 AND a.tenant_id = $2
+        ON CONFLICT (tenant_id, appointment_id)
+        DO UPDATE SET
+          status = 'checked_in',
+          status_changed_at = NOW(),
+          checked_in_at = COALESCE(patient_flow.checked_in_at, NOW()),
+          assigned_provider_id = COALESCE(patient_flow.assigned_provider_id, EXCLUDED.assigned_provider_id),
+          updated_at = NOW()
+        `,
+        [data.appointmentId, data.tenantId, require('crypto').randomUUID()]
       );
     }
 

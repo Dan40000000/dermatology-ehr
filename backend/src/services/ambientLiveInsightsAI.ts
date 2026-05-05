@@ -191,23 +191,41 @@ function normalizeDiagnoses(value: unknown, fallback: LiveDiagnosisInsight[]): L
 
 function normalizeSuggestedTests(
   value: unknown,
-  fallback: LiveSuggestedTestInsight[]
+  fallback: LiveSuggestedTestInsight[],
+  transcript = ''
 ): LiveSuggestedTestInsight[] {
   if (!Array.isArray(value)) {
     return fallback;
   }
 
   const normalized: LiveSuggestedTestInsight[] = [];
+  const normalizedTranscript = transcript.toLowerCase();
   for (const item of value) {
     const parsed = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
-    const testName = normalizeString(parsed.testName);
+    let testName = normalizeString(parsed.testName);
     if (!testName) continue;
+    if (
+      /\b(shave|tangential|biopsy|pathology|histopathology)\b/.test(normalizedTranscript)
+      && /\b(histopathology|pathology review|skin biopsy|biopsy)\b/i.test(testName)
+    ) {
+      testName = /\b(shave|tangential)\b/.test(normalizedTranscript)
+        ? 'Shave/tangential biopsy with dermatopathology'
+        : 'Skin biopsy with dermatopathology';
+    }
+    if (/\b(cryotherapy|liquid nitrogen|LN2|wound care|sunscreen|sun protection|medication|prescription)\b/i.test(testName)) {
+      continue;
+    }
     const urgency = normalizeString(parsed.urgency).toLowerCase();
     normalized.push({
       testName,
       urgency: urgency === 'urgent' || urgency === 'soon' ? urgency : 'routine',
       rationale: normalizeString(parsed.rationale, 'Suggested for clinician review from the live transcript.'),
-      cptCode: normalizeString(parsed.cptCode) || undefined,
+      cptCode: (
+        normalizeString(parsed.cptCode) === '11100'
+          || (/\b(shave|tangential)\b/.test(normalizedTranscript) && /\bbiopsy\b/i.test(testName))
+      )
+        ? '11102'
+        : normalizeString(parsed.cptCode) || undefined,
     });
     if (normalized.length >= 6) break;
   }
@@ -307,6 +325,11 @@ function buildSystemPrompt(): string {
     'Ground every summary point in the transcript. Do not invent findings.',
     'Treat diagnoses as potential diagnoses only, not confirmed diagnoses.',
     'Use confidence values from 0 to 1, where 0.75 means 75%.',
+    'Only list active symptoms or concerns. Do not list denied symptoms or aftercare warning signs as current symptoms.',
+    'Separate diagnostic tests from treatments. Cryotherapy, wound care, sunscreen, and medications are treatments/instructions, not tests.',
+    'For a rough or gritty scaly lesion on a sun-exposed cheek/face treated with liquid nitrogen, include actinic keratosis with ICD-10 L57.0 when supported.',
+    'For a darker/changing/irregular pigmented mole being biopsied, include D48.5 as melanoma rule-out or neoplasm of uncertain behavior until pathology returns.',
+    'If shave or tangential biopsy is discussed, suggest "Shave/tangential biopsy with dermatopathology" with CPT 11102 instead of generic histopathology or retired CPT 11100.',
     'Only recommend tests if the transcript supports them.',
     'Keep language concise, clinical, and useful for a dermatologist reviewing the visit live.',
   ].join(' ');
@@ -333,6 +356,9 @@ function buildUserPrompt(transcript: string, heuristic: AmbientLiveInsights): st
     '}',
     '',
     'Use the heuristic baseline only as a starting point. Improve it when the transcript supports a better summary.',
+    'If the transcript says no bleeding, no rapid growth, no drainage, no fever, or similar negatives, do not put those in symptoms.',
+    'If the transcript includes cryotherapy/liquid nitrogen, put it under clinicalActions as a procedure/treatment, not suggestedTests.',
+    'If pathology is being ordered after a shave biopsy, the suggested test should include the biopsy/pathology workflow, not only "Histopathology".',
     '',
     'HEURISTIC BASELINE:',
     JSON.stringify(heuristic, null, 2),
@@ -344,7 +370,8 @@ function buildUserPrompt(transcript: string, heuristic: AmbientLiveInsights): st
 
 function mergeInsights(
   fallback: AmbientLiveInsights,
-  parsed: Record<string, unknown>
+  parsed: Record<string, unknown>,
+  transcript = ''
 ): AmbientLiveInsights {
   return {
     source: 'openai',
@@ -352,7 +379,7 @@ function mergeInsights(
     visitSummary: normalizeVisitSummary(parsed.visitSummary, fallback.visitSummary),
     symptoms: normalizeSymptoms(parsed.symptoms, fallback.symptoms),
     workingDiagnoses: normalizeDiagnoses(parsed.workingDiagnoses, fallback.workingDiagnoses),
-    suggestedTests: normalizeSuggestedTests(parsed.suggestedTests, fallback.suggestedTests),
+    suggestedTests: normalizeSuggestedTests(parsed.suggestedTests, fallback.suggestedTests, transcript),
     medications: normalizeMedications(parsed.medications, fallback.medications),
     clinicalActions: normalizeClinicalActions(parsed.clinicalActions, fallback.clinicalActions),
     safetyFlags: normalizeSafetyFlags(parsed.safetyFlags, fallback.safetyFlags),
@@ -409,7 +436,7 @@ export async function generateAmbientLiveInsightsWithAI(
     }
 
     const parsed = JSON.parse(content) as Record<string, unknown>;
-    return mergeInsights(fallback, parsed);
+    return mergeInsights(fallback, parsed, sanitizedTranscript);
   } catch (error) {
     logger.warn('OpenAI live insights generation failed, falling back to heuristic', {
       error: toSafeErrorMessage(error),

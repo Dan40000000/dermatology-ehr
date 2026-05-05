@@ -4,6 +4,7 @@ import { encounterService } from './encounterService';
 import { randomUUID } from 'crypto';
 import type { PoolClient } from 'pg';
 import { sendPatientPaymentReceiptEmail } from './paymentConfirmationService';
+import { getDateKeyInTimeZone, getUtcRangeForPracticeDate } from '../lib/practiceTimeZone';
 
 export interface AppointmentWithDetails {
   id: string;
@@ -105,11 +106,74 @@ interface OutstandingBillBalance {
 }
 
 export class FrontDeskService {
-  private toLocalIsoDate(date: Date): string {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+  private getPracticeDayWindow(date: Date = new Date()): { dateKey: string; startIso: string; endIso: string } {
+    const dateKey = getDateKeyInTimeZone(date);
+    const { start, end } = getUtcRangeForPracticeDate(dateKey);
+    return {
+      dateKey,
+      startIso: start.toISOString(),
+      endIso: end.toISOString(),
+    };
+  }
+
+  private mapAppointmentStatusToFlowStatus(status: string): string | null {
+    const mapping: Record<string, string> = {
+      checked_in: 'checked_in',
+      in_room: 'rooming',
+      with_provider: 'with_provider',
+      checkout: 'checkout',
+      completed: 'completed',
+    };
+    return mapping[status] || null;
+  }
+
+  private getFlowTimestampColumn(flowStatus: string): string | null {
+    const mapping: Record<string, string> = {
+      checked_in: 'checked_in_at',
+      rooming: 'rooming_at',
+      with_provider: 'with_provider_at',
+      checkout: 'checkout_at',
+      completed: 'completed_at',
+    };
+    return mapping[flowStatus] || null;
+  }
+
+  private async upsertPatientFlowStatus(
+    client: Pick<PoolClient, 'query'>,
+    tenantId: string,
+    appointmentId: string,
+    appointmentStatus: string
+  ): Promise<void> {
+    const flowStatus = this.mapAppointmentStatusToFlowStatus(appointmentStatus);
+    const timestampColumn = flowStatus ? this.getFlowTimestampColumn(flowStatus) : null;
+    if (!flowStatus || !timestampColumn) {
+      return;
+    }
+
+    await client.query(
+      `
+      INSERT INTO patient_flow (
+        id, tenant_id, appointment_id, patient_id,
+        status, status_changed_at, ${timestampColumn},
+        assigned_provider_id, created_at, updated_at
+      )
+      SELECT
+        $3, a.tenant_id, a.id, a.patient_id,
+        $4, NOW(), NOW(),
+        a.provider_id, NOW(), NOW()
+      FROM appointments a
+      WHERE a.tenant_id = $1
+        AND a.id = $2
+      ON CONFLICT (tenant_id, appointment_id)
+      DO UPDATE SET
+        status = EXCLUDED.status,
+        status_changed_at = NOW(),
+        ${timestampColumn} = COALESCE(patient_flow.${timestampColumn}, NOW()),
+        assigned_provider_id = COALESCE(patient_flow.assigned_provider_id, EXCLUDED.assigned_provider_id),
+        updated_at = NOW()
+      `,
+      [tenantId, appointmentId, randomUUID(), flowStatus]
+    );
   }
 
   private async getOutstandingBills(
@@ -185,7 +249,7 @@ export class FrontDeskService {
    */
   async getTodaySchedule(tenantId: string, providerId?: string, statusFilter?: string): Promise<AppointmentWithDetails[]> {
     try {
-      const today = this.toLocalIsoDate(new Date());
+      const dayWindow = this.getPracticeDayWindow();
 
       let query = `
         SELECT
@@ -265,11 +329,12 @@ export class FrontDeskService {
         INNER JOIN locations l ON a.location_id = l.id
         INNER JOIN appointment_types at ON a.appointment_type_id = at.id
         WHERE a.tenant_id = $1
-          AND DATE(a.scheduled_start) = $2
+          AND a.scheduled_start >= $2::timestamptz
+          AND a.scheduled_start < $3::timestamptz
       `;
 
-      const params: any[] = [tenantId, today];
-      let paramCount = 2;
+      const params: any[] = [tenantId, dayWindow.startIso, dayWindow.endIso];
+      let paramCount = 3;
 
       if (providerId) {
         paramCount++;
@@ -339,7 +404,7 @@ export class FrontDeskService {
    */
   async getDailyStats(tenantId: string): Promise<DailyStats> {
     try {
-      const today = this.toLocalIsoDate(new Date());
+      const dayWindow = this.getPracticeDayWindow();
 
       // Get appointment counts
       const appointmentStats = await pool.query(
@@ -351,9 +416,10 @@ export class FrontDeskService {
           COUNT(*) FILTER (WHERE status = 'no_show') as no_shows
         FROM appointments
         WHERE tenant_id = $1
-          AND DATE(scheduled_start) = $2
+          AND scheduled_start >= $2::timestamptz
+          AND scheduled_start < $3::timestamptz
         `,
-        [tenantId, today]
+        [tenantId, dayWindow.startIso, dayWindow.endIso]
       );
 
       // Get today's collections (from payments or charges marked as paid)
@@ -362,9 +428,10 @@ export class FrontDeskService {
         SELECT COALESCE(SUM(amount_cents) / 100.0, 0) as collections_today
         FROM payments
         WHERE tenant_id = $1
-          AND DATE(created_at) = $2
+          AND created_at >= $2::timestamptz
+          AND created_at < $3::timestamptz
         `,
-        [tenantId, today]
+        [tenantId, dayWindow.startIso, dayWindow.endIso]
       );
 
       // Calculate open slots (simplified - assumes 15-min slots, 8am-5pm)
@@ -378,11 +445,12 @@ export class FrontDeskService {
         SELECT AVG(EXTRACT(EPOCH FROM (roomed_at - arrived_at)) / 60) as avg_wait_minutes
         FROM appointments
         WHERE tenant_id = $1
-          AND DATE(scheduled_start) = $2
+          AND scheduled_start >= $2::timestamptz
+          AND scheduled_start < $3::timestamptz
           AND arrived_at IS NOT NULL
           AND roomed_at IS NOT NULL
         `,
-        [tenantId, today]
+        [tenantId, dayWindow.startIso, dayWindow.endIso]
       );
 
       const stats: DailyStats = {
@@ -409,26 +477,34 @@ export class FrontDeskService {
    */
   async getWaitingRoomPatients(tenantId: string): Promise<WaitingRoomPatient[]> {
     try {
+      const dayWindow = this.getPracticeDayWindow();
       const result = await pool.query(
         `
+        WITH waiting AS (
+          SELECT
+            a.*,
+            COALESCE(a.arrived_at, a.checked_in_at, a.updated_at, a.scheduled_start) as waiting_arrived_at
+          FROM appointments a
+          WHERE a.tenant_id = $1
+            AND a.status = 'checked_in'
+            AND a.scheduled_start >= $2::timestamptz
+            AND a.scheduled_start < $3::timestamptz
+        )
         SELECT
-          a.id as appointment_id,
-          a.patient_id,
+          w.id as appointment_id,
+          w.patient_id,
           p.first_name || ' ' || p.last_name as patient_name,
-          a.provider_id,
+          w.provider_id,
           prov.full_name as provider_name,
-          a.scheduled_start as scheduled_time,
-          a.arrived_at,
-          EXTRACT(EPOCH FROM (NOW() - a.arrived_at)) / 60 as wait_time_minutes
-        FROM appointments a
-        INNER JOIN patients p ON a.patient_id = p.id
-        INNER JOIN providers prov ON a.provider_id = prov.id
-        WHERE a.tenant_id = $1
-          AND a.status = 'checked_in'
-          AND a.arrived_at IS NOT NULL
-        ORDER BY a.arrived_at ASC
+          w.scheduled_start as scheduled_time,
+          w.waiting_arrived_at as arrived_at,
+          EXTRACT(EPOCH FROM (NOW() - w.waiting_arrived_at)) / 60 as wait_time_minutes
+        FROM waiting w
+        INNER JOIN patients p ON w.patient_id = p.id
+        INNER JOIN providers prov ON w.provider_id = prov.id
+        ORDER BY w.waiting_arrived_at ASC
         `,
-        [tenantId]
+        [tenantId, dayWindow.startIso, dayWindow.endIso]
       );
 
       return result.rows.map((row: any) => ({
@@ -559,10 +635,14 @@ export class FrontDeskService {
       // Update appointment status
       await client.query(
         `UPDATE appointments
-         SET status = 'checked_in', arrived_at = NOW()
+         SET status = 'checked_in',
+             arrived_at = COALESCE(arrived_at, NOW()),
+             checked_in_at = COALESCE(checked_in_at, NOW()),
+             updated_at = NOW()
          WHERE tenant_id = $1 AND id = $2`,
         [tenantId, appointmentId]
       );
+      await this.upsertPatientFlowStatus(client, tenantId, appointmentId, 'checked_in');
 
       const parsedCopay = Number.parseFloat(appointmentRecord.insurance_copay_amount ?? '');
       const normalizedCopay = Number.isFinite(parsedCopay) && parsedCopay > 0 ? parsedCopay : 0;
@@ -841,6 +921,7 @@ export class FrontDeskService {
 
       if (status === 'checked_in' && updates) {
         updates.push('arrived_at = COALESCE(arrived_at, NOW())');
+        updates.push('checked_in_at = COALESCE(checked_in_at, NOW())');
       } else if (status === 'in_room') {
         updates.push('roomed_at = COALESCE(roomed_at, NOW())');
       } else if (status === 'completed') {
@@ -856,6 +937,24 @@ export class FrontDeskService {
       `;
 
       await pool.query(query, [tenantId, appointmentId, status]);
+
+      if (['checked_in', 'in_room', 'with_provider', 'checkout', 'completed'].includes(status)) {
+        await this.upsertPatientFlowStatus(pool, tenantId, appointmentId, status);
+      } else if (['scheduled', 'cancelled', 'no_show'].includes(status)) {
+        await pool.query(
+          `
+          UPDATE patient_flow
+          SET status = 'completed',
+              completed_at = COALESCE(completed_at, NOW()),
+              status_changed_at = NOW(),
+              updated_at = NOW()
+          WHERE tenant_id = $1
+            AND appointment_id = $2
+            AND status <> 'completed'
+          `,
+          [tenantId, appointmentId]
+        );
+      }
 
       if (status === 'checkout' || status === 'completed') {
         const timestampColumn = status === 'checkout' ? 'checkout_at' : 'completed_at';

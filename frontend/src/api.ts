@@ -6222,6 +6222,7 @@ export interface AmbientTranscript {
   transcriptText: string;
   transcriptSegments: Array<{
     speaker: string;
+    speakerRole?: 'provider' | 'patient' | 'unknown';
     text: string;
     start: number;
     end: number;

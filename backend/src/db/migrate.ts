@@ -12303,6 +12303,102 @@ Consider age-appropriate treatments and include family counseling points.',
     WHERE charges_cents IS NULL;
     `,
   },
+  {
+    name: "172_practice_day_schedule_flow_alignment",
+    sql: `
+    -- Demo-data cleanup for stale Railway office-flow state. The app now filters
+    -- by the practice day, but old active statuses can still leave rooms/waiting
+    -- occupied until normalized.
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS arrived_at TIMESTAMPTZ;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS checked_in_at TIMESTAMPTZ;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS roomed_at TIMESTAMPTZ;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+    WITH practice_day AS (
+      SELECT (NOW() AT TIME ZONE 'America/Denver')::date AS today
+    )
+    UPDATE appointments a
+    SET status = 'completed',
+        completed_at = COALESCE(a.completed_at, NOW()),
+        updated_at = NOW()
+    FROM practice_day pd
+    WHERE a.tenant_id = 'tenant-demo'
+      AND a.status IN ('checked_in', 'in_room', 'with_provider', 'checkout')
+      AND (a.scheduled_start AT TIME ZONE 'America/Denver')::date < pd.today;
+
+    UPDATE appointments a
+    SET status = 'scheduled',
+        arrived_at = NULL,
+        checked_in_at = NULL,
+        roomed_at = NULL,
+        completed_at = NULL,
+        updated_at = NOW()
+    WHERE a.tenant_id = 'tenant-demo'
+      AND a.status IN ('checked_in', 'in_room', 'with_provider', 'checkout')
+      AND COALESCE(a.arrived_at, a.checked_in_at, a.roomed_at) IS NULL;
+
+    WITH practice_day AS (
+      SELECT (NOW() AT TIME ZONE 'America/Denver')::date AS today
+    )
+    UPDATE appointments a
+    SET arrived_at = COALESCE(a.arrived_at, a.checked_in_at, a.updated_at, a.scheduled_start),
+        checked_in_at = COALESCE(a.checked_in_at, a.arrived_at, a.updated_at, a.scheduled_start),
+        updated_at = NOW()
+    FROM practice_day pd
+    WHERE a.tenant_id = 'tenant-demo'
+      AND a.status = 'checked_in'
+      AND (a.scheduled_start AT TIME ZONE 'America/Denver')::date = pd.today;
+
+    WITH practice_day AS (
+      SELECT (NOW() AT TIME ZONE 'America/Denver')::date AS today
+    )
+    UPDATE patient_flow pf
+    SET status = 'completed',
+        completed_at = COALESCE(pf.completed_at, NOW()),
+        status_changed_at = NOW(),
+        updated_at = NOW()
+    FROM appointments a, practice_day pd
+    WHERE pf.tenant_id = 'tenant-demo'
+      AND a.tenant_id = pf.tenant_id
+      AND a.id = pf.appointment_id
+      AND pf.status <> 'completed'
+      AND (
+        a.status NOT IN ('checked_in', 'in_room', 'with_provider', 'checkout')
+        OR (a.scheduled_start AT TIME ZONE 'America/Denver')::date < pd.today
+      );
+    `,
+  },
+  {
+    name: "173_reset_demo_active_office_flow_state",
+    sql: `
+    -- One-time reset for demo/test office-flow state so Railway does not retain
+    -- patients left in waiting rooms or exam rooms from earlier test sessions.
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS arrived_at TIMESTAMPTZ;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS checked_in_at TIMESTAMPTZ;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS roomed_at TIMESTAMPTZ;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+    ALTER TABLE appointments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+    UPDATE appointments
+    SET status = 'scheduled',
+        arrived_at = NULL,
+        checked_in_at = NULL,
+        roomed_at = NULL,
+        completed_at = NULL,
+        updated_at = NOW()
+    WHERE tenant_id = 'tenant-demo'
+      AND status IN ('checked_in', 'in_room', 'with_provider', 'checkout');
+
+    UPDATE patient_flow
+    SET status = 'completed',
+        completed_at = COALESCE(completed_at, NOW()),
+        status_changed_at = NOW(),
+        updated_at = NOW()
+    WHERE tenant_id = 'tenant-demo'
+      AND status <> 'completed';
+    `,
+  },
 
 ];
 

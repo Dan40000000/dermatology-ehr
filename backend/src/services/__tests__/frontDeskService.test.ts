@@ -95,12 +95,10 @@ describe("frontDeskService", () => {
 
     expect(result[0].waitTimeMinutes).toBe(30);
     expect(result[0].copayAmount).toBe(25);
-    expect(queryMock).toHaveBeenCalledWith(expect.any(String), [
-      "tenant-1",
-      "2025-01-01",
-      "prov-1",
-      "checked_in",
-    ]);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("a.scheduled_start >= $2::timestamptz"),
+      ["tenant-1", "2025-01-01T07:00:00.000Z", "2025-01-02T07:00:00.000Z", "prov-1", "checked_in"]
+    );
     jest.useRealTimers();
   });
 
@@ -117,26 +115,38 @@ describe("frontDeskService", () => {
     expect(scheduleQuery).not.toMatch(/\bb\.amount_cents\b/);
   });
 
-  it("getTodaySchedule uses local-date helper for the day filter", async () => {
-    const localDateSpy = jest
-      .spyOn(frontDeskService as any, "toLocalIsoDate")
-      .mockReturnValueOnce("2026-02-21");
+  it("getTodaySchedule uses the practice-day window for the day filter", async () => {
+    const dayWindowSpy = jest
+      .spyOn(frontDeskService as any, "getPracticeDayWindow")
+      .mockReturnValueOnce({
+        dateKey: "2026-02-21",
+        startIso: "2026-02-21T07:00:00.000Z",
+        endIso: "2026-02-22T07:00:00.000Z",
+      });
     queryMock.mockResolvedValueOnce({ rows: [] });
 
     await frontDeskService.getTodaySchedule("tenant-1");
 
-    expect(localDateSpy).toHaveBeenCalled();
-    expect(queryMock).toHaveBeenCalledWith(expect.any(String), ["tenant-1", "2026-02-21"]);
-    localDateSpy.mockRestore();
+    expect(dayWindowSpy).toHaveBeenCalled();
+    expect(queryMock).toHaveBeenCalledWith(expect.any(String), [
+      "tenant-1",
+      "2026-02-21T07:00:00.000Z",
+      "2026-02-22T07:00:00.000Z",
+    ]);
+    dayWindowSpy.mockRestore();
   });
 
   it("getDailyStats calculates open slots and average wait", async () => {
     const providerSpy = jest
       .spyOn(frontDeskService as any, "getProviderCount")
       .mockResolvedValueOnce(2);
-    const localDateSpy = jest
-      .spyOn(frontDeskService as any, "toLocalIsoDate")
-      .mockReturnValueOnce("2026-02-21");
+    const dayWindowSpy = jest
+      .spyOn(frontDeskService as any, "getPracticeDayWindow")
+      .mockReturnValueOnce({
+        dateKey: "2026-02-21",
+        startIso: "2026-02-21T07:00:00.000Z",
+        endIso: "2026-02-22T07:00:00.000Z",
+      });
 
     queryMock
       .mockResolvedValueOnce({
@@ -156,11 +166,23 @@ describe("frontDeskService", () => {
 
     expect(result.openSlotsRemaining).toBe(67);
     expect(result.averageWaitTime).toBe(12);
-    expect(localDateSpy).toHaveBeenCalled();
-    expect(queryMock).toHaveBeenNthCalledWith(1, expect.any(String), ["tenant-1", "2026-02-21"]);
-    expect(queryMock).toHaveBeenNthCalledWith(2, expect.any(String), ["tenant-1", "2026-02-21"]);
-    expect(queryMock).toHaveBeenNthCalledWith(3, expect.any(String), ["tenant-1", "2026-02-21"]);
-    localDateSpy.mockRestore();
+    expect(dayWindowSpy).toHaveBeenCalled();
+    expect(queryMock).toHaveBeenNthCalledWith(1, expect.any(String), [
+      "tenant-1",
+      "2026-02-21T07:00:00.000Z",
+      "2026-02-22T07:00:00.000Z",
+    ]);
+    expect(queryMock).toHaveBeenNthCalledWith(2, expect.any(String), [
+      "tenant-1",
+      "2026-02-21T07:00:00.000Z",
+      "2026-02-22T07:00:00.000Z",
+    ]);
+    expect(queryMock).toHaveBeenNthCalledWith(3, expect.any(String), [
+      "tenant-1",
+      "2026-02-21T07:00:00.000Z",
+      "2026-02-22T07:00:00.000Z",
+    ]);
+    dayWindowSpy.mockRestore();
     providerSpy.mockRestore();
   });
 
@@ -269,6 +291,7 @@ describe("frontDeskService", () => {
         ],
       })
       .mockResolvedValueOnce({}) // UPDATE
+      .mockResolvedValueOnce({}) // UPSERT patient_flow
       .mockResolvedValueOnce({ rows: [] }) // outstanding bills
       .mockResolvedValueOnce({ rows: [{ count: "1" }] }) // receipt count
       .mockResolvedValueOnce({}) // INSERT payment
@@ -329,6 +352,7 @@ describe("frontDeskService", () => {
         ],
       })
       .mockResolvedValueOnce({}) // UPDATE appointment
+      .mockResolvedValueOnce({}) // UPSERT patient_flow
       .mockResolvedValueOnce({
         rows: [{ id: "bill-1", balance_cents: 14500, paid_amount_cents: 0 }],
       }) // outstanding bills

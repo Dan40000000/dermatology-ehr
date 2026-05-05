@@ -21,6 +21,7 @@ import {
   type AmbientTranscript,
   type AmbientGeneratedNote
 } from '../api';
+import { getScribeSpeakerLabel, getScribeSpeakerToneClass } from '../utils/scribeSpeakers';
 
 type View = 'dashboard' | 'new-recording' | 'view-recording' | 'review-note';
 
@@ -532,12 +533,10 @@ function RecordingDetails({
           ) : (
             <div className="space-y-3 max-h-96 overflow-y-auto">
               {transcriptSegments.map((segment, idx) => (
-                <div key={idx} className={`p-3 rounded-lg ${
-                  segment.speaker === 'speaker_0' ? 'bg-blue-50 border border-blue-200' : 'bg-green-50 border border-green-200'
-                }`}>
+                <div key={idx} className={`p-3 rounded-lg ${getScribeSpeakerToneClass(segment)}`}>
                   <div className="flex justify-between items-center mb-1">
                     <span className="font-semibold text-sm">
-                      {segment.speaker === 'speaker_0' ? 'Doctor' : 'Patient'}
+                      {getScribeSpeakerLabel(segment, idx)}
                     </span>
                     <span className="text-xs text-gray-500">{Math.floor(segment.start)}s</span>
                   </div>

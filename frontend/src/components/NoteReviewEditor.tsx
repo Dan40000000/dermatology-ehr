@@ -35,6 +35,7 @@ import {
   buildTreatmentPlan,
   stripStructuredNoteContent
 } from '../utils/scribeSummary';
+import { getScribeSpeakerLabel, getScribeSpeakerToneClass } from '../utils/scribeSpeakers';
 
 interface NoteReviewEditorProps {
   noteId: string;
@@ -557,12 +558,10 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
                 <h4 className="scribe-review-sidebar-title">Transcript</h4>
                 <div className="scribe-review-transcript-list">
                   {transcript.transcriptSegments.map((segment, idx) => (
-                    <div key={idx} className={`scribe-review-transcript-segment ${
-                      segment.speaker === 'speaker_0' ? 'bg-blue-50' : 'bg-green-50'
-                    }`}>
+                    <div key={idx} className={`scribe-review-transcript-segment ${getScribeSpeakerToneClass(segment)}`}>
                       <div className="scribe-review-transcript-meta">
                         <span>
-                          {segment.speaker === 'speaker_0' ? 'Doctor' : 'Patient'}
+                          {getScribeSpeakerLabel(segment, idx)}
                         </span>
                         <span>{Math.floor(segment.start)}s</span>
                       </div>

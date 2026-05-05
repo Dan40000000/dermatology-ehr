@@ -38,8 +38,29 @@ describe('ambientLiveInsights', () => {
     expect(result.safetyFlags.some((item) => item.label === 'Skin cancer warning features' && item.severity === 'urgent')).toBe(true);
     expect(result.clinicalActions.some((item) => item.label === 'Prepare biopsy workflow' && item.urgency === 'urgent')).toBe(true);
     expect(result.suggestedTests.map((item) => item.testName)).toEqual(
-      expect.arrayContaining(['Skin biopsy', 'Dermoscopy / lesion photography', 'Pathology review'])
+      expect.arrayContaining(['Shave/tangential biopsy with dermatopathology', 'Dermoscopy / lesion photography', 'Pathology review'])
     );
+  });
+
+  it('captures cheek actinic keratosis plus shoulder biopsy without treating cryotherapy as a test', () => {
+    const result = generateAmbientLiveInsights([
+      'Clinician: What brought you in today?',
+      'Patient: I have a rough flaky spot on my left cheek that keeps coming back and feels tender when I shave.',
+      'Patient: My wife also noticed a darker mole on my right shoulder that has changed a little. It does not bleed and it is not growing fast.',
+      'Clinician: On exam the cheek has a gritty scaly patch consistent with actinic keratosis.',
+      'Clinician: I recommend liquid nitrogen for the cheek and a shave biopsy of the right shoulder mole with pathology review.',
+    ]);
+
+    expect(result.symptoms.map((item) => item.label)).toEqual(
+      expect.arrayContaining(['Rough / gritty sun-damage spot', 'Changing mole / pigmented lesion'])
+    );
+    expect(result.symptoms.some((item) => item.label === 'Bleeding')).toBe(false);
+    expect(result.workingDiagnoses.map((item) => item.icd10Code)).toEqual(expect.arrayContaining(['L57.0', 'D48.5']));
+    expect(result.suggestedTests.some((item) =>
+      item.testName === 'Shave/tangential biopsy with dermatopathology' && item.cptCode === '11102'
+    )).toBe(true);
+    expect(result.suggestedTests.some((item) => /cryotherapy|liquid nitrogen/i.test(item.testName))).toBe(false);
+    expect(result.clinicalActions.some((item) => item.label === 'Document cryotherapy treatment')).toBe(true);
   });
 
   it('builds a live acne/isotretinoin snapshot with safety requirements and labs', () => {

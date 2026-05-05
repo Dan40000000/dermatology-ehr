@@ -115,7 +115,8 @@ describe('ambientLiveInsightsAI', () => {
     expect(result.visitSummary.oneLiner).toMatch(/melanoma/i);
     expect(result.workingDiagnoses[0]?.condition).toMatch(/melanoma/i);
     expect(result.workingDiagnoses[0]?.confidence).toBeCloseTo(0.82, 2);
-    expect(result.suggestedTests[0]?.testName).toBe('Skin biopsy');
+    expect(result.suggestedTests[0]?.testName).toBe('Shave/tangential biopsy with dermatopathology');
+    expect(result.suggestedTests[0]?.cptCode).toBe('11102');
     expect((global.fetch as jest.Mock).mock.calls[0]?.[0]).toBe('https://api.openai.com/v1/chat/completions');
   });
 

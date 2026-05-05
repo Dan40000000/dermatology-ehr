@@ -2,6 +2,7 @@ import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import { getIO } from '../websocket';
 import crypto from 'crypto';
+import { getDateKeyInTimeZone, getUtcRangeForPracticeDate, getWeekdayForDateKey } from '../lib/practiceTimeZone';
 
 // ============================================
 // TYPES & INTERFACES
@@ -119,6 +120,16 @@ export interface FlowStatusHistory {
 // ============================================
 
 export class PatientFlowService {
+  private getPracticeDayWindow(date: Date = new Date()): { dateKey: string; startIso: string; endIso: string } {
+    const dateKey = getDateKeyInTimeZone(date);
+    const { start, end } = getUtcRangeForPracticeDate(dateKey);
+    return {
+      dateKey,
+      startIso: start.toISOString(),
+      endIso: end.toISOString(),
+    };
+  }
+
   // ============================================
   // ROOM MANAGEMENT
   // ============================================
@@ -320,6 +331,7 @@ export class PatientFlowService {
 
       let flow = flowResult.rows[0];
       const previousStatus = flow?.status;
+      const timestampField = this.getTimestampField(newStatus);
 
       if (!flow) {
         // Get appointment details to create flow record
@@ -341,9 +353,9 @@ export class PatientFlowService {
             `
           INSERT INTO patient_flow (
             id, tenant_id, appointment_id, patient_id,
-            status, status_changed_at, assigned_provider_id,
+            status, status_changed_at, ${timestampField}, assigned_provider_id,
             room_id, notes
-          ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8)
+          ) VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6, $7, $8)
           RETURNING *
           `,
             [
@@ -360,7 +372,6 @@ export class PatientFlowService {
         ).rows[0];
       } else {
         // Update existing flow record
-        const timestampField = this.getTimestampField(newStatus);
         const updates = [
           'status = $3',
           'status_changed_at = NOW()',
@@ -429,6 +440,8 @@ export class PatientFlowService {
         `
         UPDATE appointments
         SET status = $3,
+            arrived_at = CASE WHEN $3 = 'checked_in' THEN COALESCE(arrived_at, NOW()) ELSE arrived_at END,
+            checked_in_at = CASE WHEN $3 = 'checked_in' THEN COALESCE(checked_in_at, NOW()) ELSE checked_in_at END,
             roomed_at = CASE WHEN $3 IN ('rooming', 'vitals_complete', 'ready_for_provider', 'with_provider')
                              THEN COALESCE(roomed_at, NOW()) ELSE roomed_at END,
             completed_at = CASE
@@ -461,6 +474,7 @@ export class PatientFlowService {
    */
   async getRoomBoard(tenantId: string, locationId: string): Promise<RoomBoardEntry[]> {
     try {
+      const dayWindow = this.getPracticeDayWindow();
       // Get all active rooms for the location
       const roomsResult = await pool.query(
         `
@@ -515,13 +529,14 @@ export class PatientFlowService {
         WHERE pf.tenant_id = $1
           AND pf.room_id IN (SELECT id FROM exam_rooms WHERE location_id = $2)
           AND pf.status NOT IN ('completed', 'checkout')
-          AND DATE(pf.created_at) = CURRENT_DATE
+          AND a.scheduled_start >= $3::timestamptz
+          AND a.scheduled_start < $4::timestamptz
         `,
-        [tenantId, locationId]
+        [tenantId, locationId, dayWindow.startIso, dayWindow.endIso]
       );
 
       // Get room assignments for today
-      const today = new Date().getDay();
+      const today = getWeekdayForDateKey(dayWindow.dateKey);
       const assignmentsResult = await pool.query(
         `
         SELECT
@@ -533,10 +548,10 @@ export class PatientFlowService {
         WHERE ra.tenant_id = $1
           AND ra.day_of_week = $2
           AND ra.is_active = TRUE
-          AND (ra.effective_date IS NULL OR ra.effective_date <= CURRENT_DATE)
-          AND (ra.end_date IS NULL OR ra.end_date >= CURRENT_DATE)
+          AND (ra.effective_date IS NULL OR ra.effective_date <= $3::date)
+          AND (ra.end_date IS NULL OR ra.end_date >= $3::date)
         `,
-        [tenantId, today]
+        [tenantId, today, dayWindow.dateKey]
       );
 
       // Build the room board
@@ -593,6 +608,7 @@ export class PatientFlowService {
    */
   async getProviderQueue(tenantId: string, providerId: string): Promise<ProviderQueueEntry[]> {
     try {
+      const dayWindow = this.getPracticeDayWindow();
       const result = await pool.query(
         `
         SELECT
@@ -615,7 +631,8 @@ export class PatientFlowService {
         WHERE pf.tenant_id = $1
           AND pf.assigned_provider_id = $2
           AND pf.status IN ('vitals_complete', 'ready_for_provider', 'with_provider')
-          AND DATE(pf.created_at) = CURRENT_DATE
+          AND a.scheduled_start >= $3::timestamptz
+          AND a.scheduled_start < $4::timestamptz
         ORDER BY
           CASE pf.priority
             WHEN 'urgent' THEN 1
@@ -625,7 +642,7 @@ export class PatientFlowService {
           pf.ready_for_provider_at ASC NULLS LAST,
           a.scheduled_start ASC
         `,
-        [tenantId, providerId]
+        [tenantId, providerId, dayWindow.startIso, dayWindow.endIso]
       );
 
       return result.rows.map((row) => ({
@@ -652,6 +669,7 @@ export class PatientFlowService {
    */
   async getWaitTimes(tenantId: string, locationId?: string): Promise<WaitTimeStats[]> {
     try {
+      const dayWindow = this.getPracticeDayWindow();
       const result = await pool.query(
         `
         WITH flow_times AS (
@@ -668,8 +686,9 @@ export class PatientFlowService {
           INNER JOIN appointments a ON pf.appointment_id = a.id
           INNER JOIN locations l ON a.location_id = l.id
           WHERE pf.tenant_id = $1
-            AND DATE(pf.created_at) = CURRENT_DATE
-            ${locationId ? 'AND l.id = $2' : ''}
+            AND a.scheduled_start >= $2::timestamptz
+            AND a.scheduled_start < $3::timestamptz
+            ${locationId ? 'AND l.id = $4' : ''}
         ),
         current_counts AS (
           SELECT
@@ -681,8 +700,9 @@ export class PatientFlowService {
           INNER JOIN locations l ON a.location_id = l.id
           WHERE pf.tenant_id = $1
             AND pf.status NOT IN ('completed', 'checkout')
-            AND DATE(pf.created_at) = CURRENT_DATE
-            ${locationId ? 'AND l.id = $2' : ''}
+            AND a.scheduled_start >= $2::timestamptz
+            AND a.scheduled_start < $3::timestamptz
+            ${locationId ? 'AND l.id = $4' : ''}
           GROUP BY l.id
         )
         SELECT
@@ -699,7 +719,7 @@ export class PatientFlowService {
         LEFT JOIN current_counts cc ON ft.location_id = cc.location_id
         GROUP BY ft.location_id, ft.location_name, cc.waiting_count, cc.with_provider_count
         `,
-        locationId ? [tenantId, locationId] : [tenantId]
+        locationId ? [tenantId, dayWindow.startIso, dayWindow.endIso, locationId] : [tenantId, dayWindow.startIso, dayWindow.endIso]
       );
 
       return result.rows.map((row) => ({
@@ -768,19 +788,21 @@ export class PatientFlowService {
    */
   async getActiveFlows(tenantId: string, locationId?: string): Promise<PatientFlow[]> {
     try {
+      const dayWindow = this.getPracticeDayWindow();
       let query = `
         SELECT pf.*
         FROM patient_flow pf
         INNER JOIN appointments a ON pf.appointment_id = a.id
         WHERE pf.tenant_id = $1
           AND pf.status NOT IN ('completed')
-          AND DATE(pf.created_at) = CURRENT_DATE
+          AND a.scheduled_start >= $2::timestamptz
+          AND a.scheduled_start < $3::timestamptz
       `;
 
-      const params: string[] = [tenantId];
+      const params: string[] = [tenantId, dayWindow.startIso, dayWindow.endIso];
 
       if (locationId) {
-        query += ` AND a.location_id = $2`;
+        query += ` AND a.location_id = $4`;
         params.push(locationId);
       }
 

@@ -22,6 +22,7 @@ import {
   resolveAmbientTranscriptionProviderFromEnv,
   type AmbientTranscriptionResult,
 } from '../integrations/ambientTranscriptionAdapter';
+import { inferLiveSpeakerRole, type LiveSpeakerRole } from './ambientLiveInsights';
 
 // ============================================================================
 // RETRY CONFIGURATION
@@ -225,7 +226,7 @@ const COMMON_DERM_ICD10 = [
 ];
 
 const COMMON_DERM_CPT = [
-  { code: '11100', description: 'Biopsy of skin, single lesion', confidence: 0.90 },
+  { code: '11102', description: 'Tangential biopsy of skin, single lesion', confidence: 0.90 },
   { code: '11200', description: 'Removal of skin tags, up to 15 lesions', confidence: 0.88 },
   { code: '17000', description: 'Destruction of premalignant lesion, first', confidence: 0.92 },
   { code: '17110', description: 'Destruction of benign lesions, up to 14', confidence: 0.89 },
@@ -247,6 +248,7 @@ function resolveMockDelayMs(defaultDelayMs: number): number {
 
 export interface TranscriptionSegment {
   speaker: string;
+  speakerRole?: LiveSpeakerRole;
   text: string;
   start: number; // seconds
   end: number; // seconds
@@ -255,7 +257,7 @@ export interface TranscriptionSegment {
 
 export interface SpeakerInfo {
   [speakerId: string]: {
-    label: 'doctor' | 'patient';
+    label: 'doctor' | 'patient' | 'unknown';
     name?: string;
   };
 }
@@ -743,6 +745,7 @@ function normalizeAdapterSegments(
 
   return segments.map((segment, index) => ({
     speaker: segment.speaker || `speaker_${index === 0 ? 0 : 1}`,
+    speakerRole: inferLiveSpeakerRole(segment.text),
     text: segment.text,
     start: Number(((segment.start || 0) * scale).toFixed(3)),
     end: Number(((segment.end || 0) * scale).toFixed(3)),
@@ -762,7 +765,11 @@ function buildTranscriptionResultFromAdapter(
   segments.forEach((segment, index) => {
     if (!speakers[segment.speaker]) {
       speakers[segment.speaker] = {
-        label: index === 0 ? 'doctor' : 'patient',
+        label: segment.speakerRole === 'provider'
+          ? 'doctor'
+          : segment.speakerRole === 'patient'
+            ? 'patient'
+            : 'unknown',
       };
     }
   });
@@ -817,6 +824,7 @@ function processWhisperSegments(whisperSegments: any[], duration: number): Trans
 
     segments.push({
       speaker: currentSpeaker,
+      speakerRole: inferLiveSpeakerRole(text),
       text: text,
       start: seg.start || 0,
       end: seg.end || 0,
@@ -832,6 +840,7 @@ function buildSingleSpeakerSegments(fullText: string, duration: number): Transcr
   return [
     {
       speaker: 'speaker_0',
+      speakerRole: inferLiveSpeakerRole(fullText),
       text: fullText,
       start: 0,
       end: duration,
@@ -856,13 +865,22 @@ function processDiarizedSegments(
         speakerId = `speaker_${speakerIndex}`;
         speakerMap.set(rawSpeaker, speakerId);
         speakers[speakerId] = {
-          label: speakerIndex === 0 ? 'doctor' : 'patient'
+          label: 'unknown'
         };
         speakerIndex += 1;
       }
 
+      const speakerRole = inferLiveSpeakerRole(segment.text);
+      const speakerInfo = speakers[speakerId]!;
+      if (speakerRole === 'provider') {
+        speakerInfo.label = 'doctor';
+      } else if (speakerRole === 'patient' && speakerInfo.label === 'unknown') {
+        speakerInfo.label = 'patient';
+      }
+
       return {
         speaker: speakerId,
+        speakerRole,
         text: segment.text,
         start: typeof segment.start === 'number' ? segment.start : 0,
         end: typeof segment.end === 'number' ? segment.end : 0,
@@ -1009,6 +1027,7 @@ function generateMockConversation(durationSeconds: number): TranscriptionSegment
     const duration = segmentDuration + (Math.random() - 0.5) * 10;
     segments.push({
       speaker: conv.speaker,
+      speakerRole: conv.speaker === 'speaker_0' ? 'provider' : 'patient',
       text: conv.text,
       start: currentTime,
       end: currentTime + duration,
@@ -1246,21 +1265,41 @@ function resolveAnthropicModel(agentConfig?: AgentConfiguration | null): string 
 
 type ConversationRole = 'doctor' | 'patient' | 'unknown';
 
-function resolveConversationRole(speaker: string): ConversationRole {
+function liveRoleToConversationRole(role?: LiveSpeakerRole): ConversationRole {
+  if (role === 'provider') {
+    return 'doctor';
+  }
+  if (role === 'patient') {
+    return 'patient';
+  }
+  return 'unknown';
+}
+
+function resolveConversationRole(speaker: string, text?: string, speakerRole?: LiveSpeakerRole): ConversationRole {
   const normalized = speaker.trim().toLowerCase().replace(/[\s-]+/g, '_');
-  if (!normalized) {
-    return 'unknown';
+  const explicitRole = liveRoleToConversationRole(speakerRole);
+  if (explicitRole !== 'unknown') {
+    return explicitRole;
   }
 
-  if (/^(speaker_?0|doctor|provider|physician|clinician|dr\.?)(_|$)/.test(normalized)) {
+  const inferredRole = text ? liveRoleToConversationRole(inferLiveSpeakerRole(text)) : 'unknown';
+  if (!normalized) {
+    return inferredRole;
+  }
+
+  if (/^(doctor|provider|physician|clinician|dr\.?)(_|$)/.test(normalized)) {
     return 'doctor';
   }
 
-  if (/^(speaker_?1|patient|pt|client)(_|$)/.test(normalized)) {
+  if (/^(patient|pt|client)(_|$)/.test(normalized)) {
     return 'patient';
   }
 
-  return 'unknown';
+  if (/^speaker_?\d+/.test(normalized)) {
+    return inferredRole;
+  }
+
+  return inferredRole;
 }
 
 function splitStatementsByRole(
@@ -1273,7 +1312,7 @@ function splitStatementsByRole(
     const text = toSafeString(segment.text);
     if (!text) continue;
 
-    const role = resolveConversationRole(segment.speaker);
+    const role = resolveConversationRole(segment.speaker, text, segment.speakerRole);
     if (role === 'doctor') {
       doctorStatements.push(text);
     } else if (role === 'patient') {
@@ -1643,6 +1682,7 @@ function buildPromptContextBlock(patientContext?: PatientContext): string {
 function buildDocumentationRules(patientContext?: PatientContext): string {
   const rules = [
     '- Only document facts supported by the transcript or supplied visit context.',
+    '- The current transcript is the source of truth for today\'s chief complaint and diagnoses; do not import unrelated chronic problems or appointment labels into the note unless they are discussed.',
     '- If a section is missing material information, explicitly state "Not documented" instead of inventing content.',
     '- Do not create a normal review of systems or normal physical exam for systems that were not actually discussed.',
     '- Distinguish clearly between patient-reported symptoms, provider-observed findings, and diagnostic impression.',
@@ -1650,6 +1690,10 @@ function buildDocumentationRules(patientContext?: PatientContext): string {
     '- For procedures, only document consent, site, preparation, anesthesia, specimen handling, wound care, and follow-up instructions if they are actually supported by the transcript/context.',
     '- Keep the assessment and plan clinically specific and actionable, without padding or generic filler.',
     '- Suggested ICD-10 and CPT codes must be grounded in the documented visit type and findings.',
+    '- Separate diagnostic tests from treatments/procedures/instructions. Cryotherapy, wound care, sunscreen, and medications are not diagnostic tests.',
+    '- Use current biopsy CPT defaults: 11102 for one tangential/shave biopsy lesion. Do not use retired CPT 11100.',
+    '- For a rough/gritty/scaly sun-exposed cheek or face lesion treated with liquid nitrogen, consider actinic keratosis (L57.0) when supported.',
+    '- For a darker/changing/irregular pigmented lesion being biopsied, use D48.5 as melanoma rule-out/neoplasm of uncertain behavior until pathology confirms the final diagnosis.',
   ];
 
   const specialty = `${patientContext?.specialtyFocus || ''} ${patientContext?.appointmentTypeCategory || ''}`.toLowerCase();
@@ -1757,6 +1801,8 @@ RECOMMENDED_TESTS (array of relevant tests):
 - Specify urgency level appropriate to presentation
 - Include CPT codes where applicable for billing
 - Consider cost-effectiveness and clinical necessity
+- Do not list cryotherapy, wound care, sunscreen, or prescriptions as tests
+- If shave/tangential biopsy and pathology are discussed, list that biopsy/pathology workflow with CPT 11102 rather than generic "Histopathology" alone or CPT 11100
 
 PATIENT_SUMMARY (patient-friendly language):
 - Use simple, non-technical terms a patient can understand
@@ -1900,13 +1946,16 @@ IMPORTANT: Return ONLY valid JSON, no additional text or markdown formatting.`;
 
 const SYMPTOM_PATTERN_LIBRARY: Array<{ label: string; pattern: RegExp }> = [
   { label: 'Rash', pattern: /\brash|eruption|lesion/ },
+  { label: 'Changing mole / pigmented lesion', pattern: /\b(changing mole|mole[^.]{0,80}chang|chang[^.]{0,80}mole|pigmented lesion|darker mole|irregular mole)\b/ },
+  { label: 'Rough / gritty sun-damage spot', pattern: /\b(rough spot|gritty|sandpaper|scaly patch|flaky patch|actinic keratosis)\b/ },
   { label: 'Itching', pattern: /\bitch|pruritus/ },
   { label: 'Pain', pattern: /\bpain|hurt|tender/ },
   { label: 'Burning', pattern: /\bburn|stinging/ },
   { label: 'Redness', pattern: /\bred|erythema/ },
   { label: 'Swelling', pattern: /\bswell|edema/ },
   { label: 'Scaling', pattern: /\bscal(e|y)|flak/ },
-  { label: 'Bleeding', pattern: /\bbleed|bleeding/ },
+  { label: 'Bleeding', pattern: /\bbleed|bleeding|bled/ },
+  { label: 'Crusting / scabbing', pattern: /\bcrust|scab/ },
   { label: 'Blistering', pattern: /\bblister|vesicle|bulla/ },
   { label: 'Drainage', pattern: /\bdrain|ooz|discharge/ },
   { label: 'Fever', pattern: /\bfever|febrile/ },
@@ -2029,8 +2078,12 @@ function extractSymptomsFromContent(
     pushUnique('Growth or color change');
   }
 
-  if (hasLesionContext && hasCurrentEvidence(/\b(bleed|bleeding|bled|crust|crusted|scab)\b/i)) {
-    pushUnique('Bleeding / crusting');
+  if (hasLesionContext && hasCurrentEvidence(/\b(bleed|bleeding|bled)\b/i)) {
+    pushUnique('Bleeding');
+  }
+
+  if (hasLesionContext && hasCurrentEvidence(/\b(crust|crusted|scab)\b/i)) {
+    pushUnique('Crusting / scabbing');
   }
 
   if (hasLesionContext && hasCurrentEvidence(/\b(catches|catching|caught|clothing|shirt|scratch|scratched|irritated)\b/i)) {
@@ -2058,8 +2111,11 @@ function extractSymptomsFromContent(
     if (/\b(fever|febrile)\b/.test(normalizedConcern) && !hasCurrentEvidence(/\b(fever|febrile)\b/i)) {
       return null;
     }
-    if (/\bbleed|crust|scab/.test(normalizedConcern) && hasLesionContext) {
-      return 'Bleeding / crusting';
+    if (/\bbleed|bled/.test(normalizedConcern) && hasLesionContext) {
+      return 'Bleeding';
+    }
+    if (/\bcrust|scab/.test(normalizedConcern) && hasLesionContext) {
+      return 'Crusting / scabbing';
     }
     if (/\b(changing|growth|larger|bigger|darker|color|mole|pigmented lesion|lesion)\b/.test(normalizedConcern) && hasLesionContext) {
       return 'Changing mole / pigmented lesion';
@@ -2091,7 +2147,7 @@ function extractSymptomsFromContent(
     if (['Itching', 'Redness', 'Scaling'].includes(pattern.label) && hasScalpDermContext) {
       continue;
     }
-    if (pattern.label === 'Bleeding' && hasLesionContext) {
+    if (['Bleeding', 'Crusting / scabbing'].includes(pattern.label) && hasLesionContext) {
       continue;
     }
     if (pattern.label === 'Drainage' && !hasCurrentEvidence(/\b(drain|ooz|pus|discharge)\b/i)) {
@@ -2254,6 +2310,25 @@ function normalizeDifferentialDiagnoses(
 function normalizeRecommendedTests(raw: unknown, transcriptText: string): RecommendedTest[] {
   const tests: RecommendedTest[] = [];
   const seen = new Set<string>();
+  const transcript = transcriptText.toLowerCase();
+
+  const addTest = (test: RecommendedTest) => {
+    const normalizedName = normalizeTestName(test.testName, transcript);
+    if (!normalizedName) {
+      return;
+    }
+    const normalizedTest: RecommendedTest = {
+      ...test,
+      testName: normalizedName,
+      cptCode: normalizeTestCpt(test.cptCode, normalizedName, transcript),
+    };
+    const key = normalizedTest.testName.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    tests.push(normalizedTest);
+  };
 
   if (Array.isArray(raw)) {
     for (const entry of raw) {
@@ -2261,10 +2336,7 @@ function normalizeRecommendedTests(raw: unknown, transcriptText: string): Recomm
       const candidate = entry as Record<string, unknown>;
       const testName = toSafeString(candidate.testName);
       if (!testName) continue;
-      const key = testName.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      tests.push({
+      addTest({
         testName,
         rationale: toSafeString(candidate.rationale) || 'Suggested by documented presentation and differential.',
         urgency: normalizeUrgency(candidate.urgency),
@@ -2273,11 +2345,39 @@ function normalizeRecommendedTests(raw: unknown, transcriptText: string): Recomm
     }
   }
 
-  if (tests.length === 0) {
-    return generateRecommendedTests(transcriptText).slice(0, 5);
+  for (const fallbackTest of generateRecommendedTests(transcriptText)) {
+    if (tests.length >= 5) {
+      break;
+    }
+    addTest(fallbackTest);
   }
 
   return tests.slice(0, 5);
+}
+
+function normalizeTestName(testName: string, transcript: string): string {
+  const normalized = testName.trim();
+  const hasBiopsyContext = /\b(shave|tangential|biopsy|pathology|dermatopathology|histopathology)\b/.test(transcript);
+
+  if (hasBiopsyContext && /\b(histopathology|pathology review|skin biopsy|biopsy)\b/i.test(normalized)) {
+    return /\b(shave|tangential)\b/.test(transcript)
+      ? 'Shave/tangential biopsy with dermatopathology'
+      : 'Skin biopsy with dermatopathology';
+  }
+
+  if (/\b(cryotherapy|liquid nitrogen|LN2|wound care|sunscreen|sun protection|shampoo|medication|prescription)\b/i.test(normalized)) {
+    return '';
+  }
+
+  return normalized;
+}
+
+function normalizeTestCpt(cptCode: string | undefined, testName: string, transcript: string): string | undefined {
+  const normalizedCode = cptCode === '11100' ? '11102' : cptCode;
+  if (/\b(shave|tangential)\b/.test(transcript) && /\bbiopsy\b/i.test(testName)) {
+    return '11102';
+  }
+  return normalizedCode;
 }
 
 function normalizeSectionConfidence(raw: unknown): ClinicalNote['sectionConfidence'] {
@@ -2303,6 +2403,29 @@ function normalizeSectionConfidence(raw: unknown): ClinicalNote['sectionConfiden
     assessment: normalizeConfidence(source.assessment, defaults.assessment),
     plan: normalizeConfidence(source.plan, defaults.plan)
   };
+}
+
+function removeUnsupportedContextTopics(text: string, transcriptText: string): string {
+  let normalized = text.trim();
+  const transcript = transcriptText.toLowerCase();
+
+  if (!transcript.includes('psoriasis')) {
+    normalized = normalized
+      .replace(/\bpsoriasis follow-up and\s+/gi, '')
+      .replace(/\bfollow-up on psoriasis and\s+/gi, '')
+      .replace(/\bpsoriasis medication follow-up and\s+/gi, '')
+      .replace(/\bpsoriasis follow-up\b\.?/gi, '')
+      .replace(/\bpsoriasis\b/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .replace(/\s+([,.])/g, '$1')
+      .trim();
+  }
+
+  if (!normalized) {
+    return text.trim();
+  }
+
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
 function normalizePatientSummary(
@@ -2411,10 +2534,12 @@ function parseAIGeneratedNote(
     const followUpTasks = normalizeFollowUpTasks(parsed.followUpTasks, clinicalContext);
     const differentialDiagnoses = normalizeDifferentialDiagnoses(parsed.differentialDiagnoses, transcriptText);
     const recommendedTests = normalizeRecommendedTests(parsed.recommendedTests, transcriptText);
+    const chiefComplaint = removeUnsupportedContextTopics(toSafeString(parsed.chiefComplaint), transcriptText);
+    const hpi = removeUnsupportedContextTopics(toSafeString(parsed.hpi), transcriptText);
     const assessment = normalizeAssessmentText(parsed.assessment, differentialDiagnoses);
     const patientSummary = normalizePatientSummary(parsed.patientSummary, {
-      chiefComplaint: toSafeString(parsed.chiefComplaint),
-      hpi: toSafeString(parsed.hpi),
+      chiefComplaint,
+      hpi,
       transcriptText,
       plan: toSafeString(parsed.plan),
       differentialDiagnoses,
@@ -2429,8 +2554,8 @@ function parseAIGeneratedNote(
 
     // Build base note with standard sections (backward compatible)
     const note: ClinicalNote & ExtractedData = {
-      chiefComplaint: toSafeString(parsed.chiefComplaint),
-      hpi: toSafeString(parsed.hpi),
+      chiefComplaint,
+      hpi,
       ros: toSafeString(parsed.ros),
       physicalExam: toSafeString(parsed.physicalExam),
       assessment,
@@ -2795,6 +2920,24 @@ function extractFollowUpTasks(doctorStatements: string[]): Array<{ task: string;
 function generateDifferentialDiagnoses(transcript: string): DifferentialDiagnosis[] {
   const text = transcript.toLowerCase();
   const differentials: DifferentialDiagnosis[] = [];
+  const hasActinicKeratosisContext =
+    /\b(actinic keratosis|rough spot|gritty|sandpaper|scaly patch|flaky patch)\b/.test(text)
+    && /\b(cheek|face|temple|forehead|scalp|ear|sun|liquid nitrogen|cryotherapy|freeze|frozen|ln2)\b/.test(text);
+  const addActinicKeratosis = () => {
+    if (differentials.some((item) => item.icd10Code === 'L57.0')) {
+      return;
+    }
+    differentials.push({
+      condition: 'Actinic keratosis',
+      confidence: 0.86,
+      reasoning: 'Rough, scaly or gritty lesion on a sun-exposed site with cryotherapy discussion supports actinic keratosis.',
+      icd10Code: 'L57.0'
+    });
+  };
+
+  if (hasActinicKeratosisContext) {
+    addActinicKeratosis();
+  }
 
   if (
     text.includes('changing mole') ||
@@ -2814,13 +2957,15 @@ function generateDifferentialDiagnoses(transcript: string): DifferentialDiagnosi
       reasoning: 'Pigmented lesion with atypical features may represent dysplastic nevus; pathology is needed for distinction.',
       icd10Code: 'D22.9'
     });
-    differentials.push({
-      condition: 'Seborrheic keratosis, inflamed or atypical',
-      confidence: 0.34,
-      reasoning: 'Can mimic concerning pigmented lesions clinically, especially if irritated or dark.',
-      icd10Code: 'L82.0'
-    });
-    return differentials;
+    if (/\b(stuck on|waxy|verrucous|seborrheic keratosis|crumbly)\b/.test(text)) {
+      differentials.push({
+        condition: 'Seborrheic keratosis, inflamed or atypical',
+        confidence: 0.34,
+        reasoning: 'Can mimic concerning pigmented lesions clinically, especially if irritated, waxy, or stuck-on.',
+        icd10Code: 'L82.0'
+      });
+    }
+    return differentials.slice(0, 5);
   }
 
   if (text.includes('acne') || text.includes('isotretinoin') || text.includes('accutane') || text.includes('cyst') || text.includes('scarring')) {
@@ -2937,7 +3082,9 @@ function generateRecommendedTests(transcript: string): RecommendedTest[] {
     (/\b(dark|black|irregular|asymmetric|variegated|bleeding)\b/.test(text) && /\b(mole|lesion|spot|growth)\b/.test(text))
   ) {
     tests.push({
-      testName: 'Skin biopsy',
+      testName: /\b(shave|tangential)\b/.test(text)
+        ? 'Shave/tangential biopsy with dermatopathology'
+        : 'Skin biopsy with dermatopathology',
       rationale: 'Changing, irregular, bleeding, or dark pigmented lesion requires tissue diagnosis when clinically appropriate.',
       urgency: 'urgent',
       cptCode: '11102'
@@ -3013,7 +3160,7 @@ function generateRecommendedTests(transcript: string): RecommendedTest[] {
         testName: 'Skin biopsy with histopathology',
         rationale: 'Rule out other inflammatory conditions if rash does not respond to standard treatment or has atypical features.',
         urgency: 'soon',
-        cptCode: '11100'
+        cptCode: '11102'
       });
 
       tests.push({

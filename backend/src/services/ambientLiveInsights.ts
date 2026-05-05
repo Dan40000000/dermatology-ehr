@@ -95,8 +95,12 @@ const symptomRules: Array<{ label: string; patterns: RegExp[] }> = [
     patterns: [/\bgrowing\b/i, /\b(larger|bigger|increased size)\b/i, /\b(darker|changed color|color change|multiple shades)\b/i],
   },
   {
-    label: 'Bleeding / crusting',
-    patterns: [/\bbleed(?:ing)?\b/i, /\bbled\b/i, /\bcrust(?:ing|ed)?\b/i, /\bscab(?:bed|bing)?\b/i],
+    label: 'Bleeding',
+    patterns: [/\bbleed(?:ing)?\b/i, /\bbled\b/i],
+  },
+  {
+    label: 'Crusting / scabbing',
+    patterns: [/\bcrust(?:ing|ed)?\b/i, /\bscab(?:bed|bing)?\b/i],
   },
   {
     label: 'Irritated/catching lesion',
@@ -111,6 +115,7 @@ const symptomRules: Array<{ label: string; patterns: RegExp[] }> = [
   { label: 'Pain / tenderness', patterns: [/\bpain(?:ful)?\b/i, /\btender(?:ness)?\b/i, /\bsore\b/i, /\bburning\b/i] },
   { label: 'Redness / erythema', patterns: [/\bred(?:ness)?\b/i, /\berythema/i, /\bflushing\b/i] },
   { label: 'Scaling / flaking', patterns: [/\bscal(?:e|ing|y)\b/i, /\bflak(?:e|ing|y)\b/i, /\bdry\b/i] },
+  { label: 'Rough / gritty sun-damage spot', patterns: [/\brough spot\b/i, /\bgritty\b/i, /\bsandpaper\b/i, /\bactinic keratosis\b/i] },
   { label: 'Drainage / oozing', patterns: [/\booz(?:e|ing)\b/i, /\bdrain(?:age)?\b/i, /\bdischarge\b/i, /\bpus\b/i] },
   { label: 'Hair loss / shedding', patterns: [/\bhair loss\b/i, /\bshedding\b/i, /\bthinning hair\b/i, /\balopecia\b/i] },
   { label: 'Hives / welts', patterns: [/\bhives?\b/i, /\bwelts?\b/i, /\burticaria\b/i] },
@@ -276,6 +281,18 @@ const diagnosisRules: DiagnosisRule[] = [
     ],
   },
   {
+    condition: 'Actinic keratosis',
+    icd10Code: 'L57.0',
+    threshold: 0.38,
+    patterns: [
+      { pattern: /\bactinic keratosis\b|\bAK\b/i, weight: 0.42, clue: 'actinic keratosis stated' },
+      { pattern: /\brough spot\b|\bgritty\b|\bsandpaper\b|\bscaly patch\b|\bflaky patch\b/i, weight: 0.2, clue: 'rough or scaly keratotic lesion' },
+      { pattern: /\bcheek\b|\bface\b|\btemple\b|\bforehead\b|\bscalp\b|\bear\b/i, weight: 0.12, clue: 'sun-exposed location' },
+      { pattern: /\bliquid nitrogen\b|\bcryotherapy\b|\bfreeze\b|\bfrozen\b|\bLN2\b/i, weight: 0.18, clue: 'cryotherapy treatment discussion' },
+    ],
+    suggestedTests: [],
+  },
+  {
     condition: 'Suspicious pigmented lesion / melanoma rule-out',
     icd10Code: 'D48.5',
     threshold: 0.42,
@@ -286,7 +303,7 @@ const diagnosisRules: DiagnosisRule[] = [
       { pattern: /\bgrowth\b|\blesion\b|\bspot\b|\bmole\b/i, weight: 0.14, clue: 'concerning lesion language' },
     ],
     suggestedTests: [
-      { testName: 'Skin biopsy', urgency: 'urgent', rationale: 'Needed when a changing or concerning lesion is being described.' },
+      { testName: 'Shave/tangential biopsy with dermatopathology', urgency: 'urgent', rationale: 'Needed when a changing or concerning pigmented lesion is being described.', cptCode: '11102' },
       { testName: 'Dermoscopy / lesion photography', urgency: 'soon', rationale: 'Helpful for lesion comparison and pre-biopsy assessment.' },
       { testName: 'Pathology review', urgency: 'urgent', rationale: 'Required after biopsy to confirm diagnosis and next steps.' },
     ],
@@ -675,6 +692,17 @@ function buildClinicalActions(
       status: 'planned',
       rationale: 'Biopsy language was captured in the conversation.',
       evidence: extractEvidenceSnippet(transcript, [/\b(biopsy|shave|punch)\b/i]),
+    });
+  }
+
+  if (/\b(liquid nitrogen|cryotherapy|freeze|frozen|LN2)\b/i.test(transcript)) {
+    addAction({
+      label: 'Document cryotherapy treatment',
+      type: 'procedure',
+      urgency: 'routine',
+      status: 'planned',
+      rationale: 'Cryotherapy was discussed or performed and should be documented as treatment, not as a test.',
+      evidence: extractEvidenceSnippet(transcript, [/\b(liquid nitrogen|cryotherapy|freeze|frozen|LN2)[^.?!]*/i]),
     });
   }
 

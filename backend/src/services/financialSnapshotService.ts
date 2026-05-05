@@ -9,6 +9,11 @@ import {
   type RevenueCategoryKey,
   type RevenueCategorySummary,
 } from './financialRevenueCategories';
+import {
+  addDaysToDateKey,
+  getDateKeyInTimeZone,
+  getUtcRangeForPracticeDate,
+} from '../lib/practiceTimeZone';
 
 export interface FinancialSnapshotPeriod {
   key: 'daily' | 'weekly' | 'monthly';
@@ -58,34 +63,31 @@ interface StandaloneBillRevenueRow {
 
 function parseSnapshotDate(value: string): Date | null {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const parts = value.split('-').map(Number);
-    const year = parts[0] ?? Number.NaN;
-    const month = parts[1] ?? Number.NaN;
-    const day = parts[2] ?? Number.NaN;
-    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    try {
+      return getUtcRangeForPracticeDate(value).start;
+    } catch {
       return null;
     }
-    return new Date(year, month - 1, day);
   }
 
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function startOfDay(date: Date): Date {
-  const result = new Date(date);
-  result.setHours(0, 0, 0, 0);
-  return result;
+function getMonthStartDateKey(dateKey: string): string {
+  return `${dateKey.slice(0, 8)}01`;
 }
 
-function startOfMonth(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
+function dateKeyToUtcDate(dateKey: string): Date {
+  const [yearPart, monthPart, dayPart] = dateKey.split('-').map(Number);
+  const year = Number.isFinite(yearPart ?? Number.NaN) ? Number(yearPart) : 1970;
+  const month = Number.isFinite(monthPart ?? Number.NaN) ? Number(monthPart) : 1;
+  const day = Number.isFinite(dayPart ?? Number.NaN) ? Number(dayPart) : 1;
+  return new Date(Date.UTC(year, month - 1, day));
 }
 
-function startOfRollingWeek(date: Date): Date {
-  const result = startOfDay(date);
-  result.setDate(result.getDate() - 6);
-  return result;
+function startOfPracticeDate(dateKey: string): Date {
+  return getUtcRangeForPracticeDate(dateKey).start;
 }
 
 function parseCents(value: string | number | null | undefined): number {
@@ -103,13 +105,21 @@ function parseCents(value: string | number | null | undefined): number {
   return 0;
 }
 
-function formatRangeLabel(start: Date, end: Date): string {
-  const dateFormatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
-  return `${dateFormatter.format(start)} - ${dateFormatter.format(end)}`;
+function formatRangeLabel(startDateKey: string, endDateKey: string): string {
+  const dateFormatter = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+  return `${dateFormatter.format(dateKeyToUtcDate(startDateKey))} - ${dateFormatter.format(dateKeyToUtcDate(endDateKey))}`;
 }
 
-function formatMonthLabel(date: Date): string {
-  return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date);
+function formatMonthLabel(dateKey: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(dateKeyToUtcDate(dateKey));
 }
 
 function buildEmptyPeriod(
@@ -160,9 +170,12 @@ function addRevenueCategory(
 
 export async function getFinancialSnapshots(tenantId: string): Promise<FinancialSnapshots> {
   const now = new Date();
-  const dailyStart = startOfDay(now);
-  const weeklyStart = startOfRollingWeek(now);
-  const monthlyStart = startOfMonth(now);
+  const todayDateKey = getDateKeyInTimeZone(now);
+  const weeklyStartDateKey = addDaysToDateKey(todayDateKey, -6);
+  const monthlyStartDateKey = getMonthStartDateKey(todayDateKey);
+  const dailyStart = startOfPracticeDate(todayDateKey);
+  const weeklyStart = startOfPracticeDate(weeklyStartDateKey);
+  const monthlyStart = startOfPracticeDate(monthlyStartDateKey);
   const maxStart = monthlyStart;
 
   const [appointmentRevenueResult, patientCollectionsResult, payerCollectionsResult, standaloneRevenueResult] =
@@ -207,7 +220,7 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
          AND payment_date <= $3::date
          AND status = 'posted'
        GROUP BY payment_date::date`,
-      [tenantId, maxStart.toISOString(), now.toISOString()]
+      [tenantId, monthlyStartDateKey, todayDateKey]
     ),
     pool.query(
       `SELECT
@@ -218,7 +231,7 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
          AND payment_date >= $2::date
          AND payment_date <= $3::date
        GROUP BY payment_date::date`,
-      [tenantId, maxStart.toISOString(), now.toISOString()]
+      [tenantId, monthlyStartDateKey, todayDateKey]
     ),
     pool.query(
       `SELECT
@@ -246,14 +259,14 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
          AND b.bill_date >= $2::date
          AND b.bill_date <= $3::date
        GROUP BY b.id, b.bill_date, b.total_charges_cents, b.notes`,
-      [tenantId, maxStart.toISOString(), now.toISOString()]
+      [tenantId, monthlyStartDateKey, todayDateKey]
     ),
   ]);
 
   const periods: Array<{ key: FinancialSnapshotPeriod['key']; label: string; start: Date; rangeLabel: string }> = [
     { key: 'daily', label: 'Daily Snapshot', start: dailyStart, rangeLabel: 'Today' },
-    { key: 'weekly', label: 'Weekly Snapshot', start: weeklyStart, rangeLabel: formatRangeLabel(weeklyStart, now) },
-    { key: 'monthly', label: 'Monthly Snapshot', start: monthlyStart, rangeLabel: formatMonthLabel(now) },
+    { key: 'weekly', label: 'Weekly Snapshot', start: weeklyStart, rangeLabel: formatRangeLabel(weeklyStartDateKey, todayDateKey) },
+    { key: 'monthly', label: 'Monthly Snapshot', start: monthlyStart, rangeLabel: formatMonthLabel(todayDateKey) },
   ];
 
   const snapshots = Object.fromEntries(

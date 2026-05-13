@@ -522,7 +522,7 @@ describe('TextMessagesPage', () => {
 
     apiMocks.fetchSMSConversations.mockResolvedValueOnce({ conversations });
     apiMocks.fetchSMSTemplates.mockResolvedValueOnce({ templates: [] });
-    apiMocks.fetchSMSConversation.mockResolvedValueOnce({
+    apiMocks.fetchSMSConversation.mockResolvedValue({
       patientId: 'patient-1',
       patientName: 'Ana Derm',
       patientPhone: '5551112222',

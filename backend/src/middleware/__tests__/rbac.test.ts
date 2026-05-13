@@ -1,5 +1,5 @@
 import { requireRoles } from '../rbac';
-import { FINANCIAL_ROLES } from '../../lib/roles';
+import { CHARGE_CAPTURE_ROLES, FINANCIAL_ROLES } from '../../lib/roles';
 
 const makeRes = () => ({
   status: jest.fn().mockReturnThis(),
@@ -88,6 +88,32 @@ describe('requireRoles', () => {
     const next = jest.fn();
 
     requireRoles(FINANCIAL_ROLES)(req, res as any, next);
+
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('allows provider charge capture without granting full financial access', () => {
+    const chargeReq = { user: { role: 'provider' } } as any;
+    const financialReq = { user: { role: 'provider' } } as any;
+    const chargeRes = makeRes();
+    const financialRes = makeRes();
+    const chargeNext = jest.fn();
+    const financialNext = jest.fn();
+
+    requireRoles(CHARGE_CAPTURE_ROLES)(chargeReq, chargeRes as any, chargeNext);
+    requireRoles(FINANCIAL_ROLES)(financialReq, financialRes as any, financialNext);
+
+    expect(chargeNext).toHaveBeenCalled();
+    expect(financialRes.status).toHaveBeenCalledWith(403);
+    expect(financialNext).not.toHaveBeenCalled();
+  });
+
+  it('allows medical assistants to capture charges', () => {
+    const req = { user: { role: 'ma' } } as any;
+    const res = makeRes();
+    const next = jest.fn();
+
+    requireRoles(CHARGE_CAPTURE_ROLES)(req, res as any, next);
 
     expect(next).toHaveBeenCalled();
   });

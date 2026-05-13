@@ -5,7 +5,8 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
-import { scrubClaim, applyAutoFixes, getPassedChecks } from "../services/claimScrubber";
+import { scrubClaim, applyAutoFixes, getPassedChecks, type ClaimForScrubbing } from "../services/claimScrubber";
+import { billingService } from "../services/billingService";
 import { suggestModifiers, getAllModifierRules, getModifierInfo } from "../services/modifierEngine";
 import {
   emitClaimCreated,
@@ -236,6 +237,143 @@ const batchSubmitSchema = z.object({
 
 export const claimsRouter = Router();
 
+function normalizeLineItems(value: unknown): any[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function mapLineItemsForScrubbing(value: unknown): ClaimForScrubbing["lineItems"] {
+  return normalizeLineItems(value).map((item: any) => ({
+    cpt: String(item.cpt || item.cptCode || item.cpt_code || "").trim().toUpperCase(),
+    modifiers: Array.isArray(item.modifiers)
+      ? item.modifiers
+      : Array.isArray(item.modifierCodes)
+        ? item.modifierCodes
+        : [],
+    dx: Array.isArray(item.dx)
+      ? item.dx
+      : Array.isArray(item.diagnosisCodes)
+        ? item.diagnosisCodes
+        : Array.isArray(item.icdCodes)
+          ? item.icdCodes
+          : [],
+    diagnosisPointers: Array.isArray(item.diagnosisPointers) ? item.diagnosisPointers : [],
+    units: Number(item.units || item.quantity || 1),
+    charge: Number(item.charge ?? (Number(item.amountCents || item.amount_cents || 0) / 100)),
+    description: item.description,
+    codeType: item.codeType || item.code_type,
+    billingRoute: item.billingRoute || item.billing_route,
+  }));
+}
+
+async function loadClaimForScrubbing(tenantId: string, claimId: string): Promise<ClaimForScrubbing | null> {
+  const claimResult = await pool.query(
+    `select
+       c.id,
+       c.tenant_id,
+       c.patient_id,
+       c.service_date,
+       c.line_items,
+       c.payer_id,
+       c.payer_name,
+       c.payer,
+       c.is_cosmetic,
+       p.first_name as patient_first_name,
+       p.last_name as patient_last_name,
+       p.dob as patient_dob,
+       p.address as patient_address,
+       p.city as patient_city,
+       p.state as patient_state,
+       p.zip as patient_zip,
+       p.insurance_member_id as insurance_member_id,
+       e.provider_id,
+       pr.full_name as provider_name,
+       pr.npi as provider_npi,
+       nullif(to_jsonb(e)->>'place_of_service', '') as place_of_service
+     from claims c
+     join patients p on p.id = c.patient_id and p.tenant_id = c.tenant_id
+     left join encounters e on e.id = c.encounter_id and e.tenant_id = c.tenant_id
+     left join providers pr on pr.id = e.provider_id and pr.tenant_id = c.tenant_id
+     where c.id = $1 and c.tenant_id = $2`,
+    [claimId, tenantId],
+  );
+
+  if (!Array.isArray(claimResult.rows) || claimResult.rows.length === 0) {
+    return null;
+  }
+
+  const row = claimResult.rows[0];
+  const provider =
+    row.provider_id || row.provider_name || row.provider_npi
+      ? {
+          id: row.provider_id,
+          name: row.provider_name,
+          npi: row.provider_npi,
+        }
+      : undefined;
+
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    patientId: row.patient_id,
+    serviceDate: row.service_date,
+    lineItems: mapLineItemsForScrubbing(row.line_items),
+    payerId: row.payer_id,
+    payerName: row.payer_name || row.payer,
+    isCosmetic: row.is_cosmetic,
+    patient: {
+      firstName: row.patient_first_name,
+      lastName: row.patient_last_name,
+      dob: row.patient_dob,
+      address: row.patient_address,
+      city: row.patient_city,
+      state: row.patient_state,
+      zip: row.patient_zip,
+      insuranceMemberId: row.insurance_member_id,
+    },
+    provider,
+    placeOfService: row.place_of_service,
+  };
+}
+
+async function persistScrubResult(tenantId: string, claimId: string, scrubResult: Awaited<ReturnType<typeof scrubClaim>>) {
+  await pool.query(
+    `update claims
+     set scrub_status = $1, scrub_errors = $2, scrub_warnings = $3, scrub_info = $4,
+         last_scrubbed_at = now()
+     where id = $5 and tenant_id = $6`,
+    [
+      scrubResult.status,
+      JSON.stringify(scrubResult.errors),
+      JSON.stringify(scrubResult.warnings),
+      JSON.stringify(scrubResult.info),
+      claimId,
+      tenantId,
+    ],
+  );
+}
+
+async function scrubClaimById(tenantId: string, claimId: string) {
+  const claim = await loadClaimForScrubbing(tenantId, claimId);
+  if (!claim) {
+    return null;
+  }
+
+  const scrubResult = await scrubClaim(claim);
+  await persistScrubResult(tenantId, claimId, scrubResult);
+  return { claim, scrubResult };
+}
+
 // GET /api/claims/diagnosis-codes - Get available diagnosis codes
 claimsRouter.get("/diagnosis-codes", requireAuth, async (req: AuthedRequest, res) => {
   const { search, category, common } = req.query;
@@ -350,41 +488,19 @@ claimsRouter.post("/", requireAuth, requireRoles(["admin", "billing", "front_des
 
   const tenantId = req.user!.tenantId;
   const payload = parsed.data;
-  const claimId = crypto.randomUUID();
-
-  // Calculate total from line items or encounter charges
-  let totalCharges = 0;
-  let lineItems = payload.lineItems || [];
 
   if (payload.encounterId && !payload.lineItems) {
-    // Load from encounter
-    const chargesResult = await pool.query(
-      `select cpt_code as cpt, quantity as units, fee_cents / 100.0 as charge, description,
-              case
-                when cardinality(coalesce(icd_codes, array[]::text[])) > 0 then icd_codes
-                else coalesce((
-                  select array_agg(ed.icd10_code order by ed.is_primary desc, ed.created_at asc)
-                  from encounter_diagnoses ed
-                  where ed.tenant_id = charges.tenant_id
-                    and ed.encounter_id = charges.encounter_id
-                    and ed.id = any(coalesce(charges.linked_diagnosis_ids, array[]::text[]))
-                ), array[]::text[])
-              end as dx
-       from charges
-       where encounter_id = $1
-         and tenant_id = $2
-         and coalesce(nullif(to_jsonb(charges)->>'billing_route', ''), 'insurance') = 'insurance'`,
-      [payload.encounterId, tenantId],
-    );
+    const claim = await billingService.createClaimFromCharges(tenantId, payload.encounterId, req.user!.id);
+    return res.status(201).json({ id: claim.id, claimNumber: claim.claimNumber });
+  }
 
-    lineItems = chargesResult.rows.map((row: any) => ({
-      cpt: row.cpt,
-      modifiers: [],
-      dx: row.dx || [],
-      units: row.units,
-      charge: row.charge,
-      description: row.description,
-    }));
+  const claimId = crypto.randomUUID();
+
+  // Calculate total from manually supplied line items.
+  let totalCharges = 0;
+  let lineItems = payload.lineItems || [];
+  if (lineItems.length === 0) {
+    return res.status(400).json({ error: "Claim requires encounter charges or manual line items" });
   }
 
   totalCharges = lineItems.reduce((sum, item) => sum + (item.charge * item.units), 0);
@@ -562,6 +678,20 @@ claimsRouter.put("/:id/status", requireAuth, requireRoles(["admin", "billing", "
     return res.status(400).json({ error: "Use coding review release before marking this claim ready" });
   }
 
+  if (status === "submitted") {
+    const readiness = await scrubClaimById(tenantId, claimId);
+    if (!readiness) {
+      return res.status(404).json({ error: "Claim not found" });
+    }
+    if (!readiness.scrubResult.canSubmit) {
+      return res.status(400).json({
+        error: "Claim has unresolved readiness errors",
+        scrubStatus: readiness.scrubResult.status,
+        errors: readiness.scrubResult.errors,
+      });
+    }
+  }
+
   // Update claim status
   const updates: string[] = [`status = $1`, `updated_at = now()`];
   const params: any[] = [status];
@@ -627,6 +757,20 @@ claimsRouter.post("/:id/release", requireAuth, requireRoles(["admin", "billing"]
     return res.status(400).json({ error: "Claim missing payer information" });
   }
 
+  const readiness = await scrubClaimById(tenantId, claimId);
+  if (!readiness) {
+    return res.status(404).json({ error: "Claim not found" });
+  }
+
+  if (!readiness.scrubResult.canSubmit) {
+    return res.status(400).json({
+      error: "Claim is not ready for release",
+      scrubStatus: readiness.scrubResult.status,
+      errors: readiness.scrubResult.errors,
+      warnings: readiness.scrubResult.warnings,
+    });
+  }
+
   await pool.query(
     `update claims
      set status = 'ready',
@@ -657,44 +801,21 @@ claimsRouter.post("/scrub", requireAuth, async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { claimId, autoFix } = parsed.data;
 
-  // Load claim
-  const claimResult = await pool.query(
-    `select id, tenant_id, patient_id, service_date, line_items, payer_id, payer_name, is_cosmetic
-     from claims
-     where id = $1 and tenant_id = $2`,
-    [claimId, tenantId]
-  );
+  const claimData = await loadClaimForScrubbing(tenantId, claimId);
 
-  if (!claimResult.rowCount) {
+  if (!claimData) {
     return res.status(404).json({ error: "Claim not found" });
   }
 
-  const claimData = claimResult.rows[0];
-
   // Run scrubber
-  const scrubResult = await scrubClaim({
-    id: claimData.id,
-    tenantId: claimData.tenant_id,
-    patientId: claimData.patient_id,
-    serviceDate: claimData.service_date,
-    lineItems: claimData.line_items || [],
-    payerId: claimData.payer_id,
-    payerName: claimData.payer_name,
-    isCosmetic: claimData.is_cosmetic,
-  });
+  const scrubResult = await scrubClaim(claimData);
 
   // Apply auto-fixes if requested
-  let updatedLineItems = claimData.line_items;
+  let updatedLineItems = claimData.lineItems;
   if (autoFix && scrubResult.errors.length > 0) {
     const fixableIssues = scrubResult.errors.filter(e => e.autoFixable);
     if (fixableIssues.length > 0) {
-      const fixedClaim = applyAutoFixes({
-        id: claimData.id,
-        tenantId: claimData.tenant_id,
-        patientId: claimData.patient_id,
-        serviceDate: claimData.service_date,
-        lineItems: claimData.line_items || [],
-      }, fixableIssues);
+      const fixedClaim = applyAutoFixes(claimData, fixableIssues);
 
       updatedLineItems = fixedClaim.lineItems;
 
@@ -745,10 +866,10 @@ claimsRouter.post("/scrub", requireAuth, async (req: AuthedRequest, res) => {
 
   const passedChecks = getPassedChecks({
     id: claimData.id,
-    tenantId: claimData.tenant_id,
-    patientId: claimData.patient_id,
-    serviceDate: claimData.service_date,
-    lineItems: claimData.line_items || [],
+    tenantId: claimData.tenantId,
+    patientId: claimData.patientId,
+    serviceDate: claimData.serviceDate,
+    lineItems: claimData.lineItems || [],
   });
 
   res.json({ ...scrubResult, passedChecks });
@@ -786,9 +907,13 @@ claimsRouter.post("/submit", requireAuth, requireRoles(["admin", "billing", "fro
         continue;
       }
 
-      const scrubStatus = claim.scrub_status;
-      if (scrubStatus === "errors") {
-        results.errors.push({ claimId, error: "Claim has unresolved errors" });
+      const readiness = await scrubClaimById(tenantId, claimId);
+      if (!readiness) {
+        results.errors.push({ claimId, error: "Claim not found" });
+        continue;
+      }
+      if (!readiness.scrubResult.canSubmit) {
+        results.errors.push({ claimId, error: "Claim has unresolved readiness errors" });
         continue;
       }
 

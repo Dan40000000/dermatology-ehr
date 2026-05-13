@@ -33,6 +33,27 @@ const INTEGRATION_MOCK_FLAGS = [
   'USE_MOCK_NOTIFICATIONS',
 ];
 
+const HEALTHCARE_WORKFLOW_PROVIDERS = [
+  {
+    id: 'eligibility:provider',
+    envName: 'ELIGIBILITY_PROVIDER',
+    allowed: ['mock', 'stedi', 'surescripts'],
+    workflow: 'Eligibility',
+  },
+  {
+    id: 'prescribing:provider',
+    envName: 'PRESCRIBING_PROVIDER',
+    allowed: ['mock', 'dosespot', 'surescripts'],
+    workflow: 'Prescribing',
+  },
+  {
+    id: 'prior-auth:provider',
+    envName: 'PRIOR_AUTH_PROVIDER',
+    allowed: ['mock', 'covermymeds', 'surescripts'],
+    workflow: 'Prior authorization',
+  },
+] as const;
+
 function parseBool(value: string | undefined, fallback = false): boolean {
   if (value === undefined) return fallback;
   const normalized = value.trim().toLowerCase();
@@ -98,6 +119,46 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): SmokeCheck[] {
           'Disable mock integration flags before non-mock staging/production signoff.'
         )
   );
+
+  const allowVendorMockFallbacks = parseBool(env.ALLOW_VENDOR_MOCK_FALLBACKS);
+  for (const providerConfig of HEALTHCARE_WORKFLOW_PROVIDERS) {
+    const provider = (env[providerConfig.envName] || 'mock').trim().toLowerCase();
+    if (!(providerConfig.allowed as readonly string[]).includes(provider)) {
+      checks.push(
+        check(
+          providerConfig.id,
+          productionLike ? 'fail' : 'warn',
+          `${providerConfig.workflow} provider`,
+          `${providerConfig.envName}=${provider} is not supported.`,
+          `Use one of: ${providerConfig.allowed.join(', ')}.`
+        )
+      );
+      continue;
+    }
+
+    const nonMockProvider = provider !== 'mock';
+    checks.push(
+      nonMockProvider && productionLike && !allowVendorMockFallbacks
+        ? check(
+            providerConfig.id,
+            'fail',
+            `${providerConfig.workflow} provider`,
+            `${providerConfig.envName}=${provider}, but only mock scaffolding is implemented locally.`,
+            'Use mock for demos until real vendor credentials/adapters are active, or explicitly set ALLOW_VENDOR_MOCK_FALLBACKS=true.'
+          )
+        : check(
+            providerConfig.id,
+            provider === 'mock' ? (productionLike ? 'warn' : 'pass') : 'warn',
+            `${providerConfig.workflow} provider`,
+            provider === 'mock'
+              ? `${providerConfig.envName}=mock.`
+              : `${providerConfig.envName}=${provider}; vendor-neutral interface will use mock fallback until a real adapter is installed.`,
+            provider === 'mock'
+              ? 'Replace mock with a real vendor adapter before live PHI workflows.'
+              : 'Install and validate the real vendor adapter before production use.'
+          )
+    );
+  }
 
   const twilioSid = (env.TWILIO_ACCOUNT_SID || '').trim();
   const twilioToken = (env.TWILIO_AUTH_TOKEN || '').trim();

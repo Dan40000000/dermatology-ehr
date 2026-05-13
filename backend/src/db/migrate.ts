@@ -12399,6 +12399,503 @@ Consider age-appropriate treatments and include family counseling points.',
       AND status <> 'completed';
     `,
   },
+  {
+    name: "174_clinical_workflow_guardrails",
+    sql: `
+    ALTER TABLE encounters
+      ADD COLUMN IF NOT EXISTS signed_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS signed_by TEXT;
+
+    CREATE TABLE IF NOT EXISTS note_addendums (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      encounter_id TEXT NOT NULL REFERENCES encounters(id) ON DELETE CASCADE,
+      addendum_text TEXT NOT NULL,
+      added_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_note_addendums_encounter
+      ON note_addendums(tenant_id, encounter_id, created_at DESC);
+
+    ALTER TABLE appointments
+      ADD COLUMN IF NOT EXISTS type_id TEXT;
+
+    UPDATE appointments
+    SET type_id = COALESCE(type_id, appointment_type_id),
+        appointment_type_id = COALESCE(appointment_type_id, type_id)
+    WHERE type_id IS NULL
+       OR appointment_type_id IS NULL;
+
+    CREATE OR REPLACE FUNCTION sync_appointment_type_fields()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.type_id := COALESCE(NEW.type_id, NEW.appointment_type_id);
+      NEW.appointment_type_id := COALESCE(NEW.appointment_type_id, NEW.type_id);
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trigger_sync_appointment_type_fields ON appointments;
+    CREATE TRIGGER trigger_sync_appointment_type_fields
+      BEFORE INSERT OR UPDATE ON appointments
+      FOR EACH ROW
+      EXECUTE FUNCTION sync_appointment_type_fields();
+
+    CREATE INDEX IF NOT EXISTS idx_appointments_type_id
+      ON appointments(tenant_id, type_id);
+    `,
+  },
+  {
+    name: "175_billing_account_numbers_and_payment_ledger",
+    sql: `
+    ALTER TABLE patients
+      ADD COLUMN IF NOT EXISTS account_number TEXT;
+
+    WITH numbered_patients AS (
+      SELECT
+        id,
+        tenant_id,
+        ROW_NUMBER() OVER (PARTITION BY tenant_id ORDER BY created_at, id) AS seq
+      FROM patients
+      WHERE account_number IS NULL
+    )
+    UPDATE patients p
+    SET account_number = 'ACCT-' || LPAD(numbered_patients.seq::text, 6, '0')
+    FROM numbered_patients
+    WHERE p.id = numbered_patients.id
+      AND p.tenant_id = numbered_patients.tenant_id
+      AND p.account_number IS NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_tenant_account_number
+      ON patients(tenant_id, account_number)
+      WHERE account_number IS NOT NULL;
+
+    ALTER TABLE claim_line_items
+      ADD COLUMN IF NOT EXISTS diagnosis_pointers TEXT[];
+
+    ALTER TABLE patient_payments
+      ALTER COLUMN processed_by DROP NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_patient_payments_reference_number
+      ON patient_payments(tenant_id, reference_number)
+      WHERE reference_number IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_patient_payments_invoice
+      ON patient_payments(tenant_id, applied_to_invoice_id)
+      WHERE applied_to_invoice_id IS NOT NULL;
+    `,
+  },
+  {
+    name: "176_public_bill_pay_codes",
+    sql: `
+    CREATE SEQUENCE IF NOT EXISTS bill_pay_code_seq
+      AS INTEGER
+      START WITH 1000000
+      MINVALUE 1000000
+      MAXVALUE 9999999
+      NO CYCLE;
+
+    ALTER TABLE bills
+      ADD COLUMN IF NOT EXISTS bill_pay_code TEXT DEFAULT nextval('bill_pay_code_seq')::text;
+
+    WITH numbered_bills AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY created_at, id) AS seq
+      FROM bills
+      WHERE bill_pay_code IS NULL
+    )
+    UPDATE bills b
+    SET bill_pay_code = (1000000 + numbered_bills.seq - 1)::text
+    FROM numbered_bills
+    WHERE b.id = numbered_bills.id
+      AND b.bill_pay_code IS NULL;
+
+    SELECT setval(
+      'bill_pay_code_seq',
+      GREATEST(
+        COALESCE((SELECT MAX(bill_pay_code::integer) FROM bills WHERE bill_pay_code ~ '^[0-9]{7}$'), 999999),
+        999999
+      ),
+      true
+    );
+
+    UPDATE bills
+    SET bill_pay_code = nextval('bill_pay_code_seq')::text
+    WHERE bill_pay_code IS NULL
+       OR bill_pay_code !~ '^[0-9]{7}$';
+
+    ALTER TABLE bills
+      ALTER COLUMN bill_pay_code SET DEFAULT nextval('bill_pay_code_seq')::text;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bills_bill_pay_code
+      ON bills(bill_pay_code)
+      WHERE bill_pay_code IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_bills_tenant_bill_pay_code
+      ON bills(tenant_id, bill_pay_code)
+      WHERE bill_pay_code IS NOT NULL;
+    `,
+  },
+  {
+    name: "177_seven_digit_bill_pay_codes",
+    sql: `
+    CREATE SEQUENCE IF NOT EXISTS bill_pay_code_seq
+      AS INTEGER
+      START WITH 1000000
+      MINVALUE 1000000
+      MAXVALUE 9999999
+      NO CYCLE;
+
+    ALTER TABLE bills
+      ADD COLUMN IF NOT EXISTS bill_pay_code TEXT DEFAULT nextval('bill_pay_code_seq')::text;
+
+    WITH numbered_bills AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY created_at, id) AS seq
+      FROM bills
+    )
+    UPDATE bills b
+    SET bill_pay_code = (1000000 + numbered_bills.seq - 1)::text
+    FROM numbered_bills
+    WHERE b.id = numbered_bills.id
+      AND (b.bill_pay_code IS NULL OR b.bill_pay_code !~ '^[0-9]{7}$');
+
+    SELECT setval(
+      'bill_pay_code_seq',
+      GREATEST(
+        COALESCE((SELECT MAX(bill_pay_code::integer) FROM bills WHERE bill_pay_code ~ '^[0-9]{7}$'), 999999),
+        999999
+      ),
+      true
+    );
+
+    ALTER TABLE bills
+      ALTER COLUMN bill_pay_code SET DEFAULT nextval('bill_pay_code_seq')::text;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'bills_bill_pay_code_7_digit_check'
+      ) THEN
+        ALTER TABLE bills
+          ADD CONSTRAINT bills_bill_pay_code_7_digit_check
+          CHECK (bill_pay_code ~ '^[0-9]{7}$') NOT VALID;
+      END IF;
+    END $$;
+
+    ALTER TABLE bills
+      VALIDATE CONSTRAINT bills_bill_pay_code_7_digit_check;
+
+    UPDATE bills
+    SET bill_pay_code = nextval('bill_pay_code_seq')::text
+    WHERE bill_pay_code IS NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bills_bill_pay_code
+      ON bills(bill_pay_code)
+      WHERE bill_pay_code IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_bills_tenant_bill_pay_code
+      ON bills(tenant_id, bill_pay_code)
+      WHERE bill_pay_code IS NOT NULL;
+    `,
+  },
+  {
+    name: "178_billing_follow_up_actions",
+    sql: `
+    ALTER TABLE bills
+      ADD COLUMN IF NOT EXISTS follow_up_status TEXT DEFAULT 'none',
+      ADD COLUMN IF NOT EXISTS collections_status TEXT DEFAULT 'not_in_collections',
+      ADD COLUMN IF NOT EXISTS payment_plan_status TEXT DEFAULT 'none',
+      ADD COLUMN IF NOT EXISTS billing_internal_note TEXT,
+      ADD COLUMN IF NOT EXISTS last_statement_sent_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS collections_flagged_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS written_off_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS written_off_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS write_off_reason TEXT;
+
+    CREATE TABLE IF NOT EXISTS bill_activity (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      bill_id TEXT NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      note TEXT,
+      amount_cents INTEGER,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bill_activity_bill
+      ON bill_activity(tenant_id, bill_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_bills_follow_up_status
+      ON bills(tenant_id, follow_up_status, due_date)
+      WHERE status NOT IN ('paid', 'cancelled', 'written_off');
+
+    CREATE INDEX IF NOT EXISTS idx_bills_collections_status
+      ON bills(tenant_id, collections_status, due_date)
+      WHERE status NOT IN ('paid', 'cancelled', 'written_off');
+    `,
+  },
+  {
+    name: "179_reconcile_demo_bill_payment_ledger",
+    sql: `
+    UPDATE bills
+    SET adjustment_amount_cents = 0,
+        balance_cents = GREATEST(0, patient_responsibility_cents - paid_amount_cents),
+        status = CASE
+          WHEN GREATEST(0, patient_responsibility_cents - paid_amount_cents) = 0 THEN 'paid'
+          WHEN paid_amount_cents > 0 THEN 'partial'
+          ELSE status
+        END,
+        updated_at = NOW()
+    WHERE tenant_id = 'tenant-demo'
+      AND id IN (
+        'bill-demo-alex-001',
+        'bill-demo-jane-001',
+        'bill-demo-marcus-001',
+        'bill-demo-sofia-001'
+      );
+
+    INSERT INTO patient_payments (
+      id, tenant_id, patient_id, payment_date, amount_cents,
+      payment_method, reference_number, receipt_number, applied_to_invoice_id,
+      status, notes, processed_by, created_at, updated_at
+    )
+    VALUES
+      ('pay-demo-alex-bill-001', 'tenant-demo', 'demo-patient-1', CURRENT_DATE - 12, 17500, 'credit', 'DEMO-ALEX-PAY-001', 'RCP-DEMO-ALEX-001', 'bill-demo-alex-001', 'posted', 'Demo payment matched to BILL-DEMO-ALEX-001.', 'u-billing', NOW(), NOW()),
+      ('pay-demo-jane-bill-001', 'tenant-demo', 'demo-patient-2', CURRENT_DATE - 8, 25000, 'credit', 'DEMO-JANE-PAY-001', 'RCP-DEMO-JANE-001', 'bill-demo-jane-001', 'posted', 'Demo payment matched to BILL-DEMO-JANE-001.', 'u-billing', NOW(), NOW()),
+      ('pay-demo-marcus-bill-001', 'tenant-demo', 'demo-patient-3', CURRENT_DATE - 4, 7500, 'credit', 'DEMO-MARCUS-PAY-001', 'RCP-DEMO-MARCUS-001', 'bill-demo-marcus-001', 'posted', 'Demo payment matched to BILL-DEMO-MARCUS-001.', 'u-billing', NOW(), NOW()),
+      ('pay-demo-sofia-bill-001', 'tenant-demo', 'demo-patient-4', CURRENT_DATE - 3, 40000, 'credit', 'DEMO-SOFIA-PAY-001', 'RCP-DEMO-SOFIA-001', 'bill-demo-sofia-001', 'posted', 'Demo payment matched to BILL-DEMO-SOFIA-001.', 'u-billing', NOW(), NOW())
+    ON CONFLICT (id) DO UPDATE SET
+      payment_date = EXCLUDED.payment_date,
+      amount_cents = EXCLUDED.amount_cents,
+      payment_method = EXCLUDED.payment_method,
+      reference_number = EXCLUDED.reference_number,
+      receipt_number = EXCLUDED.receipt_number,
+      applied_to_invoice_id = EXCLUDED.applied_to_invoice_id,
+      status = EXCLUDED.status,
+      notes = EXCLUDED.notes,
+      processed_by = EXCLUDED.processed_by,
+      updated_at = NOW();
+    `,
+  },
+  {
+    name: "180_financial_work_queue",
+    sql: `
+    CREATE TABLE IF NOT EXISTS financial_work_queue (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      encounter_id TEXT REFERENCES encounters(id) ON DELETE CASCADE,
+      appointment_id TEXT REFERENCES appointments(id) ON DELETE SET NULL,
+      patient_id TEXT REFERENCES patients(id) ON DELETE SET NULL,
+      claim_id TEXT REFERENCES claims(id) ON DELETE SET NULL,
+      bill_id TEXT REFERENCES bills(id) ON DELETE SET NULL,
+      issue_type TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'error',
+      status TEXT NOT NULL DEFAULT 'open',
+      message TEXT NOT NULL,
+      error_detail TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      resolved_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      resolved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_financial_work_queue_tenant_status
+      ON financial_work_queue(tenant_id, status, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_financial_work_queue_encounter
+      ON financial_work_queue(tenant_id, encounter_id)
+      WHERE encounter_id IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_financial_work_queue_patient
+      ON financial_work_queue(tenant_id, patient_id)
+      WHERE patient_id IS NOT NULL;
+    `,
+  },
+  {
+    name: "181_clearinghouse_config_runtime_compat",
+    sql: `
+    ALTER TABLE clearinghouse_configs
+      ADD COLUMN IF NOT EXISTS clearinghouse_name TEXT,
+      ADD COLUMN IF NOT EXISTS is_primary BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS name TEXT,
+      ADD COLUMN IF NOT EXISTS type TEXT,
+      ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS api_version TEXT,
+      ADD COLUMN IF NOT EXISTS sender_id TEXT,
+      ADD COLUMN IF NOT EXISTS sender_qualifier TEXT DEFAULT 'ZZ',
+      ADD COLUMN IF NOT EXISTS receiver_id TEXT,
+      ADD COLUMN IF NOT EXISTS receiver_qualifier TEXT DEFAULT 'ZZ',
+      ADD COLUMN IF NOT EXISTS trading_partner_id TEXT,
+      ADD COLUMN IF NOT EXISTS submission_format TEXT DEFAULT '837P',
+      ADD COLUMN IF NOT EXISTS submission_method TEXT DEFAULT 'api',
+      ADD COLUMN IF NOT EXISTS batch_enabled BOOLEAN DEFAULT true,
+      ADD COLUMN IF NOT EXISTS max_batch_size INTEGER DEFAULT 100,
+      ADD COLUMN IF NOT EXISTS notes TEXT,
+      ADD COLUMN IF NOT EXISTS created_by TEXT,
+      ADD COLUMN IF NOT EXISTS updated_by TEXT;
+
+    UPDATE clearinghouse_configs
+    SET
+      name = COALESCE(NULLIF(name, ''), NULLIF(clearinghouse_name, ''), 'Default Clearinghouse'),
+      type = COALESCE(NULLIF(type, ''), 'custom'),
+      is_default = COALESCE(is_default, is_primary, false),
+      sender_qualifier = COALESCE(NULLIF(sender_qualifier, ''), 'ZZ'),
+      receiver_qualifier = COALESCE(NULLIF(receiver_qualifier, ''), 'ZZ'),
+      submission_format = COALESCE(NULLIF(submission_format, ''), '837P'),
+      submission_method = COALESCE(NULLIF(submission_method, ''), 'api'),
+      batch_enabled = COALESCE(batch_enabled, true),
+      max_batch_size = COALESCE(max_batch_size, 100)
+    WHERE name IS NULL
+       OR type IS NULL
+       OR is_default IS NULL
+       OR sender_qualifier IS NULL
+       OR receiver_qualifier IS NULL
+       OR submission_format IS NULL
+       OR submission_method IS NULL
+       OR batch_enabled IS NULL
+       OR max_batch_size IS NULL;
+
+    WITH first_active AS (
+      SELECT DISTINCT ON (tenant_id) id
+      FROM clearinghouse_configs
+      WHERE COALESCE(is_active, true) = true
+      ORDER BY tenant_id, COALESCE(is_default, false) DESC, created_at ASC NULLS LAST, id ASC
+    )
+    UPDATE clearinghouse_configs cc
+    SET is_default = true
+    FROM first_active fa
+    WHERE cc.id = fa.id
+      AND NOT EXISTS (
+        SELECT 1
+        FROM clearinghouse_configs existing
+        WHERE existing.tenant_id = cc.tenant_id
+          AND COALESCE(existing.is_active, true) = true
+          AND COALESCE(existing.is_default, false) = true
+      );
+
+    WITH ranked_defaults AS (
+      SELECT
+        id,
+        ROW_NUMBER() OVER (
+          PARTITION BY tenant_id
+          ORDER BY COALESCE(is_active, true) DESC, created_at ASC NULLS LAST, id ASC
+        ) AS rn
+      FROM clearinghouse_configs
+      WHERE COALESCE(is_default, false) = true
+    )
+    UPDATE clearinghouse_configs cc
+    SET is_default = false
+    FROM ranked_defaults rd
+    WHERE cc.id = rd.id
+      AND rd.rn > 1;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_clearinghouse_configs_default
+      ON clearinghouse_configs(tenant_id)
+      WHERE is_default = TRUE;
+
+    CREATE INDEX IF NOT EXISTS idx_clearinghouse_configs_tenant
+      ON clearinghouse_configs(tenant_id);
+
+    CREATE INDEX IF NOT EXISTS idx_clearinghouse_configs_active
+      ON clearinghouse_configs(tenant_id, is_active)
+      WHERE is_active = TRUE;
+    `,
+  },
+  {
+    name: "182_seed_demo_clearinghouse_config",
+    sql: `
+    UPDATE clearinghouse_configs
+    SET
+      clearinghouse_name = 'Demo Clearinghouse',
+      name = 'Demo Clearinghouse',
+      type = 'custom',
+      is_active = true,
+      is_primary = true,
+      is_default = true,
+      api_endpoint = COALESCE(api_endpoint, 'https://demo-clearinghouse.local/api'),
+      submission_method = COALESCE(submission_method, 'api'),
+      submission_format = COALESCE(submission_format, '837P'),
+      batch_enabled = COALESCE(batch_enabled, true),
+      max_batch_size = COALESCE(max_batch_size, 100),
+      sender_id = COALESCE(sender_id, 'DEMO-SENDER'),
+      sender_qualifier = COALESCE(sender_qualifier, 'ZZ'),
+      receiver_id = COALESCE(receiver_id, 'DEMO-RECEIVER'),
+      receiver_qualifier = COALESCE(receiver_qualifier, 'ZZ'),
+      submitter_id = COALESCE(submitter_id, 'DEMO-SUBMITTER'),
+      trading_partner_id = COALESCE(trading_partner_id, 'DEMO-TRADING-PARTNER'),
+      notes = COALESCE(notes, 'Demo-only clearinghouse configuration for local/Railway system testing. Replace with a real clearinghouse before live billing.'),
+      updated_at = NOW()
+    WHERE tenant_id = 'tenant-demo'
+      AND (
+        id = 'demo-clearinghouse-default'
+        OR clearinghouse_name = 'Demo Clearinghouse'
+        OR name = 'Demo Clearinghouse'
+      );
+
+    INSERT INTO clearinghouse_configs (
+      id, tenant_id, clearinghouse_name, name, type, is_active, is_primary, is_default,
+      api_endpoint, submission_method, submission_format, batch_enabled, max_batch_size,
+      sender_id, sender_qualifier, receiver_id, receiver_qualifier, submitter_id,
+      trading_partner_id, notes, created_at, updated_at
+    )
+    SELECT
+      'demo-clearinghouse-default',
+      t.id,
+      'Demo Clearinghouse',
+      'Demo Clearinghouse',
+      'custom',
+      true,
+      true,
+      true,
+      'https://demo-clearinghouse.local/api',
+      'api',
+      '837P',
+      true,
+      100,
+      'DEMO-SENDER',
+      'ZZ',
+      'DEMO-RECEIVER',
+      'ZZ',
+      'DEMO-SUBMITTER',
+      'DEMO-TRADING-PARTNER',
+      'Demo-only clearinghouse configuration for local/Railway system testing. Replace with a real clearinghouse before live billing.',
+      NOW(),
+      NOW()
+    FROM tenants t
+    WHERE t.id = 'tenant-demo'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM clearinghouse_configs cc
+        WHERE cc.tenant_id = t.id
+          AND COALESCE(cc.is_active, true) = true
+          AND COALESCE(cc.is_default, false) = true
+      )
+    ON CONFLICT (id) DO UPDATE SET
+      clearinghouse_name = EXCLUDED.clearinghouse_name,
+      name = EXCLUDED.name,
+      type = EXCLUDED.type,
+      is_active = EXCLUDED.is_active,
+      is_primary = EXCLUDED.is_primary,
+      is_default = EXCLUDED.is_default,
+      api_endpoint = EXCLUDED.api_endpoint,
+      submission_method = EXCLUDED.submission_method,
+      submission_format = EXCLUDED.submission_format,
+      batch_enabled = EXCLUDED.batch_enabled,
+      max_batch_size = EXCLUDED.max_batch_size,
+      sender_id = EXCLUDED.sender_id,
+      sender_qualifier = EXCLUDED.sender_qualifier,
+      receiver_id = EXCLUDED.receiver_id,
+      receiver_qualifier = EXCLUDED.receiver_qualifier,
+      submitter_id = EXCLUDED.submitter_id,
+      trading_partner_id = EXCLUDED.trading_partner_id,
+      notes = EXCLUDED.notes,
+      updated_at = NOW();
+    `,
+  },
 
 ];
 

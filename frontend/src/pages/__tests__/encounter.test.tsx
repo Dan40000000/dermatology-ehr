@@ -33,6 +33,7 @@ const autosaveMocks = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   fetchPatients: vi.fn(),
+  fetchPatientClinicalSummary: vi.fn(),
   fetchEncounters: vi.fn(),
   createEncounter: vi.fn(),
   updateEncounter: vi.fn(),
@@ -358,6 +359,7 @@ describe('EncounterPage', () => {
     navigateMock.mockClear();
     const fixtures = buildFixtures();
     apiMocks.fetchPatients.mockResolvedValue({ patients: [fixtures.patient] });
+    apiMocks.fetchPatientClinicalSummary.mockResolvedValue({ diagnoses: [], recalls: [] });
     apiMocks.fetchEncounters.mockResolvedValue({ encounters: [fixtures.encounter] });
     apiMocks.fetchVitals.mockResolvedValue({ vitals: [fixtures.vitals] });
     apiMocks.fetchProviders.mockResolvedValue({ providers: [{ id: 'user-1', fullName: 'Dr Demo' }] });
@@ -479,18 +481,22 @@ describe('EncounterPage', () => {
       expect(apiMocks.deleteDiagnosis).toHaveBeenCalledWith('tenant-1', 'token-1', 'dx-1'),
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '+ Add Procedure' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Add Charge Code' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Select Procedure' }));
 
     await waitFor(() =>
       expect(apiMocks.createCharge).toHaveBeenCalledWith('tenant-1', 'token-1', {
         encounterId: 'enc-1',
         cptCode: '11100',
+        codeType: undefined,
+        billingRoute: 'insurance',
         description: 'Skin biopsy',
         quantity: 1,
         feeCents: 5000,
         linkedDiagnosisIds: ['dx-1'],
+        icdCodes: ['L40.0'],
         amountCents: 5000,
+        status: 'pending',
       }),
     );
 
@@ -511,14 +517,15 @@ describe('EncounterPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(autosaveMocks.saveNow).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Sign & Lock' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign & Checkout' }));
     const signModal = await screen.findByTestId('modal-sign-lock-encounter');
-    fireEvent.click(within(signModal).getByRole('button', { name: 'Sign & Lock Encounter' }));
+    fireEvent.click(within(signModal).getByRole('button', { name: 'Sign & Send to Checkout' }));
 
     await waitFor(() => {
       expect(apiMocks.updateEncounter).toHaveBeenCalled();
       expect(apiMocks.updateEncounterStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'enc-1', 'signed');
-      expect(navigateMock).toHaveBeenCalledWith('/patients/patient-1');
+      expect(apiMocks.updatePatientFlowStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', 'checkout');
+      expect(navigateMock).toHaveBeenCalledWith('/office-flow');
     });
   }, 15000);
 
@@ -589,12 +596,13 @@ describe('EncounterPage', () => {
     render(<EncounterPage />);
 
     await screen.findByTestId('patient-banner');
-    fireEvent.click(screen.getByRole('button', { name: 'End Appointment' }));
+    fireEvent.click(screen.getByRole('button', { name: 'End to Checkout' }));
 
     await waitFor(() =>
       expect(apiMocks.updatePatientFlowStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', 'checkout'),
     );
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Appointment sent to checkout');
+    expect(apiMocks.updateEncounterStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'enc-1', 'signed');
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Encounter signed and appointment sent to checkout');
     expect(navigateMock).toHaveBeenCalledWith('/office-flow');
   });
 
@@ -604,12 +612,13 @@ describe('EncounterPage', () => {
     render(<EncounterPage />);
 
     await screen.findByTestId('patient-banner');
-    fireEvent.click(screen.getByRole('button', { name: 'End Appointment' }));
+    fireEvent.click(screen.getByRole('button', { name: 'End to Checkout' }));
 
     await waitFor(() =>
       expect(apiMocks.updateAppointmentStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', 'checkout'),
     );
-    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Appointment sent to checkout');
+    expect(apiMocks.updateEncounterStatus).toHaveBeenCalledWith('tenant-1', 'token-1', 'enc-1', 'signed');
+    expect(toastMocks.showSuccess).toHaveBeenCalledWith('Encounter signed and appointment sent to checkout');
     expect(navigateMock).toHaveBeenCalledWith('/office-flow');
   });
 

@@ -150,10 +150,10 @@ async function processQueuedMessage(messageId: string, tenantId: string, parsedD
            SET status = 'pending',
                retry_count = retry_count + 1,
                error_message = $1,
-               next_retry_at = CURRENT_TIMESTAMP + INTERVAL '${backoffSeconds} seconds',
+               next_retry_at = CURRENT_TIMESTAMP + ($2::int * INTERVAL '1 second'),
                updated_at = CURRENT_TIMESTAMP
-           WHERE id = $2`,
-          [result.error, messageId]
+           WHERE id = $3`,
+          [result.error, backoffSeconds, messageId]
         );
       } else {
         // Mark as permanently failed

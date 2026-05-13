@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import { KioskLayout } from '../../components/kiosk/KioskLayout';
 import { KioskWelcomePage } from '../kiosk/WelcomePage';
 
@@ -17,6 +18,10 @@ beforeEach(() => {
   navigateMock.mockReset();
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe('Kiosk flow', () => {
   it('renders kiosk layout with progress and timeout handling', () => {
     vi.useFakeTimers();
@@ -24,9 +29,11 @@ describe('Kiosk flow', () => {
     const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
 
     render(
-      <KioskLayout currentStep={1} totalSteps={3} stepName="Verify" onTimeout={timeoutMock} timeoutSeconds={1}>
-        <div>Child Content</div>
-      </KioskLayout>
+      <MemoryRouter>
+        <KioskLayout currentStep={1} totalSteps={3} stepName="Verify" onTimeout={timeoutMock} timeoutSeconds={1}>
+          <div>Child Content</div>
+        </KioskLayout>
+      </MemoryRouter>
     );
 
     expect(screen.getByText('Patient Check-In')).toBeInTheDocument();
@@ -48,7 +55,11 @@ describe('Kiosk flow', () => {
   it('toggles language and starts check-in from welcome page', () => {
     vi.useFakeTimers();
 
-    render(<KioskWelcomePage />);
+    render(
+      <MemoryRouter>
+        <KioskWelcomePage />
+      </MemoryRouter>
+    );
 
     expect(screen.getByText('Welcome')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Espanol/i }));

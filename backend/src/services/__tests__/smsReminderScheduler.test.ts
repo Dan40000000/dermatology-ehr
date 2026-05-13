@@ -71,7 +71,7 @@ beforeEach(() => {
       return Promise.resolve({ rows: tenantRows });
     }
 
-    if (sql.includes("a.start_time BETWEEN")) {
+    if (sql.includes("COALESCE(a.scheduled_start, a.start_time) BETWEEN")) {
       return Promise.resolve({ rows: appointmentRows });
     }
 
@@ -211,7 +211,7 @@ describe("smsReminderScheduler", () => {
       if (sql.includes("appointment_reminders_enabled")) {
         return Promise.resolve({ rows: tenantRows });
       }
-      if (sql.includes("a.start_time BETWEEN")) {
+      if (sql.includes("COALESCE(a.scheduled_start, a.start_time) BETWEEN")) {
         return Promise.reject(new Error("boom"));
       }
       return Promise.resolve({ rows: [] });

@@ -64,6 +64,7 @@ vi.mock('../../contexts/AuthContext', () => ({
 describe('AdminPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.history.replaceState({}, '', '/');
     authMocks.session = mockSession;
     authMocks.user = mockSession.user;
 
@@ -349,7 +350,7 @@ describe('AdminPage', () => {
 
     const nameInput = screen.getByLabelText(/Facility Name/i);
     const addressInput = screen.getByLabelText(/Address/i);
-    const phoneInput = screen.getByLabelText(/Phone/i);
+    const phoneInput = document.querySelector('#facility-phone') as HTMLInputElement;
 
     await user.clear(nameInput);
     await user.type(nameInput, 'New Clinic');

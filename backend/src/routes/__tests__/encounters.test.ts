@@ -7,6 +7,7 @@ import { recordEncounterLearning } from "../../services/learningService";
 import { encounterService } from "../../services/encounterService";
 import { billingService } from "../../services/billingService";
 import { ensureEncounterBill } from "../../services/encounterFinancialsService";
+import { createFinancialWorkQueueItem } from "../../services/financialWorkQueueService";
 import { logger } from "../../lib/logger";
 
 jest.mock("../../middleware/auth", () => ({
@@ -47,6 +48,10 @@ jest.mock("../../services/encounterFinancialsService", () => ({
   ensureEncounterBill: jest.fn(),
 }));
 
+jest.mock("../../services/financialWorkQueueService", () => ({
+  createFinancialWorkQueueItem: jest.fn(),
+}));
+
 jest.mock("../../websocket/emitter", () => ({
   emitEncounterCreated: jest.fn(),
   emitEncounterUpdated: jest.fn(),
@@ -79,6 +84,7 @@ const learningMock = recordEncounterLearning as jest.Mock;
 const encounterServiceMock = encounterService as jest.Mocked<typeof encounterService>;
 const billingServiceMock = billingService as jest.Mocked<typeof billingService>;
 const ensureEncounterBillMock = ensureEncounterBill as jest.Mock;
+const createFinancialWorkQueueItemMock = createFinancialWorkQueueItem as jest.Mock;
 const loggerMock = logger as jest.Mocked<typeof logger>;
 
 beforeEach(() => {
@@ -88,6 +94,7 @@ beforeEach(() => {
   Object.values(encounterServiceMock).forEach((fn) => fn.mockReset());
   Object.values(billingServiceMock).forEach((fn) => fn.mockReset());
   ensureEncounterBillMock.mockReset();
+  createFinancialWorkQueueItemMock.mockReset();
   loggerMock.error.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
   billingServiceMock.createClaimFromCharges.mockRejectedValue(new Error("No charges found"));
@@ -101,6 +108,7 @@ beforeEach(() => {
     chargeCount: 0,
     payerName: null,
   });
+  createFinancialWorkQueueItemMock.mockResolvedValue(null);
 });
 
 describe("Encounters routes", () => {
@@ -157,6 +165,7 @@ describe("Encounters routes", () => {
 
   it("POST /encounters/:id/status updates status and triggers learning", async () => {
     queryMock
+      .mockResolvedValueOnce({ rows: [{ status: "draft" }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
     learningMock.mockResolvedValueOnce(undefined);
     const res = await request(app).post("/encounters/enc-1/status").send({ status: "locked" });
@@ -176,6 +185,7 @@ describe("Encounters routes", () => {
 
   it("POST /encounters/:id/status auto-stops ambient recordings for closed states", async () => {
     queryMock
+      .mockResolvedValueOnce({ rows: [{ status: "draft" }], rowCount: 1 }) // current status check
       .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // encounter status update
       .mockResolvedValueOnce({ rows: [{ id: "rec-1" }], rowCount: 1 }); // ambient auto-stop update
 
@@ -191,6 +201,7 @@ describe("Encounters routes", () => {
 
   it("POST /encounters/:id/status ignores learning errors", async () => {
     queryMock
+      .mockResolvedValueOnce({ rows: [{ status: "draft" }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
     learningMock.mockRejectedValueOnce(new Error("boom"));
     const res = await request(app).post("/encounters/enc-1/status").send({ status: "finalized" });
@@ -327,6 +338,7 @@ describe("Encounters routes", () => {
 
   it("POST /encounters/:id/complete completes encounter", async () => {
     encounterServiceMock.completeEncounter.mockResolvedValueOnce(undefined as any);
+    queryMock.mockResolvedValueOnce({ rows: [{ status: "draft" }], rowCount: 1 });
 
     const res = await request(app).post("/encounters/enc-1/complete");
 
@@ -335,9 +347,35 @@ describe("Encounters routes", () => {
     expect(auditMock).toHaveBeenCalled();
   });
 
+  it("POST /encounters/:id/complete creates a financial review item when claim posting fails", async () => {
+    encounterServiceMock.completeEncounter.mockResolvedValueOnce(undefined as any);
+    billingServiceMock.createClaimFromCharges.mockRejectedValueOnce(new Error("Diagnosis code is required for 11102"));
+    createFinancialWorkQueueItemMock.mockResolvedValueOnce({
+      id: "fwq-1",
+      issueType: "encounter_claim_creation_failed",
+      status: "open",
+    });
+    queryMock.mockResolvedValueOnce({ rows: [{ status: "draft" }], rowCount: 1 });
+
+    const res = await request(app).post("/encounters/enc-1/complete");
+
+    expect(res.status).toBe(202);
+    expect(res.body.requiresFinancialReview).toBe(true);
+    expect(res.body.financialReview.id).toBe("fwq-1");
+    expect(createFinancialWorkQueueItemMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: "tenant-1",
+        encounterId: "enc-1",
+        issueType: "encounter_claim_creation_failed",
+      }),
+    );
+  });
+
   it("POST /encounters/:id/complete auto-stops ambient recordings", async () => {
     encounterServiceMock.completeEncounter.mockResolvedValueOnce(undefined as any);
-    queryMock.mockResolvedValueOnce({ rows: [{ id: "rec-1" }], rowCount: 1 });
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ status: "draft" }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ id: "rec-1" }], rowCount: 1 });
 
     const res = await request(app).post("/encounters/enc-1/complete");
 

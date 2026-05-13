@@ -24,6 +24,8 @@ import {
 } from '../services/ambientAI';
 import { AgentConfiguration, agentConfigService } from '../services/agentConfigService';
 import { askClinicalCopilot, type ClinicalCopilotContext } from '../services/clinicalCopilot';
+import { createFinancialWorkQueueItem } from '../services/financialWorkQueueService';
+import { immutableEncounterErrorMessage, isImmutableEncounterStatus } from '../lib/clinicalWorkflow';
 
 const router = Router();
 
@@ -92,6 +94,14 @@ const reviewActionSchema = z.object({
   reason: z.string().optional()
 });
 
+const applyNoteSchema = z.object({
+  applyStructuredActions: z.boolean().optional().default(true),
+  includeDiagnoses: z.boolean().optional().default(true),
+  includeOrders: z.boolean().optional().default(true),
+  includeTasks: z.boolean().optional().default(true),
+  includeBillingReview: z.boolean().optional().default(true),
+});
+
 const clinicalCopilotRequestSchema = z.object({
   prompt: z.string().min(1).max(4000),
   patientId: z.string().optional(),
@@ -150,6 +160,287 @@ function logAmbientError(message: string, error: unknown): void {
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function parseJsonArray(value: unknown): any[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function normalizeConfidence(value: unknown): number {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return numeric > 1 ? numeric / 100 : numeric;
+}
+
+function normalizeActionPriority(value: unknown): 'low' | 'normal' | 'high' | 'urgent' {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized === 'stat' || normalized === 'urgent') return 'urgent';
+  if (normalized === 'high') return 'high';
+  if (normalized === 'low') return 'low';
+  return 'normal';
+}
+
+function normalizeSuggestedBillingCode(value: any): {
+  code?: string;
+  description?: string;
+  confidence: number;
+  rationale?: string;
+  source: 'suggested_cpt' | 'recommended_test';
+} {
+  if (typeof value === 'string') {
+    return {
+      code: normalizeOptionalString(value)?.toUpperCase(),
+      confidence: 1,
+      source: 'suggested_cpt',
+    };
+  }
+
+  return {
+    code: normalizeOptionalString(value?.code || value?.cptCode)?.toUpperCase(),
+    description: normalizeOptionalString(value?.description || value?.testName),
+    confidence: normalizeConfidence(value?.confidence ?? 0.7),
+    rationale: normalizeOptionalString(value?.rationale),
+    source: value?.testName ? 'recommended_test' : 'suggested_cpt',
+  };
+}
+
+function inferOrderType(testName: string): string {
+  const normalized = testName.toLowerCase();
+  if (/biopsy|excision|procedure|mohs|shave|punch/.test(normalized)) return 'procedure';
+  if (/pathology|histology|specimen/.test(normalized)) return 'pathology';
+  if (/photo|dermoscopy|dermatoscopy|imaging/.test(normalized)) return 'imaging';
+  return 'lab';
+}
+
+async function applyStructuredActionsFromAmbientNote(
+  tenantId: string,
+  userId: string,
+  noteData: any,
+  options: z.infer<typeof applyNoteSchema>,
+): Promise<{ diagnosesCreated: number; ordersCreated: number; tasksCreated: number; billingReviewItemsCreated: number }> {
+  if (!options.applyStructuredActions) {
+    return { diagnosesCreated: 0, ordersCreated: 0, tasksCreated: 0, billingReviewItemsCreated: 0 };
+  }
+
+  const encounter = await pool.query(
+    `select id, patient_id, provider_id, status
+       from encounters
+      where id = $1 and tenant_id = $2`,
+    [noteData.encounter_id, tenantId],
+  );
+
+  if (!encounter.rowCount) {
+    throw new Error('Linked encounter not found');
+  }
+
+  const encounterRow = encounter.rows[0];
+  if (isImmutableEncounterStatus(encounterRow.status)) {
+    throw Object.assign(new Error(immutableEncounterErrorMessage(encounterRow.status)), { httpStatus: 409 });
+  }
+
+  let diagnosesCreated = 0;
+  let ordersCreated = 0;
+  let tasksCreated = 0;
+  let billingReviewItemsCreated = 0;
+
+  if (options.includeDiagnoses) {
+    const existingDiagnosisResult = await pool.query(
+      `select id, upper(icd10_code) as code, is_primary
+         from encounter_diagnoses
+        where encounter_id = $1 and tenant_id = $2`,
+      [noteData.encounter_id, tenantId],
+    );
+    const existingCodes = new Set(existingDiagnosisResult.rows.map((row: any) => String(row.code || '').toUpperCase()));
+    const hasPrimary = existingDiagnosisResult.rows.some((row: any) => row.is_primary);
+
+    const icdSuggestions = parseJsonArray(noteData.suggested_icd10_codes)
+      .map((code: any) => ({
+        code: normalizeOptionalString(code?.code),
+        description: normalizeOptionalString(code?.description),
+        confidence: normalizeConfidence(code?.confidence),
+      }));
+
+    const differentialSuggestions = parseJsonArray(noteData.differential_diagnoses)
+      .map((diagnosis: any) => ({
+        code: normalizeOptionalString(diagnosis?.icd10Code),
+        description: normalizeOptionalString(diagnosis?.condition),
+        confidence: normalizeConfidence(diagnosis?.confidence),
+      }));
+
+    const diagnosesToCreate = [...icdSuggestions, ...differentialSuggestions]
+      .filter((diagnosis) => diagnosis.code && diagnosis.description && diagnosis.confidence >= 0.6)
+      .filter((diagnosis, index, all) => all.findIndex((candidate) => candidate.code?.toUpperCase() === diagnosis.code?.toUpperCase()) === index)
+      .slice(0, 5);
+
+    for (const diagnosis of diagnosesToCreate) {
+      const normalizedCode = diagnosis.code!.toUpperCase();
+      if (existingCodes.has(normalizedCode)) {
+        continue;
+      }
+
+      await pool.query(
+        `insert into encounter_diagnoses (
+           id, tenant_id, encounter_id, icd10_code, description, is_primary, created_at
+         ) values ($1, $2, $3, $4, $5, $6, now())`,
+        [
+          crypto.randomUUID(),
+          tenantId,
+          noteData.encounter_id,
+          diagnosis.code,
+          `${diagnosis.description} (AI suggested, clinician approved)`,
+          !hasPrimary && diagnosesCreated === 0,
+        ],
+      );
+      existingCodes.add(normalizedCode);
+      diagnosesCreated++;
+    }
+  }
+
+  if (options.includeOrders) {
+    const tests = parseJsonArray(noteData.recommended_tests)
+      .map((test: any) => ({
+        testName: normalizeOptionalString(test?.testName),
+        rationale: normalizeOptionalString(test?.rationale),
+        urgency: normalizeOptionalString(test?.urgency),
+      }))
+      .filter((test) => test.testName)
+      .slice(0, 5);
+
+    for (const test of tests) {
+      const duplicate = await pool.query(
+        `select id from orders
+          where tenant_id = $1
+            and encounter_id = $2
+            and lower(coalesce(details, '')) = lower($3)
+          limit 1`,
+        [tenantId, noteData.encounter_id, test.testName],
+      );
+      if (duplicate.rowCount) {
+        continue;
+      }
+
+      await pool.query(
+        `insert into orders(
+           id, tenant_id, encounter_id, patient_id, provider_id, type, status, priority, details, notes, created_at
+         ) values ($1,$2,$3,$4,$5,$6,'draft',$7,$8,$9,now())`,
+        [
+          crypto.randomUUID(),
+          tenantId,
+          noteData.encounter_id,
+          encounterRow.patient_id,
+          encounterRow.provider_id,
+          inferOrderType(test.testName!),
+          normalizeActionPriority(test.urgency),
+          test.testName,
+          test.rationale ? `AI suggested after clinician-approved scribe note: ${test.rationale}` : 'AI suggested after clinician-approved scribe note',
+        ],
+      );
+      ordersCreated++;
+    }
+  }
+
+  if (options.includeTasks) {
+    const tasks = parseJsonArray(noteData.follow_up_tasks)
+      .map((task: any) => ({
+        title: normalizeOptionalString(task?.task || task?.title),
+        priority: normalizeActionPriority(task?.priority),
+        dueDate: normalizeOptionalString(task?.dueDate),
+      }))
+      .filter((task) => task.title)
+      .slice(0, 8);
+
+    for (const task of tasks) {
+      const duplicate = await pool.query(
+        `select id from tasks
+          where tenant_id = $1
+            and encounter_id = $2
+            and lower(title) = lower($3)
+          limit 1`,
+        [tenantId, noteData.encounter_id, task.title],
+      );
+      if (duplicate.rowCount) {
+        continue;
+      }
+
+      await pool.query(
+        `insert into tasks(
+           id, tenant_id, patient_id, encounter_id, title, description, category,
+           priority, status, due_date, due_at, created_by, created_at
+         ) values ($1,$2,$3,$4,$5,$6,'ai_follow_up',$7,'todo',$8,$8,$9,now())`,
+        [
+          crypto.randomUUID(),
+          tenantId,
+          encounterRow.patient_id,
+          noteData.encounter_id,
+          task.title,
+          'Created from clinician-approved AI scribe recommendations.',
+          task.priority,
+          task.dueDate || null,
+          userId,
+        ],
+      );
+      tasksCreated++;
+    }
+  }
+
+  if (options.includeBillingReview) {
+    const suggestedCodes = [
+      ...parseJsonArray(noteData.suggested_cpt_codes).map(normalizeSuggestedBillingCode),
+      ...parseJsonArray(noteData.recommended_tests)
+        .filter((test: any) => normalizeOptionalString(test?.cptCode))
+        .map(normalizeSuggestedBillingCode),
+    ]
+      .filter((code) => code.code && code.confidence >= 0.6)
+      .filter((code, index, all) => all.findIndex((candidate) => candidate.code === code.code) === index)
+      .slice(0, 8);
+
+    if (suggestedCodes.length > 0) {
+      const suggestedDiagnoses = parseJsonArray(noteData.suggested_icd10_codes)
+        .map((code: any) => ({
+          code: normalizeOptionalString(code?.code || code)?.toUpperCase(),
+          description: normalizeOptionalString(code?.description),
+          confidence: normalizeConfidence(code?.confidence ?? 0.7),
+        }))
+        .filter((code) => code.code && code.confidence >= 0.6)
+        .slice(0, 12);
+
+      const reviewItem = await createFinancialWorkQueueItem({
+        tenantId,
+        encounterId: noteData.encounter_id,
+        patientId: encounterRow.patient_id,
+        issueType: 'ai_scribe_charge_review',
+        severity: 'warning',
+        message: `AI scribe suggested ${suggestedCodes.length} billing code(s). Review before charge capture.`,
+        errorDetail: 'AI code suggestions are not billed automatically. A clinician or biller must confirm the supported services, diagnoses, units, and modifiers.',
+        metadata: {
+          ambientNoteId: noteData.id,
+          suggestedCptCodes: suggestedCodes,
+          suggestedIcd10Codes: suggestedDiagnoses,
+          nextStep: 'Review suggested codes, then create or update charges from the encounter billing panel.',
+        },
+        createdBy: userId,
+      });
+
+      billingReviewItemsCreated = reviewItem ? 1 : 0;
+    }
+  }
+
+  return { diagnosesCreated, ordersCreated, tasksCreated, billingReviewItemsCreated };
 }
 
 function calculateAgeFromDob(dob: unknown): number | undefined {
@@ -1653,6 +1944,11 @@ router.post('/copilot/visit-summary', requireAuth, requireRoles([...AMBIENT_CLIN
  */
 router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]), async (req: AuthedRequest, res) => {
   try {
+    const parsed = applyNoteSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
     const noteId = req.params.id;
     const tenantId = req.user!.tenantId;
     const userId = req.user!.id;
@@ -1676,6 +1972,24 @@ router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles([...AMBIE
       return res.status(400).json({ error: 'No encounter associated with this note' });
     }
 
+    const encounterStatus = await pool.query(
+      `SELECT status FROM encounters WHERE id = $1 AND tenant_id = $2`,
+      [noteData.encounter_id, tenantId]
+    );
+
+    if (!encounterStatus.rowCount) {
+      return res.status(404).json({ error: 'Linked encounter not found' });
+    }
+
+    if (isImmutableEncounterStatus(encounterStatus.rows[0].status)) {
+      return res.status(409).json({ error: immutableEncounterErrorMessage(encounterStatus.rows[0].status) });
+    }
+
+    const assessmentPlan = [noteData.assessment, noteData.plan]
+      .map((section) => (typeof section === 'string' ? section.trim() : ''))
+      .filter(Boolean)
+      .join('\n\n') || null;
+
     // Update encounter with note content
     await pool.query(
       `UPDATE encounters
@@ -1691,10 +2005,17 @@ router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles([...AMBIE
         noteData.hpi,
         noteData.ros,
         noteData.physical_exam,
-        noteData.assessment + '\n\n' + noteData.plan,
+        assessmentPlan,
         noteData.encounter_id,
         tenantId
       ]
+    );
+
+    const structuredActions = await applyStructuredActionsFromAmbientNote(
+      tenantId,
+      userId,
+      noteData,
+      parsed.data,
     );
 
     await auditLog(tenantId, userId || null, 'ambient_note_applied', 'encounter', noteData.encounter_id!);
@@ -1702,11 +2023,12 @@ router.post('/notes/:id/apply-to-encounter', requireAuth, requireRoles([...AMBIE
     res.json({
       success: true,
       encounterId: noteData.encounter_id,
+      structuredActions,
       message: 'Note applied to encounter successfully'
     });
   } catch (error: any) {
     logAmbientError('Apply note error', error);
-    res.status(500).json({ error: 'Failed to apply note to encounter' });
+    res.status(error?.httpStatus || 500).json({ error: error?.httpStatus ? error.message : 'Failed to apply note to encounter' });
   }
 });
 

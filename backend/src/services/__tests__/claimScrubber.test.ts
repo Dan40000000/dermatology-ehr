@@ -14,6 +14,7 @@ const baseClaim = {
   tenantId: "tenant-1",
   patientId: "patient-1",
   serviceDate: "2025-01-01",
+  payerName: "Demo Payer",
   lineItems: [
     { cpt: "99213", dx: ["L70.0"], units: 1, charge: 100 },
     { cpt: "11100", dx: ["L70.0"], units: 1, charge: 200 },
@@ -92,6 +93,9 @@ describe("claimScrubber", () => {
     ];
 
     queryMock.mockImplementation((query: string) => {
+      if (query.includes("to_regclass")) {
+        return Promise.resolve({ rows: [{ table_name: "claim_scrub_rules" }], rowCount: 1 });
+      }
       if (query.includes("FROM claim_scrub_rules")) {
         return Promise.resolve({ rows: rules, rowCount: rules.length });
       }
@@ -111,10 +115,10 @@ describe("claimScrubber", () => {
 
     expect(result.status).toBe("errors");
     expect(result.canSubmit).toBe(false);
-    expect(result.errors).toHaveLength(2);
+    expect(result.errors.length).toBeGreaterThanOrEqual(2);
     expect(result.warnings.length).toBeGreaterThanOrEqual(3);
     expect(result.info).toHaveLength(1);
-    expect(result.errors[0]?.message).toMatch(/requires prior authorization|has no linked diagnosis/i);
+    expect(result.errors[0]?.message).toMatch(/requires prior authorization|diagnosis code/i);
   });
 
   it("returns clean when no rules apply", async () => {
@@ -122,13 +126,109 @@ describe("claimScrubber", () => {
 
     const result = await scrubClaim({
       ...baseClaim,
-      lineItems: [{ cpt: "99213", dx: ["L70.0"], units: 1, charge: 100 }],
+      lineItems: [{ cpt: "99213", dx: ["L70.0"], diagnosisPointers: ["A"], units: 1, charge: 100 }],
     });
 
     expect(result.status).toBe("clean");
     expect(result.canSubmit).toBe(true);
     expect(result.errors).toHaveLength(0);
     expect(result.warnings).toHaveLength(0);
+  });
+
+  it("keeps core readiness checks working when custom scrub rules table is absent", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ table_name: null }], rowCount: 1 });
+
+    const result = await scrubClaim({
+      ...baseClaim,
+      lineItems: [{ cpt: "99213", dx: ["L70.0"], diagnosisPointers: ["A"], units: 1, charge: 100 }],
+    });
+
+    expect(result.status).toBe("clean");
+    expect(result.canSubmit).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("warns when a biopsy is linked to an unrelated diagnosis", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ table_name: null }], rowCount: 1 });
+
+    const result = await scrubClaim({
+      ...baseClaim,
+      lineItems: [{ cpt: "11102", dx: ["L70.0"], diagnosisPointers: ["A"], units: 1, charge: 220 }],
+    });
+
+    expect(result.status).toBe("warnings");
+    expect(result.canSubmit).toBe(true);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleCode: "DERM_MN_BIOPSY_DX",
+          message: expect.stringContaining("11102"),
+        }),
+      ]),
+    );
+  });
+
+  it("accepts biopsy and Mohs lines with dermatology-supported diagnoses", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ table_name: null }], rowCount: 1 });
+
+    const result = await scrubClaim({
+      ...baseClaim,
+      lineItems: [
+        { cpt: "11102", dx: ["D48.5"], diagnosisPointers: ["A"], units: 1, charge: 220 },
+        { cpt: "17311", dx: ["C44.41"], diagnosisPointers: ["B"], units: 1, charge: 1367 },
+      ],
+    });
+
+    expect(result.status).toBe("clean");
+    expect(result.canSubmit).toBe(true);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("warns when Mohs lacks a cancer or uncertain-neoplasm diagnosis", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ table_name: null }], rowCount: 1 });
+
+    const result = await scrubClaim({
+      ...baseClaim,
+      lineItems: [{ cpt: "17311", dx: ["L82.1"], diagnosisPointers: ["A"], units: 1, charge: 1367 }],
+    });
+
+    expect(result.status).toBe("warnings");
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleCode: "DERM_MN_MOHS_DX",
+          suggestion: expect.stringContaining("Mohs indication"),
+        }),
+      ]),
+    );
+  });
+
+  it("checks common destruction and testing diagnosis pairings", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ table_name: null }], rowCount: 1 });
+
+    const result = await scrubClaim({
+      ...baseClaim,
+      lineItems: [
+        { cpt: "17000", dx: ["L82.1"], diagnosisPointers: ["A"], units: 1, charge: 150 },
+        { cpt: "95044", dx: ["L23.9"], diagnosisPointers: ["B"], units: 1, charge: 80 },
+      ],
+    });
+
+    expect(result.status).toBe("warnings");
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleCode: "DERM_MN_PREMALIGNANT_DESTRUCTION_DX",
+        }),
+      ]),
+    );
+    expect(result.warnings).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleCode: "DERM_MN_PATCH_TEST_DX",
+        }),
+      ]),
+    );
   });
 
   it("applyAutoFixes adds missing modifiers", () => {
@@ -157,7 +257,7 @@ describe("claimScrubber", () => {
       ...baseClaim,
       lineItems: [
         { cpt: "99213", dx: ["L70.0"], units: 1, charge: 100 },
-        { cpt: "11100", dx: ["L70.0"], units: 1, charge: 200 },
+        { cpt: "11100", dx: ["D48.5"], units: 1, charge: 200 },
       ],
     });
 

@@ -107,17 +107,39 @@ describe("Charges routes", () => {
   });
 
   it("PUT /charges/:id updates charge", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [{ status: "pending" }], rowCount: 1 });
     const res = await request(app).put("/charges/charge-1").send({ status: "paid" });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
   });
 
+  it("PUT /charges/:id blocks charges already attached to claims", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ status: "pending" }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ id: "claim-1", claimNumber: "CLM-1", status: "coding_review" }], rowCount: 1 });
+
+    const res = await request(app).put("/charges/charge-1").send({ amountCents: 20000 });
+
+    expect(res.status).toBe(409);
+    expect(res.body.downstreamArtifacts.claims).toHaveLength(1);
+    expect(String(queryMock.mock.calls[queryMock.mock.calls.length - 1]?.[0] || "")).not.toContain("update charges set");
+  });
+
   it("DELETE /charges/:id deletes charge", async () => {
-    queryMock.mockResolvedValueOnce({ rows: [] });
+    queryMock.mockResolvedValueOnce({ rows: [{ status: "pending" }], rowCount: 1 });
     const res = await request(app).delete("/charges/charge-1");
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+  });
+
+  it("DELETE /charges/:id blocks terminal billing statuses", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ status: "paid" }], rowCount: 1 });
+
+    const res = await request(app).delete("/charges/charge-1");
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("locked");
+    expect(String(queryMock.mock.calls[queryMock.mock.calls.length - 1]?.[0] || "")).not.toContain("delete from charges");
   });
 
   it("GET /charges/search/cpt rejects missing query", async () => {

@@ -532,7 +532,7 @@ export class EventBusService {
       `INSERT INTO event_handler_executions (
         event_log_id, handler_id, handler_name, started_at, completed_at,
         duration_ms, status, result, error_message
-      ) VALUES ($1, $2, $3, NOW() - ($4 || ' milliseconds')::INTERVAL, NOW(), $4, $5, $6, $7)`,
+      ) VALUES ($1, $2, $3, NOW() - ($4::numeric * INTERVAL '1 millisecond'), NOW(), $4, $5, $6, $7)`,
       [
         eventLogId,
         handlerId,
@@ -830,7 +830,7 @@ export class EventBusService {
               `UPDATE event_queue
                SET status = 'pending',
                    locked_at = NULL,
-                   scheduled_at = NOW() + ($1 || ' milliseconds')::INTERVAL,
+                   scheduled_at = NOW() + ($1::numeric * INTERVAL '1 millisecond'),
                    error_message = $2
                WHERE id = $3`,
               [delay, error.message, row.id]

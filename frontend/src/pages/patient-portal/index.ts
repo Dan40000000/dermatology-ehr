@@ -11,6 +11,7 @@ export { PortalBillingPage } from './PortalBillingPage';
 export { PortalBookAppointmentPage } from './PortalBookAppointmentPage';
 export { PublicBookAppointmentPage } from './PublicBookAppointmentPage';
 export { PublicGuestBookAppointmentPage } from './PublicGuestBookAppointmentPage';
+export { PublicBillPayPage } from './PublicBillPayPage';
 export { PortalIntakePage } from './PortalIntakePage';
 export { PortalCheckInPage } from './PortalCheckInPage';
 export { PatientPortalMessagesPage } from './MessagesPage';

@@ -6706,15 +6706,34 @@ export async function reviewAmbientNote(
 export async function applyAmbientNoteToEncounter(
   tenantId: string,
   accessToken: string,
-  noteId: string
-): Promise<{ success: boolean; encounterId: string; message: string }> {
+  noteId: string,
+  options?: {
+    applyStructuredActions?: boolean;
+    includeDiagnoses?: boolean;
+    includeOrders?: boolean;
+    includeTasks?: boolean;
+    includeBillingReview?: boolean;
+  }
+): Promise<{
+  success: boolean;
+  encounterId: string;
+  message: string;
+  structuredActions?: {
+    diagnosesCreated: number;
+    ordersCreated: number;
+    tasksCreated: number;
+    billingReviewItemsCreated?: number;
+  };
+}> {
   const res = await fetch(`${API_BASE}/api/ambient/notes/${noteId}/apply-to-encounter`, {
     method: 'POST',
     headers: {
+      'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
       [TENANT_HEADER]: tenantId,
     },
     credentials: 'include',
+    body: JSON.stringify(options || { applyStructuredActions: true }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

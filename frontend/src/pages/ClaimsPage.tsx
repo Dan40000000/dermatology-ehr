@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton, Modal } from '../components/ui';
@@ -723,6 +724,8 @@ function buildDemoClaimDetail(claim: ClaimRecord): ClaimWithDetails {
 export function ClaimsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const { claimId: routeClaimId } = useParams<{ claimId?: string }>();
+  const [searchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [claims, setClaims] = useState<ClaimRecord[]>([]);
@@ -883,6 +886,19 @@ export function ClaimsPage() {
       return null;
     }
   };
+
+  useEffect(() => {
+    const targetClaimId = routeClaimId || searchParams.get('claimId');
+    if (!targetClaimId || loading || claims.length === 0) return;
+    if (showClaimDetail && selectedClaim?.claim.id === targetClaimId) return;
+
+    const claim = claims.find((entry) => entry.id === targetClaimId);
+    if (claim) {
+      void loadClaimDetail(claim, true);
+    }
+    // loadClaimDetail intentionally omitted to avoid reopening the modal whenever its cache changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claims, loading, routeClaimId, searchParams, selectedClaim?.claim.id, showClaimDetail]);
 
   const handleUpdateStatus = async (claimId: string, status: ClaimStatus, notes?: string) => {
     if (!session) return;

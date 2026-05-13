@@ -1,6 +1,7 @@
 import { billingService } from "../billingService";
 import { pool } from "../../db/pool";
 import { logger } from "../../lib/logger";
+import { scrubClaim } from "../claimScrubber";
 
 jest.mock("../../db/pool", () => ({
   pool: {
@@ -30,6 +31,10 @@ jest.mock("../encounterFinancialsService", () => ({
   normalizeEncounterCharges: jest.fn().mockResolvedValue([]),
 }));
 
+jest.mock("../claimScrubber", () => ({
+  scrubClaim: jest.fn(),
+}));
+
 jest.mock("crypto", () => ({
   ...jest.requireActual("crypto"),
   randomUUID: jest.fn(() => "uuid-1"),
@@ -37,6 +42,7 @@ jest.mock("crypto", () => ({
 
 const queryMock = pool.query as jest.Mock;
 const connectMock = pool.connect as jest.Mock;
+const scrubMock = scrubClaim as jest.Mock;
 
 const makeClient = () => ({
   query: jest.fn().mockResolvedValue({ rows: [] }),
@@ -46,6 +52,14 @@ const makeClient = () => ({
 beforeEach(() => {
   queryMock.mockReset();
   connectMock.mockReset();
+  scrubMock.mockReset();
+  scrubMock.mockResolvedValue({
+    status: "clean",
+    errors: [],
+    warnings: [],
+    info: [],
+    canSubmit: true,
+  });
   (logger.info as jest.Mock).mockReset();
   (logger.error as jest.Mock).mockReset();
 });
@@ -134,7 +148,7 @@ describe("billingService", () => {
             description: "desc2",
             quantity: 2,
             fee_cents: 50,
-            icd_codes: [],
+            icd_codes: ["L21.9"],
           },
         ],
       })
@@ -168,6 +182,42 @@ describe("billingService", () => {
       expect.arrayContaining(["coding_review"])
     );
     expect(logger.info).toHaveBeenCalled();
+  });
+
+  it("createClaimFromCharges rejects insurance charges without diagnoses", async () => {
+    const client = makeClient();
+    connectMock.mockResolvedValueOnce(client);
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [
+          {
+            patient_id: "patient-1",
+            insurance_details: { primary: { planName: "ACME", payerId: "P1" } },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [
+          {
+            id: "charge-1",
+            cpt_code: "11100",
+            description: "biopsy",
+            quantity: 1,
+            fee_cents: 100,
+            icd_codes: [],
+          },
+        ],
+      });
+
+    await expect(
+      billingService.createClaimFromCharges("tenant-1", "enc-1", "user-1")
+    ).rejects.toThrow("Diagnosis code is required");
+
+    expect(client.query).toHaveBeenCalledWith("ROLLBACK");
   });
 
   it("submitClaim throws when claim missing", async () => {
@@ -223,6 +273,33 @@ describe("billingService", () => {
         rowCount: 1,
         rows: [{ id: "claim-1", status: "ready", payer: "ACME", payer_id: "P1" }],
       })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{
+          id: "claim-1",
+          tenant_id: "tenant-1",
+          patient_id: "patient-1",
+          service_date: "2025-01-01",
+          line_items: [{ cpt: "99213", dx: ["L70.0"], units: 1, charge: 100 }],
+          payer_id: "P1",
+          payer_name: "ACME",
+          payer: "ACME",
+          is_cosmetic: false,
+          patient_first_name: "Ava",
+          patient_last_name: "Jones",
+          patient_dob: "1990-01-01",
+          patient_address: "1 Main",
+          patient_city: "Denver",
+          patient_state: "CO",
+          patient_zip: "80202",
+          insurance_member_id: "M123",
+          provider_id: "provider-1",
+          provider_name: "Dr. Demo",
+          provider_npi: "1234567890",
+          place_of_service: "11",
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -230,10 +307,50 @@ describe("billingService", () => {
     await billingService.submitClaim("tenant-1", "claim-1", "user-1");
 
     expect(logger.info).toHaveBeenCalled();
+    expect(scrubMock).toHaveBeenCalledWith(expect.objectContaining({ id: "claim-1", patientId: "patient-1" }));
     expect(client.query).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE claims"),
       ["claim-1", "tenant-1"]
     );
+  });
+
+  it("submitClaim blocks unresolved scrubber errors", async () => {
+    const client = makeClient();
+    connectMock.mockResolvedValueOnce(client);
+    scrubMock.mockResolvedValueOnce({
+      status: "errors",
+      errors: [{ severity: "error", ruleCode: "missing_dx", ruleName: "Missing diagnosis", message: "Missing diagnosis" }],
+      warnings: [],
+      info: [],
+      canSubmit: false,
+    });
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: "claim-1", status: "ready", payer: "ACME", payer_id: "P1" }],
+      })
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{
+          id: "claim-1",
+          tenant_id: "tenant-1",
+          patient_id: "patient-1",
+          service_date: "2025-01-01",
+          line_items: [{ cpt: "99213", dx: [], units: 1, charge: 100 }],
+          payer_id: "P1",
+          payer_name: "ACME",
+          payer: "ACME",
+          is_cosmetic: false,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await expect(
+      billingService.submitClaim("tenant-1", "claim-1", "user-1")
+    ).rejects.toThrow("readiness errors");
+
+    expect(client.query).toHaveBeenCalledWith("ROLLBACK");
   });
 
   it("getClaimDetails returns null when missing", async () => {
@@ -299,5 +416,13 @@ describe("billingService", () => {
       expect.stringContaining("UPDATE claims"),
       ["denied", "claim-1", "tenant-1"]
     );
+  });
+
+  it("updateClaimStatus blocks legacy ready/submitted transitions", async () => {
+    await expect(
+      billingService.updateClaimStatus("tenant-1", "claim-1", "submitted", "user-1")
+    ).rejects.toThrow("release/submission workflow");
+
+    expect(queryMock).not.toHaveBeenCalled();
   });
 });

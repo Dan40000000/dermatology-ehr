@@ -4,6 +4,7 @@ import { pool } from "../db/pool";
 import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientPortalAuth";
 import crypto from "crypto";
 import { logger } from "../lib/logger";
+import { amountToCents, postPortalPaymentToLedger } from "../services/paymentLedgerService";
 
 export const portalBillingRouter = Router();
 
@@ -68,8 +69,8 @@ const mockStripe = {
       // Simulate payment processing
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // 95% success rate simulation
-      const success = Math.random() > 0.05;
+      // Demo portal payments should be deterministic; saved/mock cards retain failure simulation.
+      const success = String(chargeData.source || '').startsWith('tok_demo_') || Math.random() > 0.05;
 
       return {
         id: `ch_${crypto.randomBytes(12).toString('hex')}`,
@@ -150,6 +151,12 @@ export async function getLivePortalBalance(tenantId: string, patientId: string) 
      payment_summary AS (
        SELECT
          COALESCE(SUM(amount_cents), 0)::int AS patient_payment_cents,
+         COALESCE(SUM(
+           CASE
+             WHEN applied_to_invoice_id IS NULL AND applied_to_claim_id IS NULL THEN amount_cents
+             ELSE 0
+           END
+         ), 0)::int AS unapplied_patient_payment_cents,
          MAX(payment_date) AS last_payment_date
        FROM patient_payments
        WHERE tenant_id = $1
@@ -164,6 +171,19 @@ export async function getLivePortalBalance(tenantId: string, patientId: string) 
        WHERE tenant_id = $1
          AND patient_id = $2
          AND status = 'completed'
+         AND NOT EXISTS (
+           SELECT 1
+           FROM patient_payments pp
+           WHERE pp.tenant_id = portal_payment_transactions.tenant_id
+             AND pp.patient_id = portal_payment_transactions.patient_id
+             AND pp.status NOT IN ('failed', 'voided')
+             AND (
+               (portal_payment_transactions.processor_transaction_id IS NOT NULL
+                 AND pp.reference_number = portal_payment_transactions.processor_transaction_id)
+               OR (portal_payment_transactions.receipt_number IS NOT NULL
+                 AND pp.receipt_number = portal_payment_transactions.receipt_number)
+             )
+         )
      ),
      last_payment AS (
        SELECT amount_cents, payment_date
@@ -185,6 +205,7 @@ export async function getLivePortalBalance(tenantId: string, patientId: string) 
        us.unbilled_patient_responsibility_cents,
        us.unbilled_insurance_responsibility_cents,
        ps.patient_payment_cents,
+       ps.unapplied_patient_payment_cents,
        pps.portal_payment_cents,
        lp.amount_cents AS last_payment_cents,
        COALESCE(lp.payment_date, ps.last_payment_date, pps.last_portal_payment_date) AS last_payment_date
@@ -201,13 +222,15 @@ export async function getLivePortalBalance(tenantId: string, patientId: string) 
   const totalChargesCents = toCents(row.bill_total_charges_cents) + toCents(row.unbilled_total_charges_cents);
   const totalPaymentsCents = Math.max(
     toCents(row.bill_paid_cents),
-    toCents(row.patient_payment_cents),
-    toCents(row.portal_payment_cents),
+    toCents(row.patient_payment_cents) + toCents(row.portal_payment_cents),
   );
   const totalAdjustmentsCents = toCents(row.bill_adjustment_cents);
   const currentBalanceCents = Math.max(
     0,
-    toCents(row.bill_balance_cents) + toCents(row.unbilled_patient_responsibility_cents),
+    toCents(row.bill_balance_cents)
+      + toCents(row.unbilled_patient_responsibility_cents)
+      - toCents(row.unapplied_patient_payment_cents)
+      - toCents(row.portal_payment_cents),
   );
   const lastPaymentCents = row.last_payment_cents == null ? null : toCents(row.last_payment_cents);
 
@@ -491,6 +514,12 @@ portalBillingRouter.post(
       const { patientId, tenantId } = req.patient!;
       const data = addPaymentMethodSchema.parse(req.body);
 
+      if (process.env.NODE_ENV === 'production' && process.env.ALLOW_PORTAL_RAW_CARD_ENTRY !== 'true') {
+        return res.status(400).json({
+          error: "Direct payment method entry is disabled. Use a tokenized payment vendor.",
+        });
+      }
+
       // Tokenize with mock Stripe
       let token: MockStripeToken;
 
@@ -610,9 +639,11 @@ portalBillingRouter.delete(
 const makePaymentSchema = z.object({
   amount: z.number().positive(),
   paymentMethodId: z.string().uuid().optional(),
+  invoiceId: z.string().optional(),
   chargeIds: z.array(z.string().uuid()).optional(),
   description: z.string().optional(),
   savePaymentMethod: z.boolean().default(false),
+  demoPaymentMethod: z.boolean().default(false),
   newPaymentMethod: z.object({
     paymentType: z.enum(['credit_card', 'debit_card']),
     cardNumber: z.string(),
@@ -641,14 +672,28 @@ portalBillingRouter.post(
 
       let paymentMethodId = data.paymentMethodId;
       let paymentToken: string;
+      let paymentMethodType = 'credit_card';
+      let cardLastFour: string | null = null;
+
+      if (data.newPaymentMethod && process.env.NODE_ENV === 'production' && process.env.ALLOW_PORTAL_RAW_CARD_ENTRY !== 'true') {
+        return res.status(400).json({
+          error: "Direct card entry is disabled. Use the demo payment method or a tokenized payment vendor.",
+        });
+      }
 
       // Get or create payment method
-      if (data.newPaymentMethod) {
+      if (data.demoPaymentMethod) {
+        paymentToken = `tok_demo_${crypto.randomBytes(8).toString('hex')}`;
+        paymentMethodType = 'credit_card';
+        cardLastFour = '0000';
+      } else if (data.newPaymentMethod) {
         // Tokenize new card
         const token = await mockStripe.tokens.create({
           card: data.newPaymentMethod,
         });
         paymentToken = token.id;
+        paymentMethodType = data.newPaymentMethod.paymentType;
+        cardLastFour = token.card.last4;
 
         // Save if requested
         if (data.savePaymentMethod) {
@@ -677,7 +722,8 @@ portalBillingRouter.post(
       } else if (paymentMethodId) {
         // Use existing payment method
         const pmResult = await pool.query(
-          `SELECT token FROM portal_payment_methods
+          `SELECT token, last_four, payment_type
+           FROM portal_payment_methods
            WHERE id = $1 AND patient_id = $2 AND tenant_id = $3 AND is_active = true`,
           [paymentMethodId, patientId, tenantId]
         );
@@ -687,6 +733,8 @@ portalBillingRouter.post(
         }
 
         paymentToken = pmResult.rows[0].token;
+        paymentMethodType = pmResult.rows[0].payment_type || 'credit_card';
+        cardLastFour = pmResult.rows[0].last_four || null;
       } else {
         return res.status(400).json({ error: "Payment method required" });
       }
@@ -708,7 +756,7 @@ portalBillingRouter.post(
           patientId,
           data.amount,
           paymentMethodId,
-          data.newPaymentMethod?.paymentType || 'credit_card',
+          paymentMethodType,
           data.chargeIds ? JSON.stringify(data.chargeIds) : null,
           data.description,
           receiptNumber,
@@ -722,47 +770,58 @@ portalBillingRouter.post(
       try {
         // Process payment with mock Stripe
         const charge = await mockStripe.charges.create({
-          amount: Math.round(data.amount * 100), // cents
+          amount: amountToCents(data.amount), // cents
           currency: 'usd',
           source: paymentToken,
           description: data.description || 'Medical services payment',
         });
 
-        // Update transaction with result
-        await pool.query(
-          `UPDATE portal_payment_transactions
-           SET status = $1,
-               processor_transaction_id = $2,
-               processor_response = $3,
-               receipt_url = $4,
-               completed_at = CURRENT_TIMESTAMP
-           WHERE id = $5`,
-          [
-            charge.status === 'succeeded' ? 'completed' : 'failed',
-            charge.id,
-            JSON.stringify(charge),
-            charge.receipt_url,
-            transactionId,
-          ]
-        );
-
         if (charge.status === 'succeeded') {
-          // Update patient balance
-          await pool.query(
-            `UPDATE portal_patient_balances
-             SET total_payments = total_payments + $1,
-                 last_payment_date = CURRENT_TIMESTAMP,
-                 last_payment_amount = $1,
-                 last_updated = CURRENT_TIMESTAMP
-             WHERE patient_id = $2 AND tenant_id = $3`,
-            [data.amount, patientId, tenantId]
-          );
+          const client = await pool.connect();
+          try {
+            await client.query('BEGIN');
+            await client.query(
+              `UPDATE portal_payment_transactions
+               SET status = 'completed',
+                   processor_transaction_id = $1,
+                   processor_response = $2,
+                   receipt_url = $3,
+                   completed_at = CURRENT_TIMESTAMP,
+                   invoice_id = COALESCE(invoice_id, $4)
+               WHERE id = $5`,
+              [
+                charge.id,
+                JSON.stringify(charge),
+                charge.receipt_url,
+                data.invoiceId || null,
+                transactionId,
+              ]
+            );
 
-          // If specific charges were paid, mark them
-          if (data.chargeIds && data.chargeIds.length > 0) {
-            // This would integrate with your charges table
-            // For now, we'll just record the association
+            await postPortalPaymentToLedger(client, {
+              tenantId,
+              patientId,
+              amountCents: amountToCents(data.amount),
+              paymentMethodType,
+              cardLastFour,
+              processorTransactionId: charge.id,
+              receiptNumber,
+              transactionId,
+              description: data.description,
+              invoiceId: data.invoiceId || null,
+            });
+
+            await client.query('COMMIT');
+          } catch (ledgerError) {
+            await client.query('ROLLBACK');
+            throw ledgerError;
+          } finally {
+            client.release();
           }
+
+          await getLivePortalBalance(tenantId, patientId).catch((balanceError) => {
+            logPortalBillingError("Portal balance refresh after payment failed", balanceError);
+          });
 
           return res.json({
             success: true,
@@ -772,6 +831,14 @@ portalBillingRouter.post(
             amount: data.amount,
           });
         } else {
+          await pool.query(
+            `UPDATE portal_payment_transactions
+             SET status = 'failed',
+                 processor_transaction_id = $1,
+                 processor_response = $2
+             WHERE id = $3`,
+            [charge.id, JSON.stringify(charge), transactionId]
+          );
           return res.status(402).json({
             error: "Payment failed",
             transactionId,

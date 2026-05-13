@@ -7,6 +7,7 @@ import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
 import { CLINICAL_ROLES, userHasRole } from "../lib/roles";
 import { logger } from "../lib/logger";
+import { immutableEncounterErrorMessage, isImmutableEncounterStatus } from "../lib/clinicalWorkflow";
 
 const noteFilterSchema = z.object({
   status: z.enum(["draft", "preliminary", "final", "signed"]).optional(),
@@ -149,10 +150,10 @@ notesRouter.post(
         return res.status(404).json({ error: "One or more notes not found" });
       }
 
-      const signedNotes = checkResult.rows.filter((n) => n.status === "signed");
+      const signedNotes = checkResult.rows.filter((n) => isImmutableEncounterStatus(n.status));
       if (signedNotes.length > 0) {
         return res.status(409).json({
-          error: "Cannot finalize signed notes",
+          error: "Cannot finalize signed or locked notes",
           signedNotes: signedNotes.map((n) => n.id),
         });
       }
@@ -217,10 +218,10 @@ notesRouter.post(
         return res.status(404).json({ error: "One or more notes not found" });
       }
 
-      const signedNotes = checkResult.rows.filter((n) => n.status === "signed");
+      const signedNotes = checkResult.rows.filter((n) => isImmutableEncounterStatus(n.status));
       if (signedNotes.length > 0) {
         return res.status(409).json({
-          error: "Cannot reassign signed notes",
+          error: "Cannot reassign signed or locked notes",
           signedNotes: signedNotes.map((n) => n.id),
         });
       }
@@ -271,8 +272,8 @@ notesRouter.patch(
       }
 
       const note = noteCheck.rows[0];
-      if (note.status === "signed") {
-        return res.status(409).json({ error: "Note is already signed" });
+      if (isImmutableEncounterStatus(note.status)) {
+        return res.status(409).json({ error: immutableEncounterErrorMessage(note.status) });
       }
 
       // Only allow provider to sign their own notes or admin to sign any
@@ -333,8 +334,8 @@ notesRouter.patch(
       }
 
       const note = noteCheck.rows[0];
-      if (note.status !== "signed") {
-        return res.status(409).json({ error: "Only signed notes can have addendums" });
+      if (!isImmutableEncounterStatus(note.status)) {
+        return res.status(409).json({ error: "Only signed or finalized notes can have addendums" });
       }
 
       // Only allow provider to add addendum to their own notes or admin to add to any
@@ -346,7 +347,7 @@ notesRouter.patch(
       const addendumId = crypto.randomUUID();
       const timestamp = new Date().toISOString();
 
-      // Store addendum in separate table for audit trail
+      // Store addendum in separate table for audit trail. The table is created by migrations.
       await pool.query(
         `INSERT INTO note_addendums (id, tenant_id, encounter_id, addendum_text, added_by, created_at)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -375,59 +376,6 @@ notesRouter.patch(
       });
     } catch (error: any) {
       logNotesError("Add addendum error:", error);
-
-      // If table doesn't exist, create it
-      if (error.code === '42P01') {
-        try {
-          await pool.query(`
-            CREATE TABLE IF NOT EXISTS note_addendums (
-              id TEXT PRIMARY KEY,
-              tenant_id TEXT NOT NULL,
-              encounter_id TEXT NOT NULL,
-              addendum_text TEXT NOT NULL,
-              added_by TEXT NOT NULL,
-              created_at TIMESTAMPTZ DEFAULT now()
-            )
-          `);
-
-          // Retry the operation
-          const addendumId = crypto.randomUUID();
-          const timestamp = new Date().toISOString();
-
-          await pool.query(
-            `INSERT INTO note_addendums (id, tenant_id, encounter_id, addendum_text, added_by, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [addendumId, tenantId, noteId, addendum, req.user!.id, timestamp]
-          );
-
-          const addendumNote = `\n\n--- ADDENDUM (${timestamp}) by ${req.user!.fullName || req.user!.id} ---\n${addendum}`;
-          const noteCheck = await pool.query(
-            `SELECT assessment_plan FROM encounters WHERE id = $1 AND tenant_id = $2`,
-            [noteId, tenantId]
-          );
-          const updatedAssessmentPlan = (noteCheck.rows[0].assessment_plan || "") + addendumNote;
-
-          await pool.query(
-            `UPDATE encounters
-             SET assessment_plan = $1, updated_at = now()
-             WHERE id = $2 AND tenant_id = $3`,
-            [updatedAssessmentPlan, noteId, tenantId]
-          );
-
-          await auditLog(tenantId, req.user!.id, "note_addendum", "encounter", noteId);
-
-          return res.json({
-            success: true,
-            message: "Addendum added successfully (table created)",
-            addendumId,
-            addedAt: timestamp
-          });
-        } catch (retryError: any) {
-          logNotesError("Retry addendum error:", retryError);
-          return res.status(500).json({ error: "Failed to add addendum after retry" });
-        }
-      }
-
       res.status(500).json({ error: "Failed to add addendum" });
     }
   }

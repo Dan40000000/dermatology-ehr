@@ -6,6 +6,7 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { CLINICAL_ROLES } from "../lib/roles";
 import { ensureMelanomaRecallForDiagnosis } from "../services/melanomaRecallService";
+import { immutableEncounterErrorMessage, isImmutableEncounterStatus } from "../lib/clinicalWorkflow";
 
 const diagnosisSchema = z.object({
   encounterId: z.string(),
@@ -36,6 +37,18 @@ async function resolveIcd10Description(code: string, fallback: string): Promise<
   return result.rows[0]?.description || fallback;
 }
 
+async function ensureEncounterCanReceiveDiagnosis(tenantId: string, encounterId: string): Promise<string | null> {
+  const result = await pool.query(
+    `select status from encounters where id = $1 and tenant_id = $2`,
+    [encounterId, tenantId],
+  );
+  const status = result.rows[0]?.status;
+  if (status && isImmutableEncounterStatus(status)) {
+    return immutableEncounterErrorMessage(status);
+  }
+  return null;
+}
+
 // Get all diagnoses for an encounter
 diagnosesRouter.get("/encounter/:encounterId", requireAuth, requireRoles([...CLINICAL_ROLES]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
@@ -62,6 +75,11 @@ diagnosesRouter.post("/", requireAuth, requireRoles(["provider", "admin"]), asyn
     ...parsed.data,
     icd10Code: normalizeIcd10Code(parsed.data.icd10Code),
   };
+  const lockError = await ensureEncounterCanReceiveDiagnosis(tenantId, payload.encounterId);
+  if (lockError) {
+    return res.status(409).json({ error: lockError });
+  }
+
   const description = await resolveIcd10Description(payload.icd10Code, payload.description);
 
   const existingResult = await pool.query(
@@ -137,6 +155,10 @@ diagnosesRouter.put("/:id", requireAuth, requireRoles(["provider", "admin"]), as
   }
 
   const encounterId = diagnosisResult.rows[0].encounter_id;
+  const lockError = await ensureEncounterCanReceiveDiagnosis(tenantId, encounterId);
+  if (lockError) {
+    return res.status(409).json({ error: lockError });
+  }
 
   // If marking as primary, unmark others
   if (isPrimary) {
@@ -173,6 +195,10 @@ diagnosesRouter.delete("/:id", requireAuth, requireRoles(["provider", "admin"]),
   }
 
   const diagnosis = diagnosisResult.rows[0];
+  const lockError = await ensureEncounterCanReceiveDiagnosis(tenantId, diagnosis.encounter_id);
+  if (lockError) {
+    return res.status(409).json({ error: lockError });
+  }
 
   await pool.query(`delete from encounter_diagnoses where id = $1 and tenant_id = $2`, [id, tenantId]);
 

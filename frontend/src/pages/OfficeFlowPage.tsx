@@ -393,6 +393,10 @@ export function OfficeFlowPage() {
           return next;
         });
       } else if (newStatus === 'completed') {
+        if (Number(flow.paymentDueCents || 0) > 0) {
+          showError('Payment or balance review is required before completing this visit.');
+          return;
+        }
         try {
           await updatePatientFlowStatus(session.tenantId, session.accessToken, flow.appointmentId, 'completed');
         } catch {
@@ -1090,12 +1094,17 @@ export function OfficeFlowPage() {
                   <div className="flow-card-info">
                     <div className="info-row muted tiny">{flow.appointmentType}</div>
                     <div className="info-row muted tiny">{flow.providerName}</div>
+                    {Number(flow.paymentDueCents || 0) > 0 && (
+                      <div className="info-row muted tiny">Payment required before completion</div>
+                    )}
                   </div>
                   <div className="flow-card-actions">
                     <button
                       type="button"
                       className="btn-sm btn-primary"
                       onClick={() => handleStatusChange(flow, 'completed')}
+                      disabled={Number(flow.paymentDueCents || 0) > 0}
+                      title={Number(flow.paymentDueCents || 0) > 0 ? 'Review or post payment before completing this visit' : undefined}
                     >
                       Submit Complete
                     </button>

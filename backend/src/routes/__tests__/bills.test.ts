@@ -108,6 +108,50 @@ describe("Bills Routes", () => {
     });
   });
 
+  describe("GET /bills/work-queue", () => {
+    it("should list financial work queue items before treating work-queue as a bill id", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          {
+            id: "fwq-1",
+            issueType: "encounter_financial_posting_failed",
+            status: "open",
+            severity: "critical",
+            patientFirstName: "Ava",
+            patientLastName: "Jones",
+          },
+        ],
+      });
+
+      const res = await request(app).get("/bills/work-queue");
+
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(1);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("from financial_work_queue fwq"),
+        expect.arrayContaining(["tenant-1", "open"]),
+      );
+    });
+  });
+
+  describe("POST /bills/work-queue/:id/resolve", () => {
+    it("should resolve a financial work queue item", async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: "fwq-1" }], rowCount: 1 });
+
+      const res = await request(app)
+        .post("/bills/work-queue/fwq-1/resolve")
+        .send({ note: "Claim corrected and bill regenerated" });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true, id: "fwq-1" });
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining("update financial_work_queue"),
+        expect.arrayContaining(["fwq-1", "tenant-1", "user-1", "Claim corrected and bill regenerated"]),
+      );
+      expect(auditLog).toHaveBeenCalledWith("tenant-1", "user-1", "financial_work_queue_resolved", "financial_work_queue", "fwq-1");
+    });
+  });
+
   describe("GET /bills/:id", () => {
     it("should return bill with line items", async () => {
       queryMock
@@ -279,6 +323,99 @@ describe("Bills Routes", () => {
       expect(loggerMock.error).toHaveBeenCalledWith("Create bill error:", {
         error: "Unknown error",
       });
+    });
+  });
+
+  describe("POST /bills/:id/actions", () => {
+    const mockClient = {
+      query: jest.fn(),
+      release: jest.fn(),
+    };
+
+    beforeEach(() => {
+      connectMock.mockResolvedValue(mockClient);
+      mockClient.query.mockReset();
+      mockClient.release.mockReset();
+    });
+
+    it("should send a statement and record bill activity", async () => {
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{ id: "bill-1", balance_cents: 5000, adjustment_amount_cents: 0 }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [] }) // update bill
+        .mockResolvedValueOnce({ rows: [] }) // insert activity
+        .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+      const res = await request(app)
+        .post("/bills/bill-1/actions")
+        .send({ action: "send_statement", note: "Statement sent by front desk" });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true, action: "send_statement" });
+      expect(mockClient.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining("last_statement_sent_at = now()"),
+        expect.arrayContaining(["statement_sent", "bill-1", "tenant-1"]),
+      );
+      expect(mockClient.query).toHaveBeenNthCalledWith(
+        4,
+        expect.stringContaining("insert into bill_activity"),
+        expect.arrayContaining(["tenant-1", "bill-1", "send_statement", "Statement sent by front desk", null, "user-1"]),
+      );
+      expect(auditLog).toHaveBeenCalledWith("tenant-1", "user-1", "bill_action_send_statement", "bill", "bill-1");
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it("should flag collections with an internal note", async () => {
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{ id: "bill-1", balance_cents: 15000, adjustment_amount_cents: 0 }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [] }) // update bill
+        .mockResolvedValueOnce({ rows: [] }) // insert activity
+        .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+      const res = await request(app)
+        .post("/bills/bill-1/actions")
+        .send({ action: "flag_collections", note: "90 day balance, call before external collections" });
+
+      expect(res.status).toBe(200);
+      expect(mockClient.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining("collections_flagged_at = coalesce(collections_flagged_at, now())"),
+        expect.arrayContaining([
+          "flagged",
+          "collections",
+          "90 day balance, call before external collections",
+          "bill-1",
+          "tenant-1",
+        ]),
+      );
+      expect(auditLog).toHaveBeenCalledWith("tenant-1", "user-1", "bill_action_flag_collections", "bill", "bill-1");
+    });
+
+    it("should reject write off when there is no open balance", async () => {
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{ id: "bill-1", balance_cents: 0, adjustment_amount_cents: 2000 }],
+          rowCount: 1,
+        });
+
+      const res = await request(app)
+        .post("/bills/bill-1/actions")
+        .send({ action: "write_off", note: "Small balance adjustment" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("No open balance available to write off");
+      expect(mockClient.query).toHaveBeenCalledWith("ROLLBACK");
+      expect(auditLog).not.toHaveBeenCalled();
+      expect(mockClient.release).toHaveBeenCalled();
     });
   });
 

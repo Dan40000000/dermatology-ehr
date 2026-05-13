@@ -174,21 +174,21 @@ export async function scheduleReminders(
         p.email as "patientEmail",
         p.phone as "patientPhone",
         a.provider_id as "providerId",
-        u.name as "providerName",
-        a.type_id as "appointmentTypeId",
+        pr.full_name as "providerName",
+        COALESCE(a.appointment_type_id, a.type_id) as "appointmentTypeId",
         at.name as "appointmentTypeName",
-        a.start_time as "startTime",
-        a.end_time as "endTime",
+        COALESCE(a.scheduled_start, a.start_time) as "startTime",
+        COALESCE(a.scheduled_end, a.end_time) as "endTime",
         a.location_id as "locationId",
         l.name as "locationName",
         l.address as "locationAddress",
         a.tenant_id as "tenantId",
-        t.name as "clinicName",
-        l.phone as "clinicPhone"
+        COALESCE(t.practice_name, t.name, 'Dermatology Office') as "clinicName",
+        COALESCE(l.phone, t.practice_phone) as "clinicPhone"
       FROM appointments a
       JOIN patients p ON a.patient_id = p.id
-      JOIN users u ON a.provider_id = u.id
-      LEFT JOIN appointment_types at ON a.type_id = at.id
+      LEFT JOIN providers pr ON a.provider_id = pr.id AND a.tenant_id = pr.tenant_id
+      LEFT JOIN appointment_types at ON COALESCE(a.appointment_type_id, a.type_id) = at.id
       LEFT JOIN locations l ON a.location_id = l.id
       JOIN tenants t ON a.tenant_id = t.id
       WHERE a.id = $1 AND a.tenant_id = $2`,
@@ -676,11 +676,12 @@ export async function scheduleNoShowFollowup(
         p.first_name || ' ' || p.last_name as "patientName",
         p.phone as "patientPhone",
         p.email as "patientEmail",
-        u.name as "providerName",
-        l.phone as "clinicPhone"
+        pr.full_name as "providerName",
+        COALESCE(l.phone, t.practice_phone) as "clinicPhone"
       FROM appointments a
       JOIN patients p ON a.patient_id = p.id
-      JOIN users u ON a.provider_id = u.id
+      LEFT JOIN providers pr ON a.provider_id = pr.id AND a.tenant_id = pr.tenant_id
+      JOIN tenants t ON a.tenant_id = t.id
       LEFT JOIN locations l ON a.location_id = l.id
       WHERE a.id = $1 AND a.tenant_id = $2 AND a.status = 'no_show'`,
       [appointmentId, tenantId]
@@ -791,7 +792,8 @@ export async function getReminderStats(
         COUNT(*) FILTER (WHERE a.status != 'no_show' AND a.status != 'cancelled') as "totalCompleted"
       FROM appointments a
       WHERE a.tenant_id = $1
-        AND a.start_time >= $2 AND a.start_time <= $3`,
+        AND COALESCE(a.scheduled_start, a.start_time) >= $2
+        AND COALESCE(a.scheduled_start, a.start_time) <= $3`,
       [tenantId, dateRange.startDate, dateRange.endDate]
     );
 
@@ -879,7 +881,7 @@ export async function getReminderQueue(
         rq.max_retries as "maxRetries",
         rq.next_retry_at as "nextRetryAt",
         p.first_name || ' ' || p.last_name as "patientName",
-        a.start_time as "appointmentTime"
+        COALESCE(a.scheduled_start, a.start_time) as "appointmentTime"
       FROM reminder_queue rq
       JOIN patients p ON rq.patient_id = p.id
       JOIN appointments a ON rq.appointment_id = a.id

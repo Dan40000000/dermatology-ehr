@@ -3,6 +3,8 @@ import express from "express";
 import { frontDeskRouter } from "../frontDesk";
 import { frontDeskService } from "../../services/frontDeskService";
 import { auditLog } from "../../services/audit";
+import { pool } from "../../db/pool";
+import { workflowOrchestrator } from "../../services/workflowOrchestrator";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -32,6 +34,18 @@ jest.mock("../../services/audit", () => ({
   auditLog: jest.fn(),
 }));
 
+jest.mock("../../db/pool", () => ({
+  pool: {
+    query: jest.fn(),
+  },
+}));
+
+jest.mock("../../services/workflowOrchestrator", () => ({
+  workflowOrchestrator: {
+    processEvent: jest.fn(),
+  },
+}));
+
 jest.mock("../../lib/logger", () => ({
   logger: {
     error: jest.fn(),
@@ -43,10 +57,14 @@ app.use(express.json());
 app.use("/front-desk", frontDeskRouter);
 
 const serviceMock = frontDeskService as jest.Mocked<typeof frontDeskService>;
+const queryMock = pool.query as jest.Mock;
+const workflowMock = workflowOrchestrator as jest.Mocked<typeof workflowOrchestrator>;
 
 beforeEach(() => {
   Object.values(serviceMock).forEach((fn) => fn.mockReset());
   (auditLog as jest.Mock).mockReset();
+  queryMock.mockReset();
+  workflowMock.processEvent.mockReset();
 });
 
 describe("Front desk routes", () => {
@@ -213,5 +231,60 @@ describe("Front desk routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(auditLog).toHaveBeenCalled();
+  });
+
+  it("PUT /front-desk/status moves completed requests to checkout first", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ status: "with_provider" }], rowCount: 1 });
+    serviceMock.updateAppointmentStatus.mockResolvedValueOnce(undefined as any);
+
+    const res = await request(app).put("/front-desk/status/apt-1").send({ status: "completed" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("checkout");
+    expect(res.body.requiresCheckoutReview).toBe(true);
+    expect(serviceMock.updateAppointmentStatus).toHaveBeenCalledWith("tenant-1", "apt-1", "checkout");
+    expect(workflowMock.processEvent).not.toHaveBeenCalled();
+    expect(auditLog).toHaveBeenCalledWith(
+      "tenant-1",
+      "user-1",
+      "checkout_required_before_completion",
+      "appointment",
+      "apt-1",
+    );
+  });
+
+  it("PUT /front-desk/status completes only after checkout", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ status: "checkout" }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ bill_count: 0, balance_cents: 0 }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ balance_cents: 0 }], rowCount: 1 });
+    serviceMock.updateAppointmentStatus.mockResolvedValueOnce(undefined as any);
+    workflowMock.processEvent.mockResolvedValueOnce(undefined as any);
+
+    const res = await request(app).put("/front-desk/status/apt-1").send({ status: "completed" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(serviceMock.updateAppointmentStatus).toHaveBeenCalledWith("tenant-1", "apt-1", "completed");
+    expect(workflowMock.processEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "appointment_checkout",
+        entityId: "apt-1",
+      }),
+    );
+    expect(auditLog).toHaveBeenCalledWith("tenant-1", "user-1", "update_status", "appointment", "apt-1");
+  });
+
+  it("PUT /front-desk/status blocks completion with an unresolved checkout balance", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ status: "checkout" }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ bill_count: 1, balance_cents: 7500 }], rowCount: 1 });
+
+    const res = await request(app).put("/front-desk/status/apt-1").send({ status: "completed" });
+
+    expect(res.status).toBe(409);
+    expect(res.body.requiresPayment).toBe(true);
+    expect(res.body.paymentDueCents).toBe(7500);
+    expect(serviceMock.updateAppointmentStatus).not.toHaveBeenCalled();
   });
 });

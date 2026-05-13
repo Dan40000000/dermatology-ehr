@@ -88,7 +88,7 @@ describe('apiClient utilities', () => {
       await expect(client.get('/test')).resolves.toEqual({ ok: true });
 
       const [url, options] = fetchWithTimeoutMock.mock.calls[0];
-      expect(url).toBe('http://localhost:4000/test');
+      expect(url).toBe('/test');
       expect(options).toMatchObject({ method: 'GET', credentials: 'include', timeout: 30000 });
       expect(options?.headers).toMatchObject({
         'Content-Type': 'application/json',

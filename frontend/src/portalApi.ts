@@ -421,9 +421,11 @@ export async function makePortalPayment(
   data: {
     amount: number;
     paymentMethodId?: string;
+    invoiceId?: string;
     chargeIds?: string[];
     description?: string;
     savePaymentMethod?: boolean;
+    demoPaymentMethod?: boolean;
     newPaymentMethod?: {
       paymentType: 'credit_card' | 'debit_card';
       cardNumber: string;

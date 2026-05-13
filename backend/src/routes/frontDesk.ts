@@ -6,6 +6,8 @@ import { frontDeskService } from '../services/frontDeskService';
 import { auditLog } from '../services/audit';
 import { logger } from '../lib/logger';
 import { workflowOrchestrator } from '../services/workflowOrchestrator';
+import { pool } from '../db/pool';
+import { getAppointmentCheckoutBalanceCents } from '../services/checkoutBalanceService';
 
 const updateStatusSchema = z.object({
   status: z.enum(['scheduled', 'checked_in', 'in_room', 'with_provider', 'checkout', 'completed', 'cancelled', 'no_show']),
@@ -392,6 +394,37 @@ frontDeskRouter.put(
       }
 
       const { status } = validation.data;
+
+      if (status === 'completed') {
+        const currentStatusResult = await pool.query(
+          `SELECT status FROM appointments WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, appointmentId]
+        );
+        const currentStatus = currentStatusResult.rows[0]?.status;
+        if (currentStatus && currentStatus !== 'checkout') {
+          await frontDeskService.updateAppointmentStatus(tenantId, appointmentId!, 'checkout');
+          try {
+            await auditLog(tenantId, userId, 'checkout_required_before_completion', 'appointment', appointmentId!);
+          } catch (auditError) {
+            logger.error('Checkout guard audit log failed:', auditError);
+          }
+          return res.json({
+            success: true,
+            status: 'checkout',
+            requiresCheckoutReview: true,
+            message: 'Visit moved to checkout. Front desk review is required before completion.',
+          });
+        }
+
+        const checkoutBalanceCents = await getAppointmentCheckoutBalanceCents(tenantId, appointmentId!);
+        if (checkoutBalanceCents > 0) {
+          return res.status(409).json({
+            error: 'Patient has an unresolved checkout balance. Review or post payment before completing the visit.',
+            requiresPayment: true,
+            paymentDueCents: checkoutBalanceCents,
+          });
+        }
+      }
 
       await frontDeskService.updateAppointmentStatus(tenantId, appointmentId!, status);
 

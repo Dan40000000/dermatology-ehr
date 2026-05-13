@@ -408,7 +408,8 @@ describe("frontDeskService", () => {
 
   it("checkOutPatient routes unpaid self-pay visits to checkout", async () => {
     queryMock
-      .mockResolvedValueOnce({ rows: [{ payment_due_cents: "12500" }] })
+      .mockResolvedValueOnce({ rows: [{ bill_count: 0, balance_cents: 0 }] })
+      .mockResolvedValueOnce({ rows: [{ balance_cents: "12500" }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -420,7 +421,7 @@ describe("frontDeskService", () => {
       paymentDueCents: 12500,
     });
     expect(queryMock).toHaveBeenNthCalledWith(
-      2,
+      3,
       expect.stringContaining("SET status = 'checkout'"),
       ["tenant-1", "appt-1"]
     );
@@ -428,7 +429,8 @@ describe("frontDeskService", () => {
 
   it("checkOutPatient still routes zero-balance visits to checkout for front desk review", async () => {
     queryMock
-      .mockResolvedValueOnce({ rows: [{ payment_due_cents: "0" }] })
+      .mockResolvedValueOnce({ rows: [{ bill_count: 0, balance_cents: 0 }] })
+      .mockResolvedValueOnce({ rows: [{ balance_cents: "0" }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -440,7 +442,7 @@ describe("frontDeskService", () => {
       paymentDueCents: 0,
     });
     expect(queryMock).toHaveBeenNthCalledWith(
-      2,
+      3,
       expect.stringContaining("SET status = 'checkout'"),
       ["tenant-1", "appt-1"]
     );

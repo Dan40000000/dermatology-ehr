@@ -32,6 +32,58 @@ export async function fetchBills(options: FetchOptions, filters?: {
   return res.json();
 }
 
+export async function fetchFinancialWorkQueue(options: FetchOptions, status = 'open') {
+  const params = new URLSearchParams();
+  if (status) params.append('status', status);
+
+  const res = await fetch(`${API_BASE}/api/bills/work-queue?${params}`, {
+    headers: {
+      Authorization: `Bearer ${options.accessToken}`,
+      [TENANT_HEADER]: options.tenantId,
+    },
+  });
+  if (!res.ok) throw new Error("Failed to fetch financial work queue");
+  return res.json();
+}
+
+export async function resolveFinancialWorkQueueItem(options: FetchOptions, itemId: string, note?: string) {
+  const res = await fetch(`${API_BASE}/api/bills/work-queue/${encodeURIComponent(itemId)}/resolve`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${options.accessToken}`,
+      [TENANT_HEADER]: options.tenantId,
+    },
+    body: JSON.stringify({ note }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to resolve financial work queue item");
+  }
+  return res.json();
+}
+
+export async function postBillAction(options: FetchOptions, billId: string, data: {
+  action: 'send_statement' | 'set_payment_plan' | 'flag_collections' | 'write_off' | 'add_note';
+  note?: string;
+  amountCents?: number;
+}) {
+  const res = await fetch(`${API_BASE}/api/bills/${encodeURIComponent(billId)}/actions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${options.accessToken}`,
+      [TENANT_HEADER]: options.tenantId,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to apply bill action");
+  }
+  return res.json();
+}
+
 // Payer Payments
 export async function fetchPayerPayments(options: FetchOptions, filters?: {
   status?: string;

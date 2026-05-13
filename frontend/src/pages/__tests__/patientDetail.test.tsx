@@ -738,7 +738,12 @@ describe('PatientDetailPage', () => {
     apiMocks.fetchAppointments.mockResolvedValueOnce({ appointments: [] });
     apiMocks.fetchDocuments.mockResolvedValueOnce({ documents: [] });
     apiMocks.fetchPhotos.mockResolvedValueOnce({ photos: [] });
-    (global.fetch as any).mockResolvedValueOnce({ ok: false });
+    (global.fetch as any).mockImplementation((_url: string, options?: RequestInit) =>
+      Promise.resolve({
+        ok: options?.method === 'PUT' ? false : true,
+        json: () => Promise.resolve({ pharmacies: [] }),
+      })
+    );
 
     render(<PatientDetailPage />);
 

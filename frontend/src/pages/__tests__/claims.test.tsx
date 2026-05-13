@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 const authMocks = vi.hoisted(() => ({
   session: null as null | { tenantId: string; accessToken: string },
@@ -47,6 +48,14 @@ vi.mock('../../components/ui', () => ({
 }));
 
 import { ClaimsPage } from '../ClaimsPage';
+
+function renderClaimsPage() {
+  return render(
+    <MemoryRouter>
+      <ClaimsPage />
+    </MemoryRouter>,
+  );
+}
 
 const buildFixtures = () => {
   const claims = [
@@ -135,7 +144,7 @@ describe('ClaimsPage', () => {
   });
 
   it('renders claims, filters, shows detail, and posts payments', async () => {
-    render(<ClaimsPage />);
+    renderClaimsPage();
 
     await screen.findByText('Claims Management');
 
@@ -185,7 +194,7 @@ describe('ClaimsPage', () => {
   });
 
   it('validates payment amounts', async () => {
-    render(<ClaimsPage />);
+    renderClaimsPage();
 
     await screen.findByText('Claims Management');
 

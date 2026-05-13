@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { clearinghouseRouter } from '../clearinghouse';
 import { pool } from '../../db/pool';
 import { auditLog } from '../../services/audit';
+import { billingService } from '../../services/billingService';
 
 // Mock auth middleware
 jest.mock('../../middleware/auth', () => ({
@@ -21,6 +22,12 @@ jest.mock('../../middleware/rbac', () => ({
 // Mock audit service
 jest.mock('../../services/audit', () => ({
   auditLog: jest.fn(),
+}));
+
+jest.mock('../../services/billingService', () => ({
+  billingService: {
+    submitClaim: jest.fn(),
+  },
 }));
 
 // Mock pool
@@ -42,10 +49,13 @@ app.use('/api/clearinghouse', clearinghouseRouter);
 
 const queryMock = pool.query as jest.Mock;
 const auditMock = auditLog as jest.Mock;
+const billingMock = billingService as jest.Mocked<typeof billingService>;
 
 beforeEach(() => {
   queryMock.mockReset();
   auditMock.mockReset();
+  billingMock.submitClaim.mockReset();
+  billingMock.submitClaim.mockResolvedValue(undefined);
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
 });
 
@@ -91,10 +101,25 @@ describe('Clearinghouse Routes - Claim Submission', () => {
       expect(res.body.error).toBe('Claim already submitted');
     });
 
+    it('should reject claims that have not been released', async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [{ id: 'claim-1', claim_number: 'CLM-001', status: 'draft' }],
+        rowCount: 1,
+      });
+
+      const res = await request(app)
+        .post('/api/clearinghouse/submit-claim')
+        .send({ claimId: '11111111-1111-4111-8111-111111111111' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('released from coding review');
+      expect(billingMock.submitClaim).not.toHaveBeenCalled();
+    });
+
     it('should successfully submit claim', async () => {
       queryMock
         .mockResolvedValueOnce({
-          rows: [{ id: 'claim-1', claim_number: 'CLM-001', status: 'draft' }],
+          rows: [{ id: 'claim-1', claim_number: 'CLM-001', status: 'ready' }],
           rowCount: 1,
         })
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // insert submission

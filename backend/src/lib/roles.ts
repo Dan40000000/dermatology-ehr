@@ -42,6 +42,12 @@ export const REVENUE_CYCLE_ROLES: Role[] = [
   "compliance_officer",
 ];
 
+export const CHARGE_CAPTURE_ROLES: Role[] = [
+  ...REVENUE_CYCLE_ROLES,
+  "provider",
+  "ma",
+];
+
 export const FINANCIAL_ROLES: Role[] = REVENUE_CYCLE_ROLES;
 
 function normalizeRole(value: unknown): Role | null {

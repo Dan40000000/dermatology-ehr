@@ -5,7 +5,7 @@ import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
 import { PatientBanner, TemplateSelector } from '../components/clinical';
 import { PatientBodyDiagram, type BodyMarker } from '../components/body-diagram';
-import { DiagnosisSearchModal, ProcedureSearchModal } from '../components/billing';
+import { DiagnosisSearchModal, PerformedWorkModal, ProcedureSearchModal } from '../components/billing';
 import { InventoryUsageList, InventoryUsageModal } from '../components/inventory';
 import { EncounterPrescriptions } from '../components/prescriptions';
 import { ScribePanel } from '../components/ScribePanel';
@@ -108,8 +108,8 @@ export function EncounterPage() {
   const [scribeNoteLoading, setScribeNoteLoading] = useState(false);
 
   // Check if encounter is locked/read-only
-  const isLocked = encounter.status === 'signed' || encounter.status === 'locked';
-  const isClosedEncounter = ['signed', 'locked', 'finalized', 'completed'].includes(String(encounter.status || '').toLowerCase());
+  const isLocked = ['signed', 'locked', 'finalized', 'completed', 'closed'].includes(String(encounter.status || '').toLowerCase());
+  const isClosedEncounter = isLocked;
 
   const [activeSection, setActiveSection] = useState<EncounterSection>('note');
   const [bodyDiagramMarkers, setBodyDiagramMarkers] = useState<BodyMarker[]>([]);
@@ -120,6 +120,7 @@ export function EncounterPage() {
   const [showSignModal, setShowSignModal] = useState(false);
   const [showDiagnosisModal, setShowDiagnosisModal] = useState(false);
   const [showProcedureModal, setShowProcedureModal] = useState(false);
+  const [showPerformedWorkModal, setShowPerformedWorkModal] = useState(false);
   const [showInventoryUsageModal, setShowInventoryUsageModal] = useState(false);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [showAiDraftModal, setShowAiDraftModal] = useState(false);
@@ -2068,6 +2069,24 @@ export function EncounterPage() {
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
                     type="button"
+                    onClick={() => setShowPerformedWorkModal(true)}
+                    disabled={isNew || isLocked}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      background: '#0f766e',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '4px',
+                      fontWeight: 600,
+                      cursor: isNew || isLocked ? 'not-allowed' : 'pointer',
+                      opacity: isNew || isLocked ? 0.6 : 1,
+                      fontSize: '0.875rem'
+                    }}
+                  >
+                    + Performed Work
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setShowProcedureModal(true)}
                     disabled={isNew || isLocked}
                     style={{
@@ -2342,6 +2361,13 @@ export function EncounterPage() {
         onClose={() => setShowProcedureModal(false)}
         onSelect={handleAddProcedure}
         diagnoses={diagnoses}
+      />
+
+      <PerformedWorkModal
+        isOpen={showPerformedWorkModal}
+        onClose={() => setShowPerformedWorkModal(false)}
+        diagnoses={diagnoses}
+        onRecord={handleRecordPerformedWork}
       />
 
       {!isNew && patientId && (

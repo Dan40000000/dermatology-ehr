@@ -172,6 +172,40 @@ const formatProviderMessage = (provider: string, workflow: string) =>
     ? undefined
     : `${provider} ${workflow} adapter is not configured yet; returned mock data through the vendor-neutral interface.`;
 
+function envFlagEnabled(value: string | undefined): boolean {
+  return String(value || '').trim().toLowerCase() === 'true';
+}
+
+function isProductionLikeEnvironment(): boolean {
+  const environment = (
+    process.env.DEPLOYMENT_ENV ||
+    process.env.APP_ENV ||
+    process.env.RAILWAY_ENVIRONMENT ||
+    process.env.NODE_ENV ||
+    'development'
+  ).toLowerCase();
+  return environment === 'production' || environment === 'staging';
+}
+
+function assertVendorMockFallbackAllowed(provider: string, workflow: string): void {
+  if (provider === 'mock') {
+    return;
+  }
+
+  if (!isProductionLikeEnvironment()) {
+    return;
+  }
+
+  if (envFlagEnabled(process.env.ALLOW_VENDOR_MOCK_FALLBACKS)) {
+    return;
+  }
+
+  throw new Error(
+    `${workflow} provider is set to "${provider}", but only mock scaffolding is implemented. ` +
+      'Set the provider to "mock" for demos or enable ALLOW_VENDOR_MOCK_FALLBACKS=true explicitly.',
+  );
+}
+
 class MockEligibilityService implements EligibilityService {
   constructor(private readonly provider: EligibilityProvider) {}
 
@@ -397,15 +431,21 @@ function buildPriorAuthTimeline(
 }
 
 export function getEligibilityService(provider = loadEnv().ELIGIBILITY_PROVIDER): EligibilityService {
-  return new MockEligibilityService(resolveEligibilityProvider(provider));
+  const resolvedProvider = resolveEligibilityProvider(provider);
+  assertVendorMockFallbackAllowed(resolvedProvider, 'Eligibility');
+  return new MockEligibilityService(resolvedProvider);
 }
 
 export function getPrescribingService(provider = loadEnv().PRESCRIBING_PROVIDER): PrescribingService {
-  return new MockPrescribingService(resolvePrescribingProvider(provider));
+  const resolvedProvider = resolvePrescribingProvider(provider);
+  assertVendorMockFallbackAllowed(resolvedProvider, 'Prescribing');
+  return new MockPrescribingService(resolvedProvider);
 }
 
 export function getPriorAuthService(provider = loadEnv().PRIOR_AUTH_PROVIDER): PriorAuthService {
-  return new MockPriorAuthService(resolvePriorAuthProvider(provider));
+  const resolvedProvider = resolvePriorAuthProvider(provider);
+  assertVendorMockFallbackAllowed(resolvedProvider, 'Prior authorization');
+  return new MockPriorAuthService(resolvedProvider);
 }
 
 export function resolveEligibilityProvider(provider: string | undefined): EligibilityProvider {

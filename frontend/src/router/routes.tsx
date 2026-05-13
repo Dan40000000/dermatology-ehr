@@ -23,6 +23,7 @@ import {
   PortalBookAppointmentPage,
   PublicBookAppointmentPage,
   PublicGuestBookAppointmentPage,
+  PublicBillPayPage,
   PortalIntakePage,
   PortalCheckInPage,
   PatientPortalMessagesPage,
@@ -225,6 +226,10 @@ export const routes: RouteObject[] = [
       </PatientPortalAuthProvider>
     ),
   },
+  {
+    path: '/bill-pay',
+    element: <PublicBillPayPage />,
+  },
   // In-office iPad kiosk routes
   { path: '/kiosk', element: <KioskWelcomePage /> },
   { path: '/kiosk/verify', element: <KioskPatientVerificationPage /> },
@@ -289,6 +294,7 @@ export const routes: RouteObject[] = [
       { path: 'inventory', element: lazyWithSuspense(InventoryPage) },
       { path: 'financials', element: lazyWithSuspense(FinancialsHub) },
       { path: 'claims', element: lazyWithSuspense(ClaimsPage) },
+      { path: 'claims/:claimId', element: lazyWithSuspense(ClaimsPage) },
       { path: 'clearinghouse', element: lazyWithSuspense(ClearinghousePage) },
       { path: 'quotes', element: lazyWithSuspense(QuotesPage) },
       { path: 'analytics', element: lazyWithSuspense(AnalyticsPage) },

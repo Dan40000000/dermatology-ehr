@@ -2,6 +2,8 @@ import { pool } from '../db/pool';
 import { logger } from '../lib/logger';
 import crypto from 'crypto';
 import { ensureEncounterBill, normalizeEncounterCharges } from './encounterFinancialsService';
+import { scrubClaim, type ClaimForScrubbing, type ScrubResult } from './claimScrubber';
+import type { PoolClient } from 'pg';
 
 export interface Claim {
   id: string;
@@ -25,8 +27,171 @@ export interface ClaimLineItem {
   cptCode: string;
   description: string;
   diagnosisCodes: string[];
+  diagnosisPointers?: string[];
   quantity: number;
   amountCents: number;
+}
+
+const DIAGNOSIS_POINTER_LABELS = 'ABCDEFGHIJKL'.split('');
+
+function normalizeIcdCodes(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return Array.from(
+      new Set(
+        value
+          .map((code) => String(code || '').trim().toUpperCase())
+          .filter(Boolean)
+      )
+    );
+  }
+
+  if (typeof value === 'string') {
+    return Array.from(
+      new Set(
+        value
+          .split(',')
+          .map((code) => code.trim().toUpperCase())
+          .filter(Boolean)
+      )
+    );
+  }
+
+  return [];
+}
+
+function getChargeAmountCents(charge: { amount_cents?: number | null; fee_cents?: number | null; quantity?: number | null }): number {
+  const quantity = Number(charge.quantity || 1);
+  return Number(charge.amount_cents ?? ((charge.fee_cents || 0) * quantity));
+}
+
+function normalizeClaimLineItemsForScrubbing(value: unknown): ClaimForScrubbing['lineItems'] {
+  let rawItems: unknown = [];
+  if (Array.isArray(value)) {
+    rawItems = value;
+  } else if (typeof value === 'string' && value.trim()) {
+    try {
+      rawItems = JSON.parse(value);
+    } catch {
+      rawItems = [];
+    }
+  }
+
+  if (!Array.isArray(rawItems)) return [];
+
+  return rawItems.map((item: any) => ({
+    cpt: String(item.cpt || item.cptCode || item.cpt_code || '').trim().toUpperCase(),
+    modifiers: Array.isArray(item.modifiers)
+      ? item.modifiers
+      : Array.isArray(item.modifierCodes)
+        ? item.modifierCodes
+        : [],
+    dx: Array.isArray(item.dx)
+      ? item.dx
+      : Array.isArray(item.diagnosisCodes)
+        ? item.diagnosisCodes
+        : Array.isArray(item.icdCodes)
+          ? item.icdCodes
+          : [],
+    diagnosisPointers: Array.isArray(item.diagnosisPointers) ? item.diagnosisPointers : [],
+    units: Number(item.units || item.quantity || 1),
+    charge: Number(item.charge ?? (Number(item.amountCents || item.amount_cents || 0) / 100)),
+    description: item.description,
+    codeType: item.codeType || item.code_type,
+    billingRoute: item.billingRoute || item.billing_route,
+  }));
+}
+
+async function loadClaimForSubmissionScrub(
+  client: PoolClient,
+  tenantId: string,
+  claimId: string,
+): Promise<ClaimForScrubbing | null> {
+  const claimResult = await client.query(
+    `SELECT
+       c.id,
+       c.tenant_id,
+       c.patient_id,
+       c.service_date,
+       c.line_items,
+       c.payer_id,
+       c.payer_name,
+       c.payer,
+       c.is_cosmetic,
+       p.first_name as patient_first_name,
+       p.last_name as patient_last_name,
+       p.dob as patient_dob,
+       p.address as patient_address,
+       p.city as patient_city,
+       p.state as patient_state,
+       p.zip as patient_zip,
+       p.insurance_member_id,
+       e.provider_id,
+       pr.full_name as provider_name,
+       pr.npi as provider_npi,
+       NULLIF(to_jsonb(e)->>'place_of_service', '') as place_of_service
+     FROM claims c
+     JOIN patients p ON p.id = c.patient_id AND p.tenant_id = c.tenant_id
+     LEFT JOIN encounters e ON e.id = c.encounter_id AND e.tenant_id = c.tenant_id
+     LEFT JOIN providers pr ON pr.id = e.provider_id AND pr.tenant_id = c.tenant_id
+     WHERE c.id = $1 AND c.tenant_id = $2`,
+    [claimId, tenantId],
+  );
+
+  if (!claimResult.rowCount) return null;
+  const row = claimResult.rows[0];
+
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    patientId: row.patient_id,
+    serviceDate: row.service_date,
+    lineItems: normalizeClaimLineItemsForScrubbing(row.line_items),
+    payerId: row.payer_id,
+    payerName: row.payer_name || row.payer,
+    isCosmetic: row.is_cosmetic,
+    patient: {
+      firstName: row.patient_first_name,
+      lastName: row.patient_last_name,
+      dob: row.patient_dob,
+      address: row.patient_address,
+      city: row.patient_city,
+      state: row.patient_state,
+      zip: row.patient_zip,
+      insuranceMemberId: row.insurance_member_id,
+    },
+    provider: {
+      id: row.provider_id,
+      name: row.provider_name,
+      npi: row.provider_npi,
+    },
+    placeOfService: row.place_of_service,
+  };
+}
+
+async function persistSubmissionScrubResult(
+  client: PoolClient,
+  tenantId: string,
+  claimId: string,
+  scrubResult: ScrubResult,
+): Promise<void> {
+  await client.query(
+    `UPDATE claims
+     SET scrub_status = $1,
+         scrub_errors = $2,
+         scrub_warnings = $3,
+         scrub_info = $4,
+         last_scrubbed_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $5 AND tenant_id = $6`,
+    [
+      scrubResult.status,
+      JSON.stringify(scrubResult.errors),
+      JSON.stringify(scrubResult.warnings),
+      JSON.stringify(scrubResult.info),
+      claimId,
+      tenantId,
+    ],
+  );
 }
 
 export class BillingService {
@@ -109,18 +274,46 @@ export class BillingService {
       }
 
       const charges = chargesResult.rows;
+      const chargesMissingDiagnosis = charges.filter((charge) => normalizeIcdCodes(charge.icd_codes).length === 0);
+      if (chargesMissingDiagnosis.length > 0) {
+        const missingCodeList = chargesMissingDiagnosis
+          .map((charge) => `${charge.cpt_code}${charge.description ? ` (${charge.description})` : ''}`)
+          .join(', ');
+        throw new Error(`Cannot create insurance claim. Diagnosis code is required for: ${missingCodeList}`);
+      }
+
+      const claimDiagnosisCodes = Array.from(
+        new Set(charges.flatMap((charge) => normalizeIcdCodes(charge.icd_codes)))
+      );
+      if (claimDiagnosisCodes.length > DIAGNOSIS_POINTER_LABELS.length) {
+        throw new Error('Cannot create insurance claim with more than 12 diagnosis codes. Split the claim or reduce line-level diagnoses.');
+      }
+      const diagnosisPointerByCode = new Map(
+        claimDiagnosisCodes.map((code, index) => [code, index])
+      );
+
       const totalCents = charges.reduce(
-        (sum, charge) => sum + (charge.amount_cents || (charge.fee_cents * (charge.quantity || 1))),
+        (sum, charge) => sum + getChargeAmountCents(charge),
         0
       );
-      const lineItems = charges.map((charge) => ({
-        cpt: charge.cpt_code,
-        modifiers: charge.modifier_codes || [],
-        dx: charge.icd_codes || [],
-        units: charge.quantity || 1,
-        charge: (charge.amount_cents || (charge.fee_cents * (charge.quantity || 1))) / 100,
-        description: charge.description,
-      }));
+      const lineItems = charges.map((charge) => {
+        const dx = normalizeIcdCodes(charge.icd_codes);
+        const diagnosisPointers = dx.map((code) => {
+          const index = diagnosisPointerByCode.get(code);
+          return typeof index === 'number' ? index + 1 : null;
+        }).filter((pointer): pointer is number => pointer != null);
+
+        return {
+          cpt: charge.cpt_code,
+          modifiers: charge.modifier_codes || [],
+          dx,
+          diagnosisPointers,
+          diagnosisPointerLabels: diagnosisPointers.map((pointer) => DIAGNOSIS_POINTER_LABELS[pointer - 1]),
+          units: charge.quantity || 1,
+          charge: getChargeAmountCents(charge) / 100,
+          description: charge.description,
+        };
+      });
       const serviceDate = charges[0]?.service_date || new Date().toISOString().split('T')[0];
 
       // Generate claim number
@@ -159,17 +352,21 @@ export class BillingService {
         await client.query(
           `INSERT INTO claim_line_items (
             id, claim_id, charge_id, cpt_code, description,
-            diagnosis_codes, quantity, amount_cents, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+            diagnosis_codes, diagnosis_pointers, quantity, amount_cents, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
           [
             lineItemId,
             claimId,
             charge.id,
             charge.cpt_code,
             charge.description,
-            charge.icd_codes || [],
+            normalizeIcdCodes(charge.icd_codes),
+            normalizeIcdCodes(charge.icd_codes).map((code) => {
+              const index = diagnosisPointerByCode.get(code);
+              return typeof index === 'number' ? DIAGNOSIS_POINTER_LABELS[index] : null;
+            }).filter((pointer): pointer is string => pointer != null),
             charge.quantity || 1,
-            charge.amount_cents || (charge.fee_cents * (charge.quantity || 1)),
+            getChargeAmountCents(charge),
           ]
         );
 
@@ -243,6 +440,17 @@ export class BillingService {
         throw new Error('Claim missing payer information');
       }
 
+      const scrubTarget = await loadClaimForSubmissionScrub(client, tenantId, claimId);
+      if (!scrubTarget) {
+        throw new Error('Claim not found');
+      }
+
+      const scrubResult = await scrubClaim(scrubTarget);
+      await persistSubmissionScrubResult(client, tenantId, claimId, scrubResult);
+      if (!scrubResult.canSubmit) {
+        throw new Error('Claim has unresolved readiness errors');
+      }
+
       // Update claim status
       await client.query(
         `UPDATE claims
@@ -297,7 +505,7 @@ export class BillingService {
 
       // Get line items
       const lineItemsResult = await pool.query(
-        `SELECT id, charge_id, cpt_code, description, diagnosis_codes,
+        `SELECT id, charge_id, cpt_code, description, diagnosis_codes, diagnosis_pointers,
                 quantity, amount_cents, created_at
          FROM claim_line_items
          WHERE claim_id = $1
@@ -347,6 +555,10 @@ export class BillingService {
     userId: string
   ): Promise<void> {
     try {
+      if (status === 'ready' || status === 'submitted') {
+        throw new Error('Use the claim release/submission workflow for ready or submitted status changes');
+      }
+
       await pool.query(
         `UPDATE claims
          SET status = $1, updated_at = NOW()

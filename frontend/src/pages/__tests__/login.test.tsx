@@ -48,7 +48,7 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText('common:appName')).toBeInTheDocument();
+    expect(screen.getByText('Provider Login')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('tenant-demo')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('admin@demo.practice')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /auth:login.signInButton/i })).toBeInTheDocument();
@@ -336,7 +336,8 @@ describe('LoginPage', () => {
       </BrowserRouter>
     );
 
-    expect(screen.getByText(/© 2025 DermEHR • Version 1.0.0/i)).toBeInTheDocument();
+    expect(screen.getByText(/© 2025 DermEHR/i)).toBeInTheDocument();
+    expect(screen.getByText(/Version 1.0.0/i)).toBeInTheDocument();
   });
 
   it('should have proper form labels', () => {

@@ -126,6 +126,7 @@ export interface Patient {
   dateOfBirth?: string; // Alias for dob
   sex?: 'M' | 'F' | 'O';
   mrn?: string;
+  accountNumber?: string;
   ssn?: string;
 
   // Driver's License

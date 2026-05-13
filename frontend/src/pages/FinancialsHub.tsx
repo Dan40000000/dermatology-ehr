@@ -14,7 +14,10 @@ import {
   fetchClaims,
   fetchCollectionsTrend,
   fetchFinancialMetrics,
+  fetchFinancialWorkQueue,
   fetchPaymentsSummary,
+  postBillAction,
+  resolveFinancialWorkQueueItem,
 } from '../api/financials';
 
 type TabType = 'dashboard' | 'snapshots' | 'bills' | 'payments' | 'analytics' | 'fees' | 'statements' | 'reports';
@@ -93,6 +96,7 @@ interface DashboardAraBucket {
 interface FinancialBill {
   id: string;
   billNumber?: string;
+  billPayCode?: string;
   patientFirstName?: string;
   patientLastName?: string;
   payerName?: string;
@@ -104,6 +108,29 @@ interface FinancialBill {
   balanceCents?: number;
   dueDate?: string;
   status?: string;
+  followUpStatus?: string;
+  collectionsStatus?: string;
+  paymentPlanStatus?: string;
+  billingInternalNote?: string;
+  lastStatementSentAt?: string;
+}
+
+interface FinancialWorkQueueItem {
+  id: string;
+  encounterId?: string;
+  patientId?: string;
+  claimId?: string;
+  billId?: string;
+  issueType?: string;
+  severity?: string;
+  status?: string;
+  message?: string;
+  errorDetail?: string;
+  patientFirstName?: string;
+  patientLastName?: string;
+  claimNumber?: string;
+  billNumber?: string;
+  createdAt?: string;
 }
 
 function toIsoDate(date: Date): string {
@@ -222,6 +249,7 @@ export function FinancialsHub() {
   });
   const [dashboardARAging, setDashboardARAging] = useState<DashboardAraBucket[]>([]);
   const [recentBills, setRecentBills] = useState<FinancialBill[]>([]);
+  const [financialWorkQueue, setFinancialWorkQueue] = useState<FinancialWorkQueueItem[]>([]);
 
   // Get active tab from URL, default to 'dashboard' if not specified
   const tabFromUrl = searchParams.get('tab') as TabType | null;
@@ -252,7 +280,7 @@ export function FinancialsHub() {
     try {
       const today = toIsoDate(new Date());
       const monthRange = getSnapshotRange('monthly');
-      const [dashboard, paymentsSummary, agingSummary, claimsResponse, billsResponse] = await Promise.all([
+      const [dashboard, paymentsSummary, agingSummary, claimsResponse, billsResponse, workQueueResponse] = await Promise.all([
         fetchFinancialMetrics({
           tenantId: session.tenantId,
           accessToken: session.accessToken,
@@ -283,10 +311,17 @@ export function FinancialsHub() {
             accessToken: session.accessToken,
           },
         ),
+        fetchFinancialWorkQueue(
+          {
+            tenantId: session.tenantId,
+            accessToken: session.accessToken,
+          },
+        ),
       ]);
       const snapshots = dashboard?.snapshots || {};
       const claims = Array.isArray(claimsResponse?.claims) ? claimsResponse.claims : [];
       setRecentBills(Array.isArray(billsResponse?.bills) ? billsResponse.bills : []);
+      setFinancialWorkQueue(Array.isArray(workQueueResponse?.items) ? workQueueResponse.items : []);
       const agingBuckets = Array.isArray(agingSummary?.buckets) ? agingSummary.buckets : [];
       const totalArCents = agingBuckets.reduce((sum: number, bucket: any) => sum + Number(bucket.totalBalanceCents || 0), 0);
       const patientPaymentsTotal = Array.isArray(paymentsSummary?.patientPaymentsByMethod)
@@ -500,6 +535,83 @@ export function FinancialsHub() {
     loadData();
   };
 
+  const copyBillPayLink = async (bill: FinancialBill) => {
+    if (!bill.billPayCode) {
+      showError('This bill does not have a bill pay code yet.');
+      return;
+    }
+
+    const url = `${window.location.origin}/bill-pay?code=${encodeURIComponent(bill.billPayCode)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      showSuccess('Bill pay link copied.');
+    } catch {
+      showError(url);
+    }
+  };
+
+  const handleBillAction = async (
+    bill: FinancialBill,
+    action: 'send_statement' | 'set_payment_plan' | 'flag_collections' | 'write_off' | 'add_note',
+  ) => {
+    if (!session) return;
+
+    const actionLabels: Record<typeof action, string> = {
+      send_statement: 'Statement sent',
+      set_payment_plan: 'Payment plan started',
+      flag_collections: 'Collections flag added',
+      write_off: 'Balance written off',
+      add_note: 'Billing note added',
+    };
+
+    try {
+      await postBillAction(
+        {
+          tenantId: session.tenantId,
+          accessToken: session.accessToken,
+        },
+        bill.id,
+        {
+          action,
+          amountCents: action === 'write_off' ? Math.max(0, Number(bill.balanceCents || 0)) : undefined,
+          note:
+            action === 'send_statement'
+              ? `Statement/pay link sent for bill ${bill.billNumber || bill.id}`
+              : action === 'set_payment_plan'
+                ? `Payment plan opened from A/R workqueue for bill ${bill.billNumber || bill.id}`
+                : action === 'flag_collections'
+                  ? `Collections review flag from A/R workqueue for bill ${bill.billNumber || bill.id}`
+                  : action === 'write_off'
+                    ? `Administrative write-off from A/R workqueue for bill ${bill.billNumber || bill.id}`
+                    : `Billing note added from A/R workqueue for bill ${bill.billNumber || bill.id}`,
+        },
+      );
+      showSuccess(actionLabels[action]);
+      loadData();
+    } catch (error: any) {
+      showError(error?.message || 'Failed to update bill');
+    }
+  };
+
+  const handleResolveFinancialWorkQueueItem = async (item: FinancialWorkQueueItem) => {
+    if (!session) return;
+
+    try {
+      await resolveFinancialWorkQueueItem(
+        {
+          tenantId: session.tenantId,
+          accessToken: session.accessToken,
+        },
+        item.id,
+        `Billing review resolved from Financials page for ${(item.issueType || 'billing_review').replace(/_/g, ' ')}`,
+      );
+      showSuccess('Billing review item resolved');
+      loadData();
+    } catch (error: any) {
+      showError(error?.message || 'Failed to resolve billing review item');
+    }
+  };
+
   const handleExportReport = (reportType: string) => {
     showSuccess(`Exporting ${reportType.toUpperCase()} report...`);
   };
@@ -553,6 +665,37 @@ export function FinancialsHub() {
   const overdueBills = openBills.filter((bill) => {
     if (!bill.dueDate) return false;
     return bill.dueDate < toIsoDate(new Date()) && (bill.balanceCents || 0) > 0;
+  });
+  const getDaysPastDue = (bill: FinancialBill) => {
+    const agingDate = (bill.dueDate || bill.billDate || '').slice(0, 10);
+    if (!agingDate) return 0;
+    const due = new Date(`${agingDate}T00:00:00Z`);
+    const today = new Date(`${toIsoDate(new Date())}T00:00:00Z`);
+    if (Number.isNaN(due.getTime())) return 0;
+    return Math.max(0, Math.floor((today.getTime() - due.getTime()) / 86_400_000));
+  };
+  const getAgingBucketKey = (bill: FinancialBill) => {
+    const days = getDaysPastDue(bill);
+    if (days <= 0) return 'current';
+    if (days <= 30) return '30';
+    if (days <= 60) return '60';
+    if (days <= 90) return '90';
+    return '90Plus';
+  };
+  const agingBucketConfig = [
+    { key: 'current', label: 'Current', tone: '#0f766e', bg: '#ecfdf5', border: '#99f6e4' },
+    { key: '30', label: '1-30 days', tone: '#0369a1', bg: '#f0f9ff', border: '#bae6fd' },
+    { key: '60', label: '31-60 days', tone: '#92400e', bg: '#fffbeb', border: '#fde68a' },
+    { key: '90', label: '61-90 days', tone: '#b45309', bg: '#fff7ed', border: '#fed7aa' },
+    { key: '90Plus', label: '90+ days', tone: '#991b1b', bg: '#fef2f2', border: '#fecaca' },
+  ];
+  const agingBuckets = agingBucketConfig.map((bucket) => {
+    const bucketBills = openBills.filter((bill) => (bill.balanceCents || 0) > 0 && getAgingBucketKey(bill) === bucket.key);
+    return {
+      ...bucket,
+      count: bucketBills.length,
+      amountCents: bucketBills.reduce((sum, bill) => sum + Number(bill.balanceCents || 0), 0),
+    };
   });
   const paidBills = recentBills.filter((bill) => String(bill.status || '') === 'paid');
   const outstandingBillCents = openBills.reduce((sum, bill) => sum + Number(bill.balanceCents || 0), 0);
@@ -1355,6 +1498,130 @@ export function FinancialsHub() {
                   </div>
                 </div>
 
+                <div style={{
+                  background: financialWorkQueue.length > 0 ? '#fff7ed' : '#f8fafc',
+                  border: financialWorkQueue.length > 0 ? '2px solid #fed7aa' : '1px solid #e5e7eb',
+                  borderRadius: '16px',
+                  padding: '1.25rem',
+                  marginBottom: '2rem',
+                  boxShadow: financialWorkQueue.length > 0 ? '0 10px 24px rgba(234, 88, 12, 0.08)' : 'none',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start', marginBottom: financialWorkQueue.length > 0 ? '1rem' : 0 }}>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#111827' }}>
+                        Billing Review Queue
+                      </h3>
+                      <p style={{ margin: '0.35rem 0 0', color: '#6b7280', fontSize: '0.875rem' }}>
+                        Encounters that completed but need billing staff to review claim or bill posting.
+                      </p>
+                    </div>
+                    <span style={{
+                      padding: '0.35rem 0.7rem',
+                      borderRadius: '999px',
+                      background: financialWorkQueue.length > 0 ? '#ffedd5' : '#ecfdf5',
+                      color: financialWorkQueue.length > 0 ? '#9a3412' : '#047857',
+                      fontSize: '0.8rem',
+                      fontWeight: 800,
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {financialWorkQueue.length} open
+                    </span>
+                  </div>
+
+                  {financialWorkQueue.length > 0 && (
+                    <div style={{ display: 'grid', gap: '0.75rem' }}>
+                      {financialWorkQueue.slice(0, 5).map((item) => (
+                        <div
+                          key={item.id}
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1.3fr 2fr auto',
+                            gap: '1rem',
+                            alignItems: 'center',
+                            background: 'white',
+                            border: '1px solid #fed7aa',
+                            borderRadius: '12px',
+                            padding: '0.9rem',
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 800, color: '#111827' }}>
+                              {[item.patientFirstName, item.patientLastName].filter(Boolean).join(' ') || 'Unknown patient'}
+                            </div>
+                            <div style={{ color: '#9a3412', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                              {(item.issueType || 'billing_review').replace(/_/g, ' ')}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ color: '#374151', fontSize: '0.9rem', fontWeight: 600 }}>
+                              {item.message || 'Financial posting needs review.'}
+                            </div>
+                            {item.errorDetail && (
+                              <div style={{ color: '#7c2d12', fontSize: '0.78rem', marginTop: '0.25rem' }}>
+                                {item.errorDetail}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            {item.patientId && (
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/patients/${item.patientId}`)}
+                                style={{
+                                  padding: '0.4rem 0.65rem',
+                                  background: '#f8fafc',
+                                  color: '#334155',
+                                  border: '1px solid #cbd5e1',
+                                  borderRadius: '8px',
+                                  fontSize: '0.8rem',
+                                  cursor: 'pointer',
+                                  fontWeight: 700,
+                                }}
+                              >
+                                Patient
+                              </button>
+                            )}
+                            {item.encounterId && (
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/encounters/${item.encounterId}`)}
+                                style={{
+                                  padding: '0.4rem 0.65rem',
+                                  background: '#fff7ed',
+                                  color: '#c2410c',
+                                  border: '1px solid #fed7aa',
+                                  borderRadius: '8px',
+                                  fontSize: '0.8rem',
+                                  cursor: 'pointer',
+                                  fontWeight: 800,
+                                }}
+                              >
+                                Encounter
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleResolveFinancialWorkQueueItem(item)}
+                              style={{
+                                padding: '0.4rem 0.65rem',
+                                background: '#ecfdf5',
+                                color: '#047857',
+                                border: '1px solid #a7f3d0',
+                                borderRadius: '8px',
+                                fontSize: '0.8rem',
+                                cursor: 'pointer',
+                                fontWeight: 800,
+                              }}
+                            >
+                              Resolve
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Bill Summary Cards */}
                 <div style={{
                   display: 'grid',
@@ -1412,6 +1679,57 @@ export function FinancialsHub() {
                   </div>
                 </div>
 
+                {/* A/R Aging Buckets */}
+                <div style={{
+                  background: '#ffffff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '16px',
+                  padding: '1.25rem',
+                  marginBottom: '2rem',
+                  boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start', marginBottom: '1rem' }}>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: '#111827' }}>
+                        Patient A/R Aging
+                      </h3>
+                      <p style={{ margin: '0.25rem 0 0', color: '#6b7280', fontSize: '0.875rem' }}>
+                        Open balances grouped by days past due. Public bill-pay payments update these buckets automatically.
+                      </p>
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                      As of {formatIsoDateForUi(toIsoDate(new Date()))}
+                    </div>
+                  </div>
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                    gap: '0.75rem',
+                  }}>
+                    {agingBuckets.map((bucket) => (
+                      <div
+                        key={bucket.key}
+                        style={{
+                          background: bucket.bg,
+                          border: `1px solid ${bucket.border}`,
+                          borderRadius: '14px',
+                          padding: '1rem',
+                        }}
+                      >
+                        <div style={{ fontSize: '0.8rem', fontWeight: 800, color: bucket.tone, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                          {bucket.label}
+                        </div>
+                        <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#111827', marginTop: '0.4rem' }}>
+                          {formatCurrency(bucket.amountCents)}
+                        </div>
+                        <div style={{ color: '#6b7280', fontSize: '0.82rem', marginTop: '0.25rem' }}>
+                          {bucket.count} {bucket.count === 1 ? 'bill' : 'bills'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Recent Bills Table */}
                 <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#374151', marginBottom: '1rem' }}>
                   Recent Bills
@@ -1420,6 +1738,7 @@ export function FinancialsHub() {
                   <thead>
                     <tr style={{ borderBottom: '2px solid #e5e7eb', background: '#f9fafb' }}>
                       <th style={{ padding: '0.75rem', textAlign: 'left' }}>Bill ID</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'left' }}>Pay Code</th>
                       <th style={{ padding: '0.75rem', textAlign: 'left' }}>Patient</th>
                       <th style={{ padding: '0.75rem', textAlign: 'left' }}>Payer</th>
                       <th style={{ padding: '0.75rem', textAlign: 'left' }}>Date</th>
@@ -1427,6 +1746,8 @@ export function FinancialsHub() {
                       <th style={{ padding: '0.75rem', textAlign: 'right' }}>Insurance</th>
                       <th style={{ padding: '0.75rem', textAlign: 'right' }}>Patient</th>
                       <th style={{ padding: '0.75rem', textAlign: 'right' }}>Balance</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'center' }}>Aging</th>
+                      <th style={{ padding: '0.75rem', textAlign: 'center' }}>Follow-up</th>
                       <th style={{ padding: '0.75rem', textAlign: 'center' }}>Status</th>
                       <th style={{ padding: '0.75rem', textAlign: 'center' }}>Actions</th>
                     </tr>
@@ -1434,7 +1755,7 @@ export function FinancialsHub() {
                   <tbody>
                     {recentBills.length === 0 && (
                       <tr>
-                        <td colSpan={10} style={{ padding: '1.5rem', textAlign: 'center', color: '#6b7280' }}>
+                        <td colSpan={13} style={{ padding: '1.5rem', textAlign: 'center', color: '#6b7280' }}>
                           No bills posted yet. Completed encounter charges will appear here automatically.
                         </td>
                       </tr>
@@ -1442,6 +1763,9 @@ export function FinancialsHub() {
                     {recentBills.map(bill => (
                       <tr key={bill.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                         <td style={{ padding: '0.75rem', fontFamily: 'monospace' }}>{bill.billNumber || bill.id}</td>
+                        <td style={{ padding: '0.75rem', fontFamily: 'monospace', color: '#0f766e', fontWeight: 700 }}>
+                          {bill.billPayCode || '--'}
+                        </td>
                         <td style={{ padding: '0.75rem', fontWeight: '600' }}>
                           {[bill.patientFirstName, bill.patientLastName].filter(Boolean).join(' ') || 'Unknown patient'}
                         </td>
@@ -1461,6 +1785,38 @@ export function FinancialsHub() {
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'center' }}>
                           <span style={{
+                            padding: '0.25rem 0.65rem',
+                            borderRadius: '999px',
+                            fontSize: '0.75rem',
+                            fontWeight: 800,
+                            background: getAgingBucketKey(bill) === '90Plus' ? '#fee2e2' : getAgingBucketKey(bill) === 'current' ? '#dcfce7' : '#fef3c7',
+                            color: getAgingBucketKey(bill) === '90Plus' ? '#991b1b' : getAgingBucketKey(bill) === 'current' ? '#166534' : '#92400e',
+                          }}>
+                            {getDaysPastDue(bill) > 0 ? `${getDaysPastDue(bill)}d late` : 'Current'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
+                            <span style={{
+                              padding: '0.22rem 0.55rem',
+                              borderRadius: '999px',
+                              fontSize: '0.72rem',
+                              fontWeight: 800,
+                              background: bill.followUpStatus === 'collections' ? '#fee2e2' : bill.paymentPlanStatus === 'active' ? '#dbeafe' : '#f3f4f6',
+                              color: bill.followUpStatus === 'collections' ? '#991b1b' : bill.paymentPlanStatus === 'active' ? '#1d4ed8' : '#374151',
+                              textTransform: 'capitalize',
+                            }}>
+                              {(bill.paymentPlanStatus === 'active' ? 'payment plan' : bill.followUpStatus || 'none').replace(/_/g, ' ')}
+                            </span>
+                            {bill.lastStatementSentAt && (
+                              <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>
+                                stmt sent
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td style={{ padding: '0.75rem', textAlign: 'center' }}>
+                          <span style={{
                             padding: '0.25rem 0.75rem',
                             borderRadius: '20px',
                             fontSize: '0.75rem',
@@ -1472,17 +1828,85 @@ export function FinancialsHub() {
                           </span>
                         </td>
                         <td style={{ padding: '0.75rem', textAlign: 'center' }}>
-                          <button style={{
-                            padding: '0.4rem 0.75rem',
-                            background: 'white',
-                            color: '#374151',
-                            border: '1px solid #d1d5db',
-                            borderRadius: '6px',
-                            fontSize: '0.8rem',
-                            cursor: 'pointer',
-                          }}>
-                            View
-                          </button>
+                          <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <button style={{
+                              padding: '0.4rem 0.75rem',
+                              background: 'white',
+                              color: '#374151',
+                              border: '1px solid #d1d5db',
+                              borderRadius: '6px',
+                              fontSize: '0.8rem',
+                              cursor: 'pointer',
+                            }}>
+                              View
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => copyBillPayLink(bill)}
+                              style={{
+                                padding: '0.4rem 0.75rem',
+                                background: '#ecfdf5',
+                                color: '#047857',
+                                border: '1px solid #a7f3d0',
+                                borderRadius: '6px',
+                                fontSize: '0.8rem',
+                                cursor: 'pointer',
+                                fontWeight: 700,
+                              }}
+                            >
+                              Copy Pay Link
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleBillAction(bill, 'send_statement')}
+                              style={{
+                                padding: '0.4rem 0.75rem',
+                                background: '#eff6ff',
+                                color: '#1d4ed8',
+                                border: '1px solid #bfdbfe',
+                                borderRadius: '6px',
+                                fontSize: '0.8rem',
+                                cursor: 'pointer',
+                                fontWeight: 700,
+                              }}
+                            >
+                              Statement
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleBillAction(bill, 'set_payment_plan')}
+                              disabled={(bill.balanceCents || 0) <= 0}
+                              style={{
+                                padding: '0.4rem 0.75rem',
+                                background: (bill.balanceCents || 0) <= 0 ? '#f3f4f6' : '#fff7ed',
+                                color: (bill.balanceCents || 0) <= 0 ? '#9ca3af' : '#c2410c',
+                                border: '1px solid #fed7aa',
+                                borderRadius: '6px',
+                                fontSize: '0.8rem',
+                                cursor: (bill.balanceCents || 0) <= 0 ? 'not-allowed' : 'pointer',
+                                fontWeight: 700,
+                              }}
+                            >
+                              Plan
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleBillAction(bill, 'flag_collections')}
+                              disabled={(bill.balanceCents || 0) <= 0}
+                              style={{
+                                padding: '0.4rem 0.75rem',
+                                background: (bill.balanceCents || 0) <= 0 ? '#f3f4f6' : '#fef2f2',
+                                color: (bill.balanceCents || 0) <= 0 ? '#9ca3af' : '#b91c1c',
+                                border: '1px solid #fecaca',
+                                borderRadius: '6px',
+                                fontSize: '0.8rem',
+                                cursor: (bill.balanceCents || 0) <= 0 ? 'not-allowed' : 'pointer',
+                                fontWeight: 700,
+                              }}
+                            >
+                              Collections
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

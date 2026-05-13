@@ -14,6 +14,7 @@ describe("registerRoutes", () => {
     expect(hasPath("/api/auth")).toBe(true);
     expect(hasPath("/api/patients")).toBe(true);
     expect(hasPath("/api/analytics")).toBe(true);
+    expect(hasPath("/api/reminders")).toBe(true);
     expect(hasPath("/api/cosmetic-treatments")).toBe(true);
     expect(calls.some((call) => call[0] === "/api/upload" && call.length === 3)).toBe(true);
     expect(calls.some((call) => call[0] === "/api/patient-portal" && call.length === 3)).toBe(true);

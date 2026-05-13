@@ -147,65 +147,9 @@ export function PortalBillingPage() {
       errors.paymentMethod = 'Please select a payment method';
     }
 
-    // Validate new card form if using new card
-    if (useNewCard) {
-      // Card number validation (basic - remove spaces and check length)
-      const cleanCardNumber = newCardForm.cardNumber.replace(/\s/g, '');
-      if (!cleanCardNumber) {
-        errors.cardNumber = 'Card number is required';
-      } else if (!/^\d{13,19}$/.test(cleanCardNumber)) {
-        errors.cardNumber = 'Please enter a valid card number';
-      }
-
-      // Expiry validation
-      if (!newCardForm.expiryMonth || !newCardForm.expiryYear) {
-        errors.cardExpiry = 'Expiration date is required';
-      } else {
-        const month = parseInt(newCardForm.expiryMonth, 10);
-        const year = parseInt(newCardForm.expiryYear, 10);
-        const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonth = now.getMonth() + 1;
-
-        if (month < 1 || month > 12) {
-          errors.cardExpiry = 'Invalid month';
-        } else if (year < currentYear || (year === currentYear && month < currentMonth)) {
-          errors.cardExpiry = 'Card has expired';
-        }
-      }
-
-      // CVV validation
-      if (!newCardForm.cvv) {
-        errors.cardCvv = 'CVV is required';
-      } else if (!/^\d{3,4}$/.test(newCardForm.cvv)) {
-        errors.cardCvv = 'CVV must be 3 or 4 digits';
-      }
-
-      // Cardholder name
-      if (!newCardForm.cardholderName.trim()) {
-        errors.cardholderName = 'Cardholder name is required';
-      }
-
-      // Billing address
-      if (!newCardForm.billingStreet.trim()) {
-        errors.billingStreet = 'Street address is required';
-      }
-      if (!newCardForm.billingCity.trim()) {
-        errors.billingCity = 'City is required';
-      }
-      if (!newCardForm.billingState.trim()) {
-        errors.billingState = 'State is required';
-      }
-      if (!newCardForm.billingZip.trim()) {
-        errors.billingZip = 'ZIP code is required';
-      } else if (!/^\d{5}(-\d{4})?$/.test(newCardForm.billingZip.trim())) {
-        errors.billingZip = 'Please enter a valid ZIP code';
-      }
-    }
-
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
-  }, [paymentAmount, selectedMethod, useNewCard, newCardForm, balance]);
+  }, [paymentAmount, selectedMethod, useNewCard, balance]);
 
   // Detect card brand from number
   const detectCardBrand = (cardNumber: string): string => {
@@ -245,25 +189,11 @@ export function PortalBillingPage() {
       let paymentData: Parameters<typeof makePortalPayment>[2];
 
       if (useNewCard) {
-        // Payment with new card
+        // Demo payment posts through the same ledger without collecting raw card data.
         paymentData = {
           amount: parseFloat(paymentAmount),
-          savePaymentMethod: newCardForm.saveCard,
-          newPaymentMethod: {
-            paymentType: 'credit_card',
-            cardNumber: newCardForm.cardNumber.replace(/\s/g, ''),
-            cardBrand: detectCardBrand(newCardForm.cardNumber),
-            expiryMonth: parseInt(newCardForm.expiryMonth, 10),
-            expiryYear: parseInt(newCardForm.expiryYear, 10),
-            cardholderName: newCardForm.cardholderName,
-            cvv: newCardForm.cvv,
-            billingAddress: {
-              street: newCardForm.billingStreet,
-              city: newCardForm.billingCity,
-              state: newCardForm.billingState,
-              zip: newCardForm.billingZip,
-            },
-          },
+          demoPaymentMethod: true,
+          description: 'Patient portal demo payment',
         };
       } else {
         // Payment with saved method
@@ -1673,7 +1603,7 @@ export function PortalBillingPage() {
                     className={`toggle-btn ${useNewCard ? 'active' : ''}`}
                     onClick={() => setUseNewCard(true)}
                   >
-                    New Card
+                    Demo Payment
                   </button>
                 </div>
 
@@ -1701,7 +1631,7 @@ export function PortalBillingPage() {
                       </select>
                     ) : (
                       <p style={{ color: '#6b7280', fontSize: '0.875rem' }}>
-                        No saved payment methods. Use the &quot;New Card&quot; option to add one.
+                        No saved payment methods. Use the &quot;Demo Payment&quot; option for testing.
                       </p>
                     )}
                     {formErrors.paymentMethod && (
@@ -1710,209 +1640,23 @@ export function PortalBillingPage() {
                   </div>
                 )}
 
-                {/* New Card Form */}
+                {/* Demo Payment */}
                 {useNewCard && (
-                  <>
-                    <div className="form-group">
-                      <label className="form-label">Card Number</label>
-                      <div className="card-input-wrapper">
-                        <input
-                          type="text"
-                          className={`form-input ${formErrors.cardNumber ? 'error' : ''}`}
-                          value={newCardForm.cardNumber}
-                          onChange={handleCardNumberChange}
-                          placeholder="1234 5678 9012 3456"
-                          maxLength={19}
-                          autoComplete="cc-number"
-                        />
-                        <span className="card-brand-icon">
-                          {detectCardBrand(newCardForm.cardNumber)}
-                        </span>
-                      </div>
-                      {formErrors.cardNumber && (
-                        <div className="error-message">{formErrors.cardNumber}</div>
-                      )}
-                    </div>
-
-                    <div className="form-row three-col">
-                      <div className="form-group">
-                        <label className="form-label">Month</label>
-                        <select
-                          className={`method-select ${formErrors.cardExpiry ? 'error' : ''}`}
-                          value={newCardForm.expiryMonth}
-                          onChange={e =>
-                            setNewCardForm(prev => ({ ...prev, expiryMonth: e.target.value }))
-                          }
-                          autoComplete="cc-exp-month"
-                        >
-                          <option value="">MM</option>
-                          {Array.from({ length: 12 }, (_, i) => {
-                            const month = (i + 1).toString().padStart(2, '0');
-                            return (
-                              <option key={month} value={month}>
-                                {month}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Year</label>
-                        <select
-                          className={`method-select ${formErrors.cardExpiry ? 'error' : ''}`}
-                          value={newCardForm.expiryYear}
-                          onChange={e =>
-                            setNewCardForm(prev => ({ ...prev, expiryYear: e.target.value }))
-                          }
-                          autoComplete="cc-exp-year"
-                        >
-                          <option value="">YYYY</option>
-                          {Array.from({ length: 15 }, (_, i) => {
-                            const year = (new Date().getFullYear() + i).toString();
-                            return (
-                              <option key={year} value={year}>
-                                {year}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">CVV</label>
-                        <input
-                          type="text"
-                          className={`form-input ${formErrors.cardCvv ? 'error' : ''}`}
-                          value={newCardForm.cvv}
-                          onChange={e =>
-                            setNewCardForm(prev => ({
-                              ...prev,
-                              cvv: e.target.value.replace(/\D/g, '').slice(0, 4),
-                            }))
-                          }
-                          placeholder="123"
-                          maxLength={4}
-                          autoComplete="cc-csc"
-                        />
-                      </div>
-                    </div>
-                    {formErrors.cardExpiry && (
-                      <div className="error-message" style={{ marginTop: '-1rem', marginBottom: '1rem' }}>
-                        {formErrors.cardExpiry}
-                      </div>
-                    )}
-                    {formErrors.cardCvv && (
-                      <div className="error-message" style={{ marginTop: '-1rem', marginBottom: '1rem' }}>
-                        {formErrors.cardCvv}
-                      </div>
-                    )}
-
-                    <div className="form-group">
-                      <label className="form-label">Cardholder Name</label>
-                      <input
-                        type="text"
-                        className={`form-input ${formErrors.cardholderName ? 'error' : ''}`}
-                        value={newCardForm.cardholderName}
-                        onChange={e =>
-                          setNewCardForm(prev => ({ ...prev, cardholderName: e.target.value }))
-                        }
-                        placeholder="Name as it appears on card"
-                        autoComplete="cc-name"
-                      />
-                      {formErrors.cardholderName && (
-                        <div className="error-message">{formErrors.cardholderName}</div>
-                      )}
-                    </div>
-
-                    <div className="billing-section-header">Billing Address</div>
-
-                    <div className="form-group">
-                      <label className="form-label">Street Address</label>
-                      <input
-                        type="text"
-                        className={`form-input ${formErrors.billingStreet ? 'error' : ''}`}
-                        value={newCardForm.billingStreet}
-                        onChange={e =>
-                          setNewCardForm(prev => ({ ...prev, billingStreet: e.target.value }))
-                        }
-                        placeholder="123 Main St"
-                        autoComplete="billing street-address"
-                      />
-                      {formErrors.billingStreet && (
-                        <div className="error-message">{formErrors.billingStreet}</div>
-                      )}
-                    </div>
-
-                    <div className="form-row two-col">
-                      <div className="form-group">
-                        <label className="form-label">City</label>
-                        <input
-                          type="text"
-                          className={`form-input ${formErrors.billingCity ? 'error' : ''}`}
-                          value={newCardForm.billingCity}
-                          onChange={e =>
-                            setNewCardForm(prev => ({ ...prev, billingCity: e.target.value }))
-                          }
-                          placeholder="City"
-                          autoComplete="billing address-level2"
-                        />
-                        {formErrors.billingCity && (
-                          <div className="error-message">{formErrors.billingCity}</div>
-                        )}
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">State</label>
-                        <input
-                          type="text"
-                          className={`form-input ${formErrors.billingState ? 'error' : ''}`}
-                          value={newCardForm.billingState}
-                          onChange={e =>
-                            setNewCardForm(prev => ({
-                              ...prev,
-                              billingState: e.target.value.toUpperCase().slice(0, 2),
-                            }))
-                          }
-                          placeholder="CA"
-                          maxLength={2}
-                          autoComplete="billing address-level1"
-                        />
-                        {formErrors.billingState && (
-                          <div className="error-message">{formErrors.billingState}</div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="form-group">
-                      <label className="form-label">ZIP Code</label>
-                      <input
-                        type="text"
-                        className={`form-input ${formErrors.billingZip ? 'error' : ''}`}
-                        value={newCardForm.billingZip}
-                        onChange={e =>
-                          setNewCardForm(prev => ({ ...prev, billingZip: e.target.value }))
-                        }
-                        placeholder="12345"
-                        maxLength={10}
-                        autoComplete="billing postal-code"
-                      />
-                      {formErrors.billingZip && (
-                        <div className="error-message">{formErrors.billingZip}</div>
-                      )}
-                    </div>
-
-                    <div className="checkbox-group">
-                      <input
-                        type="checkbox"
-                        id="saveCard"
-                        checked={newCardForm.saveCard}
-                        onChange={e =>
-                          setNewCardForm(prev => ({ ...prev, saveCard: e.target.checked }))
-                        }
-                      />
-                      <label htmlFor="saveCard" className="checkbox-label">
-                        Save this card for future payments
-                      </label>
-                    </div>
-                  </>
+                  <div
+                    style={{
+                      border: '1px solid #bfdbfe',
+                      background: '#eff6ff',
+                      borderRadius: '12px',
+                      padding: '1rem',
+                      color: '#1e3a8a',
+                      fontSize: '0.875rem',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    Demo mode will post a successful test payment to the patient ledger without
+                    collecting or storing card numbers. Real practices should use a tokenized
+                    payment vendor before accepting real cards.
+                  </div>
                 )}
 
                 <button
@@ -1931,7 +1675,7 @@ export function PortalBillingPage() {
                 </button>
 
                 <p style={{ fontSize: '0.75rem', color: '#6b7280', textAlign: 'center', marginTop: '1rem' }}>
-                  Your payment is secured with 256-bit SSL encryption
+                  Demo payments do not collect real card details. Production payments should use a tokenized payment vendor.
                 </p>
               </>
             )}

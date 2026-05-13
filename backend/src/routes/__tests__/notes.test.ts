@@ -425,7 +425,7 @@ describe("Notes routes", () => {
     consoleSpy.mockRestore();
   });
 
-  it("PATCH /notes/:id/addendum creates table when missing", async () => {
+  it("PATCH /notes/:id/addendum returns 500 when addendum table migration is missing", async () => {
     const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     queryMock
       .mockResolvedValueOnce({
@@ -439,18 +439,13 @@ describe("Notes routes", () => {
           },
         ],
       })
-      .mockRejectedValueOnce(missingTableError)
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ assessment_plan: "Plan" }] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockRejectedValueOnce(missingTableError);
 
     const res = await request(app)
       .patch("/notes/note-1/addendum")
       .send({ addendum: "Addendum detail" });
 
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(res.status).toBe(500);
     consoleSpy.mockRestore();
   });
 

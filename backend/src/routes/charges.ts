@@ -55,6 +55,16 @@ interface ChargeCodeLookup {
   isCosmetic: boolean;
 }
 
+interface ChargeMutationState {
+  encounterId?: string;
+  quantity?: number;
+  feeCents?: number;
+  amountCents?: number;
+  status?: string | null;
+}
+
+const LOCKED_CHARGE_STATUSES = new Set(["submitted", "claimed", "paid", "denied"]);
+
 function normalizeCents(value: unknown, fallback = 0): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? Math.max(0, Math.round(numeric)) : fallback;
@@ -116,6 +126,94 @@ function statusForRoute(route: BillingRoute, requested?: string): string {
   if (route === "self_pay") return "self_pay";
   if (route === "non_billable") return "draft";
   return "pending";
+}
+
+async function safeBillingArtifactRows<T>(sql: string, values: any[]): Promise<T[]> {
+  try {
+    const result = await pool.query(sql, values);
+    return result.rows as T[];
+  } catch (error: any) {
+    if (error?.code === "42P01" || error?.code === "42703") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function loadChargeMutationState(tenantId: string, chargeId: string): Promise<ChargeMutationState | null> {
+  const result = await pool.query(
+    `select encounter_id as "encounterId",
+            quantity,
+            fee_cents as "feeCents",
+            amount_cents as "amountCents",
+            status
+     from charges
+     where id = $1 and tenant_id = $2
+     limit 1`,
+    [chargeId, tenantId],
+  );
+
+  return result.rows[0] || null;
+}
+
+async function getChargeMutationBlock(
+  tenantId: string,
+  chargeId: string,
+  currentCharge?: ChargeMutationState | null,
+): Promise<{ status: number; body: Record<string, any> } | null> {
+  const charge = currentCharge === undefined ? await loadChargeMutationState(tenantId, chargeId) : currentCharge;
+
+  if (!charge) {
+    return { status: 404, body: { error: "Charge not found" } };
+  }
+
+  if (charge.status && LOCKED_CHARGE_STATUSES.has(charge.status)) {
+    return {
+      status: 409,
+      body: {
+        error: "Charge is locked because it has already entered billing.",
+        reason: `Charge status is ${charge.status}. Use billing adjustments or void workflows instead of editing the original charge.`,
+        downstreamArtifacts: { claims: [], bills: [] },
+      },
+    };
+  }
+
+  const claims = await safeBillingArtifactRows<{ id: string; claimNumber: string | null; status: string | null }>(
+    `select c.id, c.claim_number as "claimNumber", c.status
+     from claim_line_items cli
+     join claims c on c.id = cli.claim_id
+     where cli.charge_id = $1
+       and c.tenant_id = $2
+       and coalesce(c.status, '') <> 'cancelled'
+     order by c.created_at desc
+     limit 10`,
+    [chargeId, tenantId],
+  );
+
+  const bills = await safeBillingArtifactRows<{ id: string; billNumber: string | null; status: string | null }>(
+    `select b.id, b.bill_number as "billNumber", b.status
+     from bill_line_items bli
+     join bills b on b.id = bli.bill_id and b.tenant_id = bli.tenant_id
+     where bli.charge_id = $1
+       and bli.tenant_id = $2
+       and coalesce(b.status, '') <> 'cancelled'
+     order by b.created_at desc
+     limit 10`,
+    [chargeId, tenantId],
+  );
+
+  if (claims.length > 0 || bills.length > 0) {
+    return {
+      status: 409,
+      body: {
+        error: "Charge is locked because it has already been used for billing.",
+        reason: "Void or adjust through billing/claims instead of editing the source charge after downstream artifacts exist.",
+        downstreamArtifacts: { claims, bills },
+      },
+    };
+  }
+
+  return null;
 }
 
 async function lookupChargeCode(tenantId: string, rawCode: string): Promise<ChargeCodeLookup | null> {
@@ -291,35 +389,24 @@ chargesRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "provid
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
 
   const tenantId = req.user!.tenantId;
-  const { id } = req.params;
+  const id = String(req.params.id);
   const payload = parsed.data;
 
   if (Object.keys(payload).length === 0) {
     return res.status(400).json({ error: "No fields to update" });
   }
 
-  let currentCharge: { encounterId?: string; quantity?: number; feeCents?: number; amountCents?: number } | null = null;
+  let currentCharge: ChargeMutationState | null = null;
   const loadCurrentCharge = async () => {
     if (currentCharge) return currentCharge;
-
-    const currentResult = await pool.query(
-      `select encounter_id as "encounterId",
-              quantity,
-              fee_cents as "feeCents",
-              amount_cents as "amountCents"
-       from charges
-       where id = $1 and tenant_id = $2
-       limit 1`,
-      [id, tenantId],
-    );
-
-    if (currentResult.rows.length === 0) {
-      return null;
-    }
-
-    currentCharge = currentResult.rows[0];
+    currentCharge = await loadChargeMutationState(tenantId, id);
     return currentCharge;
   };
+
+  const mutationBlock = await getChargeMutationBlock(tenantId, id, await loadCurrentCharge());
+  if (mutationBlock) {
+    return res.status(mutationBlock.status).json(mutationBlock.body);
+  }
 
   const linkedDiagnosisIds = payload.linkedDiagnosisIds;
   const resolvedIcdCodes = payload.icdCodes !== undefined
@@ -441,7 +528,12 @@ chargesRouter.put("/:id", requireAuth, requireRoles(["admin", "billing", "provid
 // Delete charge
 chargesRouter.delete("/:id", requireAuth, requireRoles(["admin", "billing", "provider", "ma"]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
-  const { id } = req.params;
+  const id = String(req.params.id);
+
+  const mutationBlock = await getChargeMutationBlock(tenantId, id);
+  if (mutationBlock) {
+    return res.status(mutationBlock.status).json(mutationBlock.body);
+  }
 
   await pool.query(`delete from charges where id = $1 and tenant_id = $2`, [id, tenantId]);
   res.json({ success: true });

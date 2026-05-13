@@ -168,7 +168,7 @@ export function PatientPaymentPortal({ onPaymentSuccess }: Props) {
           };
         });
 
-      const payments = paymentsRes.payments || paymentsRes.data || [];
+      const payments = paymentsRes.patientPayments || paymentsRes.payments || paymentsRes.data || [];
       setPendingPayments(pending);
       setRecentPaymentsTotalCents(
         payments.reduce((sum: number, payment: any) => sum + Number(payment.amountCents || 0), 0),

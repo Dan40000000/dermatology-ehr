@@ -163,7 +163,7 @@ describe('FeeSchedulePage', () => {
     fireEvent.click(screen.getByRole('button', { name: '+ Add Fee' }));
     await screen.findByTestId('modal-add-fee');
 
-    fireEvent.change(screen.getByPlaceholderText('e.g., 99213'), { target: { value: '99214' } });
+    fireEvent.change(screen.getByPlaceholderText('e.g., 99213 or COS-BOTOX'), { target: { value: '99214' } });
     fireEvent.change(screen.getByPlaceholderText('e.g., Office visit, established patient'), {
       target: { value: 'Extended visit' },
     });
@@ -176,7 +176,14 @@ describe('FeeSchedulePage', () => {
         'token-1',
         'sched-1',
         '99214',
-        { feeCents: 15050, cptDescription: 'Extended visit' },
+        expect.objectContaining({
+          billingRoute: 'insurance',
+          codeType: 'CPT',
+          cptDescription: 'Extended visit',
+          feeCents: 15050,
+          isCosmetic: false,
+          requiresDiagnosis: true,
+        }),
       ),
     );
 

@@ -155,7 +155,7 @@ describe('AppointmentFlowPage', () => {
     const detailModal = await screen.findByTestId('modal-appointment-details');
 
     expect(within(detailModal).getByTestId('inventory-usage-list')).toBeInTheDocument();
-    fireEvent.click(within(detailModal).getByRole('button', { name: 'Record Inventory' }));
+    fireEvent.click(within(detailModal).getByRole('button', { name: 'Open Usage' }));
 
     const usageModal = await screen.findByTestId('inventory-usage-modal');
     fireEvent.click(within(usageModal).getByRole('button', { name: 'Success' }));

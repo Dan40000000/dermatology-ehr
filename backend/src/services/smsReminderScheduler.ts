@@ -215,26 +215,26 @@ async function getAppointmentsNeedingReminders(
       a.patient_id as "patientId",
       p.first_name || ' ' || p.last_name as "patientName",
       p.phone as "patientPhone",
-      u.name as "providerName",
-      a.start_time as "appointmentDate",
-      TO_CHAR(a.start_time, 'HH12:MI AM') as "appointmentTime",
-      t.tenant_id,
+      pr.full_name as "providerName",
+      COALESCE(a.scheduled_start, a.start_time) as "appointmentDate",
+      TO_CHAR(COALESCE(a.scheduled_start, a.start_time), 'HH12:MI AM') as "appointmentTime",
+      a.tenant_id as "tenantId",
       COALESCE(l.phone, '(555) 123-4567') as "clinicPhone"
      FROM appointments a
      JOIN patients p ON a.patient_id = p.id
-     JOIN users u ON a.provider_id = u.id
+     LEFT JOIN providers pr ON a.provider_id = pr.id AND a.tenant_id = pr.tenant_id
      JOIN tenants t ON a.tenant_id = t.id
      LEFT JOIN locations l ON a.location_id = l.id
      WHERE a.tenant_id = $1
        AND a.status = 'scheduled'
-       AND a.start_time BETWEEN $2 AND $3
+       AND COALESCE(a.scheduled_start, a.start_time) BETWEEN $2 AND $3
        AND p.phone IS NOT NULL
        AND NOT EXISTS (
          SELECT 1 FROM appointment_sms_reminders r
          WHERE r.appointment_id = a.id
            AND r.status IN ('sent', 'scheduled')
        )
-     ORDER BY a.start_time`,
+     ORDER BY COALESCE(a.scheduled_start, a.start_time)`,
     [tenantId, reminderStartTime, reminderEndTime]
   );
 
@@ -571,13 +571,13 @@ export async function sendImmediateReminder(
         a.patient_id as "patientId",
         p.first_name || ' ' || p.last_name as "patientName",
         p.phone as "patientPhone",
-        u.name as "providerName",
-        a.start_time as "appointmentDate",
-        TO_CHAR(a.start_time, 'HH12:MI AM') as "appointmentTime",
+        pr.full_name as "providerName",
+        COALESCE(a.scheduled_start, a.start_time) as "appointmentDate",
+        TO_CHAR(COALESCE(a.scheduled_start, a.start_time), 'HH12:MI AM') as "appointmentTime",
         COALESCE(l.phone, '(555) 123-4567') as "clinicPhone"
        FROM appointments a
        JOIN patients p ON a.patient_id = p.id
-       JOIN users u ON a.provider_id = u.id
+       LEFT JOIN providers pr ON a.provider_id = pr.id AND a.tenant_id = pr.tenant_id
        LEFT JOIN locations l ON a.location_id = l.id
        WHERE a.id = $1 AND a.tenant_id = $2`,
       [appointmentId, tenantId]

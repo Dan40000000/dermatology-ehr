@@ -11,6 +11,7 @@ import crypto from 'crypto';
 import { encounterService } from './encounterService';
 import { billingService } from './billingService';
 import { ensureEncounterBill } from './encounterFinancialsService';
+import { createFinancialWorkQueueItem } from './financialWorkQueueService';
 import { scrubClaim, applyAutoFixes } from './claimScrubber';
 import { notificationService } from './integrations/notificationService';
 import { smsWorkflowService } from './smsWorkflowService';
@@ -22,6 +23,10 @@ import {
   emitEncounterSigned,
   emitAppointmentUpdated,
 } from '../websocket/emitter';
+
+function isNoChargesFoundError(error: unknown): boolean {
+  return String((error as any)?.message || error || '').includes('No charges found');
+}
 
 // ============================================
 // WORKFLOW EVENT TYPES
@@ -404,24 +409,55 @@ export class WorkflowOrchestrator {
 
     if (encounterResult.rowCount) {
       const encounterId = encounterResult.rows[0].id as string;
+      let claim: Awaited<ReturnType<typeof billingService.createClaimFromCharges>> | null = null;
       try {
         await encounterService.generateChargesFromEncounter(tenantId, encounterId);
-        await billingService.createClaimFromCharges(tenantId, encounterId, userId || 'system');
+        claim = await billingService.createClaimFromCharges(tenantId, encounterId, userId || 'system');
+        await ensureEncounterBill(tenantId, encounterId, userId || 'system', undefined, claim.id);
       } catch (error: any) {
-        if (!String(error?.message || '').includes('No charges found')) {
+        const noChargesFound = isNoChargesFoundError(error);
+        if (!noChargesFound) {
           logger.error('Failed checkout claim creation', {
             encounterId,
             appointmentId,
             error: error?.message || 'Unknown error',
           });
         }
+        let billFallbackCreated = false;
+        let billFallbackError: any = null;
         try {
           await ensureEncounterBill(tenantId, encounterId, userId || 'system');
+          billFallbackCreated = true;
         } catch (billError: any) {
+          billFallbackError = billError;
           logger.error('Failed checkout bill creation', {
             encounterId,
             appointmentId,
             error: billError?.message || 'Unknown error',
+          });
+        }
+        if (!noChargesFound || billFallbackError) {
+          await createFinancialWorkQueueItem({
+            tenantId,
+            encounterId,
+            appointmentId,
+            claimId: claim?.id || null,
+            issueType: billFallbackError ? 'checkout_financial_posting_failed' : 'checkout_claim_creation_failed',
+            severity: billFallbackError ? 'critical' : 'error',
+            message: billFallbackError
+              ? 'Checkout completed, but claim and bill posting need billing review.'
+              : 'Checkout completed, but claim creation needs billing review.',
+            errorDetail: [
+              error?.message ? `claim: ${error.message}` : null,
+              billFallbackError?.message ? `bill: ${billFallbackError.message}` : null,
+            ].filter(Boolean).join('; ') || null,
+            metadata: {
+              source: 'appointment_checkout',
+              claimCreationFailed: !noChargesFound,
+              billCreationFailed: Boolean(billFallbackError),
+              fallbackBillCreated: billFallbackCreated,
+            },
+            createdBy: userId || null,
           });
         }
       }

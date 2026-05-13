@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import type { PoolClient } from 'pg';
 import { sendPatientPaymentReceiptEmail } from './paymentConfirmationService';
 import { getDateKeyInTimeZone, getUtcRangeForPracticeDate } from '../lib/practiceTimeZone';
+import { getAppointmentCheckoutBalanceCents } from './checkoutBalanceService';
 
 export interface AppointmentWithDetails {
   id: string;
@@ -858,19 +859,7 @@ export class FrontDeskService {
    */
   async checkOutPatient(tenantId: string, appointmentId: string): Promise<CheckOutResult> {
     try {
-      const paymentDueResult = await pool.query(
-        `
-        SELECT COALESCE(SUM(c.amount_cents), 0) as payment_due_cents
-        FROM encounters e
-        INNER JOIN charges c ON c.encounter_id = e.id AND c.tenant_id = e.tenant_id
-        WHERE e.tenant_id = $1
-          AND e.appointment_id = $2
-          AND c.status = 'self_pay'
-        `,
-        [tenantId, appointmentId]
-      );
-
-      const paymentDueCents = Number(paymentDueResult.rows[0]?.payment_due_cents || 0);
+      const paymentDueCents = await getAppointmentCheckoutBalanceCents(tenantId, appointmentId);
       await pool.query(
         `
         UPDATE appointments

@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { apiLimiter, portalLimiter, uploadLimiter } from "../middleware/rateLimiter";
 import { requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
-import { FINANCIAL_DASHBOARD_ROLES, REVENUE_CYCLE_ROLES } from "../lib/roles";
+import { CHARGE_CAPTURE_ROLES, FINANCIAL_DASHBOARD_ROLES, REVENUE_CYCLE_ROLES } from "../lib/roles";
 import { healthRouter } from "./health";
 import { authRouter } from "./auth";
 import { patientsRouter } from "./patients";
@@ -147,15 +147,18 @@ import { remindersRouter } from "./reminders";
 import { publicPagesRouter } from "./publicPages";
 import { downtimePacketsRouter } from "./downtimePackets";
 import { professionalFeedbackRouter } from "./professionalFeedback";
+import { publicBillPayRouter } from "./publicBillPay";
 
 export function registerRoutes(app: Express) {
   const requireRevenueCycleAccess = [requireAuth, requireRoles(REVENUE_CYCLE_ROLES)];
   const requireFinancialDashboardAccess = [requireAuth, requireRoles(FINANCIAL_DASHBOARD_ROLES)];
+  const requireChargeCaptureAccess = [requireAuth, requireRoles(CHARGE_CAPTURE_ROLES)];
 
   app.use("/health", healthRouter);
   app.use("/public", publicPagesRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/professional-feedback", professionalFeedbackRouter);
+  app.use("/api/public-bill-pay", portalLimiter, publicBillPayRouter);
   app.use("/api/downtime-packets", downtimePacketsRouter);
   app.use("/api/patients", patientsRouter);
   app.use("/api/appointments", appointmentsRouter);
@@ -168,11 +171,12 @@ export function registerRoutes(app: Express) {
   app.use("/api/encounters", encountersRouter);
   app.use("/api/documents", documentsRouter);
   app.use("/api/photos", photosRouter);
-  app.use("/api/charges", ...requireRevenueCycleAccess, chargesRouter);
+  app.use("/api/charges", ...requireChargeCaptureAccess, chargesRouter);
   app.use("/api/diagnoses", diagnosesRouter);
   app.use("/api/tasks", tasksRouter);
   app.use("/api/task-templates", taskTemplatesRouter);
   app.use("/api/messages", messagesRouter);
+  app.use("/api/reminders", remindersRouter);
   app.use("/api/fhir", fhirRouter);
   app.use("/api/analytics", analyticsRouter);
   app.use("/api/hl7", hl7Router);

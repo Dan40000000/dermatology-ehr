@@ -8,13 +8,19 @@ import { CLINICAL_ROLES } from "../lib/roles";
 import { auditLog } from "../services/audit";
 import { logger } from "../lib/logger";
 import { createChargeForOrder } from "../services/orderChargeService";
+import {
+  ORDER_STATUSES,
+  immutableEncounterErrorMessage,
+  isImmutableEncounterStatus,
+  normalizeWorkflowStatus,
+} from "../lib/clinicalWorkflow";
 
 const orderSchema = z.object({
   encounterId: z.string().optional(),
   patientId: z.string(),
   providerId: z.string().optional(), // Optional - will default to first available provider
   type: z.string().min(1),
-  status: z.string().optional(),
+  status: z.enum(ORDER_STATUSES).optional(),
   priority: z.enum(['normal', 'high', 'stat', 'routine', 'urgent']).optional(),
   details: z.string().max(500).optional(),
   notes: z.string().max(1000).optional(),
@@ -27,7 +33,7 @@ const orderSchema = z.object({
 });
 
 const orderStatusSchema = z.object({
-  status: z.string(),
+  status: z.enum(ORDER_STATUSES),
 });
 
 const erxSchema = z.object({
@@ -39,6 +45,22 @@ const erxSchema = z.object({
 
 export const ordersRouter = Router();
 ordersRouter.use(requireAuth, requireRoles([...CLINICAL_ROLES]));
+
+async function ensureLinkedEncounterIsMutable(tenantId: string, encounterId?: string): Promise<string | null> {
+  if (!encounterId) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `select status from encounters where id = $1 and tenant_id = $2`,
+    [encounterId, tenantId],
+  );
+  const status = result.rows[0]?.status;
+  if (status && isImmutableEncounterStatus(status)) {
+    return immutableEncounterErrorMessage(status);
+  }
+  return null;
+}
 
 async function resolveOrderProvider(
   tenantId: string,
@@ -181,6 +203,11 @@ ordersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]), a
   const o = parsed.data;
 
   try {
+    const lockedError = await ensureLinkedEncounterIsMutable(tenantId, o.encounterId);
+    if (lockedError) {
+      return res.status(409).json({ error: lockedError });
+    }
+
     const resolvedProvider = await resolveOrderProvider(tenantId, o.providerId, o.encounterId);
     if (!resolvedProvider) {
       return res.status(400).json({ error: "No providers available" });
@@ -197,7 +224,7 @@ ordersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]), a
         resolvedProvider.providerId,
         resolvedProvider.providerName,
         o.type,
-        o.status || "draft",
+        normalizeWorkflowStatus(o.status || "draft"),
         o.priority || "normal",
         o.details || null,
         o.notes || null
@@ -249,7 +276,8 @@ ordersRouter.post("/:id/status", requireAuth, requireRoles(["provider", "ma", "a
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
   const tenantId = req.user!.tenantId;
   const orderId = req.params.id;
-  await pool.query(`update orders set status = $1 where id = $2 and tenant_id = $3`, [parsed.data.status, orderId, tenantId]);
+  const status = normalizeWorkflowStatus(parsed.data.status);
+  await pool.query(`update orders set status = $1 where id = $2 and tenant_id = $3`, [status, orderId, tenantId]);
   await auditLog(tenantId, req.user?.id ?? "unknown", "order_status_change", "order", String(orderId));
   res.json({ ok: true });
 });

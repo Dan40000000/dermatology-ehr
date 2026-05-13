@@ -8,6 +8,7 @@ import { auditLog } from '../../services/audit';
 import * as ambientAI from '../../services/ambientAI';
 import { agentConfigService } from '../../services/agentConfigService';
 import { askClinicalCopilot } from '../../services/clinicalCopilot';
+import { createFinancialWorkQueueItem } from '../../services/financialWorkQueueService';
 
 // Mock auth middleware
 jest.mock('../../middleware/auth', () => ({
@@ -58,6 +59,10 @@ jest.mock('../../services/agentConfigService', () => ({
 
 jest.mock('../../services/clinicalCopilot', () => ({
   askClinicalCopilot: jest.fn(),
+}));
+
+jest.mock('../../services/financialWorkQueueService', () => ({
+  createFinancialWorkQueueItem: jest.fn(),
 }));
 
 // Mock multer
@@ -115,6 +120,7 @@ const getConfigurationForAppointmentTypeMock = agentConfigService.getConfigurati
 const getConfigurationForSpecialtyFocusMock = agentConfigService.getConfigurationForSpecialtyFocus as jest.Mock;
 const getDefaultConfigurationMock = agentConfigService.getDefaultConfiguration as jest.Mock;
 const askClinicalCopilotMock = askClinicalCopilot as jest.Mock;
+const createFinancialWorkQueueItemMock = createFinancialWorkQueueItem as jest.Mock;
 
 const flushPromises = () => new Promise(resolve => setImmediate(resolve));
 
@@ -129,12 +135,14 @@ beforeEach(() => {
   getConfigurationForSpecialtyFocusMock.mockReset();
   getDefaultConfigurationMock.mockReset();
   askClinicalCopilotMock.mockReset();
+  createFinancialWorkQueueItemMock.mockReset();
   unlinkMock.mockResolvedValue(undefined);
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
   getConfigurationMock.mockResolvedValue(null);
   getConfigurationForAppointmentTypeMock.mockResolvedValue(null);
   getConfigurationForSpecialtyFocusMock.mockResolvedValue(null);
   getDefaultConfigurationMock.mockResolvedValue(null);
+  createFinancialWorkQueueItemMock.mockResolvedValue(null);
   askClinicalCopilotMock.mockResolvedValue({
     answer: 'Visit summarized from chart context.',
     visitSummary: 'Patient was evaluated for an itchy rash and started on topical therapy with follow-up as needed.',
@@ -1661,12 +1669,111 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
           }],
           rowCount: 1,
         })
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // update encounter
+        .mockResolvedValueOnce({ rows: [{ status: 'draft' }], rowCount: 1 }) // encounter status check
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // update encounter
+        .mockResolvedValueOnce({ rows: [{ id: 'enc-1', patient_id: 'patient-1', provider_id: 'provider-1', status: 'draft' }], rowCount: 1 }) // structured action encounter load
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // existing diagnoses
       const res = await request(app).post('/api/ambient/notes/note-1/apply-to-encounter');
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.encounterId).toBe('enc-1');
+      expect(res.body.structuredActions).toEqual({
+        diagnosesCreated: 0,
+        ordersCreated: 0,
+        tasksCreated: 0,
+        billingReviewItemsCreated: 0,
+      });
+      expect(queryMock.mock.calls[2][1][4]).toBe('Assessment\n\nPlan');
+      expect(queryMock.mock.calls[2][1][4]).not.toContain('null');
       expect(auditMock).toHaveBeenCalled();
+    });
+
+    it('does not write literal null when assessment or plan is missing', async () => {
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'note-1',
+            review_status: 'approved',
+            encounter_id: 'enc-1',
+            chief_complaint: 'Complaint',
+            hpi: 'HPI',
+            ros: 'ROS',
+            physical_exam: 'Exam',
+            assessment: null,
+            plan: 'Continue topical therapy',
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [{ status: 'draft' }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ id: 'enc-1', patient_id: 'patient-1', provider_id: 'provider-1', status: 'draft' }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+      const res = await request(app).post('/api/ambient/notes/note-1/apply-to-encounter');
+
+      expect(res.status).toBe(200);
+      expect(queryMock.mock.calls[2][1][4]).toBe('Continue topical therapy');
+      expect(queryMock.mock.calls[2][1][4]).not.toContain('null');
+    });
+
+    it('creates a billing work-queue review item for AI CPT suggestions instead of auto-billing', async () => {
+      createFinancialWorkQueueItemMock.mockResolvedValueOnce({ id: 'fwq-1' });
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'note-1',
+            review_status: 'approved',
+            encounter_id: 'enc-1',
+            chief_complaint: 'Changing lesion',
+            hpi: 'Changing lesion on shoulder',
+            ros: null,
+            physical_exam: 'Irregular pigmented papule',
+            assessment: 'Neoplasm of uncertain behavior',
+            plan: 'Shave biopsy performed',
+            suggested_cpt_codes: JSON.stringify([
+              { code: '11102', description: 'Tangential biopsy, first lesion', confidence: 0.94, rationale: 'Biopsy documented' },
+            ]),
+            suggested_icd10_codes: JSON.stringify([
+              { code: 'D48.5', description: 'Neoplasm of uncertain behavior of skin', confidence: 0.88 },
+            ]),
+            recommended_tests: JSON.stringify([
+              { testName: 'Dermatopathology', cptCode: '88305', urgency: 'routine' },
+            ]),
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [{ status: 'draft' }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ id: 'enc-1', patient_id: 'patient-1', provider_id: 'provider-1', status: 'draft' }], rowCount: 1 });
+
+      const res = await request(app)
+        .post('/api/ambient/notes/note-1/apply-to-encounter')
+        .send({ includeDiagnoses: false, includeOrders: false, includeTasks: false });
+
+      expect(res.status).toBe(200);
+      expect(res.body.structuredActions).toEqual({
+        diagnosesCreated: 0,
+        ordersCreated: 0,
+        tasksCreated: 0,
+        billingReviewItemsCreated: 1,
+      });
+      expect(createFinancialWorkQueueItemMock).toHaveBeenCalledWith(expect.objectContaining({
+        tenantId: 'tenant-1',
+        encounterId: 'enc-1',
+        patientId: 'patient-1',
+        issueType: 'ai_scribe_charge_review',
+        severity: 'warning',
+        metadata: expect.objectContaining({
+          ambientNoteId: 'note-1',
+          suggestedCptCodes: expect.arrayContaining([
+            expect.objectContaining({ code: '11102' }),
+            expect.objectContaining({ code: '88305' }),
+          ]),
+          suggestedIcd10Codes: expect.arrayContaining([
+            expect.objectContaining({ code: 'D48.5' }),
+          ]),
+        }),
+      }));
     });
 
     it('should handle database errors', async () => {

@@ -97,6 +97,7 @@ describe("Orders routes", () => {
 
   it("POST /orders creates a financial charge for billable procedure orders", async () => {
     queryMock
+      .mockResolvedValueOnce({ rows: [{ status: "draft" }] })
       .mockResolvedValueOnce({ rows: [{ id: "prov-1", full_name: "Dr. Demo" }] })
       .mockResolvedValueOnce({ rows: [] });
     createChargeForOrderMock.mockResolvedValueOnce({
@@ -135,6 +136,7 @@ describe("Orders routes", () => {
 
   it("POST /orders falls back to encounter provider when provided provider is invalid", async () => {
     queryMock
+      .mockResolvedValueOnce({ rows: [{ status: "draft" }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: "prov-enc", full_name: "Dr. Encounter" }] })
       .mockResolvedValueOnce({ rows: [] });
@@ -148,7 +150,7 @@ describe("Orders routes", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(queryMock.mock.calls[2]?.[1]?.[4]).toBe("prov-enc");
+    expect(queryMock.mock.calls[3]?.[1]?.[4]).toBe("prov-enc");
   });
 
   it("POST /orders uses default provider when missing", async () => {

@@ -130,20 +130,22 @@ class JobRunner {
         reminderTime.setHours(reminderTime.getHours() + hoursAhead);
 
         const result = await pool.query(
-          `SELECT a.id, a.patient_id, a.provider_id, a.start_time, a.tenant_id,
+          `SELECT a.id, a.patient_id, a.provider_id,
+                  COALESCE(a.scheduled_start, a.start_time) as start_time,
+                  a.tenant_id,
                   p.first_name, p.last_name, p.phone, p.email,
                   at.name as appointment_type
            FROM appointments a
            JOIN patients p ON a.patient_id = p.id
-           LEFT JOIN appointment_types at ON a.type_id = at.id
-           WHERE a.start_time >= NOW()
-             AND a.start_time <= $1
+           LEFT JOIN appointment_types at ON COALESCE(a.appointment_type_id, a.type_id) = at.id
+           WHERE COALESCE(a.scheduled_start, a.start_time) >= NOW()
+             AND COALESCE(a.scheduled_start, a.start_time) <= $1
              AND a.status = 'scheduled'
              AND NOT EXISTS (
                SELECT 1 FROM appointment_reminders ar
                WHERE ar.appointment_id = a.id AND ar.reminder_type = '24_hour'
              )
-           ORDER BY a.start_time`,
+           ORDER BY COALESCE(a.scheduled_start, a.start_time)`,
           [reminderTime]
         );
 
@@ -179,20 +181,22 @@ class JobRunner {
         const lookbackDays = config.lookbackDays || 7;
 
         const result = await pool.query(
-          `SELECT a.id, a.patient_id, a.start_time, a.tenant_id,
+          `SELECT a.id, a.patient_id,
+                  COALESCE(a.scheduled_start, a.start_time) as start_time,
+                  a.tenant_id,
                   p.first_name, p.last_name, p.phone, p.email
            FROM appointments a
            JOIN patients p ON a.patient_id = p.id
            WHERE a.status = 'no_show'
-             AND a.start_time >= NOW() - ($1 || ' days')::INTERVAL
-             AND a.start_time < NOW()
+             AND COALESCE(a.scheduled_start, a.start_time) >= NOW() - ($1 || ' days')::INTERVAL
+             AND COALESCE(a.scheduled_start, a.start_time) < NOW()
              AND NOT EXISTS (
                SELECT 1 FROM appointments a2
                WHERE a2.patient_id = a.patient_id
-                 AND a2.start_time > a.start_time
+                 AND COALESCE(a2.scheduled_start, a2.start_time) > COALESCE(a.scheduled_start, a.start_time)
                  AND a2.status IN ('scheduled', 'completed')
              )
-           ORDER BY a.start_time DESC`,
+           ORDER BY COALESCE(a.scheduled_start, a.start_time) DESC`,
           [lookbackDays]
         );
 

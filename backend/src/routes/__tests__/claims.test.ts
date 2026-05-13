@@ -5,6 +5,7 @@ import { pool } from "../../db/pool";
 import { auditLog } from "../../services/audit";
 import { scrubClaim, applyAutoFixes, getPassedChecks } from "../../services/claimScrubber";
 import { suggestModifiers, getAllModifierRules, getModifierInfo } from "../../services/modifierEngine";
+import { billingService } from "../../services/billingService";
 
 jest.mock("../../middleware/auth", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -33,6 +34,12 @@ jest.mock("../../services/modifierEngine", () => ({
   getModifierInfo: jest.fn(),
 }));
 
+jest.mock("../../services/billingService", () => ({
+  billingService: {
+    createClaimFromCharges: jest.fn(),
+  },
+}));
+
 jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),
@@ -51,6 +58,7 @@ const passedChecksMock = getPassedChecks as jest.Mock;
 const suggestModifiersMock = suggestModifiers as jest.Mock;
 const getAllModifierRulesMock = getAllModifierRules as jest.Mock;
 const getModifierInfoMock = getModifierInfo as jest.Mock;
+const createClaimFromChargesMock = billingService.createClaimFromCharges as jest.Mock;
 
 beforeEach(() => {
   queryMock.mockReset();
@@ -61,12 +69,54 @@ beforeEach(() => {
   suggestModifiersMock.mockReset();
   getAllModifierRulesMock.mockReset();
   getModifierInfoMock.mockReset();
+  createClaimFromChargesMock.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
   passedChecksMock.mockReturnValue([]);
   suggestModifiersMock.mockResolvedValue([]);
   getAllModifierRulesMock.mockResolvedValue([]);
   getModifierInfoMock.mockResolvedValue(null);
 });
+
+const readyClaimScrubRow = {
+  id: "claim-1",
+  tenant_id: "tenant-1",
+  patient_id: "patient-1",
+  service_date: "2025-01-01",
+  line_items: [
+    {
+      cpt: "99213",
+      dx: ["L70.0"],
+      diagnosisPointers: ["A"],
+      units: 1,
+      charge: 100,
+      billingRoute: "insurance",
+    },
+  ],
+  payer_id: "payer-1",
+  payer_name: "Payer",
+  payer: "Payer",
+  is_cosmetic: false,
+  patient_first_name: "Ava",
+  patient_last_name: "Jones",
+  patient_dob: "1990-01-01",
+  patient_address: "1 Main St",
+  patient_city: "Denver",
+  patient_state: "CO",
+  patient_zip: "80202",
+  insurance_member_id: "M123",
+  provider_id: "provider-1",
+  provider_name: "Dr. Demo",
+  provider_npi: "1234567890",
+  place_of_service: "11",
+};
+
+const cleanScrubResult = {
+  status: "clean",
+  errors: [],
+  warnings: [],
+  info: [],
+  canSubmit: true,
+};
 
 describe("Claims routes", () => {
   it("GET /claims returns list", async () => {
@@ -101,11 +151,11 @@ describe("Claims routes", () => {
     expect(res.status).toBe(400);
   });
 
-  it("POST /claims creates claim", async () => {
-    queryMock
-      .mockResolvedValueOnce({ rows: [{ total: 10000 }] }) // sum charges
-      .mockResolvedValueOnce({ rows: [] }) // insert claim
-      .mockResolvedValueOnce({ rows: [] }); // status history
+  it("POST /claims creates encounter claim through billing service", async () => {
+    createClaimFromChargesMock.mockResolvedValueOnce({
+      id: "claim-from-billing",
+      claimNumber: "CLM-1",
+    });
 
     const res = await request(app).post("/claims").send({
       patientId: "patient-1",
@@ -114,8 +164,34 @@ describe("Claims routes", () => {
       payerId: "payer-1",
     });
     expect(res.status).toBe(201);
+    expect(res.body.id).toBe("claim-from-billing");
+    expect(createClaimFromChargesMock).toHaveBeenCalledWith("tenant-1", "enc-1", "user-1");
+    expect(queryMock).not.toHaveBeenCalledWith(expect.stringContaining("insert into claims"), expect.anything());
+  });
+
+  it("POST /claims creates manual line-item claim", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] }) // insurance lookup
+      .mockResolvedValueOnce({ rows: [] }) // insert claim
+      .mockResolvedValueOnce({ rows: [] }) // diagnosis
+      .mockResolvedValueOnce({ rows: [] }) // claim line
+      .mockResolvedValueOnce({ rows: [] }) // claim charge
+      .mockResolvedValueOnce({ rows: [] }); // status history
+
+    const res = await request(app).post("/claims").send({
+      patientId: "patient-1",
+      payer: "Test Payer",
+      payerId: "payer-1",
+      lineItems: [{ cpt: "99213", dx: ["L70.0"], units: 1, charge: 100, description: "Office visit" }],
+    });
+
+    expect(res.status).toBe(201);
     expect(res.body.id).toBeTruthy();
-    expect(queryMock.mock.calls[1][1]).toEqual(expect.arrayContaining(["coding_review"]));
+    expect(createClaimFromChargesMock).not.toHaveBeenCalled();
+    const insertClaimCall = queryMock.mock.calls.find(
+      ([sql]) => typeof sql === "string" && sql.includes("insert into claims"),
+    );
+    expect(insertClaimCall?.[1]).toEqual(expect.arrayContaining(["coding_review"]));
     expect(auditMock).toHaveBeenCalled();
   });
 
@@ -133,8 +209,11 @@ describe("Claims routes", () => {
   it("PUT /claims/:id/status updates claim", async () => {
     queryMock
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "claim-1", status: "ready" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [readyClaimScrubRow] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
+    scrubMock.mockResolvedValueOnce(cleanScrubResult);
     const res = await request(app).put("/claims/claim-1/status").send({ status: "submitted", notes: "ok" });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
@@ -153,8 +232,11 @@ describe("Claims routes", () => {
         rowCount: 1,
         rows: [{ id: "claim-1", status: "coding_review", scrub_status: "clean", payer: "Payer" }],
       })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [readyClaimScrubRow] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
+    scrubMock.mockResolvedValueOnce(cleanScrubResult);
 
     const res = await request(app).post("/claims/claim-1/release").send({ notes: "reviewed" });
 
@@ -323,8 +405,11 @@ describe("Claims routes", () => {
     queryMock
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: "ready", scrub_status: "clean" }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ...readyClaimScrubRow, id: "claim-2" }] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
+    scrubMock.mockResolvedValueOnce(cleanScrubResult);
 
     const res = await request(app).post("/claims/submit").send({ claimIds: ["claim-1", "claim-2"] });
 

@@ -6,6 +6,8 @@ import { patientFlowService, FlowStatus } from '../services/patientFlowService';
 import { auditLog } from '../services/audit';
 import { logger } from '../lib/logger';
 import { workflowOrchestrator } from '../services/workflowOrchestrator';
+import { pool } from '../db/pool';
+import { getAppointmentCheckoutBalanceCents } from '../services/checkoutBalanceService';
 
 // ============================================
 // VALIDATION SCHEMAS
@@ -162,6 +164,38 @@ patientFlowRouter.put(
       }
 
       const { status, roomId, notes } = validation.data;
+
+      if (status === 'completed') {
+        const currentStatusResult = await pool.query(
+          `SELECT status FROM appointments WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, appointmentId]
+        );
+        const currentStatus = currentStatusResult.rows[0]?.status;
+        if (currentStatus && currentStatus !== 'checkout') {
+          const flow = await patientFlowService.updatePatientStatus(
+            tenantId,
+            appointmentId!,
+            'checkout',
+            { roomId, userId, notes: notes || 'Checkout review required before completion.' }
+          );
+          await auditLog(tenantId, userId, 'checkout_required_before_completion', 'patient_flow', flow.id);
+          return res.json({
+            success: true,
+            message: 'Visit moved to checkout. Front desk review is required before completion.',
+            requiresCheckoutReview: true,
+            flow,
+          });
+        }
+
+        const checkoutBalanceCents = await getAppointmentCheckoutBalanceCents(tenantId, appointmentId!);
+        if (checkoutBalanceCents > 0) {
+          return res.status(409).json({
+            error: 'Patient has an unresolved checkout balance. Review or post payment before completing the visit.',
+            requiresPayment: true,
+            paymentDueCents: checkoutBalanceCents,
+          });
+        }
+      }
 
       const flow = await patientFlowService.updatePatientStatus(
         tenantId,

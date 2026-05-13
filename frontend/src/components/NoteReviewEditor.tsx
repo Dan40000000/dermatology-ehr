@@ -203,7 +203,13 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
         await reviewAmbientNote(session.tenantId, session.accessToken, noteId, 'approve');
       }
 
-      await applyAmbientNoteToEncounter(session.tenantId, session.accessToken, noteId);
+      const applyResult = await applyAmbientNoteToEncounter(session.tenantId, session.accessToken, noteId, {
+        applyStructuredActions: true,
+        includeDiagnoses: true,
+        includeOrders: true,
+        includeTasks: true,
+        includeBillingReview: true,
+      });
 
       let summaryMessage = 'patient summary saved';
       try {
@@ -218,7 +224,11 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
         showError(summaryError.message || 'Note posted, but patient summary publishing failed');
       }
 
-      showSuccess(`AI note posted to appointment; ${summaryMessage}`);
+      const actions = applyResult.structuredActions;
+      const actionMessage = actions
+        ? `structured actions: ${actions.diagnosesCreated} diagnoses, ${actions.ordersCreated} orders, ${actions.tasksCreated} tasks, ${actions.billingReviewItemsCreated || 0} billing reviews`
+        : 'structured actions reviewed';
+      showSuccess(`AI note posted to appointment; ${summaryMessage}; ${actionMessage}`);
       await loadData();
     } catch (error: any) {
       showError(error.message || 'Failed to post AI note to appointment');

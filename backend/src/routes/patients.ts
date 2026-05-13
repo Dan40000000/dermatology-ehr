@@ -188,6 +188,7 @@ patientsRouter.get("/", requireAuth, requireModuleAccess("patients"), async (req
     lastName: `last_name as "lastName"`,
     dateOfBirth: `dob as "dateOfBirth"`,
     mrn: "mrn",
+    accountNumber: `account_number as "accountNumber"`,
     phone: "phone",
     email: "email",
     sex: "sex",
@@ -213,6 +214,7 @@ patientsRouter.get("/", requireAuth, requireModuleAccess("patients"), async (req
     "lastName",
     "dateOfBirth",
     "mrn",
+    "accountNumber",
     "phone",
     "email",
     "sex",
@@ -336,6 +338,7 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
     primaryCarePhysician, referralSource, insuranceId, insuranceGroupNumber
   } = parsed.data;
   const { ssnLast4, ssnEncrypted } = buildSsnFields(ssn);
+  const accountNumber = `ACCT-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
 
   await pool.query(
     `insert into patients(
@@ -343,15 +346,16 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
       insurance, allergies, medications, sex, ssn_last4, ssn_encrypted,
       emergency_contact_name, emergency_contact_relationship, emergency_contact_phone,
       pharmacy_id, pharmacy_ncpdp, pharmacy_name, pharmacy_phone, pharmacy_address,
-      primary_care_physician, referral_source, insurance_id, insurance_group_number
-    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
+      primary_care_physician, referral_source, insurance_id, insurance_group_number, account_number
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)`,
     [
       id, tenantId, firstName, lastName, dob || null, phone || null, email || null,
       address || null, city || null, state || null, zip || null,
       insurance || null, allergies || null, medications || null, sex || null, ssnLast4, ssnEncrypted,
       emergencyContactName || null, emergencyContactRelationship || null, emergencyContactPhone || null,
       pharmacyId || null, pharmacyNcpdp || null, pharmacyName || null, pharmacyPhone || null, pharmacyAddress || null,
-      primaryCarePhysician || null, referralSource || null, insuranceId || null, insuranceGroupNumber || null
+      primaryCarePhysician || null, referralSource || null, insuranceId || null, insuranceGroupNumber || null,
+      accountNumber
     ],
   );
 
@@ -419,6 +423,7 @@ patientsRouter.get("/:id", requireAuth, requireModuleAccess("patients"), async (
     const result = await pool.query(
       `select id, first_name as "firstName", last_name as "lastName", dob, phone, email,
               address, city, state, zip, insurance, allergies, medications, sex,
+              account_number as "accountNumber",
               ${canViewSsn ? `ssn_last4 as "ssn"` : `null::text as "ssn"`},
               emergency_contact_name as "emergencyContactName",
               emergency_contact_relationship as "emergencyContactRelationship",

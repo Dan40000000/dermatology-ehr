@@ -10,7 +10,7 @@ describe('router', () => {
     const loginRoute = routes.find((route) => route.path === '/login');
     expect(loginRoute).toBeTruthy();
 
-    const rootRoute = routes.find((route) => route.path === '/');
+    const rootRoute = routes.find((route) => route.path === '/' && Array.isArray(route.children));
     expect(rootRoute?.children).toBeTruthy();
     const childPaths = (rootRoute?.children || []).map((child: any) => child.path);
     expect(childPaths).toEqual(expect.arrayContaining(['home', 'schedule', 'patients', 'notes', 'admin']));

@@ -132,7 +132,13 @@ describe("hl7Queue", () => {
 
     await hl7Queue.processPendingMessages();
 
-    expect(hasSql(messageClient.query as jest.Mock, "next_retry_at")).toBe(true);
+    const retryQuery = (messageClient.query as jest.Mock).mock.calls.find(
+      ([sql]) => typeof sql === "string" && sql.includes("next_retry_at")
+    );
+    expect(retryQuery).toBeDefined();
+    expect(retryQuery?.[0]).toContain("($2::int * INTERVAL '1 second')");
+    expect(retryQuery?.[0]).not.toContain("INTERVAL '120 seconds'");
+    expect(retryQuery?.[1]).toEqual(["boom", 120, "msg-2"]);
   });
 
   it("marks messages as failed after max retries", async () => {

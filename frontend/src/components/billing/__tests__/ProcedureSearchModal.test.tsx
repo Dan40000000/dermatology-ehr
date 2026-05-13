@@ -16,6 +16,7 @@ const toastMocks = vi.hoisted(() => ({
 
 const apiMocks = vi.hoisted(() => ({
   fetchDefaultFeeSchedule: vi.fn(),
+  fetchSelfPayProcedureCatalog: vi.fn(),
   fetchCosmeticProcedureCatalog: vi.fn(),
   fetchFeeForCPT: vi.fn(),
   fetchProceduresForDiagnosis: vi.fn(),
@@ -63,6 +64,7 @@ describe('ProcedureSearchModal', () => {
         },
       ],
     });
+    apiMocks.fetchSelfPayProcedureCatalog.mockResolvedValue([]);
     apiMocks.fetchCosmeticProcedureCatalog.mockResolvedValue([
       {
         id: 'cosmetic-1',
@@ -137,6 +139,8 @@ describe('ProcedureSearchModal', () => {
     await waitFor(() =>
       expect(onSelect).toHaveBeenCalledWith({
         code: 'BOTOX-20',
+        codeType: 'INTERNAL',
+        billingRoute: 'self_pay',
         description: 'Botox Forehead Lines',
         quantity: 1,
         feeCents: 12000,

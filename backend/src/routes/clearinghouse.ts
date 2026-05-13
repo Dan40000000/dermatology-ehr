@@ -5,6 +5,7 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireRoles } from "../middleware/rbac";
 import { auditLog } from "../services/audit";
+import { billingService } from "../services/billingService";
 
 const submitClaimSchema = z.object({
   claimId: z.string().uuid(),
@@ -82,6 +83,18 @@ clearinghouseRouter.post("/submit-claim", requireAuth, requireRoles(["admin", "b
 
   if (claim.status === "submitted" || claim.status === "accepted") {
     return res.status(400).json({ error: "Claim already submitted" });
+  }
+
+  if (claim.status !== "ready") {
+    return res.status(400).json({
+      error: `Claim must be released from coding review before clearinghouse submission (status: ${claim.status})`,
+    });
+  }
+
+  try {
+    await billingService.submitClaim(tenantId, claimId, req.user!.id);
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || "Claim is not ready for submission" });
   }
 
   // Mock clearinghouse submission logic

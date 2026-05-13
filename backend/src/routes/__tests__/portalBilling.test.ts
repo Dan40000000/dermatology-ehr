@@ -27,6 +27,7 @@ jest.mock("../../middleware/patientPortalAuth", () => ({
 jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),
+    connect: jest.fn(),
   },
 }));
 
@@ -35,10 +36,21 @@ app.use(express.json());
 app.use("/portal-billing", portalBillingRouter);
 
 const queryMock = pool.query as jest.Mock;
+const connectMock = pool.connect as jest.Mock;
+const clientQueryMock = jest.fn();
+const clientReleaseMock = jest.fn();
 
 beforeEach(() => {
   queryMock.mockReset();
+  connectMock.mockReset();
+  clientQueryMock.mockReset();
+  clientReleaseMock.mockReset();
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+  clientQueryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+  connectMock.mockResolvedValue({
+    query: clientQueryMock,
+    release: clientReleaseMock,
+  });
 });
 
 describe("Portal Billing routes", () => {
@@ -614,6 +626,9 @@ describe("Portal Billing routes", () => {
         .mockResolvedValueOnce({
           rows: [{ id: "txn-error" }],
         })
+        .mockResolvedValueOnce({ rows: [] });
+      clientQueryMock
+        .mockResolvedValueOnce({ rows: [] })
         .mockRejectedValueOnce(new Error("Payment processing error"))
         .mockResolvedValueOnce({ rows: [] });
 

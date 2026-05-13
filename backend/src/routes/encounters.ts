@@ -10,6 +10,7 @@ import { recordEncounterLearning } from "../services/learningService";
 import { encounterService } from "../services/encounterService";
 import { billingService } from "../services/billingService";
 import { ensureEncounterBill } from "../services/encounterFinancialsService";
+import { createFinancialWorkQueueItem } from "../services/financialWorkQueueService";
 import { workflowOrchestrator } from "../services/workflowOrchestrator";
 import {
   emitEncounterCreated,
@@ -18,6 +19,13 @@ import {
   emitEncounterSigned,
 } from "../websocket/emitter";
 import { logger } from "../lib/logger";
+import {
+  ENCOUNTER_STATUSES,
+  immutableEncounterErrorMessage,
+  isEncounterClosureStatus,
+  isImmutableEncounterStatus,
+  normalizeWorkflowStatus,
+} from "../lib/clinicalWorkflow";
 
 const encounterSchema = z.object({
   patientId: z.string(),
@@ -38,11 +46,10 @@ const encounterUpdateSchema = z.object({
   assessmentPlan: z.string().optional(),
 });
 
-const ENCOUNTER_CLOSURE_STATUSES = new Set(["closed", "completed", "signed", "locked", "finalized"]);
 const ENCOUNTER_FINANCIAL_READ_ROLES = [...CLINICAL_ROLES, "billing"] as const;
 
 function shouldAutoStopAmbientRecording(status: string): boolean {
-  return ENCOUNTER_CLOSURE_STATUSES.has(String(status || "").toLowerCase());
+  return isEncounterClosureStatus(status);
 }
 
 function toSafeErrorMessage(error: unknown): string {
@@ -61,6 +68,10 @@ function logEncountersError(message: string, error: unknown): void {
   logger.error(message, {
     error: toSafeErrorMessage(error),
   });
+}
+
+function isNoChargesFoundError(error: unknown): boolean {
+  return String((error as any)?.message || error || "").includes("No charges found");
 }
 
 async function autoStopAmbientRecordings(tenantId: string, encounterId: string): Promise<string[]> {
@@ -85,6 +96,22 @@ async function autoStopAmbientRecordings(tenantId: string, encounterId: string):
 }
 
 export const encountersRouter = Router();
+
+async function getEncounterStatus(tenantId: string, encounterId: string): Promise<string | null> {
+  const result = await pool.query(
+    `select status from encounters where id = $1 and tenant_id = $2`,
+    [encounterId, tenantId],
+  );
+  return result.rows[0]?.status ?? null;
+}
+
+async function ensureEncounterCanReceiveClinicalEdit(tenantId: string, encounterId: string): Promise<string | null> {
+  const status = await getEncounterStatus(tenantId, encounterId);
+  if (status && isImmutableEncounterStatus(status)) {
+    return immutableEncounterErrorMessage(status);
+  }
+  return null;
+}
 
 /**
  * @swagger
@@ -285,7 +312,7 @@ encountersRouter.post("/", requireAuth, requireRoles(["provider", "ma", "admin"]
   res.status(201).json({ id });
 });
 
-const statusSchema = z.object({ status: z.string() });
+const statusSchema = z.object({ status: z.enum(ENCOUNTER_STATUSES) });
 
 encountersRouter.post("/:id", requireAuth, requireRoles(["provider", "ma", "admin"]), async (req: AuthedRequest, res) => {
   const parsed = encounterUpdateSchema.safeParse(req.body);
@@ -294,7 +321,9 @@ encountersRouter.post("/:id", requireAuth, requireRoles(["provider", "ma", "admi
   const encId = String(req.params.id);
   const statusCheck = await pool.query(`select status from encounters where id = $1 and tenant_id = $2`, [encId, tenantId]);
   if (!statusCheck.rowCount) return res.status(404).json({ error: "Not found" });
-  if (statusCheck.rows[0].status === "locked") return res.status(409).json({ error: "Encounter is locked" });
+  if (isImmutableEncounterStatus(statusCheck.rows[0].status)) {
+    return res.status(409).json({ error: immutableEncounterErrorMessage(statusCheck.rows[0].status) });
+  }
   await pool.query(
     `update encounters
      set chief_complaint = coalesce($1, chief_complaint),
@@ -315,13 +344,28 @@ encountersRouter.post("/:id/status", requireAuth, requireRoles(["provider", "adm
   if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
   const tenantId = req.user!.tenantId;
   const encId = String(req.params.id);
-  const newStatus = parsed.data.status;
+  const newStatus = normalizeWorkflowStatus(parsed.data.status);
 
-  const updated = await pool.query(`update encounters set status = $1, updated_at = now() where id = $2 and tenant_id = $3`, [
+  const currentStatus = await getEncounterStatus(tenantId, encId);
+  if (!currentStatus) return res.status(404).json({ error: "Not found" });
+  if (isImmutableEncounterStatus(currentStatus) && normalizeWorkflowStatus(currentStatus) !== newStatus) {
+    return res.status(409).json({ error: immutableEncounterErrorMessage(currentStatus) });
+  }
+
+  const updated = await pool.query(
+    `update encounters
+     set status = $1,
+         signed_at = case when $1 = 'signed' and signed_at is null then now() else signed_at end,
+         signed_by = case when $1 = 'signed' and signed_by is null then $4 else signed_by end,
+         updated_at = now()
+     where id = $2 and tenant_id = $3`,
+    [
     newStatus,
     encId,
     tenantId,
-  ]);
+    req.user!.id,
+    ],
+  );
   if (!updated.rowCount) return res.status(404).json({ error: "Not found" });
 
   await auditLog(tenantId, req.user!.id, `encounter_status_${newStatus}`, "encounter", encId);
@@ -745,6 +789,11 @@ encountersRouter.post("/:id/diagnoses", requireAuth, requireRoles(["provider", "
   const encId = String(req.params.id);
 
   try {
+    const editError = await ensureEncounterCanReceiveClinicalEdit(tenantId, encId);
+    if (editError) {
+      return res.status(409).json({ error: editError });
+    }
+
     const diagnosisId = await encounterService.addDiagnosis(
       tenantId,
       encId,
@@ -782,6 +831,11 @@ encountersRouter.post("/:id/procedures", requireAuth, requireRoles(["provider", 
   const encId = String(req.params.id);
 
   try {
+    const editError = await ensureEncounterCanReceiveClinicalEdit(tenantId, encId);
+    if (editError) {
+      return res.status(409).json({ error: editError });
+    }
+
     const chargeId = await encounterService.addProcedure(
       tenantId,
       encId,
@@ -809,25 +863,59 @@ encountersRouter.post("/:id/complete", requireAuth, requireRoles(["provider", "a
   const encId = String(req.params.id);
 
   try {
+    const editError = await ensureEncounterCanReceiveClinicalEdit(tenantId, encId);
+    if (editError) {
+      return res.status(409).json({ error: editError });
+    }
+
     await encounterService.completeEncounter(tenantId, encId);
     let financials = null;
+    let financialReview = null;
+    let financialReviewNeeded = false;
     try {
       const claim = await billingService.createClaimFromCharges(tenantId, encId, req.user!.id);
       financials = await ensureEncounterBill(tenantId, encId, req.user!.id, undefined, claim.id);
     } catch (financialError: any) {
-      if (!String(financialError?.message || '').includes('No charges found')) {
+      const noChargesFound = isNoChargesFoundError(financialError);
+      if (!noChargesFound) {
         logger.error("Failed to post encounter financials on complete", {
           encounterId: encId,
           error: financialError?.message || "Unknown error",
         });
       }
+      let billFallbackError: any = null;
       financials = await ensureEncounterBill(tenantId, encId, req.user!.id).catch((billError: any) => {
+        billFallbackError = billError;
         logger.error("Failed to create encounter bill on complete", {
           encounterId: encId,
           error: billError?.message || "Unknown error",
         });
         return null;
       });
+
+      if (!noChargesFound || billFallbackError) {
+        financialReviewNeeded = true;
+        financialReview = await createFinancialWorkQueueItem({
+          tenantId,
+          encounterId: encId,
+          issueType: billFallbackError ? "encounter_financial_posting_failed" : "encounter_claim_creation_failed",
+          severity: billFallbackError ? "critical" : "error",
+          message: billFallbackError
+            ? "Encounter completed, but claim and patient bill posting need billing review."
+            : "Encounter completed, but claim creation needs billing review.",
+          errorDetail: [
+            financialError?.message ? `claim: ${financialError.message}` : null,
+            billFallbackError?.message ? `bill: ${billFallbackError.message}` : null,
+          ].filter(Boolean).join("; ") || null,
+          metadata: {
+            source: "encounter_complete",
+            claimCreationFailed: !noChargesFound,
+            billCreationFailed: Boolean(billFallbackError),
+            fallbackBillCreated: Boolean(financials),
+          },
+          createdBy: req.user!.id,
+        });
+      }
     }
     await auditLog(tenantId, req.user!.id, "encounter_completed", "encounter", encId);
 
@@ -847,10 +935,14 @@ encountersRouter.post("/:id/complete", requireAuth, requireRoles(["provider", "a
       });
     }
 
-    return res.status(200).json({
+    return res.status(financialReviewNeeded ? 202 : 200).json({
       encounterId: encId,
       financials,
-      message: "Encounter completed and charges generated"
+      requiresFinancialReview: financialReviewNeeded,
+      financialReview,
+      message: financialReviewNeeded
+        ? "Encounter completed, but financial posting needs billing review."
+        : "Encounter completed and charges generated"
     });
   } catch (error: any) {
     logEncountersError("Error completing encounter", error);

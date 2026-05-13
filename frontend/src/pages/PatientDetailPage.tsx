@@ -1965,6 +1965,7 @@ function DemographicsTab({ patient, onEdit }: { patient: Patient; onEdit: () => 
             <InfoRow label="Age" value={calculateAge(patient.dob)} />
             <InfoRow label="Sex" value={(patient as any).sex || 'Not specified'} />
             <InfoRow label="MRN" value={patient.mrn || 'Not assigned'} />
+            <InfoRow label="Billing Account" value={patient.accountNumber || 'Not assigned'} />
             <InfoRow label="SSN" value={(patient as any).ssn || 'Not provided'} />
           </div>
         </div>

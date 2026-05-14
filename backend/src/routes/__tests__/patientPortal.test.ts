@@ -470,6 +470,44 @@ describe("Patient portal routes", () => {
     expect(res.status).toBe(200);
   });
 
+  it("PUT /patient-portal/me maps personal profile fields", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] }).mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .put("/patient-portal/me")
+      .send({ firstName: "Alex", lastName: "Johnson", dob: "1980-01-02", sex: "male" });
+
+    expect(res.status).toBe(200);
+    const updateQuery = queryMock.mock.calls[0]?.[0] as string;
+    expect(updateQuery).toContain("first_name");
+    expect(updateQuery).toContain("last_name");
+    expect(updateQuery).toContain("dob");
+    expect(updateQuery).toContain("sex");
+  });
+
+  it("GET /patient-portal/preferences returns defaults when missing", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get("/patient-portal/preferences");
+
+    expect(res.status).toBe(200);
+    expect(res.body.preferences.appointmentReminders).toBe(true);
+    expect(res.body.preferences.healthTipsNewsletter).toBe(false);
+  });
+
+  it("PUT /patient-portal/preferences updates communication preferences", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "pref-1" }] });
+
+    const res = await request(app)
+      .put("/patient-portal/preferences")
+      .send({ appointmentReminders: false, billingAlerts: true, healthTipsNewsletter: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.preferences.appointmentReminders).toBe(false);
+    const updateQuery = queryMock.mock.calls[0]?.[0] as string;
+    expect(updateQuery).toContain("UPDATE patient_communication_preferences");
+  });
+
   it("GET /patient-portal/activity returns activity", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ action: "login" }] });
 

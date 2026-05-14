@@ -5,6 +5,12 @@ import { API_BASE_URL } from '../../utils/apiBase';
 
 const API_URL = API_BASE_URL;
 
+const isVisitSummaryDocument = (doc: Pick<Document, 'category' | 'title'>) => {
+  const category = doc.category?.toLowerCase() || '';
+  const title = doc.title?.toLowerCase() || '';
+  return category === 'visit_summary' || category === 'visit_summaries' || title.includes('visit summary');
+};
+
 interface Document {
   id: string;
   title: string;
@@ -42,7 +48,7 @@ export function PortalDocumentsPage() {
     setError(null);
     try {
       const data = await patientPortalFetch('/api/patient-portal-data/documents');
-      setDocuments(data.documents || []);
+      setDocuments((data.documents || []).filter((doc: Document) => !isVisitSummaryDocument(doc)));
     } catch (error) {
       console.error('Failed to fetch documents:', error);
       setError(error instanceof Error ? error.message : 'Failed to load documents');

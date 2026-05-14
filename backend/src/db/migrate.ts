@@ -12896,6 +12896,299 @@ Consider age-appropriate treatments and include family counseling points.',
       updated_at = NOW();
     `,
   },
+  {
+    name: "183_patient_portal_profile_refills_preferences",
+    sql: `
+    ALTER TABLE patients ADD COLUMN IF NOT EXISTS sex TEXT;
+
+    CREATE TABLE IF NOT EXISTS refill_requests (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      original_prescription_id TEXT REFERENCES prescriptions(id) ON DELETE SET NULL,
+      medication_name TEXT NOT NULL,
+      strength TEXT,
+      drug_description TEXT,
+      requested_date TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      original_rx_date TIMESTAMPTZ,
+      provider_id TEXT,
+      pharmacy_id TEXT,
+      pharmacy_name TEXT,
+      pharmacy_ncpdp TEXT,
+      status TEXT DEFAULT 'pending',
+      reviewed_by TEXT,
+      reviewed_at TIMESTAMPTZ,
+      denial_reason TEXT,
+      denial_notes TEXT,
+      request_source TEXT DEFAULT 'portal',
+      request_method TEXT DEFAULT 'portal',
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+
+    ALTER TABLE refill_requests ADD COLUMN IF NOT EXISTS request_source TEXT DEFAULT 'portal';
+    ALTER TABLE refill_requests ADD COLUMN IF NOT EXISTS request_method TEXT DEFAULT 'portal';
+    ALTER TABLE refill_requests ADD COLUMN IF NOT EXISTS notes TEXT;
+    ALTER TABLE refill_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
+    CREATE INDEX IF NOT EXISTS idx_refill_requests_tenant ON refill_requests(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_refill_requests_patient ON refill_requests(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_refill_requests_prescription ON refill_requests(original_prescription_id);
+    CREATE INDEX IF NOT EXISTS idx_refill_requests_status ON refill_requests(status);
+
+    CREATE TABLE IF NOT EXISTS patient_communication_preferences (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT REFERENCES patients(id) ON DELETE CASCADE,
+      allow_email BOOLEAN DEFAULT true,
+      allow_sms BOOLEAN DEFAULT true,
+      allow_phone BOOLEAN DEFAULT true,
+      allow_mail BOOLEAN DEFAULT true,
+      preferred_method TEXT DEFAULT 'email',
+      opted_out BOOLEAN DEFAULT false,
+      opted_out_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    ALTER TABLE patient_communication_preferences ADD COLUMN IF NOT EXISTS appointment_reminders BOOLEAN DEFAULT true;
+    ALTER TABLE patient_communication_preferences ADD COLUMN IF NOT EXISTS lab_result_notifications BOOLEAN DEFAULT true;
+    ALTER TABLE patient_communication_preferences ADD COLUMN IF NOT EXISTS billing_alerts BOOLEAN DEFAULT true;
+    ALTER TABLE patient_communication_preferences ADD COLUMN IF NOT EXISTS health_tips_newsletter BOOLEAN DEFAULT false;
+    ALTER TABLE patient_communication_preferences ADD COLUMN IF NOT EXISTS allow_email BOOLEAN DEFAULT true;
+    ALTER TABLE patient_communication_preferences ADD COLUMN IF NOT EXISTS allow_sms BOOLEAN DEFAULT true;
+    ALTER TABLE patient_communication_preferences ADD COLUMN IF NOT EXISTS allow_phone BOOLEAN DEFAULT true;
+    ALTER TABLE patient_communication_preferences ADD COLUMN IF NOT EXISTS allow_mail BOOLEAN DEFAULT true;
+    ALTER TABLE patient_communication_preferences ADD COLUMN IF NOT EXISTS preferred_method TEXT DEFAULT 'email';
+    ALTER TABLE patient_communication_preferences ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+    UPDATE patient_communication_preferences
+    SET appointment_reminders = COALESCE(appointment_reminders, allow_email, allow_sms, true),
+        lab_result_notifications = COALESCE(lab_result_notifications, allow_email, true),
+        billing_alerts = COALESCE(billing_alerts, allow_email, true),
+        health_tips_newsletter = COALESCE(health_tips_newsletter, false),
+        updated_at = COALESCE(updated_at, NOW());
+
+    DELETE FROM patient_communication_preferences older
+    USING patient_communication_preferences newer
+    WHERE older.ctid < newer.ctid
+      AND older.tenant_id = newer.tenant_id
+      AND older.patient_id = newer.patient_id;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_patient_comm_prefs_patient_unique
+      ON patient_communication_preferences(tenant_id, patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_comm_prefs_patient
+      ON patient_communication_preferences(patient_id);
+    `,
+  },
+  {
+    name: "184_secure_portal_documents_referrals_scaffold",
+    sql: `
+    -- Patient portal accounts are created by registration, but the patient-facing
+    -- profile, preferences, and billing shell should exist as soon as the chart exists.
+    INSERT INTO patient_communication_preferences (
+      id, tenant_id, patient_id, allow_email, allow_sms, allow_phone, allow_mail,
+      preferred_method, appointment_reminders, lab_result_notifications, billing_alerts,
+      health_tips_newsletter, created_at, updated_at
+    )
+    SELECT
+      gen_random_uuid()::text,
+      p.tenant_id,
+      p.id,
+      true,
+      true,
+      true,
+      true,
+      'email',
+      true,
+      true,
+      true,
+      false,
+      NOW(),
+      NOW()
+    FROM patients p
+    ON CONFLICT (tenant_id, patient_id) DO NOTHING;
+
+    INSERT INTO portal_patient_balances (
+      tenant_id, patient_id, total_charges, total_payments, total_adjustments, last_updated
+    )
+    SELECT p.tenant_id, p.id, 0, 0, 0, NOW()
+    FROM patients p
+    ON CONFLICT (patient_id) DO NOTHING;
+
+    -- Secure patient messaging attachment storage used by portal/staff messaging routes.
+    CREATE TABLE IF NOT EXISTS patient_message_attachments (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      message_id TEXT NOT NULL REFERENCES patient_messages(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      original_filename TEXT NOT NULL,
+      file_size INTEGER,
+      mime_type TEXT,
+      file_path TEXT NOT NULL,
+      uploaded_by_patient BOOLEAN DEFAULT false,
+      uploaded_by_user TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_message_attachments_message
+      ON patient_message_attachments(message_id);
+
+    ALTER TABLE patient_messages ADD COLUMN IF NOT EXISTS contains_phi BOOLEAN DEFAULT true;
+    ALTER TABLE patient_messages ADD COLUMN IF NOT EXISTS delivery_channel TEXT DEFAULT 'secure_portal';
+    ALTER TABLE patient_message_threads ADD COLUMN IF NOT EXISTS secure_transport_required BOOLEAN DEFAULT true;
+
+    -- Printed patient-facing documents need enough metadata to show in both chart and portal.
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS category TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS subcategory TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS description TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS storage TEXT DEFAULT 'local';
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS object_key TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_size INTEGER;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS mime_type TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_type TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_path TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS thumbnail_url TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploaded_by TEXT REFERENCES users(id);
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMPTZ DEFAULT NOW();
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_signed BOOLEAN DEFAULT false;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS signed_at TIMESTAMPTZ;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS signed_by TEXT REFERENCES users(id);
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS ocr_text TEXT;
+
+    CREATE TABLE IF NOT EXISTS patient_document_shares (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      shared_by TEXT NOT NULL REFERENCES users(id),
+      shared_at TIMESTAMPTZ DEFAULT NOW(),
+      viewed_at TIMESTAMPTZ,
+      notes TEXT,
+      category TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_document_shares_patient
+      ON patient_document_shares(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_document_shares_document
+      ON patient_document_shares(document_id);
+
+    -- Keep the referral table usable for both lightweight local workflows and richer future closed-loop workflows.
+    CREATE TABLE IF NOT EXISTS referring_providers (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      npi TEXT,
+      practice_name TEXT,
+      specialty TEXT,
+      phone TEXT,
+      fax TEXT,
+      email TEXT,
+      address_line1 TEXT,
+      address_line2 TEXT,
+      city TEXT,
+      state TEXT,
+      zip TEXT,
+      preferences JSONB DEFAULT '{}'::jsonb,
+      notes TEXT,
+      is_active BOOLEAN DEFAULT true,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_referring_providers_tenant_npi
+      ON referring_providers(tenant_id, npi)
+      WHERE npi IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_referring_providers_tenant
+      ON referring_providers(tenant_id);
+
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS referral_number TEXT;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS referring_provider_id TEXT REFERENCES referring_providers(id) ON DELETE SET NULL;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS assigned_provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS referring_practice TEXT;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS diagnosis_codes TEXT[];
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS clinical_notes TEXT;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS insurance_auth_status TEXT DEFAULT 'not_required';
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS insurance_auth_number TEXT;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS insurance_auth_expiry DATE;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS scheduled_date DATE;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS report_sent_at TIMESTAMPTZ;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS report_sent_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS acknowledgment_received_at TIMESTAMPTZ;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ DEFAULT NOW();
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS verified_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+    ALTER TABLE referrals ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+
+    UPDATE referrals
+    SET referral_number = COALESCE(referral_number, 'REF-' || substring(id from 1 for 8)),
+        received_at = COALESCE(received_at, created_at),
+        status = CASE WHEN status = 'new' THEN 'received' ELSE status END
+    WHERE referral_number IS NULL
+       OR received_at IS NULL
+       OR status = 'new';
+
+    CREATE INDEX IF NOT EXISTS idx_referrals_provider ON referrals(referring_provider_id);
+    CREATE INDEX IF NOT EXISTS idx_referrals_direction ON referrals(tenant_id, direction);
+    CREATE INDEX IF NOT EXISTS idx_referrals_created_desc ON referrals(tenant_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS referral_status_history (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      referral_id TEXT NOT NULL REFERENCES referrals(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      previous_status TEXT,
+      changed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_referral_status_history_referral
+      ON referral_status_history(referral_id);
+
+    CREATE TABLE IF NOT EXISTS referral_communications (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      referral_id TEXT NOT NULL REFERENCES referrals(id) ON DELETE CASCADE,
+      direction TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      subject TEXT,
+      message TEXT,
+      status TEXT DEFAULT 'sent',
+      attachments JSONB DEFAULT '[]'::jsonb,
+      contact_name TEXT,
+      contact_info TEXT,
+      sent_at TIMESTAMPTZ,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS referral_documents (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      referral_id TEXT NOT NULL REFERENCES referrals(id) ON DELETE CASCADE,
+      document_type TEXT,
+      filename TEXT,
+      file_path TEXT,
+      file_size INTEGER,
+      description TEXT,
+      uploaded_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE OR REPLACE FUNCTION generate_referral_number(p_tenant_id TEXT)
+    RETURNS TEXT AS $$
+    DECLARE
+      next_number BIGINT;
+    BEGIN
+      SELECT COALESCE(MAX(NULLIF(regexp_replace(referral_number, '[^0-9]', '', 'g'), '')::BIGINT), 0) + 1
+      INTO next_number
+      FROM referrals
+      WHERE tenant_id = p_tenant_id;
+
+      RETURN 'REF-' || LPAD(next_number::TEXT, 6, '0');
+    END;
+    $$ LANGUAGE plpgsql;
+    `,
+  },
 
 ];
 

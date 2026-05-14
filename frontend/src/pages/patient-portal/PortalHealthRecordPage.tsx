@@ -18,6 +18,9 @@ interface Medication {
   providerName?: string;
   strength?: string;
   pharmacyName?: string;
+  refillable?: boolean;
+  source?: string | null;
+  status?: string | null;
 }
 
 interface VitalRecord {
@@ -375,6 +378,15 @@ export function PortalHealthRecordPage() {
         .refill-button:disabled {
           opacity: 0.6;
           cursor: not-allowed;
+        }
+
+        .refill-unavailable {
+          color: #64748b;
+          font-size: 0.75rem;
+          font-weight: 600;
+          background: #f1f5f9;
+          border-radius: 999px;
+          padding: 0.35rem 0.7rem;
         }
 
         .refill-notice {
@@ -950,7 +962,7 @@ export function PortalHealthRecordPage() {
                           Prescribed: {formatDate(med.prescribedDate)}
                         </span>
                       </div>
-                      {med.id && (
+                      {med.refillable !== false && !med.id?.startsWith('legacy-medication-') ? (
                         <button
                           type="button"
                           className="refill-button"
@@ -959,6 +971,8 @@ export function PortalHealthRecordPage() {
                         >
                           {refillInFlight === med.id ? 'Submitting...' : 'Request Refill'}
                         </button>
+                      ) : (
+                        <span className="refill-unavailable">Contact office for refill</span>
                       )}
                     </div>
                     <p className="medication-sig">{med.sig}</p>

@@ -100,6 +100,32 @@ describe("Portal Billing routes", () => {
       );
     });
 
+    it("reconciles portal totals when payments cover the balance", async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          {
+            bill_total_charges_cents: 0,
+            bill_paid_cents: 17500,
+            bill_adjustment_cents: 0,
+            bill_balance_cents: 0,
+            unbilled_total_charges_cents: 0,
+            unbilled_patient_responsibility_cents: 0,
+            patient_payment_cents: 17500,
+            portal_payment_cents: 0,
+            last_payment_date: "2024-01-15",
+            last_payment_cents: 17500,
+          },
+        ],
+      }).mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).get("/portal-billing/balance");
+
+      expect(res.status).toBe(200);
+      expect(res.body.currentBalance).toBe(0);
+      expect(res.body.totalCharges).toBe(175);
+      expect(res.body.totalPayments).toBe(175);
+    });
+
     it("returns 500 on database error", async () => {
       queryMock.mockRejectedValueOnce(new Error("Database error"));
 

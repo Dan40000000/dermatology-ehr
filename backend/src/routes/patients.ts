@@ -69,6 +69,41 @@ async function safeAuditPatientAccess(params: {
   }
 }
 
+async function ensurePatientPortalScaffold(params: {
+  tenantId: string;
+  patientId: string;
+}) {
+  const { tenantId, patientId } = params;
+
+  try {
+    await pool.query(
+      `INSERT INTO patient_communication_preferences (
+        id, tenant_id, patient_id, allow_email, allow_sms, allow_phone, allow_mail,
+        preferred_method, appointment_reminders, lab_result_notifications, billing_alerts,
+        health_tips_newsletter, created_at, updated_at
+      )
+      VALUES ($1, $2, $3, true, true, true, true, 'email', true, true, true, false, NOW(), NOW())
+      ON CONFLICT (tenant_id, patient_id) DO UPDATE SET
+        updated_at = NOW()`,
+      [crypto.randomUUID(), tenantId, patientId],
+    );
+
+    await pool.query(
+      `INSERT INTO portal_patient_balances (
+        tenant_id, patient_id, total_charges, total_payments, total_adjustments, last_updated
+      )
+      VALUES ($1, $2, 0, 0, 0, NOW())
+      ON CONFLICT (patient_id) DO NOTHING`,
+      [tenantId, patientId],
+    );
+  } catch (error) {
+    logger.warn("Patient portal scaffold creation failed", {
+      error: toSafeErrorMessage(error),
+      patientId,
+    });
+  }
+}
+
 const createPatientSchema = z.object({
   firstName: z.string().min(1).max(100),
   lastName: z.string().min(1).max(100),
@@ -369,7 +404,14 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
     ipAddress: req.ip,
     userAgent: req.get("user-agent") || undefined,
   });
-  return res.status(201).json({ id });
+
+  await ensurePatientPortalScaffold({ tenantId, patientId: id });
+
+  return res.status(201).json({
+    id,
+    portalProfileReady: true,
+    portalSignupVerification: ssnLast4 ? "dob_ssn_last4" : "manual_verification_needed",
+  });
 });
 
 /**

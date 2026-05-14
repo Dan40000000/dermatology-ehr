@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Modal, Skeleton } from '../components/ui';
 import { API_BASE_URL } from '../utils/apiBase';
-import { fetchAppointments, fetchOrders, fetchPatients } from '../api';
+import { fetchAppointments, fetchOrders, fetchPatients, recordPrintedDocument } from '../api';
 
 type InstructionType =
   | 'all'
@@ -799,12 +799,6 @@ export function HandoutsPage() {
   const handlePrint = () => {
     if (!selectedHandout) return;
 
-    const printWindow = window.open('', '_blank', 'width=900,height=900');
-    if (!printWindow) {
-      showError('Unable to open print preview');
-      return;
-    }
-
     const html = toPrintableHtml(
       selectedHandout.title,
       selectedHandout.condition,
@@ -820,6 +814,28 @@ export function HandoutsPage() {
         generatedOn: getTodayDateLabel(),
       },
     );
+
+    if (session && selectedPatientId) {
+      void recordPrintedDocument(session.tenantId, session.accessToken, {
+        patientId: selectedPatientId,
+        title: selectedHandout.title,
+        category: selectedHandout.instruction_type === 'aftercare' ? 'After Visit Instructions' : 'Printed Documents',
+        description: `${formatInstructionType(selectedHandout.instruction_type)} handout for ${selectedHandout.condition}`,
+        html,
+        shareToPortal: true,
+        notes: 'Automatically saved from Clinical Print Templates.',
+      }).then(() => {
+        showSuccess('Printed document saved to chart and patient portal');
+      }).catch((error: unknown) => {
+        showError(getErrorMessage(error, 'Printed document could not be saved to chart'));
+      });
+    }
+
+    const printWindow = window.open('', '_blank', 'width=900,height=900');
+    if (!printWindow) {
+      showError('Unable to open print preview');
+      return;
+    }
 
     printWindow.document.open();
     printWindow.document.write(html);

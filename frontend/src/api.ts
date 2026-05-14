@@ -1627,6 +1627,17 @@ export const createCharge = (tenantId: string, accessToken: string, data: any) =
 export const createDocument = (tenantId: string, accessToken: string, data: any) =>
   authedPost(tenantId, accessToken, "/api/documents", data);
 
+export const recordPrintedDocument = (tenantId: string, accessToken: string, data: {
+  patientId: string;
+  encounterId?: string | null;
+  title: string;
+  category?: string;
+  description?: string;
+  html: string;
+  shareToPortal?: boolean;
+  notes?: string;
+}) => authedPost(tenantId, accessToken, "/api/documents/printed", data);
+
 export const createPhoto = (tenantId: string, accessToken: string, data: any) =>
   authedPost(tenantId, accessToken, "/api/photos", data);
 

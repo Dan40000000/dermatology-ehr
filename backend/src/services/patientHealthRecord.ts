@@ -32,6 +32,10 @@ export interface PatientMedicationSummary {
   prescribedDate?: string | null;
   providerName?: string | null;
   pharmacyName?: string | null;
+  status?: string | null;
+  source?: "prescription" | "patient_record" | string | null;
+  refillable?: boolean;
+  refillsRemaining?: number | null;
 }
 
 const NO_KNOWN_VALUES = new Set([
@@ -126,6 +130,10 @@ function parseLegacyMedication(entry: string, index: number): PatientMedicationS
     prescribedDate: null,
     providerName: null,
     pharmacyName: null,
+    status: "active",
+    source: "patient_record",
+    refillable: false,
+    refillsRemaining: null,
   };
 }
 
@@ -161,6 +169,10 @@ function normalizeMedicationRow(row: any): PatientMedicationSummary | null {
   const strength = cleanText(row.strength) || null;
   const sig = cleanText(row.sig);
   const dosage = cleanText(row.dosage) || [strength, sig].filter(Boolean).join(" ");
+  const source = cleanText(row.source) || "prescription";
+  const status = cleanText(row.status).toLowerCase() || "active";
+  const refills = row.refills == null ? null : Number(row.refills);
+  const refillsRemaining = row.refillsRemaining == null ? null : Number(row.refillsRemaining);
 
   return {
     id: String(row.id ?? `medication-${medicationName.toLowerCase()}`),
@@ -170,10 +182,14 @@ function normalizeMedicationRow(row: any): PatientMedicationSummary | null {
     sig,
     dosage,
     quantity: cleanText(row.quantity) || null,
-    refills: row.refills ?? null,
+    refills,
     prescribedDate: row.prescribedDate ?? row.createdAt ?? null,
     providerName: cleanText(row.providerName) || null,
     pharmacyName: cleanText(row.pharmacyName) || null,
+    status,
+    source,
+    refillable: source === "prescription" && ["active", "sent", "transmitted"].includes(status),
+    refillsRemaining,
   };
 }
 
@@ -293,14 +309,33 @@ export async function getPatientMedicationSummaries(
   if (includePrescriptions) {
     try {
       const prescriptions = await db.query(
-        `SELECT id,
-                medication_name as "medicationName",
-                written_date as "prescribedDate",
-                created_at as "createdAt"
-         FROM prescriptions
-         WHERE tenant_id = $1
-           AND patient_id = $2
-         ORDER BY COALESCE(written_date::timestamptz, created_at) DESC
+        `SELECT p.id,
+                p.medication_name as "medicationName",
+                p.strength,
+                p.sig,
+                CONCAT_WS(' ', NULLIF(p.quantity::text, ''), NULLIF(p.quantity_unit, '')) as quantity,
+                p.refills,
+                p.refills_remaining as "refillsRemaining",
+                COALESCE(p.prescribed_date, p.written_date, p.created_at) as "prescribedDate",
+                p.created_at as "createdAt",
+                p.status,
+                COALESCE(p.pharmacy_name, pharm.name) as "pharmacyName",
+                COALESCE(pr.full_name, u.full_name) as "providerName",
+                'prescription' as source
+         FROM prescriptions p
+         LEFT JOIN pharmacies pharm
+           ON pharm.id = p.pharmacy_id
+          AND (pharm.tenant_id = p.tenant_id OR pharm.tenant_id IS NULL)
+         LEFT JOIN providers pr
+           ON pr.id = p.provider_id
+          AND pr.tenant_id = p.tenant_id
+         LEFT JOIN users u
+           ON u.id = p.provider_id
+          AND u.tenant_id = p.tenant_id
+         WHERE p.tenant_id = $1
+           AND p.patient_id = $2
+           AND COALESCE(p.status, 'active') IN ('active', 'sent', 'transmitted')
+         ORDER BY COALESCE(p.prescribed_date, p.written_date, p.created_at) DESC
          LIMIT 100`,
         [tenantId, patientId],
       );
@@ -314,7 +349,7 @@ export async function getPatientMedicationSummaries(
     }
   }
 
-  if (includeLegacy) {
+  if (includeLegacy && medications.length === 0) {
     let legacyMedications = options?.legacyMedications;
     if (legacyMedications === undefined) {
       try {

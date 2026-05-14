@@ -57,6 +57,12 @@ const changePasswordSchema = z.object({
 });
 
 const updateProfileSchema = z.object({
+  firstName: z.string().min(1).optional(),
+  lastName: z.string().min(1).optional(),
+  dob: z.string().optional().nullable(),
+  dateOfBirth: z.string().optional().nullable(),
+  sex: z.string().optional().nullable(),
+  gender: z.string().optional().nullable(),
   phone: z.string().optional(),
   email: z.string().email().optional(),
   address: z.string().optional(),
@@ -71,6 +77,18 @@ const updateProfileSchema = z.object({
   pharmacyName: z.string().optional().nullable(),
   pharmacyPhone: z.string().optional().nullable(),
   pharmacyAddress: z.string().optional().nullable(),
+});
+
+const communicationPreferencesSchema = z.object({
+  appointmentReminders: z.boolean().optional(),
+  labResultNotifications: z.boolean().optional(),
+  billingAlerts: z.boolean().optional(),
+  healthTipsNewsletter: z.boolean().optional(),
+  allowEmail: z.boolean().optional(),
+  allowSms: z.boolean().optional(),
+  allowPhone: z.boolean().optional(),
+  allowMail: z.boolean().optional(),
+  preferredMethod: z.enum(["email", "sms", "phone", "mail"]).optional(),
 });
 
 export const patientPortalRouter = Router();
@@ -91,6 +109,17 @@ function logPatientPortalError(message: string, error: unknown): void {
   logger.error(message, {
     error: toSafeErrorMessage(error),
   });
+}
+
+function normalizeSex(value: unknown): string | null {
+  if (typeof value !== "string") return value == null ? null : String(value);
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  if (["m", "male"].includes(normalized)) return "male";
+  if (["f", "female"].includes(normalized)) return "female";
+  if (["o", "other", "nonbinary", "non-binary"].includes(normalized)) return "other";
+  if (["prefer_not_to_say", "prefer not to say", "unknown", "u"].includes(normalized)) return "prefer_not_to_say";
+  return normalized;
 }
 
 // Schema for identity verification (Step 1 of registration)
@@ -714,7 +743,7 @@ patientPortalRouter.get("/me", requirePatientAuth, async (req: PatientPortalRequ
   try {
     const result = await pool.query(
       `SELECT p.id, p.first_name as "firstName", p.last_name as "lastName",
-              p.dob, p.phone, p.email, p.address, p.city, p.state, p.zip,
+              p.dob, p.sex, p.phone, p.email, p.address, p.city, p.state, p.zip,
               p.emergency_contact_name as "emergencyContactName",
               p.emergency_contact_relationship as "emergencyContactRelationship",
               p.emergency_contact_phone as "emergencyContactPhone",
@@ -829,13 +858,28 @@ patientPortalRouter.put("/me", requirePatientAuth, async (req: PatientPortalRequ
     const updates: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
+    const fieldColumns: Record<string, string> = {
+      firstName: "first_name",
+      lastName: "last_name",
+      dob: "dob",
+      dateOfBirth: "dob",
+      sex: "sex",
+      gender: "sex",
+      emergencyContactName: "emergency_contact_name",
+      emergencyContactRelationship: "emergency_contact_relationship",
+      emergencyContactPhone: "emergency_contact_phone",
+      pharmacyId: "pharmacy_id",
+      pharmacyNcpdp: "pharmacy_ncpdp",
+      pharmacyName: "pharmacy_name",
+      pharmacyPhone: "pharmacy_phone",
+      pharmacyAddress: "pharmacy_address",
+    };
 
     Object.entries(parsed.data).forEach(([key, value]) => {
       if (value !== undefined) {
-        // Convert camelCase to snake_case
-        const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+        const dbKey = fieldColumns[key] || key.replace(/([A-Z])/g, '_$1').toLowerCase();
         updates.push(`${dbKey} = $${paramIndex}`);
-        values.push(value);
+        values.push(dbKey === "sex" ? normalizeSex(value) : value);
         paramIndex++;
       }
     });
@@ -881,6 +925,131 @@ patientPortalRouter.put("/me", requirePatientAuth, async (req: PatientPortalRequ
   } catch (error) {
     logPatientPortalError("Update profile error", error);
     return res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+/**
+ * GET /api/patient-portal/preferences
+ * Get patient communication preferences
+ */
+patientPortalRouter.get("/preferences", requirePatientAuth, async (req: PatientPortalRequest, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT appointment_reminders as "appointmentReminders",
+              lab_result_notifications as "labResultNotifications",
+              billing_alerts as "billingAlerts",
+              health_tips_newsletter as "healthTipsNewsletter",
+              allow_email as "allowEmail",
+              allow_sms as "allowSms",
+              allow_phone as "allowPhone",
+              allow_mail as "allowMail",
+              preferred_method as "preferredMethod"
+       FROM patient_communication_preferences
+       WHERE tenant_id = $1 AND patient_id = $2
+       ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+       LIMIT 1`,
+      [req.patient!.tenantId, req.patient!.patientId],
+    );
+
+    return res.json({
+      preferences: {
+        appointmentReminders: result.rows[0]?.appointmentReminders ?? true,
+        labResultNotifications: result.rows[0]?.labResultNotifications ?? true,
+        billingAlerts: result.rows[0]?.billingAlerts ?? true,
+        healthTipsNewsletter: result.rows[0]?.healthTipsNewsletter ?? false,
+        allowEmail: result.rows[0]?.allowEmail ?? true,
+        allowSms: result.rows[0]?.allowSms ?? true,
+        allowPhone: result.rows[0]?.allowPhone ?? true,
+        allowMail: result.rows[0]?.allowMail ?? true,
+        preferredMethod: result.rows[0]?.preferredMethod ?? "email",
+      },
+    });
+  } catch (error) {
+    logPatientPortalError("Get patient preferences error", error);
+    return res.status(500).json({ error: "Failed to get communication preferences" });
+  }
+});
+
+/**
+ * PUT /api/patient-portal/preferences
+ * Update patient communication preferences
+ */
+patientPortalRouter.put("/preferences", requirePatientAuth, async (req: PatientPortalRequest, res) => {
+  const parsed = communicationPreferencesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.format() });
+  }
+
+  try {
+    const data = {
+      appointmentReminders: parsed.data.appointmentReminders ?? true,
+      labResultNotifications: parsed.data.labResultNotifications ?? true,
+      billingAlerts: parsed.data.billingAlerts ?? true,
+      healthTipsNewsletter: parsed.data.healthTipsNewsletter ?? false,
+      allowEmail: parsed.data.allowEmail ?? true,
+      allowSms: parsed.data.allowSms ?? true,
+      allowPhone: parsed.data.allowPhone ?? true,
+      allowMail: parsed.data.allowMail ?? true,
+      preferredMethod: parsed.data.preferredMethod ?? "email",
+    };
+
+    const updateResult = await pool.query(
+      `UPDATE patient_communication_preferences
+       SET appointment_reminders = $1,
+           lab_result_notifications = $2,
+           billing_alerts = $3,
+           health_tips_newsletter = $4,
+           allow_email = $5,
+           allow_sms = $6,
+           allow_phone = $7,
+           allow_mail = $8,
+           preferred_method = $9,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE tenant_id = $10 AND patient_id = $11
+       RETURNING id`,
+      [
+        data.appointmentReminders,
+        data.labResultNotifications,
+        data.billingAlerts,
+        data.healthTipsNewsletter,
+        data.allowEmail,
+        data.allowSms,
+        data.allowPhone,
+        data.allowMail,
+        data.preferredMethod,
+        req.patient!.tenantId,
+        req.patient!.patientId,
+      ],
+    );
+
+    if (updateResult.rowCount === 0) {
+      await pool.query(
+        `INSERT INTO patient_communication_preferences (
+           id, tenant_id, patient_id, appointment_reminders, lab_result_notifications,
+           billing_alerts, health_tips_newsletter, allow_email, allow_sms,
+           allow_phone, allow_mail, preferred_method
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [
+          crypto.randomUUID(),
+          req.patient!.tenantId,
+          req.patient!.patientId,
+          data.appointmentReminders,
+          data.labResultNotifications,
+          data.billingAlerts,
+          data.healthTipsNewsletter,
+          data.allowEmail,
+          data.allowSms,
+          data.allowPhone,
+          data.allowMail,
+          data.preferredMethod,
+        ],
+      );
+    }
+
+    return res.json({ preferences: data });
+  } catch (error) {
+    logPatientPortalError("Update patient preferences error", error);
+    return res.status(500).json({ error: "Failed to update communication preferences" });
   }
 });
 

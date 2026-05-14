@@ -7,6 +7,13 @@ interface PatientPortalLayoutProps {
   children: ReactNode;
 }
 
+interface PortalNotificationItem {
+  key: string;
+  title: string;
+  detail: string;
+  path: string;
+}
+
 export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
   const { patient, logout } = usePatientPortalAuth();
   const navigate = useNavigate();
@@ -14,7 +21,9 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
   const [mounted, setMounted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationCount, setNotificationCount] = useState(0);
+  const [notificationItems, setNotificationItems] = useState<PortalNotificationItem[]>([]);
 
   useEffect(() => {
     setMounted(true);
@@ -22,6 +31,8 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
 
   useEffect(() => {
     setSidebarOpen(false);
+    setNotificationOpen(false);
+    setUserMenuOpen(false);
   }, [location.pathname]);
 
   useEffect(() => {
@@ -30,6 +41,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
     const loadNotifications = async () => {
       if (!patient) {
         setNotificationCount(0);
+        setNotificationItems([]);
         return;
       }
 
@@ -37,9 +49,71 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
         const data = await patientPortalFetch('/api/patient-portal-data/dashboard');
         const dashboard = data.dashboard || {};
         const count = Number(dashboard.actionNeededCount ?? 0);
-        if (!cancelled) setNotificationCount(Number.isFinite(count) ? count : 0);
+        const items: PortalNotificationItem[] = [];
+        const unreadMessages = Number(dashboard.unreadMessages || 0);
+        const newDocuments = Number(dashboard.newDocuments || 0);
+        const newVisits = Number(dashboard.newVisits || 0);
+        const currentBalance = Number(dashboard.currentBalance || 0);
+
+        if (dashboard.preCheckinAvailable) {
+          const appointment = dashboard.nextCheckinAppointment;
+          items.push({
+            key: 'pre-check-in',
+            title: 'Pre-check-in available',
+            detail: appointment?.appointmentType
+              ? `${appointment.appointmentType} with ${appointment.providerName || 'your provider'}`
+              : 'Complete forms before your upcoming appointment.',
+            path: '/portal/check-in',
+          });
+        }
+        if (unreadMessages > 0) {
+          items.push({
+            key: 'messages',
+            title: `${unreadMessages} unread message${unreadMessages === 1 ? '' : 's'}`,
+            detail: 'Review messages from your care team.',
+            path: '/portal/messages',
+          });
+        }
+        if (newDocuments > 0) {
+          items.push({
+            key: 'documents',
+            title: `${newDocuments} new document${newDocuments === 1 ? '' : 's'}`,
+            detail: 'Review shared after-care, consent, or result documents.',
+            path: '/portal/documents',
+          });
+        }
+        if (newVisits > 0) {
+          items.push({
+            key: 'visits',
+            title: `${newVisits} new visit summar${newVisits === 1 ? 'y' : 'ies'}`,
+            detail: 'Read patient-friendly visit summaries released by the office.',
+            path: '/portal/visits',
+          });
+        }
+        if (currentBalance > 0) {
+          items.push({
+            key: 'billing',
+            title: 'Balance due',
+            detail: `$${currentBalance.toFixed(2)} is ready for review or payment.`,
+            path: '/portal/billing',
+          });
+        }
+
+        if (!cancelled) {
+          const safeCount = Number.isFinite(count) ? count : items.length;
+          setNotificationCount(safeCount);
+          setNotificationItems(items.length > 0 || safeCount === 0 ? items : [{
+            key: 'dashboard',
+            title: 'Portal items need review',
+            detail: 'Open the dashboard to review pending items.',
+            path: '/portal/dashboard',
+          }]);
+        }
       } catch {
-        if (!cancelled) setNotificationCount(0);
+        if (!cancelled) {
+          setNotificationCount(0);
+          setNotificationItems([]);
+        }
       }
     };
 
@@ -209,16 +283,60 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
           </div>
 
           <div className="portal-topbar-right">
-            <Link
-              to="/portal/dashboard"
-              className="portal-notification-btn"
-              aria-label={`${notificationCount} portal notification${notificationCount === 1 ? '' : 's'}`}
-            >
-              {getIcon('bell')}
-              {notificationCount > 0 && (
-                <span className="notification-badge">{notificationCount > 9 ? '9+' : notificationCount}</span>
+            <div className="portal-notification-wrap">
+              <button
+                type="button"
+                className={`portal-notification-btn ${notificationOpen ? 'open' : ''}`}
+                aria-label={`${notificationCount} portal notification${notificationCount === 1 ? '' : 's'}`}
+                aria-expanded={notificationOpen}
+                onClick={() => {
+                  setNotificationOpen(open => !open);
+                  setUserMenuOpen(false);
+                }}
+              >
+                {getIcon('bell')}
+                {notificationCount > 0 && (
+                  <span className="notification-badge">{notificationCount > 9 ? '9+' : notificationCount}</span>
+                )}
+              </button>
+              {notificationOpen && (
+                <div className="portal-notification-menu">
+                  <div className="portal-notification-header">
+                    <strong>Notifications</strong>
+                    <span>{notificationCount} item{notificationCount === 1 ? '' : 's'}</span>
+                  </div>
+                  {notificationItems.length === 0 ? (
+                    <div className="portal-notification-empty">
+                      No portal items need attention right now.
+                    </div>
+                  ) : (
+                    <div className="portal-notification-list">
+                      {notificationItems.map(item => (
+                        <Link
+                          key={item.key}
+                          to={item.path}
+                          className="portal-notification-item"
+                          onClick={() => setNotificationOpen(false)}
+                        >
+                          <span className="portal-notification-dot" />
+                          <span>
+                            <strong>{item.title}</strong>
+                            <small>{item.detail}</small>
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                  <Link
+                    to="/portal/dashboard"
+                    className="portal-notification-footer"
+                    onClick={() => setNotificationOpen(false)}
+                  >
+                    View portal dashboard
+                  </Link>
+                </div>
               )}
-            </Link>
+            </div>
 
             <div className="portal-user-dropdown">
               <button
@@ -445,6 +563,10 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
           gap: 0.75rem;
         }
 
+        .portal-notification-wrap {
+          position: relative;
+        }
+
         .portal-notification-btn {
           position: relative;
           width: 40px;
@@ -466,6 +588,11 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
           color: #6366f1;
         }
 
+        .portal-notification-btn.open {
+          background: #eef2ff;
+          color: #4f46e5;
+        }
+
         .portal-notification-btn svg {
           width: 20px;
           height: 20px;
@@ -485,6 +612,96 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
           display: flex;
           align-items: center;
           justify-content: center;
+        }
+
+        .portal-notification-menu {
+          position: absolute;
+          top: calc(100% + 10px);
+          right: 0;
+          width: min(360px, calc(100vw - 2rem));
+          background: white;
+          border: 1px solid #e2e8f0;
+          border-radius: 16px;
+          box-shadow: 0 18px 50px rgba(15, 23, 42, 0.16);
+          overflow: hidden;
+          z-index: 150;
+          animation: dropdownFadeIn 0.15s ease-out;
+        }
+
+        .portal-notification-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 0.9rem 1rem;
+          border-bottom: 1px solid #f1f5f9;
+          color: #0f172a;
+        }
+
+        .portal-notification-header span {
+          color: #64748b;
+          font-size: 0.75rem;
+          font-weight: 700;
+        }
+
+        .portal-notification-list {
+          max-height: 340px;
+          overflow-y: auto;
+        }
+
+        .portal-notification-item {
+          display: flex;
+          gap: 0.75rem;
+          padding: 0.9rem 1rem;
+          text-decoration: none;
+          color: #334155;
+          border-bottom: 1px solid #f8fafc;
+        }
+
+        .portal-notification-item:hover {
+          background: #f8fafc;
+        }
+
+        .portal-notification-item strong {
+          display: block;
+          color: #0f172a;
+          font-size: 0.9rem;
+          margin-bottom: 0.2rem;
+        }
+
+        .portal-notification-item small {
+          color: #64748b;
+          line-height: 1.35;
+        }
+
+        .portal-notification-dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: #4f46e5;
+          margin-top: 0.25rem;
+          flex: 0 0 auto;
+          box-shadow: 0 0 0 4px #eef2ff;
+        }
+
+        .portal-notification-empty {
+          padding: 1.25rem;
+          color: #64748b;
+          font-size: 0.9rem;
+        }
+
+        .portal-notification-footer {
+          display: block;
+          padding: 0.85rem 1rem;
+          text-align: center;
+          color: #4f46e5;
+          font-size: 0.85rem;
+          font-weight: 700;
+          text-decoration: none;
+          background: #f8fafc;
+        }
+
+        .portal-notification-footer:hover {
+          background: #eef2ff;
         }
 
         .portal-user-dropdown {

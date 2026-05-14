@@ -233,9 +233,11 @@ export async function getLivePortalBalance(tenantId: string, patientId: string) 
       - toCents(row.portal_payment_cents),
   );
   const lastPaymentCents = row.last_payment_cents == null ? null : toCents(row.last_payment_cents);
+  // Patient-facing ledger must reconcile: charges = payments + adjustments + balance.
+  const portalLedgerChargesCents = currentBalanceCents + totalPaymentsCents + totalAdjustmentsCents;
 
   const result = {
-    totalCharges: totalChargesCents / 100,
+    totalCharges: portalLedgerChargesCents / 100,
     totalPayments: totalPaymentsCents / 100,
     totalAdjustments: totalAdjustmentsCents / 100,
     currentBalance: currentBalanceCents / 100,
@@ -244,7 +246,6 @@ export async function getLivePortalBalance(tenantId: string, patientId: string) 
   };
 
   // current_balance is generated as total_charges - total_payments - total_adjustments.
-  const portalLedgerChargesCents = currentBalanceCents + totalPaymentsCents + totalAdjustmentsCents;
   await pool.query(
     `INSERT INTO portal_patient_balances (
        tenant_id, patient_id, total_charges, total_payments, total_adjustments,

@@ -28,6 +28,7 @@ import {
   fetchOrders,
   fetchPrescriptionsEnhanced,
   fetchTasks,
+  fetchReferrals,
   fetchPatientClinicalSummary,
   fetchEligibilityHistory,
   verifyPatientEligibility,
@@ -38,6 +39,7 @@ import {
   fetchRecallCampaigns,
   getPresignedAccess,
   signUploadKey,
+  recordPrintedDocument,
   API_BASE_URL,
   TENANT_HEADER_NAME,
 } from '../api';
@@ -49,13 +51,14 @@ import type {
   Document,
   Photo,
   Prescription,
+  Referral,
   Task,
   Order,
   PhotoType,
   UserRole,
 } from '../types';
 
-type TabId = 'overview' | 'demographics' | 'insurance' | 'account' | 'medical-history' | 'clinical-summary' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks' | 'scribe';
+type TabId = 'overview' | 'demographics' | 'insurance' | 'account' | 'medical-history' | 'clinical-summary' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'referrals' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks' | 'scribe';
 const VALID_PATIENT_DETAIL_TABS = new Set<TabId>([
   'overview',
   'demographics',
@@ -67,6 +70,7 @@ const VALID_PATIENT_DETAIL_TABS = new Set<TabId>([
   'encounters',
   'appointments',
   'orders',
+  'referrals',
   'documents',
   'photos',
   'timeline',
@@ -81,6 +85,7 @@ const CLINICAL_PATIENT_TABS = new Set<TabId>([
   'clinical-trends',
   'encounters',
   'orders',
+  'referrals',
   'photos',
   'rx-history',
   'scribe',
@@ -161,6 +166,70 @@ function getNextRelevantAppointment(appointments: Appointment[]): Appointment | 
       appointments.filter((appointment) => appointment.status !== 'cancelled' && appointment.status !== 'no_show')
     )[0] || null
   );
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildFaceSheetHtml(patient: Patient, nextAppointment: Appointment | null): string {
+  const patientName = `${patient.lastName}, ${patient.firstName}`.trim();
+  const address = [patient.address, patient.city, patient.state, patient.zip].filter(Boolean).join(', ');
+  const insurance = typeof patient.insurance === 'string'
+    ? patient.insurance
+    : patient.insurance
+      ? 'Insurance on file'
+      : 'No insurance on file';
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Face Sheet - ${escapeHtml(patientName)}</title>
+    <style>
+      body { font-family: Georgia, "Times New Roman", serif; margin: 32px; color: #111827; }
+      h1 { margin-bottom: 4px; }
+      .muted { color: #6b7280; }
+      .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 24px; }
+      .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 14px; }
+      .label { font-weight: 700; color: #374151; }
+      .row { margin: 6px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>${escapeHtml(patientName)}</h1>
+    <div class="muted">DOB: ${escapeHtml(patient.dob ? new Date(patient.dob).toLocaleDateString() : 'N/A')} | Sex: ${escapeHtml(patient.sex || 'N/A')}</div>
+    <div class="grid">
+      <section class="card">
+        <h2>Contact</h2>
+        <div class="row"><span class="label">Phone:</span> ${escapeHtml(formatPhoneDisplay(patient.phone) || 'N/A')}</div>
+        <div class="row"><span class="label">Email:</span> ${escapeHtml(patient.email || 'N/A')}</div>
+        <div class="row"><span class="label">Address:</span> ${escapeHtml(address || 'N/A')}</div>
+      </section>
+      <section class="card">
+        <h2>Insurance</h2>
+        <div>${escapeHtml(insurance)}</div>
+      </section>
+      <section class="card">
+        <h2>Allergies</h2>
+        <div>${escapeHtml(Array.isArray(patient.allergies) ? patient.allergies.join(', ') : patient.allergies || 'None reported')}</div>
+      </section>
+      <section class="card">
+        <h2>Medications</h2>
+        <div>${escapeHtml(patient.medications || 'None on file')}</div>
+      </section>
+      <section class="card">
+        <h2>Next Appointment</h2>
+        <div>${escapeHtml(nextAppointment ? `${new Date(nextAppointment.scheduledStart).toLocaleString()} with ${nextAppointment.providerName || 'Provider'}` : 'None scheduled')}</div>
+      </section>
+    </div>
+  </body>
+</html>`;
 }
 
 type MedicalHistoryAllergy = {
@@ -301,6 +370,7 @@ export function PatientDetailPage() {
   const [encounters, setEncounters] = useState<Encounter[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [referrals, setReferrals] = useState<Referral[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
@@ -475,6 +545,17 @@ export function PatientDetailPage() {
         }
       } else {
         setOrders([]);
+      }
+
+      if (canViewClinicalPatientData) {
+        try {
+          const referralsRes = await fetchReferrals(session.tenantId, session.accessToken, { patientId });
+          setReferrals(referralsRes.referrals || []);
+        } catch {
+          setReferrals([]);
+        }
+      } else {
+        setReferrals([]);
       }
     } catch (err: any) {
       if (err.message === 'Patient not found') {
@@ -758,6 +839,30 @@ export function PatientDetailPage() {
     navigate(`/patients/${patientId}/encounter/${encounterId}`);
   };
 
+  const handlePrintFaceSheet = () => {
+    if (!patient) return;
+    const html = buildFaceSheetHtml(patient, nextAppointment);
+
+    if (session && patientId) {
+      void recordPrintedDocument(session.tenantId, session.accessToken, {
+        patientId,
+        title: `Face Sheet - ${patient.firstName} ${patient.lastName}`,
+        category: 'Printed Documents',
+        description: 'Patient face sheet printed from provider chart.',
+        html,
+        shareToPortal: true,
+        notes: 'Automatically saved when the face sheet was printed.',
+      }).then(() => {
+        showSuccess('Face sheet saved to chart and patient portal');
+        void loadPatientData();
+      }).catch((error: any) => {
+        showError(error.message || 'Face sheet could not be saved to chart');
+      });
+    }
+
+    window.print();
+  };
+
   const handleDeletePatient = async () => {
     if (!session || !patientId || !patient) return;
 
@@ -895,12 +1000,13 @@ export function PatientDetailPage() {
     { id: 'encounters', label: 'Encounters', icon: '', count: encounters.length },
     { id: 'appointments', label: 'Appointments', icon: '', count: appointments.length },
     { id: 'orders', label: 'Orders', icon: '', count: orders.length },
+    { id: 'referrals', label: 'Referrals', icon: '', count: referrals.length },
     { id: 'rx-history', label: 'Rx History', icon: '', count: prescriptions.length },
     { id: 'documents', label: 'Documents', icon: '', count: documents.length },
     { id: 'photos', label: 'Photos', icon: '', count: photos.length },
     { id: 'tasks', label: 'Tasks', icon: '✓', count: tasks.filter(t => t.status !== 'completed').length },
     { id: 'scribe', label: 'AI Scribe', icon: '✨' },
-    { id: 'timeline', label: 'Timeline', icon: '', count: encounters.length + appointments.length + documents.length + photos.length },
+    { id: 'timeline', label: 'Timeline', icon: '', count: encounters.length + appointments.length + documents.length + photos.length + referrals.length },
   ].filter((tab) => canViewClinicalPatientData || !CLINICAL_PATIENT_TABS.has(tab.id));
 
   return (
@@ -1546,6 +1652,13 @@ export function PatientDetailPage() {
           <OrdersTab orders={orders} onOpenOrders={() => navigate('/orders')} />
         )}
 
+        {activeTab === 'referrals' && (
+          <ReferralsTab
+            referrals={referrals}
+            onOpenReferrals={() => navigate(`/referrals?patientId=${patient.id}`)}
+          />
+        )}
+
         {activeTab === 'demographics' && (
           <DemographicsTab patient={patient} onEdit={() => setEditDemographicsOpen(true)} />
         )}
@@ -1634,6 +1747,7 @@ export function PatientDetailPage() {
             appointments={appointments}
             documents={documents}
             photos={photos}
+            referrals={referrals}
             getPhotoUrl={getPhotoDisplayUrl}
           />
         )}
@@ -1655,7 +1769,7 @@ export function PatientDetailPage() {
               </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button type="button" className="btn secondary" onClick={() => setShowFaceSheet(false)}>Close</button>
-                <button type="button" className="btn primary" onClick={() => window.print()}>Print</button>
+                <button type="button" className="btn primary" onClick={handlePrintFaceSheet}>Print</button>
               </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
@@ -2294,6 +2408,89 @@ function OrdersTab({ orders, onOpenOrders }: { orders: Order[]; onOpenOrders: ()
   );
 }
 
+function getReferralParty(referral: Referral): string {
+  if (referral.direction === 'incoming') {
+    return referral.referringProvider || referral.referringOrganization || (referral as any).referringProviderName || 'External provider';
+  }
+  return referral.referredToProvider || referral.referredToOrganization || 'External provider';
+}
+
+function ReferralsTab({
+  referrals,
+  onOpenReferrals,
+}: {
+  referrals: Referral[];
+  onOpenReferrals: () => void;
+}) {
+  const getStatusClass = (status?: string) => {
+    if (!status) return 'pending';
+    if (['completed', 'report_sent'].includes(status)) return 'established';
+    if (['declined', 'cancelled'].includes(status)) return 'inactive';
+    return 'pending';
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div className="ema-section-header">Referrals</div>
+        <button type="button" className="ema-action-btn" onClick={onOpenReferrals}>
+          <span className="icon">+</span>
+          Open Referrals
+        </button>
+      </div>
+
+      {referrals.length === 0 ? (
+        <div style={{
+          background: '#f9fafb',
+          border: '1px dashed #d1d5db',
+          borderRadius: '8px',
+          padding: '3rem',
+          textAlign: 'center'
+        }}>
+          <h3 style={{ margin: '0 0 0.5rem', color: '#374151' }}>No referrals yet</h3>
+          <p style={{ color: '#6b7280', margin: '0 0 1rem' }}>
+            Incoming and outgoing referral activity will appear here in the patient chart.
+          </p>
+          <button type="button" className="ema-action-btn" onClick={onOpenReferrals}>
+            Add Referral
+          </button>
+        </div>
+      ) : (
+        <table className="ema-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Direction</th>
+              <th>Status</th>
+              <th>Priority</th>
+              <th>Provider / Organization</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {referrals.map((referral) => (
+              <tr key={referral.id}>
+                <td>{referral.createdAt ? new Date(referral.createdAt).toLocaleDateString() : '—'}</td>
+                <td style={{ textTransform: 'capitalize' }}>{referral.direction}</td>
+                <td>
+                  <span className={`ema-status ${getStatusClass(referral.status)}`}>
+                    {String(referral.status || 'new').replace(/_/g, ' ')}
+                  </span>
+                </td>
+                <td>{String(referral.priority || 'routine').toUpperCase()}</td>
+                <td>{getReferralParty(referral)}</td>
+                <td style={{ maxWidth: '340px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {referral.reason || referral.notes || '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 // Medical History Tab Component
 function MedicalHistoryTab({
   patient,
@@ -2799,6 +2996,75 @@ function DocumentsTab({
   documents: Document[];
   onUpload: () => void;
 }) {
+  const { session } = useAuth();
+  const { showError } = useToast();
+
+  const openDocument = async (doc: Document) => {
+    if (!doc.url) return;
+
+    if (!doc.url.startsWith('/api/')) {
+      window.open(doc.url, '_blank');
+      return;
+    }
+
+    if (!session) {
+      showError('Sign in again to view this document');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}${doc.url}`, {
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+          [TENANT_HEADER_NAME]: session.tenantId,
+        },
+      });
+      if (!response.ok) throw new Error('Failed to open document');
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+    } catch (error: any) {
+      showError(error.message || 'Failed to open document');
+    }
+  };
+
+  const downloadDocument = async (doc: Document) => {
+    if (!doc.url) return;
+
+    if (!doc.url.startsWith('/api/')) {
+      const link = document.createElement('a');
+      link.href = doc.url;
+      link.download = doc.filename || doc.title || 'document';
+      link.click();
+      return;
+    }
+
+    if (!session) {
+      showError('Sign in again to download this document');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}${doc.url}`, {
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+          [TENANT_HEADER_NAME]: session.tenantId,
+        },
+      });
+      if (!response.ok) throw new Error('Failed to download document');
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = doc.filename || doc.title || 'document';
+      link.click();
+      window.URL.revokeObjectURL(url);
+    } catch (error: any) {
+      showError(error.message || 'Failed to download document');
+    }
+  };
+
   return (
     <div style={{ maxWidth: '1200px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -2851,7 +3117,7 @@ function DocumentsTab({
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button
                       type="button"
-                      onClick={() => window.open(doc.url, '_blank')}
+                      onClick={() => void openDocument(doc)}
                       style={{
                         padding: '0.25rem 0.75rem',
                         background: '#0369a1',
@@ -2866,12 +3132,7 @@ function DocumentsTab({
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        const link = document.createElement('a');
-                        link.href = doc.url;
-                        link.download = doc.filename || 'document';
-                        link.click();
-                      }}
+                      onClick={() => void downloadDocument(doc)}
                       style={{
                         padding: '0.25rem 0.75rem',
                         background: '#6b7280',
@@ -3398,14 +3659,14 @@ function EditProblemModal({ isOpen, onClose }: any) {
 // Timeline Tab Component
 interface TimelineEvent {
   id: string;
-  type: 'encounter' | 'appointment' | 'document' | 'photo';
+  type: 'encounter' | 'appointment' | 'document' | 'photo' | 'referral';
   date: string;
   title: string;
   description: string;
   status?: string;
   icon: string;
   iconColor: string;
-  data: Encounter | Appointment | Document | Photo;
+  data: Encounter | Appointment | Document | Photo | Referral;
 }
 
 function TimelineTab({
@@ -3414,6 +3675,7 @@ function TimelineTab({
   appointments,
   documents,
   photos,
+  referrals,
   getPhotoUrl,
 }: {
   patient: Patient;
@@ -3421,10 +3683,11 @@ function TimelineTab({
   appointments: Appointment[];
   documents: Document[];
   photos: Photo[];
+  referrals: Referral[];
   getPhotoUrl: (photo: Photo) => string;
 }) {
   const [selectedFilters, setSelectedFilters] = useState<Set<string>>(
-    new Set(['encounter', 'appointment', 'document', 'photo'])
+    new Set(['encounter', 'appointment', 'document', 'photo', 'referral'])
   );
 
   // Build timeline events from all data sources
@@ -3461,6 +3724,17 @@ function TimelineTab({
       icon: '📄',
       iconColor: '#7c3aed',
       data: doc,
+    })),
+    ...referrals.map((referral): TimelineEvent => ({
+      id: `referral-${referral.id}`,
+      type: 'referral',
+      date: referral.createdAt || referral.updatedAt || new Date().toISOString(),
+      title: referral.direction === 'incoming' ? 'Incoming Referral' : 'Outgoing Referral',
+      description: referral.reason || referral.notes || getReferralParty(referral),
+      status: referral.status,
+      icon: '↔',
+      iconColor: '#0f766e',
+      data: referral,
     })),
     ...photos.map((photo): TimelineEvent => ({
       id: `photo-${photo.id}`,
@@ -3540,6 +3814,7 @@ function TimelineTab({
     { type: 'encounter', label: 'Encounters', icon: '🏥', color: '#0369a1', count: encounters.length },
     { type: 'appointment', label: 'Appointments', icon: '📅', color: '#059669', count: appointments.length },
     { type: 'document', label: 'Documents', icon: '📄', color: '#7c3aed', count: documents.length },
+    { type: 'referral', label: 'Referrals', icon: '↔', color: '#0f766e', count: referrals.length },
     { type: 'photo', label: 'Photos', icon: '📷', color: '#dc2626', count: photos.length },
   ];
 
@@ -3784,6 +4059,31 @@ function TimelineTab({
                         >
                           View Document
                         </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {event.type === 'referral' && (
+                    <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #e5e7eb' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem', fontSize: '0.75rem' }}>
+                        <div>
+                          <span style={{ color: '#9ca3af' }}>Direction: </span>
+                          <span style={{ color: '#374151', fontWeight: 500, textTransform: 'capitalize' }}>
+                            {(event.data as Referral).direction}
+                          </span>
+                        </div>
+                        <div>
+                          <span style={{ color: '#9ca3af' }}>Priority: </span>
+                          <span style={{ color: '#374151', fontWeight: 500 }}>
+                            {String((event.data as Referral).priority || 'routine').toUpperCase()}
+                          </span>
+                        </div>
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <span style={{ color: '#9ca3af' }}>Provider / Organization: </span>
+                          <span style={{ color: '#374151', fontWeight: 500 }}>
+                            {getReferralParty(event.data as Referral)}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   )}

@@ -5,9 +5,7 @@ import crypto from "crypto";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import jwt from "jsonwebtoken";
-import { env } from "../config/env";
-import { NextFunction, Request, Response } from "express";
+import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientPortalAuth";
 import { notificationService } from "../services/integrations/notificationService";
 import { logger } from "../lib/logger";
 import {
@@ -32,43 +30,6 @@ function logPortalMessageError(message: string, error: unknown): void {
   logger.error(message, {
     error: toSafeErrorMessage(error),
   });
-}
-
-// Patient portal authentication middleware
-interface PatientAuthRequest extends Request {
-  patient?: {
-    id: string;
-    patientId: string;
-    tenantId: string;
-    email: string;
-  };
-}
-
-function requirePatientAuth(req: PatientAuthRequest, res: Response, next: NextFunction) {
-  const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Missing token" });
-  }
-
-  const token = header.replace("Bearer ", "").trim();
-  try {
-    const decoded = jwt.verify(token, env.jwtSecret) as any;
-
-    // Verify this is a patient token (not staff)
-    if (!decoded.patientId) {
-      return res.status(403).json({ error: "Invalid patient token" });
-    }
-
-    const tenantId = req.header(env.tenantHeader);
-    if (!tenantId || tenantId !== decoded.tenantId) {
-      return res.status(403).json({ error: "Invalid tenant" });
-    }
-
-    req.patient = decoded;
-    return next();
-  } catch (err) {
-    return res.status(401).json({ error: "Invalid token" });
-  }
 }
 
 // Configure multer for file uploads
@@ -104,7 +65,7 @@ const sendMessageSchema = z.object({
 });
 
 // GET /api/patient-portal/messages/threads - List patient's message threads
-router.get("/threads", requirePatientAuth, async (req: PatientAuthRequest, res) => {
+router.get("/threads", requirePatientAuth, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
@@ -186,7 +147,7 @@ router.get("/threads", requirePatientAuth, async (req: PatientAuthRequest, res) 
 });
 
 // GET /api/patient-portal/messages/threads/:id - Get thread with messages
-router.get("/threads/:id", requirePatientAuth, async (req: PatientAuthRequest, res) => {
+router.get("/threads/:id", requirePatientAuth, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
@@ -258,12 +219,10 @@ router.get("/threads/:id", requirePatientAuth, async (req: PatientAuthRequest, r
 });
 
 // POST /api/patient-portal/messages/threads - Create new thread
-router.post("/threads", requirePatientAuth, async (req: PatientAuthRequest, res) => {
+router.post("/threads", requirePatientAuth, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
-    const patientEmail = req.patient!.email;
-
     const parsed = createThreadSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.format() });
@@ -312,9 +271,12 @@ router.post("/threads", requirePatientAuth, async (req: PatientAuthRequest, res)
             tenantId,
             notificationType: "urgent_message",
             data: {
-              patientName,
-              messageSubject: subject,
-              messagePreview: messageText.substring(0, 150) + (messageText.length > 150 ? "..." : ""),
+              threadId,
+              category,
+              securePortalMessage: true,
+              patientName: "Secure portal patient",
+              messageSubject: "New secure patient portal message",
+              messagePreview: "A patient sent an urgent secure portal message. Log in to view details.",
               sentAt: new Date().toISOString(),
             },
           });
@@ -384,7 +346,7 @@ router.post("/threads", requirePatientAuth, async (req: PatientAuthRequest, res)
 });
 
 // POST /api/patient-portal/messages/threads/:id/messages - Send message in thread
-router.post("/threads/:id/messages", requirePatientAuth, async (req: PatientAuthRequest, res) => {
+router.post("/threads/:id/messages", requirePatientAuth, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
@@ -476,7 +438,7 @@ router.post("/threads/:id/messages", requirePatientAuth, async (req: PatientAuth
 });
 
 // POST /api/patient-portal/messages/threads/:id/mark-read - Mark thread as read by patient
-router.post("/threads/:id/mark-read", requirePatientAuth, async (req: PatientAuthRequest, res) => {
+router.post("/threads/:id/mark-read", requirePatientAuth, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
@@ -521,7 +483,7 @@ router.post("/threads/:id/mark-read", requirePatientAuth, async (req: PatientAut
 });
 
 // GET /api/patient-portal/messages/unread-count - Get unread message count
-router.get("/unread-count", requirePatientAuth, async (req: PatientAuthRequest, res) => {
+router.get("/unread-count", requirePatientAuth, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
@@ -541,7 +503,7 @@ router.get("/unread-count", requirePatientAuth, async (req: PatientAuthRequest, 
 });
 
 // POST /api/patient-portal/messages/attachments - Upload attachment
-router.post("/attachments", requirePatientAuth, upload.single("file"), async (req: PatientAuthRequest, res) => {
+router.post("/attachments", requirePatientAuth, upload.single("file"), async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
@@ -612,7 +574,7 @@ router.post("/attachments", requirePatientAuth, upload.single("file"), async (re
 });
 
 // GET /api/patient-portal/messages/attachments/:id - Download attachment
-router.get("/attachments/:id", requirePatientAuth, async (req: PatientAuthRequest, res) => {
+router.get("/attachments/:id", requirePatientAuth, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;

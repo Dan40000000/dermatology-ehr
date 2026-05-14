@@ -15,6 +15,42 @@ jest.mock("../../config/env", () => ({
   },
 }));
 
+jest.mock("../../middleware/patientPortalAuth", () => {
+  const jwt = require("jsonwebtoken");
+
+  return {
+    requirePatientAuth: (req: any, res: any, next: any) => {
+      const header = req.headers.authorization;
+      if (!header?.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "Missing token" });
+      }
+
+      const token = header.replace("Bearer ", "").trim();
+      try {
+        const decoded = jwt.verify(token, "test-secret") as any;
+        if (!decoded.patientId) {
+          return res.status(403).json({ error: "Invalid patient token" });
+        }
+
+        const tenantId = req.header("x-tenant-id");
+        if (!tenantId || tenantId !== decoded.tenantId) {
+          return res.status(403).json({ error: "Invalid tenant" });
+        }
+
+        req.patient = {
+          accountId: decoded.accountId || decoded.id,
+          patientId: decoded.patientId,
+          tenantId: decoded.tenantId,
+          email: decoded.email,
+        };
+        return next();
+      } catch {
+        return res.status(401).json({ error: "Invalid token" });
+      }
+    },
+  };
+});
+
 jest.mock("../../db/pool", () => ({
   pool: {
     query: jest.fn(),

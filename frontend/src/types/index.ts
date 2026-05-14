@@ -273,9 +273,11 @@ export interface Referral {
   patientFirstName?: string;
   patientLastName?: string;
   direction: 'incoming' | 'outgoing';
-  status: 'new' | 'scheduled' | 'in_progress' | 'completed' | 'declined' | 'cancelled';
+  status: 'new' | 'received' | 'verified' | 'scheduled' | 'in_progress' | 'completed' | 'report_sent' | 'declined' | 'cancelled';
   priority: 'routine' | 'urgent' | 'stat';
   referringProvider?: string;
+  referringProviderName?: string;
+  referringPractice?: string;
   referringOrganization?: string;
   referredToProvider?: string;
   referredToOrganization?: string;

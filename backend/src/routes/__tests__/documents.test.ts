@@ -1,5 +1,7 @@
 import request from "supertest";
 import express from "express";
+import fs from "fs";
+import path from "path";
 import { documentsRouter } from "../documents";
 import { pool } from "../../db/pool";
 
@@ -67,6 +69,37 @@ describe("Documents routes", () => {
     });
     expect(res.status).toBe(201);
     expect(res.body.suggestedCategory).toBe("Lab Results");
+  });
+
+  it("POST /documents/printed saves document and portal share", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] });
+    const client = { query: jest.fn().mockResolvedValue({ rows: [] }), release: jest.fn() };
+    connectMock.mockResolvedValueOnce(client);
+
+    const res = await request(app).post("/documents/printed").send({
+      patientId: "patient-1",
+      title: "Aftercare Instructions",
+      category: "After Visit Instructions",
+      html: "<p>Keep the area covered.</p>",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.sharedToPortal).toBe(true);
+    expect(client.query).toHaveBeenCalledWith("BEGIN");
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO documents"),
+      expect.arrayContaining(["tenant-1", "patient-1", "Aftercare Instructions", "printed_document"])
+    );
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO patient_document_shares"),
+      expect.arrayContaining(["tenant-1", res.body.id, "patient-1", "user-1"])
+    );
+    expect(client.query).toHaveBeenCalledWith("COMMIT");
+
+    const savedPath = path.join(process.cwd(), "uploads", "printed-documents", "tenant-1", `${res.body.id}.html`);
+    if (fs.existsSync(savedPath)) {
+      fs.unlinkSync(savedPath);
+    }
   });
 
   it("GET /documents/:id returns 404", async () => {

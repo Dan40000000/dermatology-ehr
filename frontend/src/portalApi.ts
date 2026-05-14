@@ -134,6 +134,7 @@ export interface PortalPatientProfile {
   firstName?: string;
   lastName?: string;
   dob?: string;
+  sex?: string | null;
   phone?: string;
   email?: string;
   address?: string;
@@ -152,6 +153,18 @@ export interface PortalPatientProfile {
   lastLogin?: string | null;
   emailVerified?: boolean;
   passwordUpdatedAt?: string | null;
+}
+
+export interface PortalCommunicationPreferences {
+  appointmentReminders: boolean;
+  labResultNotifications: boolean;
+  billingAlerts: boolean;
+  healthTipsNewsletter: boolean;
+  allowEmail: boolean;
+  allowSms: boolean;
+  allowPhone: boolean;
+  allowMail: boolean;
+  preferredMethod: 'email' | 'sms' | 'phone' | 'mail';
 }
 
 export interface PortalPharmacy {
@@ -189,6 +202,10 @@ export async function updatePortalProfile(
   tenantId: string,
   portalToken: string,
   data: {
+    firstName?: string;
+    lastName?: string;
+    dob?: string | null;
+    sex?: string | null;
     phone?: string;
     email?: string;
     address?: string;
@@ -216,6 +233,40 @@ export async function updatePortalProfile(
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Failed to update patient profile');
+  return res.json();
+}
+
+export async function fetchPortalPreferences(
+  tenantId: string,
+  portalToken: string
+): Promise<{ preferences: PortalCommunicationPreferences }> {
+  const res = await fetch(`${API_BASE}/api/patient-portal/preferences`, {
+    headers: {
+      Authorization: `Bearer ${portalToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch communication preferences');
+  return res.json();
+}
+
+export async function updatePortalPreferences(
+  tenantId: string,
+  portalToken: string,
+  data: Partial<PortalCommunicationPreferences>
+): Promise<{ preferences: PortalCommunicationPreferences }> {
+  const res = await fetch(`${API_BASE}/api/patient-portal/preferences`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${portalToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to update communication preferences');
   return res.json();
 }
 

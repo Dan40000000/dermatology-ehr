@@ -54,7 +54,7 @@ const checkinDemographicsSchema = z.object({
 });
 
 const portalRefillRequestSchema = z.object({
-  prescriptionId: z.string().uuid(),
+  prescriptionId: z.string().min(1),
   notes: z.string().optional(),
 });
 
@@ -467,6 +467,7 @@ patientPortalDataRouter.get("/documents", async (req: PatientPortalRequest, res)
       JOIN documents d ON ds.document_id = d.id
       JOIN users u ON ds.shared_by = u.id
       WHERE ds.patient_id = $1 AND ds.tenant_id = $2
+        AND COALESCE(ds.category, '') NOT IN ('visit_summary', 'visit_summaries')
     `;
 
     const params: any[] = [patientId, tenantId];
@@ -768,6 +769,7 @@ patientPortalDataRouter.post("/refill-requests", async (req: PatientPortalReques
         p.prescribed_date,
         p.provider_id,
         p.pharmacy_id,
+        p.status,
         pharm.name as pharmacy_name,
         pharm.ncpdp_id as pharmacy_ncpdp
        FROM prescriptions p
@@ -781,6 +783,9 @@ patientPortalDataRouter.post("/refill-requests", async (req: PatientPortalReques
     }
 
     const prescription = prescriptionResult.rows[0];
+    if (!["active", "sent", "transmitted"].includes(String(prescription.status || "active").toLowerCase())) {
+      return res.status(409).json({ error: "This prescription is not eligible for portal refill requests" });
+    }
 
     const existingRequest = await pool.query(
       `SELECT id FROM refill_requests
@@ -876,12 +881,13 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
       [patientId, tenantId]
     );
 
-    // Get unread documents count (not viewed)
+    // Get unread documents count (not viewed). Visit summaries live in the dedicated Visits page.
     const documentsResult = await pool.query(
       `SELECT COUNT(*) as count
-       FROM patient_document_shares
-       WHERE patient_id = $1 AND tenant_id = $2
-       AND viewed_at IS NULL`,
+       FROM patient_document_shares ds
+       WHERE ds.patient_id = $1 AND ds.tenant_id = $2
+       AND ds.viewed_at IS NULL
+       AND COALESCE(ds.category, '') NOT IN ('visit_summary', 'visit_summaries')`,
       [patientId, tenantId]
     );
 
@@ -895,14 +901,7 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
       [patientId, tenantId]
     );
 
-    // Get active prescriptions count
-    const prescriptionsResult = await pool.query(
-      `SELECT COUNT(*) as count
-       FROM prescriptions
-       WHERE patient_id = $1 AND tenant_id = $2
-       AND status = 'active'`,
-      [patientId, tenantId]
-    );
+    const activeMedications = await getPatientMedicationSummaries(tenantId, patientId);
 
     const unreadMessagesResult = await pool.query(
       `SELECT COUNT(*) as count
@@ -959,7 +958,7 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
         nextAppointment: nextAppointmentResult.rows[0] || null,
         newDocuments,
         newVisits,
-        activePrescriptions: parseInt(prescriptionsResult.rows[0].count),
+        activePrescriptions: activeMedications.length,
         unreadMessages,
         currentBalance,
         preCheckinAvailable,

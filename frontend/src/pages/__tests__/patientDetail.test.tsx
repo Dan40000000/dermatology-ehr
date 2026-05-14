@@ -26,12 +26,14 @@ const apiMocks = vi.hoisted(() => ({
   fetchProviders: vi.fn(),
   fetchTasks: vi.fn(),
   fetchOrders: vi.fn(),
+  fetchReferrals: vi.fn(),
   fetchPrescriptionsEnhanced: vi.fn(),
   fetchEligibilityHistory: vi.fn(),
   verifyPatientEligibility: vi.fn(),
   fetchPatientClinicalSummary: vi.fn(),
   fetchRecallCampaigns: vi.fn(),
   createPatientRecall: vi.fn(),
+  recordPrintedDocument: vi.fn(),
   default: {
     get: vi.fn(),
   },
@@ -203,6 +205,7 @@ describe('PatientDetailPage', () => {
     apiMocks.fetchProviders.mockResolvedValue({ providers: [{ id: 'provider-1', name: 'Dr Demo' }] });
     apiMocks.fetchTasks.mockResolvedValue({ tasks: [] });
     apiMocks.fetchOrders.mockResolvedValue({ orders: [] });
+    apiMocks.fetchReferrals.mockResolvedValue({ referrals: [] });
     apiMocks.fetchPrescriptionsEnhanced.mockResolvedValue({ prescriptions: [] });
     apiMocks.fetchEligibilityHistory.mockResolvedValue({ history: [] });
     apiMocks.verifyPatientEligibility.mockResolvedValue({ success: true });
@@ -222,6 +225,7 @@ describe('PatientDetailPage', () => {
       ],
     });
     apiMocks.createPatientRecall.mockResolvedValue({ id: 'recall-1' });
+    apiMocks.recordPrintedDocument.mockResolvedValue({ id: 'doc-print-1' });
     apiMocks.default.get.mockResolvedValue({ data: { prescriptions: [] } });
 
     vi.spyOn(window, 'open').mockImplementation(() => null);

@@ -150,6 +150,86 @@ function isLegacyReferralSchemaError(error: any): boolean {
   );
 }
 
+function getCreateReferralStatus(data: z.infer<typeof createReferralSchema>) {
+  if (data.status) {
+    return data.status === "new" && data.direction === "incoming" ? "received" : data.status;
+  }
+  return data.direction === "incoming" ? "received" : "new";
+}
+
+async function createReferralRecord(
+  tenantId: string,
+  userId: string,
+  data: z.infer<typeof createReferralSchema>
+) {
+  const id = crypto.randomUUID();
+  const referralNumber = `REF-${Date.now().toString(36).toUpperCase()}`;
+  const status = getCreateReferralStatus(data);
+
+  await pool.query(
+    `INSERT INTO referrals (
+      id, tenant_id, patient_id, direction, status, priority,
+      referring_provider, referring_organization, referred_to_provider, referred_to_organization,
+      appointment_id, reason, notes, created_by, referral_number, referring_provider_id,
+      referring_practice, diagnosis_codes, clinical_notes, insurance_auth_number,
+      insurance_auth_status, received_at, created_at, updated_at
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6,
+      $7, $8, $9, $10,
+      $11, $12, $13, $14, $15, $16,
+      $17, $18, $19, $20,
+      $21, NOW(), NOW(), NOW()
+    )`,
+    [
+      id,
+      tenantId,
+      data.patientId,
+      data.direction,
+      status,
+      data.priority || "routine",
+      data.referringProvider || data.referringProviderName || null,
+      data.referringOrganization || data.referringPractice || null,
+      data.referredToProvider || null,
+      data.referredToOrganization || null,
+      data.appointmentId || null,
+      data.reason || data.notes || null,
+      data.notes || data.clinicalNotes || null,
+      userId,
+      referralNumber,
+      data.referringProviderId || null,
+      data.referringPractice || data.referringOrganization || null,
+      data.diagnosisCodes || null,
+      data.clinicalNotes || null,
+      data.insuranceAuthNumber || null,
+      data.insuranceAuthNumber ? "pending" : "not_required",
+    ]
+  );
+
+  try {
+    await pool.query(
+      `INSERT INTO referral_status_history (referral_id, status, changed_by, notes)
+       VALUES ($1, $2, $3, $4)`,
+      [
+        id,
+        status,
+        userId,
+        data.direction === "outgoing"
+          ? "Outgoing referral created from patient chart"
+          : "Incoming referral logged",
+      ]
+    );
+  } catch (error: any) {
+    logger.warn("Referral status history unavailable", {
+      error: error?.message,
+      referralId: id,
+    });
+  }
+
+  await auditLog(tenantId, userId, "referral_create", "referral", id);
+
+  return { id, referralNumber, status };
+}
+
 // =====================================================
 // REFERRING PROVIDER ENDPOINTS (must come before /:id routes)
 // =====================================================
@@ -478,10 +558,16 @@ referralsRouter.get("/", async (req: AuthedRequest, res) => {
         r.id,
         r.referral_number as "referralNumber",
         r.patient_id as "patientId",
+        p.first_name as "patientFirstName",
+        p.last_name as "patientLastName",
         p.first_name || ' ' || p.last_name as "patientName",
         r.referring_provider_id as "referringProviderId",
         COALESCE(rp.name, r.referring_provider) as "referringProviderName",
+        COALESCE(rp.name, r.referring_provider) as "referringProvider",
         COALESCE(rp.practice_name, r.referring_practice, r.referring_organization) as "referringPractice",
+        COALESCE(rp.practice_name, r.referring_practice, r.referring_organization) as "referringOrganization",
+        r.referred_to_provider as "referredToProvider",
+        r.referred_to_organization as "referredToOrganization",
         r.assigned_provider_id as "assignedProviderId",
         pr.full_name as "assignedProviderName",
         r.direction,
@@ -493,6 +579,7 @@ referralsRouter.get("/", async (req: AuthedRequest, res) => {
         r.insurance_auth_status as "insuranceAuthStatus",
         r.insurance_auth_number as "insuranceAuthNumber",
         r.appointment_id as "appointmentId",
+        r.notes,
         r.scheduled_date as "scheduledDate",
         r.received_at as "receivedAt",
         r.verified_at as "verifiedAt",
@@ -685,6 +772,22 @@ referralsRouter.get("/", async (req: AuthedRequest, res) => {
         countQuery += ` AND r.patient_id = $${countIndex++}`;
         countParams.push(patientId);
       }
+      if (referringProviderId) {
+        countQuery += ` AND r.referring_provider_id = $${countIndex++}`;
+        countParams.push(referringProviderId);
+      }
+      if (direction) {
+        countQuery += ` AND r.direction = $${countIndex++}`;
+        countParams.push(direction);
+      }
+      if (startDate) {
+        countQuery += ` AND r.created_at >= $${countIndex++}::date`;
+        countParams.push(startDate);
+      }
+      if (endDate) {
+        countQuery += ` AND r.created_at <= $${countIndex++}::date + INTERVAL '1 day'`;
+        countParams.push(endDate);
+      }
       if (stalled === "true") {
         countQuery += ` AND r.status IN ('received', 'verified') AND r.created_at < NOW() - INTERVAL '5 days'`;
       }
@@ -840,27 +943,54 @@ referralsRouter.post("/", requireRoles(["admin", "front_desk", "ma", "provider"]
     const userId = req.user!.id;
     const data = parsed.data;
 
-    const result = await ReferralService.processIncomingReferral(
-      tenantId,
-      {
-        patientId: data.patientId,
-        referringProviderId: data.referringProviderId,
-        referringProviderName: data.referringProviderName || data.referringProvider,
-        referringPractice: data.referringPractice || data.referringOrganization,
-        priority: data.priority,
-        diagnosisCodes: data.diagnosisCodes,
-        reason: data.reason || data.notes,
-        clinicalNotes: data.clinicalNotes,
-        insuranceAuthNumber: data.insuranceAuthNumber,
-      },
-      userId
-    );
+    if (data.direction === "outgoing") {
+      const created = await createReferralRecord(tenantId, userId, data);
+      return res.status(201).json({
+        id: created.id,
+        referralNumber: created.referralNumber,
+        status: created.status,
+        autoAcknowledged: false,
+      });
+    }
 
-    res.status(201).json({
-      id: result.referralId,
-      referralNumber: result.referralNumber,
-      autoAcknowledged: result.autoAcknowledged,
-    });
+    try {
+      const result = await ReferralService.processIncomingReferral(
+        tenantId,
+        {
+          patientId: data.patientId,
+          referringProviderId: data.referringProviderId,
+          referringProviderName: data.referringProviderName || data.referringProvider,
+          referringPractice: data.referringPractice || data.referringOrganization,
+          priority: data.priority,
+          diagnosisCodes: data.diagnosisCodes,
+          reason: data.reason || data.notes,
+          clinicalNotes: data.clinicalNotes,
+          insuranceAuthNumber: data.insuranceAuthNumber,
+        },
+        userId
+      );
+
+      return res.status(201).json({
+        id: result.referralId,
+        referralNumber: result.referralNumber,
+        autoAcknowledged: result.autoAcknowledged,
+      });
+    } catch (error: any) {
+      if (!isLegacyReferralSchemaError(error)) {
+        throw error;
+      }
+
+      logger.warn("Incoming referral service unavailable; using compatible referral insert", {
+        error: error.message,
+      });
+      const created = await createReferralRecord(tenantId, userId, data);
+      return res.status(201).json({
+        id: created.id,
+        referralNumber: created.referralNumber,
+        status: created.status,
+        autoAcknowledged: false,
+      });
+    }
   } catch (error: any) {
     logger.error("Error creating referral", { error: error.message });
     res.status(500).json({ error: "Failed to create referral" });

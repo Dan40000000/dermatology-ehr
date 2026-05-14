@@ -48,6 +48,10 @@ export async function requirePatientAuth(
       email: string;
     };
 
+    if (!decoded.accountId || !decoded.patientId) {
+      return res.status(403).json({ error: "Invalid patient token" });
+    }
+
     // Validate tenant match
     if (decoded.tenantId !== tenantId) {
       return res.status(403).json({ error: "Invalid tenant" });

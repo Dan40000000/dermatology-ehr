@@ -292,7 +292,14 @@ describe("Patient portal data routes", () => {
       .mockResolvedValueOnce({ rows: [{ appointmentDate: "2025-01-02" }] })
       .mockResolvedValueOnce({ rows: [{ count: "1" }] })
       .mockResolvedValueOnce({ rows: [{ count: "3" }] })
-      .mockResolvedValueOnce({ rows: [{ count: "4" }] })
+      .mockResolvedValueOnce({
+        rows: [
+          { id: "rx-1", medicationName: "Med 1", status: "active" },
+          { id: "rx-2", medicationName: "Med 2", status: "active" },
+          { id: "rx-3", medicationName: "Med 3", status: "sent" },
+          { id: "rx-4", medicationName: "Med 4", status: "transmitted" },
+        ],
+      })
       .mockResolvedValueOnce({ rows: [{ count: "2" }] })
       .mockResolvedValueOnce({
         rows: [{

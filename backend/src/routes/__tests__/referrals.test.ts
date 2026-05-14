@@ -179,8 +179,12 @@ describe("Referrals routes - Create", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(res.body.id).toBe("referral-1");
-    expect(res.body.referralNumber).toBe("REF-0001");
+    expect(res.body.id).toBeDefined();
+    expect(res.body.referralNumber).toMatch(/^REF-/);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO referrals"),
+      expect.arrayContaining(["tenant-1", "patient-1", "outgoing", "new", "routine"])
+    );
   });
 
   it("POST /referrals creates referral with minimal data", async () => {
@@ -200,13 +204,9 @@ describe("Referrals routes - Create", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(referralServiceMock.processIncomingReferral).toHaveBeenCalledWith(
-      "tenant-1",
-      expect.objectContaining({
-        patientId: "patient-1",
-        priority: "routine",
-      }),
-      "user-1"
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO referrals"),
+      expect.arrayContaining(["tenant-1", "patient-1", "outgoing", "new", "routine"])
     );
   });
 
@@ -217,13 +217,9 @@ describe("Referrals routes - Create", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(referralServiceMock.processIncomingReferral).toHaveBeenCalledWith(
-      "tenant-1",
-      expect.objectContaining({
-        patientId: "patient-1",
-        priority: "routine",
-      }),
-      "user-1"
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO referrals"),
+      expect.arrayContaining(["tenant-1", "patient-1", "outgoing", "new", "routine"])
     );
   });
 

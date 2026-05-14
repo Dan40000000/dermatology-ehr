@@ -2,7 +2,14 @@ import { useState, useEffect } from 'react';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 import { PortalPharmacyLookup } from '../../components/patient-portal/PortalPharmacyLookup';
 import { usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
-import { changePortalPassword, fetchPortalProfile, updatePortalProfile } from '../../portalApi';
+import {
+  changePortalPassword,
+  fetchPortalPreferences,
+  fetchPortalProfile,
+  updatePortalPreferences,
+  updatePortalProfile,
+} from '../../portalApi';
+import type { PortalCommunicationPreferences } from '../../portalApi';
 import { formatPhoneDisplay } from '../../utils/phone';
 
 interface PatientProfile {
@@ -12,6 +19,7 @@ interface PatientProfile {
   lastName: string;
   dateOfBirth: string;
   gender: string;
+  sex: string;
   email: string;
   phone: string;
   address: string;
@@ -34,6 +42,24 @@ interface PatientProfile {
   passwordUpdatedAt?: string | null;
 }
 
+type CommunicationPreferenceKey =
+  | 'appointmentReminders'
+  | 'labResultNotifications'
+  | 'billingAlerts'
+  | 'healthTipsNewsletter';
+
+const defaultPreferences: PortalCommunicationPreferences = {
+  appointmentReminders: true,
+  labResultNotifications: true,
+  billingAlerts: true,
+  healthTipsNewsletter: false,
+  allowEmail: true,
+  allowSms: true,
+  allowPhone: true,
+  allowMail: true,
+  preferredMethod: 'email',
+};
+
 export function PortalProfilePage() {
   const { patient, sessionToken, tenantId } = usePatientPortalAuth();
   const [profile, setProfile] = useState<PatientProfile | null>(null);
@@ -41,6 +67,8 @@ export function PortalProfilePage() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState<Partial<PatientProfile>>({});
+  const [preferences, setPreferences] = useState<PortalCommunicationPreferences>(defaultPreferences);
+  const [preferenceSavingKey, setPreferenceSavingKey] = useState<CommunicationPreferenceKey | null>(null);
   const [activeTab, setActiveTab] = useState<'info' | 'contact' | 'preferences' | 'security'>('info');
   const [profileError, setProfileError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -70,8 +98,9 @@ export function PortalProfilePage() {
         fullName,
         firstName: portalPatient.firstName || '',
         lastName: portalPatient.lastName || '',
-        dateOfBirth: (portalPatient as any).dob || '',
-        gender: '',
+        dateOfBirth: ((portalPatient as any).dob || '').slice(0, 10),
+        gender: portalPatient.sex || '',
+        sex: portalPatient.sex || '',
         email: portalPatient.email || '',
         phone: portalPatient.phone || '',
         address: portalPatient.address || '',
@@ -93,6 +122,13 @@ export function PortalProfilePage() {
         emailVerified: portalPatient.emailVerified ?? true,
         passwordUpdatedAt: portalPatient.passwordUpdatedAt || null,
       });
+      try {
+        const preferencesData = await fetchPortalPreferences(tenantId, sessionToken);
+        setPreferences({ ...defaultPreferences, ...preferencesData.preferences });
+      } catch (preferenceError) {
+        console.warn('Failed to fetch communication preferences:', preferenceError);
+        setPreferences(defaultPreferences);
+      }
     } catch (error) {
       console.error('Failed to fetch profile:', error);
       setProfileError(error instanceof Error ? error.message : 'Failed to load your profile');
@@ -117,6 +153,10 @@ export function PortalProfilePage() {
     try {
       if (sessionToken && tenantId) {
         const updates: Record<string, any> = {};
+        if (editForm.firstName !== undefined) updates.firstName = editForm.firstName;
+        if (editForm.lastName !== undefined) updates.lastName = editForm.lastName;
+        if (editForm.dateOfBirth !== undefined) updates.dob = editForm.dateOfBirth || null;
+        if (editForm.gender !== undefined) updates.sex = editForm.gender || null;
         const allowedFields = [
           'phone',
           'email',
@@ -145,7 +185,13 @@ export function PortalProfilePage() {
         }
       }
 
-      setProfile(prev => prev ? { ...prev, ...editForm } : null);
+      setProfile(prev => {
+        if (!prev) return null;
+        const next = { ...prev, ...editForm };
+        next.sex = next.gender || '';
+        next.fullName = [next.firstName, next.lastName].filter(Boolean).join(' ') || prev.fullName;
+        return next;
+      });
       setEditing(false);
       setEditForm({});
       setNotice({ type: 'success', message: 'Profile updated successfully.' });
@@ -154,6 +200,25 @@ export function PortalProfilePage() {
       setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Failed to save profile.' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePreferenceToggle = async (key: CommunicationPreferenceKey) => {
+    if (!sessionToken || !tenantId || preferenceSavingKey) return;
+    const previous = preferences;
+    const next = { ...preferences, [key]: !preferences[key] };
+    setPreferences(next);
+    setPreferenceSavingKey(key);
+    setNotice(null);
+
+    try {
+      const response = await updatePortalPreferences(tenantId, sessionToken, next);
+      setPreferences({ ...defaultPreferences, ...response.preferences });
+    } catch (error) {
+      setPreferences(previous);
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Failed to update preferences.' });
+    } finally {
+      setPreferenceSavingKey(null);
     }
   };
 
@@ -397,6 +462,22 @@ export function PortalProfilePage() {
           margin: 0;
         }
 
+        .section-edit-btn {
+          padding: 0.45rem 0.8rem;
+          border: 1px solid #dbe4f0;
+          border-radius: 8px;
+          background: #ffffff;
+          color: #334155;
+          font-size: 0.8rem;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .section-edit-btn:hover {
+          background: #f8fafc;
+          border-color: #cbd5e1;
+        }
+
         .section-content {
           padding: 1.5rem;
         }
@@ -595,6 +676,8 @@ export function PortalProfilePage() {
           position: relative;
           cursor: pointer;
           transition: all 0.2s;
+          border: none;
+          flex-shrink: 0;
         }
 
         .toggle.active {
@@ -616,6 +699,11 @@ export function PortalProfilePage() {
 
         .toggle.active::after {
           left: 24px;
+        }
+
+        .toggle:disabled {
+          opacity: 0.65;
+          cursor: wait;
         }
 
         .profile-alert {
@@ -827,6 +915,9 @@ export function PortalProfilePage() {
             <>
               <div className="section-header">
                 <h3 className="section-title">Personal Information</h3>
+                {!editing && !loading && (
+                  <button className="section-edit-btn" onClick={handleEdit}>Edit Profile</button>
+                )}
               </div>
               <div className="section-content">
                 {loading ? (
@@ -920,6 +1011,9 @@ export function PortalProfilePage() {
             <>
               <div className="section-header">
                 <h3 className="section-title">Contact Information</h3>
+                {!editing && !loading && (
+                  <button className="section-edit-btn" onClick={handleEdit}>Edit Profile</button>
+                )}
               </div>
               <div className="section-content">
                 {loading ? (
@@ -1083,6 +1177,9 @@ export function PortalProfilePage() {
             <>
               <div className="section-header">
                 <h3 className="section-title">Communication Preferences</h3>
+                {!editing && !loading && (
+                  <button className="section-edit-btn" onClick={handleEdit}>Edit Pharmacy</button>
+                )}
               </div>
               <div className="section-content">
                 <div className="preference-item" style={{ alignItems: 'flex-start' }}>
@@ -1160,28 +1257,60 @@ export function PortalProfilePage() {
                     <h4>Appointment Reminders</h4>
                     <p>Receive email and SMS reminders before appointments</p>
                   </div>
-                  <div className="toggle active" />
+                  <button
+                    type="button"
+                    className={`toggle ${preferences.appointmentReminders ? 'active' : ''}`}
+                    role="switch"
+                    aria-checked={preferences.appointmentReminders}
+                    aria-label="Toggle appointment reminders"
+                    disabled={preferenceSavingKey === 'appointmentReminders'}
+                    onClick={() => handlePreferenceToggle('appointmentReminders')}
+                  />
                 </div>
                 <div className="preference-item">
                   <div className="preference-info">
                     <h4>Lab Results Notifications</h4>
                     <p>Get notified when new lab results are available</p>
                   </div>
-                  <div className="toggle active" />
+                  <button
+                    type="button"
+                    className={`toggle ${preferences.labResultNotifications ? 'active' : ''}`}
+                    role="switch"
+                    aria-checked={preferences.labResultNotifications}
+                    aria-label="Toggle lab result notifications"
+                    disabled={preferenceSavingKey === 'labResultNotifications'}
+                    onClick={() => handlePreferenceToggle('labResultNotifications')}
+                  />
                 </div>
                 <div className="preference-item">
                   <div className="preference-info">
                     <h4>Billing Alerts</h4>
                     <p>Receive notifications about new statements and payments</p>
                   </div>
-                  <div className="toggle active" />
+                  <button
+                    type="button"
+                    className={`toggle ${preferences.billingAlerts ? 'active' : ''}`}
+                    role="switch"
+                    aria-checked={preferences.billingAlerts}
+                    aria-label="Toggle billing alerts"
+                    disabled={preferenceSavingKey === 'billingAlerts'}
+                    onClick={() => handlePreferenceToggle('billingAlerts')}
+                  />
                 </div>
                 <div className="preference-item">
                   <div className="preference-info">
                     <h4>Health Tips & Newsletter</h4>
                     <p>Receive skin care tips and practice updates</p>
                   </div>
-                  <div className="toggle" />
+                  <button
+                    type="button"
+                    className={`toggle ${preferences.healthTipsNewsletter ? 'active' : ''}`}
+                    role="switch"
+                    aria-checked={preferences.healthTipsNewsletter}
+                    aria-label="Toggle health tips and newsletter"
+                    disabled={preferenceSavingKey === 'healthTipsNewsletter'}
+                    onClick={() => handlePreferenceToggle('healthTipsNewsletter')}
+                  />
                 </div>
                 {editing && (
                   <div className="form-actions">

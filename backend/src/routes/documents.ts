@@ -1,10 +1,13 @@
 import { Router } from "express";
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 import { z } from "zod";
 import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireModuleAccess } from "../middleware/moduleAccess";
 import { requireRoles } from "../middleware/rbac";
+import { logger } from "../lib/logger";
 
 // Document categories
 export const DOCUMENT_CATEGORIES = [
@@ -15,6 +18,8 @@ export const DOCUMENT_CATEGORIES = [
   "Consent Forms",
   "Referrals",
   "Correspondence",
+  "After Visit Instructions",
+  "Printed Documents",
   "Other",
 ] as const;
 
@@ -45,6 +50,17 @@ const signatureSchema = z.object({
 const categoryUpdateSchema = z.object({
   category: z.enum(DOCUMENT_CATEGORIES),
   subcategory: z.string().optional(),
+});
+
+const printedDocumentSchema = z.object({
+  patientId: z.string().min(1),
+  encounterId: z.string().optional().nullable(),
+  title: z.string().min(1).max(200),
+  category: z.enum(DOCUMENT_CATEGORIES).optional(),
+  description: z.string().max(1000).optional(),
+  html: z.string().min(1).max(2_000_000),
+  shareToPortal: z.boolean().optional().default(true),
+  notes: z.string().max(1000).optional(),
 });
 
 export const documentsRouter = Router();
@@ -79,6 +95,26 @@ function suggestCategory(title: string): string {
   if (lower.includes("referral") || lower.includes("refer")) return "Referrals";
   if (lower.includes("letter") || lower.includes("correspondence")) return "Correspondence";
   return "Other";
+}
+
+function normalizeLocalFilePath(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+function buildPrintedDocumentHtml(title: string, html: string): string {
+  const trimmed = html.trim();
+  if (/^<!doctype html|^<html[\s>]/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${title.replace(/[<>&"]/g, "")}</title>
+  </head>
+  <body>${trimmed}</body>
+</html>`;
 }
 
 // GET /api/documents - List documents with filtering
@@ -213,6 +249,161 @@ documentsRouter.post("/", requireAuth, requireRoles(["admin", "provider", "ma"])
   await logDocumentAccess(id, tenantId, userId, "edit", req);
 
   res.status(201).json({ id, suggestedCategory: category });
+});
+
+// POST /api/documents/printed - Persist a patient-facing printed document to the chart and portal
+documentsRouter.post(
+  "/printed",
+  requireAuth,
+  requireRoles(["admin", "provider", "ma", "front_desk"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = printedDocumentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const payload = parsed.data;
+
+    const patient = await pool.query(
+      `SELECT id FROM patients WHERE id = $1 AND tenant_id = $2`,
+      [payload.patientId, tenantId],
+    );
+    if (patient.rows.length === 0) {
+      return res.status(404).json({ error: "Patient not found" });
+    }
+
+    const id = crypto.randomUUID();
+    const html = buildPrintedDocumentHtml(payload.title, payload.html);
+    const objectKey = `printed-documents/${tenantId}/${id}.html`;
+    const relativePath = normalizeLocalFilePath(path.join("uploads", objectKey));
+    const absolutePath = path.join(process.cwd(), relativePath);
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+    fs.writeFileSync(absolutePath, html, "utf8");
+
+    const category = payload.category || "Printed Documents";
+    const fileSize = Buffer.byteLength(html, "utf8");
+    const url = `/api/documents/${id}/file`;
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        `INSERT INTO documents(
+          id, tenant_id, patient_id, encounter_id, title, type, category, subcategory,
+          description, url, storage, object_key, file_size, mime_type, file_type,
+          file_path, uploaded_by, uploaded_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, 'local', $10, $11, $12, $12, $13, $14, NOW())`,
+        [
+          id,
+          tenantId,
+          payload.patientId,
+          payload.encounterId || null,
+          payload.title,
+          "printed_document",
+          category,
+          payload.description || "Printed patient document saved automatically.",
+          url,
+          objectKey,
+          fileSize,
+          "text/html",
+          relativePath,
+          userId,
+        ],
+      );
+
+      if (payload.shareToPortal !== false) {
+        await client.query(
+          `INSERT INTO patient_document_shares (
+            id, tenant_id, document_id, patient_id, shared_by, shared_at, notes, category
+          ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7)`,
+          [
+            crypto.randomUUID(),
+            tenantId,
+            id,
+            payload.patientId,
+            userId,
+            payload.notes || "Automatically saved when printed by the office.",
+            category,
+          ],
+        );
+      }
+
+      await client.query(
+        `INSERT INTO document_access_log (id, document_id, tenant_id, user_id, action, ip_address, user_agent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          crypto.randomUUID(),
+          id,
+          tenantId,
+          userId,
+          "print",
+          req.ip || req.socket.remoteAddress || null,
+          req.get("user-agent") || null,
+        ],
+      );
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      try {
+        fs.unlinkSync(absolutePath);
+      } catch (cleanupError) {
+        logger.warn("Failed to clean up printed document file after DB error", {
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          filePath: relativePath,
+        });
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    res.status(201).json({
+      id,
+      url,
+      category,
+      sharedToPortal: payload.shareToPortal !== false,
+    });
+  },
+);
+
+// GET /api/documents/:id/file - Serve a locally persisted document to authorized staff
+documentsRouter.get("/:id/file", requireAuth, async (req: AuthedRequest, res) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+  const userId = req.user!.id;
+
+  const result = await pool.query(
+    `SELECT title, file_path, mime_type, file_type
+     FROM documents
+     WHERE id = $1 AND tenant_id = $2`,
+    [id, tenantId],
+  );
+
+  if (result.rows.length === 0) {
+    return res.status(404).json({ error: "Document not found" });
+  }
+
+  const doc = result.rows[0];
+  if (!doc.file_path) {
+    return res.status(404).json({ error: "Document file is not stored locally" });
+  }
+
+  const absolutePath = path.join(process.cwd(), doc.file_path);
+  if (!fs.existsSync(absolutePath)) {
+    return res.status(404).json({ error: "Document file not found" });
+  }
+
+  await logDocumentAccess(id!, tenantId, userId, "view", req);
+  res.setHeader("Content-Type", doc.mime_type || doc.file_type || "application/octet-stream");
+  res.setHeader("Content-Disposition", `inline; filename="${String(doc.title || "document").replace(/"/g, "")}"`);
+  return res.sendFile(absolutePath);
+});
+
+// GET /api/documents/meta/categories - Get all categories
+documentsRouter.get("/meta/categories", requireAuth, async (_req: AuthedRequest, res) => {
+  res.json({ categories: DOCUMENT_CATEGORIES });
 });
 
 // GET /api/documents/:id - Get document details

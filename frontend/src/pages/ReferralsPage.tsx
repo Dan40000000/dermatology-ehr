@@ -75,6 +75,7 @@ export function ReferralsPage() {
   });
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingReferral, setEditingReferral] = useState<Referral | null>(null);
+  const queryPatientId = searchParams.get('patientId') || undefined;
 
   const loadReferrals = useCallback(async () => {
     if (!session) return;
@@ -84,6 +85,7 @@ export function ReferralsPage() {
         status: filters.status !== 'all' ? filters.status : undefined,
         direction: filters.direction !== 'all' ? filters.direction : undefined,
         priority: filters.priority !== 'all' ? filters.priority : undefined,
+        patientId: queryPatientId,
       });
       setReferrals(res.referrals || []);
     } catch (err: any) {
@@ -91,7 +93,7 @@ export function ReferralsPage() {
     } finally {
       setLoading(false);
     }
-  }, [session, filters, showError]);
+  }, [session, filters, queryPatientId, showError]);
 
   const loadPatients = useCallback(async () => {
     if (!session) return;

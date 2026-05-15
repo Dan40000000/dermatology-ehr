@@ -33,6 +33,7 @@
     "integrations:smoke": "ts-node --require dotenv/config --transpile-only src/scripts/integrationReadinessSmoke.ts",
     "integrations:smoke:strict": "ts-node --require dotenv/config --transpile-only src/scripts/integrationReadinessSmoke.ts --strict",
     "integrations:smoke:strict-warnings": "ts-node --require dotenv/config --transpile-only src/scripts/integrationReadinessSmoke.ts --strict-warnings",
+    "patients:assign-fake-ssns": "ts-node --require dotenv/config --transpile-only src/scripts/assignFakePatientSsns.ts",
     "logging:guard": "ts-node --transpile-only src/scripts/safeErrorLoggingGuard.ts",
     "logging:guard:baseline": "ts-node --transpile-only src/scripts/safeErrorLoggingGuard.ts --write-baseline"
   },

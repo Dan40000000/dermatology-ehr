@@ -142,6 +142,31 @@ export function PortalDashboardPage() {
     return 'Good evening';
   };
 
+  const healthTips = [
+    {
+      title: 'Daily Skin Health Tip',
+      text: 'Apply broad-spectrum SPF 30+ every morning, even on cloudy days. Reapply every two hours when outdoors.',
+    },
+    {
+      title: 'Mole Check Reminder',
+      text: 'Watch for spots that are changing, bleeding, itching, asymmetric, or noticeably different from your other moles.',
+    },
+    {
+      title: 'Barrier Support',
+      text: 'Moisturize after bathing while skin is slightly damp to help reduce dryness, itching, and irritation.',
+    },
+    {
+      title: 'Medication Tip',
+      text: 'If a prescription cream causes burning or irritation, pause and message the office before changing the plan on your own.',
+    },
+    {
+      title: 'Sun Smart Planning',
+      text: 'Try to schedule outdoor time before 10 AM or after 4 PM, and use hats, UPF clothing, and shade when possible.',
+    },
+  ];
+  const todayKey = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const dailyTip = healthTips[Number(todayKey) % healthTips.length] || healthTips[0];
+
   const getIcon = (iconName: string) => {
     const icons: Record<string, JSX.Element> = {
       calendar: (
@@ -250,6 +275,15 @@ export function PortalDashboardPage() {
           </div>
         ) : (
           <div className="dashboard-content">
+            <div className="daily-tip-card">
+              <div className="daily-tip-card__icon">{getIcon('shield')}</div>
+              <div className="daily-tip-card__copy">
+                <span>Health Tip</span>
+                <h2>{dailyTip.title}</h2>
+                <p>{dailyTip.text}</p>
+              </div>
+            </div>
+
             {/* Stats Grid */}
             <div className="stats-grid">
               <Link to="/portal/appointments" className="stat-card appointments">
@@ -429,18 +463,6 @@ export function PortalDashboardPage() {
                   </Link>
                 </div>
               </div>
-
-              {/* Health Tip Card */}
-              <div className="widget-card tip-card">
-                <div className="tip-badge">
-                  <span className="tip-icon">{getIcon('shield')}</span>
-                  <span>Health Tip</span>
-                </div>
-                <p className="tip-text">
-                  Remember to stay hydrated and protect your skin from the sun, especially during outdoor activities.
-                  Drink at least 8 glasses of water daily and apply SPF 30+ sunscreen.
-                </p>
-              </div>
             </div>
           </div>
         )}
@@ -598,6 +620,59 @@ export function PortalDashboardPage() {
           font-weight: 700;
           padding: 0.7rem 1.2rem;
           cursor: pointer;
+        }
+
+        .daily-tip-card {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          margin-bottom: 1.5rem;
+          padding: 1.15rem 1.25rem;
+          background:
+            radial-gradient(circle at top right, rgba(251, 191, 36, 0.36), transparent 24rem),
+            linear-gradient(135deg, #0f766e 0%, #155e75 100%);
+          border-radius: 18px;
+          color: white;
+          box-shadow: 0 16px 36px rgba(15, 118, 110, 0.18);
+        }
+
+        .daily-tip-card__icon {
+          width: 48px;
+          height: 48px;
+          flex: 0 0 auto;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 14px;
+          background: rgba(255, 255, 255, 0.16);
+        }
+
+        .daily-tip-card__icon svg {
+          width: 24px;
+          height: 24px;
+        }
+
+        .daily-tip-card__copy span {
+          display: block;
+          margin-bottom: 0.15rem;
+          font-size: 0.72rem;
+          font-weight: 800;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: rgba(255, 255, 255, 0.72);
+        }
+
+        .daily-tip-card__copy h2 {
+          margin: 0 0 0.2rem;
+          font-size: 1.05rem;
+          color: white;
+        }
+
+        .daily-tip-card__copy p {
+          margin: 0;
+          color: rgba(255, 255, 255, 0.85);
+          line-height: 1.5;
+          font-size: 0.9rem;
         }
 
         /* Stats Grid */
@@ -901,23 +976,27 @@ export function PortalDashboardPage() {
           border-radius: 16px;
           color: white;
           min-width: 80px;
+          text-shadow: 0 1px 2px rgba(17, 24, 39, 0.22);
         }
 
         .date-day {
           font-size: 2rem;
           font-weight: 700;
           line-height: 1;
+          color: #ffffff;
         }
 
         .date-month {
           font-size: 0.9rem;
           font-weight: 600;
           text-transform: uppercase;
+          color: #ffffff;
         }
 
         .date-weekday {
           font-size: 0.75rem;
-          opacity: 0.8;
+          color: #ffffff;
+          opacity: 1;
           margin-top: 0.25rem;
         }
 

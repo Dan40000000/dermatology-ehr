@@ -23,16 +23,103 @@ interface PatientThread {
 }
 
 export function PatientPortalMessagesPage() {
-  const { sessionToken, tenantId } = usePatientPortalAuth();
+  const { sessionToken, tenantId, patient } = usePatientPortalAuth();
   const [threads, setThreads] = useState<PatientThread[]>([]);
   const [selectedThread, setSelectedThread] = useState<PatientThread | null>(null);
   const [loading, setLoading] = useState(true);
   const [showComposer, setShowComposer] = useState(false);
   const [filter, setFilter] = useState<string>('all');
+  const [unlockPassword, setUnlockPassword] = useState('');
+  const [unlocking, setUnlocking] = useState(false);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+  const [messageUnlockToken, setMessageUnlockToken] = useState('');
+  const [messageUnlockExpiresAt, setMessageUnlockExpiresAt] = useState('');
+
+  const unlockStorageKey = patient?.id ? `portal-message-unlock:${tenantId}:${patient.id}` : '';
+  const isMessagesUnlocked =
+    Boolean(messageUnlockToken) &&
+    Boolean(messageUnlockExpiresAt) &&
+    new Date(messageUnlockExpiresAt).getTime() > Date.now();
 
   useEffect(() => {
+    if (!unlockStorageKey) return;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(unlockStorageKey) || '{}') as {
+        token?: string;
+        expiresAt?: string;
+      };
+      if (saved.token && saved.expiresAt && new Date(saved.expiresAt).getTime() > Date.now()) {
+        setMessageUnlockToken(saved.token);
+        setMessageUnlockExpiresAt(saved.expiresAt);
+      }
+    } catch {
+      sessionStorage.removeItem(unlockStorageKey);
+    }
+  }, [unlockStorageKey]);
+
+  useEffect(() => {
+    if (!isMessagesUnlocked) {
+      setLoading(false);
+      setThreads([]);
+      return;
+    }
     fetchThreads();
-  }, [filter, sessionToken, tenantId]);
+  }, [filter, sessionToken, tenantId, isMessagesUnlocked]);
+
+  const clearMessageUnlock = () => {
+    setMessageUnlockToken('');
+    setMessageUnlockExpiresAt('');
+    if (unlockStorageKey) sessionStorage.removeItem(unlockStorageKey);
+  };
+
+  const handleUnlockMessages = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!sessionToken || !tenantId) {
+      setUnlockError('Please sign in again to view secure messages.');
+      return;
+    }
+
+    setUnlocking(true);
+    setUnlockError(null);
+    try {
+      const response = await fetch(`${API_URL}/api/patient-portal/security/message-unlock`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`,
+          'X-Tenant-ID': tenantId,
+        },
+        body: JSON.stringify({ password: unlockPassword }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Unable to unlock messages');
+      }
+
+      const data = await response.json();
+      setMessageUnlockToken(data.unlockToken);
+      setMessageUnlockExpiresAt(data.expiresAt);
+      setUnlockPassword('');
+      if (unlockStorageKey) {
+        sessionStorage.setItem(unlockStorageKey, JSON.stringify({
+          token: data.unlockToken,
+          expiresAt: data.expiresAt,
+        }));
+      }
+    } catch (err) {
+      clearMessageUnlock();
+      setUnlockError(err instanceof Error ? err.message : 'Unable to unlock messages');
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  const secureMessageHeaders = () => ({
+    Authorization: `Bearer ${sessionToken}`,
+    'X-Tenant-ID': tenantId || '',
+    'X-Portal-Message-Unlock': messageUnlockToken,
+  });
 
   const fetchThreads = async () => {
     setLoading(true);
@@ -45,20 +132,21 @@ export function PatientPortalMessagesPage() {
       const response = await fetch(
         `${API_URL}/api/patient-portal/messages/threads${filter !== 'all' ? `?category=${filter}` : ''}`,
         {
-          headers: {
-            Authorization: `Bearer ${sessionToken}`,
-            'X-Tenant-ID': tenantId,
-          },
+          headers: secureMessageHeaders(),
         }
       );
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
+        if (error.requiresMessageUnlock) clearMessageUnlock();
         throw new Error(error.error || 'Failed to load messages');
       }
       const data = await response.json();
       setThreads(Array.isArray(data.threads) ? data.threads : []);
     } catch (error) {
       console.error('Error fetching threads:', error);
+      if (error instanceof Error && error.message.toLowerCase().includes('unlock')) {
+        setUnlockError('Secure message access expired. Please unlock messages again.');
+      }
       setThreads([]);
     } finally {
       setLoading(false);
@@ -99,125 +187,190 @@ export function PatientPortalMessagesPage() {
                 Secure communication with your healthcare provider
               </p>
             </div>
-            <button onClick={() => setShowComposer(true)} className="portal-btn portal-btn-primary">
-              New Message
+            <button
+              onClick={() => {
+                if (isMessagesUnlocked) setShowComposer(true);
+                else setUnlockError('Unlock secure messages before starting a new message.');
+              }}
+              className="portal-btn portal-btn-primary"
+            >
+              {isMessagesUnlocked ? 'New Message' : 'Unlock to Message'}
             </button>
           </div>
         </div>
 
-        {/* Filters */}
-        <div className="portal-filters">
-          {['all', 'general', 'prescription', 'appointment', 'billing', 'medical'].map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setFilter(cat)}
-              className={`portal-filter-btn ${filter === cat ? 'active' : ''}`}
-            >
-              {cat.charAt(0).toUpperCase() + cat.slice(1)}
-            </button>
-          ))}
-        </div>
-
-        {/* Thread list */}
-        <div className="portal-thread-list">
-          {loading ? (
-            <div className="portal-loading">
-              <div className="portal-spinner" />
-            </div>
-          ) : threads.length === 0 ? (
-            <div className="portal-empty">
-              <svg
-                className="portal-empty-icon"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-                />
+        {!isMessagesUnlocked ? (
+          <div className="portal-secure-unlock-card">
+            <div className="portal-secure-unlock-icon">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
-              <p className="portal-empty-title">No messages</p>
-              <p className="portal-empty-text">Start a new conversation with your provider</p>
             </div>
-          ) : (
-            <div>
-              {threads.map((thread) => (
-                <div
-                  key={thread.id}
-                  onClick={() => handleThreadClick(thread)}
-                  className="portal-thread-item"
+            <div className="portal-secure-unlock-copy">
+              <h2>Unlock secure messages</h2>
+              <p>
+                Messages can contain private health information. Re-enter your portal password to unlock this inbox for 10 minutes.
+              </p>
+            </div>
+            <form className="portal-secure-unlock-form" onSubmit={handleUnlockMessages}>
+              {unlockError && <div className="portal-secure-unlock-error">{unlockError}</div>}
+              <label htmlFor="portal-message-password">Portal password</label>
+              <input
+                id="portal-message-password"
+                type="password"
+                value={unlockPassword}
+                onChange={(event) => setUnlockPassword(event.target.value)}
+                autoComplete="current-password"
+                placeholder="Enter your password"
+                disabled={unlocking}
+              />
+              <button type="submit" className="portal-btn portal-btn-primary" disabled={unlocking || !unlockPassword.trim()}>
+                {unlocking ? 'Unlocking...' : 'Unlock Messages'}
+              </button>
+            </form>
+          </div>
+        ) : (
+          <>
+            <div className="portal-secure-session-banner">
+              <span>Secure messages unlocked</span>
+              <button type="button" onClick={clearMessageUnlock}>Lock now</button>
+            </div>
+
+            {/* Filters */}
+            <div className="portal-filters">
+              {['all', 'general', 'prescription', 'appointment', 'billing', 'medical'].map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setFilter(cat)}
+                  className={`portal-filter-btn ${filter === cat ? 'active' : ''}`}
                 >
-                  <div className="portal-thread-header">
-                    <div className="portal-thread-content">
-                      <div className="portal-thread-title-row">
-                        <h3 className={`portal-thread-title ${thread.isReadByPatient ? 'read' : 'unread'}`}>
-                          {thread.subject}
-                        </h3>
-                        {!thread.isReadByPatient && thread.unreadCount > 0 && (
-                          <span className="portal-unread-badge">
-                            {thread.unreadCount} new
-                          </span>
-                        )}
-                      </div>
-                      <div className="portal-thread-meta">
-                        <span className={`portal-category-badge ${getCategoryClass(thread.category)}`}>
-                          {thread.category.charAt(0).toUpperCase() + thread.category.slice(1)}
-                        </span>
-                        <span className="portal-message-count">
-                          {thread.messageCount} message{thread.messageCount !== 1 ? 's' : ''}
-                        </span>
-                      </div>
-                      <p className="portal-thread-preview">
-                        {thread.lastMessagePreview}
-                      </p>
-                    </div>
-                    <span className="portal-thread-time">
-                      {formatDistanceToNow(new Date(thread.lastMessageAt), { addSuffix: true })}
-                    </span>
-                  </div>
-                </div>
+                  {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                </button>
               ))}
             </div>
-          )}
-        </div>
 
-        {/* Important notice */}
-        <div className="portal-notice">
-          <div className="portal-notice-icon">
-            <svg fill="currentColor" viewBox="0 0 20 20">
-              <path
-                fillRule="evenodd"
-                d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                clipRule="evenodd"
-              />
-            </svg>
-          </div>
-          <div className="portal-notice-content">
-            <h3 className="portal-notice-title">For urgent medical needs</h3>
-            <p className="portal-notice-text">
-              Please call our office at (555) 123-4567 or seek emergency care at your nearest emergency room. This messaging system is not monitored 24/7 and should not be used for urgent medical concerns.
-            </p>
-          </div>
-        </div>
+            {/* Thread list */}
+            <div className="portal-thread-list">
+              {loading ? (
+                <div className="portal-loading">
+                  <div className="portal-spinner" />
+                </div>
+              ) : threads.length === 0 ? (
+                <div className="portal-empty">
+                  <svg
+                    className="portal-empty-icon"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                    />
+                  </svg>
+                  <p className="portal-empty-title">No messages</p>
+                  <p className="portal-empty-text">Start a new conversation with your provider</p>
+                </div>
+              ) : (
+                <div>
+                  {threads.map((thread) => (
+                    <div
+                      key={thread.id}
+                      onClick={() => handleThreadClick(thread)}
+                      className="portal-thread-item"
+                    >
+                      <div className="portal-thread-header">
+                        <div className="portal-thread-content">
+                          <div className="portal-thread-title-row">
+                            <h3 className={`portal-thread-title ${thread.isReadByPatient ? 'read' : 'unread'}`}>
+                              {thread.subject}
+                            </h3>
+                            {!thread.isReadByPatient && thread.unreadCount > 0 && (
+                              <span className="portal-unread-badge">
+                                {thread.unreadCount} new
+                              </span>
+                            )}
+                          </div>
+                          <div className="portal-thread-meta">
+                            <span className={`portal-category-badge ${getCategoryClass(thread.category)}`}>
+                              {thread.category.charAt(0).toUpperCase() + thread.category.slice(1)}
+                            </span>
+                            <span className="portal-message-count">
+                              {thread.messageCount} message{thread.messageCount !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                          <p className="portal-thread-preview">
+                            {thread.lastMessagePreview}
+                          </p>
+                        </div>
+                        <span className="portal-thread-time">
+                          {formatDistanceToNow(new Date(thread.lastMessageAt), { addSuffix: true })}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Important notice */}
+            <div className="portal-notice">
+              <div className="portal-notice-icon">
+                <svg fill="currentColor" viewBox="0 0 20 20">
+                  <path
+                    fillRule="evenodd"
+                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </div>
+              <div className="portal-notice-content">
+                <h3 className="portal-notice-title">For urgent medical needs</h3>
+                <p className="portal-notice-text">
+                  Please call our office at (555) 123-4567 or seek emergency care at your nearest emergency room. This messaging system is not monitored 24/7 and should not be used for urgent medical concerns.
+                </p>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Modals */}
-      {showComposer && <MessageComposer onClose={() => setShowComposer(false)} onSuccess={fetchThreads} />}
-      {selectedThread && <MessageThreadView thread={selectedThread} onClose={() => setSelectedThread(null)} />}
+      {isMessagesUnlocked && showComposer && (
+        <MessageComposer
+          messageUnlockToken={messageUnlockToken}
+          onLockRequired={clearMessageUnlock}
+          onClose={() => setShowComposer(false)}
+          onSuccess={fetchThreads}
+        />
+      )}
+      {isMessagesUnlocked && selectedThread && (
+        <MessageThreadView
+          thread={selectedThread}
+          messageUnlockToken={messageUnlockToken}
+          onLockRequired={clearMessageUnlock}
+          onThreadRead={() => {
+            fetchThreads();
+            window.dispatchEvent(new Event('portalNotificationsChanged'));
+          }}
+          onClose={() => setSelectedThread(null)}
+        />
+      )}
     </div>
     </PatientPortalLayout>
   );
 }
 
 interface MessageComposerProps {
+  messageUnlockToken: string;
+  onLockRequired: () => void;
   onClose: () => void;
   onSuccess: () => void;
 }
 
-const MessageComposer: FC<MessageComposerProps> = ({ onClose, onSuccess }) => {
+const MessageComposer: FC<MessageComposerProps> = ({ messageUnlockToken, onLockRequired, onClose, onSuccess }) => {
   const { sessionToken, tenantId } = usePatientPortalAuth();
   const [subject, setSubject] = useState('');
   const [category, setCategory] = useState<string>('general');
@@ -274,6 +427,7 @@ const MessageComposer: FC<MessageComposerProps> = ({ onClose, onSuccess }) => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${sessionToken}`,
           'X-Tenant-ID': tenantId,
+          'X-Portal-Message-Unlock': messageUnlockToken,
         },
         body: JSON.stringify({
           subject: subject.trim(),
@@ -284,6 +438,7 @@ const MessageComposer: FC<MessageComposerProps> = ({ onClose, onSuccess }) => {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        if (errorData.requiresMessageUnlock) onLockRequired();
         throw new Error(errorData.error || 'Failed to send message');
       }
 
@@ -479,10 +634,19 @@ interface ThreadDetails {
 
 interface MessageThreadViewProps {
   thread: PatientThread;
+  messageUnlockToken: string;
+  onLockRequired: () => void;
+  onThreadRead: () => void;
   onClose: () => void;
 }
 
-const MessageThreadView: FC<MessageThreadViewProps> = ({ thread, onClose }) => {
+const MessageThreadView: FC<MessageThreadViewProps> = ({
+  thread,
+  messageUnlockToken,
+  onLockRequired,
+  onThreadRead,
+  onClose,
+}) => {
   const { sessionToken, tenantId } = usePatientPortalAuth();
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [threadDetails, setThreadDetails] = useState<ThreadDetails | null>(null);
@@ -501,11 +665,14 @@ const MessageThreadView: FC<MessageThreadViewProps> = ({ thread, onClose }) => {
         headers: {
           Authorization: `Bearer ${sessionToken}`,
           'X-Tenant-ID': tenantId,
+          'X-Portal-Message-Unlock': messageUnlockToken,
         },
       });
 
       if (!response.ok) {
-        throw new Error('Failed to load messages');
+        const errorData = await response.json().catch(() => ({}));
+        if (errorData.requiresMessageUnlock) onLockRequired();
+        throw new Error(errorData.error || 'Failed to load messages');
       }
 
       const data = await response.json();
@@ -519,8 +686,10 @@ const MessageThreadView: FC<MessageThreadViewProps> = ({ thread, onClose }) => {
         headers: {
           Authorization: `Bearer ${sessionToken}`,
           'X-Tenant-ID': tenantId,
+          'X-Portal-Message-Unlock': messageUnlockToken,
         },
       });
+      onThreadRead();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load messages');
     } finally {
@@ -530,7 +699,7 @@ const MessageThreadView: FC<MessageThreadViewProps> = ({ thread, onClose }) => {
 
   useEffect(() => {
     fetchThread();
-  }, [thread.id, sessionToken, tenantId]);
+  }, [thread.id, sessionToken, tenantId, messageUnlockToken]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -556,12 +725,14 @@ const MessageThreadView: FC<MessageThreadViewProps> = ({ thread, onClose }) => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${sessionToken}`,
           'X-Tenant-ID': tenantId,
+          'X-Portal-Message-Unlock': messageUnlockToken,
         },
         body: JSON.stringify({ messageText: replyText.trim() }),
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        if (errorData.requiresMessageUnlock) onLockRequired();
         throw new Error(errorData.error || 'Failed to send reply');
       }
 

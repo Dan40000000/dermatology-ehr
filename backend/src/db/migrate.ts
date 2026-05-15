@@ -13189,6 +13189,27 @@ Consider age-appropriate treatments and include family counseling points.',
     $$ LANGUAGE plpgsql;
     `,
   },
+  {
+    name: "185_patient_portal_read_receipts",
+    sql: `
+    CREATE TABLE IF NOT EXISTS patient_portal_read_receipts (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      item_type TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      first_read_at TIMESTAMPTZ DEFAULT NOW(),
+      last_read_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (tenant_id, patient_id, item_type, item_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patient_portal_read_receipts_patient
+      ON patient_portal_read_receipts(tenant_id, patient_id, item_type);
+
+    CREATE INDEX IF NOT EXISTS idx_patient_portal_read_receipts_item
+      ON patient_portal_read_receipts(item_type, item_id);
+    `,
+  },
 
 ];
 

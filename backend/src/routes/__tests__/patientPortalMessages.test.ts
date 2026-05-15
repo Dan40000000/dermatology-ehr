@@ -66,10 +66,6 @@ jest.mock("crypto", () => {
   };
 });
 
-const app = express();
-app.use(express.json());
-app.use("/api/patient-portal/messages", patientPortalMessagesRouter);
-
 const queryMock = pool.query as jest.Mock;
 const connectMock = pool.connect as jest.Mock;
 
@@ -87,6 +83,30 @@ const patientToken = jwt.sign(
   },
   "test-secret"
 );
+
+const messageUnlockToken = jwt.sign(
+  {
+    purpose: "portal_messages_unlock",
+    accountId: "portal-user-1",
+    patientId,
+    tenantId,
+  },
+  "test-secret"
+);
+
+const app = express();
+app.use(express.json());
+app.use((req, _res, next) => {
+  if (
+    req.header("x-tenant-id") === tenantId &&
+    req.headers.authorization === `Bearer ${patientToken}` &&
+    !req.headers["x-portal-message-unlock"]
+  ) {
+    req.headers["x-portal-message-unlock"] = messageUnlockToken;
+  }
+  next();
+});
+app.use("/api/patient-portal/messages", patientPortalMessagesRouter);
 
 const uploadDir = path.join(process.cwd(), "uploads", "message-attachments");
 

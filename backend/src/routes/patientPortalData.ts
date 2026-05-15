@@ -58,6 +58,27 @@ const portalRefillRequestSchema = z.object({
   notes: z.string().optional(),
 });
 
+async function markPortalItemsRead(
+  tenantId: string,
+  patientId: string,
+  itemType: string,
+  itemIds: Array<string | null | undefined>
+): Promise<void> {
+  const uniqueIds = Array.from(new Set(itemIds.filter((id): id is string => Boolean(id))));
+  if (uniqueIds.length === 0) return;
+
+  await pool.query(
+    `INSERT INTO patient_portal_read_receipts (
+       id, tenant_id, patient_id, item_type, item_id, first_read_at, last_read_at
+     )
+     SELECT gen_random_uuid()::text, $1, $2, $3, item_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+     FROM unnest($4::text[]) AS item_id
+     ON CONFLICT (tenant_id, patient_id, item_type, item_id)
+     DO UPDATE SET last_read_at = EXCLUDED.last_read_at`,
+    [tenantId, patientId, itemType, uniqueIds]
+  );
+}
+
 /**
  * GET /api/patient-portal-data/pharmacies/search
  * Search the pharmacy directory from a patient portal session.
@@ -402,6 +423,8 @@ patientPortalDataRouter.get("/visits", async (req: PatientPortalRequest, res) =>
       [patientId, tenantId]
     );
 
+    await markPortalItemsRead(tenantId, patientId, "visit_summary", result.rows.map((row) => row.id));
+
     return res.json({ visits: result.rows });
   } catch (error) {
     logPatientPortalDataError("Get visits error", error);
@@ -438,6 +461,8 @@ patientPortalDataRouter.get("/visit-summaries", async (req: PatientPortalRequest
       [patientId, tenantId]
     );
 
+    await markPortalItemsRead(tenantId, patientId, "visit_summary", result.rows.map((row) => row.id));
+
     return res.json({ summaries: result.rows });
   } catch (error) {
     logPatientPortalDataError("Get visit summaries error", error);
@@ -460,7 +485,7 @@ patientPortalDataRouter.get("/documents", async (req: PatientPortalRequest, res)
              COALESCE(d.file_type, d.mime_type, d.type) as "fileType",
              d.file_size as "fileSize",
              COALESCE(d.uploaded_at, d.created_at) as "uploadedAt",
-             ds.category, ds.shared_at as "sharedAt",
+             ds.id as "shareId", ds.category, ds.shared_at as "sharedAt",
              ds.viewed_at as "viewedAt", ds.notes,
              u.full_name as "sharedBy"
       FROM patient_document_shares ds
@@ -480,6 +505,21 @@ patientPortalDataRouter.get("/documents", async (req: PatientPortalRequest, res)
     query += ` ORDER BY ds.shared_at DESC LIMIT 100`;
 
     const result = await pool.query(query, params);
+
+    const unreadShareIds = result.rows
+      .filter((row) => row.shareId && !row.viewedAt)
+      .map((row) => row.shareId);
+    if (unreadShareIds.length > 0) {
+      await pool.query(
+        `UPDATE patient_document_shares
+         SET viewed_at = CURRENT_TIMESTAMP
+         WHERE tenant_id = $1
+           AND patient_id = $2
+           AND id = ANY($3::text[])
+           AND viewed_at IS NULL`,
+        [tenantId, patientId, unreadShareIds]
+      );
+    }
 
     return res.json({ documents: result.rows });
   } catch (error) {
@@ -891,13 +931,20 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
       [patientId, tenantId]
     );
 
-    // Get new visit summaries count (released in last 30 days)
+    // Get visit summaries the patient has not opened in the portal yet.
     const visitsResult = await pool.query(
       `SELECT COUNT(*) as count
        FROM visit_summaries
        WHERE patient_id = $1 AND tenant_id = $2
-       AND is_released = true
-       AND released_at > CURRENT_TIMESTAMP - INTERVAL '30 days'`,
+       AND (is_released = true OR shared_at IS NOT NULL)
+       AND NOT EXISTS (
+         SELECT 1
+         FROM patient_portal_read_receipts rr
+         WHERE rr.tenant_id = visit_summaries.tenant_id
+           AND rr.patient_id = visit_summaries.patient_id
+           AND rr.item_type = 'visit_summary'
+           AND rr.item_id = visit_summaries.id
+       )`,
       [patientId, tenantId]
     );
 

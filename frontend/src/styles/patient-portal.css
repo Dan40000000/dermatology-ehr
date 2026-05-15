@@ -793,3 +793,117 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.portal-secure-unlock-card {
+  display: grid;
+  grid-template-columns: auto 1fr minmax(260px, 360px);
+  gap: 1.25rem;
+  align-items: center;
+  padding: 1.5rem;
+  background:
+    radial-gradient(circle at top right, rgba(124, 58, 237, 0.12), transparent 28rem),
+    linear-gradient(135deg, #111827 0%, #312e81 100%);
+  color: white;
+  border-radius: 1rem;
+  box-shadow: 0 18px 45px rgba(17, 24, 39, 0.18);
+}
+
+.portal-secure-unlock-icon {
+  width: 4rem;
+  height: 4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.14);
+  color: white;
+}
+
+.portal-secure-unlock-icon svg {
+  width: 2rem;
+  height: 2rem;
+}
+
+.portal-secure-unlock-copy h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1.35rem;
+}
+
+.portal-secure-unlock-copy p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.55;
+}
+
+.portal-secure-unlock-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  background: rgba(255, 255, 255, 0.11);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.9rem;
+  padding: 1rem;
+}
+
+.portal-secure-unlock-form label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.portal-secure-unlock-form input {
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 0.65rem;
+  background: rgba(255, 255, 255, 0.95);
+  color: #111827;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.95rem;
+}
+
+.portal-secure-unlock-form button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.portal-secure-unlock-error {
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.65rem;
+  background: rgba(254, 226, 226, 0.95);
+  color: #991b1b;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.portal-secure-session-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 0.8rem 1rem;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 0.85rem;
+  color: #065f46;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.portal-secure-session-banner button {
+  border: none;
+  background: #047857;
+  color: white;
+  border-radius: 999px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@media (max-width: 860px) {
+  .portal-secure-unlock-card {
+    grid-template-columns: 1fr;
+  }
+}

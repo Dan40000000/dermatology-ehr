@@ -49,6 +49,7 @@ export function PortalDocumentsPage() {
     try {
       const data = await patientPortalFetch('/api/patient-portal-data/documents');
       setDocuments((data.documents || []).filter((doc: Document) => !isVisitSummaryDocument(doc)));
+      window.dispatchEvent(new Event('portalNotificationsChanged'));
     } catch (error) {
       console.error('Failed to fetch documents:', error);
       setError(error instanceof Error ? error.message : 'Failed to load documents');

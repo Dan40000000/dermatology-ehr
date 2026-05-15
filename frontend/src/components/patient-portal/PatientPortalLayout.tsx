@@ -118,8 +118,10 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
     };
 
     loadNotifications();
+    window.addEventListener('portalNotificationsChanged', loadNotifications);
     return () => {
       cancelled = true;
+      window.removeEventListener('portalNotificationsChanged', loadNotifications);
     };
   }, [patient?.id, location.pathname]);
 

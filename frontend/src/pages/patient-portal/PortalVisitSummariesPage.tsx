@@ -163,6 +163,7 @@ export function PortalVisitSummariesPage() {
       setError(null);
       const data = await patientPortalFetch('/api/patient-portal-data/visit-summaries');
       setSummaries(data.summaries || []);
+      window.dispatchEvent(new Event('portalNotificationsChanged'));
     } catch (err) {
       console.error('Failed to load visit summaries:', err);
       setError('Unable to load visit summaries. Please try again later.');

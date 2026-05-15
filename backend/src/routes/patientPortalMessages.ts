@@ -1,11 +1,13 @@
-import { Router } from "express";
+import { Router, type NextFunction, type Response } from "express";
 import { z } from "zod";
 import { pool } from "../db/pool";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { PatientPortalRequest, requirePatientAuth } from "../middleware/patientPortalAuth";
+import { env } from "../config/env";
 import { notificationService } from "../services/integrations/notificationService";
 import { logger } from "../lib/logger";
 import {
@@ -30,6 +32,38 @@ function logPortalMessageError(message: string, error: unknown): void {
   logger.error(message, {
     error: toSafeErrorMessage(error),
   });
+}
+
+function requireMessageUnlock(req: PatientPortalRequest, res: Response, next: NextFunction) {
+  const token = String(req.headers["x-portal-message-unlock"] || "").trim();
+  if (!token) {
+    return res.status(403).json({
+      error: "Secure message unlock required",
+      requiresMessageUnlock: true,
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(token, env.jwtSecret) as jwt.JwtPayload;
+    const patient = req.patient!;
+    if (
+      decoded.purpose !== "portal_messages_unlock" ||
+      decoded.accountId !== patient.accountId ||
+      decoded.patientId !== patient.patientId ||
+      decoded.tenantId !== patient.tenantId
+    ) {
+      return res.status(403).json({
+        error: "Secure message unlock required",
+        requiresMessageUnlock: true,
+      });
+    }
+    return next();
+  } catch {
+    return res.status(403).json({
+      error: "Secure message unlock expired",
+      requiresMessageUnlock: true,
+    });
+  }
 }
 
 // Configure multer for file uploads
@@ -65,7 +99,7 @@ const sendMessageSchema = z.object({
 });
 
 // GET /api/patient-portal/messages/threads - List patient's message threads
-router.get("/threads", requirePatientAuth, async (req: PatientPortalRequest, res) => {
+router.get("/threads", requirePatientAuth, requireMessageUnlock, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
@@ -147,7 +181,7 @@ router.get("/threads", requirePatientAuth, async (req: PatientPortalRequest, res
 });
 
 // GET /api/patient-portal/messages/threads/:id - Get thread with messages
-router.get("/threads/:id", requirePatientAuth, async (req: PatientPortalRequest, res) => {
+router.get("/threads/:id", requirePatientAuth, requireMessageUnlock, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
@@ -219,7 +253,7 @@ router.get("/threads/:id", requirePatientAuth, async (req: PatientPortalRequest,
 });
 
 // POST /api/patient-portal/messages/threads - Create new thread
-router.post("/threads", requirePatientAuth, async (req: PatientPortalRequest, res) => {
+router.post("/threads", requirePatientAuth, requireMessageUnlock, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
@@ -346,7 +380,7 @@ router.post("/threads", requirePatientAuth, async (req: PatientPortalRequest, re
 });
 
 // POST /api/patient-portal/messages/threads/:id/messages - Send message in thread
-router.post("/threads/:id/messages", requirePatientAuth, async (req: PatientPortalRequest, res) => {
+router.post("/threads/:id/messages", requirePatientAuth, requireMessageUnlock, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
@@ -438,7 +472,7 @@ router.post("/threads/:id/messages", requirePatientAuth, async (req: PatientPort
 });
 
 // POST /api/patient-portal/messages/threads/:id/mark-read - Mark thread as read by patient
-router.post("/threads/:id/mark-read", requirePatientAuth, async (req: PatientPortalRequest, res) => {
+router.post("/threads/:id/mark-read", requirePatientAuth, requireMessageUnlock, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
@@ -503,7 +537,7 @@ router.get("/unread-count", requirePatientAuth, async (req: PatientPortalRequest
 });
 
 // POST /api/patient-portal/messages/attachments - Upload attachment
-router.post("/attachments", requirePatientAuth, upload.single("file"), async (req: PatientPortalRequest, res) => {
+router.post("/attachments", requirePatientAuth, requireMessageUnlock, upload.single("file"), async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;
@@ -574,7 +608,7 @@ router.post("/attachments", requirePatientAuth, upload.single("file"), async (re
 });
 
 // GET /api/patient-portal/messages/attachments/:id - Download attachment
-router.get("/attachments/:id", requirePatientAuth, async (req: PatientPortalRequest, res) => {
+router.get("/attachments/:id", requirePatientAuth, requireMessageUnlock, async (req: PatientPortalRequest, res) => {
   try {
     const patientId = req.patient!.patientId;
     const tenantId = req.patient!.tenantId;

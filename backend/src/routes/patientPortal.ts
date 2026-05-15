@@ -56,6 +56,10 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(12),
 });
 
+const messageUnlockSchema = z.object({
+  password: z.string().min(1),
+});
+
 const updateProfileSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
@@ -842,6 +846,95 @@ patientPortalRouter.post("/security/change-password", requirePatientAuth, async 
     return res.status(500).json({ error: "Failed to change password" });
   }
 });
+
+/**
+ * POST /api/patient-portal/security/message-unlock
+ * Step-up verification for secure portal messages.
+ */
+patientPortalRouter.post(
+  "/security/message-unlock",
+  requirePatientAuth,
+  rateLimit({ windowMs: 60_000, max: 5 }),
+  async (req: PatientPortalRequest, res) => {
+    const parsed = messageUnlockSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    try {
+      const accountResult = await pool.query(
+        `SELECT id, password_hash
+         FROM patient_portal_accounts
+         WHERE id = $1 AND tenant_id = $2 AND patient_id = $3`,
+        [req.patient!.accountId, req.patient!.tenantId, req.patient!.patientId]
+      );
+
+      if (accountResult.rows.length === 0) {
+        return res.status(404).json({ error: "Portal account not found" });
+      }
+
+      const account = accountResult.rows[0];
+      const passwordMatches = await bcrypt.compare(parsed.data.password, account.password_hash);
+      if (!passwordMatches) {
+        await pool.query(
+          `INSERT INTO audit_log (id, tenant_id, user_id, action, resource_type, resource_id, ip_address, user_agent, severity, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [
+            crypto.randomUUID(),
+            req.patient!.tenantId,
+            null,
+            "patient_portal_message_unlock_failed",
+            "patient_portal_account",
+            req.patient!.accountId,
+            req.ip,
+            req.get("user-agent"),
+            "warning",
+            "failure",
+          ]
+        );
+        return res.status(403).json({ error: "Password is incorrect" });
+      }
+
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+      const unlockToken = jwt.sign(
+        {
+          purpose: "portal_messages_unlock",
+          accountId: req.patient!.accountId,
+          patientId: req.patient!.patientId,
+          tenantId: req.patient!.tenantId,
+        },
+        env.jwtSecret,
+        { expiresIn: "10m" }
+      );
+
+      await pool.query(
+        `INSERT INTO audit_log (id, tenant_id, user_id, action, resource_type, resource_id, ip_address, user_agent, severity, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          crypto.randomUUID(),
+          req.patient!.tenantId,
+          null,
+          "patient_portal_message_unlock",
+          "patient_portal_account",
+          req.patient!.accountId,
+          req.ip,
+          req.get("user-agent"),
+          "info",
+          "success",
+        ]
+      );
+
+      return res.json({
+        message: "Secure messages unlocked",
+        unlockToken,
+        expiresAt: expiresAt.toISOString(),
+      });
+    } catch (error) {
+      logPatientPortalError("Message unlock error", error);
+      return res.status(500).json({ error: "Failed to unlock secure messages" });
+    }
+  }
+);
 
 /**
  * PUT /api/patient-portal/me

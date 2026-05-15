@@ -508,6 +508,25 @@ describe("Patient portal routes", () => {
     expect(updateQuery).toContain("UPDATE patient_communication_preferences");
   });
 
+  it("POST /patient-portal/security/message-unlock verifies password and returns short-lived unlock token", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: "account-1", password_hash: "hash" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .post("/patient-portal/security/message-unlock")
+      .send({ password: "Portal123!" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.unlockToken).toBe("jwt-token");
+    expect(compareMock).toHaveBeenCalledWith("Portal123!", "hash");
+    expect(jwtSignMock).toHaveBeenCalledWith(
+      expect.objectContaining({ purpose: "portal_messages_unlock", patientId: "patient-1" }),
+      "test-secret",
+      { expiresIn: "10m" }
+    );
+  });
+
   it("GET /patient-portal/activity returns activity", async () => {
     queryMock.mockResolvedValueOnce({ rows: [{ action: "login" }] });
 

@@ -48,6 +48,8 @@ const toastMocks = vi.hoisted(() => ({
 const portalApiMocks = vi.hoisted(() => ({
   fetchPortalProfile: vi.fn(),
   updatePortalProfile: vi.fn(),
+  fetchPortalPreferences: vi.fn(),
+  updatePortalPreferences: vi.fn(),
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -96,6 +98,8 @@ beforeEach(() => {
   portalAuthMocks.register.mockReset().mockResolvedValue(undefined);
   portalApiMocks.fetchPortalProfile.mockReset();
   portalApiMocks.updatePortalProfile.mockReset();
+  portalApiMocks.fetchPortalPreferences.mockReset();
+  portalApiMocks.updatePortalPreferences.mockReset();
   toastMocks.showSuccess.mockReset();
   toastMocks.showError.mockReset();
 });
@@ -343,6 +347,16 @@ describe('Patient portal pages', () => {
         } as Response);
       }
 
+      if (url.includes('/api/patient-portal/security/message-unlock')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            unlockToken: 'message-unlock-token',
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+          }),
+        } as Response);
+      }
+
       if (url.includes('/api/patient-portal/messages/threads/thread-1/mark-read')) {
         return Promise.resolve({
           ok: true,
@@ -380,6 +394,12 @@ describe('Patient portal pages', () => {
     });
 
     renderWithRouter(<PatientPortalMessagesPage />, ['/portal/messages']);
+
+    expect(await screen.findByText('Unlock secure messages')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Portal password/i), {
+      target: { value: 'Portal123!' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Unlock Messages/i }));
 
     expect(await screen.findByText('Prescription Question')).toBeInTheDocument();
 
@@ -434,6 +454,16 @@ describe('Patient portal pages', () => {
         firstName: 'Jamie',
         lastName: 'Lee',
         email: 'jamie@example.com',
+      },
+    });
+    portalApiMocks.fetchPortalPreferences.mockResolvedValueOnce({
+      preferences: {
+        emailEnabled: true,
+        smsEnabled: true,
+        appointmentReminders: true,
+        labNotifications: true,
+        billingNotifications: true,
+        marketingUpdates: false,
       },
     });
 

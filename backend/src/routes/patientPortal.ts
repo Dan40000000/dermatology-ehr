@@ -138,6 +138,21 @@ function identityLast4Condition(paramNumber: number): string {
           OR RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '\\D', '', 'g'), 4) = $${paramNumber})`;
 }
 
+function identityDobCondition(paramNumber: number): string {
+  return `dob BETWEEN ($${paramNumber}::date - INTERVAL '1 day') AND ($${paramNumber}::date + INTERVAL '1 day')`;
+}
+
+function selectIdentityMatch<T extends { exactDobMatch: boolean }>(rows: T[]): T | null {
+  const exactMatches = rows.filter((row) => row.exactDobMatch);
+  if (exactMatches.length > 0) {
+    return exactMatches[0] ?? null;
+  }
+
+  // Legacy date-only values have occasionally been displayed one day off by timezone conversion.
+  // Only accept a near-date match when the patient is still uniquely identified by last4.
+  return rows.length === 1 ? rows[0] ?? null : null;
+}
+
 /**
  * POST /api/patient-portal/verify-identity
  * Verify patient identity before allowing registration
@@ -165,17 +180,23 @@ patientPortalRouter.post(
       // Find patient by last name, DOB, and last 4 of SSN or phone.
       // This links to an existing chart without transmitting full SSN.
       const patientResult = await pool.query(
-        `SELECT id, first_name, last_name, email
+        `SELECT id,
+                first_name,
+                last_name,
+                email,
+                dob::text AS dob,
+                (dob = $3::date) AS "exactDobMatch"
          FROM patients
          WHERE tenant_id = $1
          AND LOWER(TRIM(last_name)) = LOWER(TRIM($2))
-         AND dob = $3
+         AND ${identityDobCondition(3)}
          AND ${identityLast4Condition(4)}
-         ORDER BY created_at DESC`,
+         ORDER BY "exactDobMatch" DESC, created_at DESC`,
         [tenantId, lastName, dob, ssnLast4]
       );
+      const patient = selectIdentityMatch(patientResult.rows);
 
-      if (patientResult.rows.length === 0) {
+      if (!patient) {
         // Log failed verification attempt for security monitoring
         await pool.query(
           `INSERT INTO audit_log (id, tenant_id, action, resource_type, ip_address, user_agent, severity, status, metadata)
@@ -197,8 +218,6 @@ patientPortalRouter.post(
           error: "Unable to verify your identity. Please check your information or contact the office."
         });
       }
-
-      const patient = patientResult.rows[0];
 
       // Check if patient already has a portal account
       const existingAccount = await pool.query(
@@ -235,6 +254,7 @@ patientPortalRouter.post(
         firstName: patient.first_name,
         lastName: patient.last_name,
         email: patient.email, // Pre-fill if available
+        dob: patient.dob,
         patientId: patient.id, // Used internally for registration
       });
     } catch (error) {
@@ -279,25 +299,30 @@ patientPortalRouter.post(
 
       // Re-verify patient identity with SSN for security (prevent session hijacking)
       const patientResult = await pool.query(
-        `SELECT id, first_name, last_name, email as patient_email
+        `SELECT id,
+                first_name,
+                last_name,
+                email as patient_email,
+                dob::text AS dob,
+                (dob = $4::date) AS "exactDobMatch"
          FROM patients
          WHERE tenant_id = $1
          AND LOWER(TRIM(first_name)) = LOWER(TRIM($2))
          AND LOWER(TRIM(last_name)) = LOWER(TRIM($3))
-         AND dob = $4
-         ${ssnLast4Value ? `AND ${identityLast4Condition(5)}` : ""}`,
+         AND ${identityDobCondition(4)}
+         ${ssnLast4Value ? `AND ${identityLast4Condition(5)}` : ""}
+         ORDER BY "exactDobMatch" DESC, created_at DESC`,
         ssnLast4Value
           ? [tenantId, firstName, lastName, dob, ssnLast4Value]
           : [tenantId, firstName, lastName, dob]
       );
+      const patient = selectIdentityMatch(patientResult.rows);
 
-      if (patientResult.rows.length === 0) {
+      if (!patient) {
         return res.status(400).json({
           error: "Patient verification failed. Please check your information or contact the office."
         });
       }
-
-      const patient = patientResult.rows[0];
 
       // Hash password (12 rounds for enhanced security)
       const passwordHash = await bcrypt.hash(password, 12);

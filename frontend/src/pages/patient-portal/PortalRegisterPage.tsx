@@ -54,6 +54,7 @@ export function PortalRegisterPage() {
     firstName: string;
     lastName: string;
     patientEmail?: string;
+    dob?: string;
   } | null>(null);
 
   useEffect(() => {
@@ -89,7 +90,11 @@ export function PortalRegisterPage() {
         firstName: data.firstName,
         lastName: data.lastName,
         patientEmail: data.email,
+        dob: data.dob,
       });
+      if (data.dob) {
+        setDob(data.dob);
+      }
 
       // Pre-fill email if patient has one on file
       if (data.email) {

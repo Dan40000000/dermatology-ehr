@@ -101,7 +101,14 @@ describe("Patient portal routes", () => {
   it("POST /patient-portal/verify-identity links existing patient when phone last4 matches", async () => {
     queryMock
       .mockResolvedValueOnce({
-        rows: [{ id: "patient-1", first_name: "Pat", last_name: "Ent", email: "pat@example.com" }],
+        rows: [{
+          id: "patient-1",
+          first_name: "Pat",
+          last_name: "Ent",
+          email: "pat@example.com",
+          dob: "1990-01-01",
+          exactDobMatch: true,
+        }],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -120,6 +127,36 @@ describe("Patient portal routes", () => {
     const verificationQuery = queryMock.mock.calls[0]?.[0] as string;
     expect(verificationQuery).toContain("ssn_last4 = $4");
     expect(verificationQuery).toContain("REGEXP_REPLACE(COALESCE(phone, '')");
+    expect(res.body.dob).toBe("1990-01-01");
+  });
+
+  it("POST /patient-portal/verify-identity returns canonical DOB for unique one-day date display mismatches", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "patient-1",
+          first_name: "Pat",
+          last_name: "Ent",
+          email: "pat@example.com",
+          dob: "1990-01-02",
+          exactDobMatch: false,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .post("/patient-portal/verify-identity")
+      .set(tenantHeader, "tenant-1")
+      .send({
+        lastName: "Ent",
+        dob: "1990-01-01",
+        ssnLast4: "7890",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.verified).toBe(true);
+    expect(res.body.dob).toBe("1990-01-02");
   });
 
   it("POST /patient-portal/verify-identity masks non-Error failures in logs", async () => {

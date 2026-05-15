@@ -31,13 +31,14 @@ import {
   fetchChargesByEncounter,
   createCharge,
   deleteCharge,
+  syncLiveEncounterCoding,
   generateAiNoteDraft,
   fetchNoteTemplates,
   fetchProviders,
   fetchEncounterAmbientNotes,
 } from '../api';
 import type { Patient, Encounter, Vitals, Order, EncounterDiagnosis, Charge, ICD10Code, CPTCode } from '../types';
-import type { NoteTemplate, AINoteDraft, AmbientGeneratedNote, PatientDiagnosisSummary } from '../api';
+import type { NoteTemplate, AINoteDraft, AmbientGeneratedNote, PatientDiagnosisSummary, LiveEncounterCodingResult } from '../api';
 import type { PerformedWorkSubmission } from '../components/billing/PerformedWorkModal';
 import { useAutosave } from '../hooks/useAutosave';
 import { ScribeSummaryCard } from '../components/ScribeSummaryCard';
@@ -106,6 +107,10 @@ export function EncounterPage() {
   const [charges, setCharges] = useState<Charge[]>([]);
   const [scribeNote, setScribeNote] = useState<AmbientGeneratedNote | null>(null);
   const [scribeNoteLoading, setScribeNoteLoading] = useState(false);
+  const [liveCodingResult, setLiveCodingResult] = useState<LiveEncounterCodingResult | null>(null);
+  const [liveCodingSyncing, setLiveCodingSyncing] = useState(false);
+  const [liveCodingError, setLiveCodingError] = useState<string | null>(null);
+  const [lastLiveCodingSyncedAt, setLastLiveCodingSyncedAt] = useState<string | null>(null);
 
   // Check if encounter is locked/read-only
   const isLocked = ['signed', 'locked', 'finalized', 'completed', 'closed'].includes(String(encounter.status || '').toLowerCase());
@@ -136,6 +141,7 @@ export function EncounterPage() {
   // Providers for encounter creation
   const [providers, setProviders] = useState<{ id: string; fullName: string }[]>([]);
   const autoCreateEncounterRef = useRef(false);
+  const lastLiveCodingPayloadRef = useRef('');
   const encounterStartState = (location.state || {}) as EncounterStartNavigationState;
 
   // Form data
@@ -380,6 +386,57 @@ export function EncounterPage() {
       setSaving(false);
     }
   };
+
+  const runLiveCodingSync = useCallback(async (options?: { force?: boolean }) => {
+    if (!session || !encounterId || isNew || isLocked) return;
+
+    const payload = {
+      chiefComplaint: encounter.chiefComplaint ?? '',
+      hpi: encounter.hpi ?? '',
+      ros: encounter.ros ?? '',
+      exam: encounter.exam ?? '',
+      assessmentPlan: encounter.assessmentPlan ?? '',
+    };
+    const documentationText = Object.values(payload).join('\n').trim();
+    if (documentationText.length < 20) return;
+
+    const serialized = JSON.stringify(payload);
+    if (!options?.force && serialized === lastLiveCodingPayloadRef.current) return;
+    lastLiveCodingPayloadRef.current = serialized;
+
+    setLiveCodingSyncing(true);
+    setLiveCodingError(null);
+    try {
+      const result = await syncLiveEncounterCoding(session.tenantId, session.accessToken, encounterId, payload);
+      setLiveCodingResult(result);
+      setDiagnoses(result.diagnoses as EncounterDiagnosis[]);
+      setCharges(result.charges as Charge[]);
+      setLastLiveCodingSyncedAt(new Date().toISOString());
+    } catch (err: any) {
+      setLiveCodingError(err.message || 'Live coding sync failed');
+    } finally {
+      setLiveCodingSyncing(false);
+    }
+  }, [session, encounterId, isNew, isLocked, encounter.chiefComplaint, encounter.hpi, encounter.ros, encounter.exam, encounter.assessmentPlan]);
+
+  useEffect(() => {
+    if (!session || !encounterId || isNew || isLocked) return;
+    const timer = window.setTimeout(() => {
+      void runLiveCodingSync();
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [
+    session,
+    encounterId,
+    isNew,
+    isLocked,
+    encounter.chiefComplaint,
+    encounter.hpi,
+    encounter.ros,
+    encounter.exam,
+    encounter.assessmentPlan,
+    runLiveCodingSync,
+  ]);
 
   const saveAndSignEncounter = async () => {
     if (!session || !encounterId || isNew) return;
@@ -1788,126 +1845,131 @@ export function EncounterPage() {
 
         {activeSection === 'billing' && (
           <div>
-            {/* Auto-Suggest Panel */}
+            {/* Live Coding Panel */}
             {!isNew && !isLocked && (
               <div style={{
-                background: '#e0f2fe',
-                border: '1px solid #0369a1',
-                borderRadius: '8px',
+                background: 'linear-gradient(135deg, #ecfeff 0%, #f8fafc 100%)',
+                border: '1px solid #67e8f9',
+                borderRadius: '12px',
                 padding: '1rem',
-                marginBottom: '1.5rem'
+                marginBottom: '1.5rem',
+                boxShadow: '0 10px 24px rgba(8, 145, 178, 0.08)'
               }}>
-                <h4 style={{
-                  fontSize: '0.875rem',
-                  fontWeight: 600,
-                  color: '#0369a1',
-                  marginBottom: '0.75rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem'
-                }}>
-                  <span>💡</span>
-                  Suggested Procedures (Based on Documentation)
-                </h4>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                  {bodyDiagramLesionCount > 0 && !charges.find(c => c.cptCode === '11100') && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                  <div>
+                    <h4 style={{
+                      fontSize: '0.9rem',
+                      fontWeight: 800,
+                      color: '#0e7490',
+                      marginBottom: '0.2rem',
+                    }}>
+                      Live Documentation Coding
+                    </h4>
+                    <p style={{ fontSize: '0.76rem', color: '#155e75', margin: 0 }}>
+                      As the note changes, the system links ICD-10 diagnoses to encounter charges and keeps the draft superbill current.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    {lastLiveCodingSyncedAt && (
+                      <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                        Last sync {new Date(lastLiveCodingSyncedAt).toLocaleTimeString()}
+                      </span>
+                    )}
                     <button
                       type="button"
-                      onClick={() => setShowProcedureModal(true)}
+                      onClick={() => runLiveCodingSync({ force: true })}
+                      disabled={liveCodingSyncing}
                       style={{
                         padding: '0.5rem 0.75rem',
-                        background: '#ffffff',
-                        border: '1px solid #0369a1',
-                        borderRadius: '4px',
-                        color: '#0369a1',
+                        background: liveCodingSyncing ? '#bae6fd' : '#0e7490',
+                        border: 'none',
+                        borderRadius: '6px',
+                        color: liveCodingSyncing ? '#075985' : '#ffffff',
                         fontSize: '0.75rem',
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem'
+                        fontWeight: 800,
+                        cursor: liveCodingSyncing ? 'wait' : 'pointer',
                       }}
                     >
-                      <span>11100</span>
-                      <span>-</span>
-                      <span>Biopsy (lesions documented)</span>
+                      {liveCodingSyncing ? 'Syncing...' : 'Sync Coding Now'}
                     </button>
-                  )}
-                  {encounter.exam && !charges.find(c => c.cptCode.startsWith('992')) && (
-                    <button
-                      type="button"
-                      onClick={() => setShowProcedureModal(true)}
-                      style={{
-                        padding: '0.5rem 0.75rem',
-                        background: '#ffffff',
-                        border: '1px solid #0369a1',
-                        borderRadius: '4px',
-                        color: '#0369a1',
-                        fontSize: '0.75rem',
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem'
-                      }}
-                    >
-                      <span>99213</span>
-                      <span>-</span>
-                      <span>Office Visit E&M</span>
-                    </button>
-                  )}
-                  {(encounter.exam?.toLowerCase().includes('cryotherapy') || encounter.exam?.toLowerCase().includes('destruction')) && !charges.find(c => c.cptCode === '17000') && (
-                    <button
-                      type="button"
-                      onClick={() => setShowProcedureModal(true)}
-                      style={{
-                        padding: '0.5rem 0.75rem',
-                        background: '#ffffff',
-                        border: '1px solid #0369a1',
-                        borderRadius: '4px',
-                        color: '#0369a1',
-                        fontSize: '0.75rem',
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem'
-                      }}
-                    >
-                      <span>17000</span>
-                      <span>-</span>
-                      <span>Destruction/Cryotherapy</span>
-                    </button>
-                  )}
-                  {(encounter.exam?.toLowerCase().includes('excision') || encounter.exam?.toLowerCase().includes('excised')) && !charges.find(c => c.cptCode === '11400') && (
-                    <button
-                      type="button"
-                      onClick={() => setShowProcedureModal(true)}
-                      style={{
-                        padding: '0.5rem 0.75rem',
-                        background: '#ffffff',
-                        border: '1px solid #0369a1',
-                        borderRadius: '4px',
-                        color: '#0369a1',
-                        fontSize: '0.75rem',
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem'
-                      }}
-                    >
-                      <span>11400</span>
-                      <span>-</span>
-                      <span>Excision</span>
-                    </button>
-                  )}
+                  </div>
                 </div>
-                {bodyDiagramLesionCount === 0 && !encounter.exam && (
-                  <p style={{ fontSize: '0.75rem', color: '#075985', margin: 0 }}>
-                    Complete documentation to see procedure suggestions
-                  </p>
+
+                {liveCodingError && (
+                  <div style={{ background: '#fee2e2', color: '#991b1b', padding: '0.65rem 0.75rem', borderRadius: '8px', fontSize: '0.78rem', marginBottom: '0.75rem' }}>
+                    {liveCodingError}
+                  </div>
                 )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
+                  <div style={{ background: '#ffffff', border: '1px solid #cffafe', borderRadius: '10px', padding: '0.75rem' }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#0e7490', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+                      ICD-10 Diagnoses
+                    </div>
+                    {liveCodingResult?.suggestions.diagnoses.length ? (
+                      <div style={{ display: 'grid', gap: '0.45rem' }}>
+                        {liveCodingResult.suggestions.diagnoses.slice(0, 5).map((dx) => (
+                          <div key={dx.code} style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                            <span style={{ fontWeight: 900, color: '#155e75', minWidth: '4.2rem' }}>{dx.code}</span>
+                            <span style={{ color: '#334155', fontSize: '0.78rem' }}>{dx.description}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: '0.78rem', color: '#64748b', margin: 0 }}>
+                        Start documenting diagnoses, rash, lesion, biopsy, skin check, or cancer history to populate ICD-10 codes.
+                      </p>
+                    )}
+                  </div>
+
+                  <div style={{ background: '#ffffff', border: '1px solid #cffafe', borderRadius: '10px', padding: '0.75rem' }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#0e7490', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+                      Visit & Procedure Codes
+                    </div>
+                    {liveCodingResult?.suggestions.charges.length ? (
+                      <div style={{ display: 'grid', gap: '0.45rem' }}>
+                        {liveCodingResult.suggestions.charges.slice(0, 5).map((charge) => (
+                          <div key={charge.cptCode} style={{ display: 'grid', gap: '0.1rem' }}>
+                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                              <span style={{ fontWeight: 900, color: '#155e75' }}>{charge.cptCode}</span>
+                              <span style={{ color: '#334155', fontSize: '0.78rem' }}>{charge.description}</span>
+                            </div>
+                            <span style={{ color: '#64748b', fontSize: '0.7rem' }}>
+                              ${(charge.amountCents / 100).toFixed(2)} · {charge.reason}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: '0.78rem', color: '#64748b', margin: 0 }}>
+                        E/M and procedure lines will appear when the note supports a visit, biopsy, cryotherapy, or injection.
+                      </p>
+                    )}
+                  </div>
+
+                  <div style={{ background: '#ffffff', border: '1px solid #cffafe', borderRadius: '10px', padding: '0.75rem' }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#0e7490', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+                      Draft Superbill
+                    </div>
+                    {liveCodingResult?.superbill ? (
+                      <div style={{ display: 'grid', gap: '0.35rem', color: '#334155', fontSize: '0.78rem' }}>
+                        <span>Status: <strong>{liveCodingResult.superbill.status}</strong></span>
+                        <span>Lines: <strong>{liveCodingResult.superbill.lineCount}</strong></span>
+                        <span>Total: <strong>${(liveCodingResult.superbill.totalChargesCents / 100).toFixed(2)}</strong></span>
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: '0.78rem', color: '#64748b', margin: 0 }}>
+                        The draft superbill will sync once documentation supports billable coding.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {liveCodingResult?.warnings.length ? (
+                  <div style={{ marginTop: '0.75rem', color: '#92400e', fontSize: '0.76rem' }}>
+                    {liveCodingResult.warnings.join(' ')}
+                  </div>
+                ) : null}
               </div>
             )}
 

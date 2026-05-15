@@ -12,6 +12,7 @@ import { billingService } from "../services/billingService";
 import { ensureEncounterBill } from "../services/encounterFinancialsService";
 import { createFinancialWorkQueueItem } from "../services/financialWorkQueueService";
 import { workflowOrchestrator } from "../services/workflowOrchestrator";
+import { syncLiveEncounterCoding } from "../services/liveEncounterCodingService";
 import {
   emitEncounterCreated,
   emitEncounterUpdated,
@@ -44,6 +45,14 @@ const encounterUpdateSchema = z.object({
   ros: z.string().optional(),
   exam: z.string().optional(),
   assessmentPlan: z.string().optional(),
+});
+
+const liveCodingSyncSchema = z.object({
+  chiefComplaint: z.string().optional().nullable(),
+  hpi: z.string().optional().nullable(),
+  ros: z.string().optional().nullable(),
+  exam: z.string().optional().nullable(),
+  assessmentPlan: z.string().optional().nullable(),
 });
 
 const ENCOUNTER_FINANCIAL_READ_ROLES = [...CLINICAL_ROLES, "billing"] as const;
@@ -426,6 +435,37 @@ encountersRouter.post("/:id/status", requireAuth, requireRoles(["provider", "adm
 
   res.json({ ok: true });
 });
+
+encountersRouter.post(
+  "/:id/live-coding/sync",
+  requireAuth,
+  requireRoles(["provider", "ma", "admin"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = liveCodingSyncSchema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
+    const tenantId = req.user!.tenantId;
+    const encId = String(req.params.id);
+    const lockError = await ensureEncounterCanReceiveClinicalEdit(tenantId, encId);
+    if (lockError) {
+      return res.status(409).json({ error: lockError });
+    }
+
+    try {
+      const result = await syncLiveEncounterCoding({
+        tenantId,
+        encounterId: encId,
+        userId: req.user!.id,
+        noteOverrides: parsed.data,
+      });
+      return res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to sync live coding";
+      logEncountersError("Live encounter coding sync failed", error);
+      return res.status(message === "Encounter not found" ? 404 : 500).json({ error: message });
+    }
+  },
+);
 
 encountersRouter.get("/:id/superbill", requireAuth, requireRoles([...ENCOUNTER_FINANCIAL_READ_ROLES]), async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;

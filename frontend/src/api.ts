@@ -1066,6 +1066,59 @@ export const updateVitals = (tenantId: string, accessToken: string, data: any) =
 export const updateEncounterFields = (tenantId: string, accessToken: string, id: string, data: any) =>
   authedPost(tenantId, accessToken, `/api/encounters/${id}`, data);
 
+export interface LiveEncounterCodingResult {
+  diagnoses: any[];
+  charges: any[];
+  superbill: {
+    id: string;
+    status: string;
+    lineCount: number;
+    totalChargesCents: number;
+  } | null;
+  suggestions: {
+    diagnoses: Array<{
+      code: string;
+      description: string;
+      label: string;
+      evidence: string[];
+      isPrimary: boolean;
+      existing: boolean;
+    }>;
+    charges: Array<{
+      cptCode: string;
+      description: string;
+      codeType: 'CPT' | 'HCPCS' | 'INTERNAL';
+      billingRoute: 'insurance' | 'self_pay' | 'non_billable';
+      feeCents: number;
+      amountCents: number;
+      quantity: number;
+      reason: string;
+      existing: boolean;
+    }>;
+  };
+  applied: {
+    diagnosesCreated: number;
+    chargesCreated: number;
+    chargesUpdated: number;
+    superbillLinesSynced: number;
+  };
+  warnings: string[];
+}
+
+export const syncLiveEncounterCoding = (
+  tenantId: string,
+  accessToken: string,
+  id: string,
+  data: {
+    chiefComplaint?: string | null;
+    hpi?: string | null;
+    ros?: string | null;
+    exam?: string | null;
+    assessmentPlan?: string | null;
+  }
+): Promise<LiveEncounterCodingResult> =>
+  authedPost(tenantId, accessToken, `/api/encounters/${id}/live-coding/sync`, data);
+
 export async function fetchOrders(
   tenantId: string,
   accessToken: string,

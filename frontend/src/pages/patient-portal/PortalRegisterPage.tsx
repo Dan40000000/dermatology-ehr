@@ -322,8 +322,8 @@ export function PortalRegisterPage() {
                     </div>
                   </div>
 
-                  <div className={`form-field ${focusedField === 'ssn' ? 'focused' : ''} ${ssnLast4 ? 'has-value' : ''}`}>
-                    <label htmlFor="ssnLast4">Last 4 digits of Social Security Number</label>
+                  <div className={`form-field ${focusedField === 'identityLast4' ? 'focused' : ''} ${ssnLast4 ? 'has-value' : ''}`}>
+                    <label htmlFor="ssnLast4">Last 4 digits of SSN or phone number</label>
                     <div className="input-wrapper">
                       <svg className="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
@@ -340,7 +340,7 @@ export function PortalRegisterPage() {
                           const value = e.target.value.replace(/\D/g, '').slice(0, 4);
                           setSsnLast4(value);
                         }}
-                        onFocus={() => setFocusedField('ssn')}
+                        onFocus={() => setFocusedField('identityLast4')}
                         onBlur={() => setFocusedField(null)}
                         required
                         placeholder="••••"
@@ -356,7 +356,7 @@ export function PortalRegisterPage() {
                         <line x1="12" y1="16" x2="12" y2="12"/>
                         <line x1="12" y1="8" x2="12.01" y2="8"/>
                       </svg>
-                      Your SSN is used only for identity verification and is protected with bank-level encryption
+                      We use this only to link you to the patient profile already on file
                     </p>
                   </div>
 

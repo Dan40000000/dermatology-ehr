@@ -133,6 +133,11 @@ const verifyIdentitySchema = z.object({
   ssnLast4: z.string().length(4).regex(/^\d{4}$/, "Must be exactly 4 digits"),
 });
 
+function identityLast4Condition(paramNumber: number): string {
+  return `(ssn_last4 = $${paramNumber}
+          OR RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '\\D', '', 'g'), 4) = $${paramNumber})`;
+}
+
 /**
  * POST /api/patient-portal/verify-identity
  * Verify patient identity before allowing registration
@@ -157,15 +162,16 @@ patientPortalRouter.post(
     const { lastName, dob, ssnLast4 } = parsed.data;
 
     try {
-      // Find patient by last name, DOB, and last 4 of SSN
-      // This provides strong identity verification without transmitting full SSN
+      // Find patient by last name, DOB, and last 4 of SSN or phone.
+      // This links to an existing chart without transmitting full SSN.
       const patientResult = await pool.query(
         `SELECT id, first_name, last_name, email
          FROM patients
          WHERE tenant_id = $1
-         AND LOWER(last_name) = LOWER($2)
+         AND LOWER(TRIM(last_name)) = LOWER(TRIM($2))
          AND dob = $3
-         AND ssn_last4 = $4`,
+         AND ${identityLast4Condition(4)}
+         ORDER BY created_at DESC`,
         [tenantId, lastName, dob, ssnLast4]
       );
 
@@ -183,7 +189,7 @@ patientPortalRouter.post(
             req.get('user-agent'),
             'warning',
             'failure',
-            JSON.stringify({ lastName, dob, ssnLast4Provided: true })
+            JSON.stringify({ lastName, dob, verificationLast4Provided: true })
           ]
         );
 
@@ -276,10 +282,10 @@ patientPortalRouter.post(
         `SELECT id, first_name, last_name, email as patient_email
          FROM patients
          WHERE tenant_id = $1
-         AND LOWER(first_name) = LOWER($2)
-         AND LOWER(last_name) = LOWER($3)
+         AND LOWER(TRIM(first_name)) = LOWER(TRIM($2))
+         AND LOWER(TRIM(last_name)) = LOWER(TRIM($3))
          AND dob = $4
-         ${ssnLast4Value ? "AND ssn_last4 = $5" : ""}`,
+         ${ssnLast4Value ? `AND ${identityLast4Condition(5)}` : ""}`,
         ssnLast4Value
           ? [tenantId, firstName, lastName, dob, ssnLast4Value]
           : [tenantId, firstName, lastName, dob]

@@ -608,7 +608,6 @@ export function PortalRegisterPage() {
                         checked={acceptTerms}
                         onChange={(e) => setAcceptTerms(e.target.checked)}
                       />
-                      <span className="checkmark"></span>
                       <span className="checkbox-label">
                         I accept the <a href="#terms" onClick={(e) => e.preventDefault()}>Terms of Service</a> and <a href="#privacy" onClick={(e) => e.preventDefault()}>Privacy Policy</a>
                       </span>
@@ -1241,33 +1240,30 @@ export function PortalRegisterPage() {
         }
 
         .custom-checkbox input {
-          position: absolute;
-          width: 1px;
-          height: 1px;
-          margin: -1px;
-          overflow: hidden;
-          clip: rect(0, 0, 0, 0);
-          white-space: nowrap;
-          border: 0;
-        }
-
-        .checkmark {
+          appearance: none;
+          -webkit-appearance: none;
           width: 20px;
           height: 20px;
+          margin: 2px 0 0;
           border: 2px solid #d1d5db;
           border-radius: 6px;
           transition: all 0.2s ease;
           position: relative;
           flex-shrink: 0;
-          margin-top: 2px;
+          cursor: pointer;
         }
 
-        .custom-checkbox input:checked + .checkmark {
+        .custom-checkbox input:focus-visible {
+          outline: 3px solid rgba(99, 102, 241, 0.25);
+          outline-offset: 2px;
+        }
+
+        .custom-checkbox input:checked {
           background: linear-gradient(135deg, #6366f1, #8b5cf6);
           border-color: transparent;
         }
 
-        .custom-checkbox input:checked + .checkmark::after {
+        .custom-checkbox input:checked::after {
           content: '';
           position: absolute;
           left: 6px;

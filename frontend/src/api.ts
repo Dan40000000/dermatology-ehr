@@ -1464,6 +1464,33 @@ export interface PrescriptionWorkflowPayload {
   refills?: string | number;
 }
 
+export interface CreatePrescriptionPayload {
+  patientId: string;
+  encounterId?: string;
+  medicationId?: string;
+  medicationName: string;
+  genericName?: string;
+  strength?: string;
+  dosageForm?: string;
+  sig: string;
+  quantity: number;
+  quantityUnit?: string;
+  refills: number;
+  daysSupply?: number;
+  pharmacyId?: string;
+  pharmacyName?: string;
+  pharmacyPhone?: string;
+  pharmacyAddress?: string;
+  pharmacyNcpdp?: string;
+  daw?: boolean;
+  isControlled?: boolean;
+  deaSchedule?: string;
+  indication?: string;
+  notes?: string;
+  deliveryMethod?: 'electronic' | 'print' | 'manual';
+  deliveryNotes?: string;
+}
+
 export interface PriorAuthWorkflowPayload {
   id?: string;
   priorAuthId?: string;
@@ -1493,6 +1520,26 @@ export const sendPrescriptionWorkflow = (
   accessToken: string,
   payload: PrescriptionWorkflowPayload
 ) => authedPost(tenantId, accessToken, "/api/prescriptions/send", payload);
+
+export const createPrescription = (
+  tenantId: string,
+  accessToken: string,
+  payload: CreatePrescriptionPayload
+) => authedPost(tenantId, accessToken, "/api/prescriptions", payload);
+
+export const markPrescriptionPrinted = (
+  tenantId: string,
+  accessToken: string,
+  prescriptionId: string,
+  payload: { notes?: string; pharmacyName?: string; pharmacyNcpdp?: string } = {}
+) => authedPost(tenantId, accessToken, `/api/prescriptions/${prescriptionId}/print`, payload);
+
+export const markPrescriptionManualFill = (
+  tenantId: string,
+  accessToken: string,
+  prescriptionId: string,
+  payload: { notes?: string; pharmacyName?: string; pharmacyNcpdp?: string } = {}
+) => authedPost(tenantId, accessToken, `/api/prescriptions/${prescriptionId}/manual-fill`, payload);
 
 export const submitPriorAuthWorkflow = (
   tenantId: string,

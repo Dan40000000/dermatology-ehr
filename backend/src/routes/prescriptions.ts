@@ -33,9 +33,9 @@ function logPrescriptionsError(message: string, error: unknown): void {
 
 // Validation schemas
 const createPrescriptionSchema = z.object({
-  patientId: z.string().uuid(),
-  encounterId: z.string().uuid().optional(),
-  medicationId: z.string().uuid().optional(),
+  patientId: z.string().min(1),
+  encounterId: z.string().min(1).optional(),
+  medicationId: z.string().min(1).optional(),
   medicationName: z.string().min(1),
   genericName: z.string().optional(),
   strength: z.string().optional(),
@@ -43,9 +43,9 @@ const createPrescriptionSchema = z.object({
   sig: z.string().min(1),
   quantity: z.number().positive(),
   quantityUnit: z.string().optional().default('each'),
-  refills: z.number().int().min(0).max(5),
+  refills: z.number().int().min(0).max(11),
   daysSupply: z.number().int().positive().optional(),
-  pharmacyId: z.string().uuid().optional(),
+  pharmacyId: z.string().min(1).optional(),
   pharmacyName: z.string().optional(),
   pharmacyPhone: z.string().optional(),
   pharmacyAddress: z.string().optional(),
@@ -55,14 +55,16 @@ const createPrescriptionSchema = z.object({
   deaSchedule: z.string().optional(),
   indication: z.string().optional(),
   notes: z.string().optional(),
+  deliveryMethod: z.enum(['electronic', 'print', 'manual']).optional().default('electronic'),
+  deliveryNotes: z.string().optional(),
 });
 
 const updatePrescriptionSchema = z.object({
   sig: z.string().min(1).optional(),
   quantity: z.number().positive().optional(),
-  refills: z.number().int().min(0).max(5).optional(),
+  refills: z.number().int().min(0).max(11).optional(),
   daysSupply: z.number().int().positive().optional(),
-  pharmacyId: z.string().uuid().optional(),
+  pharmacyId: z.string().min(1).optional(),
   notes: z.string().optional(),
   status: z.enum(['pending', 'sent', 'transmitted', 'error', 'cancelled', 'discontinued']).optional(),
 });
@@ -82,6 +84,12 @@ const sendPrescriptionWorkflowSchema = z.object({
   (data) => data.prescriptionId || data.orderId || data.medicationName,
   { message: 'prescriptionId, orderId, or medicationName is required' }
 );
+
+const deliveryDocumentationSchema = z.object({
+  notes: z.string().optional(),
+  pharmacyName: z.string().optional(),
+  pharmacyNcpdp: z.string().optional(),
+});
 
 // GET /api/prescriptions - List prescriptions (with optional filters)
 prescriptionsRouter.get('/', requireAuth, async (req: AuthedRequest, res) => {
@@ -550,10 +558,12 @@ prescriptionsRouter.post(
           sig, quantity, quantity_unit, refills, days_supply,
           pharmacy_id, pharmacy_name, pharmacy_phone, pharmacy_address, pharmacy_ncpdp,
           daw, is_controlled, dea_schedule, indication, notes,
-          status, created_by
+          status, delivery_method, delivery_status, delivery_notes, written_date, refills_remaining,
+          created_by
         ) values (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-          $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
+          $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29,
+          CURRENT_TIMESTAMP, $30, $31
         )`,
         [
           id, tenantId, data.patientId, data.encounterId || null, userId, data.medicationId || null,
@@ -562,7 +572,8 @@ prescriptionsRouter.post(
           data.pharmacyId || null, data.pharmacyName || null, data.pharmacyPhone || null,
           data.pharmacyAddress || null, data.pharmacyNcpdp || null,
           data.daw, data.isControlled, data.deaSchedule || null, data.indication || null, data.notes || null,
-          'pending', userId,
+          'pending', data.deliveryMethod, data.deliveryMethod === 'electronic' ? 'draft' : 'pending',
+          data.deliveryNotes || null, data.refills, userId,
         ]
       );
 
@@ -582,6 +593,8 @@ prescriptionsRouter.post(
 
       return res.status(201).json({
         id,
+        deliveryMethod: data.deliveryMethod,
+        deliveryStatus: data.deliveryMethod === 'electronic' ? 'draft' : 'pending',
         validationWarnings: validation.warnings.length > 0 ? validation.warnings : undefined,
       });
     } catch (error) {
@@ -835,6 +848,10 @@ prescriptionsRouter.post(
         await pool.query(
           `UPDATE prescriptions
               SET status = 'sent',
+                  delivery_method = 'electronic',
+                  delivery_status = 'sent',
+                  documented_at = CURRENT_TIMESTAMP,
+                  documented_by = $3,
                   pharmacy_ncpdp = COALESCE($1, pharmacy_ncpdp),
                   sent_at = CURRENT_TIMESTAMP,
                   surescripts_message_id = $2,
@@ -855,6 +872,7 @@ prescriptionsRouter.post(
             JSON.stringify({
               provider: transmissionResult.provider,
               mode: transmissionResult.mode,
+              deliveryMethod: 'electronic',
               messageId: transmissionResult.messageId,
               pharmacyNcpdp: transmissionResult.pharmacyNcpdp,
             }),
@@ -992,6 +1010,10 @@ prescriptionsRouter.post(
       await pool.query(
         `UPDATE prescriptions
          SET status = 'sent',
+             delivery_method = 'electronic',
+             delivery_status = 'sent',
+             documented_at = CURRENT_TIMESTAMP,
+             documented_by = $4,
              pharmacy_ncpdp = $1,
              pharmacy_id = $2,
              sent_at = CURRENT_TIMESTAMP,
@@ -1011,7 +1033,7 @@ prescriptionsRouter.post(
           'transmitted',
           userId,
           req.ip,
-          JSON.stringify({ pharmacyNcpdp, messageId: transmissionResult.messageId }),
+          JSON.stringify({ pharmacyNcpdp, messageId: transmissionResult.messageId, deliveryMethod: 'electronic' }),
         ]
       );
 
@@ -1355,6 +1377,10 @@ prescriptionsRouter.post(
             `UPDATE prescriptions
              SET status = 'sent',
                  erx_status = 'success',
+                 delivery_method = 'electronic',
+                 delivery_status = 'sent',
+                 documented_at = CURRENT_TIMESTAMP,
+                 documented_by = $1,
                  sent_at = CURRENT_TIMESTAMP,
                  updated_at = CURRENT_TIMESTAMP,
                  updated_by = $1
@@ -1440,7 +1466,12 @@ prescriptionsRouter.post(
       // Update print counts
       await pool.query(
         `UPDATE prescriptions
-         SET print_count = COALESCE(print_count, 0) + 1,
+         SET status = 'sent',
+             delivery_method = 'print',
+             delivery_status = 'printed',
+             documented_at = CURRENT_TIMESTAMP,
+             documented_by = $1,
+             print_count = COALESCE(print_count, 0) + 1,
              last_printed_at = CURRENT_TIMESTAMP,
              last_printed_by = $1
          WHERE id = ANY($2) AND tenant_id = $3`,
@@ -1466,6 +1497,175 @@ prescriptionsRouter.post(
     } catch (error) {
       logPrescriptionsError('Error printing bulk prescriptions:', error);
       return res.status(500).json({ error: 'Failed to print prescriptions' });
+    }
+  }
+);
+
+// POST /api/prescriptions/:id/print - Document printed prescription
+prescriptionsRouter.post(
+  '/:id/print',
+  requireAuth,
+  requireRoles(['admin', 'provider', 'ma']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const parsed = deliveryDocumentationSchema.parse(req.body || {});
+      const { id } = req.params;
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+
+      const existing = await pool.query(
+        `SELECT p.id, p.status, p.medication_name, p.sig, p.quantity, p.quantity_unit,
+                p.refills, p.pharmacy_name, pat.first_name, pat.last_name
+           FROM prescriptions p
+           LEFT JOIN patients pat ON p.patient_id = pat.id
+          WHERE p.id = $1 AND p.tenant_id = $2`,
+        [id, tenantId]
+      );
+
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: 'Prescription not found' });
+      }
+
+      const prescription = existing.rows[0];
+      if (['cancelled', 'discontinued'].includes(String(prescription.status || '').toLowerCase())) {
+        return res.status(400).json({ error: 'Cannot print cancelled or discontinued prescription' });
+      }
+
+      await pool.query(
+        `UPDATE prescriptions
+            SET status = 'sent',
+                delivery_method = 'print',
+                delivery_status = 'printed',
+                delivery_notes = COALESCE(NULLIF($1, ''), delivery_notes),
+                pharmacy_name = COALESCE(NULLIF($2, ''), pharmacy_name),
+                pharmacy_ncpdp = COALESCE(NULLIF($3, ''), pharmacy_ncpdp),
+                documented_at = CURRENT_TIMESTAMP,
+                documented_by = $4,
+                print_count = COALESCE(print_count, 0) + 1,
+                last_printed_at = CURRENT_TIMESTAMP,
+                last_printed_by = $4,
+                updated_at = CURRENT_TIMESTAMP,
+                updated_by = $4
+          WHERE id = $5 AND tenant_id = $6`,
+        [parsed.notes || null, parsed.pharmacyName || null, parsed.pharmacyNcpdp || null, userId, id, tenantId]
+      );
+
+      await pool.query(
+        `INSERT INTO prescription_audit_log(prescription_id, action, user_id, ip_address, metadata)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          id,
+          'printed',
+          userId,
+          req.ip,
+          JSON.stringify({
+            deliveryMethod: 'print',
+            notes: parsed.notes || null,
+            pharmacyName: parsed.pharmacyName || null,
+          }),
+        ]
+      );
+
+      return res.json({
+        success: true,
+        prescriptionId: id,
+        deliveryMethod: 'print',
+        deliveryStatus: 'printed',
+        printCountIncremented: true,
+        printable: {
+          patientName: `${prescription.first_name || ''} ${prescription.last_name || ''}`.trim(),
+          medicationName: prescription.medication_name,
+          sig: prescription.sig,
+          quantity: prescription.quantity,
+          quantityUnit: prescription.quantity_unit,
+          refills: prescription.refills,
+          pharmacyName: parsed.pharmacyName || prescription.pharmacy_name || null,
+        },
+        message: 'Prescription marked as printed',
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid request data', details: error.issues });
+      }
+      logPrescriptionsError('Error documenting printed prescription:', error);
+      return res.status(500).json({ error: 'Failed to document printed prescription' });
+    }
+  }
+);
+
+// POST /api/prescriptions/:id/manual-fill - Document manually filled/written prescription
+prescriptionsRouter.post(
+  '/:id/manual-fill',
+  requireAuth,
+  requireRoles(['admin', 'provider', 'ma']),
+  async (req: AuthedRequest, res) => {
+    try {
+      const parsed = deliveryDocumentationSchema.parse(req.body || {});
+      const { id } = req.params;
+      const tenantId = req.user!.tenantId;
+      const userId = req.user!.id;
+
+      const existing = await pool.query(
+        'SELECT id, status FROM prescriptions WHERE id = $1 AND tenant_id = $2',
+        [id, tenantId]
+      );
+
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: 'Prescription not found' });
+      }
+
+      const prescription = existing.rows[0];
+      if (['cancelled', 'discontinued'].includes(String(prescription.status || '').toLowerCase())) {
+        return res.status(400).json({ error: 'Cannot manually fill cancelled or discontinued prescription' });
+      }
+
+      await pool.query(
+        `UPDATE prescriptions
+            SET status = 'sent',
+                delivery_method = 'manual',
+                delivery_status = 'manual_documented',
+                delivery_notes = COALESCE(NULLIF($1, ''), delivery_notes),
+                pharmacy_name = COALESCE(NULLIF($2, ''), pharmacy_name),
+                pharmacy_ncpdp = COALESCE(NULLIF($3, ''), pharmacy_ncpdp),
+                documented_at = CURRENT_TIMESTAMP,
+                documented_by = $4,
+                manually_filled_at = CURRENT_TIMESTAMP,
+                manually_filled_by = $4,
+                updated_at = CURRENT_TIMESTAMP,
+                updated_by = $4
+          WHERE id = $5 AND tenant_id = $6`,
+        [parsed.notes || null, parsed.pharmacyName || null, parsed.pharmacyNcpdp || null, userId, id, tenantId]
+      );
+
+      await pool.query(
+        `INSERT INTO prescription_audit_log(prescription_id, action, user_id, ip_address, metadata)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          id,
+          'manual_fill_documented',
+          userId,
+          req.ip,
+          JSON.stringify({
+            deliveryMethod: 'manual',
+            notes: parsed.notes || null,
+            pharmacyName: parsed.pharmacyName || null,
+          }),
+        ]
+      );
+
+      return res.json({
+        success: true,
+        prescriptionId: id,
+        deliveryMethod: 'manual',
+        deliveryStatus: 'manual_documented',
+        message: 'Manual prescription documented',
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Invalid request data', details: error.issues });
+      }
+      logPrescriptionsError('Error documenting manual prescription:', error);
+      return res.status(500).json({ error: 'Failed to document manual prescription' });
     }
   }
 );

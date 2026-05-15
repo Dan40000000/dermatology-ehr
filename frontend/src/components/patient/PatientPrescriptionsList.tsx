@@ -35,6 +35,8 @@ export function PatientPrescriptionsList({ patientId }: PatientPrescriptionsList
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'active':
+      case 'sent':
+      case 'transmitted':
         return <CheckCircle size={16} style={{ color: '#10b981' }} />;
       case 'pending':
         return <Clock size={16} style={{ color: '#f59e0b' }} />;
@@ -49,11 +51,22 @@ export function PatientPrescriptionsList({ patientId }: PatientPrescriptionsList
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active': return '#10b981';
+      case 'sent': return '#10b981';
+      case 'transmitted': return '#10b981';
       case 'pending': return '#f59e0b';
       case 'cancelled': return '#ef4444';
       case 'discontinued': return '#dc2626';
       default: return '#6b7280';
     }
+  };
+
+  const getDeliveryLabel = (rx: any) => {
+    const method = String(rx.deliveryMethod || rx.delivery_method || '').toLowerCase();
+    const status = String(rx.deliveryStatus || rx.delivery_status || '').replace(/_/g, ' ');
+    if (method === 'print') return status ? `Printed · ${status}` : 'Printed';
+    if (method === 'manual') return status ? `Manual · ${status}` : 'Manual';
+    if (method === 'electronic') return status ? `eRx · ${status}` : 'eRx';
+    return null;
   };
 
   if (isLoading) {
@@ -105,7 +118,7 @@ export function PatientPrescriptionsList({ patientId }: PatientPrescriptionsList
   }
 
   const activePrescriptions = prescriptions.filter((rx: any) =>
-    rx.status === 'active' || rx.status === 'pending'
+    rx.status === 'active' || rx.status === 'pending' || rx.status === 'sent' || rx.status === 'transmitted'
   );
   const inactivePrescriptions = prescriptions.filter((rx: any) =>
     rx.status === 'cancelled' || rx.status === 'discontinued' || rx.refillsRemaining === 0
@@ -236,6 +249,24 @@ export function PatientPrescriptionsList({ patientId }: PatientPrescriptionsList
                       <p style={{ margin: '0 0 0.5rem', color: '#6b7280', fontSize: '0.875rem' }}>
                         {rx.sig}
                       </p>
+                    )}
+
+                    {getDeliveryLabel(rx) && (
+                      <div style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        marginBottom: '0.6rem',
+                        padding: '0.25rem 0.5rem',
+                        background: '#eef2ff',
+                        border: '1px solid #c7d2fe',
+                        borderRadius: '999px',
+                        color: '#3730a3',
+                        fontSize: '0.72rem',
+                        fontWeight: 700
+                      }}>
+                        {getDeliveryLabel(rx)}
+                      </div>
                     )}
 
                     <div style={{ display: 'flex', gap: '1.5rem', fontSize: '0.75rem', color: '#6b7280' }}>

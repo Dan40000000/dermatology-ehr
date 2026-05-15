@@ -8,8 +8,7 @@ import { useEligibilityByPatient } from '../hooks/useEligibilityByPatient';
 import {
   fetchOrders,
   fetchPatients,
-  createOrder,
-  sendErx,
+  createPrescription,
   fetchRefillRequests,
   denyRefill,
   requestMedicationChange,
@@ -20,6 +19,8 @@ import {
   fetchPatientMedicationHistory,
   checkFormulary,
   fetchPrescriptionsEnhanced,
+  markPrescriptionManualFill,
+  markPrescriptionPrinted,
 } from '../api';
 import type { Order, Patient } from '../types';
 import { PARequestModal, PAStatusBadge, PADetailModal, DrugInteractionChecker } from '../components/prescriptions';
@@ -28,6 +29,7 @@ import { PrescribeButtonModal } from '../components/workflows';
 type RxFilter = 'all' | 'pending' | 'ordered' | 'completed' | 'cancelled';
 type TabType = 'prescriptions' | 'refills';
 type PrescriptionApiRecord = Record<string, any>;
+type RxDeliveryMethod = 'electronic' | 'print' | 'manual';
 
 const toDisplayString = (value: unknown) => {
   if (value === null || value === undefined) return '';
@@ -36,6 +38,27 @@ const toDisplayString = (value: unknown) => {
 
 const readRxField = (rx: PrescriptionApiRecord, camelKey: string, snakeKey: string) =>
   rx[camelKey] ?? rx[snakeKey];
+
+const parseQuantityForPrescription = (value: string) => {
+  const trimmed = value.trim();
+  const amount = Number.parseFloat(trimmed);
+  const unit = trimmed.replace(/^[\d.]+\s*/, '').trim() || 'each';
+
+  return {
+    quantity: Number.isFinite(amount) && amount > 0 ? amount : 1,
+    quantityUnit: unit,
+  };
+};
+
+const getDeliveryLabel = (method?: string, status?: string) => {
+  const normalizedMethod = toDisplayString(method).toLowerCase();
+  const normalizedStatus = toDisplayString(status).replace(/_/g, ' ');
+
+  if (normalizedMethod === 'print') return normalizedStatus ? `Printed · ${normalizedStatus}` : 'Printed';
+  if (normalizedMethod === 'manual') return normalizedStatus ? `Manual · ${normalizedStatus}` : 'Manual';
+  if (normalizedMethod === 'electronic') return normalizedStatus ? `eRx · ${normalizedStatus}` : 'eRx';
+  return 'Not documented';
+};
 
 const normalizePrescriptionStatus = (status: unknown): Order['status'] => {
   const normalized = toDisplayString(status).toLowerCase();
@@ -79,7 +102,14 @@ const normalizeClinicalPrescription = (rx: PrescriptionApiRecord): Order => ({
   details: buildPrescriptionDetails(rx),
   notes: toDisplayString(rx.notes) || undefined,
   createdAt: toDisplayString(readRxField(rx, 'createdAt', 'created_at') ?? readRxField(rx, 'writtenDate', 'written_date')) || new Date().toISOString(),
-});
+  sourceType: 'prescription',
+  deliveryMethod: toDisplayString(readRxField(rx, 'deliveryMethod', 'delivery_method')) || 'electronic',
+  deliveryStatus: toDisplayString(readRxField(rx, 'deliveryStatus', 'delivery_status')) || '',
+  deliveryNotes: toDisplayString(readRxField(rx, 'deliveryNotes', 'delivery_notes')) || '',
+  documentedAt: toDisplayString(readRxField(rx, 'documentedAt', 'documented_at')) || '',
+  lastPrintedAt: toDisplayString(readRxField(rx, 'lastPrintedAt', 'last_printed_at')) || '',
+  manuallyFilledAt: toDisplayString(readRxField(rx, 'manuallyFilledAt', 'manually_filled_at')) || '',
+} as Order);
 
 const DERM_MEDICATIONS = [
   // TOPICAL CORTICOSTEROIDS - Class 1 (Super Potent)
@@ -321,6 +351,7 @@ export function PrescriptionsPage() {
     refills: '0',
     instructions: '',
     pharmacy: '',
+    deliveryMethod: 'electronic' as RxDeliveryMethod,
   });
 
   const [medicationSearch, setMedicationSearch] = useState('');
@@ -448,24 +479,51 @@ export function PrescriptionsPage() {
   }, [searchParams]);
 
   const handleCreateRx = async () => {
-    if (!session || !newRx.patientId || !newRx.medication) {
+    const medicationName = (newRx.medication || medicationSearch).trim();
+
+    if (!session || !newRx.patientId || !medicationName) {
       showError('Please fill in required fields');
       return;
     }
 
     setSending(true);
     try {
-      const details = `${newRx.medication} ${newRx.strength}\nQty: ${newRx.quantity}\nSig: ${newRx.frequency}\nRefills: ${newRx.refills}${newRx.instructions ? `\nInstructions: ${newRx.instructions}` : ''}`;
-
-      await createOrder(session.tenantId, session.accessToken, {
+      const { quantity, quantityUnit } = parseQuantityForPrescription(newRx.quantity);
+      const prescription = await createPrescription(session.tenantId, session.accessToken, {
         patientId: newRx.patientId,
-        type: 'rx',
-        details,
+        medicationName,
+        strength: newRx.strength || undefined,
+        sig: newRx.frequency,
+        quantity,
+        quantityUnit,
+        refills: Number.parseInt(newRx.refills, 10) || 0,
+        pharmacyName: newRx.pharmacy || undefined,
         notes: newRx.pharmacy ? `Pharmacy: ${newRx.pharmacy}` : undefined,
-        status: 'pending',
+        deliveryMethod: newRx.deliveryMethod,
+        deliveryNotes: newRx.deliveryMethod === 'manual'
+          ? 'Provider will manually fill out or hand-write this prescription.'
+          : undefined,
       });
 
-      showSuccess('Prescription created');
+      if (newRx.deliveryMethod === 'print' && prescription?.id) {
+        await markPrescriptionPrinted(session.tenantId, session.accessToken, prescription.id, {
+          pharmacyName: newRx.pharmacy || undefined,
+          notes: 'Printed at prescription creation.',
+        });
+      } else if (newRx.deliveryMethod === 'manual' && prescription?.id) {
+        await markPrescriptionManualFill(session.tenantId, session.accessToken, prescription.id, {
+          pharmacyName: newRx.pharmacy || undefined,
+          notes: 'Manual/fill-out prescription documented at creation.',
+        });
+      }
+
+      showSuccess(
+        newRx.deliveryMethod === 'electronic'
+          ? 'Prescription created and ready to e-send'
+          : newRx.deliveryMethod === 'print'
+            ? 'Prescription created and marked for printing'
+            : 'Prescription created and manually filled-out documentation recorded'
+      );
       setShowNewRxModal(false);
       setMedicationSearch('');
       setShowMedicationDropdown(false);
@@ -482,27 +540,13 @@ export function PrescriptionsPage() {
         refills: '0',
         instructions: '',
         pharmacy: '',
+        deliveryMethod: 'electronic',
       });
       loadData();
     } catch (err: any) {
       showError(err.message || 'Failed to create prescription');
     } finally {
       setSending(false);
-    }
-  };
-
-  const handleSendErx = async (rx: Order) => {
-    if (!session) return;
-
-    try {
-      await sendErx(session.tenantId, session.accessToken, {
-        orderId: rx.id,
-        patientId: rx.patientId,
-      });
-      showSuccess('Prescription sent electronically');
-      loadData();
-    } catch (err: any) {
-      showError(err.message || 'Failed to send e-prescription');
     }
   };
 
@@ -558,6 +602,53 @@ export function PrescriptionsPage() {
       loadData();
     } catch (err: any) {
       showError(err.message || 'Failed to confirm audit');
+    }
+  };
+
+  const ensureClinicalPrescription = (rx: Order) => {
+    if ((rx as any).sourceType !== 'prescription') {
+      showError('This older Rx order is saved as an order only. Re-create it as a prescription to document eRx, print, or manual fill.');
+      return false;
+    }
+    return true;
+  };
+
+  const handlePrintPrescription = async (rx: Order) => {
+    if (!session || !ensureClinicalPrescription(rx)) return;
+
+    try {
+      const response = await markPrescriptionPrinted(session.tenantId, session.accessToken, rx.id, {
+        notes: 'Printed from Rx page.',
+      });
+      showSuccess('Prescription marked as printed');
+      loadData();
+
+      if (response?.printable) {
+        window.setTimeout(() => window.print(), 50);
+      }
+    } catch (err: any) {
+      showError(err.message || 'Failed to mark prescription as printed');
+    }
+  };
+
+  const handleManualFillPrescription = async (rx: Order) => {
+    if (!session || !ensureClinicalPrescription(rx)) return;
+
+    const notes = window.prompt(
+      'Document manual prescription details (optional)',
+      'Manually filled out / hand-written for patient.'
+    );
+
+    if (notes === null) return;
+
+    try {
+      await markPrescriptionManualFill(session.tenantId, session.accessToken, rx.id, {
+        notes: notes.trim() || 'Manually filled out / hand-written for patient.',
+      });
+      showSuccess('Manual prescription documented');
+      loadData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to document manual prescription');
     }
   };
 
@@ -1115,6 +1206,7 @@ export function PrescriptionsPage() {
                 <th>Medication</th>
                 <th>Sig</th>
                 <th>Qty / Refills</th>
+                <th>Delivery</th>
                 <th>Status</th>
                 <th>PA Status</th>
                 <th>Audit</th>
@@ -1132,6 +1224,13 @@ export function PrescriptionsPage() {
                 const paRequest = getPAStatusForRx(rx.id);
                 const eligibility = eligibilityByPatient[rx.patientId];
                 const insuranceLabel = getPatientInsurance(rx.patientId);
+                const deliveryMethod = (rx as any).deliveryMethod;
+                const deliveryStatus = (rx as any).deliveryStatus;
+                const deliveryBadgeColor = deliveryMethod === 'manual'
+                  ? '#92400e'
+                  : deliveryMethod === 'print'
+                    ? '#0369a1'
+                    : '#047857';
 
                 return (
                   <tr
@@ -1194,6 +1293,28 @@ export function PrescriptionsPage() {
                     <td style={{ fontSize: '0.875rem', color: '#6b7280' }}>{sig}</td>
                     <td style={{ fontSize: '0.875rem' }}>
                       {qty} / {refills} refills
+                    </td>
+                    <td>
+                      <div style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        padding: '0.25rem 0.5rem',
+                        background: `${deliveryBadgeColor}15`,
+                        color: deliveryBadgeColor,
+                        border: `1px solid ${deliveryBadgeColor}44`,
+                        borderRadius: '999px',
+                        fontSize: '0.7rem',
+                        fontWeight: 700,
+                        textTransform: 'capitalize',
+                      }}>
+                        {getDeliveryLabel(deliveryMethod, deliveryStatus)}
+                      </div>
+                      {(rx as any).deliveryNotes && (
+                        <div style={{ marginTop: '0.25rem', fontSize: '0.7rem', color: '#6b7280' }}>
+                          {(rx as any).deliveryNotes}
+                        </div>
+                      )}
                     </td>
                     <td>
                       <span
@@ -1288,6 +1409,7 @@ export function PrescriptionsPage() {
                             />
                             <button
                               type="button"
+                              onClick={() => handlePrintPrescription(rx)}
                               style={{
                                 padding: '0.25rem 0.5rem',
                                 background: '#f3f4f6',
@@ -1299,11 +1421,27 @@ export function PrescriptionsPage() {
                             >
                               Print
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => handleManualFillPrescription(rx)}
+                              style={{
+                                padding: '0.25rem 0.5rem',
+                                background: '#fffbeb',
+                                border: '1px solid #f59e0b',
+                                color: '#92400e',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                              }}
+                            >
+                              Manual
+                            </button>
                           </>
                         )}
                         {rx.status === 'ordered' && (
                           <button
                             type="button"
+                            onClick={() => handlePrintPrescription(rx)}
                             style={{
                               padding: '0.25rem 0.5rem',
                               background: '#f3f4f6',
@@ -1313,7 +1451,7 @@ export function PrescriptionsPage() {
                               fontSize: '0.75rem',
                             }}
                           >
-                            Resend
+                            Reprint
                           </button>
                         )}
                       </div>
@@ -1882,6 +2020,58 @@ export function PrescriptionsPage() {
               onChange={(e) => setNewRx((prev) => ({ ...prev, pharmacy: e.target.value }))}
               placeholder="CVS, Walgreens, etc."
             />
+          </div>
+
+          <div className="form-field">
+            <label>How will this prescription be handled?</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
+              {[
+                {
+                  value: 'electronic' as RxDeliveryMethod,
+                  title: 'Send electronically',
+                  text: 'Default. Queue it for eRx transmission to the pharmacy.',
+                },
+                {
+                  value: 'print' as RxDeliveryMethod,
+                  title: 'Print prescription',
+                  text: 'Document it as printed and open the print workflow.',
+                },
+                {
+                  value: 'manual' as RxDeliveryMethod,
+                  title: 'Manual fill-out',
+                  text: 'Document that the prescription was manually filled out or hand-written.',
+                },
+              ].map((option) => {
+                const selected = newRx.deliveryMethod === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setNewRx((prev) => ({ ...prev, deliveryMethod: option.value }))}
+                    style={{
+                      textAlign: 'left',
+                      padding: '0.85rem',
+                      border: selected ? '2px solid #7c3aed' : '1px solid #d1d5db',
+                      borderRadius: '10px',
+                      background: selected ? '#f5f3ff' : '#ffffff',
+                      color: selected ? '#5b21b6' : '#374151',
+                      cursor: 'pointer',
+                      boxShadow: selected ? '0 6px 16px rgba(124, 58, 237, 0.14)' : 'none',
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.35rem' }}>
+                      {option.title}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', lineHeight: 1.4, color: selected ? '#6d28d9' : '#6b7280' }}>
+                      {option.text}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: '0.5rem', color: '#6b7280', fontSize: '0.78rem' }}>
+              Most prescriptions should stay on electronic send. Print/manual options are for exceptions that still need a documented trail.
+            </div>
           </div>
         </div>
 

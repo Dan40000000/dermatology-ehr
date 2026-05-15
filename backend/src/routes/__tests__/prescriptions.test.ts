@@ -415,6 +415,49 @@ describe("Prescription routes", () => {
     expect(res.body.success).toBe(true);
   });
 
+  it("POST /prescriptions/:id/print documents printed prescription", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{
+          id: uuid,
+          status: "pending",
+          medication_name: "Med",
+          sig: "Apply daily",
+          quantity: 30,
+          quantity_unit: "g",
+          refills: 1,
+          pharmacy_name: "Demo Pharmacy",
+          first_name: "Pat",
+          last_name: "Ent",
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post(`/prescriptions/${uuid}/print`).send({
+      notes: "Printed for patient pickup",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.deliveryMethod).toBe("print");
+    expect(res.body.deliveryStatus).toBe("printed");
+  });
+
+  it("POST /prescriptions/:id/manual-fill documents manual prescription", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ id: uuid, status: "pending" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post(`/prescriptions/${uuid}/manual-fill`).send({
+      notes: "Hand-written prescription given to patient",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.deliveryMethod).toBe("manual");
+    expect(res.body.deliveryStatus).toBe("manual_documented");
+  });
+
   it("POST /prescriptions/check-formulary requires medication name", async () => {
     const res = await request(app).post("/prescriptions/check-formulary").send({});
 

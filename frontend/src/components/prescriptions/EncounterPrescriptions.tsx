@@ -53,6 +53,12 @@ interface Prescription {
   providerName?: string;
   indication?: string;
   notes?: string;
+  deliveryMethod?: string;
+  deliveryStatus?: string;
+  deliveryNotes?: string;
+  documentedAt?: string;
+  lastPrintedAt?: string;
+  manuallyFilledAt?: string;
 }
 
 interface EncounterPrescriptionsProps {
@@ -82,6 +88,7 @@ export const EncounterPrescriptions: React.FC<EncounterPrescriptionsProps> = ({
     quantity: '1',
     refills: '0',
     pharmacyName: '',
+    deliveryMethod: 'electronic',
   });
 
   const fetchPrescriptions = async () => {
@@ -120,15 +127,42 @@ export const EncounterPrescriptions: React.FC<EncounterPrescriptionsProps> = ({
 
   const handleSend = async (prescriptionId: string) => {
     try {
-      const response = await api.post(`/api/prescriptions/${prescriptionId}/send`);
-      if (response.data?.redirectTo) {
-        setError('eRx transmission is not configured from the encounter view. The prescription is saved; send from the Prescriptions page when eRx is enabled.');
-        return;
-      }
+      await api.post('/api/prescriptions/send', { prescriptionId });
       fetchPrescriptions();
     } catch (err: any) {
       console.error('Error sending prescription:', err);
       setError(err.response?.data?.error || 'Failed to send prescription');
+    }
+  };
+
+  const handlePrint = async (prescriptionId: string) => {
+    try {
+      await api.post(`/api/prescriptions/${prescriptionId}/print`, {
+        notes: 'Printed from encounter prescription panel.',
+      });
+      fetchPrescriptions();
+      window.setTimeout(() => window.print(), 50);
+    } catch (err: any) {
+      console.error('Error printing prescription:', err);
+      setError(err.response?.data?.error || 'Failed to document printed prescription');
+    }
+  };
+
+  const handleManualFill = async (prescriptionId: string) => {
+    const notes = window.prompt(
+      'Document manual prescription details (optional)',
+      'Manually filled out / hand-written for patient.'
+    );
+    if (notes === null) return;
+
+    try {
+      await api.post(`/api/prescriptions/${prescriptionId}/manual-fill`, {
+        notes: notes.trim() || 'Manually filled out / hand-written for patient.',
+      });
+      fetchPrescriptions();
+    } catch (err: any) {
+      console.error('Error documenting manual prescription:', err);
+      setError(err.response?.data?.error || 'Failed to document manual prescription');
     }
   };
 
@@ -141,7 +175,7 @@ export const EncounterPrescriptions: React.FC<EncounterPrescriptionsProps> = ({
     }
 
     try {
-      await api.post('/api/prescriptions', {
+      const response = await api.post('/api/prescriptions', {
         patientId,
         encounterId,
         medicationName: newPrescription.medicationName.trim(),
@@ -150,9 +184,24 @@ export const EncounterPrescriptions: React.FC<EncounterPrescriptionsProps> = ({
         quantityUnit: 'each',
         refills: Number.isFinite(refills) && refills >= 0 ? refills : 0,
         pharmacyName: newPrescription.pharmacyName.trim() || undefined,
+        deliveryMethod: newPrescription.deliveryMethod,
       });
+
+      if (newPrescription.deliveryMethod === 'print' && response.data?.id) {
+        await api.post(`/api/prescriptions/${response.data.id}/print`, {
+          notes: 'Printed at prescription creation from encounter.',
+          pharmacyName: newPrescription.pharmacyName.trim() || undefined,
+        });
+        window.setTimeout(() => window.print(), 50);
+      } else if (newPrescription.deliveryMethod === 'manual' && response.data?.id) {
+        await api.post(`/api/prescriptions/${response.data.id}/manual-fill`, {
+          notes: 'Manual/fill-out prescription documented at creation from encounter.',
+          pharmacyName: newPrescription.pharmacyName.trim() || undefined,
+        });
+      }
+
       setAddDialogOpen(false);
-      setNewPrescription({ medicationName: '', sig: '', quantity: '1', refills: '0', pharmacyName: '' });
+      setNewPrescription({ medicationName: '', sig: '', quantity: '1', refills: '0', pharmacyName: '', deliveryMethod: 'electronic' });
       fetchPrescriptions();
     } catch (err: any) {
       console.error('Error creating prescription:', err);
@@ -174,6 +223,15 @@ export const EncounterPrescriptions: React.FC<EncounterPrescriptionsProps> = ({
       default:
         return 'info';
     }
+  };
+
+  const getDeliveryLabel = (prescription: Prescription) => {
+    const method = (prescription.deliveryMethod || '').toLowerCase();
+    const status = prescription.deliveryStatus?.replace(/_/g, ' ');
+    if (method === 'print') return status ? `Printed · ${status}` : 'Printed';
+    if (method === 'manual') return status ? `Manual · ${status}` : 'Manual';
+    if (method === 'electronic') return status ? `eRx · ${status}` : 'eRx';
+    return 'Not documented';
   };
 
   if (loading) {
@@ -222,6 +280,7 @@ export const EncounterPrescriptions: React.FC<EncounterPrescriptionsProps> = ({
                   <TableCell>Quantity</TableCell>
                   <TableCell>Refills</TableCell>
                   <TableCell>Pharmacy</TableCell>
+                  <TableCell>Delivery</TableCell>
                   <TableCell>Status</TableCell>
                   {!readOnly && <TableCell align="right">Actions</TableCell>}
                 </TableRow>
@@ -275,6 +334,25 @@ export const EncounterPrescriptions: React.FC<EncounterPrescriptionsProps> = ({
                       )}
                     </TableCell>
                     <TableCell>
+                      <Chip
+                        label={getDeliveryLabel(prescription)}
+                        size="small"
+                        color={
+                          prescription.deliveryMethod === 'manual'
+                            ? 'warning'
+                            : prescription.deliveryMethod === 'print'
+                              ? 'primary'
+                              : 'success'
+                        }
+                        variant="outlined"
+                      />
+                      {prescription.deliveryNotes && (
+                        <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 0.5 }}>
+                          {prescription.deliveryNotes}
+                        </Typography>
+                      )}
+                    </TableCell>
+                    <TableCell>
                       <Chip label={prescription.status} size="small" color={getStatusColor(prescription.status) as any} />
                     </TableCell>
                     {!readOnly && (
@@ -298,9 +376,24 @@ export const EncounterPrescriptions: React.FC<EncounterPrescriptionsProps> = ({
                           </IconButton>
                         </Tooltip>
                         <Tooltip title="Print">
-                          <IconButton size="small">
+                          <IconButton
+                            size="small"
+                            onClick={() => handlePrint(prescription.id)}
+                            disabled={prescription.status === 'cancelled' || prescription.status === 'discontinued'}
+                          >
                             <PrintIcon fontSize="small" />
                           </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Document Manual Fill">
+                          <Button
+                            size="small"
+                            variant="text"
+                            onClick={() => handleManualFill(prescription.id)}
+                            disabled={prescription.status === 'cancelled' || prescription.status === 'discontinued'}
+                            sx={{ minWidth: 0, px: 0.75, fontSize: '0.7rem' }}
+                          >
+                            Manual
+                          </Button>
                         </Tooltip>
                         <Tooltip title="Cancel">
                           <IconButton
@@ -366,6 +459,19 @@ export const EncounterPrescriptions: React.FC<EncounterPrescriptionsProps> = ({
               onChange={(e) => setNewPrescription((prev) => ({ ...prev, pharmacyName: e.target.value }))}
               fullWidth
             />
+            <TextField
+              label="Prescription Handling"
+              value={newPrescription.deliveryMethod}
+              onChange={(e) => setNewPrescription((prev) => ({ ...prev, deliveryMethod: e.target.value }))}
+              fullWidth
+              select
+              SelectProps={{ native: true }}
+              helperText="Electronic is the default. Print/manual creates a documented exception trail."
+            >
+              <option value="electronic">Send electronically</option>
+              <option value="print">Print prescription</option>
+              <option value="manual">Manual fill-out / hand-written</option>
+            </TextField>
           </Box>
         </DialogContent>
         <DialogActions>

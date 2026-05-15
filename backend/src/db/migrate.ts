@@ -13210,6 +13210,54 @@ Consider age-appropriate treatments and include family counseling points.',
       ON patient_portal_read_receipts(item_type, item_id);
     `,
   },
+  {
+    name: "186_prescription_delivery_documentation",
+    sql: `
+    ALTER TABLE prescriptions
+      ADD COLUMN IF NOT EXISTS delivery_method TEXT DEFAULT 'electronic',
+      ADD COLUMN IF NOT EXISTS delivery_status TEXT DEFAULT 'draft',
+      ADD COLUMN IF NOT EXISTS delivery_notes TEXT,
+      ADD COLUMN IF NOT EXISTS documented_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS documented_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS manually_filled_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS manually_filled_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS print_count INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS last_printed_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS last_printed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS erx_status TEXT,
+      ADD COLUMN IF NOT EXISTS audit_confirmed_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS audit_confirmed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS refill_status TEXT,
+      ADD COLUMN IF NOT EXISTS denial_reason TEXT,
+      ADD COLUMN IF NOT EXISTS change_request_details JSONB,
+      ADD COLUMN IF NOT EXISTS written_date TIMESTAMPTZ;
+
+    UPDATE prescriptions
+    SET delivery_method = CASE
+          WHEN delivery_method IS NOT NULL THEN delivery_method
+          WHEN sent_at IS NOT NULL OR transmitted_at IS NOT NULL THEN 'electronic'
+          WHEN COALESCE(print_count, 0) > 0 THEN 'print'
+          ELSE 'electronic'
+        END,
+        delivery_status = CASE
+          WHEN delivery_status IS NOT NULL THEN delivery_status
+          WHEN sent_at IS NOT NULL OR transmitted_at IS NOT NULL THEN 'sent'
+          WHEN COALESCE(print_count, 0) > 0 THEN 'printed'
+          WHEN status IN ('active', 'sent', 'transmitted') THEN 'documented'
+          ELSE 'draft'
+        END,
+        written_date = COALESCE(written_date, prescribed_date, created_at)
+    WHERE delivery_method IS NULL
+       OR delivery_status IS NULL
+       OR written_date IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_prescriptions_delivery_method
+      ON prescriptions(tenant_id, delivery_method);
+
+    CREATE INDEX IF NOT EXISTS idx_prescriptions_delivery_status
+      ON prescriptions(tenant_id, delivery_status);
+    `,
+  },
 
 ];
 

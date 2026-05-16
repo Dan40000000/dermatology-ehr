@@ -65,6 +65,10 @@ function buildMockSmsResult(body: string) {
   };
 }
 
+function shouldUseMockSms(settings: { is_test_mode?: boolean | null }): boolean {
+  return settings.is_test_mode === true || (env.nodeEnv === 'production' && process.env.SMS_LIVE_SEND_ENABLED !== 'true');
+}
+
 function normalizeSmsConversationPhone(value: unknown): string {
   return String(value || '').replace(/\D/g, '');
 }
@@ -456,7 +460,7 @@ router.post('/send', requireAuth, async (req: AuthedRequest, res: Response) => {
     const settings = settingsResult.rows[0];
     const fromNumber = settings.twilio_phone_number || DEFAULT_TEST_SMS_FROM;
 
-    const result = settings.is_test_mode
+    const result = shouldUseMockSms(settings)
       ? buildMockSmsResult(messageBody)
       : await createTwilioService(
           settings.twilio_account_sid,
@@ -899,7 +903,7 @@ router.post('/conversations/:patientId/send', requireAuth, async (req: AuthedReq
     const settings = settingsResult.rows[0];
     const fromNumber = settings.twilio_phone_number || DEFAULT_TEST_SMS_FROM;
 
-    const result = settings.is_test_mode
+    const result = shouldUseMockSms(settings)
       ? buildMockSmsResult(message)
       : await createTwilioService(
           settings.twilio_account_sid,
@@ -1755,7 +1759,8 @@ router.post('/send-bulk', requireAuth, async (req: AuthedRequest, res: Response)
 
     // Send immediately
     const fromNumber = settings.twilio_phone_number || DEFAULT_TEST_SMS_FROM;
-    const twilioService = settings.is_test_mode
+    const useMockSms = shouldUseMockSms(settings);
+    const twilioService = useMockSms
       ? null
       : createTwilioService(settings.twilio_account_sid, settings.twilio_auth_token);
 
@@ -1791,7 +1796,7 @@ router.post('/send-bulk', requireAuth, async (req: AuthedRequest, res: Response)
           .replace(/{lastName}/g, patient.last_name)
           .replace(/{patientName}/g, `${patient.first_name} ${patient.last_name}`);
 
-        const result = settings.is_test_mode
+        const result = useMockSms
           ? buildMockSmsResult(personalizedMessage)
           : await twilioService!.sendSMS({
               to: patient.phone,

@@ -243,7 +243,7 @@ frontDeskRouter.post(
         encounterId?: string;
         copayAmount: number;
         copayAmountCents: number;
-        copaySource: 'insurance_profile' | 'none';
+        copaySource: 'insurance_profile' | 'manual' | 'none';
         copayDisposition: 'none' | 'collected' | 'deferred';
         copayCollectedAmountCents: number;
         outstandingBalanceCollectedAmountCents?: number;

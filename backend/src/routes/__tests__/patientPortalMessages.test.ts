@@ -493,6 +493,7 @@ describe("Patient Portal Messages routes", () => {
         .mockResolvedValueOnce({ rows: [] }) // BEGIN
         .mockResolvedValueOnce({ rows: [] }) // INSERT thread
         .mockResolvedValueOnce({ rows: [] }) // INSERT message
+        .mockResolvedValueOnce({ rows: [{ tableName: "message_auto_replies" }] }) // optional table check
         .mockResolvedValueOnce({ rows: [{ auto_reply_text: "Thanks for your message!" }] }) // auto-reply
         .mockResolvedValueOnce({ rows: [] }) // INSERT auto-reply message
         .mockResolvedValueOnce({ rows: [] }) // UPDATE thread

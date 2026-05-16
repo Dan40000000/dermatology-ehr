@@ -199,16 +199,32 @@ const DIAGNOSIS_RULES: DiagnosisRule[] = [
     patterns: [/\bskin check\b/i, /\bfull body skin exam\b/i, /\bfbse\b/i, /\bskin cancer screening\b/i],
   },
   {
+    code: "Z80.8",
+    label: "Family history of malignant neoplasm",
+    priority: 49,
+    patterns: [
+      /\bfamily history of (melanoma|skin cancer|cutaneous malignancy)\b/i,
+      /\b(father|mother|parent|sibling|brother|sister|child)\s+(had|has|with|diagnosed with)\s+(melanoma|skin cancer)\b/i,
+    ],
+  },
+  {
     code: "Z85.820",
     label: "Personal history of malignant melanoma of skin",
-    priority: 49,
-    patterns: [/\bhistory of melanoma\b/i, /\bmelanoma surveillance\b/i],
+    priority: 48,
+    patterns: [
+      /\b(personal|prior|past|previous)\s+history of melanoma\b/i,
+      /\bpatient\s+(has|had)\s+(a\s+)?history of melanoma\b/i,
+      /\bmelanoma surveillance\b/i,
+    ],
   },
   {
     code: "Z85.828",
     label: "Personal history of other malignant neoplasm of skin",
-    priority: 48,
-    patterns: [/\bhistory of (bcc|scc|non[- ]melanoma skin cancer|skin cancer)\b/i],
+    priority: 47,
+    patterns: [
+      /\b(personal|prior|past|previous)\s+history of (bcc|scc|non[- ]melanoma skin cancer|skin cancer)\b/i,
+      /\bpatient\s+(has|had)\s+(a\s+)?history of (bcc|scc|non[- ]melanoma skin cancer|skin cancer)\b/i,
+    ],
   },
 ];
 
@@ -291,11 +307,16 @@ export function suggestLiveCodingFromDocumentation(
     return { diagnosisRules: [], procedureRules: [], emCode: null, warnings: ["Add more documentation to generate live coding suggestions."] };
   }
 
-  const diagnosisRules = DIAGNOSIS_RULES
+  let diagnosisRules = DIAGNOSIS_RULES
     .map((rule) => ({ ...rule, evidence: evidenceForRule(text, rule.patterns), isPrimary: false }))
     .filter((rule) => rule.evidence.length > 0)
-    .sort((a, b) => b.priority - a.priority)
-    .slice(0, 8);
+    .sort((a, b) => b.priority - a.priority);
+
+  if (diagnosisRules.some((rule) => ["L20.9", "L21.9"].includes(rule.code))) {
+    diagnosisRules = diagnosisRules.filter((rule) => rule.code !== "L30.9");
+  }
+
+  diagnosisRules = diagnosisRules.slice(0, 8);
 
   if (diagnosisRules.length > 0) {
     diagnosisRules[0]!.isPrimary = true;

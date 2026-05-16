@@ -148,7 +148,13 @@ export async function getExpectedCopay(
     // Get appointment and patient info
     const appointmentResult = await pool.query(
       `SELECT a.id, a.patient_id, a.appointment_type_id,
-              p.insurance_payer_id, p.insurance_provider, p.insurance_copay,
+              p.insurance_payer_id,
+              coalesce(
+                nullif(to_jsonb(p)->>'insurance_provider', ''),
+                nullif(p.insurance_plan_name, ''),
+                nullif(p.insurance, '')
+              ) as insurance_provider,
+              nullif(to_jsonb(p)->>'insurance_copay', '') as insurance_copay,
               at.name as appointment_type_name
        FROM appointments a
        JOIN patients p ON p.id = a.patient_id

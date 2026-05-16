@@ -79,8 +79,19 @@ export async function verifyPatientEligibility(
   try {
     // Fetch patient data
     const patientResult = await pool.query(
-      `SELECT id, first_name, last_name, dob as date_of_birth, insurance_provider,
-              insurance_member_id, insurance_group_number, insurance_payer_id
+      `SELECT
+              id,
+              first_name,
+              last_name,
+              dob as date_of_birth,
+              coalesce(
+                nullif(to_jsonb(patients)->>'insurance_provider', ''),
+                nullif(insurance_plan_name, ''),
+                nullif(insurance, '')
+              ) as insurance_provider,
+              insurance_member_id,
+              insurance_group_number,
+              insurance_payer_id
        FROM patients
        WHERE id = $1 AND tenant_id = $2`,
       [patientId, tenantId]
@@ -174,8 +185,19 @@ export async function batchVerifyEligibility(
   try {
     // Fetch all patients
     const patientsResult = await pool.query(
-      `SELECT id, first_name, last_name, dob as date_of_birth, insurance_provider,
-              insurance_member_id, insurance_group_number, insurance_payer_id
+      `SELECT
+              id,
+              first_name,
+              last_name,
+              dob as date_of_birth,
+              coalesce(
+                nullif(to_jsonb(patients)->>'insurance_provider', ''),
+                nullif(insurance_plan_name, ''),
+                nullif(insurance, '')
+              ) as insurance_provider,
+              insurance_member_id,
+              insurance_group_number,
+              insurance_payer_id
        FROM patients
        WHERE id = ANY($1) AND tenant_id = $2`,
       [request.patientIds, request.tenantId]

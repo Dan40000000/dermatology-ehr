@@ -719,11 +719,20 @@ analyticsRouter.get("/patients", async (req: AuthedRequest, res) => {
     // Payer mix
     pool.query(
       `select
-        insurance_provider,
+        coalesce(
+          nullif(to_jsonb(patients)->>'insurance_provider', ''),
+          nullif(insurance_plan_name, ''),
+          nullif(insurance, '')
+        ) as insurance_provider,
         count(*) as count
        from patients
-       where tenant_id = $1 and insurance_provider is not null
-       group by insurance_provider
+       where tenant_id = $1
+         and coalesce(
+           nullif(to_jsonb(patients)->>'insurance_provider', ''),
+           nullif(insurance_plan_name, ''),
+           nullif(insurance, '')
+         ) is not null
+       group by 1
        order by count desc
        limit 10`,
       [tenantId]

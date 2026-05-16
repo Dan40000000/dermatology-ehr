@@ -137,6 +137,8 @@ const createPatientSchema = z.object({
   primaryCarePhysician: z.string().optional(),
   referralSource: z.string().optional(),
   insuranceId: z.string().optional(),
+  insuranceMemberId: z.string().optional(),
+  insurancePayerId: z.string().optional(),
   insuranceGroupNumber: z.string().optional(),
 });
 
@@ -370,7 +372,7 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
     insurance, allergies, medications, sex, ssn,
     emergencyContactName, emergencyContactRelationship, emergencyContactPhone,
     pharmacyId, pharmacyNcpdp, pharmacyName, pharmacyPhone, pharmacyAddress,
-    primaryCarePhysician, referralSource, insuranceId, insuranceGroupNumber
+    primaryCarePhysician, referralSource, insuranceId, insuranceMemberId, insurancePayerId, insuranceGroupNumber
   } = parsed.data;
   const { ssnLast4, ssnEncrypted } = buildSsnFields(ssn);
   const accountNumber = `ACCT-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
@@ -381,15 +383,17 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
       insurance, allergies, medications, sex, ssn_last4, ssn_encrypted,
       emergency_contact_name, emergency_contact_relationship, emergency_contact_phone,
       pharmacy_id, pharmacy_ncpdp, pharmacy_name, pharmacy_phone, pharmacy_address,
-      primary_care_physician, referral_source, insurance_id, insurance_group_number, account_number
-    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)`,
+      primary_care_physician, referral_source, insurance_id, insurance_member_id, insurance_payer_id,
+      insurance_group_number, account_number
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)`,
     [
       id, tenantId, firstName, lastName, dob || null, phone || null, email || null,
       address || null, city || null, state || null, zip || null,
       insurance || null, allergies || null, medications || null, sex || null, ssnLast4, ssnEncrypted,
       emergencyContactName || null, emergencyContactRelationship || null, emergencyContactPhone || null,
       pharmacyId || null, pharmacyNcpdp || null, pharmacyName || null, pharmacyPhone || null, pharmacyAddress || null,
-      primaryCarePhysician || null, referralSource || null, insuranceId || null, insuranceGroupNumber || null,
+      primaryCarePhysician || null, referralSource || null, insuranceId || null,
+      insuranceMemberId || insuranceId || null, insurancePayerId || null, insuranceGroupNumber || null,
       accountNumber
     ],
   );
@@ -534,6 +538,8 @@ const updatePatientSchema = z.object({
   pharmacyAddress: z.string().optional(),
   insurance: z.string().optional(),
   insuranceId: z.string().optional(),
+  insuranceMemberId: z.string().optional(),
+  insurancePayerId: z.string().optional(),
   insuranceGroupNumber: z.string().optional(),
   primaryCarePhysician: z.string().optional(),
   referralSource: z.string().optional(),
@@ -608,6 +614,9 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
   }
 
   const { ssn, ...patientUpdates } = parsed.data;
+  if (patientUpdates.insuranceId && !patientUpdates.insuranceMemberId) {
+    patientUpdates.insuranceMemberId = patientUpdates.insuranceId;
+  }
 
   // Build dynamic update query
   const updates: string[] = [];
@@ -1457,6 +1466,8 @@ patientsRouter.get("/:id/insurance", requireAuth, requireModuleAccess("patients"
     // Get patient insurance info
     const patientResult = await pool.query(
       `SELECT insurance, insurance_id as "insuranceId",
+              insurance_member_id as "insuranceMemberId",
+              insurance_payer_id as "insurancePayerId",
               insurance_group_number as "insuranceGroupNumber"
        FROM patients
        WHERE id = $1 AND tenant_id = $2`,

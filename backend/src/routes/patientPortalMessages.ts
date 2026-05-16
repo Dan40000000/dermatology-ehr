@@ -329,13 +329,19 @@ router.post("/threads", requirePatientAuth, requireMessageUnlock, async (req: Pa
         [messageId, threadId, patientId, patientName, messageText]
       );
 
-      // Check for auto-reply
-      const autoReplyResult = await client.query(
-        `SELECT auto_reply_text FROM message_auto_replies
-        WHERE tenant_id = $1 AND category = $2 AND is_active = true
-        LIMIT 1`,
-        [tenantId, category]
+      // Auto-replies are optional demo data. Some deployed databases do not
+      // have this table yet, and secure messaging should still work without it.
+      const autoReplyTableResult = await client.query(
+        `SELECT to_regclass('public.message_auto_replies') as "tableName"`
       );
+      const autoReplyResult = autoReplyTableResult.rows[0]?.tableName
+        ? await client.query(
+            `SELECT auto_reply_text FROM message_auto_replies
+             WHERE tenant_id = $1 AND category = $2 AND is_active = true
+             LIMIT 1`,
+            [tenantId, category]
+          )
+        : { rows: [] };
 
       if (autoReplyResult.rows.length > 0) {
         const autoReplyId = crypto.randomUUID();

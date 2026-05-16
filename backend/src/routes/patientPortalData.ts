@@ -173,7 +173,8 @@ patientPortalDataRouter.post("/checkin/start", async (req: PatientPortalRequest,
       const apptCheck = await pool.query(
         `SELECT id FROM appointments
          WHERE id = $1 AND patient_id = $2 AND tenant_id = $3
-           AND scheduled_start >= CURRENT_DATE`,
+           AND scheduled_start >= NOW()
+           AND status NOT IN ('cancelled', 'no_show', 'checkout', 'completed')`,
         [appointmentId, patientId, tenantId]
       );
 
@@ -375,11 +376,12 @@ patientPortalDataRouter.get("/appointments", async (req: PatientPortalRequest, r
     `;
 
     if (status === 'upcoming') {
-      query += ` AND a.scheduled_start >= CURRENT_DATE
-                 AND a.status NOT IN ('cancelled', 'no_show')
+      query += ` AND a.scheduled_start >= NOW()
+                 AND a.status NOT IN ('cancelled', 'no_show', 'checkout', 'completed')
                  ORDER BY a.scheduled_start ASC`;
     } else {
-      query += ` AND a.scheduled_start < CURRENT_DATE
+      query += ` AND (a.scheduled_start < NOW()
+                      OR a.status IN ('cancelled', 'no_show', 'checkout', 'completed'))
                  ORDER BY a.scheduled_start DESC`;
     }
 
@@ -807,13 +809,14 @@ patientPortalDataRouter.post("/refill-requests", async (req: PatientPortalReques
         p.strength,
         p.drug_description,
         p.prescribed_date,
-        p.provider_id,
+        case when prov.id is not null then p.provider_id else null end as provider_id,
         p.pharmacy_id,
         p.status,
         pharm.name as pharmacy_name,
         pharm.ncpdp_id as pharmacy_ncpdp
        FROM prescriptions p
        LEFT JOIN pharmacies pharm ON p.pharmacy_id = pharm.id
+       LEFT JOIN providers prov ON prov.id = p.provider_id AND prov.tenant_id = p.tenant_id
        WHERE p.id = $1 AND p.patient_id = $2 AND p.tenant_id = $3`,
       [prescriptionId, patientId, tenantId]
     );
@@ -898,8 +901,8 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
       `SELECT COUNT(*) as count
        FROM appointments
        WHERE patient_id = $1 AND tenant_id = $2
-       AND scheduled_start >= CURRENT_DATE
-       AND status NOT IN ('cancelled', 'no_show')`,
+       AND scheduled_start >= NOW()
+       AND status NOT IN ('cancelled', 'no_show', 'checkout', 'completed')`,
       [patientId, tenantId]
     );
 
@@ -914,8 +917,8 @@ patientPortalDataRouter.get("/dashboard", async (req: PatientPortalRequest, res)
        LEFT JOIN appointment_types at ON a.appointment_type_id = at.id
        LEFT JOIN providers pr ON a.provider_id = pr.id
        WHERE a.patient_id = $1 AND a.tenant_id = $2
-       AND a.scheduled_start >= CURRENT_DATE
-       AND a.status NOT IN ('cancelled', 'no_show')
+       AND a.scheduled_start >= NOW()
+       AND a.status NOT IN ('cancelled', 'no_show', 'checkout', 'completed')
        ORDER BY a.scheduled_start ASC
        LIMIT 1`,
       [patientId, tenantId]

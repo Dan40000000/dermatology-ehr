@@ -1030,7 +1030,9 @@ encountersRouter.get("/:id/charges", requireAuth, async (req: AuthedRequest, res
     const result = await pool.query(
       `SELECT id, cpt_code as "cptCode", description, quantity, fee_cents as "feeCents",
               linked_diagnosis_ids as "linkedDiagnosisIds", icd_codes as "icdCodes",
-              status, created_at as "createdAt", updated_at as "updatedAt"
+              status,
+              created_at as "createdAt",
+              coalesce(nullif(to_jsonb(charges)->>'updated_at', '')::timestamptz, created_at) as "updatedAt"
        FROM charges
        WHERE encounter_id = $1 AND tenant_id = $2
        ORDER BY created_at`,

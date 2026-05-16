@@ -85,7 +85,7 @@ export interface CheckInPatientResult {
   encounterId: string;
   copayAmount: number;
   copayAmountCents: number;
-  copaySource: 'insurance_profile' | 'none';
+  copaySource: 'insurance_profile' | 'manual' | 'none';
   copayDisposition: 'none' | 'collected' | 'deferred';
   copayCollectedAmountCents: number;
   outstandingBalanceCollectedAmountCents?: number;
@@ -656,7 +656,7 @@ export class FrontDeskService {
           : defaultCopayAmountCents;
       const collectedCopayAmountCents =
         Boolean(copayOptions?.collectCopay) && requestedCopayAmountCents > 0
-          ? Math.min(requestedCopayAmountCents, defaultCopayAmountCents)
+          ? requestedCopayAmountCents
           : 0;
       const requestedOutstandingBalanceAmountCents =
         typeof copayOptions?.outstandingBalanceAmountCents === 'number' &&
@@ -740,6 +740,9 @@ export class FrontDeskService {
         : shouldDeferCopay
           ? 'deferred'
           : 'none';
+      (appointment as any).__copay_amount_cents = requestedCopayAmountCents;
+      (appointment as any).__copay_source =
+        normalizedCopay > 0 ? 'insurance_profile' : requestedCopayAmountCents > 0 ? 'manual' : 'none';
       (appointment as any).__copay_collected_amount_cents = shouldCollectCopay
         ? collectedCopayAmountCents
         : 0;
@@ -772,8 +775,12 @@ export class FrontDeskService {
 
     const parsedCopay = Number.parseFloat(appointment.insurance_copay_amount ?? '');
     const normalizedCopay = Number.isFinite(parsedCopay) && parsedCopay > 0 ? parsedCopay : 0;
-    const copayAmountCents = Math.round(normalizedCopay * 100);
-    const copaySource: 'insurance_profile' | 'none' = normalizedCopay > 0 ? 'insurance_profile' : 'none';
+    const copayAmountCents = Number(
+      (appointment as any)?.__copay_amount_cents ?? Math.round(normalizedCopay * 100)
+    );
+    const copaySource: 'insurance_profile' | 'manual' | 'none' =
+      ((appointment as any)?.__copay_source as 'insurance_profile' | 'manual' | 'none' | undefined) ||
+      (normalizedCopay > 0 ? 'insurance_profile' : 'none');
     const copayDisposition =
       ((appointment as any)?.__copay_disposition as 'none' | 'collected' | 'deferred' | undefined) || 'none';
     const copayCollectedAmountCents = Number(
@@ -797,7 +804,7 @@ export class FrontDeskService {
         })
       : undefined;
     const checkInResultBase: Omit<CheckInPatientResult, 'encounterId'> = {
-      copayAmount: normalizedCopay,
+      copayAmount: copayAmountCents / 100,
       copayAmountCents,
       copaySource,
       copayDisposition,

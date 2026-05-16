@@ -13,6 +13,7 @@
  */
 
 import { pool } from '../db/pool';
+import { getTableColumns } from '../db/schema';
 import { logger } from '../lib/logger';
 import crypto from 'crypto';
 import { smsWorkflowService } from './smsWorkflowService';
@@ -421,24 +422,34 @@ class PatientIntakeService {
     patientId: string,
     insurance: Record<string, any>
   ): Promise<void> {
+    const columns = await getTableColumns('patients');
+    const updates: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    const addUpdate = (column: string, value: unknown) => {
+      if (!columns.has(column)) return;
+      updates.push(`${column} = $${paramIndex++}`);
+      values.push(value);
+    };
+
+    addUpdate('insurance_provider', insurance.payerName || null);
+    addUpdate('insurance', insurance.payerName || null);
+    addUpdate('insurance_payer_id', insurance.payerId || null);
+    addUpdate('insurance_member_id', insurance.memberId || null);
+    addUpdate('insurance_group_number', insurance.groupNumber || null);
+    addUpdate('insurance_plan_name', insurance.planName || null);
+
+    if (updates.length === 0) {
+      logger.warn('No patient insurance columns are available to update', { patientId });
+      return;
+    }
+
+    values.push(patientId, tenantId);
     await pool.query(
-      `UPDATE patients SET
-        insurance_provider = $1,
-        insurance_payer_id = $2,
-        insurance_member_id = $3,
-        insurance_group_number = $4,
-        insurance_plan_name = $5,
-        updated_at = NOW()
-       WHERE id = $6 AND tenant_id = $7`,
-      [
-        insurance.payerName || null,
-        insurance.payerId || null,
-        insurance.memberId || null,
-        insurance.groupNumber || null,
-        insurance.planName || null,
-        patientId,
-        tenantId,
-      ]
+      `UPDATE patients SET ${updates.join(', ')}, updated_at = NOW()
+       WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}`,
+      values
     );
 
     logger.info('Patient insurance updated', { patientId });
@@ -460,7 +471,16 @@ class PatientIntakeService {
 
     // Get patient insurance info
     const patientResult = await pool.query(
-      `SELECT first_name, last_name, dob, insurance_provider, insurance_payer_id,
+      `SELECT
+              first_name,
+              last_name,
+              dob,
+              coalesce(
+                nullif(to_jsonb(patients)->>'insurance_provider', ''),
+                nullif(insurance_plan_name, ''),
+                nullif(insurance, '')
+              ) as insurance_provider,
+              insurance_payer_id,
               insurance_member_id, insurance_group_number, insurance_plan_name
        FROM patients WHERE id = $1 AND tenant_id = $2`,
       [patientId, tenantId]

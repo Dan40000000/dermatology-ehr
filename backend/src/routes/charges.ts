@@ -347,6 +347,77 @@ chargesRouter.post("/", requireAuth, requireRoles(["admin", "billing", "provider
     patientId = encounterResult.rows[0]?.patientId || null;
     serviceDate = encounterResult.rows[0]?.serviceDate || null;
   }
+
+  if (payload.encounterId) {
+    const existingResult = await pool.query(
+      `select id, status
+       from charges
+       where tenant_id = $1
+         and encounter_id = $2
+         and upper(cpt_code) = upper($3)
+         and coalesce(status, 'pending') <> 'voided'
+       order by
+         case when source = 'live_documentation_coding' then 0 else 1 end,
+         created_at desc
+       limit 1`,
+      [tenantId, payload.encounterId, normalizedCode],
+    );
+
+    const existingChargeId = existingResult.rows[0]?.id as string | undefined;
+    if (existingChargeId) {
+      const mutationBlock = await getChargeMutationBlock(tenantId, existingChargeId);
+      if (mutationBlock) {
+        return res.status(mutationBlock.status).json(mutationBlock.body);
+      }
+
+      await pool.query(
+        `update charges
+         set code_type = $1,
+             billing_route = $2,
+             description = $3,
+             icd_codes = $4,
+             linked_diagnosis_ids = $5,
+             quantity = $6,
+             fee_cents = $7,
+             amount_cents = $8::int,
+             amount = round(($8::numeric / 100), 2),
+             status = $9,
+             modifier_codes = $10,
+             source = $11,
+             charge_group = $12,
+             line_note = $13,
+             patient_id = $14,
+             service_date = $15,
+             patient_responsibility_cents = $16,
+             insurance_responsibility_cents = $17
+         where id = $18 and tenant_id = $19`,
+        [
+          codeType,
+          billingRoute,
+          description,
+          resolvedIcdCodes,
+          linkedDiagnosisIds,
+          quantity,
+          feeCents || null,
+          amountCents,
+          status,
+          payload.modifierCodes || [],
+          payload.source || "manual_charge_capture",
+          payload.chargeGroup || catalogEntry?.category || null,
+          payload.lineNote || null,
+          patientId,
+          serviceDate,
+          patientResponsibilityCents,
+          insuranceResponsibilityCents,
+          existingChargeId,
+          tenantId,
+        ],
+      );
+
+      return res.status(200).json({ id: existingChargeId, deduplicated: true, updated: true });
+    }
+  }
+
   await pool.query(
     `insert into charges(
        id, tenant_id, encounter_id, cpt_code, code_type, billing_route, description, icd_codes,

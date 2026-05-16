@@ -1,14 +1,23 @@
 import { loadEnv } from "./validate";
 
 const envVars = loadEnv();
+const runtimeEnvironment = (
+  envVars.DEPLOYMENT_ENV ||
+  envVars.APP_ENV ||
+  envVars.RAILWAY_ENVIRONMENT ||
+  envVars.NODE_ENV ||
+  "development"
+).toLowerCase();
+const isProductionLike = runtimeEnvironment === "production" || runtimeEnvironment === "staging";
 
 export const env = {
   nodeEnv: envVars.NODE_ENV,
+  runtimeEnvironment,
   port: envVars.PORT,
   databaseUrl: envVars.DATABASE_URL,
   jwtSecret:
     envVars.JWT_SECRET ||
-    (envVars.NODE_ENV === "production" ? "" : "dev-secret-change-me"),
+    (isProductionLike ? "" : "dev-secret-change-me"),
   jwtIssuer: envVars.JWT_ISSUER,
   accessTokenTtlSec: envVars.ACCESS_TOKEN_TTL_SEC, // 15m
   refreshTokenTtlSec: envVars.REFRESH_TOKEN_TTL_SEC, // 14d
@@ -25,7 +34,7 @@ export const env = {
   clamavTimeoutMs: envVars.CLAMAV_TIMEOUT_MS,
 };
 
-if (!process.env.JWT_SECRET && envVars.NODE_ENV !== "production") {
+if (!process.env.JWT_SECRET && !isProductionLike) {
   // eslint-disable-next-line no-console
   console.warn("⚠️  Using default JWT secret. Set JWT_SECRET in env for non-dev use.");
 }

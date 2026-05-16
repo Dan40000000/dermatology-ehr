@@ -480,6 +480,8 @@ export function PrescriptionsPage() {
 
   const handleCreateRx = async () => {
     const medicationName = (newRx.medication || medicationSearch).trim();
+    const additionalInstructions = newRx.instructions.trim();
+    const sig = [newRx.frequency, additionalInstructions].filter(Boolean).join(' - ');
 
     if (!session || !newRx.patientId || !medicationName) {
       showError('Please fill in required fields');
@@ -493,7 +495,7 @@ export function PrescriptionsPage() {
         patientId: newRx.patientId,
         medicationName,
         strength: newRx.strength || undefined,
-        sig: newRx.frequency,
+        sig,
         quantity,
         quantityUnit,
         refills: Number.parseInt(newRx.refills, 10) || 0,

@@ -4,6 +4,28 @@
 
 The AI-powered clinical notes feature (Ambient Scribe) enables dermatologists to record patient encounters and automatically generate structured clinical documentation using state-of-the-art AI technologies.
 
+## Current Progress Snapshot
+
+Updated May 16, 2026.
+
+The AI scribe and encounter copilot are now materially beyond the original ambient-recording prototype:
+
+- Live scribe now builds a real-time visit snapshot while listening, organized into four doctor-facing boxes: Summary of Visit, Symptoms, Potential Diagnosis with confidence percentages, and Tests Recommended.
+- Ambient note generation now prefers the Medical Dermatology agent/config when the session is not explicitly specialized, instead of falling back to Cosmetic Consultation.
+- The post-scribe note is editable before it is saved or applied, so the provider can correct the AI output before it becomes part of the chart.
+- Encounter Copilot inside an appointment can generate a chart-grounded visit summary and save or update it directly in the patient's AI scribe/visit-history area. Staff no longer need to copy and paste from chat.
+- The copilot summary save flow now uses cleaner clinical buckets so symptoms, tests, treatment, prescriptions, follow-up, and diagnosis content are less likely to be mixed together.
+- Preferred pharmacy is now part of the patient workflow and supports patient profile, portal/e-check-in confirmation, and prescription routing context.
+- Prescription documentation now supports electronic send, print, and manually filled prescriptions so the chart records how the prescription was handled even before a live eRx vendor is connected.
+- Live encounter coding now ties diagnosis/coding work into the clinical and billing flow. ICD-10 and CPT suggestions are still assistive and require clinician review before billing.
+- Railway and local code were last synchronized on commit `2d65d17` with focused production smoke checks covering clinical billing, portal identity, prescription/refill, secure messaging, SMS mock mode, and live coding safeguards.
+
+Current known limits:
+
+- Real eRx, eligibility, prior authorization, drug interaction, and claim submission still require vendor credentials/subscriptions before they can be used clinically.
+- Speaker attribution is best-effort unless the selected transcription provider returns reliable diarization. The UI should be treated as "provider/patient inferred" when the transcript provider cannot prove the speaker.
+- AI output is assistive only. Providers must review and approve notes, diagnoses, ICD-10/CPT suggestions, prescriptions, and patient-facing summaries.
+
 ## Features
 
 ### 1. Audio Recording
@@ -14,10 +36,11 @@ The AI-powered clinical notes feature (Ambient Scribe) enables dermatologists to
 - **Automatic PHI detection** and masking
 
 ### 2. AI Transcription
-- **OpenAI Whisper** integration for speech-to-text
-- **Speaker diarization** to differentiate doctor vs patient
+- **Configurable ambient transcription provider** with support for OpenAI transcription models, AWS HealthScribe, and vendor adapter scaffolding
+- **Speaker diarization/inference** to differentiate doctor vs patient when provider output supports it
 - **Timestamp-aligned segments** for context
 - **Falls back to mock** if API keys not configured
+- **Live transcription** over WebSocket when enabled
 
 ### 3. Clinical Note Generation
 - **Anthropic Claude** (preferred) or **OpenAI GPT-4** for medical documentation
@@ -36,12 +59,20 @@ The AI-powered clinical notes feature (Ambient Scribe) enables dermatologists to
 - **Allergy detection**
 - **Follow-up task generation**
 
-### 4. Review & Edit Workflow
+### 4. Live Visit Insights
+- **Live Summary of Visit** during the conversation
+- **Live Symptoms** extracted separately from diagnoses and treatment
+- **Live Potential Diagnosis** cards with confidence percentages
+- **Live Tests Recommended** separated from medication/treatment recommendations
+- **Heuristic fallback** when live AI insights are disabled or unavailable
+
+### 5. Review & Edit Workflow
 - **Side-by-side view** of transcript and generated note
 - **Inline editing** with audit trail
 - **Confidence scores** for each section
 - **Approve/Reject/Regenerate** options
 - **One-click apply** to encounter chart
+- **Patient-history save** from Encounter Copilot for a concise visit summary
 
 ## Architecture
 
@@ -62,6 +93,13 @@ Recording interface component:
 - Audio file upload
 - Compact and full-view modes
 
+#### `LiveScribeInsightsPanel.tsx`
+Live doctor-facing insight panel:
+- Four-box live layout: Summary, Symptoms, Potential Diagnosis, Tests Recommended
+- Displays confidence percentages for likely diagnoses
+- Clearly labels live AI status versus heuristic fallback
+- Keeps recommendations organized so treatments are not presented as tests
+
 #### `AudioVisualizer.tsx`
 Real-time audio waveform visualization:
 - Uses Web Audio API
@@ -76,27 +114,63 @@ Note editing and review interface:
 - Code and medication suggestions
 - Edit history tracking
 
+#### `ClinicalCopilotPanel.tsx`
+In-encounter assistant:
+- Answers chart-grounded questions from patient/encounter context
+- Provides documentation, E/M, ICD-10/CPT, and missing-info suggestions
+- Generates a concise visit summary
+- Saves or updates that summary directly to patient history
+
 ### Backend Services
 
 #### `ambientAI.ts` Service
 AI integration layer:
-- **`transcribeAudio()`** - OpenAI Whisper transcription
+- **`transcribeAudio()`** - configured ambient provider, OpenAI, or mock transcription
 - **`generateClinicalNote()`** - Claude/GPT-4 note generation
 - **`maskPHI()`** - PHI detection and masking
 - Automatic fallback to mock implementations
 
+#### `ambientTranscriptionAdapter.ts` Integration
+Vendor-agnostic transcription adapter:
+- Supports OpenAI-compatible multipart transcription providers
+- Supports AWS HealthScribe jobs when configured
+- Supports Nabla-style multipart provider flow
+- Selects provider from environment configuration
+
+#### `ambientLiveInsightsAI.ts` and `ambientLiveInsights.ts`
+Live insight layer:
+- Produces structured live visit summary, symptoms, potential diagnoses, and test recommendations
+- Uses AI when `AMBIENT_LIVE_AI_ENABLED=true`
+- Falls back to deterministic dermatology heuristics when AI is not available
+
+#### `clinicalCopilot.ts` Service
+Chart-grounded copilot:
+- Answers only from supplied chart context when possible
+- Produces visit summaries, documentation improvements, and coding suggestions
+- Falls back to a local chart mock when no live AI key is configured
+
 #### `ambientScribe.ts` Routes
 RESTful API endpoints:
 - `POST /api/ambient/recordings/start` - Start recording
+- `POST /api/ambient/recordings/:id/stop` - Stop recording session metadata
 - `POST /api/ambient/recordings/:id/upload` - Upload audio
 - `GET /api/ambient/recordings` - List recordings
+- `GET /api/ambient/recordings/:id` - Get recording details
 - `POST /api/ambient/recordings/:id/transcribe` - Trigger transcription
 - `GET /api/ambient/transcripts/:id` - Get transcript
+- `GET /api/ambient/recordings/:id/transcript` - Get transcript for a recording
 - `POST /api/ambient/transcripts/:id/generate-note` - Generate note
 - `GET /api/ambient/notes/:id` - Get generated note
+- `GET /api/ambient/encounters/:encounterId/notes` - Get notes for encounter
 - `PATCH /api/ambient/notes/:id` - Edit note
 - `POST /api/ambient/notes/:id/review` - Approve/reject
 - `POST /api/ambient/notes/:id/apply-to-encounter` - Apply to chart
+- `GET /api/ambient/notes/:id/edits` - Get note edit history
+- `POST /api/ambient/copilot/respond` - Ask the chart-grounded copilot
+- `POST /api/ambient/copilot/visit-summary` - Generate and save/update patient-history summary
+- `POST /api/ambient/notes/:noteId/generate-patient-summary` - Generate patient-facing summary
+- `GET /api/ambient/patient-summaries/:patientId` - List patient summaries
+- `POST /api/ambient/patient-summaries/:summaryId/share` - Share summary to portal
 
 ### Database Schema
 
@@ -136,11 +210,26 @@ Complete audit trail:
 Add API keys to `/backend/.env`:
 
 ```bash
-# OpenAI API for Whisper transcription and GPT-4 (optional)
+# OpenAI API for transcription and GPT-4-class note generation (optional)
 OPENAI_API_KEY=sk-your-openai-key-here
+OPENAI_TRANSCRIBE_MODEL=gpt-4o-transcribe-diarize
+OPENAI_NOTE_MODEL=gpt-4o
 
 # Anthropic API for Claude note generation (preferred, optional)
 ANTHROPIC_API_KEY=sk-ant-your-anthropic-key-here
+ANTHROPIC_NOTE_MODEL=claude-3-5-sonnet-20241022
+ANTHROPIC_COPILOT_MODEL=claude-3-5-sonnet-20241022
+
+# Optional live scribe behavior
+AMBIENT_LIVE_TRANSCRIBE_ENABLED=true
+AMBIENT_LIVE_TRANSCRIBE_MIN_INTERVAL_MS=5000
+AMBIENT_LIVE_TRANSCRIBE_MODEL=gpt-4o-transcribe
+AMBIENT_LIVE_AI_ENABLED=false
+AMBIENT_LIVE_AI_MIN_INTERVAL_MS=15000
+
+# Optional vendor adapter. Leave unset/mock until credentials exist.
+# Examples: openai, aws_healthscribe, abridge, wispr_flow, nabla
+AMBIENT_TRANSCRIPTION_PROVIDER=
 ```
 
 **Note:** If API keys are not provided, the system will use realistic mock implementations for development.
@@ -188,6 +277,7 @@ The backend will automatically detect API keys and use real AI services when ava
    - Click "Start Recording" to begin
    - Real-time waveform shows audio levels
    - Duration timer tracks recording length
+   - Live panel updates the summary, symptoms, possible diagnoses, and test recommendations while speaking
    - Click "Stop Recording" when finished
 
 4. **Upload & Transcribe**
@@ -217,10 +307,21 @@ The backend will automatically detect API keys and use real AI services when ava
    - Edit any section as needed
    - All edits are tracked in audit log
 
-7. **Approve & Apply**
+7. **Approve, Save, & Apply**
    - Click "Approve Note" when satisfied
    - Click "Apply to Encounter" to add to patient chart
    - Note becomes part of permanent medical record
+   - Use Encounter Copilot's save-summary action when a concise patient-history summary is needed
+
+### Using Encounter Copilot During an Appointment
+
+1. Open an appointment/encounter.
+2. Use the Encounter Copilot chat to ask documentation, coding, or workflow questions grounded in the current chart.
+3. Click the summarize/save action to generate a concise visit summary.
+4. Review the returned summary.
+5. The system saves or updates the patient-history entry, including chart evidence and audit logging.
+
+The copilot is intended to reduce duplicate work. It should summarize what is supported by the chart, not invent missing clinical facts.
 
 ## API Keys Setup
 
@@ -246,14 +347,17 @@ The backend will automatically detect API keys and use real AI services when ava
 
 ## AI Models Used
 
-### Speech-to-Text: OpenAI Whisper
-- **Model:** `whisper-1`
+### Speech-to-Text: Configurable Ambient Transcription
+- **Default OpenAI model:** `gpt-4o-transcribe-diarize` when configured, with `whisper-1` still supported
+- **Live chunk model:** `gpt-4o-transcribe` by default
+- **Optional providers:** AWS HealthScribe and vendor adapter paths for Abridge, Wispr Flow, and Nabla-style APIs
 - **Language:** English
 - **Features:**
-  - Multi-speaker capable
+  - Multi-speaker capable when provider supports diarization
   - Medical terminology recognition
   - Timestamp-aligned segments
   - Robust to background noise
+  - Mock fallback for demos/development
 
 ### Clinical Note Generation
 
@@ -267,7 +371,7 @@ The backend will automatically detect API keys and use real AI services when ava
   - Lower cost per note
 
 #### Option 2: OpenAI GPT-4
-- **Model:** `gpt-4-turbo-preview`
+- **Model:** `gpt-4o` or configured OpenAI note model
 - **Strengths:**
   - Strong general medical knowledge
   - Good medication extraction
@@ -323,16 +427,23 @@ When API keys are not configured, the system uses realistic mock implementations
 
 ### Transcription Issues
 
-**Whisper API errors:**
+**Transcription provider errors:**
 - Check OPENAI_API_KEY is valid
+- Check `AMBIENT_TRANSCRIPTION_PROVIDER` is unset or correctly configured
 - Verify API quota/billing
 - Check file size (<500MB limit)
 - Review backend logs for details
 
 **Poor speaker diarization:**
-- Current implementation uses heuristics
-- For production: Consider AssemblyAI or Pyannote
+- Use a diarization-capable provider/model when available
+- Current fallback uses heuristics and should label speaker roles as inferred
+- For production, prefer a medical transcription provider with reliable diarization
 - Clear speaker changes help (pauses, questions)
+
+**Live boxes look incomplete:**
+- Live insights need enough transcript text before they stabilize
+- `AMBIENT_LIVE_AI_ENABLED=true` enables live AI summaries when an AI key is configured
+- Heuristic fallback is intentionally conservative and may leave fields sparse until enough clinical context is heard
 
 ### Note Generation Issues
 
@@ -351,19 +462,36 @@ When API keys are not configured, the system uses realistic mock implementations
 ## Future Enhancements
 
 ### Short-term
-- [ ] Real-time transcription streaming
-- [ ] Better speaker diarization (integrate Pyannote)
+- [x] Real-time transcription streaming
+- [x] Live visit insight boxes
+- [x] Encounter Copilot save-to-patient-history flow
+- [x] Editable AI note before applying to chart
+- [x] Preferred pharmacy in patient workflow
+- [x] Prescription delivery documentation for electronic, print, and manual workflows
+- [ ] Improve proven speaker diarization with a production-grade vendor/model
 - [ ] Multi-language support
 - [ ] Custom medical vocabularies
 - [ ] Template-based prompts per specialty
 
 ### Long-term
-- [ ] Real-time AI suggestions during encounter
+- [x] Real-time AI suggestions during encounter
 - [ ] Voice commands for navigation
-- [ ] Integration with EHR coding workflows
+- [x] Integration with encounter coding workflows
 - [ ] Quality metrics and analytics
 - [ ] Batch processing of recordings
 - [ ] Mobile app for recording
+- [ ] Production drug interaction database/vendor connection
+- [ ] Production eRx, eligibility, prior authorization, and claims vendor credentials
+
+## Recent Verification
+
+Recent focused verification completed before this guide update:
+
+- Backend targeted tests passed: 265/265.
+- Backend build passed.
+- Railway focused smoke test passed: 22/22.
+- Smoke coverage included eligibility resilience, portal identity/linking, live coding ICD safeguards, charge de-duplication, encounter charge retrieval, mock eRx send, portal refill request, secure messaging, SMS mock mode, and completed-appointment portal visibility.
+- AI scribe/copy-to-history behavior has unit coverage for live insights, clinical copilot, and ambient summary save flows.
 
 ## Performance Metrics
 

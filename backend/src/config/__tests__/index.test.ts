@@ -11,6 +11,30 @@ const loadConfig = () => {
 beforeEach(() => {
   jest.resetModules();
   process.env = { ...originalEnv };
+  [
+    'DEPLOYMENT_ENV',
+    'APP_ENV',
+    'RAILWAY_ENVIRONMENT',
+    'API_URL',
+    'FRONTEND_URL',
+    'DATABASE_URL',
+    'DB_SSL_ENABLED',
+    'CORS_ORIGIN',
+    'JWT_SECRET',
+    'CSRF_SECRET',
+    'SESSION_SECRET',
+    'ENCRYPTION_KEY',
+    'PHI_ENCRYPTION_ENABLED',
+    'ENABLE_PHI_ENCRYPTION',
+    'STORAGE_PROVIDER',
+    'AWS_S3_BUCKET',
+    'SENTRY_DSN',
+    'ENABLE_API_DOCS',
+    'ENABLE_PLAYGROUND',
+    'SSL_ENABLED',
+  ].forEach((key) => {
+    process.env[key] = '';
+  });
 });
 
 afterAll(() => {
@@ -66,8 +90,7 @@ describe('config validation', () => {
 
   it('warns when https api url uses disabled ssl', () => {
     process.env.NODE_ENV = 'production';
-    process.env.DB_PASSWORD = 'test-db-pass';
-    process.env.DB_SSL_ENABLED = 'true';
+    process.env.DATABASE_URL = 'postgres://demo:demo@db.example.com:5432/derm?sslmode=require';
     process.env.JWT_SECRET = 'x'.repeat(32);
     process.env.CSRF_SECRET = 'x'.repeat(32);
     process.env.SESSION_SECRET = 'x'.repeat(32);
@@ -76,6 +99,7 @@ describe('config validation', () => {
     process.env.SENTRY_DSN = 'https://example.com/123';
     process.env.STORAGE_PROVIDER = 'local';
     process.env.API_URL = 'https://example.com';
+    process.env.CORS_ORIGIN = 'https://app.example.com';
     process.env.SSL_ENABLED = 'false';
 
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
@@ -89,8 +113,7 @@ describe('config validation', () => {
 
   it('does not throw when SENTRY_DSN is missing in production', () => {
     process.env.NODE_ENV = 'production';
-    process.env.DB_PASSWORD = 'test-db-pass';
-    process.env.DB_SSL_ENABLED = 'true';
+    process.env.DATABASE_URL = 'postgres://demo:demo@db.example.com:5432/derm?sslmode=require';
     process.env.JWT_SECRET = 'x'.repeat(32);
     process.env.CSRF_SECRET = 'x'.repeat(32);
     process.env.SESSION_SECRET = 'x'.repeat(32);
@@ -98,6 +121,7 @@ describe('config validation', () => {
     process.env.PHI_ENCRYPTION_ENABLED = 'true';
     process.env.SENTRY_DSN = '';
     process.env.STORAGE_PROVIDER = 'local';
+    process.env.CORS_ORIGIN = 'https://app.example.com';
 
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -131,5 +155,34 @@ describe('config validation', () => {
 
     expect(config.cors.origin.length).toBe(originSet.size);
     expect(config.cors.origin.filter((origin) => origin === 'http://localhost:5173')).toHaveLength(1);
+  });
+
+  it('uses production-like hardening for staging deployment envs', () => {
+    process.env.NODE_ENV = 'development';
+    process.env.DEPLOYMENT_ENV = 'staging';
+    process.env.DATABASE_URL = 'postgres://demo:demo@localhost:5432/derm';
+    process.env.JWT_SECRET = 'x'.repeat(32);
+    process.env.CSRF_SECRET = 'x'.repeat(32);
+    process.env.SESSION_SECRET = 'x'.repeat(32);
+    process.env.ENCRYPTION_KEY = 'x'.repeat(32);
+    process.env.PHI_ENCRYPTION_ENABLED = 'true';
+    process.env.CORS_ORIGIN = 'https://staging.dermapp.example,http://localhost:5173,http://127.0.0.1:5173';
+    process.env.API_URL = 'https://api.staging.dermapp.example';
+    process.env.ENABLE_API_DOCS = 'false';
+    process.env.ENABLE_PLAYGROUND = 'false';
+    process.env.STORAGE_PROVIDER = 'local';
+
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const config = loadConfig();
+
+    expect(config.runtimeEnvironment).toBe('staging');
+    expect(config.isProductionLike).toBe(true);
+    expect(config.isDevelopment).toBe(false);
+    expect(config.cors.origin).toEqual(['https://staging.dermapp.example']);
+    expect(warnSpy).toHaveBeenCalledWith(
+      'WARNING: DEPLOYMENT_ENV=staging is using a local database target; DB TLS cannot be validated locally.'
+    );
+
+    warnSpy.mockRestore();
   });
 });

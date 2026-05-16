@@ -31,6 +31,9 @@ const booleanDefault = (defaultValue: boolean) =>
 
 export const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  DEPLOYMENT_ENV: stringOptional,
+  APP_ENV: stringOptional,
+  RAILWAY_ENVIRONMENT: stringOptional,
   PORT: numberDefault(4000),
   API_URL: stringDefault("http://localhost:4000"),
   FRONTEND_URL: stringDefault("http://localhost:5173"),

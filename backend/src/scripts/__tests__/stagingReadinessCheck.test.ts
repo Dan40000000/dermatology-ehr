@@ -50,6 +50,37 @@ describe('stagingReadinessCheck', () => {
     expect(report.checks.find((item) => item.id === 'auth:secret-length')?.status).toBe('pass');
   });
 
+  it('treats a localhost staging database as a local mirror and ignores localhost CORS origins', async () => {
+    const report = await generateReadinessReport(
+      {
+        DEPLOYMENT_ENV: 'staging',
+        PHI_ENCRYPTION_ENABLED: 'true',
+        ENCRYPTION_KEY: 'x'.repeat(64),
+        DB_SSL_ENABLED: 'false',
+        DATABASE_URL: 'postgres://demo:demo@localhost:5432/derm',
+        CORS_ORIGIN: 'https://staging.dermapp.example,http://localhost:5173,http://127.0.0.1:5173',
+        JWT_SECRET: 'y'.repeat(64),
+        CSRF_SECRET: 'z'.repeat(64),
+        SESSION_SECRET: 'w'.repeat(64),
+        API_URL: 'https://api.staging.dermapp.example',
+        ENABLE_API_DOCS: 'false',
+        ENABLE_PLAYGROUND: 'false',
+        STORAGE_PROVIDER: 's3',
+        AWS_S3_BUCKET: 'derm-ehr-staging',
+        AWS_REGION: 'us-east-1',
+      },
+      { skipDb: true }
+    );
+
+    const dbTls = report.checks.find((item) => item.id === 'db:tls');
+    const cors = report.checks.find((item) => item.id === 'cors:origins');
+
+    expect(dbTls?.status).toBe('warn');
+    expect(cors?.status).toBe('pass');
+    expect(cors?.detail).toContain('https://staging.dermapp.example');
+    expect(cors?.detail).toContain('Localhost origins are ignored');
+  });
+
   it('warns when run in non-production-like environment', async () => {
     const report = await generateReadinessReport(
       {

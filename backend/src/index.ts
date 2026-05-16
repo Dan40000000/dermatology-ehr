@@ -111,7 +111,7 @@ app.use((req, _res, next) => {
   next();
 });
 
-const exposeApiDocs = !config.isProduction || config.debug.apiDocs;
+const exposeApiDocs = !config.isProductionLike || config.debug.apiDocs;
 if (exposeApiDocs) {
   // Swagger API Documentation
   app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
@@ -143,7 +143,7 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
   });
 
   // Don't leak error details in production
-  const message = config.isProduction
+  const message = config.isProductionLike
     ? 'Internal server error'
     : err.message;
 
@@ -159,6 +159,7 @@ initializeWebSocket(httpServer);
 httpServer.listen(env.port, () => {
   logger.info(`API server started on port ${env.port}`, {
     nodeEnv: config.env,
+    runtimeEnvironment: config.runtimeEnvironment,
     port: env.port,
   });
 

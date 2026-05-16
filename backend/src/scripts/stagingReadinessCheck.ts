@@ -71,6 +71,35 @@ function isProductionLike(environment: string): boolean {
   return environment === 'production' || environment === 'staging';
 }
 
+const localhostAliases = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+function normalizeHostname(hostname: string): string {
+  return hostname.replace(/^\[|\]$/g, '').toLowerCase();
+}
+
+function isLocalHostname(hostname: string | undefined): boolean {
+  if (!hostname) return false;
+  return localhostAliases.has(normalizeHostname(hostname));
+}
+
+function databaseTargetIsLocal(env: NodeJS.ProcessEnv): boolean {
+  const databaseUrl = env.DATABASE_URL || '';
+  try {
+    return isLocalHostname(new URL(databaseUrl).hostname);
+  } catch {
+    return isLocalHostname(env.DB_HOST);
+  }
+}
+
+function isLocalOrigin(origin: string): boolean {
+  if (origin === '*') return false;
+  try {
+    return isLocalHostname(new URL(origin).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function check(
   id: string,
   status: CheckStatus,
@@ -221,9 +250,11 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
   const databaseUrl = env.DATABASE_URL || '';
   const dbSslEnabled = parseBool(env.DB_SSL_ENABLED);
   const databaseUrlForcesSsl = /(sslmode=require|sslmode=verify-full|ssl=true)/i.test(databaseUrl);
-  const corsOrigins = splitOrigins(env.CORS_ORIGIN || env.FRONTEND_URL);
-  const hasWildcardCors = corsOrigins.includes('*');
-  const hasLocalhostCors = corsOrigins.some((origin) => /localhost|127\.0\.0\.1/i.test(origin));
+  const rawCorsOrigins = splitOrigins(env.CORS_ORIGIN || env.FRONTEND_URL);
+  const corsOrigins = productionLike ? rawCorsOrigins.filter((origin) => !isLocalOrigin(origin)) : rawCorsOrigins;
+  const hasWildcardCors = rawCorsOrigins.includes('*');
+  const hasLocalhostCors = rawCorsOrigins.some(isLocalOrigin);
+  const localDatabaseTarget = databaseTargetIsLocal(env);
   const docsEnabled = parseBool(env.ENABLE_API_DOCS);
   const playgroundEnabled = parseBool(env.ENABLE_PLAYGROUND);
   const apiUrl = env.API_URL || '';
@@ -257,17 +288,29 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
           )
     );
 
-    checks.push(
-      dbSslEnabled || databaseUrlForcesSsl
-        ? check('db:tls', 'pass', 'Database TLS enforced', 'DB TLS is enabled through DB_SSL_ENABLED or DATABASE_URL sslmode.')
-        : check(
-            'db:tls',
-            'fail',
-            'Database TLS enforced',
-            'Database TLS is not enforced for a production-like environment.',
-            'Enable DB_SSL_ENABLED=true or enforce sslmode=require in DATABASE_URL.'
-          )
-    );
+    if (dbSslEnabled || databaseUrlForcesSsl) {
+      checks.push(check('db:tls', 'pass', 'Database TLS enforced', 'DB TLS is enabled through DB_SSL_ENABLED or DATABASE_URL sslmode.'));
+    } else if (environment === 'staging' && localDatabaseTarget) {
+      checks.push(
+        check(
+          'db:tls',
+          'warn',
+          'Database TLS enforced',
+          'The readiness run is using a localhost database mirror, so deployed DB TLS cannot be verified from this local run.',
+          'Run this check against the deployed staging database with DB_SSL_ENABLED=true or DATABASE_URL sslmode=require before launch signoff.'
+        )
+      );
+    } else {
+      checks.push(
+        check(
+          'db:tls',
+          'fail',
+          'Database TLS enforced',
+          'Database TLS is not enforced for a production-like environment.',
+          'Enable DB_SSL_ENABLED=true or enforce sslmode=require in DATABASE_URL.'
+        )
+      );
+    }
 
     if (corsOrigins.length === 0) {
       checks.push(
@@ -289,18 +332,18 @@ function evaluateStaticChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
           'Replace wildcard with explicit allow-list origins.'
         )
       );
-    } else if (hasLocalhostCors) {
+    } else {
+      const ignoredLocalhostDetail = hasLocalhostCors
+        ? ' Localhost origins are ignored by production-like runtime config.'
+        : '';
       checks.push(
         check(
           'cors:origins',
-          'fail',
+          'pass',
           'CORS origins explicit',
-          'Localhost origin detected in production-like environment.',
-          'Remove localhost/127.0.0.1 origins from CORS_ORIGIN.'
+          `Configured origins: ${corsOrigins.join(', ')}.${ignoredLocalhostDetail}`
         )
       );
-    } else {
-      checks.push(check('cors:origins', 'pass', 'CORS origins explicit', `Configured origins: ${corsOrigins.join(', ')}`));
     }
 
     checks.push(

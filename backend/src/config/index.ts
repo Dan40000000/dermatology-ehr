@@ -8,11 +8,56 @@ const envVars = loadEnv();
  * Centralized configuration management with validation
  */
 
+const normalizeEnvironment = (value: string | undefined) => value?.trim().toLowerCase();
+const runtimeEnvironment =
+  normalizeEnvironment(envVars.DEPLOYMENT_ENV) ||
+  normalizeEnvironment(envVars.APP_ENV) ||
+  normalizeEnvironment(envVars.RAILWAY_ENVIRONMENT) ||
+  normalizeEnvironment(envVars.NODE_ENV) ||
+  'development';
+const isProductionLikeEnvironment = runtimeEnvironment === 'production' || runtimeEnvironment === 'staging';
+
+const localhostAliases = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+function normalizeHostname(hostname: string): string {
+  return hostname.replace(/^\[|\]$/g, '').toLowerCase();
+}
+
+function isLocalHostname(hostname: string | undefined): boolean {
+  if (!hostname) return false;
+  return localhostAliases.has(normalizeHostname(hostname));
+}
+
+function getDatabaseHostname(): string {
+  try {
+    return new URL(envVars.DATABASE_URL).hostname;
+  } catch {
+    return envVars.DB_HOST;
+  }
+}
+
+function isLocalOrigin(origin: string): boolean {
+  if (origin === '*') return false;
+  try {
+    return isLocalHostname(new URL(origin).hostname);
+  } catch {
+    return false;
+  }
+}
+
+const databaseUrlHasSslMode = /sslmode=(require|verify-full)|ssl=true/i.test(envVars.DATABASE_URL);
+const isLocalDatabaseTarget = isLocalHostname(getDatabaseHostname());
+const effectiveDbSslEnabled =
+  envVars.DB_SSL_ENABLED || databaseUrlHasSslMode || (isProductionLikeEnvironment && !isLocalDatabaseTarget);
+
 export const config = {
   // Environment
   env: envVars.NODE_ENV,
-  isDevelopment: envVars.NODE_ENV === 'development',
-  isProduction: envVars.NODE_ENV === 'production',
+  runtimeEnvironment,
+  isDevelopment: runtimeEnvironment === 'development' && envVars.NODE_ENV !== 'test',
+  isProduction: runtimeEnvironment === 'production',
+  isStaging: runtimeEnvironment === 'staging',
+  isProductionLike: isProductionLikeEnvironment,
   isTest: envVars.NODE_ENV === 'test',
 
   // Server
@@ -30,7 +75,7 @@ export const config = {
     maxConnections: envVars.DB_MAX_CONNECTIONS,
     idleTimeout: envVars.DB_IDLE_TIMEOUT,
     ssl: {
-      enabled: envVars.DB_SSL_ENABLED,
+      enabled: effectiveDbSslEnabled,
       rejectUnauthorized: envVars.DB_SSL_REJECT_UNAUTHORIZED,
     },
   },
@@ -142,6 +187,9 @@ export const config = {
       const addOrigin = (origin: string) => {
         const trimmed = origin.trim();
         if (trimmed) {
+          if (isProductionLikeEnvironment && isLocalOrigin(trimmed)) {
+            return;
+          }
           origins.add(trimmed);
         }
       };
@@ -154,7 +202,7 @@ export const config = {
         addOrigin(envVars.FRONTEND_URL);
       }
 
-      if (envVars.NODE_ENV !== 'production') {
+      if (!isProductionLikeEnvironment) {
         [
           'http://localhost:5173',
           'http://127.0.0.1:5173',
@@ -218,7 +266,7 @@ function validateConfig(): void {
   };
 
   // Required in production
-  if (config.isProduction) {
+  if (config.isProductionLike) {
     requireEnv('JWT_SECRET');
     requireEnv('CSRF_SECRET');
     requireEnv('SESSION_SECRET');
@@ -227,10 +275,16 @@ function validateConfig(): void {
       errors.push('Missing required environment variable: DB_PASSWORD (or DATABASE_URL)');
     }
 
-    const databaseUrl = process.env.DATABASE_URL || '';
-    const databaseUrlHasSslMode = /sslmode=require/i.test(databaseUrl) || /ssl=true/i.test(databaseUrl);
-    if (!config.database.ssl.enabled && !databaseUrlHasSslMode) {
-      errors.push('DB_SSL_ENABLED must be true (or DATABASE_URL must enforce sslmode=require) in production');
+    if (config.isProduction && isLocalDatabaseTarget) {
+      errors.push('Production database target must not point to localhost');
+    }
+
+    if (!config.database.ssl.enabled && !(config.isStaging && isLocalDatabaseTarget)) {
+      errors.push('DB_SSL_ENABLED must be true (or DATABASE_URL must enforce sslmode=require) in production-like environments');
+    }
+
+    if (config.isStaging && isLocalDatabaseTarget && !config.database.ssl.enabled) {
+      console.warn('WARNING: DEPLOYMENT_ENV=staging is using a local database target; DB TLS cannot be validated locally.');
     }
 
     // Warn about secure configuration
@@ -247,7 +301,7 @@ function validateConfig(): void {
     }
 
     if (!config.security.phiEncryptionEnabled) {
-      errors.push('PHI_ENCRYPTION_ENABLED must be true in production');
+      errors.push('PHI_ENCRYPTION_ENABLED must be true in production-like environments');
     }
 
     if (!config.ssl.enabled && config.apiUrl.startsWith('https')) {
@@ -261,6 +315,14 @@ function validateConfig(): void {
     if (config.storage.provider === 's3' && !config.storage.aws.bucket) {
       errors.push('AWS_S3_BUCKET is required when STORAGE_PROVIDER is s3');
     }
+
+    if (config.cors.origin.length === 0) {
+      errors.push('CORS_ORIGIN must include at least one non-localhost origin in production-like environments');
+    }
+
+    if (config.cors.origin.includes('*')) {
+      errors.push('CORS_ORIGIN must not include wildcard (*) in production-like environments');
+    }
   }
 
   if (config.security.phiEncryptionEnabled) {
@@ -271,7 +333,7 @@ function validateConfig(): void {
     }
   }
 
-  if (!config.isProduction) {
+  if (!config.isProductionLike) {
     if (!process.env.JWT_SECRET) {
       console.warn('WARNING: JWT_SECRET is not set; using defaults is unsafe outside development.');
     }
@@ -289,6 +351,7 @@ function validateConfig(): void {
   if (config.isDevelopment) {
     console.log('Configuration loaded:', {
       env: config.env,
+      runtimeEnvironment: config.runtimeEnvironment,
       port: config.port,
       database: `${config.database.host}:${config.database.port}/${config.database.name}`,
       redis: config.redis.url,

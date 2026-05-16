@@ -20,6 +20,9 @@ const apiMocks = vi.hoisted(() => ({
   fetchPrescriptionsEnhanced: vi.fn(),
   fetchPatients: vi.fn(),
   createOrder: vi.fn(),
+  createPrescription: vi.fn(),
+  markPrescriptionPrinted: vi.fn(),
+  markPrescriptionManualFill: vi.fn(),
   sendErx: vi.fn(),
   sendPrescriptionWorkflow: vi.fn(),
   getLastPDMPCheck: vi.fn(),
@@ -155,6 +158,9 @@ describe('PrescriptionsPage', () => {
     apiMocks.checkPDMP.mockResolvedValue({ riskScore: 'Low', totalControlledRxLast6Months: 0, flags: [] });
     apiMocks.fetchPatientMedicationHistory.mockResolvedValue([]);
     apiMocks.createOrder.mockResolvedValue({ id: 'rx-2' });
+    apiMocks.createPrescription.mockResolvedValue({ id: 'rx-2' });
+    apiMocks.markPrescriptionPrinted.mockResolvedValue({ ok: true });
+    apiMocks.markPrescriptionManualFill.mockResolvedValue({ ok: true });
     apiMocks.sendErx.mockResolvedValue({ ok: true });
     apiMocks.sendPrescriptionWorkflow.mockResolvedValue({
       success: true,
@@ -211,12 +217,20 @@ describe('PrescriptionsPage', () => {
     });
     fireEvent.click(modalScope.getByRole('button', { name: 'Create Prescription' }));
 
-    await waitFor(() => expect(apiMocks.createOrder).toHaveBeenCalled());
-    const createCall = apiMocks.createOrder.mock.calls[0][2];
-    expect(createCall.patientId).toBe('patient-1');
-    expect(createCall.notes).toBe('Pharmacy: CVS');
-    expect(createCall.details).toContain('Tretinoin 0.025% cream');
-    expect(createCall.details).toContain('Instructions: Apply nightly');
+    await waitFor(() => expect(apiMocks.createPrescription).toHaveBeenCalled());
+    expect(apiMocks.createPrescription).toHaveBeenCalledWith('tenant-1', 'token-1', {
+      patientId: 'patient-1',
+      medicationName: 'Tretinoin 0.025% cream',
+      strength: undefined,
+      sig: 'Twice daily - Apply nightly',
+      quantity: 30,
+      quantityUnit: 'g',
+      refills: 0,
+      pharmacyName: 'CVS',
+      notes: 'Pharmacy: CVS',
+      deliveryMethod: 'electronic',
+      deliveryNotes: undefined,
+    });
 
     const rxRow = screen.getByText('Derm, Ana').closest('tr');
     expect(rxRow).toBeTruthy();

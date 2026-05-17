@@ -71,6 +71,8 @@ const DEMO_CREATED_PATIENTS_KEY = 'demoCreatedPatients.v1';
 const DEMO_PATIENT_OVERRIDES_KEY = 'demoPatientOverrides.v1';
 const DEMO_BIOPSY_OVERRIDES_KEY = 'demoBiopsyOverrides.v1';
 const DEMO_TASKS_KEY = 'demoTasks.v1';
+const DEMO_STORE_PRODUCTS_KEY = 'demoStoreProducts.v1';
+const DEMO_STORE_ORDERS_KEY = 'demoStoreOrders.v1';
 
 function isLocalDemoEnabled(): boolean {
   return import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
@@ -149,6 +151,73 @@ const PORTAL_EMAILS = [
 ];
 
 type DemoItem = Record<string, any>;
+
+const DEFAULT_DEMO_STORE_PRODUCTS: DemoItem[] = [
+  {
+    id: '11111111-1111-4111-8111-111111111111',
+    tenantId: 'tenant-demo',
+    sku: 'SPF-TINT-50',
+    name: 'Tinted Mineral SPF 50',
+    description: 'Broad-spectrum mineral sunscreen with a sheer tint.',
+    category: 'sunscreen',
+    brand: 'ClearDerm',
+    price: 4200,
+    cost: 1850,
+    inventoryCount: 32,
+    reorderPoint: 8,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: '22222222-2222-4222-8222-222222222222',
+    tenantId: 'tenant-demo',
+    sku: 'BARRIER-CRM',
+    name: 'Barrier Repair Cream',
+    description: 'Fragrance-free moisturizer for irritated or dry skin.',
+    category: 'skincare',
+    brand: 'ClearDerm',
+    price: 3600,
+    cost: 1425,
+    inventoryCount: 18,
+    reorderPoint: 6,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: '33333333-3333-4333-8333-333333333333',
+    tenantId: 'tenant-demo',
+    sku: 'POST-LASER-KIT',
+    name: 'Post-Laser Recovery Kit',
+    description: 'Cleanser, balm, and SPF for procedure recovery.',
+    category: 'post_procedure',
+    brand: 'AesthetiCare',
+    price: 6800,
+    cost: 2900,
+    inventoryCount: 9,
+    reorderPoint: 10,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: '44444444-4444-4444-8444-444444444444',
+    tenantId: 'tenant-demo',
+    sku: 'HA-SERUM',
+    name: 'Hydrating HA Serum',
+    description: 'Lightweight hyaluronic acid serum for daily hydration.',
+    category: 'cosmetic',
+    brand: 'AesthetiCare',
+    price: 5200,
+    cost: 2100,
+    inventoryCount: 14,
+    reorderPoint: 5,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+];
 
 const DEMO_PHARMACIES: DemoItem[] = [
   {
@@ -407,6 +476,23 @@ function readStorageJson<T>(key: string, fallback: T): T {
 
 function writeStorageJson(key: string, value: unknown) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function readDemoStoreProducts(): DemoItem[] {
+  const stored = readStorageJson<DemoItem[] | null>(DEMO_STORE_PRODUCTS_KEY, null);
+  return Array.isArray(stored) && stored.length > 0 ? stored : DEFAULT_DEMO_STORE_PRODUCTS;
+}
+
+function writeDemoStoreProducts(products: DemoItem[]) {
+  writeStorageJson(DEMO_STORE_PRODUCTS_KEY, products);
+}
+
+function readDemoStoreOrders(): DemoItem[] {
+  return readStorageJson<DemoItem[]>(DEMO_STORE_ORDERS_KEY, []);
+}
+
+function writeDemoStoreOrders(orders: DemoItem[]) {
+  writeStorageJson(DEMO_STORE_ORDERS_KEY, orders);
 }
 
 function readDemoCreatedPatients(): DemoItem[] {
@@ -2394,6 +2480,148 @@ function handleProviderRoute(
   const biopsyResultMatch = path.match(/^\/api\/biopsies\/([^/]+)\/result$/);
   const biopsyAlertsMatch = path.match(/^\/api\/biopsies\/([^/]+)\/alerts$/);
 
+  if (path === '/api/products/inventory/status' && method.toUpperCase() === 'GET') {
+    const products = readDemoStoreProducts().filter((product) => product.isActive !== false);
+    const byCategory = new Map<string, { category: string; count: number; value: number }>();
+    products.forEach((product) => {
+      const current = byCategory.get(String(product.category)) || { category: String(product.category), count: 0, value: 0 };
+      current.count += 1;
+      current.value += Number(product.inventoryCount || 0) * Number(product.cost || 0);
+      byCategory.set(String(product.category), current);
+    });
+    return mockResponse({
+      status: {
+        totalProducts: products.length,
+        totalValue: products.reduce((sum, product) => sum + Number(product.inventoryCount || 0) * Number(product.cost || 0), 0),
+        lowStockCount: products.filter((product) => Number(product.inventoryCount || 0) <= Number(product.reorderPoint || 0) && Number(product.inventoryCount || 0) > 0).length,
+        outOfStockCount: products.filter((product) => Number(product.inventoryCount || 0) === 0).length,
+        byCategory: Array.from(byCategory.values()),
+      },
+    });
+  }
+
+  if (path === '/api/products/inventory/low-stock' && method.toUpperCase() === 'GET') {
+    return mockResponse({
+      products: readDemoStoreProducts().filter((product) =>
+        product.isActive !== false && Number(product.inventoryCount || 0) <= Number(product.reorderPoint || 0)
+      ),
+    });
+  }
+
+  if (path === '/api/products/sales/report' && method.toUpperCase() === 'GET') {
+    const orders = readDemoStoreOrders();
+    const topProductMap = new Map<string, DemoItem>();
+    orders.forEach((order) => {
+      (order.items || []).forEach((item: DemoItem) => {
+        const current = topProductMap.get(String(item.productId)) || {
+          productId: item.productId,
+          productName: item.productName,
+          quantitySold: 0,
+          revenue: 0,
+        };
+        current.quantitySold += Number(item.quantity || 0);
+        current.revenue += Number(item.lineTotal || 0);
+        topProductMap.set(String(item.productId), current);
+      });
+    });
+    return mockResponse({
+      report: {
+        totalSales: orders.length,
+        totalRevenue: orders.reduce((sum, order) => sum + Number(order.total || 0), 0),
+        totalDiscounts: 0,
+        totalTax: orders.reduce((sum, order) => sum + Number(order.tax || 0), 0),
+        uniqueCustomers: new Set(orders.map((order) => order.patientId)).size,
+        topProducts: Array.from(topProductMap.values()).sort((a, b) => Number(b.quantitySold) - Number(a.quantitySold)),
+        salesByCategory: [],
+        dailySales: [],
+      },
+    });
+  }
+
+  if (path === '/api/products/sales' && method.toUpperCase() === 'GET') {
+    return mockResponse({ orders: readDemoStoreOrders() });
+  }
+
+  const storeFulfillmentMatch = path.match(/^\/api\/products\/sales\/([^/]+)\/fulfillment$/);
+  if (storeFulfillmentMatch && method.toUpperCase() === 'PUT') {
+    const saleId = storeFulfillmentMatch[1];
+    const orders = readDemoStoreOrders();
+    const updatedOrders = orders.map((order) =>
+      String(order.id) === saleId
+        ? { ...order, ...body, updatedAt: new Date().toISOString() }
+        : order
+    );
+    writeDemoStoreOrders(updatedOrders);
+    const order = updatedOrders.find((item) => String(item.id) === saleId);
+    return order ? mockResponse({ order }) : mockResponse({ error: 'Store order not found' }, 404);
+  }
+
+  if (path === '/api/products' && method.toUpperCase() === 'GET') {
+    let products = readDemoStoreProducts();
+    const category = params.get('category');
+    const isActive = params.get('isActive');
+    const search = params.get('search')?.toLowerCase() || '';
+    if (category) products = products.filter((product) => String(product.category) === category);
+    if (isActive != null) products = products.filter((product) => String(product.isActive !== false) === isActive);
+    if (params.get('lowStockOnly') === 'true') {
+      products = products.filter((product) => Number(product.inventoryCount || 0) <= Number(product.reorderPoint || 0));
+    }
+    if (search) {
+      products = products.filter((product) =>
+        [product.name, product.sku, product.brand, product.description].filter(Boolean).some((value) => String(value).toLowerCase().includes(search))
+      );
+    }
+    return mockResponse({ products });
+  }
+
+  if (path === '/api/products' && method.toUpperCase() === 'POST') {
+    const now = new Date().toISOString();
+    const product = {
+      id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `demo-product-${Date.now()}`,
+      tenantId: 'tenant-demo',
+      sku: String(body?.sku || `SKU-${Date.now()}`),
+      name: String(body?.name || 'New Store Product'),
+      description: body?.description ? String(body.description) : '',
+      category: String(body?.category || 'skincare'),
+      brand: body?.brand ? String(body.brand) : '',
+      price: Number(body?.price || 0),
+      cost: Number(body?.cost || 0),
+      inventoryCount: Number(body?.inventoryCount || 0),
+      reorderPoint: Number(body?.reorderPoint || 5),
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    writeDemoStoreProducts([...readDemoStoreProducts(), product]);
+    return mockResponse({ product }, 201);
+  }
+
+  const productInventoryMatch = path.match(/^\/api\/products\/([^/]+)\/inventory$/);
+  if (productInventoryMatch && method.toUpperCase() === 'PUT') {
+    const productId = productInventoryMatch[1];
+    let newCount = 0;
+    const products = readDemoStoreProducts().map((product) => {
+      if (String(product.id) !== productId) return product;
+      newCount = Math.max(0, Number(product.inventoryCount || 0) + Number(body?.quantity || 0));
+      return { ...product, inventoryCount: newCount, updatedAt: new Date().toISOString() };
+    });
+    writeDemoStoreProducts(products);
+    return mockResponse({ newCount });
+  }
+
+  const productMatch = path.match(/^\/api\/products\/([^/]+)$/);
+  if (productMatch && method.toUpperCase() === 'PUT') {
+    const productId = productMatch[1];
+    const products = readDemoStoreProducts().map((product) =>
+      String(product.id) === productId
+        ? { ...product, ...body, updatedAt: new Date().toISOString() }
+        : product
+    );
+    writeDemoStoreProducts(products);
+    const product = products.find((item) => String(item.id) === productId);
+    return product ? mockResponse({ product }) : mockResponse({ error: 'Product not found' }, 404);
+  }
+
   if (path === '/api/patients' && method.toUpperCase() === 'POST') {
     const now = new Date().toISOString();
     const id = `demo-created-patient-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Date.now()}`;
@@ -3843,6 +4071,89 @@ function handlePortalRoute(
           + (upcomingAppointments.length > 0 ? 1 : 0),
       },
     });
+  }
+
+  if (path === '/api/patient-portal-data/store/products' && method.toUpperCase() === 'GET') {
+    return mockResponse({
+      products: readDemoStoreProducts().filter((product) => product.isActive !== false && product.category !== 'prescription'),
+    });
+  }
+
+  if (path === '/api/patient-portal-data/store/orders' && method.toUpperCase() === 'POST') {
+    const items = Array.isArray(body?.items) ? body.items : [];
+    if (items.length === 0) return mockResponse({ error: 'At least one item is required' }, 400);
+
+    const products = readDemoStoreProducts();
+    const updatedProducts = [...products];
+    const saleItems: DemoItem[] = [];
+    let subtotal = 0;
+
+    for (const item of items) {
+      const productIndex = updatedProducts.findIndex((product) => String(product.id) === String(item.productId));
+      if (productIndex < 0) return mockResponse({ error: 'Product not found' }, 404);
+      const product = updatedProducts[productIndex];
+      const quantity = Number(item.quantity || 1);
+      if (Number(product.inventoryCount || 0) < quantity) {
+        return mockResponse({ error: `Insufficient inventory for ${product.name}` }, 400);
+      }
+      updatedProducts[productIndex] = {
+        ...product,
+        inventoryCount: Number(product.inventoryCount || 0) - quantity,
+        updatedAt: new Date().toISOString(),
+      };
+      const lineTotal = Number(product.price || 0) * quantity;
+      subtotal += lineTotal;
+      saleItems.push({
+        id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `demo-sale-item-${Date.now()}`,
+        saleId: '',
+        productId: product.id,
+        quantity,
+        unitPrice: Number(product.price || 0),
+        discountAmount: 0,
+        lineTotal,
+        productName: product.name,
+        productSku: product.sku,
+      });
+    }
+
+    const tax = Math.round(subtotal * 0.0825);
+    const shippingFee = body?.shippingMethod === 'priority' ? 995 : body?.shippingMethod === 'pickup' ? 0 : 595;
+    const total = subtotal + tax + shippingFee;
+    const saleId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `demo-store-order-${Date.now()}`;
+    const now = new Date().toISOString();
+    const order = {
+      id: saleId,
+      tenantId: 'tenant-demo',
+      patientId: data.patient.id,
+      patientFirstName: data.patient.firstName,
+      patientLastName: data.patient.lastName,
+      soldBy: 'portal-demo',
+      saleDate: now,
+      subtotal,
+      tax,
+      discount: 0,
+      total,
+      paymentMethod: 'credit',
+      paymentReference: body?.paymentReference || body?.stripePaymentIntentId || `stripe_portal_${Date.now()}`,
+      status: 'completed',
+      channel: 'patient_portal',
+      fulfillmentStatus: 'paid',
+      shippingMethod: body?.shippingMethod || 'standard',
+      carrier: '',
+      trackingNumber: '',
+      shippingAddress: body?.shippingAddress || {},
+      notificationEmail: body?.notificationEmail || data.profile.email,
+      notificationStatus: 'queued',
+      stripePaymentIntentId: body?.stripePaymentIntentId || body?.paymentReference || `stripe_portal_${Date.now()}`,
+      stripePaymentStatus: 'paid',
+      createdAt: now,
+      updatedAt: now,
+      items: saleItems.map((item) => ({ ...item, saleId })),
+    };
+
+    writeDemoStoreProducts(updatedProducts);
+    writeDemoStoreOrders([order, ...readDemoStoreOrders()]);
+    return mockResponse({ order, sale: order }, 201);
   }
 
   if (path.startsWith('/api/patient-portal-data/appointments')) {

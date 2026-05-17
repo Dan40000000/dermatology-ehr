@@ -52,6 +52,7 @@ interface AmbientInsightsEvent {
   medications: ReturnType<typeof generateAmbientLiveInsights>["medications"];
   clinicalActions: ReturnType<typeof generateAmbientLiveInsights>["clinicalActions"];
   safetyFlags: ReturnType<typeof generateAmbientLiveInsights>["safetyFlags"];
+  billingCodes: ReturnType<typeof generateAmbientLiveInsights>["billingCodes"];
 }
 
 const LIVE_TRANSCRIBE_ENABLED = process.env.AMBIENT_LIVE_TRANSCRIBE_ENABLED !== "false";
@@ -237,6 +238,7 @@ function buildAmbientInsightsPayload(recordingId: string, history: SavedChunk[])
     medications: insights.medications,
     clinicalActions: insights.clinicalActions,
     safetyFlags: insights.safetyFlags,
+    billingCodes: insights.billingCodes,
   };
 }
 
@@ -255,6 +257,7 @@ function buildAmbientInsightsEventFromInsights(
     medications: insights.medications,
     clinicalActions: insights.clinicalActions,
     safetyFlags: insights.safetyFlags,
+    billingCodes: insights.billingCodes,
   };
 }
 
@@ -272,6 +275,9 @@ function buildInsightsSignature(payload: AmbientInsightsEvent): string {
     meds: payload.medications.map((item) => item.name),
     actions: payload.clinicalActions.map((item) => item.label),
     flags: payload.safetyFlags.map((item) => item.label),
+    billingDx: payload.billingCodes.diagnoses.map((item) => item.code),
+    billingCharges: payload.billingCodes.charges.map((item) => item.cptCode),
+    billingWarnings: payload.billingCodes.warnings,
   });
 }
 

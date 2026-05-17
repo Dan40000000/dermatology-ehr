@@ -9,6 +9,7 @@ import { logger } from "../lib/logger";
 import { getPracticeTimeZone } from "../lib/practiceTimeZone";
 import { getLivePortalBalance } from "./portalBilling";
 import { getPatientAllergySummaries, getPatientMedicationSummaries } from "../services/patientHealthRecord";
+import * as productSalesService from "../services/productSalesService";
 
 export const patientPortalDataRouter = Router();
 
@@ -56,6 +57,27 @@ const checkinDemographicsSchema = z.object({
 const portalRefillRequestSchema = z.object({
   prescriptionId: z.string().min(1),
   notes: z.string().optional(),
+});
+
+const portalStoreShippingAddressSchema = z.object({
+  name: z.string().min(1).max(120),
+  street: z.string().min(1).max(180),
+  city: z.string().min(1).max(100),
+  state: z.string().min(2).max(2),
+  zip: z.string().min(5).max(12),
+  phone: z.string().max(40).optional(),
+});
+
+const portalStoreOrderSchema = z.object({
+  items: z.array(z.object({
+    productId: z.string().uuid(),
+    quantity: z.number().int().min(1).max(25),
+  })).min(1).max(20),
+  shippingAddress: portalStoreShippingAddressSchema,
+  shippingMethod: z.enum(["standard", "priority", "pickup"]).optional(),
+  notificationEmail: z.string().email().optional(),
+  paymentReference: z.string().max(255).optional(),
+  stripePaymentIntentId: z.string().max(255).optional(),
 });
 
 async function markPortalItemsRead(
@@ -150,6 +172,90 @@ patientPortalDataRouter.get("/pharmacies/search", async (req: PatientPortalReque
   } catch (error) {
     logPatientPortalDataError("Portal pharmacy search error", error);
     return res.status(500).json({ error: "Failed to search pharmacies" });
+  }
+});
+
+/**
+ * GET /api/patient-portal-data/store/products
+ * List active non-prescription products available for patient portal ordering.
+ */
+patientPortalDataRouter.get("/store/products", async (req: PatientPortalRequest, res) => {
+  try {
+    const tenantId = req.patient!.tenantId;
+    const products = await productSalesService.getProducts(tenantId, { isActive: true });
+    const storeProducts = products.filter((product) => product.category !== "prescription");
+
+    return res.json({ products: storeProducts });
+  } catch (error) {
+    logPatientPortalDataError("Portal store products error", error);
+    return res.status(500).json({ error: "Failed to load store products" });
+  }
+});
+
+/**
+ * POST /api/patient-portal-data/store/orders
+ * Create a patient portal store order and reserve inventory through product sales.
+ */
+patientPortalDataRouter.post("/store/orders", async (req: PatientPortalRequest, res) => {
+  try {
+    const parsed = portalStoreOrderSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.patient!.tenantId;
+    const patientId = req.patient!.patientId;
+    const requestedProductIds = new Set(parsed.data.items.map((item) => item.productId));
+    const activeProducts = await productSalesService.getProducts(tenantId, { isActive: true });
+    const productsById = new Map(activeProducts.map((product) => [product.id, product]));
+
+    for (const productId of requestedProductIds) {
+      const product = productsById.get(productId);
+      if (!product) {
+        return res.status(404).json({ error: "One or more products are no longer available" });
+      }
+      if (product.category === "prescription") {
+        return res.status(400).json({ error: "Prescription products cannot be purchased through the store" });
+      }
+    }
+
+    const paymentReference =
+      parsed.data.paymentReference ||
+      parsed.data.stripePaymentIntentId ||
+      `stripe_checkout_pending_${Date.now()}`;
+    const shippingMethod = parsed.data.shippingMethod || "standard";
+    const shippingFee = shippingMethod === "priority" ? 995 : shippingMethod === "pickup" ? 0 : 595;
+
+    const sale = await productSalesService.createSale(
+      tenantId,
+      patientId,
+      parsed.data.items,
+      { method: "credit", reference: paymentReference },
+      `portal:${req.patient!.accountId}`,
+      undefined,
+      0
+    );
+
+    await productSalesService.createStoreFulfillment(tenantId, sale.id, patientId, {
+      channel: "patient_portal",
+      fulfillmentStatus: "paid",
+      shippingMethod,
+      shippingFee,
+      shippingAddress: parsed.data.shippingAddress,
+      notificationEmail: parsed.data.notificationEmail || req.patient!.email,
+      notificationStatus: "queued",
+      stripePaymentIntentId: parsed.data.stripePaymentIntentId || paymentReference,
+      stripePaymentStatus: "paid",
+    });
+
+    const [order] = await productSalesService.getStoreOrders(tenantId, { saleId: sale.id, limit: 1 });
+
+    return res.status(201).json({ order: order || sale, sale });
+  } catch (error) {
+    logPatientPortalDataError("Portal store order error", error);
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : "Failed to place store order",
+    });
   }
 });
 

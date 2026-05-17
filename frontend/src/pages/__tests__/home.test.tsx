@@ -16,7 +16,9 @@ const apiMocks = vi.hoisted(() => ({
   fetchAppointments: vi.fn(),
   fetchAppointmentTypes: vi.fn(),
   fetchAvailability: vi.fn(),
+  fetchBiopsyCommandCenter: vi.fn(),
   fetchEncounters: vi.fn(),
+  fetchFrontDeskSchedule: vi.fn(),
   fetchLocations: vi.fn(),
   fetchTasks: vi.fn(),
   fetchOrders: vi.fn(),
@@ -24,6 +26,13 @@ const apiMocks = vi.hoisted(() => ({
   fetchProviders: vi.fn(),
   fetchTimeBlocks: vi.fn(),
   fetchUnreadCount: vi.fn(),
+}));
+
+const financialApiMocks = vi.hoisted(() => ({
+  fetchARAging: vi.fn(),
+  fetchClaims: vi.fn(),
+  fetchFinancialWorkQueue: vi.fn(),
+  fetchPaymentsSummary: vi.fn(),
 }));
 
 const navigateMock = vi.hoisted(() => vi.fn());
@@ -45,6 +54,7 @@ vi.mock('react-router-dom', () => ({
 }));
 
 vi.mock('../../api', () => apiMocks);
+vi.mock('../../api/financials', () => financialApiMocks);
 
 import { HomePage } from '../HomePage';
 
@@ -155,10 +165,20 @@ describe('HomePage', () => {
     const fixtures = buildFixtures();
     searchParamsMocks.value = new URLSearchParams();
     apiMocks.fetchAppointments.mockResolvedValue({ appointments: fixtures.appointments });
+    apiMocks.fetchFrontDeskSchedule.mockResolvedValue({ appointments: fixtures.appointments });
     apiMocks.fetchEncounters.mockResolvedValue({ encounters: fixtures.encounters });
     apiMocks.fetchTasks.mockResolvedValue({ tasks: fixtures.tasks });
     apiMocks.fetchOrders.mockResolvedValue({ orders: fixtures.orders });
     apiMocks.fetchUnreadCount.mockResolvedValue({ count: fixtures.unreadCount });
+    apiMocks.fetchBiopsyCommandCenter.mockResolvedValue({
+      summary: {
+        total_open_loops: 0,
+        pending_review: 0,
+        needs_patient_notification: 0,
+        needs_treatment_scheduling: 0,
+      },
+      queues: { critical: [] },
+    });
     apiMocks.fetchPatients.mockResolvedValue({ patients: [] });
     apiMocks.fetchProviders.mockResolvedValue({ providers: [] });
     apiMocks.fetchLocations.mockResolvedValue({ locations: [] });
@@ -166,6 +186,22 @@ describe('HomePage', () => {
     apiMocks.fetchAvailability.mockResolvedValue({ availability: [] });
     apiMocks.fetchTimeBlocks.mockResolvedValue([]);
     apiMocks.createAppointment.mockResolvedValue({ appointment: { id: 'appt-new' } });
+    financialApiMocks.fetchClaims.mockResolvedValue({ claims: [] });
+    financialApiMocks.fetchFinancialWorkQueue.mockResolvedValue({ items: [] });
+    financialApiMocks.fetchPaymentsSummary.mockResolvedValue({
+      calculated: {
+        postedPatientPaymentsCents: 0,
+        payerAppliedCents: 0,
+        netCollectionsCents: 0,
+      },
+    });
+    financialApiMocks.fetchARAging.mockResolvedValue({
+      totals: {
+        totalBalanceCents: 0,
+        over90BalanceCents: 0,
+      },
+      buckets: [],
+    });
   });
 
   afterEach(() => {
@@ -189,37 +225,41 @@ describe('HomePage', () => {
         endDate: expect.any(String),
       })
     );
+    expect(apiMocks.fetchFrontDeskSchedule).toHaveBeenCalledWith('tenant-1', 'token-1');
     expect(apiMocks.fetchEncounters).toHaveBeenCalledWith('tenant-1', 'token-1');
     expect(apiMocks.fetchTasks).toHaveBeenCalledWith('tenant-1', 'token-1');
     expect(apiMocks.fetchOrders).toHaveBeenCalledWith('tenant-1', 'token-1');
     expect(apiMocks.fetchUnreadCount).toHaveBeenCalledWith('tenant-1', 'token-1');
 
-    const appointmentsCard = screen.getByText(/Appointments\s*Today/i).closest('.stat-card-teal') as HTMLElement;
+    const appointmentsCard = screen.getByText("Today's schedule").closest('.command-metric-card') as HTMLElement;
     expect(within(appointmentsCard).getByText('3')).toBeInTheDocument();
 
-    const checkedInCard = screen.getByText(/Checked In\s*Patients/i).closest('.stat-card-teal') as HTMLElement;
-    expect(within(checkedInCard).getByText('1')).toBeInTheDocument();
+    const flowPanel = screen.getByText("Today's Patients").closest('.command-panel') as HTMLElement;
+    const waitingTile = within(flowPanel).getAllByText('Waiting')[0].closest('.command-flow-tile') as HTMLElement;
+    expect(within(waitingTile).getByText('1')).toBeInTheDocument();
 
-    const inRoomsCard = screen.getByText(/Patients\s*In Rooms/i).closest('.stat-card-teal') as HTMLElement;
-    expect(within(inRoomsCard).getByText('0')).toBeInTheDocument();
+    const inRoomsTile = within(flowPanel).getByText('In Rooms').closest('.command-flow-tile') as HTMLElement;
+    expect(within(inRoomsTile).getByText('0')).toBeInTheDocument();
 
-    const pendingLabCard = screen.getByText(/Pending Lab\/Path\s*Orders/i).closest('.stat-card-teal') as HTMLElement;
-    expect(within(pendingLabCard).getByText('2')).toBeInTheDocument();
+    const pendingLabRow = screen.getByText('Pending Lab/Path Orders').closest('.command-work-row') as HTMLElement;
+    expect(within(pendingLabRow).getByText('2')).toBeInTheDocument();
 
-    const unreadMessageCard = screen.getByText(/Unread Message\s*Threads/i).closest('.stat-card-teal') as HTMLElement;
+    const unreadMessageCard = screen
+      .getAllByText('Clinical Inbox')
+      .map((node) => node.closest('.command-metric-card'))
+      .find(Boolean) as HTMLElement;
     expect(within(unreadMessageCard).getByText('3')).toBeInTheDocument();
 
-    const pendingTasksPanel = screen.getByText('Pending Tasks').closest('.panel') as HTMLElement;
-    expect(within(pendingTasksPanel).getByText('2')).toBeInTheDocument();
+    expect(within(unreadMessageCard).getByText(/2 open tasks/i)).toBeInTheDocument();
 
-    const notesPanel = screen.getByText('Notes Needing Attention').closest('.panel') as HTMLElement;
-    expect(within(notesPanel).getByText('My notes needing work:')).toBeInTheDocument();
-    expect(within(notesPanel).getByText('Unsigned notes updated today:')).toBeInTheDocument();
+    const notesPanel = screen.getByText('Notes Needing Attention').closest('.command-work-row') as HTMLElement;
+    expect(within(notesPanel).getByText(/My notes: 1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Unsigned notes today: 1/i)).toBeInTheDocument();
 
     const locationSelect = screen.getByLabelText('Location');
     fireEvent.change(locationSelect, { target: { value: 'loc-2' } });
     await waitFor(() => {
-      const refreshedAppointmentsCard = screen.getByText(/Appointments\s*Today/i).closest('.stat-card-teal') as HTMLElement;
+      const refreshedAppointmentsCard = screen.getByText("Today's schedule").closest('.command-metric-card') as HTMLElement;
       expect(within(refreshedAppointmentsCard).getByText('1')).toBeInTheDocument();
     });
 
@@ -227,9 +267,6 @@ describe('HomePage', () => {
     expect(navigateMock).toHaveBeenCalledWith('/patients/new');
 
     fireEvent.click(screen.getByRole('button', { name: /Open Notes Queue/i }));
-    expect(navigateMock).toHaveBeenCalledWith('/notes');
-
-    fireEvent.click(screen.getByRole('button', { name: /Open Notes Page/i }));
     expect(navigateMock).toHaveBeenCalledWith('/notes');
 
     fireEvent.click(screen.getByRole('button', { name: /Regulatory Reporting/i }));

@@ -65,6 +65,18 @@ const navItems: NavItem[] = [
     ]
   },
   {
+    label: 'Clinical Inbox',
+    path: '/clinical-inbox',
+    module: 'clinical_inbox',
+    dropdown: [
+      { label: 'All Work', path: '/clinical-inbox' },
+      { label: 'Messages', path: '/clinical-inbox?queue=messages' },
+      { label: 'Rx / ePA', path: '/clinical-inbox?queue=rx' },
+      { label: 'Results', path: '/clinical-inbox?queue=results' },
+      { label: 'Admin', path: '/clinical-inbox?queue=admin' },
+    ]
+  },
+  {
     label: 'Patients',
     path: '/patients',
     module: 'patients',
@@ -295,6 +307,19 @@ const navItems: NavItem[] = [
       { label: 'Order This Month', path: '/inventory?filter=order-month' },
       { label: 'Add Item', path: '/inventory?action=add' },
       { label: 'Usage Report', path: '/inventory?tab=usage' },
+    ]
+  },
+  {
+    label: 'Store',
+    path: '/store-ops',
+    module: 'store',
+    dropdown: [
+      { label: 'Order Queue', path: '/store-ops', section: 'Store' },
+      { label: 'Products', path: '/store-ops?tab=products', section: 'Store' },
+      { label: 'Shipping', path: '/store-ops?tab=shipping', section: 'Store' },
+      { label: 'Payments', path: '/store-ops?tab=payments', section: 'Store' },
+      { label: 'Notifications', path: '/store-ops?tab=notifications', section: 'Store' },
+      { label: 'Patient Storefront', path: '/store', section: 'Patient Portal' },
     ]
   },
   {

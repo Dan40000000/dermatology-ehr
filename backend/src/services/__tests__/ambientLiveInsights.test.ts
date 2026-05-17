@@ -40,6 +40,9 @@ describe('ambientLiveInsights', () => {
     expect(result.suggestedTests.map((item) => item.testName)).toEqual(
       expect.arrayContaining(['Shave/tangential biopsy with dermatopathology', 'Dermoscopy / lesion photography', 'Pathology review'])
     );
+    expect(result.billingCodes.diagnoses.map((item) => item.code)).toContain('D48.5');
+    expect(result.billingCodes.charges.map((item) => item.cptCode)).toEqual(expect.arrayContaining(['99214', '11102']));
+    expect(result.billingCodes.readyForBillingReview).toBe(true);
   });
 
   it('captures cheek actinic keratosis plus shoulder biopsy without treating cryotherapy as a test', () => {
@@ -106,5 +109,17 @@ describe('ambientLiveInsights', () => {
 
     expect(result.symptoms.some((item) => item.label === 'Changing mole / pigmented lesion')).toBe(true);
     expect(result.symptoms.some((item) => /pain|drainage|fever/i.test(item.label))).toBe(false);
+  });
+
+  it('keeps casual transcript content out of live billing suggestions', () => {
+    const result = generateAmbientLiveInsights([
+      'Patient: My daughter just started college and work has been busy.',
+      'Doctor: That sounds like a full week. How is the family doing?',
+      'Patient: Everyone is good and we went on vacation last month.',
+    ]);
+
+    expect(result.billingCodes.readyForBillingReview).toBe(false);
+    expect(result.billingCodes.diagnoses).toEqual([]);
+    expect(result.billingCodes.charges).toEqual([]);
   });
 });

@@ -39,6 +39,7 @@ export type ModuleKey =
   | 'epa'
   | 'labs'
   | 'radiology'
+  | 'clinical_inbox'
   | 'text_messages'
   | 'mail'
   | 'direct'
@@ -61,6 +62,7 @@ export type ModuleKey =
   | 'help'
   | 'telehealth'
   | 'inventory'
+  | 'store'
   | 'financials'
   | 'claims'
   | 'clearinghouse'
@@ -97,6 +99,7 @@ export const MODULE_ACCESS: Record<ModuleKey, Role[]> = {
   epa: CLINICAL_ROLES,
   labs: CLINICAL_ROLES,
   radiology: CLINICAL_ROLES,
+  clinical_inbox: [...PATIENT_ACCESS_ROLES, ...BASIC_WORKFORCE_ROLES],
   text_messages: COMMUNICATION_ROLES,
   mail: COMMUNICATION_ROLES,
   direct: COMMUNICATION_ROLES,
@@ -119,6 +122,7 @@ export const MODULE_ACCESS: Record<ModuleKey, Role[]> = {
   help: ['admin', 'provider', 'ma', 'front_desk', 'billing', 'nurse', 'manager', 'scheduler', 'compliance_officer', 'staff', 'hr'],
   telehealth: ['admin', 'provider', 'ma', 'nurse', 'manager'],
   inventory: ['admin', 'ma', 'front_desk', 'manager'],
+  store: ['admin', 'front_desk', 'manager', 'billing'],
   financials: FINANCIAL_DASHBOARD_ROLES,
   claims: REVENUE_CYCLE_ROLES,
   clearinghouse: REVENUE_CYCLE_ROLES,
@@ -142,6 +146,7 @@ export const MODULE_PATHS: Array<{ path: string; module: ModuleKey }> = [
   { path: '/claims', module: 'claims' },
   { path: '/clearinghouse', module: 'clearinghouse' },
   { path: '/quotes', module: 'quotes' },
+  { path: '/store-ops', module: 'store' },
   { path: '/inventory', module: 'inventory' },
   { path: '/telehealth', module: 'telehealth' },
   { path: '/documents', module: 'documents' },
@@ -151,6 +156,7 @@ export const MODULE_PATHS: Array<{ path: string; module: ModuleKey }> = [
   { path: '/mail', module: 'mail' },
   { path: '/direct', module: 'direct' },
   { path: '/fax', module: 'fax' },
+  { path: '/clinical-inbox', module: 'clinical_inbox' },
   { path: '/text-messages', module: 'text_messages' },
   { path: '/tasks', module: 'tasks' },
   { path: '/reminders', module: 'reminders' },

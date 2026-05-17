@@ -25,5 +25,14 @@ describe("live encounter coding suggestions", () => {
 
     expect(result.diagnosisRules.map((rule) => rule.code)).toContain("C43.9");
   });
-});
 
+  it("does not create coding suggestions from casual family or work small talk", () => {
+    const result = suggestLiveCodingFromDocumentation({
+      hpi: "Patient says work has been busy and his daughter just started college. Family vacation went well.",
+    });
+
+    expect(result.diagnosisRules).toEqual([]);
+    expect(result.procedureRules).toEqual([]);
+    expect(result.emCode).toBeNull();
+  });
+});

@@ -24,9 +24,11 @@ import {
   PublicBookAppointmentPage,
   PublicGuestBookAppointmentPage,
   PublicBillPayPage,
+  PublicStorePage,
   PortalIntakePage,
   PortalCheckInPage,
   PatientPortalMessagesPage,
+  PortalStorePage,
 } from '../pages/patient-portal';
 import {
   KioskWelcomePage,
@@ -57,6 +59,7 @@ const RadiologyPage = lazy(() => import('../pages/RadiologyPage').then(m => ({ d
 const MessagingPage = lazy(() => import('../pages/MessagingPage').then(m => ({ default: m.MessagingPage })));
 const TasksPage = lazy(() => import('../pages/TasksPage').then(m => ({ default: m.TasksPage })));
 const RemindersPage = lazy(() => import('../pages/RemindersPage').then(m => ({ default: m.RemindersPage })));
+const ClinicalInboxPage = lazy(() => import('../pages/ClinicalInboxPage').then(m => ({ default: m.ClinicalInboxPage })));
 const TextMessagesPage = lazy(() =>
   import('../pages/TextMessagesPage').then((module) => ({
     default: module.default || (module as any).TextMessagesPage,
@@ -69,6 +72,7 @@ const TelehealthPage = lazy(() =>
   }))
 );
 const InventoryPage = lazy(() => import('../pages/InventoryPage').then(m => ({ default: m.InventoryPage })));
+const StoreOperationsPage = lazy(() => import('../pages/StoreOperationsPage').then(m => ({ default: m.StoreOperationsPage })));
 const FinancialsHub = lazy(() => import('../pages/FinancialsHub').then(m => ({ default: m.FinancialsHub })));
 const QuotesPage = lazy(() => import('../pages/QuotesPage').then(m => ({ default: m.QuotesPage })));
 const OfficeFlowPage = lazy(() => import('../pages/OfficeFlowPage').then(m => ({ default: m.OfficeFlowPage })));
@@ -188,6 +192,7 @@ export const routes: RouteObject[] = [
           { path: 'documents', element: <PortalDocumentsPage /> },
           { path: 'health-record', element: <PortalHealthRecordPage /> },
           { path: 'billing', element: <PortalBillingPage /> },
+          { path: 'store', element: <PortalStorePage /> },
           { path: 'profile', element: <PortalProfilePage /> },
           { path: 'messages', element: <PatientPortalMessagesPage /> },
         ],
@@ -230,6 +235,10 @@ export const routes: RouteObject[] = [
   {
     path: '/bill-pay',
     element: <PublicBillPayPage />,
+  },
+  {
+    path: '/store',
+    element: <PublicStorePage />,
   },
   // In-office iPad kiosk routes
   { path: '/kiosk', element: <KioskWelcomePage /> },
@@ -277,6 +286,7 @@ export const routes: RouteObject[] = [
       { path: 'radiology', element: lazyWithSuspense(RadiologyPage) },
 
       // Communication
+      { path: 'clinical-inbox', element: lazyWithSuspense(ClinicalInboxPage) },
       { path: 'text-messages', element: lazyWithSuspense(TextMessagesPage) },
       { path: 'mail', element: lazyWithSuspense(MailPage) },
       { path: 'direct', element: <Navigate to="/mail" replace /> },
@@ -294,6 +304,7 @@ export const routes: RouteObject[] = [
       // Operations
       { path: 'telehealth', element: lazyWithSuspense(TelehealthPage) },
       { path: 'inventory', element: lazyWithSuspense(InventoryPage) },
+      { path: 'store-ops', element: lazyWithSuspense(StoreOperationsPage) },
       { path: 'financials', element: lazyWithSuspense(FinancialsHub) },
       { path: 'claims', element: lazyWithSuspense(ClaimsPage) },
       { path: 'claims/:claimId', element: lazyWithSuspense(ClaimsPage) },

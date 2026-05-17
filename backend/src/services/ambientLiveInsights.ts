@@ -1,3 +1,5 @@
+import { suggestLiveCodingFromDocumentation } from './liveEncounterCodingService';
+
 export interface LiveSymptomInsight {
   label: string;
   confidence: number;
@@ -51,6 +53,30 @@ export interface LiveSafetyFlagInsight {
   evidence?: string;
 }
 
+export interface LiveBillingDiagnosisInsight {
+  code: string;
+  description: string;
+  evidence: string[];
+  isPrimary: boolean;
+}
+
+export interface LiveBillingChargeInsight {
+  cptCode: string;
+  description: string;
+  codeType: 'CPT';
+  category: 'evaluation_management' | 'procedure';
+  evidence: string[];
+  reason: string;
+  reviewRequired: boolean;
+}
+
+export interface LiveBillingCodeInsights {
+  diagnoses: LiveBillingDiagnosisInsight[];
+  charges: LiveBillingChargeInsight[];
+  warnings: string[];
+  readyForBillingReview: boolean;
+}
+
 export interface AmbientLiveInsights {
   source: 'heuristic' | 'openai';
   updatedAt: string;
@@ -61,6 +87,7 @@ export interface AmbientLiveInsights {
   medications: LiveMedicationInsight[];
   clinicalActions: LiveClinicalActionInsight[];
   safetyFlags: LiveSafetyFlagInsight[];
+  billingCodes: LiveBillingCodeInsights;
 }
 
 type WeightedPattern = {
@@ -780,9 +807,63 @@ function dedupeTests(tests: LiveSuggestedTestInsight[]): LiveSuggestedTestInsigh
   return Array.from(byName.values()).slice(0, 6);
 }
 
+function buildLiveBillingCodeInsights(transcript: string): LiveBillingCodeInsights {
+  const suggestions = suggestLiveCodingFromDocumentation({
+    hpi: transcript,
+    assessmentPlan: transcript,
+  });
+
+  const diagnoses = suggestions.diagnosisRules.map((rule) => ({
+    code: rule.code,
+    description: rule.label,
+    evidence: rule.evidence,
+    isPrimary: rule.isPrimary,
+  }));
+
+  const charges: LiveBillingChargeInsight[] = [];
+  if (suggestions.emCode) {
+    charges.push({
+      cptCode: suggestions.emCode,
+      description: suggestions.emCode === '99214'
+        ? 'Established patient office/outpatient visit, level 4'
+        : 'Established patient office/outpatient visit, level 3',
+      codeType: 'CPT',
+      category: 'evaluation_management',
+      evidence: [],
+      reason: suggestions.emCode === '99214'
+        ? 'Live documentation suggests higher-complexity E/M review. Billing must confirm medical decision making and final documentation.'
+        : 'Live documentation suggests established patient E/M review. Billing must confirm final documentation.',
+      reviewRequired: true,
+    });
+  }
+
+  charges.push(...suggestions.procedureRules.map((rule) => ({
+    cptCode: rule.code,
+    description: rule.description,
+    codeType: 'CPT' as const,
+    category: 'procedure' as const,
+    evidence: rule.evidence,
+    reason: rule.reason,
+    reviewRequired: true,
+  })));
+
+  return {
+    diagnoses,
+    charges,
+    warnings: suggestions.warnings,
+    readyForBillingReview: diagnoses.length > 0 || charges.length > 0,
+  };
+}
+
 export function generateAmbientLiveInsights(input: string | string[]): AmbientLiveInsights {
   const transcript = normalizeTranscript(input);
   const normalized = transcript.toLowerCase();
+  const emptyBillingCodes: LiveBillingCodeInsights = {
+    diagnoses: [],
+    charges: [],
+    warnings: [],
+    readyForBillingReview: false,
+  };
 
   if (!transcript) {
     return {
@@ -801,6 +882,7 @@ export function generateAmbientLiveInsights(input: string | string[]): AmbientLi
       medications: [],
       clinicalActions: [],
       safetyFlags: [],
+      billingCodes: emptyBillingCodes,
     };
   }
 
@@ -871,6 +953,7 @@ export function generateAmbientLiveInsights(input: string | string[]): AmbientLi
   const safetyFlags = buildSafetyFlags(transcript);
   const clinicalActions = buildClinicalActions(transcript, suggestedTests, medications);
   const visitSummary = buildVisitSummary(transcript, sentences, filteredSymptoms, filteredDiagnoses);
+  const billingCodes = buildLiveBillingCodeInsights(transcript);
 
   return {
     source: 'heuristic',
@@ -882,5 +965,6 @@ export function generateAmbientLiveInsights(input: string | string[]): AmbientLi
     medications,
     clinicalActions,
     safetyFlags,
+    billingCodes,
   };
 }

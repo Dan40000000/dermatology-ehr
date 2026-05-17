@@ -75,7 +75,7 @@ export function PatientPortalAuthProvider({ children }: { children: ReactNode })
     const storedPatient = localStorage.getItem('patientPortalPatient');
 
     if (storedToken && storedTenantId && storedPatient) {
-      if (storedToken === 'demo-portal-token') {
+      if (storedToken === 'demo-portal-token' && !isLocalDemoEnabled()) {
         localStorage.removeItem('patientPortalToken');
         localStorage.removeItem('patientPortalTenantId');
         localStorage.removeItem('patientPortalPatient');

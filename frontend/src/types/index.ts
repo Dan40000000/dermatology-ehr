@@ -1487,6 +1487,9 @@ export type PaymentMethod = 'cash' | 'credit' | 'debit' | 'check' | 'insurance' 
 export type SaleStatus = 'pending' | 'completed' | 'refunded' | 'cancelled';
 export type InventoryTransactionType = 'received' | 'sold' | 'adjustment' | 'return' | 'damaged' | 'expired';
 export type DiscountType = 'percentage' | 'fixed' | 'loyalty';
+export type StoreFulfillmentStatus = 'paid' | 'packing' | 'label_created' | 'shipped' | 'delivered' | 'exception' | 'cancelled';
+export type StoreNotificationStatus = 'queued' | 'sent' | 'failed' | 'muted';
+export type StoreShippingMethod = 'standard' | 'priority' | 'pickup';
 
 export interface Product {
   id: string;
@@ -1543,6 +1546,32 @@ export interface Sale {
   items?: SaleItemDetail[];
   patientFirstName?: string;
   patientLastName?: string;
+}
+
+export interface StoreShippingAddress {
+  name: string;
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+  phone?: string;
+}
+
+export interface StoreOrder extends Sale {
+  channel: 'patient_portal' | 'public_store' | 'staff';
+  fulfillmentStatus: StoreFulfillmentStatus;
+  shippingMethod: StoreShippingMethod;
+  shippingFee?: number;
+  carrier?: string;
+  trackingNumber?: string;
+  shippingAddress?: StoreShippingAddress | Record<string, unknown>;
+  notificationEmail?: string;
+  notificationStatus: StoreNotificationStatus;
+  lastNotificationAt?: string;
+  stripePaymentIntentId?: string;
+  stripePaymentStatus: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ProductRecommendation {

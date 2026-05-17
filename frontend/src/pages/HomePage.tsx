@@ -1,5 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import {
+  AlertTriangle,
+  ArrowRight,
+  BarChart3,
+  Bell,
+  CalendarDays,
+  ClipboardCheck,
+  Clock,
+  CreditCard,
+  DollarSign,
+  FileText,
+  Inbox,
+  Mail,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Stethoscope,
+  UserPlus,
+  type LucideIcon,
+} from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal } from '../components/ui';
@@ -12,6 +32,7 @@ import {
   fetchAppointmentTypes,
   fetchAvailability,
   fetchEncounters,
+  fetchFrontDeskSchedule,
   fetchLocations,
   fetchTasks,
   fetchOrders,
@@ -24,6 +45,12 @@ import {
   type BiopsySafetyItem,
   type TimeBlock,
 } from '../api';
+import {
+  fetchARAging,
+  fetchClaims,
+  fetchFinancialWorkQueue,
+  fetchPaymentsSummary,
+} from '../api/financials';
 import { canAccessModule } from '../config/moduleAccess';
 import { getEffectiveRoles } from '../utils/roles';
 import type { Appointment, AppointmentType, Availability, Location, Patient, Provider } from '../types';
@@ -62,11 +89,45 @@ interface HomeStats {
   unreadMessageThreads: number;
   myNotesNeedingWork: number;
   teamNotesNeedingWork: number;
+  needsInsuranceVerification: number;
+  balanceDueAppointments: number;
+  copayDueCents: number;
+  noShowCount: number;
+  cancelledCount: number;
+  netCollectionsCents: number;
+  patientCollectionsCents: number;
+  payerCollectionsCents: number;
+  claimsInQueue: number;
+  claimsDeniedRejected: number;
+  financialWorkQueueCount: number;
+  arTotalCents: number;
+  arOver90Cents: number;
 }
 
 interface HomeBiopsySafety {
   summary: BiopsyCommandCenterSummary;
   critical: BiopsySafetyItem[];
+}
+
+interface HomeDashboardAppointment {
+  id: string;
+  patientId?: string;
+  patientName: string;
+  providerName: string;
+  locationName: string;
+  appointmentTypeName: string;
+  scheduledStart?: string;
+  status: string;
+  insuranceVerified?: boolean;
+  copayCents: number;
+  outstandingBalanceCents: number;
+  waitTimeMinutes?: number;
+  riskFlags: string[];
+}
+
+interface HomeSchedulePulse {
+  nextAppointments: HomeDashboardAppointment[];
+  attentionAppointments: HomeDashboardAppointment[];
 }
 
 interface AppointmentFinderSelection {
@@ -183,6 +244,144 @@ const loadStoredScheduleContext = () => {
   };
 };
 
+const numberOrZero = (value: unknown): number => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+};
+
+const currencyFromCents = (cents: number): string =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(numberOrZero(cents) / 100);
+
+const formatAppointmentTime = (value: string | undefined): string => {
+  if (!value) return 'Unscheduled';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unscheduled';
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+};
+
+const normalizeStatus = (value: unknown): string => String(value || '').trim().toLowerCase();
+
+const statusLabel = (value: unknown): string => {
+  const normalized = normalizeStatus(value);
+  const labels: Record<string, string> = {
+    scheduled: 'Scheduled',
+    checked_in: 'Waiting',
+    in_room: 'In Room',
+    with_provider: 'With Provider',
+    checkout: 'Checkout',
+    completed: 'Completed',
+    cancelled: 'Cancelled',
+    no_show: 'No Show',
+    ready: 'Ready',
+    submitted: 'Submitted',
+    accepted: 'Accepted',
+    denied: 'Denied',
+    rejected: 'Rejected',
+    appealed: 'Appealed',
+  };
+  return labels[normalized] || String(value || 'Open');
+};
+
+const centsFromDollars = (value: unknown): number => Math.round(numberOrZero(value) * 100);
+
+const getAppointmentPatientName = (appointment: any): string => {
+  const explicit = String(appointment.patientName || '').trim();
+  if (explicit) return explicit;
+
+  const first = String(appointment.patientFirstName || appointment.firstName || '').trim();
+  const last = String(appointment.patientLastName || appointment.lastName || '').trim();
+  const name = `${first} ${last}`.trim();
+  return name || String(appointment.patientId || 'Patient');
+};
+
+const getAppointmentRiskFlags = (appointment: any): string[] => {
+  const flags: string[] = [];
+  const status = normalizeStatus(appointment.status);
+  const waitTime = numberOrZero(appointment.waitTimeMinutes);
+  const outstandingBalance = centsFromDollars(appointment.outstandingBalance);
+  const paymentDueCents = numberOrZero(appointment.paymentDueCents);
+  const copayCents = centsFromDollars(appointment.copayAmount);
+
+  if (appointment.insuranceVerified === false) flags.push('Insurance');
+  if (outstandingBalance > 0 || paymentDueCents > 0) flags.push('Balance');
+  if (copayCents > 0 && !['completed', 'cancelled', 'no_show'].includes(status)) flags.push('Copay');
+  if (waitTime >= 20) flags.push('Wait');
+  if (status === 'no_show') flags.push('No-show');
+  return flags;
+};
+
+const toDashboardAppointment = (appointment: any): HomeDashboardAppointment => ({
+  id: String(appointment.id || ''),
+  patientId: appointment.patientId ? String(appointment.patientId) : undefined,
+  patientName: getAppointmentPatientName(appointment),
+  providerName: String(appointment.providerName || appointment.provider || 'Unassigned'),
+  locationName: String(appointment.locationName || 'No location'),
+  appointmentTypeName: String(appointment.appointmentTypeName || appointment.typeName || appointment.reason || 'Visit'),
+  scheduledStart: appointment.scheduledStart,
+  status: String(appointment.status || 'scheduled'),
+  insuranceVerified: appointment.insuranceVerified,
+  copayCents: centsFromDollars(appointment.copayAmount),
+  outstandingBalanceCents: Math.max(centsFromDollars(appointment.outstandingBalance), numberOrZero(appointment.paymentDueCents)),
+  waitTimeMinutes: appointment.waitTimeMinutes !== undefined ? numberOrZero(appointment.waitTimeMinutes) : undefined,
+  riskFlags: getAppointmentRiskFlags(appointment),
+});
+
+const extractArray = (payload: any, keys: string[]): any[] => {
+  if (Array.isArray(payload)) return payload;
+  for (const key of keys) {
+    if (Array.isArray(payload?.[key])) return payload[key];
+  }
+  return [];
+};
+
+const isClaimInQueue = (claim: any): boolean =>
+  ['draft', 'ready', 'submitted', 'accepted'].includes(normalizeStatus(claim.status));
+
+const isClaimAtRisk = (claim: any): boolean =>
+  ['denied', 'rejected', 'appealed'].includes(normalizeStatus(claim.status)) ||
+  normalizeStatus(claim.scrubStatus) === 'failed';
+
+const getCollectionsCents = (paymentsSummary: any) => {
+  const patientCollectionsCents =
+    numberOrZero(paymentsSummary?.calculated?.postedPatientPaymentsCents) ||
+    extractArray(paymentsSummary, ['patientPaymentsByMethod']).reduce(
+      (sum, row) => sum + numberOrZero(row.totalCents),
+      0,
+    );
+  const payerCollectionsCents =
+    numberOrZero(paymentsSummary?.calculated?.payerAppliedCents) ||
+    numberOrZero(paymentsSummary?.payerPaymentsSummary?.appliedCents);
+  const netCollectionsCents =
+    numberOrZero(paymentsSummary?.calculated?.netCollectionsCents) ||
+    patientCollectionsCents + payerCollectionsCents;
+
+  return {
+    patientCollectionsCents,
+    payerCollectionsCents,
+    netCollectionsCents,
+  };
+};
+
+const getArAgingCents = (aging: any) => {
+  const arTotalCents =
+    numberOrZero(aging?.totals?.totalBalanceCents) ||
+    extractArray(aging, ['buckets']).reduce((sum, bucket) => sum + numberOrZero(bucket.totalBalanceCents), 0);
+  const arOver90Cents =
+    numberOrZero(aging?.totals?.over90BalanceCents) ||
+    extractArray(aging, ['buckets'])
+      .filter((bucket) => {
+        const key = String(bucket.key || bucket.label || '').toLowerCase();
+        return key.includes('91') || key.includes('120');
+      })
+      .reduce((sum, bucket) => sum + numberOrZero(bucket.totalBalanceCents), 0);
+
+  return { arTotalCents, arOver90Cents };
+};
+
 const INITIAL_STATS: HomeStats = {
   appointmentsCount: 0,
   checkedInCount: 0,
@@ -201,6 +400,19 @@ const INITIAL_STATS: HomeStats = {
   unreadMessageThreads: 0,
   myNotesNeedingWork: 0,
   teamNotesNeedingWork: 0,
+  needsInsuranceVerification: 0,
+  balanceDueAppointments: 0,
+  copayDueCents: 0,
+  noShowCount: 0,
+  cancelledCount: 0,
+  netCollectionsCents: 0,
+  patientCollectionsCents: 0,
+  payerCollectionsCents: 0,
+  claimsInQueue: 0,
+  claimsDeniedRejected: 0,
+  financialWorkQueueCount: 0,
+  arTotalCents: 0,
+  arOver90Cents: 0,
 };
 
 export function HomePage() {
@@ -213,6 +425,10 @@ export function HomePage() {
   const [overviewLocationOptions, setOverviewLocationOptions] = useState<LocationScopeOption[]>([]);
   const [stats, setStats] = useState<HomeStats>(INITIAL_STATS);
   const [biopsySafety, setBiopsySafety] = useState<HomeBiopsySafety | null>(null);
+  const [schedulePulse, setSchedulePulse] = useState<HomeSchedulePulse>({
+    nextAppointments: [],
+    attentionAppointments: [],
+  });
 
   const [showRegulatoryModal, setShowRegulatoryModal] = useState(false);
   const [showReminderModal, setShowReminderModal] = useState(false);
@@ -287,14 +503,31 @@ export function HomePage() {
       const canLoadOrders = canAccessModule(effectiveRoles, 'orders');
       const canLoadUnreadMessages = canAccessModule(effectiveRoles, 'mail');
       const canLoadBiopsySafety = canAccessModule(effectiveRoles, 'labs');
+      const canLoadFinancials = canAccessModule(effectiveRoles, 'financials');
+      const canLoadClaims = canAccessModule(effectiveRoles, 'claims') || canAccessModule(effectiveRoles, 'clearinghouse') || canLoadFinancials;
 
-      const [appointmentsRes, encountersRes, tasksRes, ordersRes, unreadRes, biopsyRes] = await Promise.all([
+      const [
+        appointmentsRes,
+        frontDeskRes,
+        encountersRes,
+        tasksRes,
+        ordersRes,
+        unreadRes,
+        biopsyRes,
+        claimsRes,
+        financialWorkQueueRes,
+        paymentsSummaryRes,
+        arAgingRes,
+      ] = await Promise.all([
         canLoadAppointments
           ? fetchAppointments(session.tenantId, session.accessToken, {
               startDate: toLocalIsoDate(queryStart),
               endDate: toLocalIsoDate(queryEnd),
             })
           : Promise.resolve({ appointments: [] }),
+        canLoadAppointments
+          ? fetchFrontDeskSchedule(session.tenantId, session.accessToken).catch(() => null)
+          : Promise.resolve(null),
         canLoadEncounters
           ? fetchEncounters(session.tenantId, session.accessToken).catch(() => ({ encounters: [] }))
           : Promise.resolve({ encounters: [] }),
@@ -308,13 +541,33 @@ export function HomePage() {
         canLoadBiopsySafety
           ? fetchBiopsyCommandCenter(session.tenantId, session.accessToken).catch(() => null)
           : Promise.resolve(null),
+        canLoadClaims
+          ? fetchClaims({ tenantId: session.tenantId, accessToken: session.accessToken }).catch(() => ({ claims: [] }))
+          : Promise.resolve({ claims: [] }),
+        canLoadFinancials
+          ? fetchFinancialWorkQueue({ tenantId: session.tenantId, accessToken: session.accessToken }).catch(() => ({ items: [] }))
+          : Promise.resolve({ items: [] }),
+        canLoadFinancials
+          ? fetchPaymentsSummary(
+              { tenantId: session.tenantId, accessToken: session.accessToken },
+              { startDate: todayStr, endDate: todayStr },
+            ).catch(() => null)
+          : Promise.resolve(null),
+        canLoadFinancials
+          ? fetchARAging({ tenantId: session.tenantId, accessToken: session.accessToken }, { asOfDate: todayStr }).catch(() => null)
+          : Promise.resolve(null),
       ]);
 
       const appointments = appointmentsRes.appointments || [];
+      const frontDeskAppointments = extractArray(frontDeskRes, ['appointments']);
       const encountersData = (encountersRes.encounters || []) as Encounter[];
       const tasks = tasksRes.tasks || [];
       const orders = ordersRes.orders || [];
       const unreadMessageThreads = Number(unreadRes.count || 0);
+      const claims = extractArray(claimsRes, ['claims', 'data']);
+      const financialWorkQueueItems = extractArray(financialWorkQueueRes, ['items', 'workQueue', 'data']);
+      const { patientCollectionsCents, payerCollectionsCents, netCollectionsCents } = getCollectionsCents(paymentsSummaryRes);
+      const { arTotalCents, arOver90Cents } = getArAgingCents(arAgingRes);
       setBiopsySafety(
         biopsyRes
           ? {
@@ -324,12 +577,15 @@ export function HomePage() {
           : null,
       );
 
-      const todaysAppointments = appointments.filter((a: any) =>
-        isOnLocalDay(a.scheduledStart, todayStr) && isAppointmentIncludedInOverview(a.status)
-      );
+      const todaysAllAppointments = appointments.filter((a: any) => isOnLocalDay(a.scheduledStart, todayStr));
+      const todaysAppointments = todaysAllAppointments.filter((a: any) => isAppointmentIncludedInOverview(a.status));
+      const frontDeskTodayAppointments = frontDeskAppointments
+        .filter((a: any) => isOnLocalDay(a.scheduledStart, todayStr))
+        .filter((a: any) => isAppointmentIncludedInOverview(a.status));
+      const dashboardAppointments = frontDeskTodayAppointments.length > 0 ? frontDeskTodayAppointments : todaysAppointments;
 
       const locationMap = new Map<string, string>();
-      todaysAppointments.forEach((appointment: any) => {
+      dashboardAppointments.forEach((appointment: any) => {
         if (!appointment.locationId || locationMap.has(appointment.locationId)) return;
         locationMap.set(appointment.locationId, appointment.locationName || 'Unknown Location');
       });
@@ -346,7 +602,7 @@ export function HomePage() {
         setOverviewLocationFilter('all');
       }
 
-      const scopedAppointments = todaysAppointments.filter((appointment: any) =>
+      const scopedAppointments = dashboardAppointments.filter((appointment: any) =>
         effectiveOverviewLocation === 'all' ? true : appointment.locationId === effectiveOverviewLocation
       );
 
@@ -357,6 +613,35 @@ export function HomePage() {
       const waitingCount = overviewAppointments.filter((a: any) => isCheckedIn(a.status)).length;
       const inRoomsCount = overviewAppointments.filter((a: any) => isInRooms(a.status)).length;
       const checkoutCount = overviewAppointments.filter((a: any) => isCompletedVisit(a.status)).length;
+      const noShowCount = todaysAllAppointments.filter((a: any) => normalizeStatus(a.status) === 'no_show').length;
+      const cancelledCount = todaysAllAppointments.filter((a: any) => normalizeStatus(a.status) === 'cancelled').length;
+      const needsInsuranceVerification = scopedAppointments.filter((a: any) => a.insuranceVerified === false).length;
+      const balanceDueAppointments = scopedAppointments.filter((a: any) =>
+        centsFromDollars(a.outstandingBalance) > 0 || numberOrZero(a.paymentDueCents) > 0
+      ).length;
+      const copayDueCents = scopedAppointments.reduce((sum: number, appointment: any) => {
+        if (['completed', 'cancelled', 'no_show'].includes(normalizeStatus(appointment.status))) return sum;
+        return sum + centsFromDollars(appointment.copayAmount);
+      }, 0);
+
+      const nowMs = Date.now();
+      const dashboardPulseAppointments = overviewAppointments
+        .map(toDashboardAppointment)
+        .sort((left, right) => {
+          const leftMs = left.scheduledStart ? new Date(left.scheduledStart).getTime() : 0;
+          const rightMs = right.scheduledStart ? new Date(right.scheduledStart).getTime() : 0;
+          return leftMs - rightMs;
+        });
+      const nextAppointments = dashboardPulseAppointments
+        .filter((appointment) => {
+          const appointmentMs = appointment.scheduledStart ? new Date(appointment.scheduledStart).getTime() : 0;
+          return appointmentMs >= nowMs || ['checked_in', 'in_room', 'with_provider', 'checkout'].includes(normalizeStatus(appointment.status));
+        })
+        .slice(0, 5);
+      const attentionAppointments = dashboardPulseAppointments
+        .filter((appointment) => appointment.riskFlags.length > 0)
+        .slice(0, 5);
+      setSchedulePulse({ nextAppointments, attentionAppointments });
 
       const pendingOrderStatuses = new Set(['pending', 'in-progress', 'in_progress']);
       const labOrderTypes = new Set(['lab', 'pathology', 'dermpath', 'biopsy']);
@@ -418,6 +703,19 @@ export function HomePage() {
         unreadMessageThreads,
         myNotesNeedingWork,
         teamNotesNeedingWork,
+        needsInsuranceVerification,
+        balanceDueAppointments,
+        copayDueCents,
+        noShowCount,
+        cancelledCount,
+        netCollectionsCents,
+        patientCollectionsCents,
+        payerCollectionsCents,
+        claimsInQueue: claims.filter(isClaimInQueue).length,
+        claimsDeniedRejected: claims.filter(isClaimAtRisk).length,
+        financialWorkQueueCount: financialWorkQueueItems.filter((item: any) => isTaskPending(item.status)).length,
+        arTotalCents,
+        arOver90Cents,
       });
     } catch (err: any) {
       showError(err.message || 'Failed to load dashboard');
@@ -604,35 +902,138 @@ export function HomePage() {
     };
   }, [loadStats, session]);
 
-  return (
-    <div className="home-page">
-      <div className="section-title-bar">Today's Overview</div>
+  const criticalPathologyCount = biopsySafety?.critical.length || 0;
+  const totalPathologyOpenLoops = biopsySafety?.summary.total_open_loops || 0;
+  const commandRiskCount =
+    criticalPathologyCount +
+    stats.claimsDeniedRejected +
+    stats.financialWorkQueueCount +
+    stats.needsInsuranceVerification +
+    stats.balanceDueAppointments;
+  const operationalCompletionRate =
+    stats.appointmentsCount > 0 ? Math.round((stats.completedCount / stats.appointmentsCount) * 100) : 0;
 
-      {!loading && (
-        <div
-          style={{
-            marginTop: '0.5rem',
-            marginBottom: '0.75rem',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.75rem',
-          }}
-        >
-          <label htmlFor="home-overview-location" style={{ fontSize: '0.875rem', fontWeight: 600, color: '#334155' }}>
-            Location
-          </label>
+  const commandMetrics: Array<{
+    label: string;
+    value: string | number;
+    detail: string;
+    route: string;
+    icon: LucideIcon;
+    tone: 'blue' | 'emerald' | 'amber' | 'red' | 'violet' | 'slate';
+  }> = [
+    {
+      label: "Today's schedule",
+      value: stats.appointmentsCount,
+      detail: `${stats.waitingCount} waiting, ${stats.inRoomsCount} in rooms, ${stats.completedCount} completed`,
+      route: '/schedule',
+      icon: CalendarDays,
+      tone: 'blue',
+    },
+    {
+      label: 'Clinical work',
+      value: stats.teamNotesNeedingWork + stats.pendingLabOrders,
+      detail: `${stats.teamNotesNeedingWork} notes, ${stats.pendingLabOrders} lab/path orders`,
+      route: '/notes',
+      icon: Stethoscope,
+      tone: 'violet',
+    },
+    {
+      label: 'Patient access',
+      value: stats.needsInsuranceVerification + stats.balanceDueAppointments,
+      detail: `${stats.needsInsuranceVerification} insurance checks, ${stats.balanceDueAppointments} balances`,
+      route: '/front-desk',
+      icon: ClipboardCheck,
+      tone: 'amber',
+    },
+    {
+      label: 'Revenue cycle',
+      value: stats.claimsInQueue + stats.claimsDeniedRejected + stats.financialWorkQueueCount,
+      detail: `${stats.claimsInQueue} claims active, ${stats.claimsDeniedRejected} at risk`,
+      route: '/financials',
+      icon: DollarSign,
+      tone: stats.claimsDeniedRejected + stats.financialWorkQueueCount > 0 ? 'red' : 'emerald',
+    },
+    {
+      label: 'Collections today',
+      value: currencyFromCents(stats.netCollectionsCents),
+      detail: `${currencyFromCents(stats.patientCollectionsCents)} patient, ${currencyFromCents(stats.payerCollectionsCents)} payer`,
+      route: '/financials',
+      icon: CreditCard,
+      tone: 'emerald',
+    },
+    {
+      label: 'Clinical Inbox',
+      value: stats.unreadMessageThreads,
+      detail: `${stats.pendingTasks} open tasks, ${stats.unreadMessageThreads} unread threads`,
+      route: '/clinical-inbox',
+      icon: Inbox,
+      tone: stats.unreadMessageThreads > 0 ? 'amber' : 'slate',
+    },
+  ];
+
+  const priorityItems = [
+    {
+      label: 'Critical pathology follow-up',
+      value: criticalPathologyCount,
+      detail: `${totalPathologyOpenLoops} open biopsy loops`,
+      route: '/biopsies',
+      icon: ShieldCheck,
+      severity: criticalPathologyCount > 0 ? 'critical' : 'steady',
+    },
+    {
+      label: 'Claim and billing exceptions',
+      value: stats.claimsDeniedRejected + stats.financialWorkQueueCount,
+      detail: `${stats.claimsDeniedRejected} claim risks, ${stats.financialWorkQueueCount} work queue items`,
+      route: '/financials',
+      icon: AlertTriangle,
+      severity: stats.claimsDeniedRejected + stats.financialWorkQueueCount > 0 ? 'critical' : 'steady',
+    },
+    {
+      label: 'Patient-ready blockers',
+      value: stats.needsInsuranceVerification + stats.balanceDueAppointments,
+      detail: `${stats.needsInsuranceVerification} insurance, ${currencyFromCents(stats.copayDueCents)} copays due`,
+      route: '/front-desk',
+      icon: ClipboardCheck,
+      severity: stats.needsInsuranceVerification + stats.balanceDueAppointments > 0 ? 'warning' : 'steady',
+    },
+    {
+      label: 'Provider desk',
+      value: stats.myNotesNeedingWork + stats.pendingLabOrders,
+      detail: `${stats.myNotesNeedingWork} my notes, ${stats.pendingLabOrders} lab/path orders`,
+      route: '/notes',
+      icon: FileText,
+      severity: stats.myNotesNeedingWork + stats.pendingLabOrders > 0 ? 'warning' : 'steady',
+    },
+  ];
+
+  const quickActions = [
+    { label: 'New Patient', route: '/patients/new', icon: UserPlus },
+    { label: 'Schedule', route: '/schedule', icon: CalendarDays },
+    { label: 'Tasks', route: '/tasks', icon: ClipboardCheck },
+    { label: 'Financials', route: '/financials', icon: DollarSign },
+    { label: 'Analytics', route: '/analytics', icon: BarChart3 },
+    { label: 'Clinical Inbox', route: '/clinical-inbox', icon: Inbox },
+    { label: 'Mail', route: '/mail', icon: Mail },
+  ];
+
+  return (
+    <div className="home-page command-center-page">
+      <header className="command-center-hero">
+        <div className="command-center-hero__copy">
+          <div className="command-center-kicker">Today's Overview</div>
+          <h1>Practice Command Center</h1>
+          <div className="command-center-hero__meta">
+            <span>{stats.scheduleDateLabel || new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+            <span>{operationalCompletionRate}% complete</span>
+            <span>{commandRiskCount} items need attention</span>
+          </div>
+        </div>
+        <div className="command-center-toolbar">
+          <label htmlFor="home-overview-location">Location</label>
           <select
             id="home-overview-location"
             value={overviewLocationFilter}
             onChange={(e) => setOverviewLocationFilter(e.target.value)}
-            style={{
-              minWidth: '220px',
-              padding: '0.45rem 0.6rem',
-              borderRadius: '6px',
-              border: '1px solid #cbd5e1',
-              fontSize: '0.875rem',
-              background: '#ffffff',
-            }}
           >
             <option value="all">All Locations</option>
             {overviewLocationOptions.map((option) => (
@@ -641,434 +1042,279 @@ export function HomePage() {
               </option>
             ))}
           </select>
+          <button type="button" className="command-center-icon-btn" onClick={loadStats} disabled={loading} aria-label="Refresh command center">
+            <RefreshCw size={17} aria-hidden="true" />
+          </button>
         </div>
-      )}
+      </header>
 
-      <div className="stats-grid">
+      <section className="command-metric-grid" aria-label="Command center metrics">
         {loading ? (
           <>
             <Skeleton variant="card" />
             <Skeleton variant="card" />
             <Skeleton variant="card" />
             <Skeleton variant="card" />
-          </>
-        ) : (
-          <>
-            <div className="stat-card-teal">
-              <div className="stat-number">{stats.appointmentsCount}</div>
-              <div className="stat-label">Appointments<br />Today</div>
-            </div>
-            <div className="stat-card-teal">
-              <div className="stat-number">{stats.checkedInCount}</div>
-              <div className="stat-label">Checked In<br />Patients</div>
-            </div>
-            <div className="stat-card-teal">
-              <div className="stat-number">{stats.completedCount}</div>
-              <div className="stat-label">Completed<br />Visits</div>
-            </div>
-            <div className="stat-card-teal">
-              <div className="stat-number">{stats.inRoomsCount}</div>
-              <div className="stat-label">Patients<br />In Rooms</div>
-            </div>
-          </>
-        )}
-      </div>
-
-      {!loading && (
-        <div
-          style={{
-            marginTop: '0.5rem',
-            marginBottom: '0.5rem',
-            color: '#475569',
-            fontSize: '0.8rem',
-          }}
-        >
-          Overview counts are based on Home location filter and calendar window (7:00 AM-6:00 PM).
-        </div>
-      )}
-
-      {!loading && (
-        <div
-          style={{
-            marginTop: '0.75rem',
-            padding: '0.75rem 1rem',
-            borderRadius: '8px',
-            border: '1px solid #cbd5e1',
-            background: '#f8fafc',
-            color: '#334155',
-            fontSize: '0.875rem',
-          }}
-        >
-          Current schedule view: <strong>{stats.scheduleViewCount}</strong> appointments ({stats.scheduleViewMode} view, {stats.scheduleDateLabel}
-          {stats.scheduleHasFilters ? ', filtered' : ', unfiltered'}).
-        </div>
-      )}
-
-      {canUseAppointmentFinder && (
-        <section
-          aria-label="Smart appointment finder"
-          style={{
-            marginTop: '1rem',
-            borderRadius: '24px',
-            overflow: 'hidden',
-            border: '1px solid rgba(14, 116, 144, 0.22)',
-            background:
-              'radial-gradient(circle at 12% 20%, rgba(20, 184, 166, 0.34), transparent 28%), linear-gradient(135deg, #06202f 0%, #0f3d47 48%, #14532d 100%)',
-            boxShadow: '0 24px 60px rgba(8, 47, 73, 0.24)',
-            color: '#ffffff',
-          }}
-        >
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-              gap: '1.25rem',
-              padding: '1.25rem',
-              alignItems: 'stretch',
-            }}
-          >
-            <div style={{ display: 'grid', gap: '0.85rem', alignContent: 'center' }}>
-              <div
-                style={{
-                  width: 'fit-content',
-                  padding: '0.3rem 0.65rem',
-                  borderRadius: '999px',
-                  background: 'rgba(236, 253, 245, 0.14)',
-                  border: '1px solid rgba(204, 251, 241, 0.28)',
-                  color: '#ccfbf1',
-                  fontSize: '0.72rem',
-                  fontWeight: 800,
-                  letterSpacing: '0.12em',
-                  textTransform: 'uppercase',
-                }}
-              >
-                Scheduling command center
-              </div>
-              <div>
-                <h2 style={{ margin: 0, fontSize: 'clamp(1.7rem, 3vw, 2.65rem)', lineHeight: 1.02 }}>
-                  Smart Appointment Finder
-                </h2>
-                <p style={{ margin: '0.75rem 0 0', maxWidth: '740px', color: '#d1fae5', fontSize: '1rem', lineHeight: 1.55 }}>
-                  Search by patient, provider, visit type, exact time, or time window. It checks provider availability,
-                  blocked time, and existing appointments before handing the slot to the normal booking flow.
-                </p>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginTop: '0.25rem' }}>
-                <button
-                  type="button"
-                  onClick={openAppointmentFinder}
-                  disabled={finderLoading}
-                  style={{
-                    border: 'none',
-                    borderRadius: '16px',
-                    padding: '0.95rem 1.15rem',
-                    background: '#f8fafc',
-                    color: '#064e3b',
-                    fontWeight: 900,
-                    cursor: finderLoading ? 'wait' : 'pointer',
-                    boxShadow: '0 16px 32px rgba(15, 23, 42, 0.22)',
-                    minWidth: '190px',
-                  }}
-                >
-                  {finderLoading ? 'Loading finder...' : 'Launch Finder'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigate('/schedule')}
-                  style={{
-                    border: '1px solid rgba(204, 251, 241, 0.4)',
-                    borderRadius: '16px',
-                    padding: '0.95rem 1.15rem',
-                    background: 'rgba(255,255,255,0.08)',
-                    color: '#ffffff',
-                    fontWeight: 800,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Open full schedule
-                </button>
-              </div>
-            </div>
-
-            <div
-              style={{
-                display: 'grid',
-                gap: '0.75rem',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
-                alignContent: 'center',
-              }}
-            >
-              {[
-                { label: 'Patients searchable', value: finderSummary.patients },
-                { label: 'Providers checked', value: finderSummary.providers },
-                { label: 'Visit types', value: finderSummary.visitTypes },
-              ].map((item) => (
-                <div
-                  key={item.label}
-                  style={{
-                    borderRadius: '18px',
-                    padding: '1rem',
-                    background: 'rgba(255,255,255,0.1)',
-                    border: '1px solid rgba(255,255,255,0.18)',
-                    minHeight: '112px',
-                    display: 'grid',
-                    alignContent: 'center',
-                  }}
-                >
-                  <div style={{ fontSize: '1.65rem', fontWeight: 900, color: '#ffffff' }}>{item.value}</div>
-                  <div style={{ marginTop: '0.35rem', color: '#ccfbf1', fontSize: '0.82rem', fontWeight: 700 }}>
-                    {item.label}
-                  </div>
-                </div>
-              ))}
-              <div
-                style={{
-                  gridColumn: '1 / -1',
-                  borderRadius: '18px',
-                  padding: '0.9rem 1rem',
-                  background: 'rgba(6, 78, 59, 0.42)',
-                  border: '1px solid rgba(153, 246, 228, 0.28)',
-                  color: '#ecfeff',
-                  fontSize: '0.9rem',
-                  lineHeight: 1.45,
-                }}
-              >
-                Built for the front desk: find openings first, then book, reschedule, or keep working from Schedule.
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
-
-      <div className="section-title-bar" style={{ marginTop: '1rem', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: '#ffffff' }}>
-        Today's Action Snapshot
-      </div>
-
-      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-        {loading ? (
-          <>
-            <Skeleton variant="card" />
             <Skeleton variant="card" />
             <Skeleton variant="card" />
           </>
         ) : (
-          <>
-            <div className="stat-card-teal">
-              <div className="stat-number">{stats.pendingLabOrders}</div>
-              <div className="stat-label">Pending Lab/Path<br />Orders</div>
-            </div>
-            <div className="stat-card-teal">
-              <div className="stat-number">{stats.unsignedNotesToday}</div>
-              <div className="stat-label">Unsigned Notes<br />Today</div>
-            </div>
-            <div className="stat-card-teal">
-              <div className="stat-number">{stats.unreadMessageThreads}</div>
-              <div className="stat-label">Unread Message<br />Threads</div>
-            </div>
-          </>
+          commandMetrics.map((metric) => {
+            const Icon = metric.icon;
+            return (
+              <button
+                type="button"
+                key={metric.label}
+                className={`command-metric-card command-metric-card--${metric.tone}`}
+                onClick={() => navigate(metric.route)}
+              >
+                <span className="command-metric-card__icon">
+                  <Icon size={19} aria-hidden="true" />
+                </span>
+                <span className="command-metric-card__value">{metric.value}</span>
+                <span className="command-metric-card__label">{metric.label}</span>
+                <span className="command-metric-card__detail">{metric.detail}</span>
+              </button>
+            );
+          })
         )}
-      </div>
+      </section>
 
-      {!loading && biopsySafety && biopsySafety.summary.total_open_loops > 0 && (
-        <section
-          aria-label="Pathology safety alerts"
-          style={{
-            marginTop: '1rem',
-            border: '1px solid #fecaca',
-            borderRadius: '12px',
-            background: '#fff7f7',
-            boxShadow: '0 8px 20px rgba(185, 28, 28, 0.08)',
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            style={{
-              padding: '1rem 1.25rem',
-              background: 'linear-gradient(135deg, #991b1b 0%, #dc2626 100%)',
-              color: '#ffffff',
-              display: 'flex',
-              justifyContent: 'space-between',
-              gap: '1rem',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-            }}
-          >
-            <div>
-              <div style={{ fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', opacity: 0.88 }}>
-                Pathology Safety Alerts
-              </div>
-              <div style={{ marginTop: '0.25rem', fontSize: '1.2rem', fontWeight: 900 }}>
-                {biopsySafety.summary.total_open_loops} open biopsy loops need active follow-up
-              </div>
-            </div>
+      <section className="command-priority-strip" aria-label="Priority work queues">
+        {priorityItems.map((item) => {
+          const Icon = item.icon;
+          return (
             <button
               type="button"
-              onClick={() => navigate('/biopsies')}
-              style={{
-                border: '1px solid rgba(255,255,255,0.5)',
-                borderRadius: '999px',
-                background: '#ffffff',
-                color: '#991b1b',
-                padding: '0.7rem 1rem',
-                fontWeight: 900,
-                cursor: 'pointer',
-              }}
+              key={item.label}
+              className={`command-priority-item command-priority-item--${item.severity}`}
+              onClick={() => navigate(item.route)}
             >
-              Open Biopsy Safety
+              <span className="command-priority-item__icon">
+                <Icon size={18} aria-hidden="true" />
+              </span>
+              <span>
+                <span className="command-priority-item__label">{item.label}</span>
+                <span className="command-priority-item__detail">{item.detail}</span>
+              </span>
+              <strong>{loading ? '-' : item.value}</strong>
+            </button>
+          );
+        })}
+      </section>
+
+      <section className="command-center-grid" aria-label="Daily operations command center">
+        <div className="command-panel command-panel--wide">
+          <div className="command-panel__header">
+            <div>
+              <p>Patient Flow</p>
+              <h2>Today's Patients</h2>
+            </div>
+            <button type="button" className="command-link-btn" onClick={() => navigate('/front-desk')}>
+              Front Desk <ArrowRight size={15} aria-hidden="true" />
             </button>
           </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
-              gap: '0.75rem',
-              padding: '1rem',
-            }}
-          >
+          <div className="command-flow-row">
             {[
-              { label: 'Critical / High', value: biopsySafety.critical.length },
-              { label: 'Pending Review', value: biopsySafety.summary.pending_review },
-              { label: 'Notify Patient', value: biopsySafety.summary.needs_patient_notification },
-              { label: 'Treatment Needed', value: biopsySafety.summary.needs_treatment_scheduling },
+              { label: 'Scheduled', value: stats.appointmentsCount, tone: 'blue' },
+              { label: 'Waiting', value: stats.waitingCount, tone: 'amber' },
+              { label: 'In Rooms', value: stats.inRoomsCount, tone: 'violet' },
+              { label: 'Completed', value: stats.completedCount, tone: 'emerald' },
+              { label: 'No-shows', value: stats.noShowCount, tone: 'red' },
+              { label: 'Cancelled', value: stats.cancelledCount, tone: 'slate' },
             ].map((item) => (
-              <div
-                key={item.label}
-                style={{
-                  border: '1px solid #fecaca',
-                  borderRadius: '10px',
-                  background: '#ffffff',
-                  padding: '0.85rem',
-                }}
-              >
-                <div style={{ fontSize: '1.45rem', fontWeight: 900, color: '#991b1b' }}>{item.value}</div>
-                <div style={{ marginTop: '0.25rem', color: '#7f1d1d', fontSize: '0.8rem', fontWeight: 800, textTransform: 'uppercase' }}>
-                  {item.label}
-                </div>
+              <div key={item.label} className={`command-flow-tile command-flow-tile--${item.tone}`}>
+                <span>{loading ? '-' : item.value}</span>
+                <p>{item.label}</p>
               </div>
             ))}
           </div>
-          {biopsySafety.critical.length > 0 && (
-            <div style={{ display: 'grid', gap: '0.5rem', padding: '0 1rem 1rem' }}>
-              {biopsySafety.critical.slice(0, 3).map((item) => (
-                <button
-                  type="button"
-                  key={item.id}
-                  onClick={() => navigate('/biopsies')}
-                  style={{
-                    border: '1px solid #fecaca',
-                    borderRadius: '10px',
-                    background: '#ffffff',
-                    padding: '0.8rem 0.9rem',
-                    display: 'grid',
-                    gridTemplateColumns: '1fr auto',
-                    gap: '0.75rem',
-                    alignItems: 'center',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <span>
-                    <strong style={{ color: '#111827' }}>{item.patient_name}</strong>
-                    <span style={{ color: '#64748b' }}> - {item.specimen_id}</span>
-                    <span style={{ display: 'block', marginTop: '0.2rem', color: '#7f1d1d', fontSize: '0.86rem' }}>
-                      {item.loop_status || 'Open biopsy loop'}: {item.next_action || 'Open pathology follow-up'}
-                    </span>
-                  </span>
-                  <span style={{ color: '#991b1b', fontWeight: 900, textTransform: 'capitalize' }}>
-                    {item.highest_severity || 'open'}
-                  </span>
-                </button>
-              ))}
+          <div className="command-schedule-context">
+            <Clock size={16} aria-hidden="true" />
+            <span>
+              Current schedule view: <strong>{stats.scheduleViewCount}</strong> appointments, {stats.scheduleViewMode} view, {stats.scheduleDateLabel || 'today'}
+              {stats.scheduleHasFilters ? ', filtered' : ', unfiltered'}.
+            </span>
+          </div>
+          <div className="command-list-grid">
+            <div>
+              <h3>Next Up</h3>
+              <div className="command-list">
+                {schedulePulse.nextAppointments.length === 0 ? (
+                  <div className="command-empty-state">No upcoming appointments in this view.</div>
+                ) : (
+                  schedulePulse.nextAppointments.map((appointment) => (
+                    <button
+                      type="button"
+                      key={appointment.id}
+                      className="command-list-row"
+                      onClick={() => navigate(appointment.patientId ? `/patients/${appointment.patientId}` : '/schedule')}
+                    >
+                      <span className="command-list-row__time">{formatAppointmentTime(appointment.scheduledStart)}</span>
+                      <span>
+                        <strong>{appointment.patientName}</strong>
+                        <small>{appointment.appointmentTypeName} with {appointment.providerName}</small>
+                      </span>
+                      <em>{statusLabel(appointment.status)}</em>
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
-          )}
+            <div>
+              <h3>Patient-Ready Checks</h3>
+              <div className="command-list">
+                {schedulePulse.attentionAppointments.length === 0 ? (
+                  <div className="command-empty-state">No insurance, balance, copay, or wait-time blockers.</div>
+                ) : (
+                  schedulePulse.attentionAppointments.map((appointment) => (
+                    <button
+                      type="button"
+                      key={appointment.id}
+                      className="command-list-row command-list-row--warning"
+                      onClick={() => navigate(appointment.patientId ? `/patients/${appointment.patientId}` : '/front-desk')}
+                    >
+                      <span className="command-list-row__time">{formatAppointmentTime(appointment.scheduledStart)}</span>
+                      <span>
+                        <strong>{appointment.patientName}</strong>
+                        <small>{appointment.riskFlags.join(', ')}</small>
+                      </span>
+                      <em>{appointment.outstandingBalanceCents > 0 ? currencyFromCents(appointment.outstandingBalanceCents) : statusLabel(appointment.status)}</em>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="command-panel">
+          <div className="command-panel__header">
+            <div>
+              <p>Clinical Work</p>
+              <h2>Provider Desk</h2>
+            </div>
+            <button type="button" className="command-link-btn" onClick={() => navigate('/notes')}>
+              Open Notes Queue <ArrowRight size={15} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="command-stack">
+            <button type="button" className="command-work-row" onClick={() => navigate('/notes')}>
+              <FileText size={17} aria-hidden="true" />
+              <span>
+                <strong>Notes Needing Attention</strong>
+                <small>My notes: {stats.myNotesNeedingWork}; team open encounters: {stats.teamNotesNeedingWork}</small>
+              </span>
+              <b>{loading ? '-' : stats.teamNotesNeedingWork}</b>
+            </button>
+            <button type="button" className="command-work-row" onClick={() => navigate('/orders')}>
+              <ClipboardCheck size={17} aria-hidden="true" />
+              <span>
+                <strong>Pending Lab/Path Orders</strong>
+                <small>Unsigned notes today: {stats.unsignedNotesToday}</small>
+              </span>
+              <b>{loading ? '-' : stats.pendingLabOrders}</b>
+            </button>
+            <button type="button" className="command-work-row" onClick={() => navigate('/biopsies')}>
+              <ShieldCheck size={17} aria-hidden="true" />
+              <span>
+                <strong>Pathology Safety</strong>
+                <small>{totalPathologyOpenLoops} open loops; {criticalPathologyCount} critical/high</small>
+              </span>
+              <b>{loading ? '-' : criticalPathologyCount}</b>
+            </button>
+          </div>
+        </div>
+
+        <div className="command-panel">
+          <div className="command-panel__header">
+            <div>
+              <p>Revenue Cycle</p>
+              <h2>Money Watch</h2>
+            </div>
+            <button type="button" className="command-link-btn" onClick={() => navigate('/financials')}>
+              Financials <ArrowRight size={15} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="command-money-grid">
+            <div>
+              <span>{currencyFromCents(stats.netCollectionsCents)}</span>
+              <p>Collections today</p>
+            </div>
+            <div>
+              <span>{stats.claimsInQueue}</span>
+              <p>Claims active</p>
+            </div>
+            <div>
+              <span>{stats.claimsDeniedRejected}</span>
+              <p>Denied/rejected</p>
+            </div>
+            <div>
+              <span>{currencyFromCents(stats.arOver90Cents)}</span>
+              <p>A/R over 90</p>
+            </div>
+          </div>
+          <button type="button" className="command-work-row command-work-row--tight" onClick={() => navigate('/financials')}>
+            <AlertTriangle size={17} aria-hidden="true" />
+            <span>
+              <strong>Financial work queue</strong>
+              <small>{currencyFromCents(stats.arTotalCents)} total open A/R</small>
+            </span>
+            <b>{loading ? '-' : stats.financialWorkQueueCount}</b>
+          </button>
+        </div>
+      </section>
+
+      {biopsySafety && totalPathologyOpenLoops > 0 && (
+        <section className="command-pathology-banner" aria-label="Pathology safety alerts">
+          <div>
+            <p>Pathology Safety Alerts</p>
+            <h2>{totalPathologyOpenLoops} open biopsy loops need active follow-up</h2>
+          </div>
+          <div className="command-pathology-banner__stats">
+            <span><strong>{criticalPathologyCount}</strong> critical/high</span>
+            <span><strong>{biopsySafety.summary.pending_review}</strong> pending review</span>
+            <span><strong>{biopsySafety.summary.needs_patient_notification}</strong> notify patient</span>
+            <span><strong>{biopsySafety.summary.needs_treatment_scheduling}</strong> treatment needed</span>
+          </div>
+          <button type="button" className="command-danger-btn" onClick={() => navigate('/biopsies')}>
+            Open Biopsy Safety
+          </button>
         </section>
       )}
 
-      <div
-        className="ema-action-bar"
-        style={{
-          marginTop: '1rem',
-          background: 'linear-gradient(to bottom, #f9fafb 0%, #f3f4f6 100%)',
-          borderBottom: '2px solid #e5e7eb',
-          gap: '0.5rem',
-        }}
-      >
-        <button
-          type="button"
-          className="ema-action-btn"
-          onClick={() => navigate('/patients/new')}
-          style={{
-            background: 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
-            border: '1px solid #d1d5db',
-            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-            color: '#374151',
-            padding: '0.5rem 1rem',
-            borderRadius: '6px',
-            fontWeight: 500,
-          }}
-        >
-          <span style={{ marginRight: '0.5rem', color: '#16a34a' }}>+</span>
-          New Patient
+      <section className="command-actions-bar" aria-label="Command center actions">
+        {quickActions.map((action) => {
+          const Icon = action.icon;
+          return (
+            <button type="button" key={action.label} onClick={() => navigate(action.route)}>
+              <Icon size={17} aria-hidden="true" />
+              {action.label}
+            </button>
+          );
+        })}
+        {canUseAppointmentFinder && (
+          <button type="button" onClick={openAppointmentFinder} disabled={finderLoading}>
+            <Search size={17} aria-hidden="true" />
+            {finderLoading ? 'Loading Finder' : 'Appointment Finder'}
+          </button>
+        )}
+        <button type="button" onClick={() => setShowReminderModal(true)}>
+          <Bell size={17} aria-hidden="true" />
+          General Reminder
         </button>
-
-        <div style={{ position: 'relative' }}>
-          <button
-            type="button"
-            className="ema-action-btn"
-            onClick={() => setShowRegulatoryModal((prev) => !prev)}
-            style={{
-              background: 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
-              border: '1px solid #d1d5db',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-              color: '#374151',
-              padding: '0.5rem 1rem',
-              borderRadius: '6px',
-              fontWeight: 500,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-            }}
-          >
-            <span style={{ fontSize: '1.2em' }}>📊</span>
+        <div className="command-actions-menu">
+          <button type="button" onClick={() => setShowRegulatoryModal((prev) => !prev)}>
+            <BarChart3 size={17} aria-hidden="true" />
             Regulatory Reporting
-            <span style={{ fontSize: '0.7em' }}>▼</span>
           </button>
           {showRegulatoryModal && (
-            <div
-              style={{
-                position: 'absolute',
-                top: '100%',
-                left: 0,
-                marginTop: '0.25rem',
-                background: '#ffffff',
-                border: '1px solid #d1d5db',
-                borderRadius: '6px',
-                boxShadow: '0 10px 15px rgba(0,0,0,0.1)',
-                minWidth: '200px',
-                zIndex: 1000,
-              }}
-            >
+            <div className="command-actions-menu__content">
               <button
                 type="button"
                 onClick={() => {
                   navigate('/reports?type=regulatory');
                   setShowRegulatoryModal(false);
-                }}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem 1rem',
-                  border: 'none',
-                  background: 'transparent',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                  borderBottom: '1px solid #e5e7eb',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = '#f3f4f6';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'transparent';
                 }}
               >
                 MIPS Report
@@ -1079,133 +1325,13 @@ export function HomePage() {
                   navigate('/reports?type=regulatory');
                   setShowRegulatoryModal(false);
                 }}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem 1rem',
-                  border: 'none',
-                  background: 'transparent',
-                  textAlign: 'left',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = '#f3f4f6';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'transparent';
-                }}
               >
                 MIPS Value Path Report
               </button>
             </div>
           )}
         </div>
-
-        <button
-          type="button"
-          className="ema-action-btn"
-          onClick={() => setShowReminderModal(true)}
-          style={{
-            background: 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
-            border: '1px solid #d1d5db',
-            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-            color: '#374151',
-            padding: '0.5rem 1rem',
-            borderRadius: '6px',
-            fontWeight: 500,
-          }}
-        >
-          <span style={{ marginRight: '0.5rem', color: '#8b5cf6' }}>🔔</span>
-          General Reminder
-        </button>
-
-        <button
-          type="button"
-          className="ema-action-btn"
-          onClick={() => navigate('/notes')}
-          style={{
-            background: 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
-            border: '1px solid #d1d5db',
-            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-            color: '#374151',
-            padding: '0.5rem 1rem',
-            borderRadius: '6px',
-            fontWeight: 500,
-          }}
-        >
-          <span style={{ marginRight: '0.5rem', color: '#0ea5e9' }}>📝</span>
-          Open Notes Queue
-        </button>
-      </div>
-
-      <div className="section-title-bar" style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', color: '#ffffff' }}>
-        Office Flow Summary
-      </div>
-
-      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-        {loading ? (
-          <>
-            <Skeleton variant="card" />
-            <Skeleton variant="card" />
-            <Skeleton variant="card" />
-          </>
-        ) : (
-          <>
-            <div className="stat-card" style={{ background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)', color: '#ffffff', padding: '1.5rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
-              <div className="stat-number" style={{ fontSize: '2.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>{stats.waitingCount}</div>
-              <div className="stat-label" style={{ fontSize: '1rem', fontWeight: 500 }}>Waiting</div>
-            </div>
-            <div className="stat-card" style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)', color: '#ffffff', padding: '1.5rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
-              <div className="stat-number" style={{ fontSize: '2.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>{stats.inRoomsCount}</div>
-              <div className="stat-label" style={{ fontSize: '1rem', fontWeight: 500 }}>In Rooms</div>
-            </div>
-            <div className="stat-card" style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: '#ffffff', padding: '1.5rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', textAlign: 'center' }}>
-              <div className="stat-number" style={{ fontSize: '2.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>{stats.checkoutCount}</div>
-              <div className="stat-label" style={{ fontSize: '1rem', fontWeight: 500 }}>Completed</div>
-            </div>
-          </>
-        )}
-      </div>
-
-      <div className="home-grid">
-        <div className="panel">
-          <p className="panel-title">Pending Tasks</p>
-          <div className="stat-highlight">
-            {loading ? <Skeleton width={60} height={40} /> : stats.pendingTasks}
-          </div>
-          <p className="muted">open or in-progress tasks</p>
-        </div>
-
-        <div className="panel">
-          <p className="panel-title">Open Encounters</p>
-          <div className="stat-highlight">
-            {loading ? <Skeleton width={60} height={40} /> : stats.openEncounters}
-          </div>
-          <p className="muted">non-finalized encounters</p>
-        </div>
-
-        <div className="panel">
-          <p className="panel-title">Notes Needing Attention</p>
-          <div className="stat-highlight">
-            {loading ? <Skeleton width={60} height={40} /> : stats.teamNotesNeedingWork}
-          </div>
-          {!loading && (
-            <>
-              <p className="muted">My notes needing work: <strong>{stats.myNotesNeedingWork}</strong></p>
-              <p className="muted">Unsigned notes updated today: <strong>{stats.unsignedNotesToday}</strong></p>
-            </>
-          )}
-          <button
-            type="button"
-            className="quick-action"
-            onClick={() => navigate('/notes')}
-            style={{ marginTop: '0.5rem' }}
-          >
-            Open Notes Page
-          </button>
-        </div>
-
-      </div>
+      </section>
 
       <Modal
         isOpen={showAppointmentFinder}

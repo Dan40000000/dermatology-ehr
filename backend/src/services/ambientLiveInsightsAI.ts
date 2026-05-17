@@ -359,6 +359,7 @@ function buildUserPrompt(transcript: string, heuristic: AmbientLiveInsights): st
     'If the transcript says no bleeding, no rapid growth, no drainage, no fever, or similar negatives, do not put those in symptoms.',
     'If the transcript includes cryotherapy/liquid nitrogen, put it under clinicalActions as a procedure/treatment, not suggestedTests.',
     'If pathology is being ordered after a shave biopsy, the suggested test should include the biopsy/pathology workflow, not only "Histopathology".',
+    'Do not alter billingCodes; those are generated deterministically by coding rules and require billing-team review.',
     '',
     'HEURISTIC BASELINE:',
     JSON.stringify(heuristic, null, 2),
@@ -383,6 +384,7 @@ function mergeInsights(
     medications: normalizeMedications(parsed.medications, fallback.medications),
     clinicalActions: normalizeClinicalActions(parsed.clinicalActions, fallback.clinicalActions),
     safetyFlags: normalizeSafetyFlags(parsed.safetyFlags, fallback.safetyFlags),
+    billingCodes: fallback.billingCodes,
   };
 }
 

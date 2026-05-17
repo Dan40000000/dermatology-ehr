@@ -2,7 +2,18 @@ import { expect, Page, test } from '@playwright/test';
 
 type ClinicRecord = Record<string, any>;
 
-const DAY = '2026-05-16';
+function getClinicIsoDate() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+const DAY = getClinicIsoDate();
 const TENANT_ID = 'tenant-demo';
 const DAY_START = `${DAY}T08:00:00.000Z`;
 
@@ -181,7 +192,189 @@ function buildClinicDayState() {
     { id: 'eft-day-001', traceNumber: 'EFT-DAY-001', eftTraceNumber: 'EFT-DAY-001', payer: 'Medicare', amountCents: toCents(610), paymentAmountCents: toCents(610), depositDate: DAY, transactionType: 'CCD+', reconciled: false, varianceCents: 0 },
   ];
 
-  return { patients, appointments, encounters, diagnoses, prescriptions, charges, claims, bills, workQueue, eras, efts };
+  const portalThreads = [
+    {
+      id: 'portal-day-001',
+      patientId: 'patient-biopsy',
+      patientName: 'Helen Brooks',
+      patientMrn: 'DAY-003',
+      subject: 'Portal rash photo review',
+      category: 'medical',
+      priority: 'urgent',
+      status: 'open',
+      lastMessagePreview: 'The biopsy site is red and itchy after my visit.',
+      lastMessageAt: `${DAY}T17:10:00.000Z`,
+      isReadByStaff: false,
+    },
+  ];
+  const portalMessagesByThread: Record<string, ClinicRecord[]> = {
+    'portal-day-001': [
+      {
+        id: 'portal-msg-day-001',
+        senderType: 'patient',
+        senderName: 'Helen Brooks',
+        messageText: 'The biopsy site is red and itchy after my visit.',
+        sentAt: `${DAY}T17:10:00.000Z`,
+      },
+    ],
+  };
+  const clinicalSmsConversations = [
+    {
+      patientId: 'patient-eczema',
+      patientName: 'Noah Foster',
+      patientMrn: 'DAY-006',
+      category: 'prescription',
+      threadStatus: 'open',
+      lastMessagePreview: 'Can we send the triamcinolone to Demo Pharmacy?',
+      lastMessageAt: `${DAY}T17:25:00.000Z`,
+      unreadCount: 1,
+    },
+  ];
+  const clinicalMailThreads = [
+    {
+      id: 'mail-day-001',
+      subject: 'Pathology callback before close',
+      patientId: 'patient-mohs',
+      patientFirstName: 'Robert',
+      patientLastName: 'Castillo',
+      lastMessage: { body: 'Please call patient with Mohs wound-care instructions.' },
+      updatedAt: `${DAY}T18:05:00.000Z`,
+      unreadCount: 1,
+    },
+  ];
+  const clinicalMailMessagesByThread: Record<string, ClinicRecord[]> = {
+    'mail-day-001': [
+      {
+        id: 'mail-msg-day-001',
+        senderFirstName: 'Owen',
+        senderLastName: 'Sinclair',
+        body: 'Please call patient with Mohs wound-care instructions.',
+        createdAt: `${DAY}T18:05:00.000Z`,
+      },
+    ],
+  };
+  const tasks = [
+    {
+      id: 'task-day-001',
+      title: 'Call psoriasis patient about labs',
+      description: 'Confirm baseline lab timing before biologic start.',
+      status: 'todo',
+      priority: 'high',
+      patientId: 'patient-psoriasis',
+      patientFirstName: 'Marcus',
+      patientLastName: 'Hill',
+      dueDate: DAY,
+      createdAt: `${DAY}T13:00:00.000Z`,
+    },
+  ];
+  const refillRequests = [
+    {
+      id: 'refill-day-001',
+      patientId: 'patient-eczema',
+      patientFirstName: 'Noah',
+      patientLastName: 'Foster',
+      medicationName: 'Triamcinolone 0.1% cream',
+      pharmacyName: 'Demo Pharmacy',
+      status: 'pending',
+      requestedDate: `${DAY}T17:30:00.000Z`,
+    },
+  ];
+  const priorAuthRequests = [
+    {
+      id: 'epa-day-001',
+      patientId: 'patient-psoriasis',
+      patientName: 'Marcus Hill',
+      medicationName: 'Adalimumab',
+      payer: 'Blue Cross',
+      status: 'needs_info',
+      statusReason: 'Upload BSA, failed topical history, and PASI score.',
+      priority: 'normal',
+      updatedAt: `${DAY}T16:45:00.000Z`,
+    },
+  ];
+  const orders = [
+    {
+      id: 'order-day-001',
+      patientId: 'patient-acne',
+      type: 'lab',
+      status: 'pending',
+      priority: 'stat',
+      details: 'Pregnancy test before isotretinoin counseling.',
+      providerName: 'Dr. Maya Patel, MD',
+      createdAt: `${DAY}T15:40:00.000Z`,
+    },
+  ];
+  const faxes = [
+    {
+      id: 'fax-day-001',
+      subject: 'Outside pathology report',
+      fromNumber: '+15551008888',
+      pages: 4,
+      status: 'received',
+      read: false,
+      receivedAt: `${DAY}T18:20:00.000Z`,
+    },
+  ];
+  const biopsyCommandCenter = {
+    generated_at: `${DAY}T18:30:00.000Z`,
+    summary: {
+      total_open_loops: 1,
+      overdue_results: 0,
+      pending_review: 1,
+      needs_patient_notification: 0,
+      needs_treatment_scheduling: 0,
+      open_malignancies: 1,
+      open_melanomas: 0,
+      closed_loop_complete: 0,
+      critical_items: 1,
+      avg_turnaround_days: 3,
+    },
+    queues: {
+      critical: [
+        {
+          id: 'biopsy-day-001',
+          specimen_id: 'SP-DAY-003',
+          patient_id: 'patient-biopsy',
+          patient_name: 'Helen Brooks',
+          mrn: 'DAY-003',
+          loop_status: 'Needs provider review',
+          next_action: 'Review pathology result and notify patient.',
+          pathology_diagnosis: 'Superficial basal cell carcinoma',
+          body_location: 'Left shoulder',
+          highest_severity: 'critical',
+          ordered_at: `${DAY}T09:45:00.000Z`,
+          resulted_at: `${DAY}T18:00:00.000Z`,
+          ordering_provider_name: 'Dr. Maya Patel, MD',
+        },
+      ],
+    },
+    biopsies: [],
+  };
+
+  return {
+    patients,
+    appointments,
+    encounters,
+    diagnoses,
+    prescriptions,
+    charges,
+    claims,
+    bills,
+    workQueue,
+    eras,
+    efts,
+    portalThreads,
+    portalMessagesByThread,
+    clinicalSmsConversations,
+    clinicalMailThreads,
+    clinicalMailMessagesByThread,
+    tasks,
+    refillRequests,
+    priorAuthRequests,
+    orders,
+    faxes,
+    biopsyCommandCenter,
+  };
 }
 
 function summarizeRevenue(state: ReturnType<typeof buildClinicDayState>) {
@@ -239,6 +432,165 @@ async function installFullDayRoutes(page: Page, state: ReturnType<typeof buildCl
           tenantId: TENANT_ID,
         },
       });
+      return;
+    }
+
+    if (path === '/api/patient-messages/threads' && method === 'GET') {
+      await fulfillJson(route, {
+        threads: state.portalThreads.filter((thread) => thread.status !== 'closed' || thread.isReadByStaff === false),
+        pagination: { total: state.portalThreads.length, limit: 100, offset: 0, hasMore: false },
+      });
+      return;
+    }
+
+    const portalThreadMatch = path.match(/^\/api\/patient-messages\/threads\/([^/]+)$/);
+    if (portalThreadMatch && method === 'GET') {
+      const threadId = decodeURIComponent(portalThreadMatch[1]);
+      const thread = state.portalThreads.find((item) => item.id === threadId);
+      await fulfillJson(route, thread ? {
+        thread,
+        messages: state.portalMessagesByThread[threadId] || [],
+      } : { error: 'Thread not found' }, thread ? 200 : 404);
+      return;
+    }
+
+    if (portalThreadMatch && method === 'PUT') {
+      const threadId = decodeURIComponent(portalThreadMatch[1]);
+      const thread = state.portalThreads.find((item) => item.id === threadId);
+      if (thread) Object.assign(thread, readBody(), { updatedAt: new Date().toISOString() });
+      await fulfillJson(route, { success: Boolean(thread), thread }, thread ? 200 : 404);
+      return;
+    }
+
+    const portalThreadReadMatch = path.match(/^\/api\/patient-messages\/threads\/([^/]+)\/mark-read$/);
+    if (portalThreadReadMatch && method === 'POST') {
+      const threadId = decodeURIComponent(portalThreadReadMatch[1]);
+      const thread = state.portalThreads.find((item) => item.id === threadId);
+      if (thread) thread.isReadByStaff = true;
+      await fulfillJson(route, { success: Boolean(thread) }, thread ? 200 : 404);
+      return;
+    }
+
+    const portalThreadMessageMatch = path.match(/^\/api\/patient-messages\/threads\/([^/]+)\/messages$/);
+    if (portalThreadMessageMatch && method === 'POST') {
+      const threadId = decodeURIComponent(portalThreadMessageMatch[1]);
+      const payload = readBody();
+      const message = {
+        id: `portal-msg-day-${(state.portalMessagesByThread[threadId] || []).length + 1}`,
+        senderType: payload.isInternalNote ? 'staff' : 'staff',
+        senderName: payload.isInternalNote ? 'Internal note' : 'Demo Admin',
+        messageText: payload.messageText,
+        isInternalNote: Boolean(payload.isInternalNote),
+        sentAt: new Date().toISOString(),
+      };
+      state.portalMessagesByThread[threadId] = [...(state.portalMessagesByThread[threadId] || []), message];
+      const thread = state.portalThreads.find((item) => item.id === threadId);
+      if (thread) {
+        thread.lastMessagePreview = payload.messageText;
+        thread.lastMessageAt = message.sentAt;
+        thread.isReadByStaff = true;
+      }
+      await fulfillJson(route, { messageId: message.id });
+      return;
+    }
+
+    if (path === '/api/sms/conversations' && method === 'GET') {
+      await fulfillJson(route, { conversations: state.clinicalSmsConversations });
+      return;
+    }
+
+    const smsReadMatch = path.match(/^\/api\/sms\/conversations\/([^/]+)\/mark-read$/);
+    if (smsReadMatch && method === 'PUT') {
+      const patientId = decodeURIComponent(smsReadMatch[1]);
+      const conversation = state.clinicalSmsConversations.find((item) => item.patientId === patientId);
+      if (conversation) conversation.unreadCount = 0;
+      await fulfillJson(route, { success: Boolean(conversation) }, conversation ? 200 : 404);
+      return;
+    }
+
+    if (path === '/api/messaging/threads' && method === 'GET') {
+      await fulfillJson(route, { threads: state.clinicalMailThreads.filter((thread) => Number(thread.unreadCount || 0) > 0) });
+      return;
+    }
+
+    const mailThreadMatch = path.match(/^\/api\/messaging\/threads\/([^/]+)$/);
+    if (mailThreadMatch && method === 'GET') {
+      const threadId = decodeURIComponent(mailThreadMatch[1]);
+      const thread = state.clinicalMailThreads.find((item) => item.id === threadId);
+      await fulfillJson(route, thread ? {
+        thread,
+        messages: state.clinicalMailMessagesByThread[threadId] || [],
+      } : { error: 'Thread not found' }, thread ? 200 : 404);
+      return;
+    }
+
+    const mailMessageMatch = path.match(/^\/api\/messaging\/threads\/([^/]+)\/messages$/);
+    if (mailMessageMatch && method === 'POST') {
+      const threadId = decodeURIComponent(mailMessageMatch[1]);
+      const payload = readBody();
+      const message = {
+        id: `mail-msg-day-${(state.clinicalMailMessagesByThread[threadId] || []).length + 1}`,
+        senderFirstName: 'Demo',
+        senderLastName: 'Admin',
+        body: payload.body,
+        createdAt: new Date().toISOString(),
+      };
+      state.clinicalMailMessagesByThread[threadId] = [...(state.clinicalMailMessagesByThread[threadId] || []), message];
+      await fulfillJson(route, { id: message.id });
+      return;
+    }
+
+    const mailReadMatch = path.match(/^\/api\/messaging\/threads\/([^/]+)\/read$/);
+    if (mailReadMatch && method === 'PUT') {
+      const thread = state.clinicalMailThreads.find((item) => item.id === decodeURIComponent(mailReadMatch[1]));
+      if (thread) thread.unreadCount = 0;
+      await fulfillJson(route, { success: Boolean(thread) }, thread ? 200 : 404);
+      return;
+    }
+
+    if (path === '/api/tasks' && method === 'GET') {
+      await fulfillJson(route, { tasks: state.tasks.filter((task) => !['completed', 'done', 'closed'].includes(String(task.status).toLowerCase())) });
+      return;
+    }
+
+    if (path === '/api/tasks' && method === 'POST') {
+      const payload = readBody();
+      const patient = state.patients.find((item) => item.id === payload.patientId);
+      const task = {
+        id: `task-day-${state.tasks.length + 1}`,
+        ...payload,
+        patientFirstName: patient?.firstName,
+        patientLastName: patient?.lastName,
+        createdAt: new Date().toISOString(),
+      };
+      state.tasks.push(task);
+      await fulfillJson(route, { task, id: task.id }, 201);
+      return;
+    }
+
+    const taskStatusMatch = path.match(/^\/api\/tasks\/([^/]+)\/status$/);
+    if (taskStatusMatch && method === 'PUT') {
+      const task = state.tasks.find((item) => item.id === decodeURIComponent(taskStatusMatch[1]));
+      if (task) task.status = readBody().status || task.status;
+      await fulfillJson(route, { success: Boolean(task), task }, task ? 200 : 404);
+      return;
+    }
+
+    if (path === '/api/biopsies/command-center' && method === 'GET') {
+      await fulfillJson(route, state.biopsyCommandCenter);
+      return;
+    }
+
+    if (path === '/api/fax/inbox' && method === 'GET') {
+      await fulfillJson(route, { faxes: state.faxes.filter((fax) => fax.read === false || !fax.patientId) });
+      return;
+    }
+
+    const faxUpdateMatch = path.match(/^\/api\/fax\/([^/]+)$/);
+    if (faxUpdateMatch && method === 'PATCH') {
+      const fax = state.faxes.find((item) => item.id === decodeURIComponent(faxUpdateMatch[1]));
+      if (fax) Object.assign(fax, readBody());
+      await fulfillJson(route, { success: Boolean(fax), fax }, fax ? 200 : 404);
       return;
     }
 
@@ -305,8 +657,8 @@ async function installFullDayRoutes(page: Page, state: ReturnType<typeof buildCl
       await fulfillJson(route, { appointments: state.appointments.map((appointment) => ({ ...appointment, copayAmount: 25, outstandingBalance: appointment.patientId === 'patient-biopsy' ? 175 : 0 })) });
       return;
     }
-    if (path === '/api/prior-auth-requests') {
-      await fulfillJson(route, { priorAuths: [] });
+    if (path === '/api/prior-auth-requests' && method === 'GET') {
+      await fulfillJson(route, { data: state.priorAuthRequests, priorAuths: state.priorAuthRequests });
       return;
     }
 
@@ -505,12 +857,45 @@ async function installFullDayRoutes(page: Page, state: ReturnType<typeof buildCl
       return;
     }
 
-    if (path === '/api/prescriptions/refill-requests' || path === '/api/refill-requests') {
-      await fulfillJson(route, { refillRequests: [] });
+    const refillApproveMatch = path.match(/^\/api\/refill-requests\/([^/]+)\/approve$/);
+    if (refillApproveMatch && method === 'POST') {
+      const requestId = decodeURIComponent(refillApproveMatch[1]);
+      const refill = state.refillRequests.find((item) => item.id === requestId);
+      if (refill) {
+        refill.status = 'approved';
+        state.prescriptions.unshift({
+          id: `rx-day-refill-${state.prescriptions.length + 1}`,
+          tenantId: TENANT_ID,
+          patientId: refill.patientId,
+          providerId: 'provider-day-pa',
+          providerName: 'Riley Johnson, PA-C',
+          medicationName: refill.medicationName,
+          status: 'ordered',
+          deliveryMethod: 'electronic',
+          deliveryStatus: 'sent',
+          pharmacyName: refill.pharmacyName,
+          writtenDate: new Date().toISOString(),
+        });
+      }
+      await fulfillJson(route, { success: Boolean(refill), message: 'Approved', newPrescriptionId: refill ? state.prescriptions[0].id : undefined }, refill ? 200 : 404);
       return;
     }
+
+    if (path === '/api/prescriptions/refill-requests' || path === '/api/refill-requests') {
+      await fulfillJson(route, { refillRequests: state.refillRequests.filter((item) => item.status === 'pending') });
+      return;
+    }
+
+    const orderStatusMatch = path.match(/^\/api\/orders\/([^/]+)\/status$/);
+    if (orderStatusMatch && method === 'POST') {
+      const order = state.orders.find((item) => item.id === decodeURIComponent(orderStatusMatch[1]));
+      if (order) order.status = readBody().status || order.status;
+      await fulfillJson(route, { success: Boolean(order), order }, order ? 200 : 404);
+      return;
+    }
+
     if (path === '/api/orders') {
-      await fulfillJson(route, { orders: [], data: [] });
+      await fulfillJson(route, { orders: state.orders.filter((order) => !['completed', 'closed', 'cancelled'].includes(String(order.status).toLowerCase())), data: state.orders });
       return;
     }
 
@@ -915,6 +1300,50 @@ test.describe('Full clinic day simulation', () => {
     expect(flowResult.prescriptionCount).toBeGreaterThanOrEqual(5);
     expect(flowResult.workQueueCount).toBeGreaterThanOrEqual(2);
     expect(flowResult.closingTotalChargesCents).toBeGreaterThan(toCents(1900));
+
+    await page.goto('/clinical-inbox');
+    await expect(page.getByRole('heading', { name: 'Clinical Inbox' })).toBeVisible();
+    await expect(page.getByText('Portal rash photo review').first()).toBeVisible();
+    await expect(page.getByText('Refill request: Triamcinolone 0.1% cream').first()).toBeVisible();
+    await expect(page.getByText('Biopsy follow-up: SP-DAY-003').first()).toBeVisible();
+
+    const inboxTabs = page.locator('.clinical-inbox-tabs');
+    const inboxDetail = page.locator('.clinical-inbox-detail-panel');
+
+    await page.getByRole('button', { name: /Portal rash photo review/ }).click();
+    await page.getByPlaceholder('Write the reply or internal note...').fill('Reviewed photo. Keep the site covered and we will call today.');
+    await inboxDetail.getByRole('button', { name: 'Send' }).click();
+    await expect.poll(() => state.portalMessagesByThread['portal-day-001'].length).toBe(2);
+
+    await inboxTabs.getByRole('button', { name: /Messages/ }).click();
+    await page.getByRole('button', { name: /Text from Noah Foster/ }).click();
+    await inboxDetail.getByRole('button', { name: 'Mark read' }).click();
+    await expect.poll(() => state.clinicalSmsConversations[0].unreadCount).toBe(0);
+
+    await inboxTabs.getByRole('button', { name: /Rx \/ ePA/ }).click();
+    await expect(page.getByText('ePA: Adalimumab').first()).toBeVisible();
+    await page.getByRole('button', { name: /Refill request: Triamcinolone 0\.1% cream/ }).click();
+    await inboxDetail.getByRole('button', { name: 'Approve refill' }).click();
+    await expect.poll(() => state.refillRequests[0].status).toBe('approved');
+
+    await inboxTabs.getByRole('button', { name: /Results/ }).click();
+    await page.getByRole('button', { name: /LAB order/ }).click();
+    await inboxDetail.getByRole('button', { name: 'Complete order' }).click();
+    await expect.poll(() => state.orders[0].status).toBe('completed');
+
+    await page.getByRole('button', { name: /Biopsy follow-up: SP-DAY-003/ }).click();
+    await inboxDetail.getByRole('button', { name: 'Create follow-up' }).click();
+    await expect.poll(() => state.tasks.some((task) => String(task.title || '').includes('Biopsy follow-up: SP-DAY-003'))).toBe(true);
+
+    await inboxTabs.getByRole('button', { name: /Clinical/ }).click();
+    await page.getByRole('button', { name: /Call psoriasis patient about labs/ }).click();
+    await inboxDetail.getByRole('button', { name: 'Complete task' }).click();
+    await expect.poll(() => state.tasks.find((task) => task.id === 'task-day-001')?.status).toBe('completed');
+
+    await inboxTabs.getByRole('button', { name: /Admin/ }).click();
+    await page.getByRole('button', { name: /Outside pathology report/ }).click();
+    await inboxDetail.getByRole('button', { name: 'Mark read' }).click();
+    await expect.poll(() => state.faxes[0].read).toBe(true);
 
     await page.goto('/patients');
     await expect(page.getByRole('row', { name: /Taylor Jordan.*jordan\.taylor\.full\.day@example\.test/ })).toBeVisible();

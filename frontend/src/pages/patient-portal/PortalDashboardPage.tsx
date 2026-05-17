@@ -231,6 +231,14 @@ export function PortalDashboardPage() {
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
         </svg>
       ),
+      store: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6 2l-1 5h14l-1-5H6z"/>
+          <path d="M5 7v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7"/>
+          <path d="M9 11h6"/>
+          <path d="M9 15h6"/>
+        </svg>
+      ),
       shield: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -439,6 +447,10 @@ export function PortalDashboardPage() {
                   <Link to="/portal/documents" className="action-item">
                     <div className="action-icon docs-icon">{getIcon('document')}</div>
                     <span>Documents</span>
+                  </Link>
+                  <Link to="/portal/store" className="action-item">
+                    <div className="action-icon store-icon">{getIcon('store')}</div>
+                    <span>Store</span>
                   </Link>
                   <Link to="/portal/health-record" className="action-item">
                     <div className="action-icon health-icon">{getIcon('heart')}</div>

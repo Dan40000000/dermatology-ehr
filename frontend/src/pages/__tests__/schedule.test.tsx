@@ -403,6 +403,7 @@ describe('SchedulePage', () => {
 
   afterEach(() => {
     confirmSpy?.mockRestore();
+    vi.useRealTimers();
     vi.clearAllMocks();
   });
 
@@ -508,31 +509,36 @@ describe('SchedulePage', () => {
   });
 
   it('waits until the configured cutoff before auto-preparing the downtime packet', async () => {
-    const fixtures = buildFixtures();
-    localStorage.setItem('sched:location', 'loc-1');
-    apiMocks.fetchLocations.mockResolvedValue({
-      locations: [
-        {
-          ...fixtures.locations[0],
-          downtimeSettings: {
-            enabled: true,
-            packetTime: '23:59',
-            deviceProfile: 'desktop',
-            includeDob: true,
-            includePhone: true,
-            includeInsurance: true,
+    vi.useFakeTimers({ now: new Date('2026-05-14T12:00:00'), shouldAdvanceTime: true });
+    try {
+      const fixtures = buildFixtures();
+      localStorage.setItem('sched:location', 'loc-1');
+      apiMocks.fetchLocations.mockResolvedValue({
+        locations: [
+          {
+            ...fixtures.locations[0],
+            downtimeSettings: {
+              enabled: true,
+              packetTime: '23:59',
+              deviceProfile: 'desktop',
+              includeDob: true,
+              includePhone: true,
+              includeInsurance: true,
+            },
           },
-        },
-        fixtures.locations[1],
-      ],
-    });
+          fixtures.locations[1],
+        ],
+      });
 
-    render(<SchedulePage />);
+      render(<SchedulePage />);
 
-    await screen.findByTestId('calendar');
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(apiMocks.generateDowntimePacket).not.toHaveBeenCalled();
-    expect(apiMocks.fetchReadyDowntimePacket).not.toHaveBeenCalled();
+      await screen.findByTestId('calendar');
+      await vi.advanceTimersByTimeAsync(25);
+      expect(apiMocks.generateDowntimePacket).not.toHaveBeenCalled();
+      expect(apiMocks.fetchReadyDowntimePacket).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not auto-prepare when this browser is not the registered downtime station', async () => {

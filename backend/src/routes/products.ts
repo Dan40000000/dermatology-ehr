@@ -53,6 +53,22 @@ const createSaleSchema = z.object({
   discountAmount: z.number().int().min(0).optional(),
 });
 
+const storeFulfillmentStatusSchema = z.enum(['paid', 'packing', 'label_created', 'shipped', 'delivered', 'exception', 'cancelled']);
+const storeNotificationStatusSchema = z.enum(['queued', 'sent', 'failed', 'muted']);
+const storeShippingMethodSchema = z.enum(['standard', 'priority', 'pickup']);
+
+const updateStoreFulfillmentSchema = z.object({
+  fulfillmentStatus: storeFulfillmentStatusSchema.optional(),
+  shippingMethod: storeShippingMethodSchema.optional(),
+  shippingFee: z.number().int().min(0).optional(),
+  carrier: z.string().max(100).nullable().optional(),
+  trackingNumber: z.string().max(120).nullable().optional(),
+  notificationEmail: z.string().email().nullable().optional(),
+  notificationStatus: storeNotificationStatusSchema.optional(),
+  stripePaymentIntentId: z.string().max(255).nullable().optional(),
+  stripePaymentStatus: z.string().max(80).optional(),
+});
+
 const adjustInventorySchema = z.object({
   quantity: z.number().int(),
   reason: transactionTypeSchema,
@@ -113,42 +129,6 @@ productsRouter.get("/", requireAuth, async (req: AuthedRequest, res) => {
     res.json({ products });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to fetch products' });
-  }
-});
-
-/**
- * @swagger
- * /api/products/{id}:
- *   get:
- *     summary: Get a single product
- *     tags: [Products]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *     responses:
- *       200:
- *         description: Product details
- *       404:
- *         description: Product not found
- */
-productsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
-  try {
-    const tenantId = req.user!.tenantId;
-    const { id } = req.params;
-
-    const product = await productSalesService.getProduct(tenantId, id as string);
-
-    if (!product) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-
-    res.json({ product });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to fetch product' });
   }
 });
 
@@ -283,6 +263,25 @@ productsRouter.post("/sales", requireAuth, async (req: AuthedRequest, res) => {
   }
 });
 
+productsRouter.get("/sales", requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { startDate, endDate, fulfillmentStatus, search, limit } = req.query;
+
+    const orders = await productSalesService.getStoreOrders(tenantId, {
+      startDate: startDate as string | undefined,
+      endDate: endDate as string | undefined,
+      fulfillmentStatus: fulfillmentStatus as productSalesService.StoreFulfillmentStatus | undefined,
+      search: search as string | undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+
+    res.json({ orders });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to fetch store orders' });
+  }
+});
+
 /**
  * @swagger
  * /api/products/sales/report:
@@ -362,6 +361,28 @@ productsRouter.get("/sales/:id", requireAuth, async (req: AuthedRequest, res) =>
     res.json({ sale });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to fetch sale' });
+  }
+});
+
+productsRouter.put("/sales/:id/fulfillment", requireAuth, requireRoles(["admin", "provider", "front_desk", "manager"]), async (req: AuthedRequest, res) => {
+  try {
+    const parsed = updateStoreFulfillmentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const { id } = req.params;
+
+    const order = await productSalesService.updateStoreFulfillment(tenantId, id as string, parsed.data);
+
+    if (!order) {
+      return res.status(404).json({ error: 'Store order not found' });
+    }
+
+    res.json({ order });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Failed to update store order' });
   }
 });
 
@@ -620,5 +641,41 @@ productsRouter.get("/patients/:patientId/sales", requireAuth, async (req: Authed
     res.json({ sales });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to fetch patient sales' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/products/{id}:
+ *   get:
+ *     summary: Get a single product
+ *     tags: [Products]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Product details
+ *       404:
+ *         description: Product not found
+ */
+productsRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { id } = req.params;
+
+    const product = await productSalesService.getProduct(tenantId, id as string);
+
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    res.json({ product });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to fetch product' });
   }
 });

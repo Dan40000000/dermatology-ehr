@@ -139,6 +139,7 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
     { path: '/portal/documents', label: 'Documents', icon: 'document' },
     { path: '/portal/health-record', label: 'Health Record', icon: 'heart' },
     { path: '/portal/billing', label: 'Billing', icon: 'billing' },
+    { path: '/portal/store', label: 'Store', icon: 'store' },
     { path: '/portal/messages', label: 'Messages', icon: 'message' },
     { path: '/portal/profile', label: 'Profile', icon: 'user' },
   ];
@@ -199,6 +200,14 @@ export function PatientPortalLayout({ children }: PatientPortalLayoutProps) {
       message: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+      ),
+      store: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6 2l-1 5h14l-1-5H6z"/>
+          <path d="M5 7v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7"/>
+          <path d="M9 11h6"/>
+          <path d="M9 15h6"/>
         </svg>
       ),
       consent: (

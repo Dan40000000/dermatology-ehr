@@ -106,6 +106,15 @@ describe("ambientScribeHandlers", () => {
         clinicalActions: expect.arrayContaining([
           expect.objectContaining({ label: expect.stringContaining("Patch testing") }),
         ]),
+        billingCodes: expect.objectContaining({
+          diagnoses: expect.arrayContaining([
+            expect.objectContaining({ code: expect.stringMatching(/L23\.9|L30\.9/) }),
+          ]),
+          charges: expect.arrayContaining([
+            expect.objectContaining({ cptCode: expect.stringMatching(/99213|99214/) }),
+          ]),
+          readyForBillingReview: true,
+        }),
       })
     );
   });

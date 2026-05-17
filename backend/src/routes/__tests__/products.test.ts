@@ -68,4 +68,34 @@ describe("Products routes", () => {
     reportSpy.mockRestore();
     saleSpy.mockRestore();
   });
+
+  it("GET /products/sales reaches the store order route before product detail route", async () => {
+    const orders = [
+      {
+        id: "sale-1",
+        tenantId: "tenant-1",
+        patientId: "patient-1",
+        total: 1200,
+        fulfillmentStatus: "paid",
+      },
+    ];
+    const orderSpy = jest.spyOn(productSalesService, "getStoreOrders").mockResolvedValueOnce(orders as any);
+    const productSpy = jest.spyOn(productSalesService, "getProduct").mockResolvedValueOnce(null as any);
+
+    const res = await request(app).get("/products/sales");
+
+    expect(res.status).toBe(200);
+    expect(res.body.orders).toEqual(orders);
+    expect(orderSpy).toHaveBeenCalledWith("tenant-1", {
+      startDate: undefined,
+      endDate: undefined,
+      fulfillmentStatus: undefined,
+      search: undefined,
+      limit: undefined,
+    });
+    expect(productSpy).not.toHaveBeenCalled();
+
+    orderSpy.mockRestore();
+    productSpy.mockRestore();
+  });
 });

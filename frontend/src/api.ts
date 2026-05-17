@@ -641,6 +641,153 @@ export async function fetchUnreadCount(tenantId: string, accessToken: string) {
   return res.json();
 }
 
+export interface StaffPatientMessageThreadPreview {
+  id: string;
+  patientId: string;
+  subject: string;
+  category: 'general' | 'prescription' | 'appointment' | 'billing' | 'medical' | 'other' | string;
+  priority: 'low' | 'normal' | 'high' | 'urgent' | string;
+  status: 'open' | 'in-progress' | 'waiting-patient' | 'waiting-provider' | 'closed' | string;
+  assignedTo?: string | null;
+  assignedToName?: string | null;
+  createdByPatient?: boolean;
+  lastMessageAt?: string;
+  lastMessageBy?: string;
+  lastMessagePreview?: string;
+  isReadByStaff?: boolean;
+  messageCount?: number;
+  patientName?: string;
+  patientMrn?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StaffPatientMessage {
+  id: string;
+  senderType: 'staff' | 'patient' | string;
+  senderName?: string;
+  messageText: string;
+  sentAt?: string;
+  isInternalNote?: boolean;
+  attachments?: Array<{
+    id: string;
+    filename?: string;
+    originalFilename?: string;
+    fileSize?: number;
+    mimeType?: string;
+  }>;
+}
+
+export interface StaffPatientMessageThreadDetail extends StaffPatientMessageThreadPreview {
+  patientDob?: string | null;
+  patientEmail?: string | null;
+  patientPhone?: string | null;
+}
+
+export async function fetchStaffPatientMessageThreads(
+  tenantId: string,
+  accessToken: string,
+  filters?: {
+    category?: string;
+    status?: string;
+    assignedTo?: string;
+    priority?: string;
+    unreadOnly?: boolean;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }
+): Promise<{
+  threads: StaffPatientMessageThreadPreview[];
+  pagination?: { total: number; limit: number; offset: number; hasMore: boolean };
+}> {
+  const params = new URLSearchParams();
+  if (filters?.category) params.append('category', filters.category);
+  if (filters?.status) params.append('status', filters.status);
+  if (filters?.assignedTo) params.append('assignedTo', filters.assignedTo);
+  if (filters?.priority) params.append('priority', filters.priority);
+  if (filters?.unreadOnly) params.append('unreadOnly', 'true');
+  if (filters?.search) params.append('search', filters.search);
+  if (filters?.limit) params.append('limit', String(filters.limit));
+  if (filters?.offset) params.append('offset', String(filters.offset));
+
+  const res = await fetch(`${API_BASE}/api/patient-messages/threads${params.toString() ? `?${params.toString()}` : ''}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load patient portal threads");
+  return res.json();
+}
+
+export async function fetchStaffPatientMessageThread(
+  tenantId: string,
+  accessToken: string,
+  threadId: string
+): Promise<{ thread: StaffPatientMessageThreadDetail; messages: StaffPatientMessage[] }> {
+  const res = await fetch(`${API_BASE}/api/patient-messages/threads/${threadId}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load patient portal thread");
+  return res.json();
+}
+
+export async function updateStaffPatientMessageThread(
+  tenantId: string,
+  accessToken: string,
+  threadId: string,
+  updates: { assignedTo?: string; status?: string; priority?: string }
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/patient-messages/threads/${threadId}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to update patient portal thread");
+  }
+  return res.json();
+}
+
+export async function sendStaffPatientMessageThreadMessage(
+  tenantId: string,
+  accessToken: string,
+  threadId: string,
+  messageText: string,
+  isInternalNote = false
+): Promise<{ messageId: string }> {
+  const res = await fetch(`${API_BASE}/api/patient-messages/threads/${threadId}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    body: JSON.stringify({ messageText, isInternalNote }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to send patient portal message");
+  }
+  return res.json();
+}
+
+export async function markStaffPatientMessageThreadRead(
+  tenantId: string,
+  accessToken: string,
+  threadId: string
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/patient-messages/threads/${threadId}/mark-read`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to mark patient portal thread as read");
+  return res.json();
+}
+
 export async function fetchProviders(tenantId: string, accessToken: string) {
   const res = await fetch(`${API_BASE}/api/providers`, {
     headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
@@ -9569,6 +9716,10 @@ export async function getSuperbillFee(
 import type {
   Product,
   Sale,
+  StoreFulfillmentStatus,
+  StoreNotificationStatus,
+  StoreOrder,
+  StoreShippingMethod,
   ProductRecommendation,
   SalesReport,
   InventoryStatus,
@@ -9706,6 +9857,79 @@ export async function createProductSale(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to create sale');
+  }
+  return res.json();
+}
+
+/**
+ * Fetch product store orders
+ */
+export async function fetchProductSales(
+  tenantId: string,
+  accessToken: string,
+  filters?: {
+    startDate?: string;
+    endDate?: string;
+    fulfillmentStatus?: StoreFulfillmentStatus;
+    search?: string;
+    limit?: number;
+  }
+): Promise<{ orders: StoreOrder[] }> {
+  const params = new URLSearchParams();
+  if (filters?.startDate) params.set('startDate', filters.startDate);
+  if (filters?.endDate) params.set('endDate', filters.endDate);
+  if (filters?.fulfillmentStatus) params.set('fulfillmentStatus', filters.fulfillmentStatus);
+  if (filters?.search) params.set('search', filters.search);
+  if (filters?.limit) params.set('limit', String(filters.limit));
+
+  const url = params.toString()
+    ? `${API_BASE}/api/products/sales?${params.toString()}`
+    : `${API_BASE}/api/products/sales`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch store orders');
+  }
+  return res.json();
+}
+
+/**
+ * Update store order fulfillment, shipping, payment, or notification status
+ */
+export async function updateStoreOrderFulfillment(
+  tenantId: string,
+  accessToken: string,
+  saleId: string,
+  data: {
+    fulfillmentStatus?: StoreFulfillmentStatus;
+    shippingMethod?: StoreShippingMethod;
+    shippingFee?: number;
+    carrier?: string | null;
+    trackingNumber?: string | null;
+    notificationEmail?: string | null;
+    notificationStatus?: StoreNotificationStatus;
+    stripePaymentIntentId?: string | null;
+    stripePaymentStatus?: string;
+  }
+): Promise<{ order: StoreOrder }> {
+  const res = await fetch(`${API_BASE}/api/products/sales/${saleId}/fulfillment`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update store order');
   }
   return res.json();
 }

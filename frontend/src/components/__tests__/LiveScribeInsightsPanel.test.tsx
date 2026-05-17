@@ -41,6 +41,38 @@ const buildInsights = (): AmbientLiveInsightsPayload => ({
       rationale: 'Biopsy language was captured in the conversation.',
     },
   ],
+  billingCodes: {
+    diagnoses: [
+      {
+        code: 'D48.5',
+        description: 'Neoplasm of uncertain behavior of skin',
+        evidence: ['changing mole', 'shave biopsy'],
+        isPrimary: true,
+      },
+    ],
+    charges: [
+      {
+        cptCode: '99214',
+        description: 'Established patient office/outpatient visit, level 4',
+        codeType: 'CPT',
+        category: 'evaluation_management',
+        evidence: [],
+        reason: 'Live documentation suggests higher-complexity E/M review.',
+        reviewRequired: true,
+      },
+      {
+        cptCode: '11102',
+        description: 'Tangential skin biopsy, first lesion',
+        codeType: 'CPT',
+        category: 'procedure',
+        evidence: ['shave biopsy'],
+        reason: 'Documentation mentions a tangential/shave biopsy.',
+        reviewRequired: true,
+      },
+    ],
+    warnings: [],
+    readyForBillingReview: true,
+  },
   safetyFlags: [
     {
       label: 'Skin cancer warning features',
@@ -61,10 +93,13 @@ describe('LiveScribeInsightsPanel', () => {
     expect(screen.getByText('Live Symptoms')).toBeInTheDocument();
     expect(screen.getByText('Potential Diagnosis')).toBeInTheDocument();
     expect(screen.getByText('Potential Testing')).toBeInTheDocument();
+    expect(screen.getByText('Billing Code Preview')).toBeInTheDocument();
     expect(screen.getByText(/Changing dark mole/i)).toBeInTheDocument();
     expect(screen.getByText('Skin cancer warning features')).toBeInTheDocument();
     expect(screen.getByText('Suspicious pigmented lesion / melanoma rule-out')).toBeInTheDocument();
     expect(screen.getByText('Skin biopsy')).toBeInTheDocument();
+    expect(screen.getByText('D48.5')).toBeInTheDocument();
+    expect(screen.getByText('11102')).toBeInTheDocument();
     expect(screen.getByText('Prepare biopsy workflow')).toBeInTheDocument();
     expect(screen.getByText('Confirm medication allergies before prescribing.')).toBeInTheDocument();
   });

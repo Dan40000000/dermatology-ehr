@@ -156,6 +156,30 @@ export interface AmbientLiveSafetyFlagData {
   evidence?: string;
 }
 
+export interface AmbientLiveBillingDiagnosisData {
+  code: string;
+  description: string;
+  evidence: string[];
+  isPrimary: boolean;
+}
+
+export interface AmbientLiveBillingChargeData {
+  cptCode: string;
+  description: string;
+  codeType: 'CPT';
+  category: 'evaluation_management' | 'procedure';
+  evidence: string[];
+  reason: string;
+  reviewRequired: boolean;
+}
+
+export interface AmbientLiveBillingCodeData {
+  diagnoses: AmbientLiveBillingDiagnosisData[];
+  charges: AmbientLiveBillingChargeData[];
+  warnings: string[];
+  readyForBillingReview: boolean;
+}
+
 export interface AmbientInsightsEventData {
   recordingId: string;
   source: 'heuristic' | 'openai';
@@ -167,6 +191,7 @@ export interface AmbientInsightsEventData {
   medications: AmbientLiveMedicationData[];
   clinicalActions: AmbientLiveClinicalActionData[];
   safetyFlags: AmbientLiveSafetyFlagData[];
+  billingCodes: AmbientLiveBillingCodeData;
 }
 
 // Patient events

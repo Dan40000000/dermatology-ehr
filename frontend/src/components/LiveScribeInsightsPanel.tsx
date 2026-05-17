@@ -51,6 +51,30 @@ export interface AmbientLiveSafetyFlagInsight {
   evidence?: string;
 }
 
+export interface AmbientLiveBillingDiagnosisInsight {
+  code: string;
+  description: string;
+  evidence: string[];
+  isPrimary: boolean;
+}
+
+export interface AmbientLiveBillingChargeInsight {
+  cptCode: string;
+  description: string;
+  codeType: 'CPT';
+  category: 'evaluation_management' | 'procedure';
+  evidence: string[];
+  reason: string;
+  reviewRequired: boolean;
+}
+
+export interface AmbientLiveBillingCodeInsights {
+  diagnoses: AmbientLiveBillingDiagnosisInsight[];
+  charges: AmbientLiveBillingChargeInsight[];
+  warnings: string[];
+  readyForBillingReview: boolean;
+}
+
 export interface AmbientLiveInsightsPayload {
   recordingId: string;
   source: 'heuristic' | 'openai';
@@ -62,6 +86,7 @@ export interface AmbientLiveInsightsPayload {
   medications: AmbientLiveMedicationInsight[];
   clinicalActions: AmbientLiveClinicalActionInsight[];
   safetyFlags: AmbientLiveSafetyFlagInsight[];
+  billingCodes?: AmbientLiveBillingCodeInsights;
 }
 
 interface LiveScribeInsightsPanelProps {
@@ -127,6 +152,13 @@ const aiBadgeStyle: React.CSSProperties = {
   background: '#dcfce7',
   color: '#166534',
   border: '1px solid #bbf7d0',
+};
+
+const billingBadgeStyle: React.CSSProperties = {
+  ...metaBadgeStyle,
+  background: '#f1f5f9',
+  color: '#334155',
+  border: '1px solid #cbd5e1',
 };
 
 const emptyStyle: React.CSSProperties = {
@@ -216,6 +248,79 @@ function SummaryLines({
   );
 }
 
+function BillingPreview({
+  billingCodes,
+}: {
+  billingCodes: AmbientLiveBillingCodeInsights | undefined;
+}) {
+  const diagnoses = billingCodes?.diagnoses || [];
+  const charges = billingCodes?.charges || [];
+  const warnings = billingCodes?.warnings || [];
+
+  return (
+    <section style={{ ...cardStyle, borderColor: billingCodes?.readyForBillingReview ? '#99f6e4' : 'rgba(148, 163, 184, 0.22)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+        <div style={{ ...sectionTitleStyle, marginBottom: 0 }}>Billing Code Preview</div>
+        <span style={billingBadgeStyle}>Billing review</span>
+      </div>
+
+      {!diagnoses.length && !charges.length ? (
+        <div style={emptyStyle}>No billable codes supported by the live transcript yet.</div>
+      ) : (
+        <div style={{ display: 'grid', gap: 12 }}>
+          {diagnoses.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800, marginBottom: 6 }}>ICD-10</div>
+              <div style={{ display: 'grid', gap: 7 }}>
+                {diagnoses.slice(0, 5).map((diagnosis) => (
+                  <div key={diagnosis.code} style={{ display: 'grid', gap: 3 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13, fontWeight: 900, color: '#0f766e' }}>{diagnosis.code}</span>
+                      <span style={{ fontSize: 13, color: '#334155', fontWeight: 700 }}>{diagnosis.description}</span>
+                      {diagnosis.isPrimary && <span style={billingBadgeStyle}>primary</span>}
+                    </div>
+                    {diagnosis.evidence.length > 0 && (
+                      <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.4 }}>
+                        Evidence: {diagnosis.evidence.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {charges.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800, marginBottom: 6 }}>CPT</div>
+              <div style={{ display: 'grid', gap: 7 }}>
+                {charges.slice(0, 5).map((charge) => (
+                  <div key={`${charge.cptCode}-${charge.category}`} style={{ display: 'grid', gap: 3 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13, fontWeight: 900, color: '#0f766e' }}>{charge.cptCode}</span>
+                      <span style={{ fontSize: 13, color: '#334155', fontWeight: 700 }}>{charge.description}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.4 }}>{charge.reason}</div>
+                    {charge.evidence.length > 0 && (
+                      <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.4 }}>
+                        Evidence: {charge.evidence.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {warnings.length > 0 && (
+            <div style={{ fontSize: 11, color: '#92400e', lineHeight: 1.45 }}>{warnings.join(' ')}</div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function LiveScribeInsightsPanel({
   insights,
   compact = false,
@@ -227,6 +332,7 @@ export function LiveScribeInsightsPanel({
   const medications = insights?.medications || [];
   const actions = insights?.clinicalActions || [];
   const safetyFlags = insights?.safetyFlags || [];
+  const billingCodes = insights?.billingCodes;
 
   const gridStyle: React.CSSProperties = {
     display: 'grid',
@@ -417,6 +523,8 @@ export function LiveScribeInsightsPanel({
           items={summary?.documentationGaps}
           empty="Core documentation elements look covered so far."
         />
+
+        <BillingPreview billingCodes={billingCodes} />
       </div>
     </div>
   );

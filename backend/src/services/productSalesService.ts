@@ -7,6 +7,9 @@ export type PaymentMethod = 'cash' | 'credit' | 'debit' | 'check' | 'insurance' 
 export type SaleStatus = 'pending' | 'completed' | 'refunded' | 'cancelled';
 export type TransactionType = 'received' | 'sold' | 'adjustment' | 'return' | 'damaged' | 'expired';
 export type DiscountType = 'percentage' | 'fixed' | 'loyalty';
+export type StoreFulfillmentStatus = 'paid' | 'packing' | 'label_created' | 'shipped' | 'delivered' | 'exception' | 'cancelled';
+export type StoreNotificationStatus = 'queued' | 'sent' | 'failed' | 'muted';
+export type StoreShippingMethod = 'standard' | 'priority' | 'pickup';
 
 export interface Product {
   id: string;
@@ -111,6 +114,46 @@ export interface SalesReport {
     count: number;
     revenue: number;
   }>;
+}
+
+export interface StoreShippingAddress {
+  name: string;
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+  phone?: string;
+}
+
+export interface StoreOrder extends Sale {
+  channel: 'patient_portal' | 'public_store' | 'staff';
+  fulfillmentStatus: StoreFulfillmentStatus;
+  shippingMethod: StoreShippingMethod;
+  shippingFee?: number;
+  carrier?: string;
+  trackingNumber?: string;
+  shippingAddress?: StoreShippingAddress | Record<string, unknown>;
+  notificationEmail?: string;
+  notificationStatus: StoreNotificationStatus;
+  lastNotificationAt?: string;
+  stripePaymentIntentId?: string;
+  stripePaymentStatus: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StoreFulfillmentInput {
+  channel?: 'patient_portal' | 'public_store' | 'staff';
+  fulfillmentStatus?: StoreFulfillmentStatus;
+  shippingMethod?: StoreShippingMethod;
+  shippingFee?: number;
+  carrier?: string | null;
+  trackingNumber?: string | null;
+  shippingAddress?: StoreShippingAddress | Record<string, unknown>;
+  notificationEmail?: string | null;
+  notificationStatus?: StoreNotificationStatus;
+  stripePaymentIntentId?: string | null;
+  stripePaymentStatus?: string;
 }
 
 // Tax rate (configurable per tenant in production)
@@ -905,6 +948,369 @@ export async function getSale(
   sale.items = itemsResult.rows;
 
   return sale;
+}
+
+function isMissingStoreFulfillmentTable(error: any): boolean {
+  return error?.code === "42P01";
+}
+
+function toIsoString(value: unknown): string | undefined {
+  if (!value) return undefined;
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
+}
+
+function normalizeStoreOrderRow(row: any): StoreOrder {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    patientId: row.patientId,
+    encounterId: row.encounterId || undefined,
+    soldBy: row.soldBy,
+    saleDate: toIsoString(row.saleDate) || new Date().toISOString(),
+    subtotal: Number(row.subtotal) || 0,
+    tax: Number(row.tax) || 0,
+    discount: Number(row.discount) || 0,
+    total: Number(row.total) || 0,
+    paymentMethod: row.paymentMethod,
+    paymentReference: row.paymentReference || undefined,
+    status: row.status,
+    patientFirstName: row.patientFirstName || undefined,
+    patientLastName: row.patientLastName || undefined,
+    channel: row.channel || 'staff',
+    fulfillmentStatus: row.fulfillmentStatus || 'paid',
+    shippingMethod: row.shippingMethod || 'standard',
+    shippingFee: Number(row.shippingFee) || 0,
+    carrier: row.carrier || undefined,
+    trackingNumber: row.trackingNumber || undefined,
+    shippingAddress: row.shippingAddress || {},
+    notificationEmail: row.notificationEmail || undefined,
+    notificationStatus: row.notificationStatus || 'queued',
+    lastNotificationAt: toIsoString(row.lastNotificationAt),
+    stripePaymentIntentId: row.stripePaymentIntentId || undefined,
+    stripePaymentStatus: row.stripePaymentStatus || 'paid',
+    createdAt: toIsoString(row.createdAt),
+    updatedAt: toIsoString(row.updatedAt),
+  };
+}
+
+async function attachSaleItems(orders: StoreOrder[]): Promise<StoreOrder[]> {
+  if (orders.length === 0) return orders;
+
+  const saleIds = orders.map((order) => order.id);
+  const itemsResult = await pool.query(
+    `SELECT
+       sale_id as "saleId", id, product_id as "productId",
+       quantity, unit_price as "unitPrice", discount_amount as "discountAmount",
+       line_total as "lineTotal", product_name as "productName",
+       product_sku as "productSku"
+     FROM product_sale_items
+     WHERE sale_id = ANY($1::uuid[])
+     ORDER BY product_name`,
+    [saleIds]
+  );
+
+  const bySale = new Map<string, SaleItemDetail[]>();
+  for (const item of itemsResult.rows) {
+    const saleId = item.saleId;
+    const current = bySale.get(saleId) || [];
+    current.push({
+      id: item.id,
+      saleId,
+      productId: item.productId,
+      quantity: Number(item.quantity) || 0,
+      unitPrice: Number(item.unitPrice) || 0,
+      discountAmount: Number(item.discountAmount) || 0,
+      lineTotal: Number(item.lineTotal) || 0,
+      productName: item.productName,
+      productSku: item.productSku,
+    });
+    bySale.set(saleId, current);
+  }
+
+  return orders.map((order) => ({
+    ...order,
+    items: bySale.get(order.id) || [],
+  }));
+}
+
+async function getStoreOrdersWithoutFulfillment(
+  tenantId: string,
+  filters: {
+    startDate?: string;
+    endDate?: string;
+    saleId?: string;
+    limit?: number;
+  } = {}
+): Promise<StoreOrder[]> {
+  const conditions: string[] = ['ps.tenant_id = $1'];
+  const params: any[] = [tenantId];
+  let paramIndex = 2;
+
+  if (filters.saleId) {
+    conditions.push(`ps.id = $${paramIndex}::uuid`);
+    params.push(filters.saleId);
+    paramIndex++;
+  }
+
+  if (filters.startDate) {
+    conditions.push(`ps.sale_date >= $${paramIndex}::timestamp`);
+    params.push(filters.startDate);
+    paramIndex++;
+  }
+
+  if (filters.endDate) {
+    conditions.push(`ps.sale_date <= $${paramIndex}::timestamp`);
+    params.push(filters.endDate);
+    paramIndex++;
+  }
+
+  const limit = Math.min(Math.max(filters.limit || 100, 1), 500);
+  params.push(limit);
+
+  const result = await pool.query(
+    `SELECT
+       ps.id, ps.tenant_id as "tenantId", ps.patient_id as "patientId",
+       ps.encounter_id as "encounterId", ps.sold_by as "soldBy",
+       ps.sale_date as "saleDate", ps.subtotal, ps.tax, ps.discount,
+       ps.total, 0 as "shippingFee", ps.payment_method as "paymentMethod",
+       ps.payment_reference as "paymentReference", ps.status,
+       p.first_name as "patientFirstName", p.last_name as "patientLastName",
+       'staff' as channel, 'paid' as "fulfillmentStatus",
+       'standard' as "shippingMethod", NULL as carrier,
+       NULL as "trackingNumber", '{}'::jsonb as "shippingAddress",
+       p.email as "notificationEmail", 'queued' as "notificationStatus",
+       NULL as "lastNotificationAt", ps.payment_reference as "stripePaymentIntentId",
+       CASE WHEN ps.status = 'completed' THEN 'paid' ELSE ps.status END as "stripePaymentStatus",
+       ps.created_at as "createdAt", ps.updated_at as "updatedAt"
+     FROM product_sales ps
+     LEFT JOIN patients p ON ps.patient_id = p.id
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY ps.sale_date DESC
+     LIMIT $${paramIndex}`,
+    params
+  );
+
+  return attachSaleItems(result.rows.map(normalizeStoreOrderRow));
+}
+
+export async function getStoreOrders(
+  tenantId: string,
+  filters: {
+    startDate?: string;
+    endDate?: string;
+    fulfillmentStatus?: StoreFulfillmentStatus;
+    search?: string;
+    saleId?: string;
+    limit?: number;
+  } = {}
+): Promise<StoreOrder[]> {
+  const conditions: string[] = ['ps.tenant_id = $1'];
+  const params: any[] = [tenantId];
+  let paramIndex = 2;
+
+  if (filters.saleId) {
+    conditions.push(`ps.id = $${paramIndex}::uuid`);
+    params.push(filters.saleId);
+    paramIndex++;
+  }
+
+  if (filters.startDate) {
+    conditions.push(`ps.sale_date >= $${paramIndex}::timestamp`);
+    params.push(filters.startDate);
+    paramIndex++;
+  }
+
+  if (filters.endDate) {
+    conditions.push(`ps.sale_date <= $${paramIndex}::timestamp`);
+    params.push(filters.endDate);
+    paramIndex++;
+  }
+
+  if (filters.fulfillmentStatus) {
+    conditions.push(`COALESCE(sof.fulfillment_status, 'paid') = $${paramIndex}`);
+    params.push(filters.fulfillmentStatus);
+    paramIndex++;
+  }
+
+  if (filters.search) {
+    conditions.push(`(
+      ps.id::text ILIKE $${paramIndex}
+      OR ps.payment_reference ILIKE $${paramIndex}
+      OR sof.tracking_number ILIKE $${paramIndex}
+      OR p.first_name ILIKE $${paramIndex}
+      OR p.last_name ILIKE $${paramIndex}
+      OR CONCAT_WS(' ', p.first_name, p.last_name) ILIKE $${paramIndex}
+    )`);
+    params.push(`%${filters.search}%`);
+    paramIndex++;
+  }
+
+  const limit = Math.min(Math.max(filters.limit || 100, 1), 500);
+  params.push(limit);
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         ps.id, ps.tenant_id as "tenantId", ps.patient_id as "patientId",
+         ps.encounter_id as "encounterId", ps.sold_by as "soldBy",
+         ps.sale_date as "saleDate", ps.subtotal, ps.tax, ps.discount,
+         (ps.total + COALESCE(sof.shipping_fee, 0)) as total,
+         COALESCE(sof.shipping_fee, 0) as "shippingFee",
+         ps.payment_method as "paymentMethod",
+         ps.payment_reference as "paymentReference", ps.status,
+         p.first_name as "patientFirstName", p.last_name as "patientLastName",
+         COALESCE(sof.channel, 'staff') as channel,
+         COALESCE(sof.fulfillment_status, 'paid') as "fulfillmentStatus",
+         COALESCE(sof.shipping_method, 'standard') as "shippingMethod",
+         sof.carrier, sof.tracking_number as "trackingNumber",
+         COALESCE(sof.shipping_address, '{}'::jsonb) as "shippingAddress",
+         COALESCE(sof.notification_email, p.email) as "notificationEmail",
+         COALESCE(sof.notification_status, 'queued') as "notificationStatus",
+         sof.last_notification_at as "lastNotificationAt",
+         COALESCE(sof.stripe_payment_intent_id, ps.payment_reference) as "stripePaymentIntentId",
+         COALESCE(sof.stripe_payment_status, CASE WHEN ps.status = 'completed' THEN 'paid' ELSE ps.status END) as "stripePaymentStatus",
+         COALESCE(sof.created_at, ps.created_at) as "createdAt",
+         COALESCE(sof.updated_at, ps.updated_at) as "updatedAt"
+       FROM product_sales ps
+       LEFT JOIN patients p ON ps.patient_id = p.id
+       LEFT JOIN store_order_fulfillments sof ON sof.sale_id = ps.id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY ps.sale_date DESC
+       LIMIT $${paramIndex}`,
+      params
+    );
+
+    return attachSaleItems(result.rows.map(normalizeStoreOrderRow));
+  } catch (error: any) {
+    if (isMissingStoreFulfillmentTable(error)) {
+      return getStoreOrdersWithoutFulfillment(tenantId, filters);
+    }
+    throw error;
+  }
+}
+
+export async function createStoreFulfillment(
+  tenantId: string,
+  saleId: string,
+  patientId: string,
+  data: StoreFulfillmentInput
+): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO store_order_fulfillments (
+       id, tenant_id, sale_id, patient_id, channel, fulfillment_status,
+         shipping_method, shipping_fee, carrier, tracking_number, shipping_address,
+         notification_email, notification_status, last_notification_at,
+         stripe_payment_intent_id, stripe_payment_status
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13,
+         CASE WHEN $13 IN ('sent', 'failed') THEN NOW() ELSE NULL END,
+         $14, $15
+       )
+       ON CONFLICT (sale_id) DO UPDATE SET
+         channel = EXCLUDED.channel,
+         fulfillment_status = EXCLUDED.fulfillment_status,
+         shipping_method = EXCLUDED.shipping_method,
+         shipping_fee = EXCLUDED.shipping_fee,
+         carrier = EXCLUDED.carrier,
+         tracking_number = EXCLUDED.tracking_number,
+         shipping_address = EXCLUDED.shipping_address,
+         notification_email = EXCLUDED.notification_email,
+         notification_status = EXCLUDED.notification_status,
+         last_notification_at = CASE
+           WHEN EXCLUDED.notification_status IN ('sent', 'failed') THEN NOW()
+           ELSE store_order_fulfillments.last_notification_at
+         END,
+         stripe_payment_intent_id = EXCLUDED.stripe_payment_intent_id,
+         stripe_payment_status = EXCLUDED.stripe_payment_status,
+         updated_at = NOW()`,
+      [
+        crypto.randomUUID(),
+        tenantId,
+        saleId,
+        patientId,
+        data.channel || 'patient_portal',
+        data.fulfillmentStatus || 'paid',
+        data.shippingMethod || 'standard',
+        Math.max(0, data.shippingFee || 0),
+        data.carrier || null,
+        data.trackingNumber || null,
+        JSON.stringify(data.shippingAddress || {}),
+        data.notificationEmail || null,
+        data.notificationStatus || 'queued',
+        data.stripePaymentIntentId || null,
+        data.stripePaymentStatus || 'paid',
+      ]
+    );
+  } catch (error: any) {
+    if (isMissingStoreFulfillmentTable(error)) return;
+    throw error;
+  }
+}
+
+export async function updateStoreFulfillment(
+  tenantId: string,
+  saleId: string,
+  data: StoreFulfillmentInput
+): Promise<StoreOrder | null> {
+  try {
+    await pool.query(
+      `INSERT INTO store_order_fulfillments (id, tenant_id, sale_id, patient_id)
+       SELECT $1, $2, ps.id, ps.patient_id
+       FROM product_sales ps
+       WHERE ps.id = $3 AND ps.tenant_id = $2
+       ON CONFLICT (sale_id) DO NOTHING`,
+      [crypto.randomUUID(), tenantId, saleId]
+    );
+
+    const updates: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    const addUpdate = (column: string, value: unknown, cast = '') => {
+      updates.push(`${column} = $${paramIndex}${cast}`);
+      values.push(value);
+      paramIndex++;
+    };
+
+    if (data.fulfillmentStatus !== undefined) addUpdate('fulfillment_status', data.fulfillmentStatus);
+    if (data.shippingMethod !== undefined) addUpdate('shipping_method', data.shippingMethod);
+    if (data.shippingFee !== undefined) addUpdate('shipping_fee', Math.max(0, data.shippingFee));
+    if (data.carrier !== undefined) addUpdate('carrier', data.carrier);
+    if (data.trackingNumber !== undefined) addUpdate('tracking_number', data.trackingNumber);
+    if (data.shippingAddress !== undefined) addUpdate('shipping_address', JSON.stringify(data.shippingAddress), '::jsonb');
+    if (data.notificationEmail !== undefined) addUpdate('notification_email', data.notificationEmail);
+    if (data.notificationStatus !== undefined) {
+      addUpdate('notification_status', data.notificationStatus);
+      if (['sent', 'failed'].includes(data.notificationStatus)) {
+        updates.push('last_notification_at = NOW()');
+      }
+    }
+    if (data.stripePaymentIntentId !== undefined) addUpdate('stripe_payment_intent_id', data.stripePaymentIntentId);
+    if (data.stripePaymentStatus !== undefined) addUpdate('stripe_payment_status', data.stripePaymentStatus);
+
+    if (updates.length > 0) {
+      updates.push('updated_at = NOW()');
+      values.push(saleId, tenantId);
+
+      await pool.query(
+        `UPDATE store_order_fulfillments
+         SET ${updates.join(', ')}
+         WHERE sale_id = $${paramIndex} AND tenant_id = $${paramIndex + 1}`,
+        values
+      );
+    }
+
+    const [order] = await getStoreOrders(tenantId, { saleId, limit: 1 });
+    return order || null;
+  } catch (error: any) {
+    if (isMissingStoreFulfillmentTable(error)) {
+      const [order] = await getStoreOrdersWithoutFulfillment(tenantId, { saleId, limit: 1 });
+      return order || null;
+    }
+    throw error;
+  }
 }
 
 /**

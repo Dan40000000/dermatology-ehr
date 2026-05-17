@@ -1146,6 +1146,11 @@ export function PortalDashboardPage() {
           color: #059669;
         }
 
+        .action-icon.store-icon {
+          background: linear-gradient(135deg, #ccfbf1 0%, #99f6e4 100%);
+          color: #0f766e;
+        }
+
         .action-icon.health-icon {
           background: linear-gradient(135deg, #fce7f3 0%, #fbcfe8 100%);
           color: #db2777;

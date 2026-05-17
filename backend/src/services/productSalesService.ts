@@ -159,6 +159,346 @@ export interface StoreFulfillmentInput {
 // Tax rate (configurable per tenant in production)
 const DEFAULT_TAX_RATE = 0.0825; // 8.25%
 
+interface StoreCatalogSeedProduct {
+  id: string;
+  sku: string;
+  name: string;
+  description: string;
+  category: ProductCategory;
+  brand: string;
+  price: number;
+  cost: number;
+  inventoryCount: number;
+  reorderPoint: number;
+}
+
+const EXPANDED_STORE_CATALOG: StoreCatalogSeedProduct[] = [
+  { id: '10000000-0000-4000-8000-000000000001', sku: 'SPF-TINT-50', name: 'Tinted Mineral SPF 50', description: 'Broad-spectrum mineral sunscreen with a sheer tint for daily face coverage.', category: 'sunscreen', brand: 'ClearDerm', price: 4200, cost: 1850, inventoryCount: 36, reorderPoint: 8 },
+  { id: '10000000-0000-4000-8000-000000000002', sku: 'SPF-CLEAR-46', name: 'Clear Daily SPF 46', description: 'Lightweight niacinamide sunscreen for acne-prone or sensitive skin.', category: 'sunscreen', brand: 'EltaMD', price: 4300, cost: 2100, inventoryCount: 42, reorderPoint: 10 },
+  { id: '10000000-0000-4000-8000-000000000003', sku: 'SPF-MIN-MATTE', name: 'Matte Mineral SPF 40', description: 'Oil-control mineral sunscreen with a soft matte finish.', category: 'sunscreen', brand: 'La Roche-Posay', price: 3899, cost: 1760, inventoryCount: 28, reorderPoint: 8 },
+  { id: '10000000-0000-4000-8000-000000000004', sku: 'SPF-BODY-50', name: 'Body Shield SPF 50', description: 'Water-resistant body sunscreen for outdoor activity.', category: 'sunscreen', brand: 'Neutrogena', price: 1799, cost: 820, inventoryCount: 54, reorderPoint: 14 },
+  { id: '10000000-0000-4000-8000-000000000005', sku: 'SPF-KIDS-MIN', name: 'Kids Mineral SPF 50', description: 'Gentle zinc-based sunscreen for children and reactive skin.', category: 'sunscreen', brand: 'Blue Lizard', price: 2499, cost: 1125, inventoryCount: 24, reorderPoint: 8 },
+  { id: '10000000-0000-4000-8000-000000000006', sku: 'SPF-STICK-SPORT', name: 'Sport SPF 50 Stick', description: 'Pocket-size sunscreen stick for ears, nose, scars, and reapplication.', category: 'sunscreen', brand: 'ClearDerm', price: 1899, cost: 760, inventoryCount: 40, reorderPoint: 12 },
+  { id: '10000000-0000-4000-8000-000000000007', sku: 'SPF-POWDER-BRUSH', name: 'Brush-On SPF 30 Powder', description: 'Translucent mineral powder for reapplying SPF over makeup.', category: 'sunscreen', brand: 'Colorescience', price: 6900, cost: 3450, inventoryCount: 16, reorderPoint: 5 },
+  { id: '10000000-0000-4000-8000-000000000008', sku: 'SPF-LIP-BALM', name: 'SPF 36 Lip Balm', description: 'Moisturizing lip protection for daily sun exposure.', category: 'sunscreen', brand: 'EltaMD', price: 1400, cost: 610, inventoryCount: 50, reorderPoint: 14 },
+  { id: '10000000-0000-4000-8000-000000000009', sku: 'SPF-ROSACEA-TINT', name: 'Rosacea Calming Tinted SPF', description: 'Mineral sunscreen with green-neutralizing tint for facial redness.', category: 'sunscreen', brand: 'ClearDerm', price: 4600, cost: 2050, inventoryCount: 22, reorderPoint: 7 },
+  { id: '10000000-0000-4000-8000-000000000010', sku: 'SPF-MELASMA-DEF', name: 'Melasma Defense SPF 50+', description: 'High-protection iron oxide sunscreen for pigment-prone skin.', category: 'sunscreen', brand: 'SkinCeuticals', price: 5600, cost: 2750, inventoryCount: 18, reorderPoint: 6 },
+  { id: '10000000-0000-4000-8000-000000000011', sku: 'CLN-GENTLE-GEL', name: 'Gentle Gel Cleanser', description: 'Low-foam cleanser for normal, combination, and sensitive skin.', category: 'skincare', brand: 'ClearDerm', price: 2400, cost: 900, inventoryCount: 38, reorderPoint: 10 },
+  { id: '10000000-0000-4000-8000-000000000012', sku: 'CLN-HYD-CREAM', name: 'Hydrating Cream Cleanser', description: 'Non-stripping cleanser for dry skin, eczema, and retinoid users.', category: 'skincare', brand: 'CeraVe', price: 1699, cost: 760, inventoryCount: 44, reorderPoint: 12 },
+  { id: '10000000-0000-4000-8000-000000000013', sku: 'CLN-ACNE-SA', name: 'Salicylic Acid Acne Wash', description: 'Two-percent salicylic wash for clogged pores and oily skin.', category: 'skincare', brand: 'La Roche-Posay', price: 2299, cost: 1040, inventoryCount: 30, reorderPoint: 9 },
+  { id: '10000000-0000-4000-8000-000000000014', sku: 'CLN-BPO-4', name: 'Benzoyl Peroxide 4% Wash', description: 'Creamy acne wash for face, chest, back, and folliculitis routines.', category: 'skincare', brand: 'PanOxyl', price: 1499, cost: 640, inventoryCount: 34, reorderPoint: 10 },
+  { id: '10000000-0000-4000-8000-000000000015', sku: 'CLN-ECZEMA', name: 'Eczema Relief Body Wash', description: 'Fragrance-free wash with colloidal oatmeal for itch-prone skin.', category: 'skincare', brand: 'Aveeno', price: 1399, cost: 590, inventoryCount: 26, reorderPoint: 8 },
+  { id: '10000000-0000-4000-8000-000000000016', sku: 'CRM-BARRIER', name: 'Barrier Repair Cream', description: 'Ceramide-rich moisturizer for irritated, dry, or retinoid-sensitive skin.', category: 'skincare', brand: 'ClearDerm', price: 3600, cost: 1425, inventoryCount: 32, reorderPoint: 8 },
+  { id: '10000000-0000-4000-8000-000000000017', sku: 'LOT-LIGHT-DAILY', name: 'Light Daily Moisturizer', description: 'Oil-free daily moisturizer for acne-prone and combination skin.', category: 'skincare', brand: 'CeraVe', price: 1899, cost: 850, inventoryCount: 36, reorderPoint: 10 },
+  { id: '10000000-0000-4000-8000-000000000018', sku: 'CRM-RICH-REPAIR', name: 'Rich Repair Cream', description: 'Intensive moisturizer for xerosis, eczema, and winter dryness.', category: 'skincare', brand: 'La Roche-Posay', price: 2499, cost: 1120, inventoryCount: 24, reorderPoint: 8 },
+  { id: '10000000-0000-4000-8000-000000000019', sku: 'OINT-HEALING', name: 'Healing Ointment', description: 'Petrolatum-based ointment for wounds, lips, and compromised barrier areas.', category: 'skincare', brand: 'Aquaphor', price: 1299, cost: 560, inventoryCount: 58, reorderPoint: 16 },
+  { id: '10000000-0000-4000-8000-000000000020', sku: 'CRM-HAND-ECZEMA', name: 'Hand Eczema Repair Cream', description: 'Thick hand cream for fissures, irritant dermatitis, and frequent washing.', category: 'skincare', brand: 'Vanicream', price: 1599, cost: 700, inventoryCount: 31, reorderPoint: 9 },
+  { id: '10000000-0000-4000-8000-000000000021', sku: 'ACNE-BPO-SPOT', name: 'BPO 5% Spot Treatment', description: 'Targeted benzoyl peroxide gel for inflamed acne lesions.', category: 'skincare', brand: 'ClearDerm', price: 1800, cost: 700, inventoryCount: 33, reorderPoint: 10 },
+  { id: '10000000-0000-4000-8000-000000000022', sku: 'ACNE-ADAP-01', name: 'Adapalene 0.1% Gel', description: 'OTC retinoid gel for acne maintenance and comedonal breakouts.', category: 'skincare', brand: 'Differin', price: 2199, cost: 960, inventoryCount: 27, reorderPoint: 8 },
+  { id: '10000000-0000-4000-8000-000000000023', sku: 'ACNE-SA-PADS', name: 'Salicylic Clarifying Pads', description: 'Textured pads for oily skin, clogged pores, and gym-bag acne routines.', category: 'skincare', brand: 'ClearDerm', price: 2600, cost: 980, inventoryCount: 25, reorderPoint: 8 },
+  { id: '10000000-0000-4000-8000-000000000024', sku: 'ACNE-NIACIN-10', name: 'Niacinamide 10% Serum', description: 'Oil-control serum for redness, pores, and post-acne discoloration.', category: 'skincare', brand: 'The Ordinary', price: 799, cost: 350, inventoryCount: 52, reorderPoint: 14 },
+  { id: '10000000-0000-4000-8000-000000000025', sku: 'ACNE-PATCH-XL', name: 'Hydrocolloid Acne Patches', description: 'Assorted patches for whiteheads and healing picked spots.', category: 'skincare', brand: 'Hero Cosmetics', price: 1299, cost: 540, inventoryCount: 46, reorderPoint: 12 },
+  { id: '10000000-0000-4000-8000-000000000026', sku: 'ACNE-BODY-SPRAY', name: 'Clarifying Body Spray', description: 'Back and chest acne spray with salicylic acid and soothing botanicals.', category: 'skincare', brand: 'ClearDerm', price: 2800, cost: 1100, inventoryCount: 21, reorderPoint: 7 },
+  { id: '10000000-0000-4000-8000-000000000027', sku: 'AZE-REDNESS-10', name: 'Azelaic Acid 10% Booster', description: 'Leave-on booster for redness, uneven tone, and blemish-prone skin.', category: 'skincare', brand: "Paula's Choice", price: 3900, cost: 1800, inventoryCount: 20, reorderPoint: 7 },
+  { id: '10000000-0000-4000-8000-000000000028', sku: 'SER-VITC-15', name: 'Vitamin C 15% Serum', description: 'Antioxidant serum for brightness, texture, and photodamage support.', category: 'cosmetic', brand: 'SkinCeuticals', price: 16600, cost: 8300, inventoryCount: 15, reorderPoint: 5 },
+  { id: '10000000-0000-4000-8000-000000000029', sku: 'SER-HA-HYDRATE', name: 'Hydrating HA Serum', description: 'Hyaluronic acid serum for lightweight plumping hydration.', category: 'cosmetic', brand: 'AesthetiCare', price: 5200, cost: 2100, inventoryCount: 22, reorderPoint: 6 },
+  { id: '10000000-0000-4000-8000-000000000030', sku: 'RETINOL-03', name: 'Retinol 0.3% Night Serum', description: 'Starter retinol for texture, fine lines, and preventive skin aging routines.', category: 'cosmetic', brand: 'SkinBetter', price: 8900, cost: 4200, inventoryCount: 14, reorderPoint: 5 },
+  { id: '10000000-0000-4000-8000-000000000031', sku: 'RETINAL-ADV', name: 'Advanced Retinal Night Cream', description: 'Higher-strength retinal cream for experienced retinoid users.', category: 'cosmetic', brand: 'Avene', price: 7400, cost: 3350, inventoryCount: 12, reorderPoint: 4 },
+  { id: '10000000-0000-4000-8000-000000000032', sku: 'EYE-PEPTIDE', name: 'Peptide Eye Repair', description: 'Peptide eye cream for dryness, crepey texture, and post-procedure support.', category: 'cosmetic', brand: 'AesthetiCare', price: 6400, cost: 2500, inventoryCount: 16, reorderPoint: 5 },
+  { id: '10000000-0000-4000-8000-000000000033', sku: 'PAD-GLYCOLIC-10', name: 'Glycolic Renewal Pads', description: 'Ten-percent glycolic pads for dullness, keratosis pilaris, and texture.', category: 'cosmetic', brand: 'ClearDerm', price: 3200, cost: 1200, inventoryCount: 24, reorderPoint: 8 },
+  { id: '10000000-0000-4000-8000-000000000034', sku: 'SER-TRANEX', name: 'Tranexamic Brightening Serum', description: 'Pigment-focused serum for melasma-prone and uneven skin tone routines.', category: 'cosmetic', brand: 'SkinCeuticals', price: 9800, cost: 4900, inventoryCount: 13, reorderPoint: 5 },
+  { id: '10000000-0000-4000-8000-000000000035', sku: 'SER-GROWTH', name: 'Recovery Growth Factor Serum', description: 'Post-procedure and anti-aging serum for barrier recovery and glow.', category: 'cosmetic', brand: 'AesthetiCare', price: 11800, cost: 5200, inventoryCount: 10, reorderPoint: 4 },
+  { id: '10000000-0000-4000-8000-000000000036', sku: 'CRM-NECK-FIRM', name: 'Neck Firming Cream', description: 'Firming cream for neck texture, crepiness, and cosmetic maintenance.', category: 'cosmetic', brand: 'Revision', price: 11200, cost: 5600, inventoryCount: 11, reorderPoint: 4 },
+  { id: '10000000-0000-4000-8000-000000000037', sku: 'CRM-LIPID-RESTORE', name: 'Triple Lipid Restore Cream', description: 'Lipid-rich cosmetic moisturizer for dry, mature, or retinoid-treated skin.', category: 'cosmetic', brand: 'SkinCeuticals', price: 15000, cost: 7600, inventoryCount: 12, reorderPoint: 4 },
+  { id: '10000000-0000-4000-8000-000000000038', sku: 'POST-LASER-KIT', name: 'Post-Laser Recovery Kit', description: 'Cleanser, balm, compress cloths, and SPF for laser recovery.', category: 'post_procedure', brand: 'AesthetiCare', price: 6800, cost: 2900, inventoryCount: 18, reorderPoint: 6 },
+  { id: '10000000-0000-4000-8000-000000000039', sku: 'POST-PEEL-KIT', name: 'Chemical Peel Recovery Kit', description: 'Gentle cleanser, bland moisturizer, ointment, and sunscreen for peel aftercare.', category: 'post_procedure', brand: 'ClearDerm', price: 6200, cost: 2600, inventoryCount: 19, reorderPoint: 6 },
+  { id: '10000000-0000-4000-8000-000000000040', sku: 'POST-BIOPSY-KIT', name: 'Biopsy Wound Care Kit', description: 'Petrolatum packets, nonstick pads, paper tape, and wound-care instructions.', category: 'post_procedure', brand: 'ClearDerm', price: 2200, cost: 850, inventoryCount: 44, reorderPoint: 12 },
+  { id: '10000000-0000-4000-8000-000000000041', sku: 'SCAR-SIL-GEL', name: 'Silicone Scar Gel', description: 'Clear silicone gel for surgical scars and procedure-site healing.', category: 'post_procedure', brand: 'ScarAway', price: 2499, cost: 1150, inventoryCount: 28, reorderPoint: 8 },
+  { id: '10000000-0000-4000-8000-000000000042', sku: 'SCAR-SIL-SHEETS', name: 'Silicone Scar Sheets', description: 'Reusable silicone sheets for hypertrophic scars and incision support.', category: 'post_procedure', brand: 'ScarAway', price: 3199, cost: 1460, inventoryCount: 22, reorderPoint: 7 },
+  { id: '10000000-0000-4000-8000-000000000043', sku: 'POST-HYDRO-BAND', name: 'Hydrocolloid Bandages', description: 'Flexible hydrocolloid dressings for small wound coverage.', category: 'post_procedure', brand: 'Band-Aid', price: 999, cost: 420, inventoryCount: 48, reorderPoint: 12 },
+  { id: '10000000-0000-4000-8000-000000000044', sku: 'POST-COOL-MASK', name: 'Cooling Recovery Mask', description: 'Single-use cooling mask for laser, microneedling, and peel appointments.', category: 'post_procedure', brand: 'AesthetiCare', price: 1800, cost: 640, inventoryCount: 35, reorderPoint: 10 },
+  { id: '10000000-0000-4000-8000-000000000045', sku: 'POST-BARRIER-BALM', name: 'Procedure Barrier Balm', description: 'Bland occlusive balm for resurfacing, biopsy, and irritated skin recovery.', category: 'post_procedure', brand: 'ClearDerm', price: 1600, cost: 620, inventoryCount: 39, reorderPoint: 10 },
+  { id: '10000000-0000-4000-8000-000000000046', sku: 'POST-SCAR-SPF', name: 'Scar SPF 50 Stick', description: 'Targeted mineral SPF stick for healing scars and post-procedure pigment control.', category: 'post_procedure', brand: 'La Roche-Posay', price: 1999, cost: 880, inventoryCount: 27, reorderPoint: 8 },
+  { id: '10000000-0000-4000-8000-000000000047', sku: 'POST-SOAK-KIT', name: 'Vinegar Soak Kit', description: 'Measuring cup, gauze, and instructions for provider-directed soak routines.', category: 'post_procedure', brand: 'ClearDerm', price: 1500, cost: 500, inventoryCount: 30, reorderPoint: 8 },
+  { id: '10000000-0000-4000-8000-000000000048', sku: 'HAIR-MINOX-FOAM', name: 'Minoxidil 5% Foam', description: 'OTC foam for hair thinning maintenance when appropriate for the patient.', category: 'skincare', brand: 'Rogaine', price: 3499, cost: 1700, inventoryCount: 18, reorderPoint: 6 },
+  { id: '10000000-0000-4000-8000-000000000049', sku: 'HAIR-SCALP-SERUM', name: 'Soothing Scalp Serum', description: 'Leave-on scalp serum for dryness, itch, and flaking-prone routines.', category: 'skincare', brand: 'ClearDerm', price: 3000, cost: 1200, inventoryCount: 20, reorderPoint: 7 },
+  { id: '10000000-0000-4000-8000-000000000050', sku: 'NAIL-REPAIR-LACQ', name: 'Brittle Nail Repair Lacquer', description: 'Hydrating nail lacquer for brittle, peeling, or post-gel damaged nails.', category: 'skincare', brand: 'ISDIN', price: 3200, cost: 1450, inventoryCount: 18, reorderPoint: 6 },
+];
+
+const storeReadyTenants = new Set<string>();
+
+async function ensureStoreSchemaAndCatalog(tenantId: string): Promise<void> {
+  if (storeReadyTenants.has(tenantId)) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS products (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        sku TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        category TEXT NOT NULL,
+        brand TEXT,
+        price INTEGER NOT NULL DEFAULT 0,
+        cost INTEGER NOT NULL DEFAULT 0,
+        inventory_count INTEGER NOT NULL DEFAULT 0,
+        reorder_point INTEGER NOT NULL DEFAULT 10,
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        image_url TEXT,
+        barcode TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        created_by TEXT,
+        UNIQUE(tenant_id, sku)
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS product_sales (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        patient_id TEXT REFERENCES patients(id) ON DELETE CASCADE,
+        encounter_id TEXT REFERENCES encounters(id) ON DELETE SET NULL,
+        sold_by TEXT,
+        sale_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        subtotal INTEGER NOT NULL DEFAULT 0,
+        tax INTEGER NOT NULL DEFAULT 0,
+        discount INTEGER NOT NULL DEFAULT 0,
+        total INTEGER NOT NULL DEFAULT 0,
+        payment_method TEXT NOT NULL DEFAULT 'credit',
+        payment_reference TEXT,
+        status TEXT NOT NULL DEFAULT 'completed',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      ALTER TABLE product_sales
+        ADD COLUMN IF NOT EXISTS patient_id TEXT,
+        ADD COLUMN IF NOT EXISTS encounter_id TEXT,
+        ADD COLUMN IF NOT EXISTS sold_by TEXT,
+        ADD COLUMN IF NOT EXISTS tax INTEGER DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS discount INTEGER DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS total INTEGER DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()
+    `);
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'product_sales' AND column_name = 'sale_number'
+        ) THEN
+          ALTER TABLE product_sales ALTER COLUMN sale_number DROP NOT NULL;
+        END IF;
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'product_sales' AND column_name = 'total_amount'
+        ) THEN
+          ALTER TABLE product_sales ALTER COLUMN total_amount DROP NOT NULL;
+        END IF;
+      END $$;
+    `);
+    await client.query(`
+      DO $$
+      DECLARE constraint_name TEXT;
+      BEGIN
+        FOR constraint_name IN
+          SELECT con.conname
+          FROM pg_constraint con
+          JOIN pg_attribute att
+            ON att.attrelid = con.conrelid
+           AND att.attnum = ANY(con.conkey)
+          WHERE con.conrelid = 'product_sales'::regclass
+            AND con.contype = 'f'
+            AND att.attname = 'sold_by'
+        LOOP
+          EXECUTE format('ALTER TABLE product_sales DROP CONSTRAINT IF EXISTS %I', constraint_name);
+        END LOOP;
+      END $$;
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS product_sale_items (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        sale_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        unit_price INTEGER NOT NULL DEFAULT 0,
+        discount_amount INTEGER NOT NULL DEFAULT 0,
+        line_total INTEGER NOT NULL DEFAULT 0,
+        product_name TEXT NOT NULL DEFAULT '',
+        product_sku TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      ALTER TABLE product_sale_items
+        ADD COLUMN IF NOT EXISTS discount_amount INTEGER DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS product_name TEXT DEFAULT '',
+        ADD COLUMN IF NOT EXISTS product_sku TEXT DEFAULT ''
+    `);
+    await client.query(`
+      DO $$
+      DECLARE constraint_name TEXT;
+      BEGIN
+        FOR constraint_name IN
+          SELECT con.conname
+          FROM pg_constraint con
+          JOIN pg_attribute att
+            ON att.attrelid = con.conrelid
+           AND att.attnum = ANY(con.conkey)
+          WHERE con.conrelid = 'product_sale_items'::regclass
+            AND con.contype = 'f'
+            AND att.attname = 'product_id'
+        LOOP
+          EXECUTE format('ALTER TABLE product_sale_items DROP CONSTRAINT IF EXISTS %I', constraint_name);
+        END LOOP;
+      END $$;
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS product_inventory_transactions (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        product_id TEXT NOT NULL,
+        transaction_type TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        reference_id TEXT,
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        created_by TEXT
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS store_order_fulfillments (
+        id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        sale_id TEXT NOT NULL UNIQUE,
+        patient_id TEXT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+        channel TEXT NOT NULL DEFAULT 'patient_portal',
+        fulfillment_status TEXT NOT NULL DEFAULT 'paid',
+        shipping_method TEXT NOT NULL DEFAULT 'standard',
+        shipping_fee INTEGER NOT NULL DEFAULT 0,
+        carrier TEXT,
+        tracking_number TEXT,
+        shipping_address JSONB NOT NULL DEFAULT '{}'::jsonb,
+        notification_email TEXT,
+        notification_status TEXT NOT NULL DEFAULT 'queued',
+        last_notification_at TIMESTAMPTZ,
+        stripe_payment_intent_id TEXT,
+        stripe_payment_status TEXT NOT NULL DEFAULT 'paid',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_products_tenant ON products(tenant_id);
+      CREATE INDEX IF NOT EXISTS idx_products_category ON products(tenant_id, category);
+      CREATE INDEX IF NOT EXISTS idx_products_active ON products(tenant_id) WHERE is_active = true;
+      CREATE INDEX IF NOT EXISTS idx_product_sales_tenant ON product_sales(tenant_id);
+      CREATE INDEX IF NOT EXISTS idx_product_sales_patient ON product_sales(patient_id);
+      CREATE INDEX IF NOT EXISTS idx_product_sales_date ON product_sales(tenant_id, sale_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_product_sale_items_sale ON product_sale_items(sale_id);
+      CREATE INDEX IF NOT EXISTS idx_store_fulfillments_tenant ON store_order_fulfillments(tenant_id);
+      CREATE INDEX IF NOT EXISTS idx_store_fulfillments_sale ON store_order_fulfillments(sale_id);
+    `);
+    await client.query(`
+      CREATE OR REPLACE FUNCTION decrease_product_inventory_on_sale()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        UPDATE products
+        SET inventory_count = inventory_count - NEW.quantity,
+            updated_at = NOW()
+        WHERE id::text = NEW.product_id::text;
+
+        IF FOUND AND (SELECT inventory_count FROM products WHERE id::text = NEW.product_id::text) < 0 THEN
+          RAISE EXCEPTION 'Insufficient inventory: not enough units available';
+        END IF;
+
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS trigger_decrease_product_inventory ON product_sale_items;
+      CREATE TRIGGER trigger_decrease_product_inventory
+        AFTER INSERT ON product_sale_items
+        FOR EACH ROW
+        EXECUTE FUNCTION decrease_product_inventory_on_sale();
+    `);
+    await client.query(`
+      CREATE OR REPLACE FUNCTION log_product_inventory_transaction()
+      RETURNS TRIGGER AS $$
+      DECLARE
+        v_tenant_id TEXT;
+        v_sale_id TEXT;
+      BEGIN
+        SELECT ps.tenant_id, ps.id::text INTO v_tenant_id, v_sale_id
+        FROM product_sales ps
+        WHERE ps.id::text = NEW.sale_id::text;
+
+        IF v_tenant_id IS NOT NULL THEN
+          INSERT INTO product_inventory_transactions (
+            tenant_id, product_id, transaction_type, quantity, reference_id, notes, created_at
+          ) VALUES (
+            v_tenant_id, NEW.product_id::text, 'sold', -NEW.quantity, v_sale_id, 'Sold to patient', NOW()
+          );
+        END IF;
+
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS trigger_log_product_inventory_on_sale ON product_sale_items;
+      CREATE TRIGGER trigger_log_product_inventory_on_sale
+        AFTER INSERT ON product_sale_items
+        FOR EACH ROW
+        EXECUTE FUNCTION log_product_inventory_transaction();
+    `);
+
+    for (const product of EXPANDED_STORE_CATALOG) {
+      await client.query(
+        `INSERT INTO products (
+          id, tenant_id, sku, name, description, category, brand, price, cost,
+          inventory_count, reorder_point, is_active, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, NOW(), NOW())
+        ON CONFLICT (tenant_id, sku) DO UPDATE SET
+          name = EXCLUDED.name,
+          description = EXCLUDED.description,
+          category = EXCLUDED.category,
+          brand = EXCLUDED.brand,
+          price = EXCLUDED.price,
+          cost = EXCLUDED.cost,
+          reorder_point = EXCLUDED.reorder_point,
+          is_active = true,
+          updated_at = NOW()`,
+        [
+          product.id,
+          tenantId,
+          product.sku,
+          product.name,
+          product.description,
+          product.category,
+          product.brand,
+          product.price,
+          product.cost,
+          product.inventoryCount,
+          product.reorderPoint,
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+    storeReadyTenants.add(tenantId);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * Create a new product sale
  */
@@ -171,6 +511,7 @@ export async function createSale(
   encounterId?: string,
   discountAmount?: number
 ): Promise<Sale> {
+  await ensureStoreSchemaAndCatalog(tenantId);
   const client = await pool.connect();
 
   try {
@@ -305,6 +646,8 @@ export async function getProductRecommendations(
   tenantId: string,
   diagnosisCodes: string[]
 ): Promise<ProductRecommendation[]> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   if (!diagnosisCodes || diagnosisCodes.length === 0) {
     return [];
   }
@@ -364,6 +707,7 @@ export async function adjustInventory(
   notes?: string,
   userId?: string
 ): Promise<{ newCount: number }> {
+  await ensureStoreSchemaAndCatalog(tenantId);
   const client = await pool.connect();
 
   try {
@@ -412,6 +756,8 @@ export async function adjustInventory(
  * Get products with low stock
  */
 export async function getLowStockProducts(tenantId: string): Promise<Product[]> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   const result = await pool.query(
     `SELECT
       id, tenant_id as "tenantId", sku, name, description,
@@ -437,6 +783,8 @@ export async function getSalesReport(
   tenantId: string,
   filters: SalesReportFilters
 ): Promise<SalesReport> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   const { startDate, endDate, category, soldBy } = filters;
 
   // Build date filter
@@ -491,7 +839,7 @@ export async function getSalesReport(
       SUM(psi.quantity) as "quantitySold",
       SUM(psi.line_total) as "revenue"
     FROM product_sale_items psi
-    JOIN product_sales ps ON psi.sale_id = ps.id
+    JOIN product_sales ps ON psi.sale_id::text = ps.id::text
     WHERE ps.tenant_id = $1
       AND ps.status = 'completed'
       ${dateFilter}
@@ -516,8 +864,8 @@ export async function getSalesReport(
       COUNT(DISTINCT ps.id) as count,
       COALESCE(SUM(psi.line_total), 0) as revenue
     FROM product_sale_items psi
-    JOIN product_sales ps ON psi.sale_id = ps.id
-    JOIN products p ON psi.product_id = p.id
+    JOIN product_sales ps ON psi.sale_id::text = ps.id::text
+    JOIN products p ON psi.product_id::text = p.id::text
     WHERE ps.tenant_id = $1
       AND ps.status = 'completed'
       ${categoryFilter}
@@ -576,6 +924,8 @@ export async function applyDiscount(
   discountType: DiscountType,
   amount: number
 ): Promise<Sale> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   const client = await pool.connect();
 
   try {
@@ -627,7 +977,7 @@ export async function applyDiscount(
     await client.query(
       `UPDATE product_sales
        SET discount = $1, tax = $2, total = $3, updated_at = NOW()
-       WHERE id = $4`,
+       WHERE id::text = $4`,
       [newDiscount, newTax, newTotal, saleId]
     );
 
@@ -644,7 +994,7 @@ export async function applyDiscount(
         p.first_name as "patientFirstName", p.last_name as "patientLastName"
       FROM product_sales ps
       LEFT JOIN patients p ON ps.patient_id = p.id
-      WHERE ps.id = $1`,
+      WHERE ps.id::text = $1`,
       [saleId]
     );
 
@@ -669,6 +1019,8 @@ export async function getProducts(
     lowStockOnly?: boolean;
   }
 ): Promise<Product[]> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   const conditions: string[] = ['tenant_id = $1'];
   const params: any[] = [tenantId];
   let paramIndex = 2;
@@ -718,6 +1070,8 @@ export async function getProduct(
   tenantId: string,
   productId: string
 ): Promise<Product | null> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   const result = await pool.query(
     `SELECT
       id, tenant_id as "tenantId", sku, name, description,
@@ -753,6 +1107,8 @@ export async function createProduct(
   },
   createdBy?: string
 ): Promise<Product> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   const id = crypto.randomUUID();
 
   const result = await pool.query(
@@ -808,6 +1164,8 @@ export async function updateProduct(
     barcode: string;
   }>
 ): Promise<Product | null> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   const updates: string[] = [];
   const values: any[] = [];
   let paramCount = 1;
@@ -887,6 +1245,8 @@ export async function getPatientSales(
   tenantId: string,
   patientId: string
 ): Promise<Sale[]> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   const result = await pool.query(
     `SELECT
       ps.id, ps.tenant_id as "tenantId", ps.patient_id as "patientId",
@@ -912,6 +1272,8 @@ export async function getSale(
   tenantId: string,
   saleId: string
 ): Promise<Sale | null> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   const saleResult = await pool.query(
     `SELECT
       ps.id, ps.tenant_id as "tenantId", ps.patient_id as "patientId",
@@ -922,7 +1284,7 @@ export async function getSale(
       p.first_name as "patientFirstName", p.last_name as "patientLastName"
     FROM product_sales ps
     LEFT JOIN patients p ON ps.patient_id = p.id
-    WHERE ps.id = $1 AND ps.tenant_id = $2`,
+    WHERE ps.id::text = $1 AND ps.tenant_id = $2`,
     [saleId, tenantId]
   );
 
@@ -940,7 +1302,7 @@ export async function getSale(
       line_total as "lineTotal", product_name as "productName",
       product_sku as "productSku"
     FROM product_sale_items
-    WHERE sale_id = $1
+    WHERE sale_id::text = $1
     ORDER BY product_name`,
     [saleId]
   );
@@ -1005,7 +1367,7 @@ async function attachSaleItems(orders: StoreOrder[]): Promise<StoreOrder[]> {
        line_total as "lineTotal", product_name as "productName",
        product_sku as "productSku"
      FROM product_sale_items
-     WHERE sale_id = ANY($1::uuid[])
+     WHERE sale_id::text = ANY($1::text[])
      ORDER BY product_name`,
     [saleIds]
   );
@@ -1048,7 +1410,7 @@ async function getStoreOrdersWithoutFulfillment(
   let paramIndex = 2;
 
   if (filters.saleId) {
-    conditions.push(`ps.id = $${paramIndex}::uuid`);
+    conditions.push(`ps.id::text = $${paramIndex}`);
     params.push(filters.saleId);
     paramIndex++;
   }
@@ -1105,12 +1467,14 @@ export async function getStoreOrders(
     limit?: number;
   } = {}
 ): Promise<StoreOrder[]> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   const conditions: string[] = ['ps.tenant_id = $1'];
   const params: any[] = [tenantId];
   let paramIndex = 2;
 
   if (filters.saleId) {
-    conditions.push(`ps.id = $${paramIndex}::uuid`);
+    conditions.push(`ps.id::text = $${paramIndex}`);
     params.push(filters.saleId);
     paramIndex++;
   }
@@ -1174,7 +1538,7 @@ export async function getStoreOrders(
          COALESCE(sof.updated_at, ps.updated_at) as "updatedAt"
        FROM product_sales ps
        LEFT JOIN patients p ON ps.patient_id = p.id
-       LEFT JOIN store_order_fulfillments sof ON sof.sale_id = ps.id
+       LEFT JOIN store_order_fulfillments sof ON sof.sale_id::text = ps.id::text
        WHERE ${conditions.join(' AND ')}
        ORDER BY ps.sale_date DESC
        LIMIT $${paramIndex}`,
@@ -1196,6 +1560,8 @@ export async function createStoreFulfillment(
   patientId: string,
   data: StoreFulfillmentInput
 ): Promise<void> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   try {
     await pool.query(
       `INSERT INTO store_order_fulfillments (
@@ -1254,12 +1620,14 @@ export async function updateStoreFulfillment(
   saleId: string,
   data: StoreFulfillmentInput
 ): Promise<StoreOrder | null> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   try {
     await pool.query(
       `INSERT INTO store_order_fulfillments (id, tenant_id, sale_id, patient_id)
        SELECT $1, $2, ps.id, ps.patient_id
        FROM product_sales ps
-       WHERE ps.id = $3 AND ps.tenant_id = $2
+       WHERE ps.id::text = $3 AND ps.tenant_id = $2
        ON CONFLICT (sale_id) DO NOTHING`,
       [crypto.randomUUID(), tenantId, saleId]
     );
@@ -1297,7 +1665,7 @@ export async function updateStoreFulfillment(
       await pool.query(
         `UPDATE store_order_fulfillments
          SET ${updates.join(', ')}
-         WHERE sale_id = $${paramIndex} AND tenant_id = $${paramIndex + 1}`,
+         WHERE sale_id::text = $${paramIndex} AND tenant_id = $${paramIndex + 1}`,
         values
       );
     }
@@ -1327,6 +1695,8 @@ export async function getInventoryStatus(tenantId: string): Promise<{
     value: number;
   }>;
 }> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   const summaryResult = await pool.query(
     `SELECT
       COUNT(*) as total_products,

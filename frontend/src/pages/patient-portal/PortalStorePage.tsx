@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle, CreditCard, Minus, Package, Plus, ShoppingCart, Truck } from 'lucide-react';
+import { CheckCircle, CreditCard, Minus, Package, Plus, Search, ShoppingCart, Truck } from 'lucide-react';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 import { patientPortalFetch, usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
 import type { Product, StoreShippingAddress } from '../../types';
@@ -17,6 +17,15 @@ interface StoreOrderConfirmation {
 }
 
 const TAX_RATE = 0.0825;
+const FEATURED_SKUS = ['SPF-TINT-50', 'CRM-BARRIER', 'POST-LASER-KIT', 'SER-VITC-15'];
+const CONCERN_FILTERS = [
+  { value: 'all', label: 'All routines', keywords: [] },
+  { value: 'acne', label: 'Acne', keywords: ['acne', 'pores', 'benzoyl', 'salicylic', 'adapalene', 'blemish'] },
+  { value: 'sun', label: 'Sun protection', keywords: ['spf', 'sunscreen', 'sun', 'mineral', 'melasma'] },
+  { value: 'sensitive', label: 'Sensitive skin', keywords: ['sensitive', 'eczema', 'barrier', 'gentle', 'irritated', 'reactive'] },
+  { value: 'procedure', label: 'After procedures', keywords: ['post', 'procedure', 'wound', 'scar', 'laser', 'peel', 'biopsy'] },
+  { value: 'anti-aging', label: 'Anti-aging', keywords: ['retinol', 'retinal', 'vitamin c', 'peptide', 'firming', 'growth'] },
+] as const;
 
 function formatCurrency(cents: number): string {
   return new Intl.NumberFormat('en-US', {
@@ -33,6 +42,16 @@ function categoryLabel(value: string): string {
   return value;
 }
 
+function productSearchText(product: Product): string {
+  return [
+    product.name,
+    product.brand,
+    product.sku,
+    product.description,
+    categoryLabel(product.category),
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
 export function PortalStorePage() {
   const { patient } = usePatientPortalAuth();
   const [products, setProducts] = useState<Product[]>([]);
@@ -42,6 +61,8 @@ export function PortalStorePage() {
   const [error, setError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<StoreOrderConfirmation | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<Product['category'] | 'all'>('all');
+  const [concernFilter, setConcernFilter] = useState<(typeof CONCERN_FILTERS)[number]['value']>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [shippingMethod, setShippingMethod] = useState<'standard' | 'priority' | 'pickup'>('standard');
   const [shippingAddress, setShippingAddress] = useState<StoreShippingAddress>({
     name: `${patient?.firstName || ''} ${patient?.lastName || ''}`.trim(),
@@ -86,8 +107,29 @@ export function PortalStorePage() {
   }, []);
 
   const visibleProducts = useMemo(() => {
-    return products.filter((product) => categoryFilter === 'all' || product.category === categoryFilter);
-  }, [categoryFilter, products]);
+    const normalizedSearch = searchQuery.trim().toLowerCase();
+    const concern = CONCERN_FILTERS.find((filter) => filter.value === concernFilter);
+
+    return products.filter((product) => {
+      const searchText = productSearchText(product);
+      const matchesCategory = categoryFilter === 'all' || product.category === categoryFilter;
+      const matchesSearch = !normalizedSearch || searchText.includes(normalizedSearch);
+      const matchesConcern = !concern || concern.value === 'all' || concern.keywords.some((keyword) => searchText.includes(keyword));
+      return matchesCategory && matchesSearch && matchesConcern;
+    });
+  }, [categoryFilter, concernFilter, products, searchQuery]);
+
+  const categoryCounts = useMemo(() => {
+    return products.reduce<Record<string, number>>((counts, product) => {
+      counts[product.category] = (counts[product.category] || 0) + 1;
+      return counts;
+    }, {});
+  }, [products]);
+
+  const featuredProducts = useMemo(() => {
+    const bySku = new Map(products.map((product) => [product.sku, product]));
+    return FEATURED_SKUS.map((sku) => bySku.get(sku)).filter(Boolean) as Product[];
+  }, [products]);
 
   const subtotal = useMemo(
     () => cart.reduce((sum, line) => sum + line.product.price * line.quantity, 0),
@@ -184,7 +226,12 @@ export function PortalStorePage() {
           <div>
             <span>Skin Care Store</span>
             <h1>Office Store</h1>
-            <p>Dermatology products selected by the office for daily skin care and after-procedure support.</p>
+            <p>Dermatology products selected by the office for daily skin care, sun protection, acne support, cosmetic routines, and after-procedure recovery.</p>
+            <div className="portal-store-header-stats" aria-label="Store catalog summary">
+              <span>{products.length || 50} curated products</span>
+              <span>{categoryCounts.sunscreen || 0} sunscreens</span>
+              <span>{categoryCounts.post_procedure || 0} recovery items</span>
+            </div>
           </div>
           <div className="portal-store-cart-pill">
             <ShoppingCart size={18} />
@@ -209,21 +256,68 @@ export function PortalStorePage() {
           </div>
         )}
 
+        {!loading && featuredProducts.length > 0 && (
+          <section className="portal-store-featured" aria-label="Featured dermatology store products">
+            {featuredProducts.map((product) => (
+              <button
+                key={product.id}
+                type="button"
+                onClick={() => {
+                  setSearchQuery(product.name);
+                  setCategoryFilter('all');
+                  setConcernFilter('all');
+                }}
+              >
+                <span>{categoryLabel(product.category)}</span>
+                <strong>{product.name}</strong>
+                <small>{formatCurrency(product.price)}</small>
+              </button>
+            ))}
+          </section>
+        )}
+
         <div className="portal-store-layout">
           <section className="portal-store-products">
             <div className="portal-store-toolbar">
-              <h2>Products</h2>
-              <select
-                aria-label="Filter store products"
-                value={categoryFilter}
-                onChange={(event) => setCategoryFilter(event.target.value as Product['category'] | 'all')}
-              >
-                <option value="all">All</option>
-                <option value="skincare">Skincare</option>
-                <option value="sunscreen">Sunscreen</option>
-                <option value="cosmetic">Cosmetic</option>
-                <option value="post_procedure">Post-procedure</option>
-              </select>
+              <div>
+                <h2>Products</h2>
+                <p>{visibleProducts.length} matching item{visibleProducts.length === 1 ? '' : 's'}</p>
+              </div>
+              <div className="portal-store-filterbar">
+                <label className="portal-store-search">
+                  <Search size={16} />
+                  <span className="sr-only">Search store products</span>
+                  <input
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search products, brands, routines"
+                  />
+                </label>
+                <select
+                  aria-label="Filter store products by category"
+                  value={categoryFilter}
+                  onChange={(event) => setCategoryFilter(event.target.value as Product['category'] | 'all')}
+                >
+                  <option value="all">All categories</option>
+                  <option value="skincare">Skincare ({categoryCounts.skincare || 0})</option>
+                  <option value="sunscreen">Sunscreen ({categoryCounts.sunscreen || 0})</option>
+                  <option value="cosmetic">Cosmetic ({categoryCounts.cosmetic || 0})</option>
+                  <option value="post_procedure">Post-procedure ({categoryCounts.post_procedure || 0})</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="portal-store-concerns" aria-label="Filter store products by skin concern">
+              {CONCERN_FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  className={concernFilter === filter.value ? 'active' : ''}
+                  onClick={() => setConcernFilter(filter.value)}
+                >
+                  {filter.label}
+                </button>
+              ))}
             </div>
 
             {loading ? (

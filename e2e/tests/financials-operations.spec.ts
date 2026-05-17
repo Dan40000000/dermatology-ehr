@@ -17,17 +17,18 @@ test.describe('Financials & Operations', () => {
 
     const tabChecks = [
       { label: 'Overview', heading: /revenue cycle management/i },
+      { label: 'Insurance', heading: /insurance analytics/i },
       { label: 'Bills', heading: /patient bills/i },
       { label: 'Payments', heading: /patient payments/i },
       { label: 'Analytics', heading: /premium analytics/i },
-      { label: 'Fee Schedule', heading: /fee schedule management/i },
+      { label: 'Fee Schedule', heading: /fee schedules/i },
       { label: 'Statements', heading: /patient statements/i },
       { label: 'Reports', heading: /financial reports/i },
     ];
 
-    const nav = authenticatedPage.locator('nav');
+    const nav = authenticatedPage.getByRole('main').locator('nav').last();
     for (const tab of tabChecks) {
-      await nav.getByRole('button', { name: new RegExp(`^${tab.label}`, 'i') }).click();
+      await nav.getByText(tab.label, { exact: true }).click();
       await expect(authenticatedPage.getByRole('heading', { name: tab.heading })).toBeVisible();
     }
   });
@@ -41,7 +42,7 @@ test.describe('Financials & Operations', () => {
     await authenticatedPage.getByRole('button', { name: /payment posting/i }).click();
     await expect(authenticatedPage.getByText(/recent payments/i)).toBeVisible();
 
-    await authenticatedPage.getByRole('button', { name: /claims list/i }).click();
+    await authenticatedPage.getByRole('button', { name: /claims workbench/i }).click();
     await expect(authenticatedPage.getByText(/status filter/i)).toBeVisible();
 
     const viewButtons = authenticatedPage.getByRole('button', { name: /^view$/i });
@@ -60,11 +61,11 @@ test.describe('Financials & Operations', () => {
       authenticatedPage.getByRole('heading', { name: /inventory management/i })
     ).toBeVisible();
 
-    await authenticatedPage.getByRole('button', { name: /record usage/i }).click();
+    await authenticatedPage.getByRole('button', { name: /manual stock correction/i }).click();
     await expect(
-      authenticatedPage.getByRole('heading', { name: /record inventory usage/i })
+      authenticatedPage.getByRole('heading', { name: /manual stock correction/i })
     ).toBeVisible();
-    await authenticatedPage.getByLabel(/close modal/i).click();
+    await authenticatedPage.getByRole('button', { name: /^cancel$/i }).click();
 
     await authenticatedPage.getByRole('button', { name: /add item/i }).click();
     await expect(

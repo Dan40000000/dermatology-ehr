@@ -140,6 +140,27 @@ const createPatientSchema = z.object({
   insuranceMemberId: z.string().optional(),
   insurancePayerId: z.string().optional(),
   insuranceGroupNumber: z.string().optional(),
+  accessibilityProfile: z.object({
+    communicationSupport: z.array(z.string()).optional(),
+    interpreterNeeded: z.boolean().optional(),
+    interpreterLanguage: z.string().optional(),
+    mobilityAssistance: z.boolean().optional(),
+    accessibleRoomRequired: z.boolean().optional(),
+    accessibleEquipment: z.array(z.string()).optional(),
+    serviceAnimal: z.boolean().optional(),
+    extendedVisit: z.boolean().optional(),
+    extraVisitMinutes: z.number().int().min(0).max(240).optional(),
+    sensoryConsiderations: z.string().optional(),
+    notes: z.string().optional(),
+    lastReviewedAt: z.string().optional(),
+    lastReviewedBy: z.string().optional(),
+    supportPerson: z.object({
+      name: z.string().optional(),
+      relationship: z.string().optional(),
+      phone: z.string().optional(),
+      communicationNeeds: z.string().optional(),
+    }).optional(),
+  }).passthrough().optional(),
 });
 
 export const patientsRouter = Router();
@@ -241,6 +262,7 @@ patientsRouter.get("/", requireAuth, requireModuleAccess("patients"), async (req
     pharmacyName: `pharmacy_name as "pharmacyName"`,
     pharmacyPhone: `pharmacy_phone as "pharmacyPhone"`,
     pharmacyAddress: `pharmacy_address as "pharmacyAddress"`,
+    accessibilityProfile: `accessibility_profile as "accessibilityProfile"`,
     createdAt: `created_at as "createdAt"`,
     updatedAt: `updated_at as "updatedAt"`,
     ssn: canViewSsn ? `ssn_last4 as "ssn"` : `null::text as "ssn"`,
@@ -267,6 +289,7 @@ patientsRouter.get("/", requireAuth, requireModuleAccess("patients"), async (req
     "pharmacyName",
     "pharmacyPhone",
     "pharmacyAddress",
+    "accessibilityProfile",
     "createdAt",
     "updatedAt",
   ];
@@ -372,7 +395,8 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
     insurance, allergies, medications, sex, ssn,
     emergencyContactName, emergencyContactRelationship, emergencyContactPhone,
     pharmacyId, pharmacyNcpdp, pharmacyName, pharmacyPhone, pharmacyAddress,
-    primaryCarePhysician, referralSource, insuranceId, insuranceMemberId, insurancePayerId, insuranceGroupNumber
+    primaryCarePhysician, referralSource, insuranceId, insuranceMemberId, insurancePayerId, insuranceGroupNumber,
+    accessibilityProfile
   } = parsed.data;
   const { ssnLast4, ssnEncrypted } = buildSsnFields(ssn);
   const accountNumber = `ACCT-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
@@ -384,8 +408,8 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
       emergency_contact_name, emergency_contact_relationship, emergency_contact_phone,
       pharmacy_id, pharmacy_ncpdp, pharmacy_name, pharmacy_phone, pharmacy_address,
       primary_care_physician, referral_source, insurance_id, insurance_member_id, insurance_payer_id,
-      insurance_group_number, account_number
-    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)`,
+      insurance_group_number, account_number, accessibility_profile
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)`,
     [
       id, tenantId, firstName, lastName, dob || null, phone || null, email || null,
       address || null, city || null, state || null, zip || null,
@@ -394,7 +418,7 @@ patientsRouter.post("/", requireAuth, requireRoles(["admin", "ma", "front_desk",
       pharmacyId || null, pharmacyNcpdp || null, pharmacyName || null, pharmacyPhone || null, pharmacyAddress || null,
       primaryCarePhysician || null, referralSource || null, insuranceId || null,
       insuranceMemberId || insuranceId || null, insurancePayerId || null, insuranceGroupNumber || null,
-      accountNumber
+      accountNumber, accessibilityProfile || {}
     ],
   );
 
@@ -483,6 +507,7 @@ patientsRouter.get("/:id", requireAuth, requireModuleAccess("patients"), async (
               insurance_group_number as "insuranceGroupNumber",
               primary_care_physician as "primaryCarePhysician",
               referral_source as "referralSource",
+              accessibility_profile as "accessibilityProfile",
               created_at as "createdAt", updated_at as "updatedAt"
        from patients where id = $1 and tenant_id = $2`,
       [id, tenantId],
@@ -545,6 +570,27 @@ const updatePatientSchema = z.object({
   referralSource: z.string().optional(),
   allergies: z.string().optional(),
   medications: z.string().optional(),
+  accessibilityProfile: z.object({
+    communicationSupport: z.array(z.string()).optional(),
+    interpreterNeeded: z.boolean().optional(),
+    interpreterLanguage: z.string().optional(),
+    mobilityAssistance: z.boolean().optional(),
+    accessibleRoomRequired: z.boolean().optional(),
+    accessibleEquipment: z.array(z.string()).optional(),
+    serviceAnimal: z.boolean().optional(),
+    extendedVisit: z.boolean().optional(),
+    extraVisitMinutes: z.number().int().min(0).max(240).optional(),
+    sensoryConsiderations: z.string().optional(),
+    notes: z.string().optional(),
+    lastReviewedAt: z.string().optional(),
+    lastReviewedBy: z.string().optional(),
+    supportPerson: z.object({
+      name: z.string().optional(),
+      relationship: z.string().optional(),
+      phone: z.string().optional(),
+      communicationNeeds: z.string().optional(),
+    }).optional(),
+  }).passthrough().optional(),
 });
 
 /**
@@ -681,7 +727,7 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
     // Emit WebSocket event for patient update
     try {
       const patientData = await pool.query(
-        `SELECT id, first_name, last_name, dob, phone, email, insurance
+        `SELECT id, first_name, last_name, dob, phone, email, insurance, accessibility_profile
          FROM patients
          WHERE id = $1 AND tenant_id = $2`,
         [id, tenantId]
@@ -697,6 +743,7 @@ patientsRouter.put("/:id", requireAuth, requireRoles(["admin", "ma", "front_desk
           phone: patient.phone,
           email: patient.email,
           insurance: patient.insurance,
+          accessibilityProfile: patient.accessibility_profile,
           lastUpdated: new Date().toISOString(),
         });
       }

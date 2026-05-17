@@ -178,6 +178,7 @@ export interface PatientEventData {
   phone?: string;
   email?: string;
   insurance?: string;
+  accessibilityProfile?: Record<string, unknown>;
   balance?: number;
   lastUpdated?: string;
 }

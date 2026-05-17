@@ -19,6 +19,9 @@ import {
   fetchProviders,
   fetchTimeBlocks,
   fetchUnreadCount,
+  fetchBiopsyCommandCenter,
+  type BiopsyCommandCenterSummary,
+  type BiopsySafetyItem,
   type TimeBlock,
 } from '../api';
 import { canAccessModule } from '../config/moduleAccess';
@@ -59,6 +62,11 @@ interface HomeStats {
   unreadMessageThreads: number;
   myNotesNeedingWork: number;
   teamNotesNeedingWork: number;
+}
+
+interface HomeBiopsySafety {
+  summary: BiopsyCommandCenterSummary;
+  critical: BiopsySafetyItem[];
 }
 
 interface AppointmentFinderSelection {
@@ -204,6 +212,7 @@ export function HomePage() {
   const [overviewLocationFilter, setOverviewLocationFilter] = useState('all');
   const [overviewLocationOptions, setOverviewLocationOptions] = useState<LocationScopeOption[]>([]);
   const [stats, setStats] = useState<HomeStats>(INITIAL_STATS);
+  const [biopsySafety, setBiopsySafety] = useState<HomeBiopsySafety | null>(null);
 
   const [showRegulatoryModal, setShowRegulatoryModal] = useState(false);
   const [showReminderModal, setShowReminderModal] = useState(false);
@@ -277,8 +286,9 @@ export function HomePage() {
       const canLoadEncounters = canAccessModule(effectiveRoles, 'notes');
       const canLoadOrders = canAccessModule(effectiveRoles, 'orders');
       const canLoadUnreadMessages = canAccessModule(effectiveRoles, 'mail');
+      const canLoadBiopsySafety = canAccessModule(effectiveRoles, 'labs');
 
-      const [appointmentsRes, encountersRes, tasksRes, ordersRes, unreadRes] = await Promise.all([
+      const [appointmentsRes, encountersRes, tasksRes, ordersRes, unreadRes, biopsyRes] = await Promise.all([
         canLoadAppointments
           ? fetchAppointments(session.tenantId, session.accessToken, {
               startDate: toLocalIsoDate(queryStart),
@@ -295,6 +305,9 @@ export function HomePage() {
         canLoadUnreadMessages
           ? fetchUnreadCount(session.tenantId, session.accessToken).catch(() => ({ count: 0 }))
           : Promise.resolve({ count: 0 }),
+        canLoadBiopsySafety
+          ? fetchBiopsyCommandCenter(session.tenantId, session.accessToken).catch(() => null)
+          : Promise.resolve(null),
       ]);
 
       const appointments = appointmentsRes.appointments || [];
@@ -302,6 +315,14 @@ export function HomePage() {
       const tasks = tasksRes.tasks || [];
       const orders = ordersRes.orders || [];
       const unreadMessageThreads = Number(unreadRes.count || 0);
+      setBiopsySafety(
+        biopsyRes
+          ? {
+              summary: biopsyRes.summary,
+              critical: biopsyRes.queues.critical || [],
+            }
+          : null,
+      );
 
       const todaysAppointments = appointments.filter((a: any) =>
         isOnLocalDay(a.scheduledStart, todayStr) && isAppointmentIncludedInOverview(a.status)
@@ -847,6 +868,121 @@ export function HomePage() {
           </>
         )}
       </div>
+
+      {!loading && biopsySafety && biopsySafety.summary.total_open_loops > 0 && (
+        <section
+          aria-label="Pathology safety alerts"
+          style={{
+            marginTop: '1rem',
+            border: '1px solid #fecaca',
+            borderRadius: '12px',
+            background: '#fff7f7',
+            boxShadow: '0 8px 20px rgba(185, 28, 28, 0.08)',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              padding: '1rem 1.25rem',
+              background: 'linear-gradient(135deg, #991b1b 0%, #dc2626 100%)',
+              color: '#ffffff',
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: '1rem',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', opacity: 0.88 }}>
+                Pathology Safety Alerts
+              </div>
+              <div style={{ marginTop: '0.25rem', fontSize: '1.2rem', fontWeight: 900 }}>
+                {biopsySafety.summary.total_open_loops} open biopsy loops need active follow-up
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/biopsies')}
+              style={{
+                border: '1px solid rgba(255,255,255,0.5)',
+                borderRadius: '999px',
+                background: '#ffffff',
+                color: '#991b1b',
+                padding: '0.7rem 1rem',
+                fontWeight: 900,
+                cursor: 'pointer',
+              }}
+            >
+              Open Biopsy Safety
+            </button>
+          </div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
+              gap: '0.75rem',
+              padding: '1rem',
+            }}
+          >
+            {[
+              { label: 'Critical / High', value: biopsySafety.critical.length },
+              { label: 'Pending Review', value: biopsySafety.summary.pending_review },
+              { label: 'Notify Patient', value: biopsySafety.summary.needs_patient_notification },
+              { label: 'Treatment Needed', value: biopsySafety.summary.needs_treatment_scheduling },
+            ].map((item) => (
+              <div
+                key={item.label}
+                style={{
+                  border: '1px solid #fecaca',
+                  borderRadius: '10px',
+                  background: '#ffffff',
+                  padding: '0.85rem',
+                }}
+              >
+                <div style={{ fontSize: '1.45rem', fontWeight: 900, color: '#991b1b' }}>{item.value}</div>
+                <div style={{ marginTop: '0.25rem', color: '#7f1d1d', fontSize: '0.8rem', fontWeight: 800, textTransform: 'uppercase' }}>
+                  {item.label}
+                </div>
+              </div>
+            ))}
+          </div>
+          {biopsySafety.critical.length > 0 && (
+            <div style={{ display: 'grid', gap: '0.5rem', padding: '0 1rem 1rem' }}>
+              {biopsySafety.critical.slice(0, 3).map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  onClick={() => navigate('/biopsies')}
+                  style={{
+                    border: '1px solid #fecaca',
+                    borderRadius: '10px',
+                    background: '#ffffff',
+                    padding: '0.8rem 0.9rem',
+                    display: 'grid',
+                    gridTemplateColumns: '1fr auto',
+                    gap: '0.75rem',
+                    alignItems: 'center',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span>
+                    <strong style={{ color: '#111827' }}>{item.patient_name}</strong>
+                    <span style={{ color: '#64748b' }}> - {item.specimen_id}</span>
+                    <span style={{ display: 'block', marginTop: '0.2rem', color: '#7f1d1d', fontSize: '0.86rem' }}>
+                      {item.loop_status || 'Open biopsy loop'}: {item.next_action || 'Open pathology follow-up'}
+                    </span>
+                  </span>
+                  <span style={{ color: '#991b1b', fontWeight: 900, textTransform: 'capitalize' }}>
+                    {item.highest_severity || 'open'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <div
         className="ema-action-bar"

@@ -38,6 +38,7 @@ Thumbs.db
 # Test
 .nyc_output
 .playwright-cli/
+test-results/
 output/
 perm_test*.txt
 perm_test*.tmp

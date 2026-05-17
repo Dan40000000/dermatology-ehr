@@ -1,66 +1,95 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
+const APP_A11Y_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
+const INTERNAL_KNOWN_EXCEPTIONS = ['color-contrast'];
+
 // Helper to login
 async function login(page: any) {
   await page.goto('/login');
   await page.getByLabel(/email/i).fill('admin@demo.practice');
-  await page.getByLabel(/password/i).fill('Password123!');
+  await page.getByRole('textbox', { name: /^password$/i }).fill('Password123!');
   await page.getByRole('button', { name: /sign in/i }).click();
   await expect(page).toHaveURL(/\/(home|dashboard)/i);
+}
+
+function summarizeViolations(violations: any[]) {
+  return violations.map((violation) => ({
+    id: violation.id,
+    impact: violation.impact,
+    help: violation.help,
+    nodes: violation.nodes.slice(0, 3).map((node: any) => ({
+      target: node.target,
+      failureSummary: node.failureSummary,
+    })),
+  }));
+}
+
+async function expectNoA11yViolations(page: any, options: { disableKnownInternalRules?: boolean } = {}) {
+  let builder = new AxeBuilder({ page }).withTags(APP_A11Y_TAGS);
+  if (options.disableKnownInternalRules) {
+    builder = builder.disableRules(INTERNAL_KNOWN_EXCEPTIONS);
+  }
+  const accessibilityScanResults = await builder.analyze();
+  expect(summarizeViolations(accessibilityScanResults.violations)).toEqual([]);
 }
 
 test.describe('Accessibility', () => {
   test('login page should be accessible', async ({ page }) => {
     await page.goto('/');
 
-    const accessibilityScanResults = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-      .analyze();
-
-    expect(accessibilityScanResults.violations).toEqual([]);
+    await expectNoA11yViolations(page);
   });
 
   test('dashboard should be accessible', async ({ page }) => {
     await login(page);
     await page.goto('/home');
 
-    const accessibilityScanResults = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-      .disableRules(['color-contrast'])
-      .analyze();
-
-    expect(accessibilityScanResults.violations).toEqual([]);
+    await expectNoA11yViolations(page, { disableKnownInternalRules: true });
   });
 
   test('patients page should be accessible', async ({ page }) => {
     await login(page);
     await page.goto('/patients');
 
-    const accessibilityScanResults = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-      .disableRules(['color-contrast'])
-      .analyze();
-
-    expect(accessibilityScanResults.violations).toEqual([]);
+    await expectNoA11yViolations(page, { disableKnownInternalRules: true });
   });
 
   test('appointments page should be accessible', async ({ page }) => {
     await login(page);
     await page.goto('/schedule');
 
-    const accessibilityScanResults = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-      .disableRules(['color-contrast'])
-      .analyze();
+    await expectNoA11yViolations(page, { disableKnownInternalRules: true });
+  });
 
-    expect(accessibilityScanResults.violations).toEqual([]);
+  test('patient access needs workflow should be accessible', async ({ page }) => {
+    await login(page);
+    await page.goto('/patients/demo-patient-2?tab=accessibility');
+    await expect(page.getByText(/access needs & accommodations/i)).toBeVisible();
+
+    await expectNoA11yViolations(page, { disableKnownInternalRules: true });
+  });
+
+  test('new patient access needs form should be accessible', async ({ page }) => {
+    await login(page);
+    await page.goto('/patients/new');
+    await page.getByRole('button', { name: /access needs/i }).click();
+    await expect(page.getByText(/optional, patient-requested accommodation details/i)).toBeVisible();
+
+    await expectNoA11yViolations(page, { disableKnownInternalRules: true });
+  });
+
+  test('public booking entry should be accessible', async ({ page }) => {
+    await page.goto('/book-appointment/guest');
+    await expect(page.locator('body')).toBeVisible();
+
+    await expectNoA11yViolations(page, { disableKnownInternalRules: true });
   });
 
   test('should have proper keyboard navigation', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/login?fresh=1');
 
-    // Start at the first input to avoid optional chrome (language switcher) in the tab order
+    // Start at the first login input to avoid optional chrome in the tab order.
     await page.getByLabel(/practice id/i).focus();
     await expect(page.getByLabel(/practice id/i)).toBeFocused();
 
@@ -68,7 +97,7 @@ test.describe('Accessibility', () => {
     await expect(page.getByLabel(/email/i)).toBeFocused();
 
     await page.keyboard.press('Tab');
-    await expect(page.getByLabel(/password/i)).toBeFocused();
+    await expect(page.getByRole('textbox', { name: /^password$/i })).toBeFocused();
 
     await page.keyboard.press('Tab');
     await expect(page.getByRole('button', { name: /sign in/i })).toBeFocused();

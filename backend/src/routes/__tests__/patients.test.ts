@@ -151,6 +151,32 @@ describe("Patients routes", () => {
     expect(res.body.id).toBeTruthy();
   });
 
+  it("POST /patients stores accessibility profile for visit prep", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const accessibilityProfile = {
+      interpreterNeeded: true,
+      interpreterLanguage: "ASL",
+      accessibleRoomRequired: true,
+      accessibleEquipment: ["height_adjustable_exam_table"],
+      extendedVisit: true,
+      extraVisitMinutes: 20,
+    };
+
+    const res = await request(app).post("/patients").send({
+      firstName: "Riley",
+      lastName: "Access",
+      accessibilityProfile,
+    });
+
+    expect(res.status).toBe(201);
+    expect(queryMock).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("accessibility_profile"),
+      expect.arrayContaining([accessibilityProfile]),
+    );
+  });
+
   it("GET /patients/:id returns 404 when missing", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
 
@@ -220,6 +246,29 @@ describe("Patients routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.id).toBe("patient-1");
+  });
+
+  it("PUT /patients/:id updates accessibility profile", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [{ id: "patient-1" }] });
+
+    const res = await request(app).put("/patients/patient-1").send({
+      accessibilityProfile: {
+        communicationSupport: ["large_print"],
+        mobilityAssistance: true,
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(queryMock).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("accessibility_profile = $1"),
+      expect.arrayContaining([
+        expect.objectContaining({
+          communicationSupport: ["large_print"],
+          mobilityAssistance: true,
+        }),
+      ]),
+    );
   });
 
   it("PUT /patients/:id emits patient update when data available", async () => {

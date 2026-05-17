@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { Patient } from '../../types';
 import { formatPhoneDisplay } from '../../utils/phone';
+import { getAccessibilitySummary, hasAccessibilityNeeds } from '../../utils/accessibilityAccommodations';
 
 interface PatientBannerProps {
   patient: Patient;
@@ -18,8 +19,9 @@ export function PatientBanner({
   className = '',
 }: PatientBannerProps) {
   const age = useMemo(() => {
-    if (!patient.dateOfBirth) return null;
-    const dob = new Date(patient.dateOfBirth);
+    const dateOfBirth = patient.dateOfBirth || patient.dob;
+    if (!dateOfBirth) return null;
+    const dob = new Date(dateOfBirth);
     const today = new Date();
     let years = today.getFullYear() - dob.getFullYear();
     const monthDiff = today.getMonth() - dob.getMonth();
@@ -27,7 +29,7 @@ export function PatientBanner({
       years--;
     }
     return years;
-  }, [patient.dateOfBirth]);
+  }, [patient.dateOfBirth, patient.dob]);
 
   const initials = useMemo(() => {
     const first = patient.firstName?.[0] || '';
@@ -60,6 +62,8 @@ export function PatientBanner({
     return [];
   }, [patient.alerts]);
   const hasAlerts = alertsArray.length > 0;
+  const hasAccessNeeds = hasAccessibilityNeeds(patient.accessibilityProfile);
+  const accessSummary = getAccessibilitySummary(patient.accessibilityProfile);
 
   if (compact) {
     return (
@@ -76,6 +80,11 @@ export function PatientBanner({
             Allergies
           </span>
         )}
+        {hasAccessNeeds && (
+          <span className="allergy-badge" title={accessSummary}>
+            Access needs
+          </span>
+        )}
       </div>
     );
   }
@@ -89,11 +98,11 @@ export function PatientBanner({
           <h2 className="patient-name">{fullName}</h2>
 
           <div className="patient-meta-row">
-            {patient.dateOfBirth && (
+            {(patient.dateOfBirth || patient.dob) && (
               <span className="meta-item">
                 <span className="meta-label">DOB:</span>
                 <span className="meta-value">
-                  {new Date(patient.dateOfBirth).toLocaleDateString()} {age && `(${age}yo)`}
+                  {new Date(patient.dateOfBirth || patient.dob || '').toLocaleDateString()} {age && `(${age}yo)`}
                 </span>
               </span>
             )}
@@ -132,7 +141,7 @@ export function PatientBanner({
       </div>
 
       {/* Alerts and Allergies Strip */}
-      {(hasAllergies || hasAlerts) && (
+      {(hasAllergies || hasAlerts || hasAccessNeeds) && (
         <div className="patient-alerts-strip">
           {hasAllergies && (
             <div className="alert-section allergy">
@@ -146,6 +155,13 @@ export function PatientBanner({
               <span className="alert-icon"></span>
               <span className="alert-label">Alerts:</span>
               <span className="alert-content">{alertsArray.join(', ')}</span>
+            </div>
+          )}
+          {hasAccessNeeds && (
+            <div className="alert-section warning">
+              <span className="alert-icon"></span>
+              <span className="alert-label">Access needs:</span>
+              <span className="alert-content">{accessSummary}</span>
             </div>
           )}
         </div>

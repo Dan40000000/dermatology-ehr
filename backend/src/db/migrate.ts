@@ -13258,6 +13258,16 @@ Consider age-appropriate treatments and include family counseling points.',
       ON prescriptions(tenant_id, delivery_status);
     `,
   },
+  {
+    name: "187_patient_accessibility_profile",
+    sql: `
+    ALTER TABLE patients
+      ADD COLUMN IF NOT EXISTS accessibility_profile JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+    CREATE INDEX IF NOT EXISTS idx_patients_accessibility_profile
+      ON patients USING GIN (accessibility_profile);
+    `,
+  },
 
 ];
 

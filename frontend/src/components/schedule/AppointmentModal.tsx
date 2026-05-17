@@ -9,6 +9,11 @@ import type {
   Availability,
 } from '../../types';
 import type { TimeBlock } from '../../api';
+import {
+  buildVisitPrepChecklist,
+  getRecommendedAppointmentDuration,
+  hasAccessibilityNeeds,
+} from '../../utils/accessibilityAccommodations';
 
 interface AppointmentModalProps {
   isOpen: boolean;
@@ -30,6 +35,7 @@ interface AppointmentModalProps {
     date?: string;
     time?: string;
     duration?: number;
+    notes?: string;
   };
 }
 
@@ -120,6 +126,14 @@ export function AppointmentModal({
 
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const selectedPatient = useMemo(
+    () => patients.find((patient) => patient.id === formData.patientId) || null,
+    [patients, formData.patientId],
+  );
+  const selectedPatientChecklist = useMemo(
+    () => buildVisitPrepChecklist(selectedPatient?.accessibilityProfile),
+    [selectedPatient],
+  );
 
   // Initialize form data when modal opens
   useEffect(() => {
@@ -154,6 +168,7 @@ export function AppointmentModal({
           time: initialData.time ?? prev.time,
           locationId: initialData.locationId ?? locations[0]?.id ?? prev.locationId,
           duration: initialData.duration ?? prev.duration,
+          notes: initialData.notes ?? prev.notes,
         }));
       } else {
         // Create mode from scratch
@@ -177,10 +192,13 @@ export function AppointmentModal({
     if (formData.appointmentTypeId) {
       const selectedType = appointmentTypes.find((t) => t.id === formData.appointmentTypeId);
       if (selectedType) {
-        setFormData((prev) => ({ ...prev, duration: selectedType.durationMinutes }));
+        setFormData((prev) => ({
+          ...prev,
+          duration: getRecommendedAppointmentDuration(selectedType.durationMinutes, selectedPatient?.accessibilityProfile),
+        }));
       }
     }
-  }, [formData.appointmentTypeId, appointmentTypes]);
+  }, [formData.appointmentTypeId, appointmentTypes, selectedPatient?.accessibilityProfile]);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -378,6 +396,28 @@ export function AppointmentModal({
           </select>
           {errors.patientId && <span className="field-error">{errors.patientId}</span>}
         </div>
+
+        {selectedPatient && hasAccessibilityNeeds(selectedPatient.accessibilityProfile) && (
+          <div
+            style={{
+              border: '1px solid #7dd3fc',
+              background: '#f0f9ff',
+              color: '#075985',
+              borderRadius: '8px',
+              padding: '0.85rem',
+              fontSize: '0.875rem',
+            }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: '0.35rem' }}>
+              Access needs for this visit
+            </div>
+            <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+              {selectedPatientChecklist.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div className="form-row">
           {/* Provider Selection */}

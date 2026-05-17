@@ -29,6 +29,7 @@ jest.mock("../../services/biopsyService", () => ({
     getOverdueBiopsies: jest.fn(),
     getBiopsyStats: jest.fn(),
     getQualityMetrics: jest.fn(),
+    getSafetyCommandCenter: jest.fn(),
     exportBiopsyLog: jest.fn(),
     sendNotification: jest.fn(),
   },
@@ -92,6 +93,11 @@ beforeEach(() => {
   biopsyService.getOverdueBiopsies.mockResolvedValue([]);
   biopsyService.getBiopsyStats.mockResolvedValue({ total: 0 });
   biopsyService.getQualityMetrics.mockResolvedValue({ total: 0 });
+  biopsyService.getSafetyCommandCenter.mockResolvedValue({
+    summary: { total_open_loops: 0 },
+    queues: { critical: [] },
+    biopsies: [],
+  });
   biopsyService.exportBiopsyLog.mockResolvedValue([]);
   biopsyService.sendNotification.mockResolvedValue(undefined);
   queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
@@ -168,6 +174,20 @@ describe("Biopsy routes", () => {
     expect(res.body.total).toBe(3);
   });
 
+  it("GET /biopsies/command-center returns safety queues", async () => {
+    biopsyService.getSafetyCommandCenter.mockResolvedValueOnce({
+      summary: { total_open_loops: 2, critical_items: 1 },
+      queues: { critical: [{ id: "bio-1" }], pendingReview: [{ id: "bio-2" }] },
+      biopsies: [{ id: "bio-1" }, { id: "bio-2" }],
+    });
+
+    const res = await request(app).get(`/biopsies/command-center?provider_id=${providerId}`);
+    expect(res.status).toBe(200);
+    expect(res.body.summary.critical_items).toBe(1);
+    expect(res.body.queues.critical).toHaveLength(1);
+    expect(biopsyService.getSafetyCommandCenter).toHaveBeenCalledWith("tenant-1", providerId);
+  });
+
   it("GET /biopsies/:id returns 404 when missing", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
     const res = await request(app).get("/biopsies/bio-1");
@@ -201,6 +221,23 @@ describe("Biopsy routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.id).toBe("bio-1");
     expect(biopsyService.trackSpecimen).toHaveBeenCalled();
+  });
+
+  it("PUT /biopsies/:id accepts diagnosis updates without status changes", async () => {
+    const client = makeClient();
+    client.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "bio-1", diagnosis_code: "C44.91" }] });
+    connectMock.mockResolvedValueOnce(client);
+    biopsyService.trackSpecimen.mockClear();
+
+    const res = await request(app).put("/biopsies/bio-1").send({
+      diagnosis_code: "C44.91",
+      diagnosis_description: "Basal cell carcinoma of skin, unspecified",
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.diagnosis_code).toBe("C44.91");
+    expect(biopsyService.trackSpecimen).not.toHaveBeenCalled();
   });
 
   it("POST /biopsies/:id/result returns 404 when missing", async () => {

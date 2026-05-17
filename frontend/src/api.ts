@@ -437,6 +437,84 @@ export async function fetchTasks(
   return res.json();
 }
 
+export type BiopsySafetySeverity = 'low' | 'medium' | 'high' | 'critical';
+
+export interface BiopsySafetyFlag {
+  id: string;
+  type: string;
+  severity: BiopsySafetySeverity;
+  title: string;
+  message: string;
+  action: string;
+}
+
+export interface BiopsySafetyItem {
+  id: string;
+  specimen_id: string;
+  patient_id?: string;
+  patientId?: string;
+  patient_name: string;
+  mrn?: string;
+  body_location?: string;
+  specimen_type?: string;
+  status: string;
+  ordered_at?: string;
+  sent_at?: string | null;
+  resulted_at?: string | null;
+  reviewed_at?: string | null;
+  pathology_diagnosis?: string | null;
+  malignancy_type?: string | null;
+  diagnosis_code?: string | null;
+  follow_up_action?: string | null;
+  turnaround_time_days?: number | null;
+  ordering_provider_name?: string;
+  path_lab?: string;
+  patient_notified?: boolean;
+  days_since_sent?: number | null;
+  days_since_result?: number | null;
+  safety_flags?: BiopsySafetyFlag[];
+  highest_severity?: BiopsySafetySeverity | null;
+  safety_stage?: string;
+  loop_status?: string;
+  next_action?: string;
+}
+
+export interface BiopsyCommandCenterSummary {
+  total_open_loops: number;
+  overdue_results: number;
+  pending_review: number;
+  needs_patient_notification: number;
+  needs_treatment_scheduling: number;
+  open_malignancies: number;
+  open_melanomas: number;
+  closed_loop_complete: number;
+  critical_items: number;
+  avg_turnaround_days: number | null;
+}
+
+export interface BiopsyCommandCenterResponse {
+  generated_at: string;
+  summary: BiopsyCommandCenterSummary;
+  queues: {
+    critical?: BiopsySafetyItem[];
+    pendingResults?: BiopsySafetyItem[];
+    pendingReview?: BiopsySafetyItem[];
+    pendingNotification?: BiopsySafetyItem[];
+    treatmentFollowUp?: BiopsySafetyItem[];
+    closed?: BiopsySafetyItem[];
+    [key: string]: BiopsySafetyItem[] | undefined;
+  };
+  biopsies: BiopsySafetyItem[];
+}
+
+export async function fetchBiopsyCommandCenter(tenantId: string, accessToken: string): Promise<BiopsyCommandCenterResponse> {
+  const res = await fetch(`${API_BASE}/api/biopsies/command-center`, {
+    headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },
+  });
+  if (!res.ok) throw new Error("Failed to load biopsy safety queue");
+  return res.json();
+}
+
 export async function fetchMessages(tenantId: string, accessToken: string) {
   const res = await fetch(`${API_BASE}/api/messages`, {
     headers: { Authorization: `Bearer ${accessToken}`, [TENANT_HEADER]: tenantId },

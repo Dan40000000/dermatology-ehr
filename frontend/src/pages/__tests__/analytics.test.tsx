@@ -33,9 +33,22 @@ const apiMocks = vi.hoisted(() => ({
   fetchProviderProductivity: vi.fn(),
   fetchPatientDemographics: vi.fn(),
   fetchAppointmentTypesAnalytics: vi.fn(),
+  fetchAnalyticsOverview: vi.fn(),
+  fetchAppointmentAnalytics: vi.fn(),
+  fetchProviderAnalytics: vi.fn(),
   fetchDermatologyMetrics: vi.fn(),
   fetchYoYComparison: vi.fn(),
   fetchNoShowRiskAnalysis: vi.fn(),
+}));
+
+const financialApiMocks = vi.hoisted(() => ({
+  fetchFinancialMetrics: vi.fn(),
+  fetchCollectionsTrend: vi.fn(),
+  fetchPaymentsSummary: vi.fn(),
+  fetchARAging: vi.fn(),
+  fetchBillsSummary: vi.fn(),
+  fetchClaims: vi.fn(),
+  fetchFinancialWorkQueue: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -47,6 +60,8 @@ vi.mock('../../contexts/ToastContext', () => ({
 }));
 
 vi.mock('../../api', () => apiMocks);
+
+vi.mock('../../api/financials', () => financialApiMocks);
 
 vi.mock('recharts', () => {
   const Mock = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
@@ -109,6 +124,48 @@ describe('AnalyticsPage', () => {
     apiMocks.fetchAppointmentTypesAnalytics.mockResolvedValue({
       data: [{ type_name: 'New', count: 6 }],
     });
+    apiMocks.fetchAnalyticsOverview.mockResolvedValue({
+      newPatients: { current: 14, previous: 11, trend: 27.3 },
+      appointments: {
+        current: 32,
+        previous: 29,
+        trend: 10.3,
+        byStatus: [
+          { status: 'completed', count: 24 },
+          { status: 'scheduled', count: 4 },
+          { status: 'no_show', count: 2 },
+          { status: 'cancelled', count: 2 },
+        ],
+      },
+      revenue: { current: 140000, previous: 120000, trend: 16.7 },
+      collectionRate: 87.5,
+    });
+    apiMocks.fetchAppointmentAnalytics.mockResolvedValue({
+      byStatus: [
+        { status: 'completed', count: 24 },
+        { status: 'scheduled', count: 4 },
+        { status: 'no_show', count: 2 },
+        { status: 'cancelled', count: 2 },
+      ],
+      byType: [{ type_name: 'New', count: 6 }],
+      byProvider: [{ provider_name: 'Dr. Demo', count: 12 }],
+      avgWaitTimeMinutes: 8.4,
+    });
+    apiMocks.fetchProviderAnalytics.mockResolvedValue({
+      data: [
+        {
+          id: 'prov-1',
+          provider_name: 'Dr. Demo',
+          completed_appointments: 24,
+          cancelled_appointments: 2,
+          no_shows: 2,
+          total_encounters: 24,
+          unique_patients: 20,
+          revenue_cents: 60000,
+          avg_visit_duration_minutes: 18,
+        },
+      ],
+    });
     apiMocks.fetchDermatologyMetrics.mockResolvedValue({
       biopsyStats: { total: 0, byType: { shave: 0, punch: 0, excisional: 0, incisional: 0 }, resultsBreakdown: [] },
       procedureSplit: {
@@ -142,6 +199,74 @@ describe('AnalyticsPage', () => {
       riskFactors: { byDayOfWeek: [], byTimeOfDay: [], byAppointmentType: [] },
       recommendations: [],
     });
+    financialApiMocks.fetchFinancialMetrics.mockResolvedValue({
+      snapshots: {
+        monthly: {
+          key: 'monthly',
+          label: 'Monthly Snapshot',
+          rangeLabel: 'Month to date',
+          completedAppointments: 24,
+          totalRevenueCents: 140000,
+          collectionsCents: 122500,
+          avgRevenuePerVisitCents: 5833,
+          benchmarkVisitsCount: 30,
+          collectionRate: 87.5,
+          standaloneRevenueCents: 20000,
+          revenueCategories: [
+            { key: 'office_visit', label: 'Office Visits', revenueCents: 100000, itemCount: 24 },
+            { key: 'no_show_fee', label: 'No-show Fees', revenueCents: 5000, itemCount: 2 },
+          ],
+        },
+      },
+    });
+    financialApiMocks.fetchCollectionsTrend.mockResolvedValue({
+      data: [{ bucketStartDate: '2024-01-01', revenueEarnedCents: 140000, paymentsCollectedCents: 122500, patientPaymentsCents: 25000, payerPaymentsCents: 97500 }],
+      summary: {
+        totalPaymentsCollectedCents: 122500,
+        totalRevenueEarnedCents: 140000,
+        totalPatientPaymentsCents: 25000,
+        totalPayerPaymentsCents: 97500,
+        totalPaymentCount: 10,
+        totalBillCount: 12,
+        dayCount: 31,
+        collectionRate: 87.5,
+        revenueCategories: [{ key: 'no_show_fee', label: 'No-show Fees', revenueCents: 5000, itemCount: 2 }],
+      },
+    });
+    financialApiMocks.fetchPaymentsSummary.mockResolvedValue({
+      calculated: { netCollectionRate: 87.5 },
+      receivables: { outstandingBalanceCents: 42000, overdueBalanceCents: 12000, overdueCount: 3 },
+      payerPaymentsSummary: { appliedCents: 97500, unappliedCents: 500 },
+      patientPaymentsByMethod: [{ paymentMethod: 'credit_card', count: 5, totalCents: 25000 }],
+    });
+    financialApiMocks.fetchARAging.mockResolvedValue({
+      buckets: [
+        { key: '0-30', label: '0-30 days', billCount: 4, totalBalanceCents: 30000 },
+        { key: '91-120', label: '91-120 days', billCount: 1, totalBalanceCents: 12000 },
+      ],
+    });
+    financialApiMocks.fetchBillsSummary.mockResolvedValue({
+      billsByStatus: [{ status: 'partial', count: 2, totalChargesCents: 42000 }],
+    });
+    financialApiMocks.fetchClaims.mockResolvedValue({
+      claims: [
+        { id: 'claim-1', status: 'paid', totalCents: 100000, paidAmountCents: 100000 },
+        { id: 'claim-2', status: 'denied', totalCents: 40000, balanceCents: 40000 },
+      ],
+    });
+    financialApiMocks.fetchFinancialWorkQueue.mockResolvedValue({
+      items: [
+        {
+          id: 'fwq-1',
+          issueType: 'claim_rejection',
+          severity: 'critical',
+          status: 'open',
+          message: 'Claim rejected by clearinghouse',
+          patientFirstName: 'Ava',
+          patientLastName: 'Jones',
+        },
+      ],
+    });
     toastMocks.showError.mockClear();
     toastMocks.showSuccess.mockClear();
   }, 15000);
@@ -159,7 +284,7 @@ describe('AnalyticsPage', () => {
 
     await screen.findByText('Analytics & Reports');
     expect(screen.getByText('Total Patients')).toBeInTheDocument();
-    expect(screen.getByText('Dr. Demo')).toBeInTheDocument();
+    expect(screen.getAllByText('Dr. Demo').length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'Clinical and Operational' }));
     expect(screen.getByText('Data Explorer')).toBeInTheDocument();
@@ -172,6 +297,8 @@ describe('AnalyticsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Financials' }));
     expect(screen.getByText('Financial Reports')).toBeInTheDocument();
+    expect(screen.getByText('Collections Story')).toBeInTheDocument();
+    expect(screen.getByText('Claim Pipeline')).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText('Start Date'), { target: { value: '2024-01-01' } });
     await waitFor(() => {

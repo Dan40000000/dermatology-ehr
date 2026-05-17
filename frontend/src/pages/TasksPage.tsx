@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, ExportButtons } from '../components/ui';
@@ -15,6 +15,9 @@ import {
   deleteTask,
   fetchTaskComments,
   addTaskComment,
+  fetchBiopsyCommandCenter,
+  type BiopsyCommandCenterResponse,
+  type BiopsySafetyItem,
 } from '../api';
 import { TaskKanbanBoard } from '../components/tasks/TaskKanbanBoard';
 import { TaskDetailModal } from '../components/tasks/TaskDetailModal';
@@ -26,12 +29,15 @@ type ViewMode = 'kanban' | 'list';
 export function TasksPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [biopsyCommandCenter, setBiopsyCommandCenter] = useState<BiopsyCommandCenterResponse | null>(null);
+  const [safetyTaskBusyId, setSafetyTaskBusyId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('kanban');
 
   // Modals
@@ -84,7 +90,7 @@ export function TasksPage() {
 
     setLoading(true);
     try {
-      const [tasksRes, patientsRes, providersRes] = await Promise.all([
+      const [tasksRes, patientsRes, providersRes, biopsyRes] = await Promise.all([
         fetchTasks(session.tenantId, session.accessToken, {
           ...filters,
           sortBy: 'dueDate',
@@ -92,11 +98,13 @@ export function TasksPage() {
         }),
         fetchPatients(session.tenantId, session.accessToken),
         fetchProviders(session.tenantId, session.accessToken),
+        fetchBiopsyCommandCenter(session.tenantId, session.accessToken).catch(() => null),
       ]);
 
       setTasks(tasksRes.tasks || []);
       setPatients(patientsRes.patients || []);
       setProviders(providersRes.providers || []);
+      setBiopsyCommandCenter(biopsyRes);
     } catch (err: any) {
       showError(err.message || 'Failed to load tasks');
     } finally {
@@ -151,6 +159,41 @@ export function TasksPage() {
     } catch (err: any) {
       showError(err.message || 'Failed to create task');
       throw err;
+    }
+  };
+
+  const patientIdForBiopsy = (biopsy: BiopsySafetyItem) => biopsy.patient_id || biopsy.patientId || '';
+
+  const hasSafetyTaskForBiopsy = (biopsy: BiopsySafetyItem) => {
+    const specimenId = biopsy.specimen_id;
+    return tasks.some((task) =>
+      task.status !== 'completed' &&
+      [task.title, task.description].filter(Boolean).some((value) => String(value).includes(specimenId)),
+    );
+  };
+
+  const handleCreateBiopsySafetyTask = async (biopsy: BiopsySafetyItem) => {
+    if (!session || hasSafetyTaskForBiopsy(biopsy)) return;
+
+    setSafetyTaskBusyId(biopsy.id);
+    try {
+      const severity = biopsy.highest_severity;
+      await createTask(session.tenantId, session.accessToken, {
+        title: `Biopsy follow-up: ${biopsy.specimen_id}`,
+        description: `${biopsy.patient_name}${biopsy.mrn ? ` (${biopsy.mrn})` : ''} - ${biopsy.loop_status || 'Biopsy follow-up'}${biopsy.body_location ? ` at ${biopsy.body_location}` : ''}. ${biopsy.next_action || ''}`,
+        category: 'lab-path-followup',
+        priority: severity === 'critical' ? 'urgent' : severity === 'high' ? 'high' : 'normal',
+        status: 'todo',
+        patientId: patientIdForBiopsy(biopsy) || undefined,
+        dueDate: new Date().toISOString().slice(0, 10),
+      });
+
+      showSuccess('Biopsy safety task created');
+      await loadData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to create biopsy safety task');
+    } finally {
+      setSafetyTaskBusyId(null);
     }
   };
 
@@ -271,6 +314,8 @@ export function TasksPage() {
   const myTasksCount = tasks.filter((t) => t && t.assignedTo === session?.user?.id).length;
 
   const users = providers.map((p) => ({ id: p.id, fullName: p.fullName }));
+  const biopsySafetyItems = biopsyCommandCenter?.queues.critical || [];
+  const biopsyOpenLoops = biopsyCommandCenter?.summary.total_open_loops || 0;
 
   return (
     <div className="tasks-page" style={{
@@ -379,6 +424,138 @@ export function TasksPage() {
         <span style={{ fontSize: '1.5rem' }}>✓</span>
         Task Management
       </div>
+
+      {!loading && biopsyOpenLoops > 0 && (
+        <section
+          aria-label="Biopsy safety work queue"
+          style={{
+            marginBottom: '1.5rem',
+            border: '1px solid #fecaca',
+            borderRadius: '12px',
+            background: '#fff7f7',
+            boxShadow: '0 10px 24px rgba(185, 28, 28, 0.1)',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              padding: '1rem 1.25rem',
+              background: 'linear-gradient(135deg, #7f1d1d 0%, #dc2626 100%)',
+              color: '#ffffff',
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: '1rem',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', opacity: 0.9 }}>
+                Biopsy Safety Work Queue
+              </div>
+              <div style={{ marginTop: '0.25rem', fontSize: '1.15rem', fontWeight: 900 }}>
+                {biopsySafetyItems.length} critical/high pathology loops, {biopsyOpenLoops} total open loops
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => navigate('/biopsies')}
+                style={{
+                  border: '1px solid rgba(255,255,255,0.5)',
+                  borderRadius: '999px',
+                  background: '#ffffff',
+                  color: '#991b1b',
+                  padding: '0.7rem 1rem',
+                  fontWeight: 900,
+                  cursor: 'pointer',
+                }}
+              >
+                Open Biopsy Queue
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchParams({});
+                  setFilters((prev) => ({ ...prev, category: 'lab-path-followup', assignedTo: '', status: '' }));
+                }}
+                style={{
+                  border: '1px solid rgba(255,255,255,0.4)',
+                  borderRadius: '999px',
+                  background: 'rgba(255,255,255,0.14)',
+                  color: '#ffffff',
+                  padding: '0.7rem 1rem',
+                  fontWeight: 900,
+                  cursor: 'pointer',
+                }}
+              >
+                Show Lab/Path Tasks
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: '0.75rem', padding: '1rem' }}>
+            {biopsySafetyItems.slice(0, 4).map((biopsy) => {
+              const alreadyTasked = hasSafetyTaskForBiopsy(biopsy);
+              return (
+                <div
+                  key={biopsy.id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(0, 1fr) auto',
+                    gap: '0.75rem',
+                    alignItems: 'center',
+                    border: '1px solid #fecaca',
+                    borderRadius: '10px',
+                    background: '#ffffff',
+                    padding: '0.9rem',
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <strong style={{ color: '#111827' }}>{biopsy.patient_name}</strong>
+                      <span style={{ color: '#64748b', fontSize: '0.88rem' }}>{biopsy.specimen_id}</span>
+                      <span
+                        style={{
+                          borderRadius: '999px',
+                          background: biopsy.highest_severity === 'critical' ? '#fee2e2' : '#ffedd5',
+                          color: biopsy.highest_severity === 'critical' ? '#991b1b' : '#9a3412',
+                          padding: '0.12rem 0.5rem',
+                          fontSize: '0.72rem',
+                          fontWeight: 900,
+                          textTransform: 'capitalize',
+                        }}
+                      >
+                        {biopsy.highest_severity || 'open'}
+                      </span>
+                    </div>
+                    <div style={{ marginTop: '0.25rem', color: '#7f1d1d', fontSize: '0.9rem' }}>
+                      {biopsy.loop_status || 'Open biopsy loop'}: {biopsy.next_action || 'Open pathology follow-up'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={alreadyTasked || safetyTaskBusyId === biopsy.id}
+                    onClick={() => handleCreateBiopsySafetyTask(biopsy)}
+                    style={{
+                      border: '1px solid #fecaca',
+                      borderRadius: '8px',
+                      background: alreadyTasked ? '#f1f5f9' : '#ffffff',
+                      color: alreadyTasked ? '#64748b' : '#991b1b',
+                      padding: '0.6rem 0.85rem',
+                      fontWeight: 900,
+                      cursor: alreadyTasked || safetyTaskBusyId === biopsy.id ? 'default' : 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {alreadyTasked ? 'Task Exists' : safetyTaskBusyId === biopsy.id ? 'Creating...' : 'Create Task'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Stats Row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
@@ -540,6 +717,7 @@ export function TasksPage() {
             <label className="ema-filter-label">Category</label>
             <select
               className="ema-filter-select"
+              aria-label="Category"
               value={filters.category}
               onChange={(e) => setFilters((prev) => ({ ...prev, category: e.target.value }))}
             >
@@ -557,10 +735,12 @@ export function TasksPage() {
             <label className="ema-filter-label">Priority</label>
             <select
               className="ema-filter-select"
+              aria-label="Priority"
               value={filters.priority}
               onChange={(e) => setFilters((prev) => ({ ...prev, priority: e.target.value }))}
             >
               <option value="">All Priorities</option>
+              <option value="urgent">Urgent</option>
               <option value="high">High</option>
               <option value="normal">Normal</option>
               <option value="low">Low</option>
@@ -571,6 +751,7 @@ export function TasksPage() {
             <label className="ema-filter-label">Assigned To</label>
             <select
               className="ema-filter-select"
+              aria-label="Assigned To"
               value={filters.assignedTo}
               onChange={(e) => setFilters((prev) => ({ ...prev, assignedTo: e.target.value }))}
             >

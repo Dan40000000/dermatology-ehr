@@ -37,6 +37,7 @@ export interface AppointmentWithDetails {
   balanceAge?: number;
   // Wait time
   waitTimeMinutes?: number;
+  accessibilityProfile?: Record<string, unknown>;
   // Metadata
   createdAt: string;
 }
@@ -261,6 +262,7 @@ export class FrontDeskService {
           p.last_name as patient_last_name,
           p.phone as patient_phone,
           p.email as patient_email,
+          p.accessibility_profile as accessibility_profile,
           a.provider_id,
           prov.full_name as provider_name,
           a.location_id,
@@ -363,6 +365,7 @@ export class FrontDeskService {
           patientLastName: row.patient_last_name,
           patientPhone: row.patient_phone,
           patientEmail: row.patient_email,
+          accessibilityProfile: row.accessibility_profile || {},
           providerId: row.provider_id,
           providerName: row.provider_name,
           locationId: row.location_id,
@@ -1001,6 +1004,7 @@ export class FrontDeskService {
           p.last_name as patient_last_name,
           p.phone as patient_phone,
           p.email as patient_email,
+          p.accessibility_profile as accessibility_profile,
           a.provider_id,
           prov.full_name as provider_name,
           a.location_id,
@@ -1072,6 +1076,7 @@ export class FrontDeskService {
         patientLastName: row.patient_last_name,
         patientPhone: row.patient_phone,
         patientEmail: row.patient_email,
+        accessibilityProfile: row.accessibility_profile || {},
         providerId: row.provider_id,
         providerName: row.provider_name,
         locationId: row.location_id,

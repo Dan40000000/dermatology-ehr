@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { format } from 'date-fns';
+import { buildVisitPrepChecklist, getAccessibilitySummary, hasAccessibilityNeeds } from '../../utils/accessibilityAccommodations';
 
 export interface AppointmentWithDetails {
   id: string;
@@ -20,6 +21,7 @@ export interface AppointmentWithDetails {
   insurancePlanName?: string;
   copayAmount?: number;
   outstandingBalance?: number;
+  accessibilityProfile?: Record<string, unknown>;
 }
 
 interface TodaySchedulePanelProps {
@@ -192,6 +194,15 @@ export const TodaySchedulePanel: React.FC<TodaySchedulePanelProps> = ({
 
                   {/* Status & Indicators */}
                   <div className="flex items-center gap-3">
+                    {hasAccessibilityNeeds(appointment.accessibilityProfile) && (
+                      <div
+                        className="text-blue-700 bg-blue-50 border border-blue-200 px-3 py-1 rounded-full text-sm font-medium"
+                        title={getAccessibilitySummary(appointment.accessibilityProfile)}
+                      >
+                        Access needs
+                      </div>
+                    )}
+
                     {/* Wait Time Alert */}
                     {appointment.waitTimeMinutes && appointment.waitTimeMinutes > 15 && (
                       <div className="flex items-center gap-1 text-orange-600 bg-orange-50 px-3 py-1 rounded-full text-sm font-medium">
@@ -286,6 +297,18 @@ export const TodaySchedulePanel: React.FC<TodaySchedulePanelProps> = ({
                         ${(appointment.outstandingBalance || 0).toFixed(2)}
                       </div>
                     </div>
+                    {hasAccessibilityNeeds(appointment.accessibilityProfile) && (
+                      <div className="col-span-2">
+                        <div className="text-sm font-medium text-gray-700">
+                          Access Needs
+                        </div>
+                        <ul className="mt-1 list-disc pl-5 text-sm text-blue-900">
+                          {buildVisitPrepChecklist(appointment.accessibilityProfile).map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
 
                   {/* Quick Actions */}

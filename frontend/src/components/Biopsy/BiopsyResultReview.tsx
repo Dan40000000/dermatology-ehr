@@ -36,6 +36,8 @@ import {
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../contexts/AuthContext';
+import { API_BASE_URL } from '../../utils/apiBase';
 
 interface BiopsyResultReviewProps {
   biopsyId: string;
@@ -54,6 +56,7 @@ interface Biopsy {
   body_location: string;
   location_details: string;
   specimen_type: string;
+  status: string;
   clinical_description: string;
   differential_diagnoses: string[];
   ordered_at: string;
@@ -79,6 +82,12 @@ interface Biopsy {
   photo_ids: string[];
   lesion_id: string | null;
   ordering_provider_name: string;
+  follow_up_action?: string | null;
+  follow_up_interval?: string | null;
+  follow_up_notes?: string | null;
+  reexcision_required?: boolean | null;
+  patient_notification_notes?: string | null;
+  patient_notified?: boolean;
 }
 
 interface ICD10Code {
@@ -91,6 +100,7 @@ const BiopsyResultReview: React.FC<BiopsyResultReviewProps> = ({
   onClose,
   onReviewComplete
 }) => {
+  const { headers } = useAuth();
   const [biopsy, setBiopsy] = useState<Biopsy | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -137,11 +147,7 @@ const BiopsyResultReview: React.FC<BiopsyResultReviewProps> = ({
 
   const fetchBiopsy = async () => {
     try {
-      const response = await fetch(`/api/biopsies/${biopsyId}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
+      const response = await fetch(`${API_BASE_URL}/api/biopsies/${biopsyId}`, { headers });
 
       if (response.ok) {
         const data = await response.json();
@@ -153,8 +159,17 @@ const BiopsyResultReview: React.FC<BiopsyResultReviewProps> = ({
           setDiagnosisDescription(data.diagnosis_description || '');
         }
 
+        setReviewData(prev => ({
+          ...prev,
+          follow_up_action: data.follow_up_action || prev.follow_up_action,
+          follow_up_interval: data.follow_up_interval || '',
+          follow_up_notes: data.follow_up_notes || '',
+          reexcision_required: Boolean(data.reexcision_required),
+          patient_notification_notes: data.patient_notification_notes || ''
+        }));
+
         // Auto-suggest follow-up based on findings
-        if (data.malignancy_type) {
+        if (data.malignancy_type && !data.follow_up_action) {
           if (data.malignancy_type === 'melanoma') {
             setReviewData(prev => ({
               ...prev,
@@ -198,25 +213,29 @@ const BiopsyResultReview: React.FC<BiopsyResultReviewProps> = ({
     try {
       // First update diagnosis code if needed
       if (diagnosisCode !== biopsy?.diagnosis_code) {
-        await fetch(`/api/biopsies/${biopsyId}`, {
+        const diagnosisResponse = await fetch(`${API_BASE_URL}/api/biopsies/${biopsyId}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
+            ...headers,
           },
           body: JSON.stringify({
             diagnosis_code: diagnosisCode,
             diagnosis_description: diagnosisDescription
           })
         });
+
+        if (!diagnosisResponse.ok) {
+          throw new Error('Failed to update diagnosis code');
+        }
       }
 
       // Submit review
-      const response = await fetch(`/api/biopsies/${biopsyId}/review`, {
+      const response = await fetch(`${API_BASE_URL}/api/biopsies/${biopsyId}/review`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          ...headers,
         },
         body: JSON.stringify(reviewData)
       });
@@ -239,11 +258,11 @@ const BiopsyResultReview: React.FC<BiopsyResultReviewProps> = ({
 
   const handlePatientNotification = async () => {
     try {
-      const response = await fetch(`/api/biopsies/${biopsyId}/notify-patient`, {
+      const response = await fetch(`${API_BASE_URL}/api/biopsies/${biopsyId}/notify-patient`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          ...headers,
         },
         body: JSON.stringify({
           method: notificationMethod,
@@ -415,7 +434,7 @@ const BiopsyResultReview: React.FC<BiopsyResultReviewProps> = ({
                 Diagnosis:
               </Typography>
               <Typography variant="body1" sx={{ mb: 2, fontWeight: 500 }}>
-                {biopsy.pathology_diagnosis}
+              {biopsy.pathology_diagnosis || 'Pathology result is not available yet.'}
               </Typography>
 
               {biopsy.pathology_gross_description && (
@@ -611,14 +630,14 @@ const BiopsyResultReview: React.FC<BiopsyResultReviewProps> = ({
         <Button onClick={onClose} disabled={submitting}>
           Cancel
         </Button>
-        <Button
-          variant="contained"
-          startIcon={<CheckCircleIcon />}
-          onClick={handleReviewSubmit}
-          disabled={submitting || !diagnosisCode}
-        >
-          {submitting ? 'Submitting...' : 'Sign & Close Review'}
-        </Button>
+	        <Button
+	          variant="contained"
+	          startIcon={<CheckCircleIcon />}
+	          onClick={handleReviewSubmit}
+	          disabled={submitting || !diagnosisCode || biopsy.status !== 'resulted'}
+	        >
+	          {biopsy.status === 'resulted' ? (submitting ? 'Submitting...' : 'Sign & Close Review') : 'Review Already Signed'}
+	        </Button>
       </Box>
 
       {/* Patient Notification Dialog */}

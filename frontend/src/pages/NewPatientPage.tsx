@@ -4,6 +4,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { createPatient } from '../api';
 import { PharmacySearch, type Pharmacy } from '../components/prescriptions/PharmacySearch';
+import {
+  ACCESSIBILITY_COMMUNICATION_OPTIONS,
+  ACCESSIBILITY_EQUIPMENT_OPTIONS,
+  normalizeAccessibilityProfile,
+} from '../utils/accessibilityAccommodations';
 
 interface PatientFormData {
   firstName: string;
@@ -34,6 +39,17 @@ interface PatientFormData {
   preferredPharmacy: string;
   pharmacyPhone: string;
   pharmacyAddress: string;
+  communicationSupport: string[];
+  interpreterNeeded: boolean;
+  interpreterLanguage: string;
+  mobilityAssistance: boolean;
+  accessibleRoomRequired: boolean;
+  accessibleEquipment: string[];
+  serviceAnimal: boolean;
+  extendedVisit: boolean;
+  extraVisitMinutes: string;
+  sensoryConsiderations: string;
+  accessNotes: string;
 }
 
 const STATES = [
@@ -67,7 +83,7 @@ export function NewPatientPage() {
   const { showSuccess, showError } = useToast();
 
   const [saving, setSaving] = useState(false);
-  const [activeSection, setActiveSection] = useState<'demographics' | 'contact' | 'insurance' | 'medical'>('demographics');
+  const [activeSection, setActiveSection] = useState<'demographics' | 'contact' | 'insurance' | 'medical' | 'accessibility'>('demographics');
   const [formData, setFormData] = useState<PatientFormData>({
     firstName: '',
     lastName: '',
@@ -97,10 +113,33 @@ export function NewPatientPage() {
     preferredPharmacy: '',
     pharmacyPhone: '',
     pharmacyAddress: '',
+    communicationSupport: [],
+    interpreterNeeded: false,
+    interpreterLanguage: '',
+    mobilityAssistance: false,
+    accessibleRoomRequired: false,
+    accessibleEquipment: [],
+    serviceAnimal: false,
+    extendedVisit: false,
+    extraVisitMinutes: '',
+    sensoryConsiderations: '',
+    accessNotes: '',
   });
 
-  const updateField = (field: keyof PatientFormData, value: string) => {
+  const updateField = (field: keyof PatientFormData, value: string | boolean | string[]) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const toggleArrayField = (field: 'communicationSupport' | 'accessibleEquipment', value: string) => {
+    setFormData((prev) => {
+      const values = new Set(prev[field]);
+      if (values.has(value)) {
+        values.delete(value);
+      } else {
+        values.add(value);
+      }
+      return { ...prev, [field]: Array.from(values) };
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -148,6 +187,21 @@ export function NewPatientPage() {
         referralSource: formData.referralSource || undefined,
         insuranceId: formData.insuranceId || undefined,
         insuranceGroupNumber: formData.insuranceGroupNumber || undefined,
+        accessibilityProfile: normalizeAccessibilityProfile({
+          communicationSupport: formData.communicationSupport,
+          interpreterNeeded: formData.interpreterNeeded,
+          interpreterLanguage: formData.interpreterLanguage,
+          mobilityAssistance: formData.mobilityAssistance,
+          accessibleRoomRequired: formData.accessibleRoomRequired,
+          accessibleEquipment: formData.accessibleEquipment,
+          serviceAnimal: formData.serviceAnimal,
+          extendedVisit: formData.extendedVisit,
+          extraVisitMinutes: Number(formData.extraVisitMinutes || 0) || undefined,
+          sensoryConsiderations: formData.sensoryConsiderations,
+          notes: formData.accessNotes,
+          lastReviewedAt: new Date().toISOString(),
+          lastReviewedBy: session.user?.fullName || session.user?.email || 'Staff',
+        }),
       });
 
       showSuccess('Patient created successfully');
@@ -164,6 +218,7 @@ export function NewPatientPage() {
     { id: 'contact', label: 'Contact Info', icon: '' },
     { id: 'insurance', label: 'Insurance', icon: '' },
     { id: 'medical', label: 'Medical Info', icon: '' },
+    { id: 'accessibility', label: 'Access Needs', icon: '' },
   ];
 
   const selectedPharmacy: Pharmacy | undefined = formData.preferredPharmacy
@@ -870,6 +925,186 @@ export function NewPatientPage() {
               <button
                 type="button"
                 onClick={() => setActiveSection('insurance')}
+                style={{
+                  padding: '0.5rem 1rem',
+                  background: '#f3f4f6',
+                  color: '#374151',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem'
+                }}
+              >
+                ← Back
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSection('accessibility')}
+                style={{
+                  padding: '0.5rem 1rem',
+                  background: '#0369a1',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                }}
+              >
+                Next: Access Needs →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activeSection === 'accessibility' && (
+          <div>
+            <div className="ema-section-header" style={{ marginBottom: '1rem' }}>Access Needs & Accommodations</div>
+            <div style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
+              Optional, patient-requested accommodation details for scheduling, check-in, rooming, telehealth, and patient communication.
+            </div>
+
+            <div style={{ display: 'grid', gap: '1rem' }}>
+              <section style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
+                <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', color: '#374151' }}>
+                  Communication Support
+                </h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem 1rem' }}>
+                  {ACCESSIBILITY_COMMUNICATION_OPTIONS.map((option) => (
+                    <label key={option.value} style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center', justifyContent: 'flex-start', textAlign: 'left', fontSize: '0.875rem', color: '#374151' }}>
+                      <input
+                        type="checkbox"
+                        checked={formData.communicationSupport.includes(option.value)}
+                        onChange={() => toggleArrayField('communicationSupport', option.value)}
+                        style={{ width: 'auto', padding: 0, margin: 0, flex: '0 0 auto' }}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
+                  <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={formData.interpreterNeeded}
+                        onChange={(e) => updateField('interpreterNeeded', e.target.checked)}
+                        style={{ width: 'auto', padding: 0, margin: 0, flex: '0 0 auto' }}
+                      />
+                      Interpreter needed
+                    </span>
+                    <input
+                      type="text"
+                      value={formData.interpreterLanguage}
+                      onChange={(e) => updateField('interpreterLanguage', e.target.value)}
+                      placeholder="Language or modality"
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem 0.75rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '4px',
+                        fontSize: '0.875rem'
+                      }}
+                    />
+                  </label>
+                  <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                    Sensory considerations
+                    <input
+                      type="text"
+                      value={formData.sensoryConsiderations}
+                      onChange={(e) => updateField('sensoryConsiderations', e.target.value)}
+                      placeholder="Example: low-stimulation room, dim lights"
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem 0.75rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '4px',
+                        fontSize: '0.875rem'
+                      }}
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <section style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
+                <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', color: '#374151' }}>
+                  Mobility, Room, and Equipment
+                </h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem 1rem', marginBottom: '0.75rem' }}>
+                  <label style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center', justifyContent: 'flex-start', textAlign: 'left', fontSize: '0.875rem', color: '#374151' }}>
+                    <input type="checkbox" checked={formData.mobilityAssistance} onChange={(e) => updateField('mobilityAssistance', e.target.checked)} style={{ width: 'auto', padding: 0, margin: 0, flex: '0 0 auto' }} />
+                    Mobility or transfer assistance requested
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center', justifyContent: 'flex-start', textAlign: 'left', fontSize: '0.875rem', color: '#374151' }}>
+                    <input type="checkbox" checked={formData.accessibleRoomRequired} onChange={(e) => updateField('accessibleRoomRequired', e.target.checked)} style={{ width: 'auto', padding: 0, margin: 0, flex: '0 0 auto' }} />
+                    Accessible room required
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center', justifyContent: 'flex-start', textAlign: 'left', fontSize: '0.875rem', color: '#374151' }}>
+                    <input type="checkbox" checked={formData.serviceAnimal} onChange={(e) => updateField('serviceAnimal', e.target.checked)} style={{ width: 'auto', padding: 0, margin: 0, flex: '0 0 auto' }} />
+                    Service animal may accompany patient
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center', justifyContent: 'flex-start', textAlign: 'left', fontSize: '0.875rem', color: '#374151' }}>
+                    <input type="checkbox" checked={formData.extendedVisit} onChange={(e) => updateField('extendedVisit', e.target.checked)} style={{ width: 'auto', padding: 0, margin: 0, flex: '0 0 auto' }} />
+                    Extended visit time
+                  </label>
+                </div>
+                <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151', maxWidth: '220px', marginBottom: '0.75rem' }}>
+                  Extra minutes
+                  <input
+                    type="number"
+                    min={0}
+                    max={240}
+                    value={formData.extraVisitMinutes}
+                    onChange={(e) => updateField('extraVisitMinutes', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem 0.75rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '4px',
+                      fontSize: '0.875rem'
+                    }}
+                  />
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem 1rem' }}>
+                  {ACCESSIBILITY_EQUIPMENT_OPTIONS.map((option) => (
+                    <label key={option.value} style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center', justifyContent: 'flex-start', textAlign: 'left', fontSize: '0.875rem', color: '#374151' }}>
+                      <input
+                        type="checkbox"
+                        checked={formData.accessibleEquipment.includes(option.value)}
+                        onChange={() => toggleArrayField('accessibleEquipment', option.value)}
+                        style={{ width: 'auto', padding: 0, margin: 0, flex: '0 0 auto' }}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+              </section>
+
+              <div className="form-field">
+                <label htmlFor="access-notes" style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.75rem', fontWeight: 500, color: '#374151' }}>
+                  Staff Notes
+                </label>
+                <textarea
+                  id="access-notes"
+                  value={formData.accessNotes}
+                  onChange={(e) => updateField('accessNotes', e.target.value)}
+                  placeholder="Document patient-requested accommodation details or visit-prep notes."
+                  rows={3}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '4px',
+                    fontSize: '0.875rem',
+                    fontFamily: 'inherit'
+                  }}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'space-between' }}>
+              <button
+                type="button"
+                onClick={() => setActiveSection('medical')}
                 style={{
                   padding: '0.5rem 1rem',
                   background: '#f3f4f6',

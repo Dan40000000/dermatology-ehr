@@ -52,6 +52,7 @@ const AnalyticsPage = lazy(() => import('../pages/AnalyticsPage').then(m => ({ d
 const AnalyticsDashboard = lazy(() => import('../pages/admin/AnalyticsDashboard').then(m => ({ default: m.AnalyticsDashboard })));
 const PrescriptionsPage = lazy(() => import('../pages/PrescriptionsPage').then(m => ({ default: m.PrescriptionsPage })));
 const LabsPage = lazy(() => import('../pages/LabsPage').then(m => ({ default: m.LabsPage })));
+const BiopsyLogPage = lazy(() => import('../pages/BiopsyLogPage'));
 const RadiologyPage = lazy(() => import('../pages/RadiologyPage').then(m => ({ default: m.RadiologyPage })));
 const MessagingPage = lazy(() => import('../pages/MessagingPage').then(m => ({ default: m.MessagingPage })));
 const TasksPage = lazy(() => import('../pages/TasksPage').then(m => ({ default: m.TasksPage })));
@@ -272,6 +273,7 @@ export const routes: RouteObject[] = [
       { path: 'rx', element: lazyWithSuspense(PrescriptionsPage) },
       { path: 'prior-auth', element: lazyWithSuspense(PriorAuthPage) },
       { path: 'labs', element: lazyWithSuspense(LabsPage) },
+      { path: 'biopsies', element: lazyWithSuspense(BiopsyLogPage) },
       { path: 'radiology', element: lazyWithSuspense(RadiologyPage) },
 
       // Communication

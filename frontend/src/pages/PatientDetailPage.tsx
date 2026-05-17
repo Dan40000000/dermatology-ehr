@@ -19,6 +19,15 @@ import { InsuranceLookupPanel } from '../components/workflows';
 import { hasAnyRole, hasRole } from '../utils/roles';
 import { formatPhoneDisplay } from '../utils/phone';
 import {
+  ACCESSIBILITY_COMMUNICATION_OPTIONS,
+  ACCESSIBILITY_EQUIPMENT_OPTIONS,
+  buildVisitPrepChecklist,
+  getAccessibilityNeedLabels,
+  getAccessibilitySummary,
+  hasAccessibilityNeeds,
+  normalizeAccessibilityProfile,
+} from '../utils/accessibilityAccommodations';
+import {
   fetchPatient,
   fetchEncounters,
   fetchAppointments,
@@ -56,12 +65,14 @@ import type {
   Order,
   PhotoType,
   UserRole,
+  PatientAccessibilityProfile,
 } from '../types';
 
-type TabId = 'overview' | 'demographics' | 'insurance' | 'account' | 'medical-history' | 'clinical-summary' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'referrals' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks' | 'scribe';
+type TabId = 'overview' | 'demographics' | 'accessibility' | 'insurance' | 'account' | 'medical-history' | 'clinical-summary' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'referrals' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks' | 'scribe';
 const VALID_PATIENT_DETAIL_TABS = new Set<TabId>([
   'overview',
   'demographics',
+  'accessibility',
   'insurance',
   'account',
   'medical-history',
@@ -397,6 +408,7 @@ export function PatientDetailPage() {
 
   // Modal states
   const [editDemographicsOpen, setEditDemographicsOpen] = useState(false);
+  const [editAccessibilityOpen, setEditAccessibilityOpen] = useState(false);
   const [editInsuranceOpen, setEditInsuranceOpen] = useState(false);
   const [editAllergyOpen, setEditAllergyOpen] = useState(false);
   const [editMedicationOpen, setEditMedicationOpen] = useState(false);
@@ -992,6 +1004,7 @@ export function PatientDetailPage() {
   const tabs: { id: TabId; label: string; icon: string; count?: number }[] = [
     { id: 'overview', label: 'Overview', icon: '' },
     { id: 'demographics', label: 'Demographics', icon: '' },
+    { id: 'accessibility', label: 'Access Needs', icon: '', count: patient ? getAccessibilityNeedLabels(patient.accessibilityProfile).length : 0 },
     { id: 'insurance', label: 'Insurance', icon: '' },
     { id: 'account', label: 'Account', icon: '' },
     { id: 'medical-history', label: 'Medical History', icon: '' },
@@ -1350,6 +1363,12 @@ export function PatientDetailPage() {
                 />
               )}
 
+              <AccessNeedsPreview
+                patient={patient}
+                onOpen={() => setActiveTab('accessibility')}
+                onEdit={() => setEditAccessibilityOpen(true)}
+              />
+
               {/* Recent Activity */}
               <div>
                 <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
@@ -1473,6 +1492,7 @@ export function PatientDetailPage() {
                   { label: 'Photos', icon: '', onClick: () => setActiveTab('photos') },
                   { label: 'Orders', icon: '', onClick: () => setActiveTab('orders') },
                   { label: 'Insurance', icon: '', onClick: () => setActiveTab('insurance') },
+                  { label: 'Access Needs', icon: '', onClick: () => setActiveTab('accessibility') },
                 ].map((action) => (
                     <button
                       key={action.label}
@@ -1663,6 +1683,10 @@ export function PatientDetailPage() {
           <DemographicsTab patient={patient} onEdit={() => setEditDemographicsOpen(true)} />
         )}
 
+        {activeTab === 'accessibility' && (
+          <AccessibilityTab patient={patient} onEdit={() => setEditAccessibilityOpen(true)} />
+        )}
+
         {activeTab === 'insurance' && (
           <InsuranceTab patient={patient} onEdit={() => setEditInsuranceOpen(true)} />
         )}
@@ -1830,6 +1854,14 @@ export function PatientDetailPage() {
       <EditDemographicsModal
         isOpen={editDemographicsOpen}
         onClose={() => setEditDemographicsOpen(false)}
+        patient={patient}
+        onSave={loadPatientData}
+        session={session}
+      />
+
+      <EditAccessibilityModal
+        isOpen={editAccessibilityOpen}
+        onClose={() => setEditAccessibilityOpen(false)}
         patient={patient}
         onSave={loadPatientData}
         session={session}
@@ -3247,6 +3279,162 @@ function InfoRow({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+function AccessNeedsPreview({
+  patient,
+  onOpen,
+  onEdit,
+}: {
+  patient: Patient;
+  onOpen: () => void;
+  onEdit: () => void;
+}) {
+  const checklist = buildVisitPrepChecklist(patient.accessibilityProfile);
+  const hasNeeds = hasAccessibilityNeeds(patient.accessibilityProfile);
+
+  return (
+    <div>
+      <div className="ema-section-header" style={{ marginBottom: '0.75rem' }}>
+        Access Needs
+      </div>
+      <div style={{
+        background: hasNeeds ? '#eff6ff' : '#f9fafb',
+        border: hasNeeds ? '1px solid #93c5fd' : '1px solid #e5e7eb',
+        borderRadius: '8px',
+        padding: '1rem',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start' }}>
+          <div>
+            <div style={{ fontWeight: 700, color: '#111827', marginBottom: '0.25rem' }}>
+              {getAccessibilitySummary(patient.accessibilityProfile)}
+            </div>
+            <div style={{ fontSize: '0.8rem', color: '#4b5563' }}>
+              {hasNeeds ? 'Review before scheduling, check-in, rooming, and telehealth.' : 'Document communication, mobility, service animal, or extra-time needs when requested.'}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button type="button" className="ema-action-btn" onClick={onOpen}>Open</button>
+            <button type="button" className="ema-action-btn" onClick={onEdit}>Edit</button>
+          </div>
+        </div>
+        {checklist.length > 0 && (
+          <ul style={{ margin: '0.75rem 0 0', paddingLeft: '1.2rem', color: '#1f2937', fontSize: '0.85rem' }}>
+            {checklist.slice(0, 3).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AccessibilityChipList({ labels }: { labels: string[] }) {
+  if (labels.length === 0) {
+    return <span style={{ color: '#6b7280' }}>No access needs documented</span>;
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+      {labels.map((label) => (
+        <span
+          key={label}
+          style={{
+            background: '#e0f2fe',
+            color: '#075985',
+            border: '1px solid #7dd3fc',
+            borderRadius: '999px',
+            padding: '0.25rem 0.65rem',
+            fontSize: '0.78rem',
+            fontWeight: 700,
+          }}
+        >
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function AccessibilityTab({ patient, onEdit }: { patient: Patient; onEdit: () => void }) {
+  const profile = normalizeAccessibilityProfile(patient.accessibilityProfile);
+  const labels = getAccessibilityNeedLabels(profile);
+  const checklist = buildVisitPrepChecklist(profile);
+
+  return (
+    <div style={{ maxWidth: '1200px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', gap: '1rem' }}>
+        <div>
+          <div className="ema-section-header">Access Needs & Accommodations</div>
+          <div style={{ color: '#6b7280', fontSize: '0.875rem', marginTop: '0.35rem' }}>
+            Documentation for requested communication support, accessible room setup, mobility assistance, service animal access, and companion communication.
+          </div>
+        </div>
+        <button type="button" className="ema-action-btn" onClick={onEdit}>
+          Edit Access Needs
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 0.9fr', gap: '1.5rem' }}>
+        <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1.5rem' }}>
+          <h3 style={{ margin: '0 0 1rem', fontSize: '1rem', fontWeight: 600, color: '#374151' }}>
+            Active Access Profile
+          </h3>
+          <AccessibilityChipList labels={labels} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '1rem', marginTop: '1.25rem' }}>
+            <InfoRow label="Interpreter" value={profile.interpreterNeeded ? profile.interpreterLanguage || 'Needed' : 'Not documented'} />
+            <InfoRow label="Communication Support" value={(profile.communicationSupport || []).length > 0 ? profile.communicationSupport!.join(', ').replace(/_/g, ' ') : 'Not documented'} />
+            <InfoRow label="Accessible Room" value={profile.accessibleRoomRequired ? 'Required' : 'Not documented'} />
+            <InfoRow label="Mobility Assistance" value={profile.mobilityAssistance ? 'Requested' : 'Not documented'} />
+            <InfoRow label="Service Animal" value={profile.serviceAnimal ? 'May accompany patient' : 'Not documented'} />
+            <InfoRow label="Extra Time" value={profile.extendedVisit ? `${profile.extraVisitMinutes || 15} minutes` : 'Not documented'} />
+          </div>
+        </div>
+
+        <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1.5rem' }}>
+          <h3 style={{ margin: '0 0 1rem', fontSize: '1rem', fontWeight: 600, color: '#374151' }}>
+            Visit Prep Checklist
+          </h3>
+          {checklist.length === 0 ? (
+            <p style={{ margin: 0, color: '#6b7280' }}>
+              No visit-prep actions generated yet.
+            </p>
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: '1.2rem', color: '#374151', display: 'grid', gap: '0.5rem' }}>
+              {checklist.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1.5rem' }}>
+          <h3 style={{ margin: '0 0 1rem', fontSize: '1rem', fontWeight: 600, color: '#374151' }}>
+            Support Person / Companion
+          </h3>
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
+            <InfoRow label="Name" value={profile.supportPerson?.name || 'Not documented'} />
+            <InfoRow label="Relationship" value={profile.supportPerson?.relationship || 'Not documented'} />
+            <InfoRow label="Phone" value={formatPhoneDisplay(profile.supportPerson?.phone) || 'Not documented'} />
+            <InfoRow label="Companion Communication Needs" value={profile.supportPerson?.communicationNeeds || 'Not documented'} />
+          </div>
+        </div>
+
+        <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1.5rem' }}>
+          <h3 style={{ margin: '0 0 1rem', fontSize: '1rem', fontWeight: 600, color: '#374151' }}>
+            Notes & Review
+          </h3>
+          <div style={{ display: 'grid', gap: '0.75rem' }}>
+            <InfoRow label="Sensory Considerations" value={profile.sensoryConsiderations || 'Not documented'} />
+            <InfoRow label="Staff Notes" value={profile.notes || 'Not documented'} />
+            <InfoRow label="Last Reviewed" value={profile.lastReviewedAt ? new Date(profile.lastReviewedAt).toLocaleString() : 'Not reviewed'} />
+            <InfoRow label="Reviewed By" value={profile.lastReviewedBy || 'Not documented'} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Edit Demographics Modal
 function EditDemographicsModal({
   isOpen,
@@ -3561,6 +3749,296 @@ function EditDemographicsModal({
             }}
           >
             Save Changes
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function EditAccessibilityModal({
+  isOpen,
+  onClose,
+  patient,
+  onSave,
+  session,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  patient: Patient | null;
+  onSave: () => void;
+  session: any;
+}) {
+  const [formData, setFormData] = useState<PatientAccessibilityProfile>({
+    communicationSupport: [],
+    accessibleEquipment: [],
+    supportPerson: {},
+  });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (patient && isOpen) {
+      const profile = normalizeAccessibilityProfile(patient.accessibilityProfile);
+      setFormData({
+        ...profile,
+        communicationSupport: profile.communicationSupport || [],
+        accessibleEquipment: profile.accessibleEquipment || [],
+        supportPerson: profile.supportPerson || {},
+      });
+    }
+  }, [patient, isOpen]);
+
+  const setBoolean = (field: keyof PatientAccessibilityProfile, value: boolean) => {
+    setFormData((current) => ({ ...current, [field]: value }));
+  };
+
+  const setText = (field: keyof PatientAccessibilityProfile, value: string) => {
+    setFormData((current) => ({ ...current, [field]: value }));
+  };
+
+  const toggleArrayValue = (
+    field: 'communicationSupport' | 'accessibleEquipment',
+    value: string,
+  ) => {
+    setFormData((current) => {
+      const values = new Set(current[field] || []);
+      if (values.has(value)) {
+        values.delete(value);
+      } else {
+        values.add(value);
+      }
+      return { ...current, [field]: Array.from(values) };
+    });
+  };
+
+  const updateSupportPerson = (field: keyof NonNullable<PatientAccessibilityProfile['supportPerson']>, value: string) => {
+    setFormData((current) => ({
+      ...current,
+      supportPerson: {
+        ...(current.supportPerson || {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!session || !patient) return;
+
+    setSaving(true);
+    try {
+      const profile = normalizeAccessibilityProfile({
+        ...formData,
+        extraVisitMinutes: Number(formData.extraVisitMinutes || 0) || undefined,
+        lastReviewedAt: new Date().toISOString(),
+        lastReviewedBy: session.user?.fullName || session.user?.email || 'Staff',
+      });
+
+      const res = await fetch(`${API_BASE_URL}/api/patients/${patient.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.accessToken}`,
+          [TENANT_HEADER_NAME]: session.tenantId,
+        },
+        body: JSON.stringify({ accessibilityProfile: profile }),
+      });
+
+      if (!res.ok) throw new Error('Failed to update access needs');
+
+      onSave();
+      onClose();
+    } catch (error) {
+      console.error('Error updating access needs:', error);
+      alert('Failed to update access needs');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Edit Access Needs" size="lg">
+      <form onSubmit={handleSubmit}>
+        <div style={{ display: 'grid', gap: '1rem' }}>
+          <section style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
+            <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', color: '#374151' }}>
+              Communication Support
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem 1rem' }}>
+              {ACCESSIBILITY_COMMUNICATION_OPTIONS.map((option) => (
+                <label key={option.value} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
+                  <input
+                    type="checkbox"
+                    checked={(formData.communicationSupport || []).includes(option.value)}
+                    onChange={() => toggleArrayValue('communicationSupport', option.value)}
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
+              <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                <span>
+                  <input
+                    type="checkbox"
+                    checked={!!formData.interpreterNeeded}
+                    onChange={(event) => setBoolean('interpreterNeeded', event.target.checked)}
+                    style={{ marginRight: '0.5rem' }}
+                  />
+                  Interpreter needed
+                </span>
+                <input
+                  type="text"
+                  value={formData.interpreterLanguage || ''}
+                  onChange={(event) => setText('interpreterLanguage', event.target.value)}
+                  placeholder="Language or modality"
+                  style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                Sensory considerations
+                <input
+                  type="text"
+                  value={formData.sensoryConsiderations || ''}
+                  onChange={(event) => setText('sensoryConsiderations', event.target.value)}
+                  placeholder="Example: low-stimulation room, dim lights"
+                  style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
+                />
+              </label>
+            </div>
+          </section>
+
+          <section style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
+            <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', color: '#374151' }}>
+              Mobility, Room, and Equipment
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem 1rem', marginBottom: '0.75rem' }}>
+              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
+                <input
+                  type="checkbox"
+                  checked={!!formData.mobilityAssistance}
+                  onChange={(event) => setBoolean('mobilityAssistance', event.target.checked)}
+                />
+                Mobility or transfer assistance requested
+              </label>
+              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
+                <input
+                  type="checkbox"
+                  checked={!!formData.accessibleRoomRequired}
+                  onChange={(event) => setBoolean('accessibleRoomRequired', event.target.checked)}
+                />
+                Accessible room required
+              </label>
+              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
+                <input
+                  type="checkbox"
+                  checked={!!formData.serviceAnimal}
+                  onChange={(event) => setBoolean('serviceAnimal', event.target.checked)}
+                />
+                Service animal may accompany patient
+              </label>
+              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
+                <input
+                  type="checkbox"
+                  checked={!!formData.extendedVisit}
+                  onChange={(event) => setBoolean('extendedVisit', event.target.checked)}
+                />
+                Extended visit time
+              </label>
+            </div>
+            <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151', maxWidth: '240px', marginBottom: '0.75rem' }}>
+              Extra minutes
+              <input
+                type="number"
+                min={0}
+                max={240}
+                value={formData.extraVisitMinutes || ''}
+                onChange={(event) => setFormData((current) => ({ ...current, extraVisitMinutes: Number(event.target.value) || undefined }))}
+                style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
+              />
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem 1rem' }}>
+              {ACCESSIBILITY_EQUIPMENT_OPTIONS.map((option) => (
+                <label key={option.value} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.875rem', color: '#374151' }}>
+                  <input
+                    type="checkbox"
+                    checked={(formData.accessibleEquipment || []).includes(option.value)}
+                    onChange={() => toggleArrayValue('accessibleEquipment', option.value)}
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </div>
+          </section>
+
+          <section style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1rem' }}>
+            <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', color: '#374151' }}>
+              Support Person / Companion
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '1rem' }}>
+              <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                Name
+                <input
+                  type="text"
+                  value={formData.supportPerson?.name || ''}
+                  onChange={(event) => updateSupportPerson('name', event.target.value)}
+                  style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                Relationship
+                <input
+                  type="text"
+                  value={formData.supportPerson?.relationship || ''}
+                  onChange={(event) => updateSupportPerson('relationship', event.target.value)}
+                  style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                Phone
+                <input
+                  type="tel"
+                  value={formData.supportPerson?.phone || ''}
+                  onChange={(event) => updateSupportPerson('phone', event.target.value)}
+                  style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+                Companion communication needs
+                <input
+                  type="text"
+                  value={formData.supportPerson?.communicationNeeds || ''}
+                  onChange={(event) => updateSupportPerson('communicationNeeds', event.target.value)}
+                  placeholder="Example: large print, interpreter"
+                  style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px' }}
+                />
+              </label>
+            </div>
+          </section>
+
+          <label style={{ display: 'grid', gap: '0.35rem', fontSize: '0.875rem', color: '#374151' }}>
+            Staff notes
+            <textarea
+              value={formData.notes || ''}
+              onChange={(event) => setText('notes', event.target.value)}
+              rows={3}
+              placeholder="Document patient-requested accommodation details, staff prep notes, or review context."
+              style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '4px', resize: 'vertical' }}
+            />
+          </label>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
+          <button type="button" className="ema-action-btn" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="ema-action-btn"
+            disabled={saving}
+            style={{ background: '#0369a1', color: '#fff' }}
+          >
+            {saving ? 'Saving...' : 'Save Access Needs'}
           </button>
         </div>
       </form>

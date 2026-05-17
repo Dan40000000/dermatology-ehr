@@ -108,6 +108,28 @@ export interface PatientInsuranceDetails {
   payerContacts?: PayerContact[];
 }
 
+export interface PatientAccessibilityProfile {
+  communicationSupport?: string[];
+  interpreterNeeded?: boolean;
+  interpreterLanguage?: string;
+  mobilityAssistance?: boolean;
+  accessibleRoomRequired?: boolean;
+  accessibleEquipment?: string[];
+  serviceAnimal?: boolean;
+  extendedVisit?: boolean;
+  extraVisitMinutes?: number;
+  sensoryConsiderations?: string;
+  notes?: string;
+  lastReviewedAt?: string;
+  lastReviewedBy?: string;
+  supportPerson?: {
+    name?: string;
+    relationship?: string;
+    phone?: string;
+    communicationNeeds?: string;
+  };
+}
+
 export interface Patient {
   id: string;
   tenantId: string;
@@ -242,6 +264,7 @@ export interface Patient {
   createdAt: string;
   // New insurance details
   insuranceDetails?: PatientInsuranceDetails;
+  accessibilityProfile?: PatientAccessibilityProfile;
 }
 
 // Registry Types

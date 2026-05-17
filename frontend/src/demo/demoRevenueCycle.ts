@@ -48,6 +48,7 @@ interface DemoRevenueCycleState {
   claims: DemoClaimState[];
   autoVerifyEnabled: boolean;
   lastAutoVerifyRun: string | null;
+  resolvedFinancialWorkQueueItemIds: string[];
 }
 
 const DEFAULT_TIMESTAMP = '2026-01-01T08:00:00Z';
@@ -413,6 +414,7 @@ function buildBaseState(): DemoRevenueCycleState {
     claims,
     autoVerifyEnabled: true,
     lastAutoVerifyRun: `${toIsoDate(new Date())}T06:00:00Z`,
+    resolvedFinancialWorkQueueItemIds: [],
   };
 }
 
@@ -432,6 +434,9 @@ function readState(): DemoRevenueCycleState {
       const initial = buildBaseState();
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
       return initial;
+    }
+    if (!Array.isArray(parsed.resolvedFinancialWorkQueueItemIds)) {
+      parsed.resolvedFinancialWorkQueueItemIds = [];
     }
     return parsed as DemoRevenueCycleState;
   } catch {
@@ -994,6 +999,83 @@ export function getDemoBillsSummary(startDate?: string | null, endDate?: string 
     statusMap.set(bill.status, current);
   }
   return { billsByStatus: [...statusMap.values()] };
+}
+
+export function queryDemoFinancialWorkQueue(params: URLSearchParams) {
+  const state = readState();
+  const requestedStatus = params.get('status') || 'open';
+  const today = toIsoDate(new Date());
+  const resolvedIds = new Set(state.resolvedFinancialWorkQueueItemIds || []);
+  const claimItems = state.claims
+    .filter((claim) => claim.status === 'denied' || claim.status === 'rejected' || claim.scrubStatus === 'failed')
+    .map((claim) => ({
+      id: `demo-fwq-claim-${claim.id}`,
+      encounterId: undefined,
+      patientId: claim.patientId,
+      claimId: claim.id,
+      billId: undefined,
+      issueType: claim.status === 'rejected' ? 'clearinghouse_rejection' : 'claim_denial',
+      severity: claim.status === 'rejected' ? 'critical' : 'error',
+      status: 'open',
+      message: claim.denialReason || 'Claim requires billing review before payment can move forward.',
+      errorDetail: claim.denialCode || undefined,
+      patientFirstName: claim.patientFirstName,
+      patientLastName: claim.patientLastName,
+      claimNumber: `CLM-DEMO-${claim.id.slice(-4)}`,
+      createdAt: claim.updatedAt,
+      updatedAt: claim.updatedAt,
+    }));
+
+  const billItems = buildBills(state)
+    .filter((bill) => bill.outstandingBalanceCents > 0 && daysBetween(String(bill.dueDate || '').slice(0, 10), today) > 0)
+    .map((bill) => ({
+      id: `demo-fwq-bill-${bill.id}`,
+      encounterId: undefined,
+      patientId: bill.patientId,
+      claimId: bill.claimId,
+      billId: bill.id,
+      issueType: 'overdue_patient_balance',
+      severity: daysBetween(String(bill.dueDate || '').slice(0, 10), today) > 60 ? 'error' : 'warning',
+      status: 'open',
+      message: 'Patient balance is overdue and needs statement, payment plan, or collections review.',
+      errorDetail: `${daysBetween(String(bill.dueDate || '').slice(0, 10), today)} days past due`,
+      patientFirstName: String(bill.patientName || '').split(' ')[0],
+      patientLastName: String(bill.patientName || '').split(' ').slice(1).join(' '),
+      billNumber: bill.id,
+      createdAt: bill.updatedAt || bill.createdAt,
+      updatedAt: bill.updatedAt,
+    }));
+
+  const items = [...claimItems, ...billItems]
+    .filter((item) => !resolvedIds.has(item.id))
+    .filter((item) => requestedStatus === 'all' || item.status === requestedStatus)
+    .sort((left, right) => String(right.createdAt || '').localeCompare(String(left.createdAt || '')));
+
+  return { items };
+}
+
+export function resolveDemoFinancialWorkQueueItem(itemId: string, note?: string) {
+  return withState((state) => {
+    const allItems = queryDemoFinancialWorkQueue(new URLSearchParams('status=all')).items;
+    const item = allItems.find((candidate: DemoItem) => String(candidate.id) === String(itemId));
+    if (!item) {
+      throw new Error('Financial work queue item not found');
+    }
+
+    const resolvedIds = new Set(state.resolvedFinancialWorkQueueItemIds || []);
+    resolvedIds.add(itemId);
+    state.resolvedFinancialWorkQueueItemIds = [...resolvedIds];
+
+    return {
+      success: true,
+      item: {
+        ...item,
+        status: 'resolved',
+        resolvedAt: new Date().toISOString(),
+        resolutionNote: note || null,
+      },
+    };
+  });
 }
 
 export function queryDemoClaims(params: URLSearchParams) {

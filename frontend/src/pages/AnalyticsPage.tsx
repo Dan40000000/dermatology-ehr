@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Panel, Skeleton } from '../components/ui';
@@ -29,10 +29,40 @@ import {
   fetchProviderProductivity,
   fetchPatientDemographics,
   fetchAppointmentTypesAnalytics,
+  fetchAnalyticsOverview,
+  fetchAppointmentAnalytics,
+  fetchProviderAnalytics,
   fetchDermatologyMetrics,
   fetchYoYComparison,
   fetchNoShowRiskAnalysis,
 } from '../api';
+import {
+  fetchARAging,
+  fetchBillsSummary,
+  fetchClaims as fetchFinancialClaims,
+  fetchCollectionsTrend,
+  fetchFinancialMetrics,
+  fetchFinancialWorkQueue,
+  fetchPaymentsSummary,
+} from '../api/financials';
+import {
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  BarChart3,
+  CalendarClock,
+  CheckCircle2,
+  ClipboardList,
+  CreditCard,
+  DollarSign,
+  FileWarning,
+  RefreshCw,
+  ShieldAlert,
+  Stethoscope,
+  TrendingDown,
+  Users,
+  WalletCards,
+} from 'lucide-react';
 
 interface DashboardKPIs {
   totalPatients: number;
@@ -131,6 +161,164 @@ interface NoShowRiskAnalysis {
   recommendations: string[];
 }
 
+interface AnalyticsOverview {
+  newPatients?: {
+    current: number;
+    previous?: number;
+    trend?: number;
+  };
+  appointments?: {
+    current: number;
+    previous?: number;
+    trend?: number;
+    byStatus?: { status: string; count: number | string }[];
+  };
+  revenue?: {
+    current: number;
+    previous?: number;
+    trend?: number;
+  };
+  collectionRate?: number;
+}
+
+interface AppointmentAnalytics {
+  byStatus?: { status: string; count: number | string }[];
+  byType?: { type_name: string; count: number | string }[];
+  byProvider?: { provider_name: string; count: number | string }[];
+  avgWaitTimeMinutes?: number | string;
+}
+
+interface ProviderAnalyticsRow {
+  id: string;
+  provider_name: string;
+  completed_appointments: number | string;
+  cancelled_appointments: number | string;
+  no_shows: number | string;
+  total_encounters: number | string;
+  unique_patients: number | string;
+  revenue_cents: number | string;
+  avg_visit_duration_minutes: number | string;
+}
+
+interface RevenueCategorySummary {
+  key: string;
+  label: string;
+  revenueCents: number;
+  itemCount: number;
+}
+
+interface SnapshotMetricCard {
+  key: 'daily' | 'weekly' | 'monthly';
+  label: string;
+  rangeLabel: string;
+  completedAppointments: number;
+  totalRevenueCents: number;
+  collectionsCents: number;
+  avgRevenuePerVisitCents: number;
+  benchmarkVisitsCount: number;
+  collectionRate: number;
+  standaloneRevenueCents: number;
+  revenueCategories: RevenueCategorySummary[];
+}
+
+interface FinancialDashboard {
+  snapshots?: {
+    daily?: SnapshotMetricCard;
+    weekly?: SnapshotMetricCard;
+    monthly?: SnapshotMetricCard;
+    sourceNote?: string;
+  };
+}
+
+interface CollectionsTrendRow {
+  bucketStartDate: string;
+  revenueEarnedCents: number;
+  paymentsCollectedCents: number;
+  patientPaymentsCents: number;
+  payerPaymentsCents: number;
+  billCount: number;
+  paymentCount: number;
+  revenueCategories?: RevenueCategorySummary[];
+}
+
+interface CollectionsTrendSummary {
+  totalPaymentsCollectedCents: number;
+  totalRevenueEarnedCents: number;
+  totalPatientPaymentsCents: number;
+  totalPayerPaymentsCents: number;
+  totalPaymentCount: number;
+  totalBillCount: number;
+  dayCount: number;
+  avgDailyPaymentsCollectedCents?: number;
+  avgDailyRevenueEarnedCents?: number;
+  collectionRate: number;
+  revenueCategories?: RevenueCategorySummary[];
+}
+
+interface PaymentsSummary {
+  calculated?: {
+    netCollectionRate?: number;
+  };
+  receivables?: {
+    outstandingBalanceCents?: number;
+    overdueBalanceCents?: number;
+    overdueCount?: number;
+  };
+  payerPaymentsSummary?: {
+    appliedCents?: number;
+    unappliedCents?: number;
+  };
+  patientPaymentsByMethod?: { paymentMethod: string; count: number; totalCents: number }[];
+}
+
+interface ARAgingBucket {
+  key: string;
+  label: string;
+  billCount: number;
+  totalBalanceCents: number;
+}
+
+interface BillStatusSummary {
+  status: string;
+  count: number;
+  totalChargesCents: number;
+}
+
+interface FinancialClaim {
+  id: string;
+  status?: string;
+  claimNumber?: string;
+  patientFirstName?: string;
+  patientLastName?: string;
+  payerName?: string;
+  payer?: string;
+  serviceDate?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  totalCents?: number;
+  paidAmountCents?: number;
+  balanceCents?: number;
+  denialReason?: string;
+  denialCode?: string;
+  scrubStatus?: string;
+}
+
+interface FinancialWorkQueueItem {
+  id: string;
+  claimId?: string;
+  billId?: string;
+  issueType?: string;
+  severity?: string;
+  status?: string;
+  message?: string;
+  errorDetail?: string;
+  patientFirstName?: string;
+  patientLastName?: string;
+  claimNumber?: string;
+  billNumber?: string;
+  createdAt?: string;
+}
+
 type DateRangePreset = 'today' | 'week' | 'month' | '30days' | 'year';
 type AnalyticsTab = 'financials' | 'clinical' | 'compliance' | 'inventory' | 'dermatology';
 
@@ -173,6 +361,17 @@ export function AnalyticsPage() {
   const [dermMetrics, setDermMetrics] = useState<DermatologyMetrics | null>(null);
   const [yoyComparison, setYoyComparison] = useState<YoYComparison | null>(null);
   const [noShowRisk, setNoShowRisk] = useState<NoShowRiskAnalysis | null>(null);
+  const [analyticsOverview, setAnalyticsOverview] = useState<AnalyticsOverview | null>(null);
+  const [appointmentAnalytics, setAppointmentAnalytics] = useState<AppointmentAnalytics | null>(null);
+  const [providerAnalytics, setProviderAnalytics] = useState<ProviderAnalyticsRow[]>([]);
+  const [financialDashboard, setFinancialDashboard] = useState<FinancialDashboard | null>(null);
+  const [collectionsTrend, setCollectionsTrend] = useState<CollectionsTrendRow[]>([]);
+  const [collectionsSummary, setCollectionsSummary] = useState<CollectionsTrendSummary | null>(null);
+  const [paymentsSummary, setPaymentsSummary] = useState<PaymentsSummary | null>(null);
+  const [arBuckets, setArBuckets] = useState<ARAgingBucket[]>([]);
+  const [billsSummary, setBillsSummary] = useState<BillStatusSummary[]>([]);
+  const [financialClaims, setFinancialClaims] = useState<FinancialClaim[]>([]);
+  const [financialWorkQueue, setFinancialWorkQueue] = useState<FinancialWorkQueueItem[]>([]);
 
   useEffect(() => {
     const requestedTab = searchParams.get('tab');
@@ -244,9 +443,19 @@ export function AnalyticsPage() {
         providerProductivityRes,
         demographicsRes,
         appointmentTypesRes,
+        analyticsOverviewRes,
+        appointmentAnalyticsRes,
+        providerAnalyticsRes,
         dermMetricsRes,
         yoyComparisonRes,
         noShowRiskRes,
+        financialDashboardRes,
+        collectionsTrendRes,
+        paymentsSummaryRes,
+        arAgingRes,
+        billsSummaryRes,
+        claimsRes,
+        workQueueRes,
       ] = await Promise.all([
         fetchDashboardKPIs(session.tenantId, session.accessToken, filter),
         fetchAppointmentsTrend(session.tenantId, session.accessToken, filter),
@@ -256,9 +465,37 @@ export function AnalyticsPage() {
         fetchProviderProductivity(session.tenantId, session.accessToken, filter),
         fetchPatientDemographics(session.tenantId, session.accessToken),
         fetchAppointmentTypesAnalytics(session.tenantId, session.accessToken, filter),
+        fetchAnalyticsOverview(session.tenantId, session.accessToken, filter).catch(() => null),
+        fetchAppointmentAnalytics(session.tenantId, session.accessToken, filter).catch(() => null),
+        fetchProviderAnalytics(session.tenantId, session.accessToken, filter).catch(() => ({ data: [] })),
         fetchDermatologyMetrics(session.tenantId, session.accessToken, filter).catch(() => null),
         fetchYoYComparison(session.tenantId, session.accessToken, filter).catch(() => null),
         fetchNoShowRiskAnalysis(session.tenantId, session.accessToken, filter).catch(() => null),
+        fetchFinancialMetrics({ tenantId: session.tenantId, accessToken: session.accessToken }, filter.endDate).catch(() => null),
+        fetchCollectionsTrend(
+          { tenantId: session.tenantId, accessToken: session.accessToken },
+          { ...filter, granularity: dateRange === 'year' ? 'month' : dateRange === 'week' || dateRange === 'today' ? 'day' : 'week' },
+        ).catch(() => ({ data: [], summary: null })),
+        fetchPaymentsSummary(
+          { tenantId: session.tenantId, accessToken: session.accessToken },
+          filter,
+        ).catch(() => null),
+        fetchARAging(
+          { tenantId: session.tenantId, accessToken: session.accessToken },
+          { asOfDate: filter.endDate },
+        ).catch(() => ({ buckets: [] })),
+        fetchBillsSummary(
+          { tenantId: session.tenantId, accessToken: session.accessToken },
+          filter,
+        ).catch(() => ({ billsByStatus: [] })),
+        fetchFinancialClaims(
+          { tenantId: session.tenantId, accessToken: session.accessToken },
+          filter,
+        ).catch(() => ({ claims: [], data: [] })),
+        fetchFinancialWorkQueue(
+          { tenantId: session.tenantId, accessToken: session.accessToken },
+          'open',
+        ).catch(() => ({ items: [] })),
       ]);
 
       setKpis(kpisRes);
@@ -269,9 +506,25 @@ export function AnalyticsPage() {
       setProviderStats(Array.isArray(providerProductivityRes.data) ? providerProductivityRes.data : []);
       setDemographics(demographicsRes);
       setAppointmentTypes(Array.isArray(appointmentTypesRes.data) ? appointmentTypesRes.data : []);
+      setAnalyticsOverview(analyticsOverviewRes);
+      setAppointmentAnalytics(appointmentAnalyticsRes);
+      setProviderAnalytics(Array.isArray(providerAnalyticsRes?.data) ? providerAnalyticsRes.data : []);
       setDermMetrics(dermMetricsRes);
       setYoyComparison(yoyComparisonRes);
       setNoShowRisk(noShowRiskRes);
+      setFinancialDashboard(financialDashboardRes);
+      setCollectionsTrend(Array.isArray(collectionsTrendRes?.data) ? collectionsTrendRes.data : []);
+      setCollectionsSummary(collectionsTrendRes?.summary || null);
+      setPaymentsSummary(paymentsSummaryRes);
+      setArBuckets(Array.isArray(arAgingRes?.buckets) ? arAgingRes.buckets : []);
+      setBillsSummary(Array.isArray(billsSummaryRes?.billsByStatus) ? billsSummaryRes.billsByStatus : []);
+      const claimRows = Array.isArray(claimsRes?.claims)
+        ? claimsRes.claims
+        : Array.isArray(claimsRes?.data)
+        ? claimsRes.data
+        : [];
+      setFinancialClaims(claimRows);
+      setFinancialWorkQueue(Array.isArray(workQueueRes?.items) ? workQueueRes.items : []);
 
       if (isRefresh) {
         showSuccess('Dashboard refreshed');
@@ -282,7 +535,7 @@ export function AnalyticsPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [session, showError, showSuccess, getDateFilter]);
+  }, [session, showError, showSuccess, getDateFilter, dateRange]);
 
   useEffect(() => {
     loadData();
@@ -313,7 +566,6 @@ export function AnalyticsPage() {
   const applyCustomRange = () => {
     if (customStartDate && customEndDate) {
       setUseCustomRange(true);
-      loadData();
     }
   };
 
@@ -321,7 +573,6 @@ export function AnalyticsPage() {
     setUseCustomRange(false);
     setCustomStartDate('');
     setCustomEndDate('');
-    loadData();
   };
 
   if (loading) {
@@ -344,6 +595,150 @@ export function AnalyticsPage() {
       </div>
     );
   }
+
+  const toNumber = (value: unknown) => Number(value || 0);
+  const formatPercent = (value: number, digits = 1) => `${Number.isFinite(value) ? value.toFixed(digits) : '0.0'}%`;
+  const normalizeStatus = (status: unknown) => String(status || '').toLowerCase().replace(/[-\s]+/g, '_');
+  const appointmentStatusRows =
+    appointmentAnalytics?.byStatus?.length
+      ? appointmentAnalytics.byStatus
+      : analyticsOverview?.appointments?.byStatus || [];
+  const getAppointmentStatusCount = (aliases: string[]) => {
+    const aliasSet = new Set(aliases.map(normalizeStatus));
+    return appointmentStatusRows.reduce((sum, row) => {
+      return aliasSet.has(normalizeStatus(row.status)) ? sum + toNumber(row.count) : sum;
+    }, 0);
+  };
+
+  const monthlySnapshot = financialDashboard?.snapshots?.monthly;
+  const patientCollectionsCents = (paymentsSummary?.patientPaymentsByMethod || []).reduce(
+    (sum, row) => sum + toNumber(row.totalCents),
+    0,
+  );
+  const payerCollectionsCents = toNumber(paymentsSummary?.payerPaymentsSummary?.appliedCents);
+  const selectedRevenueCents =
+    toNumber(collectionsSummary?.totalRevenueEarnedCents) ||
+    toNumber(monthlySnapshot?.totalRevenueCents) ||
+    toNumber(kpis?.monthRevenue);
+  const selectedCollectionsCents =
+    toNumber(collectionsSummary?.totalPaymentsCollectedCents) ||
+    toNumber(monthlySnapshot?.collectionsCents) ||
+    patientCollectionsCents + payerCollectionsCents;
+  const netCollectionRate =
+    toNumber(paymentsSummary?.calculated?.netCollectionRate) ||
+    toNumber(collectionsSummary?.collectionRate) ||
+    toNumber(monthlySnapshot?.collectionRate) ||
+    (selectedRevenueCents > 0 ? (selectedCollectionsCents / selectedRevenueCents) * 100 : 0);
+  const outstandingArCents =
+    toNumber(paymentsSummary?.receivables?.outstandingBalanceCents) ||
+    arBuckets.reduce((sum, bucket) => sum + toNumber(bucket.totalBalanceCents), 0);
+  const overdueArCents = toNumber(paymentsSummary?.receivables?.overdueBalanceCents);
+  const ar90PlusCents = arBuckets
+    .filter((bucket) => ['91-120', '120+', '90+', '91_plus'].includes(String(bucket.key)))
+    .reduce((sum, bucket) => sum + toNumber(bucket.totalBalanceCents), 0);
+  const dsoWeightedDays = arBuckets.reduce((sum, bucket) => {
+    const key = String(bucket.key || '');
+    const midpoint = key === '0-30' ? 15 : key === '31-60' ? 45 : key === '61-90' ? 75 : key === '91-120' ? 105 : 135;
+    return sum + midpoint * toNumber(bucket.totalBalanceCents);
+  }, 0);
+  const daysInAr = outstandingArCents > 0 ? dsoWeightedDays / outstandingArCents : 0;
+
+  const totalAppointments =
+    toNumber(analyticsOverview?.appointments?.current) ||
+    appointmentStatusRows.reduce((sum, row) => sum + toNumber(row.count), 0) ||
+    toNumber(noShowRisk?.totalAppointments) ||
+    appointmentsTrend.reduce((sum, row) => sum + toNumber(row.count), 0);
+  const completedAppointments =
+    getAppointmentStatusCount(['completed', 'checked_out', 'checked out']) ||
+    toNumber(yoyComparison?.metrics.completedAppointments.current);
+  const scheduledAppointments = getAppointmentStatusCount(['scheduled', 'confirmed', 'checked_in', 'checked in']);
+  const noShowCount =
+    getAppointmentStatusCount(['no_show', 'no show', 'no-show']) ||
+    toNumber(noShowRisk?.totalNoShows) ||
+    toNumber(yoyComparison?.metrics.noShows.current);
+  const cancelledCount = getAppointmentStatusCount(['cancelled', 'canceled', 'late_cancelled', 'late canceled', 'late_cancel']);
+  const newPatientCount =
+    toNumber(analyticsOverview?.newPatients?.current) ||
+    toNumber(yoyComparison?.metrics.newPatients.current);
+  const completionRate = totalAppointments > 0 ? (completedAppointments / totalAppointments) * 100 : 0;
+  const scheduleLeakageCount = noShowCount + cancelledCount;
+  const scheduleLeakageRate = totalAppointments > 0 ? (scheduleLeakageCount / totalAppointments) * 100 : 0;
+  const avgRevenuePerVisitCents =
+    toNumber(monthlySnapshot?.avgRevenuePerVisitCents) ||
+    (completedAppointments > 0 ? Math.round(selectedRevenueCents / completedAppointments) : 0);
+  const revenueCategories =
+    collectionsSummary?.revenueCategories?.length
+      ? collectionsSummary.revenueCategories
+      : monthlySnapshot?.revenueCategories || [];
+  const getCategoryRevenue = (tokens: string[]) => {
+    const needles = tokens.map((token) => token.toLowerCase());
+    return revenueCategories.reduce((sum, category) => {
+      const haystack = `${category.key} ${category.label}`.toLowerCase();
+      return needles.some((token) => haystack.includes(token)) ? sum + toNumber(category.revenueCents) : sum;
+    }, 0);
+  };
+  const noShowFeeCents = getCategoryRevenue(['no_show', 'no show', 'missed']);
+  const cancellationFeeCents = getCategoryRevenue(['cancel', 'late_fee', 'late fee']);
+  const collectedLeakageFeesCents = noShowFeeCents + cancellationFeeCents;
+  const estimatedNoShowLeakageCents = noShowCount * avgRevenuePerVisitCents;
+  const estimatedCancellationLeakageCents = cancelledCount * avgRevenuePerVisitCents;
+  const estimatedScheduleLeakageCents = estimatedNoShowLeakageCents + estimatedCancellationLeakageCents;
+  const unrecoveredLeakageCents = Math.max(0, estimatedScheduleLeakageCents - collectedLeakageFeesCents);
+
+  const claimStatusCount = (statuses: string[]) => {
+    const statusSet = new Set(statuses.map(normalizeStatus));
+    return financialClaims.filter((claim) => statusSet.has(normalizeStatus(claim.status))).length;
+  };
+  const readyClaims = claimStatusCount(['draft', 'ready']);
+  const clearinghouseClaims = claimStatusCount(['submitted', 'accepted']);
+  const paidClaims = claimStatusCount(['paid', 'partially_paid', 'partial']);
+  const deniedClaims = claimStatusCount(['denied', 'rejected', 'appealed']);
+  const adjudicatedClaims = financialClaims.filter((claim) => !['draft', 'ready'].includes(normalizeStatus(claim.status)));
+  const denialRate = adjudicatedClaims.length > 0 ? (deniedClaims / adjudicatedClaims.length) * 100 : 0;
+  const firstPassRate = adjudicatedClaims.length > 0 ? (paidClaims / adjudicatedClaims.length) * 100 : 0;
+  const claimsNeedingAction = deniedClaims + financialWorkQueue.length;
+  const unappliedCashCents = toNumber(paymentsSummary?.payerPaymentsSummary?.unappliedCents);
+  const workQueueCritical = financialWorkQueue.filter((item) => ['critical', 'error'].includes(String(item.severity || '').toLowerCase())).length;
+  const billsByStatusTotal = billsSummary.reduce((sum, row) => sum + toNumber(row.count), 0);
+
+  const financialTrendData = collectionsTrend.map((row) => ({
+    date: row.bucketStartDate,
+    revenue: toNumber(row.revenueEarnedCents),
+    collections: toNumber(row.paymentsCollectedCents),
+    patient: toNumber(row.patientPaymentsCents),
+    payer: toNumber(row.payerPaymentsCents),
+  }));
+  const arAgingData = arBuckets.map((bucket) => ({
+    label: bucket.label || bucket.key,
+    amount: toNumber(bucket.totalBalanceCents),
+    count: toNumber(bucket.billCount),
+  }));
+  const claimPipelineData = [
+    { label: 'Ready', value: readyClaims, fill: '#2563eb' },
+    { label: 'Clearinghouse', value: clearinghouseClaims, fill: '#0f766e' },
+    { label: 'Paid', value: paidClaims, fill: '#16a34a' },
+    { label: 'Denied / Rejected', value: deniedClaims, fill: '#dc2626' },
+  ];
+  const providerStoryRows = providerAnalytics.length
+    ? providerAnalytics.slice(0, 5).map((provider) => ({
+        id: provider.id,
+        name: provider.provider_name,
+        seen: toNumber(provider.unique_patients),
+        completed: toNumber(provider.completed_appointments),
+        noShows: toNumber(provider.no_shows),
+        cancelled: toNumber(provider.cancelled_appointments),
+        revenue: toNumber(provider.revenue_cents),
+      }))
+    : providerStats.slice(0, 5).map((provider) => ({
+        id: provider.id,
+        name: provider.provider_name,
+        seen: toNumber(provider.patients_seen),
+        completed: toNumber(provider.appointments),
+        noShows: 0,
+        cancelled: 0,
+        revenue: toNumber(provider.revenue_cents),
+      }));
+  const topWorkQueueItems = financialWorkQueue.slice(0, 5);
 
   return (
     <div className="analytics-page">
@@ -464,12 +859,7 @@ export function AnalyticsPage() {
       <div className="kpi-cards">
         <div className="kpi-card patients">
           <div className="kpi-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-              <circle cx="9" cy="7" r="4" />
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-            </svg>
+            <Users size={24} aria-hidden="true" />
           </div>
           <div className="kpi-content">
             <div className="kpi-label">Total Patients</div>
@@ -479,12 +869,7 @@ export function AnalyticsPage() {
 
         <div className="kpi-card appointments">
           <div className="kpi-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-              <line x1="16" y1="2" x2="16" y2="6" />
-              <line x1="8" y1="2" x2="8" y2="6" />
-              <line x1="3" y1="10" x2="21" y2="10" />
-            </svg>
+            <CalendarClock size={24} aria-hidden="true" />
           </div>
           <div className="kpi-content">
             <div className="kpi-label">Today's Appointments</div>
@@ -494,10 +879,7 @@ export function AnalyticsPage() {
 
         <div className="kpi-card revenue">
           <div className="kpi-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <line x1="12" y1="1" x2="12" y2="23" />
-              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-            </svg>
+            <DollarSign size={24} aria-hidden="true" />
           </div>
           <div className="kpi-content">
             <div className="kpi-label">This Month's Revenue</div>
@@ -507,13 +889,7 @@ export function AnalyticsPage() {
 
         <div className="kpi-card encounters">
           <div className="kpi-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="16" y1="13" x2="8" y2="13" />
-              <line x1="16" y1="17" x2="8" y2="17" />
-              <polyline points="10 9 9 9 8 9" />
-            </svg>
+            <Stethoscope size={24} aria-hidden="true" />
           </div>
           <div className="kpi-content">
             <div className="kpi-label">Active Encounters</div>
@@ -525,62 +901,290 @@ export function AnalyticsPage() {
       {/* Tab Content */}
       {activeTab === 'financials' && (
         <div className="tab-content">
-          <div className="analytics-section-header">
-            <div className="section-icon">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2">
-                <path d="M3 3v18h18" />
-                <path d="M18 17V9" />
-                <path d="M13 17V5" />
-                <path d="M8 17v-3" />
-              </svg>
+          <div className="analytics-section-header financial-story-header">
+            <div className="section-icon finance-icon">
+              <BarChart3 size={34} aria-hidden="true" />
             </div>
             <div className="section-header-content">
               <div className="section-title-row">
                 <h2>Financial Reports</h2>
-                <button className="external-link-btn" title="Open external dashboard">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                    <polyline points="15 3 21 3 21 9" />
-                    <line x1="10" y1="14" x2="21" y2="3" />
-                  </svg>
-                </button>
               </div>
-              <p>View a graphical display of several key metrics, critical for the management of your practice</p>
+              <p>Collections, access leakage, claim movement, and A/R risk tied back to the day-to-day workflows.</p>
+            </div>
+            <div className="story-actions">
+              <Link to="/financials" className="story-link-button">
+                Financials <ArrowRight size={16} aria-hidden="true" />
+              </Link>
+              <Link to="/clearinghouse" className="story-link-button subtle">
+                Clearinghouse <ArrowRight size={16} aria-hidden="true" />
+              </Link>
             </div>
           </div>
 
-          <div className="analytics-feature-section">
-            <div className="feature-section-header">
-              <div className="section-icon-large">
-                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="1.5">
-                  <circle cx="12" cy="12" r="10" />
-                  <polyline points="12 6 12 12 16 14" />
-                </svg>
-              </div>
-              <h3>Real-Time Financial Reports</h3>
+          <div className="finance-story-strip">
+            <div className="story-strip-item">
+              <span className="story-strip-label">Revenue booked</span>
+              <strong>{formatCurrency(selectedRevenueCents)}</strong>
+              <span>{totalAppointments.toLocaleString()} appointments in period</span>
             </div>
-            <div className="feature-list-two-column">
-              <div className="feature-column">
-                <div className="feature-item">
-                  <strong>Charges</strong>
-                  <span>View all the charges in the system for a specific time period.</span>
-                </div>
-                <div className="feature-item">
-                  <strong>Outstanding Charges</strong>
-                  <span>View all the outstanding line items charges for a specific time period.</span>
-                </div>
-              </div>
-              <div className="feature-column">
-                <div className="feature-item">
-                  <strong>Payments Received</strong>
-                  <span>Summarize all payments received for a specific time period.</span>
-                </div>
-                <div className="feature-item">
-                  <strong>Refunds Issued</strong>
-                  <span>Summarize all refunds issued for a specific time period.</span>
-                </div>
-              </div>
+            <div className="story-strip-item">
+              <span className="story-strip-label">Collected</span>
+              <strong>{formatCurrency(selectedCollectionsCents)}</strong>
+              <span>{formatPercent(netCollectionRate)} net collection rate</span>
             </div>
+            <div className="story-strip-item warning">
+              <span className="story-strip-label">Schedule leakage</span>
+              <strong>{formatCurrency(unrecoveredLeakageCents)}</strong>
+              <span>{formatPercent(scheduleLeakageRate)} lost or cancelled slots</span>
+            </div>
+            <div className="story-strip-item danger">
+              <span className="story-strip-label">Needs action</span>
+              <strong>{claimsNeedingAction}</strong>
+              <span>{workQueueCritical} critical billing review items</span>
+            </div>
+          </div>
+
+          <div className="finance-command-grid">
+            <Panel title="Collections Story">
+              <div className="finance-panel-body">
+                <div className="metric-card-row">
+                  <div className="metric-tile">
+                    <DollarSign size={20} aria-hidden="true" />
+                    <span className="metric-label">Charges</span>
+                    <strong>{formatCurrency(selectedRevenueCents)}</strong>
+                    <span className="metric-note">Billed or earned in selected range</span>
+                  </div>
+                  <div className="metric-tile">
+                    <CreditCard size={20} aria-hidden="true" />
+                    <span className="metric-label">Payments</span>
+                    <strong>{formatCurrency(selectedCollectionsCents)}</strong>
+                    <span className="metric-note">{formatCurrency(patientCollectionsCents)} patient, {formatCurrency(payerCollectionsCents)} payer</span>
+                  </div>
+                  <div className="metric-tile">
+                    <WalletCards size={20} aria-hidden="true" />
+                    <span className="metric-label">Unapplied Cash</span>
+                    <strong>{formatCurrency(unappliedCashCents)}</strong>
+                    <span className="metric-note">EFT/ERA variance to reconcile</span>
+                  </div>
+                </div>
+                <div className="finance-chart">
+                  {financialTrendData.length === 0 ? (
+                    <div className="empty-chart compact">
+                      <p className="muted">No collections trend available for this range</p>
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={260}>
+                      <AreaChart data={financialTrendData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis dataKey="date" tickFormatter={formatDate} />
+                        <YAxis tickFormatter={(value) => formatCurrency(value)} />
+                        <Tooltip
+                          labelFormatter={formatDate}
+                          formatter={(value: any, name: any) => [formatCurrency(value), name === 'revenue' ? 'Revenue' : 'Collections']}
+                        />
+                        <Legend />
+                        <Area type="monotone" dataKey="revenue" stroke="#2563eb" fill="#dbeafe" name="Revenue" />
+                        <Area type="monotone" dataKey="collections" stroke="#0f766e" fill="#ccfbf1" name="Collections" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="Schedule Leakage">
+              <div className="finance-panel-body">
+                <div className="leakage-summary">
+                  <div>
+                    <span className="metric-label">Completed</span>
+                    <strong>{completedAppointments.toLocaleString()}</strong>
+                    <span>{formatPercent(completionRate)} completion rate</span>
+                  </div>
+                  <div>
+                    <span className="metric-label">No-shows</span>
+                    <strong>{noShowCount.toLocaleString()}</strong>
+                    <span>{formatCurrency(estimatedNoShowLeakageCents)} estimated visit value</span>
+                  </div>
+                  <div>
+                    <span className="metric-label">Cancelled</span>
+                    <strong>{cancelledCount.toLocaleString()}</strong>
+                    <span>{formatCurrency(estimatedCancellationLeakageCents)} estimated visit value</span>
+                  </div>
+                </div>
+                <div className="leakage-recovery">
+                  <div className="recovery-meter">
+                    <span
+                      style={{
+                        width: `${estimatedScheduleLeakageCents > 0 ? Math.min(100, (collectedLeakageFeesCents / estimatedScheduleLeakageCents) * 100) : 0}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="recovery-copy">
+                    <strong>{formatCurrency(collectedLeakageFeesCents)}</strong>
+                    <span>no-show and cancellation fees captured against {formatCurrency(estimatedScheduleLeakageCents)} estimated leakage</span>
+                  </div>
+                </div>
+                <div className="action-row">
+                  <Link to="/schedule" className="inline-action">Open Schedule <ArrowRight size={14} aria-hidden="true" /></Link>
+                  <Link to="/text-messages" className="inline-action">Reminder Campaigns <ArrowRight size={14} aria-hidden="true" /></Link>
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="Claim Pipeline">
+              <div className="finance-panel-body">
+                <div className="pipeline-steps">
+                  {claimPipelineData.map((step) => (
+                    <div key={step.label} className="pipeline-step" style={{ borderTopColor: step.fill }}>
+                      <span>{step.label}</span>
+                      <strong>{step.value}</strong>
+                    </div>
+                  ))}
+                </div>
+                <div className="metric-card-row compact-metrics">
+                  <div className="metric-tile">
+                    <CheckCircle2 size={18} aria-hidden="true" />
+                    <span className="metric-label">First-pass</span>
+                    <strong>{formatPercent(firstPassRate)}</strong>
+                  </div>
+                  <div className="metric-tile">
+                    <ShieldAlert size={18} aria-hidden="true" />
+                    <span className="metric-label">Denial rate</span>
+                    <strong>{formatPercent(denialRate)}</strong>
+                  </div>
+                  <div className="metric-tile">
+                    <FileWarning size={18} aria-hidden="true" />
+                    <span className="metric-label">Open reviews</span>
+                    <strong>{financialWorkQueue.length}</strong>
+                  </div>
+                </div>
+                <div className="action-row">
+                  <Link to="/claims" className="inline-action">Claims Worklist <ArrowRight size={14} aria-hidden="true" /></Link>
+                  <Link to="/clearinghouse" className="inline-action">Submit and Reconcile <ArrowRight size={14} aria-hidden="true" /></Link>
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="A/R Aging and Patient Balances">
+              <div className="finance-panel-body">
+                <div className="metric-card-row">
+                  <div className="metric-tile">
+                    <TrendingDown size={20} aria-hidden="true" />
+                    <span className="metric-label">Total A/R</span>
+                    <strong>{formatCurrency(outstandingArCents)}</strong>
+                    <span className="metric-note">{formatCurrency(overdueArCents)} overdue</span>
+                  </div>
+                  <div className="metric-tile">
+                    <AlertTriangle size={20} aria-hidden="true" />
+                    <span className="metric-label">A/R 90+</span>
+                    <strong>{formatCurrency(ar90PlusCents)}</strong>
+                    <span className="metric-note">{outstandingArCents > 0 ? formatPercent((ar90PlusCents / outstandingArCents) * 100) : '0.0%'} of open A/R</span>
+                  </div>
+                  <div className="metric-tile">
+                    <Activity size={20} aria-hidden="true" />
+                    <span className="metric-label">Days in A/R</span>
+                    <strong>{daysInAr.toFixed(1)}</strong>
+                    <span className="metric-note">{billsByStatusTotal} bills represented</span>
+                  </div>
+                </div>
+                {arAgingData.length === 0 ? (
+                  <div className="empty-chart compact">
+                    <p className="muted">No A/R aging buckets available</p>
+                  </div>
+                ) : (
+                  <div className="ar-aging-list">
+                    {arAgingData.map((bucket) => (
+                      <div key={bucket.label} className="ar-aging-row">
+                        <div className="ar-aging-label">
+                          <strong>{bucket.label}</strong>
+                          <span>{bucket.count} bills</span>
+                        </div>
+                        <div className="ar-aging-bar">
+                          <span style={{ width: `${outstandingArCents > 0 ? Math.max(4, (bucket.amount / outstandingArCents) * 100) : 0}%` }} />
+                        </div>
+                        <strong>{formatCurrency(bucket.amount)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="action-row">
+                  <Link to="/financials?tab=bills" className="inline-action">Patient Balances <ArrowRight size={14} aria-hidden="true" /></Link>
+                  <Link to="/financials?tab=analytics" className="inline-action">A/R Analytics <ArrowRight size={14} aria-hidden="true" /></Link>
+                </div>
+              </div>
+            </Panel>
+          </div>
+
+          <div className="finance-lower-grid">
+            <Panel title="Provider Financial Story">
+              {providerStoryRows.length === 0 ? (
+                <div className="empty-state">No provider data available</div>
+              ) : (
+                <div className="provider-story-list">
+                  {providerStoryRows.map((provider) => (
+                    <div key={provider.id} className="provider-story-row">
+                      <div>
+                        <strong>{provider.name || 'Unknown provider'}</strong>
+                        <span>{provider.seen.toLocaleString()} patients, {provider.completed.toLocaleString()} completed visits</span>
+                      </div>
+                      <div>
+                        <strong>{formatCurrency(provider.revenue)}</strong>
+                        <span>{provider.noShows} no-shows, {provider.cancelled} cancellations</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
+
+            <Panel title="Billing Work Queue">
+              {topWorkQueueItems.length === 0 ? (
+                <div className="clean-state">
+                  <CheckCircle2 size={28} aria-hidden="true" />
+                  <strong>No open billing review items</strong>
+                  <span>Claims, bills, and posting failures are clear for the selected queue.</span>
+                </div>
+              ) : (
+                <div className="workqueue-list">
+                  {topWorkQueueItems.map((item) => (
+                    <div key={item.id} className={`workqueue-item ${String(item.severity || '').toLowerCase()}`}>
+                      <div>
+                        <strong>{item.message || (item.issueType || 'Billing review').replace(/_/g, ' ')}</strong>
+                        <span>
+                          {[item.patientFirstName, item.patientLastName].filter(Boolean).join(' ') || item.claimNumber || item.billNumber || 'Unassigned item'}
+                        </span>
+                      </div>
+                      <span className="severity-pill">{item.severity || 'review'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
+
+            <Panel title="Day-to-Day Office Pulse">
+              <div className="office-pulse-grid">
+                <div>
+                  <Users size={18} aria-hidden="true" />
+                  <span>New patients</span>
+                  <strong>{newPatientCount.toLocaleString()}</strong>
+                </div>
+                <div>
+                  <CalendarClock size={18} aria-hidden="true" />
+                  <span>Scheduled now</span>
+                  <strong>{scheduledAppointments.toLocaleString()}</strong>
+                </div>
+                <div>
+                  <RefreshCw size={18} aria-hidden="true" />
+                  <span>Avg wait</span>
+                  <strong>{toNumber(appointmentAnalytics?.avgWaitTimeMinutes).toFixed(1)}m</strong>
+                </div>
+                <div>
+                  <ClipboardList size={18} aria-hidden="true" />
+                  <span>Bill statuses</span>
+                  <strong>{billsByStatusTotal.toLocaleString()}</strong>
+                </div>
+              </div>
+            </Panel>
           </div>
         </div>
       )}
@@ -960,6 +1564,13 @@ export function AnalyticsPage() {
 
       {/* Charts Grid - Only show on financials tab */}
       {activeTab === 'financials' && (
+        <>
+        <div className="financial-drilldown-header">
+          <div>
+            <h3>Operational Drill-Downs</h3>
+            <p>Volume, revenue, diagnoses, procedures, demographics, appointment mix, and provider productivity for the selected period.</p>
+          </div>
+        </div>
         <div className="charts-grid">
           {/* Appointments Trend */}
           <Panel title="Appointments Trend">
@@ -1149,12 +1760,13 @@ export function AnalyticsPage() {
             )}
           </Panel>
         </div>
+        </>
       )}
 
       <style>{`
         .analytics-page {
           padding: 1.5rem;
-          background: linear-gradient(135deg, #faf5ff 0%, #f5f3ff 100%);
+          background: #f6f8fb;
           min-height: 100vh;
         }
 
@@ -1176,31 +1788,32 @@ export function AnalyticsPage() {
           margin-bottom: 2rem;
           background: white;
           padding: 0.5rem;
-          border-radius: 12px;
-          box-shadow: 0 2px 8px rgba(139, 92, 246, 0.1);
+          border-radius: 8px;
+          border: 1px solid #e2e8f0;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
         }
 
         .analytics-tab {
           padding: 0.75rem 1.5rem;
           background: transparent;
           border: none;
-          border-radius: 8px;
+          border-radius: 6px;
           cursor: pointer;
           font-weight: 500;
           color: #64748b;
-          transition: all 0.3s ease;
+          transition: all 0.2s ease;
           white-space: nowrap;
         }
 
         .analytics-tab:hover {
-          color: #7c3aed;
-          background: #faf5ff;
+          color: #0f766e;
+          background: #f0fdfa;
         }
 
         .analytics-tab.active {
           color: white;
-          background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-          box-shadow: 0 4px 6px rgba(139, 92, 246, 0.3);
+          background: #0f766e;
+          box-shadow: 0 4px 10px rgba(15, 118, 110, 0.18);
         }
 
         .tab-content {
@@ -1224,10 +1837,11 @@ export function AnalyticsPage() {
           gap: 1.5rem;
           padding: 2rem;
           background: white;
-          border-radius: 12px;
-          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+          border-radius: 8px;
+          border: 1px solid #e2e8f0;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
           margin-bottom: 2rem;
-          border-left: 4px solid #8b5cf6;
+          border-left: 4px solid #0f766e;
         }
 
         .section-icon {
@@ -1259,7 +1873,7 @@ export function AnalyticsPage() {
         .external-link-btn {
           background: transparent;
           border: none;
-          color: #8b5cf6;
+          color: #0f766e;
           cursor: pointer;
           padding: 0.25rem;
           display: flex;
@@ -1270,16 +1884,17 @@ export function AnalyticsPage() {
         }
 
         .external-link-btn:hover {
-          background: #faf5ff;
-          color: #7c3aed;
+          background: #f0fdfa;
+          color: #0f766e;
           transform: scale(1.1);
         }
 
         .analytics-feature-section {
           background: white;
-          border-radius: 12px;
+          border-radius: 8px;
           padding: 3rem;
-          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+          border: 1px solid #e2e8f0;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
           margin-bottom: 2rem;
         }
 
@@ -1321,21 +1936,21 @@ export function AnalyticsPage() {
 
         .feature-item {
           padding: 1.5rem;
-          background: linear-gradient(135deg, #faf5ff 0%, #f5f3ff 100%);
-          border-radius: 10px;
-          border-left: 4px solid #8b5cf6;
-          transition: all 0.3s ease;
+          background: #f8fafc;
+          border-radius: 8px;
+          border-left: 4px solid #0f766e;
+          transition: all 0.2s ease;
           cursor: pointer;
         }
 
         .feature-item:hover {
           transform: translateX(4px);
-          box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
-          border-left-color: #7c3aed;
+          box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+          border-left-color: #0f766e;
         }
 
         .feature-item strong {
-          color: #7c3aed;
+          color: #0f766e;
           display: block;
           margin-bottom: 0.5rem;
           font-size: 1.1rem;
@@ -1350,10 +1965,11 @@ export function AnalyticsPage() {
 
         .analytics-link-box {
           background: white;
-          border-radius: 12px;
+          border-radius: 8px;
           padding: 4rem 3rem;
           text-align: center;
-          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+          border: 1px solid #e2e8f0;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -1375,9 +1991,9 @@ export function AnalyticsPage() {
         .analytics-learn-more {
           padding: 1rem 2.5rem;
           background: white;
-          border: 2px solid #7c3aed;
-          border-radius: 10px;
-          color: #7c3aed;
+          border: 2px solid #0f766e;
+          border-radius: 8px;
+          color: #0f766e;
           font-weight: 600;
           font-size: 1rem;
           cursor: pointer;
@@ -1386,10 +2002,10 @@ export function AnalyticsPage() {
         }
 
         .analytics-learn-more:hover {
-          background: #7c3aed;
+          background: #0f766e;
           color: white;
           transform: translateY(-2px);
-          box-shadow: 0 6px 16px rgba(124, 58, 237, 0.3);
+          box-shadow: 0 6px 16px rgba(15, 118, 110, 0.25);
         }
 
         .kpi-cards {
@@ -1401,14 +2017,14 @@ export function AnalyticsPage() {
 
         .kpi-card {
           background: white;
-          border-radius: 12px;
+          border-radius: 8px;
           padding: 1.5rem;
-          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
           display: flex;
           gap: 1rem;
           align-items: flex-start;
           transition: all 0.3s ease;
-          border: 2px solid transparent;
+          border: 1px solid #e2e8f0;
         }
 
         .kpi-card.patients {
@@ -1429,7 +2045,7 @@ export function AnalyticsPage() {
 
         .kpi-card:hover {
           transform: translateY(-4px);
-          box-shadow: 0 8px 16px rgba(139, 92, 246, 0.15);
+          box-shadow: 0 8px 16px rgba(15, 23, 42, 0.08);
         }
 
         .kpi-icon {
@@ -1439,24 +2055,24 @@ export function AnalyticsPage() {
           display: flex;
           align-items: center;
           justify-content: center;
-          border-radius: 10px;
-          background: linear-gradient(135deg, #faf5ff 0%, #f5f3ff 100%);
+          border-radius: 8px;
+          background: #f8fafc;
         }
 
         .kpi-card.patients .kpi-icon {
-          background: linear-gradient(135deg, #ddd6fe 0%, #c4b5fd 100%);
+          background: #e0f2fe;
         }
 
         .kpi-card.appointments .kpi-icon {
-          background: linear-gradient(135deg, #bae6fd 0%, #7dd3fc 100%);
+          background: #dbeafe;
         }
 
         .kpi-card.revenue .kpi-icon {
-          background: linear-gradient(135deg, #d1fae5 0%, #6ee7b7 100%);
+          background: #dcfce7;
         }
 
         .kpi-card.encounters .kpi-icon {
-          background: linear-gradient(135deg, #fed7aa 0%, #fdba74 100%);
+          background: #ffedd5;
         }
 
         .kpi-content {
@@ -1499,7 +2115,7 @@ export function AnalyticsPage() {
           padding: 0.5rem 1rem;
           background: white;
           border: 2px solid #e5e7eb;
-          border-radius: 8px;
+          border-radius: 6px;
           cursor: pointer;
           font-weight: 500;
           color: #6b7280;
@@ -1507,13 +2123,13 @@ export function AnalyticsPage() {
         }
 
         .range-btn:hover {
-          border-color: #8b5cf6;
-          color: #8b5cf6;
+          border-color: #0f766e;
+          color: #0f766e;
         }
 
         .range-btn.active {
-          background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-          border-color: #8b5cf6;
+          background: #0f766e;
+          border-color: #0f766e;
           color: white;
         }
 
@@ -1522,6 +2138,17 @@ export function AnalyticsPage() {
           gap: 0.75rem;
           align-items: center;
           flex-wrap: wrap;
+        }
+
+        .custom-range input[type="date"] {
+          width: 170px;
+          max-width: 100%;
+          flex: 0 0 170px;
+        }
+
+        .custom-range span {
+          color: #64748b;
+          font-weight: 700;
         }
 
         .empty-chart {
@@ -1541,19 +2168,19 @@ export function AnalyticsPage() {
         .data-table th {
           text-align: left;
           padding: 0.75rem;
-          background: #faf5ff;
-          border-bottom: 2px solid #e9d5ff;
+          background: #f8fafc;
+          border-bottom: 2px solid #e2e8f0;
           font-weight: 600;
-          color: #581c87;
+          color: #0f172a;
         }
 
         .data-table td {
           padding: 0.75rem;
-          border-bottom: 1px solid #f3e8ff;
+          border-bottom: 1px solid #e2e8f0;
         }
 
         .data-table tbody tr:hover {
-          background: #faf5ff;
+          background: #f8fafc;
         }
 
         .empty-state {
@@ -1564,6 +2191,450 @@ export function AnalyticsPage() {
 
         .muted {
           color: #6b7280;
+        }
+
+        .financial-story-header {
+          align-items: stretch;
+        }
+
+        .finance-icon {
+          width: 56px;
+          height: 56px;
+          border-radius: 8px;
+          background: #ecfdf5;
+          color: #0f766e;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .story-actions {
+          display: flex;
+          gap: 0.75rem;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+
+        .story-link-button,
+        .inline-action {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.4rem;
+          text-decoration: none;
+          font-weight: 700;
+          border-radius: 8px;
+          white-space: nowrap;
+        }
+
+        .story-link-button {
+          min-height: 40px;
+          padding: 0.65rem 0.95rem;
+          color: #fff;
+          background: #0f766e;
+          border: 1px solid #0f766e;
+        }
+
+        .story-link-button.subtle {
+          color: #0f766e;
+          background: #fff;
+          border-color: #99f6e4;
+        }
+
+        .finance-story-strip {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 1rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .story-strip-item {
+          background: #fff;
+          border: 1px solid #dbe4ee;
+          border-top: 4px solid #0f766e;
+          border-radius: 8px;
+          padding: 1rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+          min-height: 118px;
+        }
+
+        .story-strip-item.warning {
+          border-top-color: #d97706;
+        }
+
+        .story-strip-item.danger {
+          border-top-color: #dc2626;
+        }
+
+        .story-strip-label,
+        .metric-label {
+          color: #64748b;
+          font-size: 0.78rem;
+          font-weight: 800;
+          letter-spacing: 0;
+          text-transform: uppercase;
+        }
+
+        .story-strip-item strong {
+          color: #0f172a;
+          font-size: 1.55rem;
+          line-height: 1.15;
+        }
+
+        .story-strip-item span:last-child,
+        .metric-note {
+          color: #64748b;
+          font-size: 0.88rem;
+          line-height: 1.35;
+        }
+
+        .finance-command-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1.5rem;
+        }
+
+        .finance-lower-grid {
+          display: grid;
+          grid-template-columns: 1.2fr 1fr 0.9fr;
+          gap: 1.5rem;
+          margin-top: 1.5rem;
+        }
+
+        .finance-panel-body {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+
+        .metric-card-row {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 0.75rem;
+        }
+
+        .metric-card-row.compact-metrics {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .metric-tile {
+          min-height: 126px;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          background: #f8fafc;
+          padding: 0.85rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+          color: #0f766e;
+        }
+
+        .metric-tile strong {
+          color: #0f172a;
+          font-size: 1.25rem;
+          line-height: 1.1;
+        }
+
+        .finance-chart {
+          min-height: 260px;
+        }
+
+        .empty-chart.compact {
+          padding: 2rem;
+          min-height: 220px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .leakage-summary {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 0.75rem;
+        }
+
+        .leakage-summary > div {
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          background: #fff7ed;
+          padding: 0.85rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+        }
+
+        .leakage-summary strong {
+          font-size: 1.35rem;
+          color: #9a3412;
+        }
+
+        .leakage-summary span {
+          color: #64748b;
+          font-size: 0.86rem;
+          line-height: 1.35;
+        }
+
+        .leakage-recovery {
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 1rem;
+          background: #fff;
+        }
+
+        .recovery-meter {
+          height: 12px;
+          border-radius: 999px;
+          background: #fee2e2;
+          overflow: hidden;
+          margin-bottom: 0.75rem;
+        }
+
+        .recovery-meter span {
+          display: block;
+          height: 100%;
+          border-radius: inherit;
+          background: #0f766e;
+        }
+
+        .recovery-copy {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.35rem 0.75rem;
+          align-items: baseline;
+          color: #64748b;
+        }
+
+        .recovery-copy strong {
+          color: #0f172a;
+        }
+
+        .action-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.75rem;
+        }
+
+        .inline-action {
+          color: #0f766e;
+          background: #f0fdfa;
+          border: 1px solid #99f6e4;
+          padding: 0.55rem 0.8rem;
+          min-height: 36px;
+        }
+
+        .pipeline-steps {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 0.75rem;
+        }
+
+        .pipeline-step {
+          border: 1px solid #e2e8f0;
+          border-top: 4px solid #0f766e;
+          border-radius: 8px;
+          padding: 0.85rem;
+          background: #fff;
+          min-height: 92px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+        }
+
+        .pipeline-step span {
+          color: #64748b;
+          font-weight: 700;
+          font-size: 0.8rem;
+        }
+
+        .pipeline-step strong {
+          color: #0f172a;
+          font-size: 1.65rem;
+        }
+
+        .ar-aging-list,
+        .provider-story-list,
+        .workqueue-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+
+        .ar-aging-row {
+          display: grid;
+          grid-template-columns: minmax(110px, 0.8fr) minmax(120px, 1.6fr) auto;
+          gap: 0.75rem;
+          align-items: center;
+          padding: 0.75rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          background: #fff;
+        }
+
+        .ar-aging-label {
+          display: flex;
+          flex-direction: column;
+          gap: 0.2rem;
+        }
+
+        .ar-aging-label span {
+          color: #64748b;
+          font-size: 0.82rem;
+        }
+
+        .ar-aging-bar {
+          height: 10px;
+          border-radius: 999px;
+          background: #e2e8f0;
+          overflow: hidden;
+        }
+
+        .ar-aging-bar span {
+          display: block;
+          height: 100%;
+          border-radius: inherit;
+          background: #2563eb;
+        }
+
+        .provider-story-row,
+        .workqueue-item {
+          display: grid;
+          grid-template-columns: 1fr auto;
+          gap: 1rem;
+          align-items: center;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          background: #fff;
+          padding: 0.85rem;
+        }
+
+        .provider-story-row div,
+        .workqueue-item div {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+
+        .provider-story-row span,
+        .workqueue-item span {
+          color: #64748b;
+          font-size: 0.86rem;
+        }
+
+        .workqueue-item.critical,
+        .workqueue-item.error {
+          border-left: 4px solid #dc2626;
+        }
+
+        .workqueue-item.warning {
+          border-left: 4px solid #d97706;
+        }
+
+        .severity-pill {
+          justify-self: end;
+          border-radius: 999px;
+          background: #f1f5f9;
+          color: #334155 !important;
+          padding: 0.25rem 0.65rem;
+          font-weight: 800;
+          text-transform: capitalize;
+        }
+
+        .clean-state {
+          min-height: 190px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 0.55rem;
+          text-align: center;
+          color: #0f766e;
+          background: #f0fdfa;
+          border: 1px solid #99f6e4;
+          border-radius: 8px;
+          padding: 1.25rem;
+        }
+
+        .clean-state span {
+          color: #64748b;
+          max-width: 280px;
+          line-height: 1.4;
+        }
+
+        .office-pulse-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.75rem;
+        }
+
+        .office-pulse-grid > div {
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          background: #f8fafc;
+          padding: 0.9rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+          color: #0f766e;
+          min-height: 104px;
+        }
+
+        .office-pulse-grid span {
+          color: #64748b;
+          font-weight: 700;
+          font-size: 0.82rem;
+        }
+
+        .office-pulse-grid strong {
+          color: #0f172a;
+          font-size: 1.45rem;
+        }
+
+        .financial-drilldown-header {
+          margin: 1.75rem 0 1rem;
+        }
+
+        .financial-drilldown-header h3 {
+          margin: 0 0 0.25rem;
+          color: #0f172a;
+          font-size: 1.2rem;
+        }
+
+        .financial-drilldown-header p {
+          margin: 0;
+          color: #64748b;
+        }
+
+        @media (max-width: 1180px) {
+          .finance-story-strip,
+          .finance-command-grid,
+          .finance-lower-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        @media (max-width: 820px) {
+          .financial-story-header,
+          .page-header {
+            flex-direction: column;
+            align-items: flex-start;
+          }
+
+          .analytics-tabs {
+            overflow-x: auto;
+          }
+
+          .metric-card-row,
+          .leakage-summary,
+          .pipeline-steps,
+          .office-pulse-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .ar-aging-row {
+            grid-template-columns: 1fr;
+          }
         }
 
         /* Dermatology Tab Styles */

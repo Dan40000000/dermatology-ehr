@@ -55,6 +55,11 @@ import { setActiveEncounter } from '../utils/activeEncounter';
 import { ensureKioskContext } from '../utils/kioskContext';
 import { hasAnyRole } from '../utils/roles';
 import { getOrCreateDowntimeBrowserDevice, type DowntimeBrowserDevice } from '../utils/downtimeDevice';
+import {
+  buildVisitPrepChecklist,
+  getAccessibilitySummary,
+  hasAccessibilityNeeds,
+} from '../utils/accessibilityAccommodations';
 
 type ScheduleViewMode = 'day' | 'week' | 'month';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -369,6 +374,7 @@ export function SchedulePage() {
   const { showSuccess, showError } = useToast();
   const patientIdParam = searchParams.get('patientId');
   const appointmentIdParam = searchParams.get('appointmentId');
+  const reasonParam = searchParams.get('reason');
   const viewParam = searchParams.get('view');
   const handledQueryRef = useRef<{ patientId: string | null; appointmentId: string | null }>({
     patientId: null,
@@ -385,6 +391,13 @@ export function SchedulePage() {
   const [copayByAppointmentId, setCopayByAppointmentId] = useState<Record<string, number>>({});
   const [outstandingBalanceByAppointmentId, setOutstandingBalanceByAppointmentId] = useState<Record<string, number>>({});
   const [priorAuthByPatientId, setPriorAuthByPatientId] = useState<Record<string, PriorAuthSnapshot>>({});
+  const patientById = useMemo(() => {
+    const map = new Map<string, Patient>();
+    for (const patient of patients) {
+      map.set(patient.id, patient);
+    }
+    return map;
+  }, [patients]);
 
   // Schedule state - Initialize from URL parameter or localStorage
   const [dayOffset, setDayOffset] = useState(() => {
@@ -502,16 +515,21 @@ export function SchedulePage() {
     if (handledQueryRef.current.patientId === patientIdParam) return;
 
     handledQueryRef.current.patientId = patientIdParam;
-    setNewAppt((prev) => ({ ...prev, patientId: patientIdParam }));
+    setNewAppt((prev) => ({
+      ...prev,
+      patientId: patientIdParam,
+      notes: reasonParam || prev.notes,
+    }));
     setShowNewApptModal(true);
 
     setSearchParams((prev) => {
-      if (!prev.has('patientId')) return prev;
+      if (!prev.has('patientId') && !prev.has('reason')) return prev;
       const nextParams = new URLSearchParams(prev);
       nextParams.delete('patientId');
+      nextParams.delete('reason');
       return nextParams;
     }, { replace: true });
-  }, [patientIdParam, appointmentIdParam, setSearchParams]);
+  }, [patientIdParam, appointmentIdParam, reasonParam, setSearchParams]);
 
   // Save filter state
   useEffect(() => {
@@ -2623,6 +2641,30 @@ const handleUndoNoShow = async (appt: Appointment) => {
                     })}
                   </td>
                   <td>
+                    {(() => {
+                      const appointmentPatient = patientById.get(a.patientId);
+                      const accessSummary = getAccessibilitySummary(appointmentPatient?.accessibilityProfile);
+                      const hasNeeds = hasAccessibilityNeeds(appointmentPatient?.accessibilityProfile);
+                      return hasNeeds ? (
+                        <div style={{ marginBottom: '0.25rem' }}>
+                          <span
+                            title={accessSummary}
+                            style={{
+                              display: 'inline-flex',
+                              background: '#e0f2fe',
+                              color: '#075985',
+                              border: '1px solid #7dd3fc',
+                              borderRadius: '999px',
+                              padding: '0.1rem 0.5rem',
+                              fontSize: '0.68rem',
+                              fontWeight: 700,
+                            }}
+                          >
+                            Access needs
+                          </span>
+                        </div>
+                      ) : null;
+                    })()}
                     <button
                       type="button"
                       className="ema-patient-link"
@@ -2889,6 +2931,34 @@ const handleUndoNoShow = async (appt: Appointment) => {
               <strong>Total due today:</strong> ${modalTotalDue.toFixed(2)}
             </div>
           ) : null}
+
+          {(() => {
+            const appointmentPatient = copayCheckInAppointment
+              ? patientById.get(copayCheckInAppointment.patientId)
+              : undefined;
+            const checklist = buildVisitPrepChecklist(appointmentPatient?.accessibilityProfile);
+            if (checklist.length === 0) return null;
+            return (
+              <div
+                style={{
+                  marginBottom: '1rem',
+                  border: '1px solid #7dd3fc',
+                  background: '#f0f9ff',
+                  color: '#075985',
+                  borderRadius: '6px',
+                  padding: '0.75rem',
+                  fontSize: '0.875rem',
+                }}
+              >
+                <strong>Access needs:</strong>
+                <ul style={{ margin: '0.5rem 0 0', paddingLeft: '1.1rem' }}>
+                  {checklist.slice(0, 4).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
 
           <div
             style={{
@@ -3329,6 +3399,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
           date: newAppt.date,
           time: newAppt.time,
           duration: newAppt.duration,
+          notes: newAppt.notes,
         }}
       />
 

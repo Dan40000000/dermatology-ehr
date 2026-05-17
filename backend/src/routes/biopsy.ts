@@ -55,7 +55,15 @@ const updateBiopsySchema = z.object({
   received_by_lab_at: z.string().optional(),
   path_lab_case_number: z.string().optional(),
   clinical_description: z.string().optional(),
-  special_instructions: z.string().optional()
+  special_instructions: z.string().optional(),
+  diagnosis_code: z.string().optional().nullable(),
+  diagnosis_description: z.string().optional().nullable(),
+  follow_up_action: z.enum(['none', 'reexcision', 'mohs', 'dermatology_followup', 'oncology_referral', 'monitoring']).optional(),
+  follow_up_interval: z.string().optional().nullable(),
+  follow_up_notes: z.string().optional().nullable(),
+  reexcision_required: z.boolean().optional(),
+  reexcision_scheduled_date: z.string().optional().nullable(),
+  patient_notification_notes: z.string().optional().nullable()
 });
 
 const addResultSchema = z.object({
@@ -393,6 +401,24 @@ router.get('/quality-metrics', async (req: AuthedRequest, res: Response) => {
   } catch (error: any) {
     logger.error('Error fetching quality metrics', { error: error.message });
     res.status(500).json({ error: 'Failed to fetch quality metrics' });
+  }
+});
+
+/**
+ * GET /api/biopsies/command-center
+ * Daily biopsy safety workflow for open loops and escalation queues
+ */
+router.get('/command-center', async (req: AuthedRequest, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const providerId = req.query.provider_id as string | undefined;
+
+    const commandCenter = await BiopsyService.getSafetyCommandCenter(tenantId, providerId);
+
+    res.json(commandCenter);
+  } catch (error: any) {
+    logger.error('Error fetching biopsy command center', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch biopsy command center' });
   }
 });
 

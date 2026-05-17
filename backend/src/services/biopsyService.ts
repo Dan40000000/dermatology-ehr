@@ -19,6 +19,60 @@ interface BiopsyNotificationParams {
   recipientType: 'provider' | 'patient';
 }
 
+type BiopsySeverity = 'low' | 'medium' | 'high' | 'critical';
+
+interface BiopsySafetyFlag {
+  id: string;
+  type: string;
+  severity: BiopsySeverity;
+  title: string;
+  message: string;
+  action: string;
+}
+
+interface BiopsyCommandCenterItem {
+  [key: string]: any;
+  days_since_ordered: number | null;
+  days_since_sent: number | null;
+  days_since_result: number | null;
+  days_since_review: number | null;
+  safety_flags: BiopsySafetyFlag[];
+  highest_severity: BiopsySeverity | null;
+  safety_stage: string;
+  loop_status: string;
+  next_action: string;
+}
+
+const severityRank: Record<BiopsySeverity, number> = {
+  low: 1,
+  medium: 2,
+  high: 3,
+  critical: 4,
+};
+
+function asDate(value: unknown): Date | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function daysBetween(start: unknown, end: Date = new Date()): number | null {
+  const startDate = asDate(start);
+  if (!startDate) return null;
+  return Math.max(0, Math.floor((end.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+}
+
+function highestSeverity(flags: BiopsySafetyFlag[]): BiopsySeverity | null {
+  if (flags.length === 0) return null;
+  return flags.reduce<BiopsySeverity>((highest, flag) => (
+    severityRank[flag.severity] > severityRank[highest] ? flag.severity : highest
+  ), flags[0]!.severity);
+}
+
+function isTreatmentAction(action: unknown): boolean {
+  return ['reexcision', 'mohs', 'oncology_referral', 'dermatology_followup'].includes(String(action || ''));
+}
+
 export class BiopsyService {
   /**
    * Generate unique specimen ID in format: BX-YYYYMMDD-XXX
@@ -170,6 +224,217 @@ export class BiopsyService {
 
     const result = await pool.query(query, params);
     return result.rows[0];
+  }
+
+  /**
+   * Build the biopsy safety command center.
+   *
+   * This intentionally computes loop status from the existing biopsy lifecycle
+   * fields instead of requiring extra schema. The command center is used by
+   * daily clinic workflows to catch missing specimens, overdue pathology,
+   * unreviewed malignancies, missing patient notification, and treatment plans
+   * that have not been scheduled.
+   */
+  static async getSafetyCommandCenter(tenantId: string, providerId?: string) {
+    const params: any[] = [tenantId];
+    let providerFilter = '';
+
+    if (providerId) {
+      providerFilter = 'AND b.ordering_provider_id = $2';
+      params.push(providerId);
+    }
+
+    const query = `
+      SELECT
+        b.*,
+        p.first_name || ' ' || p.last_name as patient_name,
+        p.mrn,
+        p.dob as date_of_birth,
+        p.phone as patient_phone,
+        p.email as patient_email,
+        ordering_pr.first_name || ' ' || ordering_pr.last_name as ordering_provider_name,
+        reviewing_pr.first_name || ' ' || reviewing_pr.last_name as reviewing_provider_name,
+        EXTRACT(DAY FROM (NOW() - b.ordered_at))::INTEGER as days_since_ordered,
+        EXTRACT(DAY FROM (NOW() - b.sent_at))::INTEGER as days_since_sent,
+        EXTRACT(DAY FROM (NOW() - b.resulted_at))::INTEGER as days_since_result,
+        EXTRACT(DAY FROM (NOW() - b.reviewed_at))::INTEGER as days_since_review,
+        (SELECT COUNT(*) FROM biopsy_alerts ba WHERE ba.biopsy_id = b.id AND ba.status = 'active') as active_alert_count
+      FROM biopsies b
+      JOIN patients p ON b.patient_id = p.id
+      JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id
+      LEFT JOIN providers reviewing_pr ON b.reviewing_provider_id = reviewing_pr.id
+      WHERE b.tenant_id = $1
+        AND b.deleted_at IS NULL
+        ${providerFilter}
+        AND (
+          b.status <> 'closed'
+          OR b.ordered_at >= NOW() - INTERVAL '180 days'
+        )
+      ORDER BY
+        CASE
+          WHEN b.malignancy_type = 'melanoma' AND b.status <> 'closed' THEN 0
+          WHEN b.is_overdue = true THEN 1
+          WHEN b.status = 'resulted' THEN 2
+          WHEN b.status = 'reviewed' AND b.patient_notified = false THEN 3
+          WHEN b.malignancy_type IS NOT NULL AND b.status <> 'closed' THEN 4
+          ELSE 5
+        END,
+        COALESCE(b.resulted_at, b.sent_at, b.ordered_at) ASC
+    `;
+
+    const result = await pool.query(query, params);
+    const now = new Date();
+    const biopsies = result.rows.map((row) => BiopsyService.decorateSafetyItem(row, now));
+
+    const queues = {
+      critical: biopsies.filter((biopsy) => ['critical', 'high'].includes(String(biopsy.highest_severity || ''))),
+      pendingResults: biopsies.filter((biopsy) => biopsy.safety_stage === 'pending_result'),
+      pendingReview: biopsies.filter((biopsy) => biopsy.safety_stage === 'pending_review'),
+      pendingNotification: biopsies.filter((biopsy) => biopsy.safety_stage === 'pending_notification'),
+      treatmentFollowUp: biopsies.filter((biopsy) => biopsy.safety_stage === 'treatment_follow_up'),
+      closed: biopsies.filter((biopsy) => biopsy.safety_stage === 'closed'),
+    };
+
+    const openBiopsies = biopsies.filter((biopsy) => biopsy.safety_stage !== 'closed');
+    const completedTurnaround = biopsies
+      .map((biopsy) => Number(biopsy.turnaround_time_days))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const avgTurnaround = completedTurnaround.length > 0
+      ? completedTurnaround.reduce((sum, value) => sum + value, 0) / completedTurnaround.length
+      : null;
+
+    return {
+      generated_at: now.toISOString(),
+      summary: {
+        total_open_loops: openBiopsies.length,
+        overdue_results: queues.pendingResults.filter((biopsy) =>
+          biopsy.safety_flags.some((flag) => flag.type === 'result_overdue')
+        ).length,
+        pending_review: queues.pendingReview.length,
+        needs_patient_notification: queues.pendingNotification.length,
+        needs_treatment_scheduling: queues.treatmentFollowUp.length,
+        open_malignancies: openBiopsies.filter((biopsy) => biopsy.malignancy_type).length,
+        open_melanomas: openBiopsies.filter((biopsy) => biopsy.malignancy_type === 'melanoma').length,
+        closed_loop_complete: queues.closed.length,
+        critical_items: queues.critical.filter((biopsy) => biopsy.highest_severity === 'critical').length,
+        avg_turnaround_days: avgTurnaround,
+      },
+      queues,
+      biopsies,
+    };
+  }
+
+  private static decorateSafetyItem(row: any, now: Date): BiopsyCommandCenterItem {
+    const status = String(row.status || 'ordered');
+    const malignancyType = row.malignancy_type ? String(row.malignancy_type) : null;
+    const daysSinceOrdered = row.days_since_ordered == null ? daysBetween(row.ordered_at, now) : Number(row.days_since_ordered);
+    const daysSinceSent = row.days_since_sent == null ? daysBetween(row.sent_at, now) : Number(row.days_since_sent);
+    const daysSinceResult = row.days_since_result == null ? daysBetween(row.resulted_at, now) : Number(row.days_since_result);
+    const daysSinceReview = row.days_since_review == null ? daysBetween(row.reviewed_at, now) : Number(row.days_since_review);
+    const flags: BiopsySafetyFlag[] = [];
+
+    if (['ordered', 'collected'].includes(status) && daysSinceOrdered != null && daysSinceOrdered >= 2 && !row.sent_at) {
+      flags.push({
+        id: 'specimen_not_sent',
+        type: 'specimen_not_sent',
+        severity: daysSinceOrdered >= 4 ? 'high' : 'medium',
+        title: 'Specimen not sent',
+        message: `Specimen has been in ${status} status for ${daysSinceOrdered} days.`,
+        action: 'Confirm collection and send to pathology lab.',
+      });
+    }
+
+    if (['sent', 'received_by_lab', 'processing'].includes(status) && daysSinceSent != null && daysSinceSent > 7 && !row.resulted_at) {
+      flags.push({
+        id: 'result_overdue',
+        type: 'result_overdue',
+        severity: daysSinceSent >= 14 ? 'critical' : 'high',
+        title: 'Pathology result overdue',
+        message: `Specimen was sent ${daysSinceSent} days ago with no final result.`,
+        action: 'Call pathology lab and document follow-up.',
+      });
+    }
+
+    if (status === 'resulted') {
+      flags.push({
+        id: 'pending_provider_review',
+        type: 'pending_provider_review',
+        severity: malignancyType === 'melanoma' ? 'critical' : malignancyType ? 'high' : 'medium',
+        title: 'Result needs provider review',
+        message: malignancyType
+          ? `${malignancyType} result is not signed off.`
+          : 'Final pathology result is available but not signed off.',
+        action: 'Review result, code diagnosis, and document follow-up plan.',
+      });
+    }
+
+    if (status === 'reviewed' && row.patient_notified === false) {
+      flags.push({
+        id: 'patient_not_notified',
+        type: 'patient_not_notified',
+        severity: malignancyType === 'melanoma' ? 'critical' : malignancyType ? 'high' : 'medium',
+        title: 'Patient notification missing',
+        message: 'Provider review is complete but patient notification is not documented.',
+        action: 'Notify patient and record method, date, and notes.',
+      });
+    }
+
+    if (status !== 'closed' && malignancyType && row.patient_notified === true && isTreatmentAction(row.follow_up_action) && !row.reexcision_scheduled_date) {
+      flags.push({
+        id: 'treatment_not_scheduled',
+        type: 'treatment_not_scheduled',
+        severity: malignancyType === 'melanoma' ? 'critical' : 'high',
+        title: 'Treatment follow-up not scheduled',
+        message: `${row.follow_up_action} is planned but no treatment date is documented.`,
+        action: 'Schedule treatment, Mohs, referral, or surveillance appointment.',
+      });
+    }
+
+    if (Number(row.active_alert_count || 0) > 0) {
+      flags.push({
+        id: 'active_alert',
+        type: 'active_alert',
+        severity: 'medium',
+        title: 'Active biopsy alert',
+        message: `${row.active_alert_count} active alert${Number(row.active_alert_count) === 1 ? '' : 's'} on this specimen.`,
+        action: 'Resolve or acknowledge active alert.',
+      });
+    }
+
+    let safetyStage = 'closed';
+    let loopStatus = 'Closed loop complete';
+    let nextAction = 'No action needed';
+
+    if (['ordered', 'collected', 'sent', 'received_by_lab', 'processing'].includes(status)) {
+      safetyStage = 'pending_result';
+      loopStatus = flags.some((flag) => flag.type === 'result_overdue') ? 'Result overdue' : 'Awaiting pathology';
+      nextAction = flags[0]?.action || 'Monitor result status.';
+    } else if (status === 'resulted') {
+      safetyStage = 'pending_review';
+      loopStatus = 'Needs provider review';
+      nextAction = 'Review and sign pathology result.';
+    } else if (status === 'reviewed' && row.patient_notified === false) {
+      safetyStage = 'pending_notification';
+      loopStatus = 'Needs patient notification';
+      nextAction = 'Notify patient and document contact.';
+    } else if (status !== 'closed' && malignancyType && isTreatmentAction(row.follow_up_action) && !row.reexcision_scheduled_date) {
+      safetyStage = 'treatment_follow_up';
+      loopStatus = 'Needs treatment scheduling';
+      nextAction = 'Schedule treatment follow-up.';
+    }
+
+    return {
+      ...row,
+      days_since_ordered: daysSinceOrdered,
+      days_since_sent: daysSinceSent,
+      days_since_result: daysSinceResult,
+      days_since_review: daysSinceReview,
+      safety_flags: flags,
+      highest_severity: highestSeverity(flags),
+      safety_stage: safetyStage,
+      loop_status: loopStatus,
+      next_action: nextAction,
+    };
   }
 
   /**

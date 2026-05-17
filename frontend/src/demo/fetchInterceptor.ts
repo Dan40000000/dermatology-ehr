@@ -9,6 +9,7 @@ import {
   ALL_PRESCRIPTIONS,
   ALL_ORDERS,
   ALL_DOCUMENTS,
+  DEMO_BIOPSIES,
   getDemoDataForPortalUser,
 } from './demoData';
 import {
@@ -45,10 +46,12 @@ import {
   queryDemoBatches,
   queryDemoBills,
   queryDemoClaims,
+  queryDemoFinancialWorkQueue,
   queryDemoPatientPayments,
   queryDemoPayerPayments,
   queryDemoStatements,
   reconcileDemoPayments,
+  resolveDemoFinancialWorkQueueItem,
   submitDemoClaim,
   toggleDemoAutoVerify,
   updateDemoFeeSchedule,
@@ -64,6 +67,10 @@ const DEMO_APPOINTMENT_OVERRIDES_KEY = 'demoAppointmentOverrides.v1';
 const DEMO_RECALL_CAMPAIGNS_KEY = 'demoRecallCampaigns.v1';
 const DEMO_RECALLS_KEY = 'demoRecalls.v1';
 const DEMO_RECALL_HISTORY_KEY = 'demoRecallHistory.v1';
+const DEMO_CREATED_PATIENTS_KEY = 'demoCreatedPatients.v1';
+const DEMO_PATIENT_OVERRIDES_KEY = 'demoPatientOverrides.v1';
+const DEMO_BIOPSY_OVERRIDES_KEY = 'demoBiopsyOverrides.v1';
+const DEMO_TASKS_KEY = 'demoTasks.v1';
 
 function isLocalDemoEnabled(): boolean {
   return import.meta.env.VITE_ENABLE_LOCAL_DEMO === 'true';
@@ -365,10 +372,6 @@ function parseRequestBody(init?: RequestInit): DemoItem | null {
   }
 }
 
-function getPatientById(patientId: string) {
-  return ALL_PATIENTS.find((patient) => patient.id === patientId) || null;
-}
-
 function getPortalDataByPatientId(patientId: string) {
   for (const email of PORTAL_EMAILS) {
     const data = getDemoDataForPortalUser(email);
@@ -404,6 +407,335 @@ function readStorageJson<T>(key: string, fallback: T): T {
 
 function writeStorageJson(key: string, value: unknown) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function readDemoCreatedPatients(): DemoItem[] {
+  return readStorageJson<DemoItem[]>(DEMO_CREATED_PATIENTS_KEY, []);
+}
+
+function writeDemoCreatedPatients(patients: DemoItem[]) {
+  writeStorageJson(DEMO_CREATED_PATIENTS_KEY, patients);
+}
+
+function readDemoPatientOverrides(): Record<string, DemoItem> {
+  return readStorageJson<Record<string, DemoItem>>(DEMO_PATIENT_OVERRIDES_KEY, {});
+}
+
+function writeDemoPatientOverrides(overrides: Record<string, DemoItem>) {
+  writeStorageJson(DEMO_PATIENT_OVERRIDES_KEY, overrides);
+}
+
+function getAllPatients(): DemoItem[] {
+  const overrides = readDemoPatientOverrides();
+  const basePatients = [...readDemoCreatedPatients(), ...ALL_PATIENTS];
+  return basePatients.map((patient) => ({
+    ...patient,
+    ...(overrides[String(patient.id)] || {}),
+  }));
+}
+
+function getPatientById(patientId: string) {
+  return getAllPatients().find((patient) => patient.id === patientId) || null;
+}
+
+function readDemoBiopsyOverrides(): Record<string, DemoItem> {
+  return readStorageJson<Record<string, DemoItem>>(DEMO_BIOPSY_OVERRIDES_KEY, {});
+}
+
+function writeDemoBiopsyOverrides(overrides: Record<string, DemoItem>) {
+  writeStorageJson(DEMO_BIOPSY_OVERRIDES_KEY, overrides);
+}
+
+function getDemoBiopsies(): DemoItem[] {
+  const overrides = readDemoBiopsyOverrides();
+  return DEMO_BIOPSIES.map((biopsy) => {
+    const merged = {
+      ...biopsy,
+      ...(overrides[String(biopsy.id)] || {}),
+    };
+    const patient = getPatientById(String(merged.patient_id || merged.patientId || ''));
+    return {
+      ...merged,
+      patient_name: merged.patient_name || (patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : ''),
+      mrn: merged.mrn || patient?.mrn || '',
+      date_of_birth: merged.date_of_birth || patient?.dateOfBirth || patient?.dob || null,
+      patient_phone: merged.patient_phone || patient?.phone || null,
+      patient_email: merged.patient_email || patient?.email || null,
+    };
+  });
+}
+
+function updateDemoBiopsyRecord(biopsyId: string, updates: DemoItem): DemoItem | null {
+  const current = getDemoBiopsies().find((biopsy) => String(biopsy.id) === String(biopsyId));
+  if (!current) return null;
+
+  const next = {
+    ...current,
+    ...updates,
+    updated_at: new Date().toISOString(),
+  };
+  writeDemoBiopsyOverrides({
+    ...readDemoBiopsyOverrides(),
+    [biopsyId]: next,
+  });
+  return next;
+}
+
+function readDemoTasks(): DemoItem[] {
+  return readStorageJson<DemoItem[]>(DEMO_TASKS_KEY, []);
+}
+
+function writeDemoTasks(tasks: DemoItem[]) {
+  writeStorageJson(DEMO_TASKS_KEY, tasks);
+}
+
+const demoSeverityRank: Record<string, number> = {
+  low: 1,
+  medium: 2,
+  high: 3,
+  critical: 4,
+};
+
+function parseDemoDate(value: unknown): Date | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function demoDaysSince(value: unknown, now = new Date()): number | null {
+  const date = parseDemoDate(value);
+  if (!date) return null;
+  return Math.max(0, Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24)));
+}
+
+function isDemoTreatmentAction(action: unknown): boolean {
+  return ['reexcision', 'mohs', 'oncology_referral', 'dermatology_followup'].includes(String(action || ''));
+}
+
+function highestDemoSeverity(flags: DemoItem[]): string | null {
+  if (flags.length === 0) return null;
+  return flags.reduce((highest, flag) => (
+    demoSeverityRank[String(flag.severity)] > demoSeverityRank[highest] ? String(flag.severity) : highest
+  ), String(flags[0].severity));
+}
+
+function decorateDemoBiopsySafety(biopsy: DemoItem, now = new Date()): DemoItem {
+  const status = String(biopsy.status || 'ordered');
+  const malignancyType = biopsy.malignancy_type ? String(biopsy.malignancy_type) : null;
+  const daysSinceOrdered = demoDaysSince(biopsy.ordered_at, now);
+  const daysSinceSent = demoDaysSince(biopsy.sent_at, now);
+  const daysSinceResult = demoDaysSince(biopsy.resulted_at, now);
+  const daysSinceReview = demoDaysSince(biopsy.reviewed_at, now);
+  const flags: DemoItem[] = [];
+
+  if (['ordered', 'collected'].includes(status) && daysSinceOrdered != null && daysSinceOrdered >= 2 && !biopsy.sent_at) {
+    flags.push({
+      id: 'specimen_not_sent',
+      type: 'specimen_not_sent',
+      severity: daysSinceOrdered >= 4 ? 'high' : 'medium',
+      title: 'Specimen not sent',
+      message: `Specimen has been in ${status} status for ${daysSinceOrdered} days.`,
+      action: 'Confirm collection and send to pathology lab.',
+    });
+  }
+
+  if (['sent', 'received_by_lab', 'processing'].includes(status) && daysSinceSent != null && daysSinceSent > 7 && !biopsy.resulted_at) {
+    flags.push({
+      id: 'result_overdue',
+      type: 'result_overdue',
+      severity: daysSinceSent >= 14 ? 'critical' : 'high',
+      title: 'Pathology result overdue',
+      message: `Specimen was sent ${daysSinceSent} days ago with no final result.`,
+      action: 'Call pathology lab and document follow-up.',
+    });
+  }
+
+  if (status === 'resulted') {
+    flags.push({
+      id: 'pending_provider_review',
+      type: 'pending_provider_review',
+      severity: malignancyType === 'melanoma' ? 'critical' : malignancyType ? 'high' : 'medium',
+      title: 'Result needs provider review',
+      message: malignancyType
+        ? `${malignancyType} result is not signed off.`
+        : 'Final pathology result is available but not signed off.',
+      action: 'Review result, code diagnosis, and document follow-up plan.',
+    });
+  }
+
+  if (status === 'reviewed' && biopsy.patient_notified === false) {
+    flags.push({
+      id: 'patient_not_notified',
+      type: 'patient_not_notified',
+      severity: malignancyType === 'melanoma' ? 'critical' : malignancyType ? 'high' : 'medium',
+      title: 'Patient notification missing',
+      message: 'Provider review is complete but patient notification is not documented.',
+      action: 'Notify patient and record method, date, and notes.',
+    });
+  }
+
+  if (status !== 'closed' && malignancyType && biopsy.patient_notified === true && isDemoTreatmentAction(biopsy.follow_up_action) && !biopsy.reexcision_scheduled_date) {
+    flags.push({
+      id: 'treatment_not_scheduled',
+      type: 'treatment_not_scheduled',
+      severity: malignancyType === 'melanoma' ? 'critical' : 'high',
+      title: 'Treatment follow-up not scheduled',
+      message: `${biopsy.follow_up_action} is planned but no treatment date is documented.`,
+      action: 'Schedule treatment, Mohs, referral, or surveillance appointment.',
+    });
+  }
+
+  let safetyStage = 'closed';
+  let loopStatus = 'Closed loop complete';
+  let nextAction = 'No action needed';
+
+  if (['ordered', 'collected', 'sent', 'received_by_lab', 'processing'].includes(status)) {
+    safetyStage = 'pending_result';
+    loopStatus = flags.some((flag) => flag.type === 'result_overdue') ? 'Result overdue' : 'Awaiting pathology';
+    nextAction = flags[0]?.action || 'Monitor result status.';
+  } else if (status === 'resulted') {
+    safetyStage = 'pending_review';
+    loopStatus = 'Needs provider review';
+    nextAction = 'Review and sign pathology result.';
+  } else if (status === 'reviewed' && biopsy.patient_notified === false) {
+    safetyStage = 'pending_notification';
+    loopStatus = 'Needs patient notification';
+    nextAction = 'Notify patient and document contact.';
+  } else if (status !== 'closed' && malignancyType && isDemoTreatmentAction(biopsy.follow_up_action) && !biopsy.reexcision_scheduled_date) {
+    safetyStage = 'treatment_follow_up';
+    loopStatus = 'Needs treatment scheduling';
+    nextAction = 'Schedule treatment follow-up.';
+  }
+
+  return {
+    ...biopsy,
+    days_since_ordered: daysSinceOrdered,
+    days_since_sent: daysSinceSent,
+    days_since_result: daysSinceResult,
+    days_since_review: daysSinceReview,
+    safety_flags: flags,
+    highest_severity: highestDemoSeverity(flags),
+    safety_stage: safetyStage,
+    loop_status: loopStatus,
+    next_action: nextAction,
+  };
+}
+
+function sortDemoBiopsiesBySafety(biopsies: DemoItem[]): DemoItem[] {
+  return [...biopsies].sort((a, b) => {
+    const severityDiff = (demoSeverityRank[String(b.highest_severity || '')] || 0) - (demoSeverityRank[String(a.highest_severity || '')] || 0);
+    if (severityDiff !== 0) return severityDiff;
+    return String(a.resulted_at || a.sent_at || a.ordered_at || '').localeCompare(String(b.resulted_at || b.sent_at || b.ordered_at || ''));
+  });
+}
+
+function buildDemoBiopsyCommandCenter() {
+  const biopsies = sortDemoBiopsiesBySafety(getDemoBiopsies().map((biopsy) => decorateDemoBiopsySafety(biopsy)));
+  const queues = {
+    critical: biopsies.filter((biopsy) => ['critical', 'high'].includes(String(biopsy.highest_severity || ''))),
+    pendingResults: biopsies.filter((biopsy) => biopsy.safety_stage === 'pending_result'),
+    pendingReview: biopsies.filter((biopsy) => biopsy.safety_stage === 'pending_review'),
+    pendingNotification: biopsies.filter((biopsy) => biopsy.safety_stage === 'pending_notification'),
+    treatmentFollowUp: biopsies.filter((biopsy) => biopsy.safety_stage === 'treatment_follow_up'),
+    closed: biopsies.filter((biopsy) => biopsy.safety_stage === 'closed'),
+  };
+  const openBiopsies = biopsies.filter((biopsy) => biopsy.safety_stage !== 'closed');
+  const turnaround = biopsies
+    .map((biopsy) => Number(biopsy.turnaround_time_days))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const avgTurnaroundDays = turnaround.length
+    ? turnaround.reduce((sum, value) => sum + value, 0) / turnaround.length
+    : null;
+
+  return {
+    generated_at: new Date().toISOString(),
+    summary: {
+      total_open_loops: openBiopsies.length,
+      overdue_results: queues.pendingResults.filter((biopsy) =>
+        (biopsy.safety_flags || []).some((flag: DemoItem) => flag.type === 'result_overdue'),
+      ).length,
+      pending_review: queues.pendingReview.length,
+      needs_patient_notification: queues.pendingNotification.length,
+      needs_treatment_scheduling: queues.treatmentFollowUp.length,
+      open_malignancies: openBiopsies.filter((biopsy) => biopsy.malignancy_type).length,
+      open_melanomas: openBiopsies.filter((biopsy) => biopsy.malignancy_type === 'melanoma').length,
+      closed_loop_complete: queues.closed.length,
+      critical_items: queues.critical.filter((biopsy) => biopsy.highest_severity === 'critical').length,
+      avg_turnaround_days: avgTurnaroundDays,
+    },
+    queues,
+    biopsies,
+  };
+}
+
+function buildDemoBiopsyMetrics() {
+  const biopsies = getDemoBiopsies();
+  const turnaround = biopsies
+    .map((biopsy) => Number(biopsy.turnaround_time_days))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const within7 = turnaround.filter((value) => value <= 7).length;
+  return {
+    total_biopsies: biopsies.length,
+    avg_turnaround_days: turnaround.length ? turnaround.reduce((sum, value) => sum + value, 0) / turnaround.length : null,
+    max_turnaround_days: turnaround.length ? Math.max(...turnaround) : null,
+    min_turnaround_days: turnaround.length ? Math.min(...turnaround) : null,
+    within_7_days: within7,
+    over_7_days: turnaround.filter((value) => value > 7).length,
+    total_overdue: biopsies.filter((biopsy) => decorateDemoBiopsySafety(biopsy).safety_flags.some((flag: DemoItem) => flag.type === 'result_overdue')).length,
+    total_malignancies: biopsies.filter((biopsy) => biopsy.malignancy_type).length,
+    total_melanoma: biopsies.filter((biopsy) => biopsy.malignancy_type === 'melanoma').length,
+    patients_notified: biopsies.filter((biopsy) => biopsy.patient_notified === true).length,
+    completed_biopsies: biopsies.filter((biopsy) => biopsy.status === 'closed').length,
+    within_7_days_percentage: turnaround.length ? Math.round((within7 / turnaround.length) * 100) : null,
+  };
+}
+
+function filterDemoBiopsies(params: URLSearchParams): DemoItem[] {
+  let biopsies = getDemoBiopsies().map((biopsy) => decorateDemoBiopsySafety(biopsy));
+  const patientId = params.get('patient_id');
+  const status = params.get('status');
+  const providerId = params.get('ordering_provider_id');
+  const malignancyType = params.get('malignancy_type');
+  const isOverdue = params.get('is_overdue');
+
+  if (patientId) biopsies = biopsies.filter((biopsy) => String(biopsy.patient_id || biopsy.patientId) === patientId);
+  if (status) biopsies = biopsies.filter((biopsy) => String(biopsy.status) === status);
+  if (providerId) biopsies = biopsies.filter((biopsy) => String(biopsy.ordering_provider_id) === providerId);
+  if (malignancyType) biopsies = biopsies.filter((biopsy) => String(biopsy.malignancy_type) === malignancyType);
+  if (isOverdue === 'true') {
+    biopsies = biopsies.filter((biopsy) => (biopsy.safety_flags || []).some((flag: DemoItem) => flag.type === 'result_overdue'));
+  }
+
+  return sortDemoBiopsiesBySafety(biopsies);
+}
+
+function buildDemoBiopsyDetail(biopsy: DemoItem): DemoItem {
+  const decorated = decorateDemoBiopsySafety(biopsy);
+  return {
+    ...decorated,
+    alerts: (decorated.safety_flags || []).map((flag: DemoItem) => ({
+      id: `${decorated.id}-${flag.id}`,
+      alert_type: flag.type,
+      severity: flag.severity,
+      title: flag.title,
+      message: flag.message,
+      status: 'active',
+      created_at: decorated.resulted_at || decorated.sent_at || decorated.ordered_at,
+    })),
+    specimen_tracking: [
+      { id: `${decorated.id}-ordered`, event_type: 'ordered', event_timestamp: decorated.ordered_at, notes: 'Biopsy order created' },
+      decorated.collected_at ? { id: `${decorated.id}-collected`, event_type: 'collected', event_timestamp: decorated.collected_at, notes: 'Specimen collected' } : null,
+      decorated.sent_at ? { id: `${decorated.id}-sent`, event_type: 'sent', event_timestamp: decorated.sent_at, notes: `Sent to ${decorated.path_lab}` } : null,
+      decorated.resulted_at ? { id: `${decorated.id}-resulted`, event_type: 'resulted', event_timestamp: decorated.resulted_at, notes: 'Pathology result received' } : null,
+      decorated.reviewed_at ? { id: `${decorated.id}-reviewed`, event_type: 'reviewed', event_timestamp: decorated.reviewed_at, notes: 'Provider reviewed result' } : null,
+    ].filter(Boolean),
+    status_history: [
+      { old_status: null, new_status: 'ordered', changed_at: decorated.ordered_at, notes: 'Biopsy ordered' },
+      decorated.sent_at ? { old_status: 'collected', new_status: 'sent', changed_at: decorated.sent_at, notes: `Sent to ${decorated.path_lab}` } : null,
+      decorated.resulted_at ? { old_status: 'sent', new_status: 'resulted', changed_at: decorated.resulted_at, notes: 'Result received' } : null,
+      decorated.reviewed_at ? { old_status: 'resulted', new_status: 'reviewed', changed_at: decorated.reviewed_at, notes: 'Result reviewed' } : null,
+    ].filter(Boolean),
+  };
 }
 
 function readDemoAppointmentOverrides(): Record<string, DemoItem> {
@@ -1705,10 +2037,11 @@ function buildBalanceResponse(patientId: string) {
 
 function filterPatients(params: URLSearchParams) {
   const search = (params.get('search') || '').trim().toLowerCase();
-  const limit = Math.max(1, Number(params.get('limit') || ALL_PATIENTS.length) || ALL_PATIENTS.length);
+  const allPatients = getAllPatients();
+  const limit = Math.max(1, Number(params.get('limit') || allPatients.length) || allPatients.length);
   const page = Math.max(1, Number(params.get('page') || 1) || 1);
 
-  let filtered = [...ALL_PATIENTS];
+  let filtered = [...allPatients];
   if (search) {
     const digits = search.replace(/\D/g, '');
     filtered = filtered.filter((patient) => {
@@ -1758,6 +2091,285 @@ function filterAppointments(items: DemoItem[], params: URLSearchParams) {
   return filtered;
 }
 
+function getDemoAppointmentDate(appointment: DemoItem): string {
+  return String(appointment.scheduledStart || appointment.scheduled_start || appointment.date || '').slice(0, 10);
+}
+
+function getDemoAppointmentStatusBreakdown(appointments: DemoItem[]) {
+  const counts = new Map<string, number>();
+  for (const appointment of appointments) {
+    const status = String(appointment.status || 'scheduled');
+    counts.set(status, (counts.get(status) || 0) + 1);
+  }
+
+  const total = appointments.length;
+  if (!counts.has('no_show') && total > 0) counts.set('no_show', Math.max(1, Math.round(total * 0.06)));
+  if (!counts.has('cancelled') && total > 0) counts.set('cancelled', Math.max(1, Math.round(total * 0.05)));
+
+  return [...counts.entries()].map(([status, count]) => ({ status, count }));
+}
+
+function getDemoAnalyticsResponse(path: string, params: URLSearchParams): DemoItem {
+  const appointments = filterAppointments(ALL_APPOINTMENTS, params);
+  const statusBreakdown = getDemoAppointmentStatusBreakdown(appointments);
+  const completedCount = statusBreakdown
+    .filter((row) => row.status === 'completed')
+    .reduce((sum, row) => sum + row.count, 0);
+  const noShowCount = statusBreakdown
+    .filter((row) => row.status === 'no_show')
+    .reduce((sum, row) => sum + row.count, 0);
+  const cancelledCount = statusBreakdown
+    .filter((row) => row.status === 'cancelled')
+    .reduce((sum, row) => sum + row.count, 0);
+  const totalAppointments = statusBreakdown.reduce((sum, row) => sum + row.count, 0);
+  const dashboard = getDemoFinancialDashboard(params.get('endDate') || undefined);
+  const monthlySnapshot = dashboard.snapshots.monthly;
+  const currentRevenue = monthlySnapshot.totalRevenueCents;
+  const newPatients = ALL_PATIENTS.filter((patient) => {
+    const createdAt = String(patient.createdAt || '').slice(0, 10);
+    const startDate = params.get('startDate');
+    const endDate = params.get('endDate');
+    return (!startDate || createdAt >= startDate) && (!endDate || createdAt <= endDate);
+  }).length || Math.max(1, Math.round(ALL_PATIENTS.length * 0.08));
+
+  if (path === '/api/analytics/dashboard') {
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      totalPatients: ALL_PATIENTS.length,
+      todayAppointments: ALL_APPOINTMENTS.filter((appointment) => getDemoAppointmentDate(appointment) === today).length,
+      monthRevenue: currentRevenue,
+      activeEncounters: ALL_ENCOUNTERS.filter((encounter) => String(encounter.status || '') === 'draft').length,
+    };
+  }
+
+  if (path === '/api/analytics/appointments/trend') {
+    const grouped = new Map<string, number>();
+    for (const appointment of appointments) {
+      const date = getDemoAppointmentDate(appointment);
+      if (!date) continue;
+      grouped.set(date, (grouped.get(date) || 0) + 1);
+    }
+    return {
+      data: [...grouped.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([date, count]) => ({ date, count })),
+    };
+  }
+
+  if (path === '/api/analytics/revenue/trend') {
+    const trend = getDemoCollectionsTrend(params.get('startDate'), params.get('endDate'), 'week');
+    return {
+      data: (trend.data || []).map((row: DemoItem) => ({
+        date: row.bucketStartDate,
+        revenue: row.revenueEarnedCents,
+      })),
+    };
+  }
+
+  if (path === '/api/analytics/top-diagnoses') {
+    return {
+      data: [
+        { name: 'Psoriasis vulgaris', count: 24 },
+        { name: 'Atopic dermatitis', count: 19 },
+        { name: 'Acne vulgaris', count: 18 },
+        { name: 'Actinic keratosis', count: 15 },
+        { name: 'Basal cell carcinoma', count: 8 },
+      ],
+    };
+  }
+
+  if (path === '/api/analytics/top-procedures') {
+    return {
+      data: [
+        { name: 'Established patient visit', count: 42 },
+        { name: 'Shave biopsy', count: 16 },
+        { name: 'Cryotherapy', count: 15 },
+        { name: 'Patch testing', count: 8 },
+        { name: 'Excision malignant lesion', count: 6 },
+      ],
+    };
+  }
+
+  if (path === '/api/analytics/provider-productivity') {
+    const providers = getDemoProviders();
+    return {
+      data: providers.slice(0, 4).map((provider, index) => {
+        const providerAppointments = appointments.filter((appointment) => appointment.providerId === provider.id);
+        const appointmentCount = providerAppointments.length || Math.max(3, Math.round(appointments.length / Math.max(1, providers.length)));
+        return {
+          id: provider.id,
+          provider_name: provider.fullName || provider.name,
+          patients_seen: Math.max(1, appointmentCount - 1),
+          appointments: appointmentCount,
+          revenue_cents: Math.round(currentRevenue * ([0.34, 0.25, 0.22, 0.19][index] || 0.15)),
+        };
+      }),
+    };
+  }
+
+  if (path === '/api/analytics/patient-demographics') {
+    const ageGroups = new Map<string, number>();
+    const gender = new Map<string, number>();
+    for (const patient of ALL_PATIENTS) {
+      const dobYear = Number(String(patient.dateOfBirth || patient.dob || '').slice(0, 4));
+      const age = Number.isFinite(dobYear) && dobYear > 1900 ? new Date().getFullYear() - dobYear : 0;
+      const ageGroup = age < 18 ? '0-17' : age < 35 ? '18-34' : age < 55 ? '35-54' : age < 75 ? '55-74' : '75+';
+      ageGroups.set(ageGroup, (ageGroups.get(ageGroup) || 0) + 1);
+      const sex = String(patient.sex || patient.gender || 'Unknown');
+      gender.set(sex, (gender.get(sex) || 0) + 1);
+    }
+    return {
+      ageGroups: [...ageGroups.entries()].map(([age_group, count]) => ({ age_group, count })),
+      gender: [...gender.entries()].map(([sex, count]) => ({ gender: sex, count })),
+    };
+  }
+
+  if (path === '/api/analytics/appointment-types') {
+    return {
+      data: getDemoAppointmentTypes().slice(0, 6).map((type, index) => ({
+        type_name: type.name,
+        count: Math.max(2, Math.round((appointments.length || 20) / (index + 2))),
+      })),
+    };
+  }
+
+  if (path === '/api/analytics/overview') {
+    return {
+      newPatients: { current: newPatients, previous: Math.max(0, newPatients - 2), trend: 18.2 },
+      appointments: {
+        current: totalAppointments,
+        previous: Math.max(0, totalAppointments - 5),
+        trend: 9.4,
+        byStatus: statusBreakdown,
+      },
+      revenue: { current: currentRevenue, previous: Math.round(currentRevenue * 0.9), trend: 11.1 },
+      collectionRate: monthlySnapshot.collectionRate,
+    };
+  }
+
+  if (path === '/api/analytics/appointments') {
+    return {
+      byStatus: statusBreakdown,
+      byType: getDemoAppointmentTypes().slice(0, 6).map((type, index) => ({
+        type_name: type.name,
+        count: Math.max(2, Math.round((appointments.length || 20) / (index + 2))),
+      })),
+      byProvider: getDemoProviders().slice(0, 4).map((provider, index) => ({
+        provider_name: provider.fullName || provider.name,
+        count: Math.max(3, Math.round((appointments.length || 20) / (index + 2))),
+      })),
+      avgWaitTimeMinutes: 8.7,
+    };
+  }
+
+  if (path === '/api/analytics/providers') {
+    const providers = getDemoProviders();
+    return {
+      data: providers.slice(0, 4).map((provider, index) => ({
+        id: provider.id,
+        provider_name: provider.fullName || provider.name,
+        completed_appointments: Math.max(3, Math.round(completedCount / Math.max(1, index + 1))),
+        cancelled_appointments: index === 0 ? cancelledCount : Math.max(0, Math.round(cancelledCount / (index + 2))),
+        no_shows: index === 0 ? noShowCount : Math.max(0, Math.round(noShowCount / (index + 2))),
+        total_encounters: Math.max(3, Math.round(completedCount / Math.max(1, index + 1))),
+        unique_patients: Math.max(3, Math.round((appointments.length || 20) / (index + 2))),
+        revenue_cents: Math.round(currentRevenue * ([0.34, 0.25, 0.22, 0.19][index] || 0.15)),
+        avg_visit_duration_minutes: [22, 19, 26, 16][index] || 20,
+      })),
+    };
+  }
+
+  if (path === '/api/analytics/dermatology-metrics') {
+    return {
+      biopsyStats: {
+        total: 18,
+        byType: { shave: 11, punch: 4, excisional: 2, incisional: 1 },
+        resultsBreakdown: [
+          { result: 'benign', count: 10 },
+          { result: 'dysplastic', count: 4 },
+          { result: 'malignant', count: 4 },
+        ],
+      },
+      procedureSplit: {
+        cosmetic: { count: 12, revenue: 840000, percentage: 18 },
+        medical: { count: 42, revenue: 1940000, percentage: 63 },
+        surgical: { count: 13, revenue: 940000, percentage: 19 },
+      },
+      topConditions: [
+        { icdCode: 'L40.0', conditionName: 'Psoriasis vulgaris', treatmentCount: 24, uniquePatients: 18 },
+        { icdCode: 'L20.9', conditionName: 'Atopic dermatitis', treatmentCount: 19, uniquePatients: 15 },
+        { icdCode: 'L70.0', conditionName: 'Acne vulgaris', treatmentCount: 18, uniquePatients: 14 },
+      ],
+      lesionTracking: {
+        totalTracked: 34,
+        byStatus: { new: 8, monitoring: 15, resolved: 7, biopsied: 4 },
+        byRiskLevel: { high: 6, medium: 14, low: 14 },
+        patientsWithLesions: 22,
+      },
+    };
+  }
+
+  if (path === '/api/analytics/yoy-comparison') {
+    const metric = (current: number, lastYear: number) => ({
+      current,
+      lastYear,
+      percentChange: lastYear > 0 ? Number((((current - lastYear) / lastYear) * 100).toFixed(1)) : 0,
+      trend: current >= lastYear ? 'up' : 'down',
+    });
+    return {
+      metrics: {
+        newPatients: metric(newPatients, Math.max(1, newPatients - 2)),
+        totalAppointments: metric(totalAppointments, Math.max(1, totalAppointments - 5)),
+        completedAppointments: metric(completedCount, Math.max(1, completedCount - 3)),
+        noShows: metric(noShowCount, Math.max(1, noShowCount - 1)),
+        revenue: metric(currentRevenue, Math.round(currentRevenue * 0.9)),
+        encounters: metric(completedCount, Math.max(1, completedCount - 3)),
+        procedures: metric(67, 59),
+      },
+    };
+  }
+
+  if (path === '/api/analytics/no-show-risk') {
+    const noShowRate = totalAppointments > 0 ? Number(((noShowCount / totalAppointments) * 100).toFixed(1)) : 0;
+    return {
+      overallNoShowRate: noShowRate,
+      totalAppointments,
+      totalNoShows: noShowCount,
+      riskFactors: {
+        byDayOfWeek: [
+          { day: 'Monday', noShowRate: Math.max(noShowRate, 9.5), riskLevel: 'high' },
+          { day: 'Friday', noShowRate: Math.max(noShowRate - 1, 7.4), riskLevel: 'medium' },
+        ],
+        byTimeOfDay: [
+          { timeSlot: 'Morning', noShowRate: 5.2, riskLevel: 'low' },
+          { timeSlot: 'Late afternoon', noShowRate: 8.8, riskLevel: 'medium' },
+        ],
+        byAppointmentType: [
+          { appointmentType: 'New patient consult', noShowRate: 10.1, riskLevel: 'high' },
+          { appointmentType: 'Cosmetic consult', noShowRate: 7.9, riskLevel: 'medium' },
+        ],
+      },
+      recommendations: [
+        'Prioritize text confirmation for high-risk appointment types.',
+        'Use the waitlist to backfill cancelled slots within 48 hours.',
+        'Review fee capture for repeated no-shows and late cancellations.',
+      ],
+    };
+  }
+
+  if (path.startsWith('/api/analytics/no-show-risk/patient/')) {
+    return {
+      patientId: path.split('/').pop(),
+      riskScore: 22,
+      riskLevel: 'low',
+      history: { totalAppointments: 4, completed: 4, noShows: 0, cancelled: 0, noShowRate: 0 },
+      recommendations: ['Standard scheduling practices apply'],
+    };
+  }
+
+  return {};
+}
+
 function handleProviderRoute(
   path: string,
   params: URLSearchParams,
@@ -1776,6 +2388,40 @@ function handleProviderRoute(
   const patientPhotosMatch = path.match(/^\/api\/patients\/([^/]+)\/photos(?:\/.*)?$/);
   const patientBodyMapMatch = path.match(/^\/api\/patients\/([^/]+)\/body-map$/);
   const eligibilityMatch = path.match(/^\/api\/eligibility\/history\/([^/]+)$/);
+  const biopsyDetailMatch = path.match(/^\/api\/biopsies\/([^/]+)$/);
+  const biopsyReviewMatch = path.match(/^\/api\/biopsies\/([^/]+)\/review$/);
+  const biopsyNotifyMatch = path.match(/^\/api\/biopsies\/([^/]+)\/notify-patient$/);
+  const biopsyResultMatch = path.match(/^\/api\/biopsies\/([^/]+)\/result$/);
+  const biopsyAlertsMatch = path.match(/^\/api\/biopsies\/([^/]+)\/alerts$/);
+
+  if (path === '/api/patients' && method.toUpperCase() === 'POST') {
+    const now = new Date().toISOString();
+    const id = `demo-created-patient-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Date.now()}`;
+    const newPatient = {
+      id,
+      tenantId: 'tenant-demo',
+      mrn: `MRN-${String(readDemoCreatedPatients().length + 90001)}`,
+      firstName: String(body?.firstName || 'New'),
+      lastName: String(body?.lastName || 'Patient'),
+      dateOfBirth: body?.dob || body?.dateOfBirth || '',
+      dob: body?.dob || body?.dateOfBirth || '',
+      sex: body?.sex || '',
+      phone: body?.phone || '',
+      email: body?.email || '',
+      address: body?.address || '',
+      city: body?.city || '',
+      state: body?.state || '',
+      zip: body?.zip || '',
+      insurance: body?.insurance || '',
+      allergies: body?.allergies || '',
+      medications: body?.medications || '',
+      accessibilityProfile: body?.accessibilityProfile || {},
+      createdAt: now,
+      updatedAt: now,
+    };
+    writeDemoCreatedPatients([newPatient, ...readDemoCreatedPatients()]);
+    return mockResponse({ id, patient: newPatient, portalProfileReady: true }, 201);
+  }
 
   if (path === '/api/patients') {
     const result = filterPatients(params);
@@ -1805,8 +2451,199 @@ function handleProviderRoute(
     return mockResponse({ appointmentTypes: getDemoAppointmentTypes() });
   }
 
+  if (path.startsWith('/api/analytics/')) {
+    return mockResponse(getDemoAnalyticsResponse(path, params));
+  }
+
+  if (path === '/api/biopsies/command-center' && method.toUpperCase() === 'GET') {
+    return mockResponse(buildDemoBiopsyCommandCenter());
+  }
+
+  if (path === '/api/biopsies/quality-metrics' && method.toUpperCase() === 'GET') {
+    return mockResponse(buildDemoBiopsyMetrics());
+  }
+
+  if (path === '/api/biopsies/stats' && method.toUpperCase() === 'GET') {
+    const commandCenter = buildDemoBiopsyCommandCenter();
+    return mockResponse({
+      ordered_count: getDemoBiopsies().filter((biopsy) => biopsy.status === 'ordered').length,
+      collected_count: getDemoBiopsies().filter((biopsy) => biopsy.status === 'collected').length,
+      sent_count: getDemoBiopsies().filter((biopsy) => biopsy.status === 'sent').length,
+      pending_review_count: commandCenter.summary.pending_review,
+      overdue_count: commandCenter.summary.overdue_results,
+      malignancy_count: getDemoBiopsies().filter((biopsy) => biopsy.malignancy_type).length,
+      melanoma_count: getDemoBiopsies().filter((biopsy) => biopsy.malignancy_type === 'melanoma').length,
+      needs_patient_notification: commandCenter.summary.needs_patient_notification,
+      avg_turnaround_days: commandCenter.summary.avg_turnaround_days,
+      total_biopsies_all_time: getDemoBiopsies().length,
+      biopsies_last_30_days: getDemoBiopsies().filter((biopsy) => demoDaysSince(biopsy.ordered_at) != null && Number(demoDaysSince(biopsy.ordered_at)) <= 30).length,
+    });
+  }
+
+  if (path === '/api/biopsies/pending' && method.toUpperCase() === 'GET') {
+    return mockResponse({ biopsies: buildDemoBiopsyCommandCenter().queues.pendingReview });
+  }
+
+  if (path === '/api/biopsies/overdue' && method.toUpperCase() === 'GET') {
+    const overdue = buildDemoBiopsyCommandCenter().queues.pendingResults.filter((biopsy: DemoItem) =>
+      (biopsy.safety_flags || []).some((flag: DemoItem) => flag.type === 'result_overdue'),
+    );
+    return mockResponse({ biopsies: overdue });
+  }
+
+  if (path === '/api/labs/pathology/pending' && method.toUpperCase() === 'GET') {
+    const pending = buildDemoBiopsyCommandCenter().queues.pendingResults.map((biopsy: DemoItem) => ({
+      id: biopsy.id,
+      biopsy_id: biopsy.id,
+      specimen_id: biopsy.specimen_id,
+      patient_id: biopsy.patient_id,
+      patient_name: biopsy.patient_name,
+      mrn: biopsy.mrn,
+      body_location: biopsy.body_location,
+      specimen_type: biopsy.specimen_type,
+      status: biopsy.safety_flags?.some((flag: DemoItem) => flag.type === 'result_overdue') ? 'overdue' : 'pending',
+      ordered_at: biopsy.ordered_at,
+      sent_at: biopsy.sent_at,
+      days_pending: biopsy.days_since_sent || biopsy.days_since_ordered || 0,
+      path_lab: biopsy.path_lab,
+      ordering_provider_name: biopsy.ordering_provider_name,
+    }));
+    return mockResponse({ biopsies: pending });
+  }
+
+  if (path === '/api/biopsies/export/log' && method.toUpperCase() === 'GET') {
+    const headers = [
+      'Specimen ID',
+      'Ordered Date',
+      'Patient MRN',
+      'Patient Name',
+      'Location',
+      'Specimen Type',
+      'Status',
+      'Diagnosis',
+      'Malignancy',
+      'ICD-10',
+      'Follow-up',
+      'Ordering Provider',
+      'Path Lab',
+      'Turnaround Days',
+      'Patient Notified',
+    ];
+    const rows = filterDemoBiopsies(params).map((biopsy) => ([
+      biopsy.specimen_id,
+      biopsy.ordered_at,
+      biopsy.mrn,
+      `"${String(biopsy.patient_name || '').replace(/"/g, '""')}"`,
+      `"${String(biopsy.body_location || '').replace(/"/g, '""')}"`,
+      biopsy.specimen_type,
+      biopsy.status,
+      `"${String(biopsy.pathology_diagnosis || '').replace(/"/g, '""')}"`,
+      biopsy.malignancy_type || '',
+      biopsy.diagnosis_code || '',
+      biopsy.follow_up_action || '',
+      `"${String(biopsy.ordering_provider_name || '').replace(/"/g, '""')}"`,
+      `"${String(biopsy.path_lab || '').replace(/"/g, '""')}"`,
+      biopsy.turnaround_time_days || '',
+      biopsy.patient_notified ? 'Yes' : 'No',
+    ].join(',')));
+    return new Response([headers.join(','), ...rows].join('\n'), {
+      status: 200,
+      headers: { 'Content-Type': 'text/csv' },
+    });
+  }
+
+  if (path === '/api/biopsies' && method.toUpperCase() === 'GET') {
+    const allBiopsies = filterDemoBiopsies(params);
+    const offset = Number(params.get('offset') || 0);
+    const limit = Number(params.get('limit') || allBiopsies.length || 100);
+    return mockResponse({
+      biopsies: allBiopsies.slice(offset, offset + limit),
+      total: allBiopsies.length,
+      limit,
+      offset,
+    });
+  }
+
+  if (biopsyAlertsMatch && method.toUpperCase() === 'GET') {
+    const biopsy = getDemoBiopsies().find((candidate) => String(candidate.id) === String(biopsyAlertsMatch[1]));
+    return biopsy ? mockResponse({ alerts: buildDemoBiopsyDetail(biopsy).alerts }) : mockResponse({ error: 'Biopsy not found' }, 404);
+  }
+
+  if (biopsyReviewMatch && method.toUpperCase() === 'POST') {
+    const biopsyId = biopsyReviewMatch[1] || '';
+    const updated = updateDemoBiopsyRecord(biopsyId, {
+      ...(body || {}),
+      status: 'reviewed',
+      reviewed_at: new Date().toISOString(),
+      reviewing_provider_id: 'demo-provider-1',
+      reviewing_provider_name: 'Dr. David Skin, MD, FAAD',
+    });
+    return updated ? mockResponse(updated) : mockResponse({ error: 'Biopsy not found or not in resulted status' }, 404);
+  }
+
+  if (biopsyNotifyMatch && method.toUpperCase() === 'POST') {
+    const biopsyId = biopsyNotifyMatch[1] || '';
+    const updated = updateDemoBiopsyRecord(biopsyId, {
+      patient_notified: true,
+      patient_notified_at: new Date().toISOString(),
+      patient_notified_method: body?.method || 'portal',
+      patient_notification_notes: body?.notes || null,
+    });
+    return updated ? mockResponse(updated) : mockResponse({ error: 'Biopsy not found' }, 404);
+  }
+
+  if (biopsyResultMatch && method.toUpperCase() === 'POST') {
+    const biopsyId = biopsyResultMatch[1] || '';
+    const now = new Date().toISOString();
+    const updated = updateDemoBiopsyRecord(biopsyId, {
+      ...(body || {}),
+      status: 'resulted',
+      resulted_at: now,
+    });
+    return updated ? mockResponse(updated) : mockResponse({ error: 'Biopsy not found' }, 404);
+  }
+
+  if (biopsyDetailMatch && method.toUpperCase() === 'PUT') {
+    const biopsyId = biopsyDetailMatch[1] || '';
+    const updated = updateDemoBiopsyRecord(biopsyId, body || {});
+    return updated ? mockResponse(updated) : mockResponse({ error: 'Biopsy not found' }, 404);
+  }
+
+  if (biopsyDetailMatch && method.toUpperCase() === 'GET') {
+    const biopsy = getDemoBiopsies().find((candidate) => String(candidate.id) === String(biopsyDetailMatch[1]));
+    return biopsy ? mockResponse(buildDemoBiopsyDetail(biopsy)) : mockResponse({ error: 'Biopsy not found' }, 404);
+  }
+
   if (path === '/api/availability') {
     return mockResponse({ availability: getDemoAvailability() });
+  }
+
+  if (patientMatch && method.toUpperCase() === 'PUT') {
+    const patientId = patientMatch[1] || '';
+    const current = getPatientById(patientId);
+    if (!current) return mockResponse({ error: 'Patient not found' }, 404);
+    const nextPatient = {
+      ...current,
+      ...(body || {}),
+      updatedAt: new Date().toISOString(),
+    };
+    const createdPatients = readDemoCreatedPatients();
+    if (createdPatients.some((candidate) => String(candidate.id) === patientId)) {
+      writeDemoCreatedPatients(
+        createdPatients.map((candidate) => String(candidate.id) === patientId ? nextPatient : candidate),
+      );
+    } else {
+      const overrides = readDemoPatientOverrides();
+      writeDemoPatientOverrides({
+        ...overrides,
+        [patientId]: {
+          ...(overrides[patientId] || {}),
+          ...(body || {}),
+          updatedAt: nextPatient.updatedAt,
+        },
+      });
+    }
+    return mockResponse({ success: true, id: patientId, patient: nextPatient });
   }
 
   if (patientMatch) {
@@ -1871,7 +2708,7 @@ function handleProviderRoute(
   if (patientBiopsiesMatch) {
     const patientId = patientBiopsiesMatch[1] || '';
     return mockResponse({
-      biopsies: ALL_ORDERS.filter((order) => order.patientId === patientId && order.type === 'biopsy'),
+      biopsies: filterDemoBiopsies(new URLSearchParams({ patient_id: patientId })),
     });
   }
 
@@ -1964,6 +2801,7 @@ function handleProviderRoute(
       .filter((appointment) => !status || String(appointment.status) === status)
       .map((appointment) => ({
         ...appointment,
+        accessibilityProfile: getPatientById(String(appointment.patientId || ''))?.accessibilityProfile || {},
         copayAmount: getDemoCopayAmountForAppointment(appointment),
         outstandingBalance: getDemoOutstandingBalanceForAppointment(appointment),
       }));
@@ -2282,6 +3120,16 @@ function handleProviderRoute(
     return mockResponse(getDemoBillsSummary(params.get('startDate'), params.get('endDate')));
   }
 
+  if (path === '/api/bills/work-queue') return mockResponse(queryDemoFinancialWorkQueue(params));
+  if (path.startsWith('/api/bills/work-queue/') && path.endsWith('/resolve') && method.toUpperCase() === 'POST') {
+    const segments = path.split('/');
+    const itemId = decodeURIComponent(segments[segments.length - 2] || '');
+    try {
+      return mockResponse(resolveDemoFinancialWorkQueueItem(itemId, body?.note ? String(body.note) : undefined));
+    } catch (error: any) {
+      return mockResponse({ error: error?.message || 'Financial work queue item not found' }, 404);
+    }
+  }
   if (path === '/api/bills') return mockResponse(queryDemoBills(params));
   if (path === '/api/payer-payments') return mockResponse(queryDemoPayerPayments(params));
   if (path === '/api/patient-payments') return mockResponse(queryDemoPatientPayments(params));
@@ -2421,7 +3269,49 @@ function handleProviderRoute(
     return schedule ? mockResponse(schedule) : mockResponse({ error: 'Fee schedule not found' }, 404);
   }
 
-  if (path === '/api/tasks') return mockResponse({ data: [] });
+  if (path === '/api/tasks' && method.toUpperCase() === 'POST') {
+    const now = new Date().toISOString();
+    const newTask = {
+      id: `task-demo-${typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Date.now()}`,
+      patientId: body?.patientId || body?.patient_id || null,
+      encounterId: body?.encounterId || body?.encounter_id || null,
+      title: String(body?.title || 'New task'),
+      description: body?.description ? String(body.description) : '',
+      category: body?.category || 'Clinical',
+      priority: body?.priority || 'normal',
+      status: body?.status || 'todo',
+      dueDate: body?.dueDate || body?.due_date || null,
+      assignedTo: body?.assignedTo || null,
+      createdBy: 'demo-provider-1',
+      createdAt: now,
+      updatedAt: now,
+    };
+    writeDemoTasks([newTask, ...readDemoTasks()]);
+    return mockResponse({ id: newTask.id, task: newTask }, 201);
+  }
+
+  if (path === '/api/tasks') {
+    let tasks = readDemoTasks();
+    const search = params.get('search');
+    const status = params.get('status');
+    const category = params.get('category');
+    const priority = params.get('priority');
+    const assignedTo = params.get('assignedTo');
+    if (search) {
+      const needle = search.toLowerCase();
+      tasks = tasks.filter((task) =>
+        [task.title, task.description, task.patientName].filter(Boolean).some((value) => String(value).toLowerCase().includes(needle)),
+      );
+    }
+    if (status) tasks = tasks.filter((task) => String(task.status) === status);
+    if (category) tasks = tasks.filter((task) => String(task.category) === category);
+    if (priority) tasks = tasks.filter((task) => String(task.priority) === priority);
+    if (assignedTo === 'unassigned') tasks = tasks.filter((task) => !task.assignedTo);
+    if (assignedTo && !['unassigned', 'me', 'sent', 'overdue'].includes(assignedTo)) {
+      tasks = tasks.filter((task) => String(task.assignedTo || '') === assignedTo);
+    }
+    return mockResponse({ tasks, data: tasks });
+  }
 
   if (path === '/api/recalls/campaigns' && method.toUpperCase() === 'GET') {
     return mockResponse({ campaigns: readDemoRecallCampaigns() });

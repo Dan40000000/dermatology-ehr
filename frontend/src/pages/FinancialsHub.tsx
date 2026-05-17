@@ -20,8 +20,9 @@ import {
   resolveFinancialWorkQueueItem,
 } from '../api/financials';
 
-type TabType = 'dashboard' | 'snapshots' | 'bills' | 'payments' | 'analytics' | 'fees' | 'statements' | 'reports';
+type TabType = 'dashboard' | 'snapshots' | 'insurance' | 'bills' | 'payments' | 'analytics' | 'fees' | 'statements' | 'reports';
 type SnapshotPagePeriod = SnapshotMetricCard['key'] | 'custom';
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface TabConfig {
   key: TabType;
@@ -115,6 +116,55 @@ interface FinancialBill {
   lastStatementSentAt?: string;
 }
 
+interface FinancialClaim {
+  id: string;
+  claimNumber?: string;
+  status?: string;
+  payer?: string;
+  payerName?: string;
+  insurancePlanName?: string;
+  providerName?: string;
+  patientName?: string;
+  patientFirstName?: string;
+  patientLastName?: string;
+  serviceDate?: string;
+  createdAt?: string;
+  submittedAt?: string;
+  acceptedAt?: string;
+  adjudicatedAt?: string;
+  paidAt?: string;
+  paymentDate?: string;
+  updatedAt?: string;
+  totalCents?: number;
+  totalChargesCents?: number;
+  billedAmountCents?: number;
+  chargeAmountCents?: number;
+  allowedCents?: number;
+  allowedAmountCents?: number;
+  payerExpectedCents?: number;
+  expectedPayerCents?: number;
+  expectedAmountCents?: number;
+  paidAmountCents?: number;
+  payerPaidCents?: number;
+  insurancePaidCents?: number;
+  patientResponsibilityCents?: number;
+  balanceCents?: number;
+  adjustmentCents?: number;
+  denialReason?: string;
+  denialCode?: string;
+  appealStatus?: string;
+  scrubStatus?: string;
+  eraPosted?: boolean;
+  reconciled?: boolean;
+  charges?: Array<{
+    cptCode?: string;
+    code?: string;
+    description?: string;
+    feeCents?: number;
+    totalCents?: number;
+  }>;
+}
+
 interface FinancialWorkQueueItem {
   id: string;
   encounterId?: string;
@@ -131,6 +181,43 @@ interface FinancialWorkQueueItem {
   claimNumber?: string;
   billNumber?: string;
   createdAt?: string;
+}
+
+interface PayerPerformanceRow {
+  payerName: string;
+  planNames: string[];
+  claimCount: number;
+  chargesCents: number;
+  allowedCents: number;
+  expectedPayerCents: number;
+  paidCents: number;
+  patientResponsibilityCents: number;
+  adjustmentCents: number;
+  balanceCents: number;
+  ar60Cents: number;
+  deniedCount: number;
+  rejectedCount: number;
+  cleanClaimCount: number;
+  adjudicatedCount: number;
+  paidClaimCount: number;
+  underpaidCents: number;
+  avgDaysToSubmit: number;
+  avgDaysToPay: number;
+  avgDaysOutstanding: number;
+  cleanClaimRate: number;
+  denialRate: number;
+  paymentYield: number;
+  adminMinutes: number;
+  score: number;
+  oldestOpenDays: number;
+  actionLabel: string;
+}
+
+interface InsuranceWorkflowMetric {
+  label: string;
+  value: string;
+  detail: string;
+  tone: string;
 }
 
 function toIsoDate(date: Date): string {
@@ -181,9 +268,303 @@ function formatIsoDateForUi(isoDate: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
+function numberOrZero(value: unknown): number {
+  const next = Number(value);
+  return Number.isFinite(next) ? next : 0;
+}
+
+function normalizeClaimStatus(status?: string): string {
+  return String(status || '').trim().toLowerCase();
+}
+
+function getClaimPayer(claim: FinancialClaim): string {
+  return String(claim.payerName || claim.payer || claim.insurancePlanName || 'Unassigned Payer').trim() || 'Unassigned Payer';
+}
+
+function isInsurancePayer(payerName: string): boolean {
+  const normalized = payerName.toLowerCase();
+  return !['self-pay', 'self pay', 'cash pay', 'cash', 'patient pay'].includes(normalized);
+}
+
+function getClaimChargeCents(claim: FinancialClaim): number {
+  return numberOrZero(claim.totalCents ?? claim.totalChargesCents ?? claim.billedAmountCents ?? claim.chargeAmountCents);
+}
+
+function getClaimAllowedCents(claim: FinancialClaim): number {
+  return numberOrZero(claim.allowedCents ?? claim.allowedAmountCents ?? claim.expectedAmountCents);
+}
+
+function getClaimExpectedPayerCents(claim: FinancialClaim): number {
+  const explicit = numberOrZero(claim.payerExpectedCents ?? claim.expectedPayerCents);
+  if (explicit > 0) return explicit;
+  const allowed = getClaimAllowedCents(claim);
+  if (allowed <= 0) return 0;
+  return Math.max(0, allowed - numberOrZero(claim.patientResponsibilityCents));
+}
+
+function getClaimPaidCents(claim: FinancialClaim): number {
+  return numberOrZero(claim.payerPaidCents ?? claim.insurancePaidCents ?? claim.paidAmountCents);
+}
+
+function getClaimBalanceCents(claim: FinancialClaim): number {
+  if (claim.balanceCents !== undefined) return numberOrZero(claim.balanceCents);
+  const charges = getClaimChargeCents(claim);
+  return Math.max(0, charges - getClaimPaidCents(claim) - numberOrZero(claim.patientResponsibilityCents) - numberOrZero(claim.adjustmentCents));
+}
+
+function parseClaimDate(value?: string): Date | null {
+  if (!value) return null;
+  const normalized = value.includes('T') ? value : `${value}T00:00:00Z`;
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function daysBetweenDates(start?: string, end?: string): number | null {
+  const startDate = parseClaimDate(start);
+  const endDate = parseClaimDate(end);
+  if (!startDate || !endDate) return null;
+  return Math.max(0, Math.round((endDate.getTime() - startDate.getTime()) / DAY_MS));
+}
+
+function average(values: number[]): number {
+  const validValues = values.filter((value) => Number.isFinite(value));
+  return validValues.length ? validValues.reduce((sum, value) => sum + value, 0) / validValues.length : 0;
+}
+
+function getClaimFinalizedDate(claim: FinancialClaim): string | undefined {
+  return claim.paidAt || claim.paymentDate || claim.adjudicatedAt || claim.updatedAt || claim.createdAt;
+}
+
+function getClaimProcedureLabels(claim: FinancialClaim): string[] {
+  if (Array.isArray(claim.charges) && claim.charges.length > 0) {
+    return claim.charges
+      .map((charge) => String(charge.cptCode || charge.code || charge.description || '').trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function calculatePayerPerformance(
+  claims: FinancialClaim[],
+  bills: FinancialBill[],
+  workQueueItems: FinancialWorkQueueItem[],
+) {
+  const insuranceClaims = claims.filter((claim) => isInsurancePayer(getClaimPayer(claim)));
+  const payerGroups = new Map<string, FinancialClaim[]>();
+
+  for (const claim of insuranceClaims) {
+    const payerName = getClaimPayer(claim);
+    payerGroups.set(payerName, [...(payerGroups.get(payerName) || []), claim]);
+  }
+
+  const rows: PayerPerformanceRow[] = Array.from(payerGroups.entries()).map(([payerName, payerClaims]) => {
+    const adjudicatedClaims = payerClaims.filter((claim) => {
+      const status = normalizeClaimStatus(claim.status);
+      return !['draft', 'ready', 'submitted', 'accepted', 'pending'].includes(status);
+    });
+    const paidClaims = payerClaims.filter((claim) => ['paid', 'partially_paid'].includes(normalizeClaimStatus(claim.status)) || getClaimPaidCents(claim) > 0);
+    const deniedClaims = payerClaims.filter((claim) => ['denied', 'appealed'].includes(normalizeClaimStatus(claim.status)));
+    const rejectedClaims = payerClaims.filter((claim) => normalizeClaimStatus(claim.status) === 'rejected' || normalizeClaimStatus(claim.scrubStatus) === 'failed');
+    const cleanClaims = payerClaims.filter((claim) => {
+      const status = normalizeClaimStatus(claim.status);
+      return ['accepted', 'paid', 'partially_paid'].includes(status) && !claim.denialReason && normalizeClaimStatus(claim.scrubStatus) !== 'failed';
+    });
+    const balanceCents = payerClaims.reduce((sum, claim) => sum + getClaimBalanceCents(claim), 0);
+    const underpaidCents = payerClaims.reduce((sum, claim) => {
+      const expectedPayerCents = getClaimExpectedPayerCents(claim);
+      if (expectedPayerCents <= 0 || getClaimPaidCents(claim) <= 0) return sum;
+      return sum + Math.max(0, expectedPayerCents - getClaimPaidCents(claim));
+    }, 0);
+    const todayIso = toIsoDate(new Date());
+    const outstandingDays = payerClaims
+      .filter((claim) => getClaimBalanceCents(claim) > 0)
+      .map((claim) => daysBetweenDates(claim.serviceDate || claim.createdAt, todayIso) || 0);
+    const ar60Cents = payerClaims.reduce((sum, claim) => {
+      const age = daysBetweenDates(claim.serviceDate || claim.createdAt, todayIso) || 0;
+      return age >= 60 ? sum + getClaimBalanceCents(claim) : sum;
+    }, 0);
+    const avgDaysToSubmit = average(
+      payerClaims
+        .map((claim) => daysBetweenDates(claim.serviceDate || claim.createdAt, claim.submittedAt || claim.createdAt))
+        .filter((value): value is number => value !== null),
+    );
+    const avgDaysToPay = average(
+      paidClaims
+        .map((claim) => daysBetweenDates(claim.serviceDate || claim.createdAt, getClaimFinalizedDate(claim)))
+        .filter((value): value is number => value !== null),
+    );
+    const avgDaysOutstanding = average(outstandingDays);
+    const payerBills = bills.filter((bill) => String(bill.payerName || '').toLowerCase() === payerName.toLowerCase());
+    const payerWorkQueueItems = workQueueItems.filter((item) =>
+      payerClaims.some((claim) => claim.id === item.claimId || claim.claimNumber === item.claimNumber),
+    );
+    const staleClaimCount = outstandingDays.filter((days) => days >= 30).length;
+    const adminMinutes =
+      deniedClaims.length * 22 +
+      rejectedClaims.length * 14 +
+      staleClaimCount * 8 +
+      payerWorkQueueItems.length * 12 +
+      paidClaims.length * 2;
+    const deniedAndRejected = deniedClaims.length + rejectedClaims.length;
+    const denialRate = payerClaims.length ? (deniedAndRejected / payerClaims.length) * 100 : 0;
+    const cleanClaimRate = payerClaims.length ? (cleanClaims.length / payerClaims.length) * 100 : 0;
+    const expectedPayerCents = payerClaims.reduce((sum, claim) => sum + getClaimExpectedPayerCents(claim), 0);
+    const paidCents = payerClaims.reduce((sum, claim) => sum + getClaimPaidCents(claim), 0);
+    const score = Math.max(
+      0,
+      Math.min(
+        100,
+        100 -
+          denialRate * 1.2 -
+          Math.max(0, avgDaysToPay - 21) * 0.8 -
+          Math.min(25, underpaidCents / 1000) -
+          Math.min(20, ar60Cents / 2500),
+      ),
+    );
+
+    let actionLabel = 'Monitor';
+    if (underpaidCents > 0) actionLabel = 'Review underpayments';
+    if (ar60Cents > 0) actionLabel = 'Work aged A/R';
+    if (deniedAndRejected > 0) actionLabel = 'Fix denials';
+
+    return {
+      payerName,
+      planNames: Array.from(new Set(payerClaims.map((claim) => String(claim.insurancePlanName || '').trim()).filter(Boolean))).slice(0, 3),
+      claimCount: payerClaims.length,
+      chargesCents: payerClaims.reduce((sum, claim) => sum + getClaimChargeCents(claim), 0),
+      allowedCents: payerClaims.reduce((sum, claim) => sum + getClaimAllowedCents(claim), 0),
+      expectedPayerCents,
+      paidCents,
+      patientResponsibilityCents: payerClaims.reduce((sum, claim) => sum + numberOrZero(claim.patientResponsibilityCents), 0),
+      adjustmentCents: payerClaims.reduce((sum, claim) => sum + numberOrZero(claim.adjustmentCents), 0),
+      balanceCents: balanceCents + payerBills.reduce((sum, bill) => sum + numberOrZero(bill.insuranceResponsibilityCents), 0),
+      ar60Cents,
+      deniedCount: deniedClaims.length,
+      rejectedCount: rejectedClaims.length,
+      cleanClaimCount: cleanClaims.length,
+      adjudicatedCount: adjudicatedClaims.length,
+      paidClaimCount: paidClaims.length,
+      underpaidCents,
+      avgDaysToSubmit,
+      avgDaysToPay,
+      avgDaysOutstanding,
+      cleanClaimRate,
+      denialRate,
+      paymentYield: expectedPayerCents > 0 ? (paidCents / expectedPayerCents) * 100 : 0,
+      adminMinutes,
+      score,
+      oldestOpenDays: outstandingDays.length ? Math.max(...outstandingDays) : 0,
+      actionLabel,
+    };
+  }).sort((left, right) => {
+    const riskDelta = (right.balanceCents + right.underpaidCents + right.ar60Cents) - (left.balanceCents + left.underpaidCents + left.ar60Cents);
+    return riskDelta || right.claimCount - left.claimCount;
+  });
+
+  const paidClaims = insuranceClaims.filter((claim) => ['paid', 'partially_paid'].includes(normalizeClaimStatus(claim.status)) || getClaimPaidCents(claim) > 0);
+  const deniedOrRejectedClaims = insuranceClaims.filter((claim) => ['denied', 'rejected', 'appealed'].includes(normalizeClaimStatus(claim.status)) || normalizeClaimStatus(claim.scrubStatus) === 'failed');
+  const cleanClaims = insuranceClaims.filter((claim) => {
+    const status = normalizeClaimStatus(claim.status);
+    return ['accepted', 'paid', 'partially_paid'].includes(status) && !claim.denialReason && normalizeClaimStatus(claim.scrubStatus) !== 'failed';
+  });
+  const totalExpectedPayerCents = rows.reduce((sum, row) => sum + row.expectedPayerCents, 0);
+  const totalPaidCents = rows.reduce((sum, row) => sum + row.paidCents, 0);
+  const avgDaysToPay = average(rows.flatMap((row) => (row.paidClaimCount > 0 ? [row.avgDaysToPay] : [])));
+  const summary = {
+    insuranceClaimCount: insuranceClaims.length,
+    payerCount: rows.length,
+    insuranceARCents: rows.reduce((sum, row) => sum + row.balanceCents, 0),
+    avgDaysToPay,
+    cleanClaimRate: insuranceClaims.length ? (cleanClaims.length / insuranceClaims.length) * 100 : 0,
+    denialRate: insuranceClaims.length ? (deniedOrRejectedClaims.length / insuranceClaims.length) * 100 : 0,
+    underpaidCents: rows.reduce((sum, row) => sum + row.underpaidCents, 0),
+    adminHours: rows.reduce((sum, row) => sum + row.adminMinutes, 0) / 60,
+    paymentYield: totalExpectedPayerCents > 0 ? (totalPaidCents / totalExpectedPayerCents) * 100 : 0,
+  };
+
+  const workflowMetrics: InsuranceWorkflowMetric[] = [
+    {
+      label: 'Service to Claim',
+      value: `${average(insuranceClaims.map((claim) => daysBetweenDates(claim.serviceDate || claim.createdAt, claim.submittedAt || claim.createdAt) || 0)).toFixed(1)}d`,
+      detail: 'Charge lag before the payer sees the claim',
+      tone: '#0f766e',
+    },
+    {
+      label: 'Claim to Payer Decision',
+      value: `${average(insuranceClaims.map((claim) => daysBetweenDates(claim.submittedAt || claim.createdAt, claim.adjudicatedAt || claim.paidAt || claim.updatedAt) || 0)).toFixed(1)}d`,
+      detail: 'Average time from submission to adjudication signal',
+      tone: '#1d4ed8',
+    },
+    {
+      label: 'ERA/EFT Posted',
+      value: `${paidClaims.length}/${insuranceClaims.length}`,
+      detail: 'Paid claims with remittance or payment activity',
+      tone: '#7c3aed',
+    },
+    {
+      label: 'Appeal Drag',
+      value: `${deniedOrRejectedClaims.length}`,
+      detail: 'Denied, rejected, or appealed claims slowing cash',
+      tone: '#b91c1c',
+    },
+  ];
+
+  const riskyClaims = insuranceClaims
+    .filter((claim) => {
+      const status = normalizeClaimStatus(claim.status);
+      const age = daysBetweenDates(claim.serviceDate || claim.createdAt, toIsoDate(new Date())) || 0;
+      const underpaid = getClaimExpectedPayerCents(claim) > 0 && getClaimPaidCents(claim) > 0
+        ? Math.max(0, getClaimExpectedPayerCents(claim) - getClaimPaidCents(claim))
+        : 0;
+      return ['denied', 'rejected', 'appealed'].includes(status) || age >= 30 || underpaid > 0;
+    })
+    .slice(0, 8);
+
+  const cptRows = insuranceClaims.flatMap((claim) =>
+    getClaimProcedureLabels(claim).map((code) => ({
+      key: `${getClaimPayer(claim)}-${code}`,
+      payerName: getClaimPayer(claim),
+      code,
+      chargesCents: getClaimChargeCents(claim),
+      paidCents: getClaimPaidCents(claim),
+      expectedPayerCents: getClaimExpectedPayerCents(claim),
+      status: normalizeClaimStatus(claim.status),
+    })),
+  );
+  const procedureMap = new Map<string, { payerName: string; code: string; count: number; chargesCents: number; paidCents: number; expectedPayerCents: number; deniedCount: number }>();
+  for (const row of cptRows) {
+    const existing = procedureMap.get(row.key) || {
+      payerName: row.payerName,
+      code: row.code,
+      count: 0,
+      chargesCents: 0,
+      paidCents: 0,
+      expectedPayerCents: 0,
+      deniedCount: 0,
+    };
+    existing.count += 1;
+    existing.chargesCents += row.chargesCents;
+    existing.paidCents += row.paidCents;
+    existing.expectedPayerCents += row.expectedPayerCents;
+    existing.deniedCount += ['denied', 'rejected', 'appealed'].includes(row.status) ? 1 : 0;
+    procedureMap.set(row.key, existing);
+  }
+
+  return {
+    rows,
+    summary,
+    workflowMetrics,
+    riskyClaims,
+    procedureRows: Array.from(procedureMap.values())
+      .sort((left, right) => right.chargesCents - left.chargesCents)
+      .slice(0, 8),
+  };
+}
+
 const TABS: TabConfig[] = [
   { key: 'dashboard', label: 'Overview', icon: '', description: 'Key metrics & A/R overview' },
   { key: 'snapshots', label: 'Snapshots', icon: '', description: 'Daily, weekly, monthly deep dives' },
+  { key: 'insurance', label: 'Insurance', icon: '', description: 'Payer time, money & denials' },
   { key: 'bills', label: 'Bills', icon: '', description: 'Patient billing & statements' },
   { key: 'payments', label: 'Payments', icon: '', description: 'Patient payments & plans' },
   { key: 'analytics', label: 'Analytics', icon: '', description: 'Premium analytics & reports' },
@@ -249,6 +630,7 @@ export function FinancialsHub() {
   });
   const [dashboardARAging, setDashboardARAging] = useState<DashboardAraBucket[]>([]);
   const [recentBills, setRecentBills] = useState<FinancialBill[]>([]);
+  const [financialClaims, setFinancialClaims] = useState<FinancialClaim[]>([]);
   const [financialWorkQueue, setFinancialWorkQueue] = useState<FinancialWorkQueueItem[]>([]);
 
   // Get active tab from URL, default to 'dashboard' if not specified
@@ -320,6 +702,7 @@ export function FinancialsHub() {
       ]);
       const snapshots = dashboard?.snapshots || {};
       const claims = Array.isArray(claimsResponse?.claims) ? claimsResponse.claims : [];
+      setFinancialClaims(claims);
       setRecentBills(Array.isArray(billsResponse?.bills) ? billsResponse.bills : []);
       setFinancialWorkQueue(Array.isArray(workQueueResponse?.items) ? workQueueResponse.items : []);
       const agingBuckets = Array.isArray(agingSummary?.buckets) ? agingSummary.buckets : [];
@@ -708,10 +1091,12 @@ export function FinancialsHub() {
       ? date
       : parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
   };
+  const formatPercent = (value: number) => `${Number(value || 0).toFixed(1)}%`;
+  const insuranceAnalytics = calculatePayerPerformance(financialClaims, recentBills, financialWorkQueue);
 
   // ─── Tab label map for sidebar ───────────────────────────────────────────
   const tabIcons: Record<TabType, string> = {
-    dashboard: '◈', snapshots: '◉', bills: '◧', payments: '◨',
+    dashboard: '◈', snapshots: '◉', insurance: '◇', bills: '◧', payments: '◨',
     analytics: '◎', fees: '◫', statements: '◪', reports: '◩',
   };
 
@@ -1451,6 +1836,363 @@ export function FinancialsHub() {
                     </div>
                   </>
                 )}
+              </div>
+            )}
+
+            {/* Insurance Analytics Tab */}
+            {activeTab === 'insurance' && (
+              <div>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'flex-start',
+                  gap: '1rem',
+                  marginBottom: '1.25rem',
+                  flexWrap: 'wrap',
+                }}>
+                  <div>
+                    <h2 style={{ fontSize: '1.5rem', fontWeight: '800', color: '#111827', marginBottom: '0.25rem' }}>
+                      Insurance Analytics
+                    </h2>
+                    <p style={{ color: '#6b7280', fontSize: '0.92rem', maxWidth: '760px', lineHeight: 1.5 }}>
+                      Payer time, money, denials, underpayments, and staff work tied to the same claims, bills, and clearinghouse data used by the rest of Financials.
+                    </p>
+                  </div>
+                  <div style={{
+                    border: '1px solid #bfdbfe',
+                    background: '#eff6ff',
+                    color: '#1d4ed8',
+                    borderRadius: '999px',
+                    padding: '0.42rem 0.75rem',
+                    fontSize: '0.78rem',
+                    fontWeight: 800,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {insuranceAnalytics.summary.payerCount} payers · {insuranceAnalytics.summary.insuranceClaimCount} insurance claims
+                  </div>
+                </div>
+
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                  gap: '0.9rem',
+                  marginBottom: '1.25rem',
+                }}>
+                  {[
+                    { label: 'Insurance A/R', value: formatCurrency(insuranceAnalytics.summary.insuranceARCents), detail: 'Open payer-side balances', tone: '#991b1b', bg: '#fef2f2', border: '#fecaca' },
+                    { label: 'Avg Days to Pay', value: `${insuranceAnalytics.summary.avgDaysToPay.toFixed(1)}d`, detail: 'Service date to payer payment', tone: '#1d4ed8', bg: '#eff6ff', border: '#bfdbfe' },
+                    { label: 'Clean Claim Rate', value: formatPercent(insuranceAnalytics.summary.cleanClaimRate), detail: 'Accepted or paid without denial', tone: '#047857', bg: '#ecfdf5', border: '#a7f3d0' },
+                    { label: 'Denial Rate', value: formatPercent(insuranceAnalytics.summary.denialRate), detail: 'Denied, rejected, or appealed', tone: '#b91c1c', bg: '#fff1f2', border: '#fecdd3' },
+                    { label: 'Underpayment Leakage', value: formatCurrency(insuranceAnalytics.summary.underpaidCents), detail: 'Expected payer minus paid', tone: '#92400e', bg: '#fffbeb', border: '#fde68a' },
+                    { label: 'Staff Time Estimate', value: `${insuranceAnalytics.summary.adminHours.toFixed(1)}h`, detail: 'Billing work created by payer friction', tone: '#6d28d9', bg: '#f5f3ff', border: '#ddd6fe' },
+                  ].map((card) => (
+                    <div
+                      key={card.label}
+                      style={{
+                        background: card.bg,
+                        border: `1px solid ${card.border}`,
+                        borderRadius: '14px',
+                        padding: '1rem',
+                        minHeight: '116px',
+                      }}
+                    >
+                      <div style={{ fontSize: '0.73rem', color: card.tone, textTransform: 'uppercase', fontWeight: 900, letterSpacing: '0.05em' }}>
+                        {card.label}
+                      </div>
+                      <div style={{ marginTop: '0.38rem', fontSize: '1.55rem', lineHeight: 1.05, fontWeight: 900, color: '#111827' }}>
+                        {card.value}
+                      </div>
+                      <div style={{ marginTop: '0.45rem', color: '#6b7280', fontSize: '0.82rem', lineHeight: 1.35 }}>
+                        {card.detail}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{
+                  background: '#ffffff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '16px',
+                  padding: '1rem',
+                  marginBottom: '1.25rem',
+                  boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '0.85rem', flexWrap: 'wrap' }}>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#111827' }}>
+                        Payer Time & Money
+                      </h3>
+                      <p style={{ margin: '0.25rem 0 0', color: '#6b7280', fontSize: '0.84rem' }}>
+                        Lifecycle timing shows where insurance cash slows down before it reaches the practice.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => navigate('/claims')}
+                      style={{
+                        padding: '0.5rem 0.75rem',
+                        borderRadius: '8px',
+                        border: '1px solid #bfdbfe',
+                        background: '#eff6ff',
+                        color: '#1d4ed8',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Open Claims
+                    </button>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.75rem' }}>
+                    {insuranceAnalytics.workflowMetrics.map((metric) => (
+                      <div
+                        key={metric.label}
+                        style={{
+                          border: '1px solid #e5e7eb',
+                          borderRadius: '12px',
+                          padding: '0.85rem',
+                          background: '#f8fafc',
+                        }}
+                      >
+                        <div style={{ fontSize: '0.76rem', color: '#6b7280', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                          {metric.label}
+                        </div>
+                        <div style={{ color: metric.tone, fontSize: '1.35rem', fontWeight: 900, marginTop: '0.25rem' }}>
+                          {metric.value}
+                        </div>
+                        <div style={{ color: '#6b7280', fontSize: '0.82rem', lineHeight: 1.35, marginTop: '0.25rem' }}>
+                          {metric.detail}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{
+                  background: '#ffffff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '16px',
+                  overflowX: 'auto',
+                  marginBottom: '1.25rem',
+                  boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+                }}>
+                  <div style={{ padding: '1rem 1rem 0.75rem', borderBottom: '1px solid #f3f4f6' }}>
+                    <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#111827' }}>
+                      Payer Performance Scorecard
+                    </h3>
+                    <p style={{ margin: '0.25rem 0 0', color: '#6b7280', fontSize: '0.84rem' }}>
+                      Ranked by cash risk, underpayments, aged A/R, and denial friction.
+                    </p>
+                  </div>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', minWidth: '1120px' }}>
+                    <thead>
+                      <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                        <th style={{ padding: '0.7rem', textAlign: 'left' }}>Payer</th>
+                        <th style={{ padding: '0.7rem', textAlign: 'right' }}>Claims</th>
+                        <th style={{ padding: '0.7rem', textAlign: 'right' }}>Charges</th>
+                        <th style={{ padding: '0.7rem', textAlign: 'right' }}>Expected</th>
+                        <th style={{ padding: '0.7rem', textAlign: 'right' }}>Paid</th>
+                        <th style={{ padding: '0.7rem', textAlign: 'right' }}>Balance</th>
+                        <th style={{ padding: '0.7rem', textAlign: 'right' }}>Avg Pay</th>
+                        <th style={{ padding: '0.7rem', textAlign: 'right' }}>Clean</th>
+                        <th style={{ padding: '0.7rem', textAlign: 'right' }}>Denied</th>
+                        <th style={{ padding: '0.7rem', textAlign: 'right' }}>Underpaid</th>
+                        <th style={{ padding: '0.7rem', textAlign: 'right' }}>Staff</th>
+                        <th style={{ padding: '0.7rem', textAlign: 'left' }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {insuranceAnalytics.rows.length === 0 ? (
+                        <tr>
+                          <td colSpan={12} style={{ padding: '1.2rem', textAlign: 'center', color: '#6b7280' }}>
+                            No insurance claims found yet. Submitted payer claims will appear here automatically.
+                          </td>
+                        </tr>
+                      ) : (
+                        insuranceAnalytics.rows.map((row) => (
+                          <tr key={row.payerName} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                            <td style={{ padding: '0.75rem', minWidth: '210px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                                <div style={{
+                                  width: 44,
+                                  height: 44,
+                                  borderRadius: '10px',
+                                  background: row.score >= 85 ? '#ecfdf5' : row.score >= 70 ? '#fffbeb' : '#fef2f2',
+                                  border: `1px solid ${row.score >= 85 ? '#a7f3d0' : row.score >= 70 ? '#fde68a' : '#fecaca'}`,
+                                  color: row.score >= 85 ? '#047857' : row.score >= 70 ? '#92400e' : '#b91c1c',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontWeight: 900,
+                                }}>
+                                  {Math.round(row.score)}
+                                </div>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontWeight: 800, color: '#111827' }}>{row.payerName}</div>
+                                  <div style={{ color: '#6b7280', fontSize: '0.76rem', marginTop: '0.15rem' }}>
+                                    {row.planNames.length ? row.planNames.join(', ') : 'No plan name on file'}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 700 }}>{row.claimCount}</td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right' }}>{formatCurrency(row.chargesCents)}</td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right' }}>{formatCurrency(row.expectedPayerCents || row.allowedCents)}</td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right', color: '#047857', fontWeight: 800 }}>{formatCurrency(row.paidCents)}</td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right', color: row.balanceCents > 0 ? '#991b1b' : '#047857', fontWeight: 800 }}>
+                              {formatCurrency(row.balanceCents)}
+                            </td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right' }}>{row.avgDaysToPay.toFixed(1)}d</td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right', color: row.cleanClaimRate >= 85 ? '#047857' : '#92400e', fontWeight: 800 }}>
+                              {formatPercent(row.cleanClaimRate)}
+                            </td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right', color: row.denialRate > 10 ? '#b91c1c' : '#374151', fontWeight: 800 }}>
+                              {formatPercent(row.denialRate)}
+                            </td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right', color: row.underpaidCents > 0 ? '#92400e' : '#047857', fontWeight: 800 }}>
+                              {formatCurrency(row.underpaidCents)}
+                            </td>
+                            <td style={{ padding: '0.75rem', textAlign: 'right' }}>{(row.adminMinutes / 60).toFixed(1)}h</td>
+                            <td style={{ padding: '0.75rem' }}>
+                              <span style={{
+                                display: 'inline-flex',
+                                padding: '0.3rem 0.6rem',
+                                borderRadius: '999px',
+                                background: row.actionLabel === 'Monitor' ? '#f3f4f6' : '#fff7ed',
+                                color: row.actionLabel === 'Monitor' ? '#374151' : '#c2410c',
+                                fontSize: '0.75rem',
+                                fontWeight: 800,
+                              }}>
+                                {row.actionLabel}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(320px, 1.2fr) minmax(320px, 1fr)',
+                  gap: '1rem',
+                  alignItems: 'start',
+                }}>
+                  <div style={{
+                    background: '#ffffff',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '16px',
+                    overflow: 'hidden',
+                  }}>
+                    <div style={{ padding: '1rem', borderBottom: '1px solid #f3f4f6' }}>
+                      <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#111827' }}>
+                        Denial & Underpayment Watchlist
+                      </h3>
+                      <p style={{ margin: '0.25rem 0 0', color: '#6b7280', fontSize: '0.84rem' }}>
+                        Claims that need billing attention because of age, payer denial, or payment variance.
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      {insuranceAnalytics.riskyClaims.length === 0 ? (
+                        <div style={{ padding: '1rem', color: '#6b7280', fontSize: '0.86rem' }}>
+                          No aged, denied, rejected, or underpaid insurance claims in the current claim set.
+                        </div>
+                      ) : (
+                        insuranceAnalytics.riskyClaims.map((claim) => {
+                          const expected = getClaimExpectedPayerCents(claim);
+                          const paid = getClaimPaidCents(claim);
+                          const underpaid = expected > 0 && paid > 0 ? Math.max(0, expected - paid) : 0;
+                          const age = daysBetweenDates(claim.serviceDate || claim.createdAt, toIsoDate(new Date())) || 0;
+                          return (
+                            <div
+                              key={claim.id}
+                              style={{
+                                display: 'grid',
+                                gridTemplateColumns: '1.3fr 0.9fr 0.8fr',
+                                gap: '0.85rem',
+                                padding: '0.85rem 1rem',
+                                borderBottom: '1px solid #f3f4f6',
+                                alignItems: 'center',
+                              }}
+                            >
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontWeight: 800, color: '#111827' }}>{claim.claimNumber || claim.id}</div>
+                                <div style={{ color: '#6b7280', fontSize: '0.78rem', marginTop: '0.12rem' }}>
+                                  {getClaimPayer(claim)} · {claim.patientName || [claim.patientFirstName, claim.patientLastName].filter(Boolean).join(' ') || 'Unknown patient'}
+                                </div>
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '0.76rem', color: '#6b7280', fontWeight: 800, textTransform: 'uppercase' }}>
+                                  Reason
+                                </div>
+                                <div style={{ color: '#374151', fontSize: '0.82rem', marginTop: '0.12rem' }}>
+                                  {claim.denialReason || (underpaid > 0 ? `Underpaid ${formatCurrency(underpaid)}` : `${age} days open`)}
+                                </div>
+                              </div>
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontWeight: 900, color: getClaimBalanceCents(claim) > 0 ? '#991b1b' : '#047857' }}>
+                                  {formatCurrency(getClaimBalanceCents(claim))}
+                                </div>
+                                <div style={{ fontSize: '0.76rem', color: '#6b7280', marginTop: '0.12rem', textTransform: 'capitalize' }}>
+                                  {normalizeClaimStatus(claim.status) || 'unknown'}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{
+                    background: '#ffffff',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '16px',
+                    overflow: 'hidden',
+                  }}>
+                    <div style={{ padding: '1rem', borderBottom: '1px solid #f3f4f6' }}>
+                      <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#111827' }}>
+                        Procedure Reimbursement
+                      </h3>
+                      <p style={{ margin: '0.25rem 0 0', color: '#6b7280', fontSize: '0.84rem' }}>
+                        CPT-level payer signals for dermatology procedures when charge detail is available.
+                      </p>
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                      <thead>
+                        <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                          <th style={{ padding: '0.65rem', textAlign: 'left' }}>Payer / CPT</th>
+                          <th style={{ padding: '0.65rem', textAlign: 'right' }}>Claims</th>
+                          <th style={{ padding: '0.65rem', textAlign: 'right' }}>Paid</th>
+                          <th style={{ padding: '0.65rem', textAlign: 'right' }}>Denied</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {insuranceAnalytics.procedureRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} style={{ padding: '1rem', color: '#6b7280', textAlign: 'center' }}>
+                              No procedure-level charge detail found yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          insuranceAnalytics.procedureRows.map((row) => (
+                            <tr key={`${row.payerName}-${row.code}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                              <td style={{ padding: '0.65rem' }}>
+                                <div style={{ fontWeight: 800, color: '#111827' }}>{row.code}</div>
+                                <div style={{ color: '#6b7280', fontSize: '0.76rem' }}>{row.payerName}</div>
+                              </td>
+                              <td style={{ padding: '0.65rem', textAlign: 'right' }}>{row.count}</td>
+                              <td style={{ padding: '0.65rem', textAlign: 'right', color: '#047857', fontWeight: 800 }}>{formatCurrency(row.paidCents)}</td>
+                              <td style={{ padding: '0.65rem', textAlign: 'right', color: row.deniedCount > 0 ? '#b91c1c' : '#374151', fontWeight: 800 }}>
+                                {row.deniedCount}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             )}
 

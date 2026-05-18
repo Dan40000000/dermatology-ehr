@@ -5,6 +5,7 @@
  */
 
 import { pool } from '../db/pool';
+import { getTableColumns } from '../db/schema';
 import { logger } from '../lib/logger';
 
 interface BiopsySpecimenIdParams {
@@ -71,6 +72,62 @@ function highestSeverity(flags: BiopsySafetyFlag[]): BiopsySeverity | null {
 
 function isTreatmentAction(action: unknown): boolean {
   return ['reexcision', 'mohs', 'oncology_referral', 'dermatology_followup'].includes(String(action || ''));
+}
+
+function emptySafetyCommandCenter(now = new Date()) {
+  return {
+    generated_at: now.toISOString(),
+    summary: {
+      total_open_loops: 0,
+      overdue_results: 0,
+      pending_review: 0,
+      needs_patient_notification: 0,
+      needs_treatment_scheduling: 0,
+      open_malignancies: 0,
+      open_melanomas: 0,
+      closed_loop_complete: 0,
+      critical_items: 0,
+      avg_turnaround_days: null,
+    },
+    queues: {
+      critical: [] as BiopsyCommandCenterItem[],
+      pendingResults: [] as BiopsyCommandCenterItem[],
+      pendingReview: [] as BiopsyCommandCenterItem[],
+      pendingNotification: [] as BiopsyCommandCenterItem[],
+      treatmentFollowUp: [] as BiopsyCommandCenterItem[],
+      closed: [] as BiopsyCommandCenterItem[],
+    },
+    biopsies: [] as BiopsyCommandCenterItem[],
+  };
+}
+
+function timestampExpr(columns: Set<string>, column: string): string {
+  return columns.has(column) ? `b.${column}` : 'NULL::timestamptz';
+}
+
+function textExpr(columns: Set<string>, column: string): string {
+  return columns.has(column) ? `b.${column}` : 'NULL::text';
+}
+
+function booleanExpr(columns: Set<string>, column: string, fallback: boolean): string {
+  return columns.has(column) ? `b.${column}` : `${fallback ? 'true' : 'false'}::boolean`;
+}
+
+function numberExpr(columns: Set<string>, column: string): string {
+  return columns.has(column) ? `b.${column}` : 'NULL::numeric';
+}
+
+function providerNameExpr(alias: string, columns: Set<string>): string {
+  if (columns.has('full_name')) {
+    return `${alias}.full_name`;
+  }
+  if (columns.has('first_name') && columns.has('last_name')) {
+    return `NULLIF(CONCAT_WS(' ', ${alias}.first_name, ${alias}.last_name), '')`;
+  }
+  if (columns.has('name')) {
+    return `${alias}.name`;
+  }
+  return 'NULL::text';
 }
 
 export class BiopsyService {
@@ -236,6 +293,30 @@ export class BiopsyService {
    * that have not been scheduled.
    */
   static async getSafetyCommandCenter(tenantId: string, providerId?: string) {
+    const now = new Date();
+    const [biopsyColumns, providerColumns, alertColumns, patientColumns] = await Promise.all([
+      getTableColumns('biopsies'),
+      getTableColumns('providers'),
+      getTableColumns('biopsy_alerts'),
+      getTableColumns('patients'),
+    ]);
+
+    if (!biopsyColumns.has('id') || !biopsyColumns.has('tenant_id') || !biopsyColumns.has('patient_id')) {
+      return emptySafetyCommandCenter(now);
+    }
+
+    if (!patientColumns.has('id')) {
+      return emptySafetyCommandCenter(now);
+    }
+
+    const hasOrderingProvider = biopsyColumns.has('ordering_provider_id');
+    const hasReviewingProvider = biopsyColumns.has('reviewing_provider_id');
+    const canJoinProviders = providerColumns.has('id');
+
+    if (providerId && !hasOrderingProvider) {
+      return emptySafetyCommandCenter(now);
+    }
+
     const params: any[] = [tenantId];
     let providerFilter = '';
 
@@ -244,46 +325,82 @@ export class BiopsyService {
       params.push(providerId);
     }
 
+    const orderedAtExpr = biopsyColumns.has('ordered_at')
+      ? 'b.ordered_at'
+      : timestampExpr(biopsyColumns, 'created_at');
+    const sentAtExpr = timestampExpr(biopsyColumns, 'sent_at');
+    const resultedAtExpr = timestampExpr(biopsyColumns, 'resulted_at');
+    const reviewedAtExpr = timestampExpr(biopsyColumns, 'reviewed_at');
+    const statusExpr = biopsyColumns.has('status') ? 'b.status' : `'ordered'::text`;
+    const malignancyExpr = textExpr(biopsyColumns, 'malignancy_type');
+    const patientNotifiedExpr = booleanExpr(biopsyColumns, 'patient_notified', false);
+    const isOverdueExpr = booleanExpr(biopsyColumns, 'is_overdue', false);
+    const deletedFilter = biopsyColumns.has('deleted_at') ? 'AND b.deleted_at IS NULL' : '';
+    const orderingProviderJoin = hasOrderingProvider && canJoinProviders
+      ? 'LEFT JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id'
+      : '';
+    const reviewingProviderJoin = hasReviewingProvider && canJoinProviders
+      ? 'LEFT JOIN providers reviewing_pr ON b.reviewing_provider_id = reviewing_pr.id'
+      : '';
+    const orderingProviderNameExpr = hasOrderingProvider && canJoinProviders
+      ? providerNameExpr('ordering_pr', providerColumns)
+      : 'NULL::text';
+    const reviewingProviderNameExpr = hasReviewingProvider && canJoinProviders
+      ? providerNameExpr('reviewing_pr', providerColumns)
+      : 'NULL::text';
+    const activeAlertCountExpr = alertColumns.has('biopsy_id') && alertColumns.has('status')
+      ? `(SELECT COUNT(*)::INTEGER FROM biopsy_alerts ba WHERE ba.biopsy_id = b.id AND ba.status = 'active')`
+      : '0::INTEGER';
+
     const query = `
       SELECT
         b.*,
+        ${statusExpr} as status,
+        ${orderedAtExpr} as ordered_at,
+        ${sentAtExpr} as sent_at,
+        ${resultedAtExpr} as resulted_at,
+        ${reviewedAtExpr} as reviewed_at,
+        ${malignancyExpr} as malignancy_type,
+        ${patientNotifiedExpr} as patient_notified,
+        ${textExpr(biopsyColumns, 'follow_up_action')} as follow_up_action,
+        ${timestampExpr(biopsyColumns, 'reexcision_scheduled_date')} as reexcision_scheduled_date,
+        ${numberExpr(biopsyColumns, 'turnaround_time_days')} as turnaround_time_days,
         p.first_name || ' ' || p.last_name as patient_name,
         p.mrn,
         p.dob as date_of_birth,
         p.phone as patient_phone,
         p.email as patient_email,
-        ordering_pr.first_name || ' ' || ordering_pr.last_name as ordering_provider_name,
-        reviewing_pr.first_name || ' ' || reviewing_pr.last_name as reviewing_provider_name,
-        EXTRACT(DAY FROM (NOW() - b.ordered_at))::INTEGER as days_since_ordered,
-        EXTRACT(DAY FROM (NOW() - b.sent_at))::INTEGER as days_since_sent,
-        EXTRACT(DAY FROM (NOW() - b.resulted_at))::INTEGER as days_since_result,
-        EXTRACT(DAY FROM (NOW() - b.reviewed_at))::INTEGER as days_since_review,
-        (SELECT COUNT(*) FROM biopsy_alerts ba WHERE ba.biopsy_id = b.id AND ba.status = 'active') as active_alert_count
+        ${orderingProviderNameExpr} as ordering_provider_name,
+        ${reviewingProviderNameExpr} as reviewing_provider_name,
+        EXTRACT(DAY FROM (NOW() - ${orderedAtExpr}))::INTEGER as days_since_ordered,
+        EXTRACT(DAY FROM (NOW() - ${sentAtExpr}))::INTEGER as days_since_sent,
+        EXTRACT(DAY FROM (NOW() - ${resultedAtExpr}))::INTEGER as days_since_result,
+        EXTRACT(DAY FROM (NOW() - ${reviewedAtExpr}))::INTEGER as days_since_review,
+        ${activeAlertCountExpr} as active_alert_count
       FROM biopsies b
       JOIN patients p ON b.patient_id = p.id
-      JOIN providers ordering_pr ON b.ordering_provider_id = ordering_pr.id
-      LEFT JOIN providers reviewing_pr ON b.reviewing_provider_id = reviewing_pr.id
+      ${orderingProviderJoin}
+      ${reviewingProviderJoin}
       WHERE b.tenant_id = $1
-        AND b.deleted_at IS NULL
+        ${deletedFilter}
         ${providerFilter}
         AND (
-          b.status <> 'closed'
-          OR b.ordered_at >= NOW() - INTERVAL '180 days'
+          ${statusExpr} <> 'closed'
+          OR COALESCE(${orderedAtExpr}, NOW()) >= NOW() - INTERVAL '180 days'
         )
       ORDER BY
         CASE
-          WHEN b.malignancy_type = 'melanoma' AND b.status <> 'closed' THEN 0
-          WHEN b.is_overdue = true THEN 1
-          WHEN b.status = 'resulted' THEN 2
-          WHEN b.status = 'reviewed' AND b.patient_notified = false THEN 3
-          WHEN b.malignancy_type IS NOT NULL AND b.status <> 'closed' THEN 4
+          WHEN ${malignancyExpr} = 'melanoma' AND ${statusExpr} <> 'closed' THEN 0
+          WHEN ${isOverdueExpr} = true THEN 1
+          WHEN ${statusExpr} = 'resulted' THEN 2
+          WHEN ${statusExpr} = 'reviewed' AND ${patientNotifiedExpr} = false THEN 3
+          WHEN ${malignancyExpr} IS NOT NULL AND ${statusExpr} <> 'closed' THEN 4
           ELSE 5
         END,
-        COALESCE(b.resulted_at, b.sent_at, b.ordered_at) ASC
+        COALESCE(${resultedAtExpr}, ${sentAtExpr}, ${orderedAtExpr}, NOW()) ASC
     `;
 
     const result = await pool.query(query, params);
-    const now = new Date();
     const biopsies = result.rows.map((row) => BiopsyService.decorateSafetyItem(row, now));
 
     const queues = {

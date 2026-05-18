@@ -91,6 +91,8 @@ describe("financialSnapshotService", () => {
 
     const snapshots = await getFinancialSnapshots("tenant-1");
 
+    expect(queryMock.mock.calls[1][0]).toContain("payment_date::date::text AS collected_on");
+    expect(queryMock.mock.calls[2][0]).toContain("payment_date::date::text AS collected_on");
     expect(snapshots.daily.totalRevenueCents).toBe(38360);
     expect(snapshots.daily.benchmarkRevenueCents).toBe(13360);
     expect(snapshots.daily.standaloneRevenueCents).toBe(5000);

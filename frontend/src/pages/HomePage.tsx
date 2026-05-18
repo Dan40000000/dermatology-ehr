@@ -103,6 +103,7 @@ interface HomeStats {
   needsInsuranceVerification: number;
   balanceDueAppointments: number;
   copayDueCents: number;
+  staleScheduledCount: number;
   noShowCount: number;
   cancelledCount: number;
   netCollectionsCents: number;
@@ -128,6 +129,7 @@ interface HomeDashboardAppointment {
   locationName: string;
   appointmentTypeName: string;
   scheduledStart?: string;
+  scheduledEnd?: string;
   status: string;
   insuranceVerified?: boolean;
   copayCents: number;
@@ -187,6 +189,17 @@ const isInRooms = (status: string | undefined): boolean => {
 const isCompletedVisit = (status: string | undefined): boolean => {
   const normalized = String(status || '').toLowerCase();
   return normalized === 'completed' || normalized === 'checked_out';
+};
+
+const STALE_SCHEDULED_GRACE_MS = 15 * 60 * 1000;
+
+const isStaleScheduledAppointment = (appointment: any, nowMs: number): boolean => {
+  if (normalizeStatus(appointment.status) !== 'scheduled') return false;
+  const reference = appointment.scheduledEnd || appointment.scheduledStart;
+  if (!reference) return false;
+  const scheduledMs = new Date(reference).getTime();
+  if (Number.isNaN(scheduledMs)) return false;
+  return scheduledMs + STALE_SCHEDULED_GRACE_MS < nowMs;
 };
 
 const isOnLocalDay = (value: string | undefined, dayKey: string): boolean => {
@@ -334,6 +347,7 @@ const toDashboardAppointment = (appointment: any): HomeDashboardAppointment => (
   locationName: String(appointment.locationName || 'No location'),
   appointmentTypeName: String(appointment.appointmentTypeName || appointment.typeName || appointment.reason || 'Visit'),
   scheduledStart: appointment.scheduledStart,
+  scheduledEnd: appointment.scheduledEnd,
   status: String(appointment.status || 'scheduled'),
   insuranceVerified: appointment.insuranceVerified,
   copayCents: centsFromDollars(appointment.copayAmount),
@@ -452,6 +466,7 @@ const INITIAL_STATS: HomeStats = {
   needsInsuranceVerification: 0,
   balanceDueAppointments: 0,
   copayDueCents: 0,
+  staleScheduledCount: 0,
   noShowCount: 0,
   cancelledCount: 0,
   netCollectionsCents: 0,
@@ -654,8 +669,9 @@ export function HomePage() {
       const todayScheduleAllAppointments = scheduleSourceAppointments
         .filter((appointment: any) => isWithinDateRange(appointment.scheduledStart, todayRange.start, todayRange.end))
         .filter((appointment: any) => matchesStoredScheduleFilters(appointment, scheduleContext));
+      const nowMs = Date.now();
       const dashboardAppointments = todayScheduleAllAppointments.filter((appointment: any) =>
-        isAppointmentIncludedInOverview(appointment.status)
+        isAppointmentIncludedInOverview(appointment.status) && !isStaleScheduledAppointment(appointment, nowMs)
       );
 
       const locationMap = new Map<string, string>();
@@ -682,6 +698,9 @@ export function HomePage() {
       const scopedAllAppointments = todayScheduleAllAppointments.filter((appointment: any) =>
         effectiveOverviewLocation === 'all' ? true : appointment.locationId === effectiveOverviewLocation
       );
+      const staleScheduledCount = scopedAllAppointments.filter((appointment: any) =>
+        isStaleScheduledAppointment(appointment, nowMs)
+      ).length;
 
       const overviewAppointments = scopedAppointments.filter((appointment: any) =>
         isWithinCalendarWindow(appointment.scheduledStart)
@@ -701,7 +720,6 @@ export function HomePage() {
         return sum + centsFromDollars(appointment.copayAmount);
       }, 0);
 
-      const nowMs = Date.now();
       const dashboardPulseAppointments = overviewAppointments
         .map(toDashboardAppointment)
         .sort((left, right) => {
@@ -745,6 +763,7 @@ export function HomePage() {
       const scheduleViewEndMs = scheduleRange.end.getTime();
       const scheduleViewAppointments = scheduleSourceAppointments.filter((a: any) => {
         if (!isAppointmentIncludedInOverview(a.status)) return false;
+        if (isStaleScheduledAppointment(a, nowMs)) return false;
         if (!matchesStoredScheduleFilters(a, scheduleContext)) return false;
 
         const appointmentStart = new Date(a.scheduledStart).getTime();
@@ -790,6 +809,7 @@ export function HomePage() {
         needsInsuranceVerification,
         balanceDueAppointments,
         copayDueCents,
+        staleScheduledCount,
         noShowCount,
         cancelledCount,
         netCollectionsCents,
@@ -1008,7 +1028,9 @@ export function HomePage() {
     {
       label: "Today's schedule",
       value: stats.appointmentsCount,
-      detail: `${stats.waitingCount} waiting, ${stats.inRoomsCount} in rooms, ${stats.completedCount} completed`,
+      detail: `${stats.waitingCount} waiting, ${stats.inRoomsCount} in rooms, ${stats.completedCount} completed${
+        stats.staleScheduledCount > 0 ? `, ${stats.staleScheduledCount} need status` : ''
+      }`,
       route: '/schedule',
       icon: CalendarDays,
       tone: 'blue',

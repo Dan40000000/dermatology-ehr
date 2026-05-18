@@ -212,7 +212,7 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
     ),
     pool.query(
       `SELECT
-         payment_date::date AS collected_on,
+         payment_date::date::text AS collected_on,
          SUM(amount_cents) AS amount_cents
        FROM patient_payments
        WHERE tenant_id = $1
@@ -224,7 +224,7 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
     ),
     pool.query(
       `SELECT
-         payment_date::date AS collected_on,
+         payment_date::date::text AS collected_on,
          SUM(applied_amount_cents) AS amount_cents
        FROM payer_payments
        WHERE tenant_id = $1

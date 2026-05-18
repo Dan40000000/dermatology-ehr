@@ -734,7 +734,7 @@ export function FinancialsHub() {
       }, 0);
 
       setDashboardMetrics({
-        totalClinicalCollections: Number(snapshots?.monthly?.collectionsCents || totalPaymentsCollected),
+        totalClinicalCollections: Number(paymentsSummary?.calculated?.netCollectionsCents || totalPaymentsCollected),
         netCollectionRatio: Number(paymentsSummary?.calculated?.netCollectionRate || snapshots?.monthly?.collectionRate || 0),
         adjustmentsWriteoffs,
         daysSalesOutstanding: totalArCents > 0 ? Number((dsoWeightedDays / totalArCents).toFixed(1)) : 0,

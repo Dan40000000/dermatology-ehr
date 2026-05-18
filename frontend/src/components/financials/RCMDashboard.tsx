@@ -159,7 +159,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
           }}
         >
           <div style={{ fontSize: '0.85rem', opacity: 0.9, marginBottom: '0.5rem', fontWeight: '600' }}>
-            Total Clinical Collections
+            MTD Clinical Collections
           </div>
           <div style={{ fontSize: '2.25rem', fontWeight: '800', marginBottom: '0.5rem' }}>
             {formatCurrency(metrics.totalClinicalCollections)}
@@ -167,7 +167,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
           {showTrends && (
             <div style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <span style={{ color: '#bbf7d0' }}>+8.5%</span>
-              <span style={{ opacity: 0.8 }}>vs last period</span>
+              <span style={{ opacity: 0.8 }}>vs prior MTD</span>
             </div>
           )}
         </div>

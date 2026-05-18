@@ -322,6 +322,111 @@ const updateStatusSchema = z.object({
 export const appointmentsRouter = Router();
 appointmentsRouter.use(requireAuth, requireModuleAccess("schedule"));
 
+const syntheticAppointmentPrefixes = [
+  "appt-skin-%",
+  "appt-riley-%",
+  "appt-phil-%",
+  "appt-martinez-%",
+  "appt-sarah-%",
+  "appt-telehealth-%",
+];
+
+const demoSyntheticCleanupSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default("2026-05-18"),
+});
+
+appointmentsRouter.delete(
+  "/demo-cleanup/stale-synthetic",
+  requireRoles(["admin"]),
+  async (req: AuthedRequest, res) => {
+    const parsed = demoSyntheticCleanupSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const cleanupDate = parsed.data.date;
+    const client = await pool.connect();
+
+    try {
+      await client.query("begin");
+      await client.query(
+        `CREATE TEMP TABLE stale_synthetic_appointments (
+           id text primary key
+         ) ON COMMIT DROP`,
+      );
+      await client.query(
+        `INSERT INTO stale_synthetic_appointments (id)
+         SELECT id
+         FROM appointments
+         WHERE tenant_id = $1
+           AND status = 'scheduled'
+           AND (scheduled_start AT TIME ZONE $2)::date = $3::date
+           AND id LIKE ANY($4::text[])`,
+        [tenantId, APPOINTMENT_WINDOW_TIME_ZONE, cleanupDate, syntheticAppointmentPrefixes],
+      );
+
+      const targetResult = await client.query(
+        `SELECT COUNT(*)::int AS count FROM stale_synthetic_appointments`,
+      );
+      const targetCount = Number(targetResult.rows[0]?.count || 0);
+
+      await client.query(`
+        DO $$
+        DECLARE
+          target_table regclass;
+        BEGIN
+          FOR target_table IN
+            SELECT format('%I.%I', table_schema, table_name)::regclass
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND column_name = 'appointment_id'
+              AND table_name <> 'appointments'
+          LOOP
+            EXECUTE format(
+              'DELETE FROM %s WHERE appointment_id::text IN (SELECT id FROM stale_synthetic_appointments)',
+              target_table
+            );
+          END LOOP;
+        END $$;
+      `);
+
+      const deleteResult = await client.query(
+        `DELETE FROM appointments
+         WHERE id IN (SELECT id FROM stale_synthetic_appointments)
+         RETURNING id`,
+      );
+      await client.query("commit");
+
+      await auditLog(
+        tenantId,
+        req.user!.id,
+        "demo_synthetic_appointments_cleanup",
+        "appointment",
+        cleanupDate,
+      );
+
+      return res.json({
+        ok: true,
+        date: cleanupDate,
+        matched: targetCount,
+        deleted: deleteResult.rowCount || 0,
+        appointmentIds: deleteResult.rows.map((row) => row.id),
+      });
+    } catch (error: any) {
+      await client.query("rollback").catch(() => undefined);
+      logger.error("Failed to clean up stale synthetic appointments", {
+        error: error.message,
+        tenantId,
+        date: cleanupDate,
+      });
+      return res.status(500).json({ error: "Failed to clean up stale synthetic appointments" });
+    } finally {
+      client.release();
+    }
+  },
+);
+
 /**
  * @swagger
  * /api/appointments:

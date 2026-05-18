@@ -63,8 +63,8 @@ describe('MainNav role-based visibility', () => {
     renderNav();
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
     expect(screen.queryByText('AI Assistant')).not.toBeInTheDocument();
-    expect(screen.queryByText('Financials')).not.toBeInTheDocument();
-    expect(screen.getByText('Claims')).toBeInTheDocument();
+    expect(screen.queryByText('Financials / Analytics')).not.toBeInTheDocument();
+    expect(screen.getByText('Claims / Clearinghouse')).toBeInTheDocument();
     expect(screen.queryByText('Quality')).not.toBeInTheDocument();
     expect(screen.getByText('Registry & Recalls')).toBeInTheDocument();
     expect(screen.queryByText('Registry')).not.toBeInTheDocument();
@@ -73,9 +73,8 @@ describe('MainNav role-based visibility', () => {
   it('shows billing revenue-cycle nav but hides analytics', () => {
     mockRole = 'billing';
     renderNav();
-    expect(screen.getByText('Financials')).toBeInTheDocument();
-    expect(screen.getByText('Claims')).toBeInTheDocument();
-    expect(screen.getByText('Clearinghouse')).toBeInTheDocument();
+    expect(screen.getByText('Financials / Analytics')).toBeInTheDocument();
+    expect(screen.getByText('Claims / Clearinghouse')).toBeInTheDocument();
     expect(screen.queryByText('Analytics')).not.toBeInTheDocument();
     expect(screen.queryByText('Admin')).not.toBeInTheDocument();
   });

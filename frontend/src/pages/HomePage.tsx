@@ -71,6 +71,15 @@ interface LocationScopeOption {
 
 type StoredScheduleViewMode = 'day' | 'week' | 'month';
 
+interface StoredScheduleContext {
+  viewMode: StoredScheduleViewMode;
+  dayOffset: number;
+  providerFilter: string;
+  typeFilter: string;
+  locationFilter: string;
+  showWeekends: boolean;
+}
+
 interface HomeStats {
   appointmentsCount: number;
   checkedInCount: number;
@@ -83,6 +92,7 @@ interface HomeStats {
   scheduleViewCount: number;
   scheduleViewMode: StoredScheduleViewMode;
   scheduleDateLabel: string;
+  scheduleViewDateLabel: string;
   scheduleHasFilters: boolean;
   pendingLabOrders: number;
   unsignedNotesToday: number;
@@ -205,7 +215,7 @@ const endOfDay = (date: Date): Date => {
   return next;
 };
 
-const getScheduleViewRange = (currentDate: Date, viewMode: StoredScheduleViewMode): { start: Date; end: Date } => {
+const getScheduleViewRange = (currentDate: Date, viewMode: StoredScheduleViewMode, showWeekends = false): { start: Date; end: Date } => {
   if (viewMode === 'day') {
     return { start: startOfDay(currentDate), end: endOfDay(currentDate) };
   }
@@ -215,9 +225,9 @@ const getScheduleViewRange = (currentDate: Date, viewMode: StoredScheduleViewMod
     const dayOfWeek = monday.getDay();
     const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
     monday.setDate(monday.getDate() + diffToMonday);
-    const friday = endOfDay(monday);
-    friday.setDate(monday.getDate() + 4);
-    return { start: monday, end: friday };
+    const weekEnd = endOfDay(monday);
+    weekEnd.setDate(monday.getDate() + (showWeekends ? 6 : 4));
+    return { start: monday, end: weekEnd };
   }
 
   const monthStart = startOfDay(new Date(currentDate.getFullYear(), currentDate.getMonth(), 1));
@@ -227,7 +237,7 @@ const getScheduleViewRange = (currentDate: Date, viewMode: StoredScheduleViewMod
   return { start: monthStart, end: monthEnd };
 };
 
-const loadStoredScheduleContext = () => {
+const loadStoredScheduleContext = (): StoredScheduleContext => {
   const rawViewMode = localStorage.getItem('sched:viewMode');
   const viewMode: StoredScheduleViewMode =
     rawViewMode === 'week' || rawViewMode === 'month' ? rawViewMode : 'day';
@@ -241,6 +251,7 @@ const loadStoredScheduleContext = () => {
     providerFilter: localStorage.getItem('sched:provider') || 'all',
     typeFilter: localStorage.getItem('sched:type') || 'all',
     locationFilter: localStorage.getItem('sched:location') || 'all',
+    showWeekends: localStorage.getItem('sched:showWeekends') === 'true',
   };
 };
 
@@ -338,6 +349,41 @@ const extractArray = (payload: any, keys: string[]): any[] => {
   return [];
 };
 
+const isWithinDateRange = (value: string | undefined, start: Date, end: Date): boolean => {
+  if (!value) return false;
+  const dateMs = new Date(value).getTime();
+  if (Number.isNaN(dateMs)) return false;
+  return dateMs >= start.getTime() && dateMs <= end.getTime();
+};
+
+const isTelehealthAppointment = (appointment: any): boolean => {
+  const combined = `${appointment.appointmentTypeName || appointment.typeName || ''} ${appointment.locationName || ''}`.toLowerCase();
+  return combined.includes('telehealth') || combined.includes('video') || combined.includes('virtual');
+};
+
+const matchesStoredScheduleFilters = (appointment: any, scheduleContext: StoredScheduleContext): boolean => {
+  if (scheduleContext.providerFilter !== 'all' && appointment.providerId !== scheduleContext.providerFilter) {
+    return false;
+  }
+
+  if (scheduleContext.typeFilter !== 'all' && appointment.appointmentTypeId !== scheduleContext.typeFilter) {
+    return false;
+  }
+
+  const telehealthOverride =
+    scheduleContext.providerFilter !== 'all' &&
+    isTelehealthAppointment(appointment);
+  if (
+    scheduleContext.locationFilter !== 'all' &&
+    appointment.locationId !== scheduleContext.locationFilter &&
+    !telehealthOverride
+  ) {
+    return false;
+  }
+
+  return true;
+};
+
 const isClaimInQueue = (claim: any): boolean =>
   ['draft', 'ready', 'submitted', 'accepted'].includes(normalizeStatus(claim.status));
 
@@ -394,6 +440,7 @@ const INITIAL_STATS: HomeStats = {
   scheduleViewCount: 0,
   scheduleViewMode: 'day',
   scheduleDateLabel: '',
+  scheduleViewDateLabel: '',
   scheduleHasFilters: false,
   pendingLabOrders: 0,
   unsignedNotesToday: 0,
@@ -490,13 +537,15 @@ export function HomePage() {
     try {
       const todayStr = toLocalIsoDate(new Date());
       const scheduleContext = loadStoredScheduleContext();
+      const todayDate = startOfDay(new Date());
+      const todayRange = getScheduleViewRange(todayDate, 'day');
       const scheduleDate = startOfDay(new Date());
       scheduleDate.setDate(scheduleDate.getDate() + scheduleContext.dayOffset);
-      const scheduleRange = getScheduleViewRange(scheduleDate, scheduleContext.viewMode);
+      const scheduleRange = getScheduleViewRange(scheduleDate, scheduleContext.viewMode, scheduleContext.showWeekends);
 
-      const queryStart = new Date(Math.min(startOfDay(new Date()).getTime(), scheduleRange.start.getTime()));
+      const queryStart = new Date(Math.min(todayDate.getTime(), scheduleRange.start.getTime()));
       queryStart.setDate(queryStart.getDate() - 1);
-      const queryEnd = new Date(Math.max(endOfDay(new Date()).getTime(), scheduleRange.end.getTime()));
+      const queryEnd = new Date(Math.max(endOfDay(todayDate).getTime(), scheduleRange.end.getTime()));
       queryEnd.setDate(queryEnd.getDate() + 1);
       const canLoadAppointments = canAccessModule(effectiveRoles, 'schedule');
       const canLoadEncounters = canAccessModule(effectiveRoles, 'notes');
@@ -568,6 +617,29 @@ export function HomePage() {
       const financialWorkQueueItems = extractArray(financialWorkQueueRes, ['items', 'workQueue', 'data']);
       const { patientCollectionsCents, payerCollectionsCents, netCollectionsCents } = getCollectionsCents(paymentsSummaryRes);
       const { arTotalCents, arOver90Cents } = getArAgingCents(arAgingRes);
+      const frontDeskByAppointmentId = new Map<string, any>();
+      frontDeskAppointments.forEach((appointment: any) => {
+        if (appointment?.id) {
+          frontDeskByAppointmentId.set(String(appointment.id), appointment);
+        }
+      });
+      const enrichedAppointments = appointments.map((appointment: any) => {
+        const frontDeskAppointment = frontDeskByAppointmentId.get(String(appointment.id || ''));
+        return frontDeskAppointment
+          ? {
+              ...appointment,
+              ...frontDeskAppointment,
+              id: appointment.id || frontDeskAppointment.id,
+              patientId: appointment.patientId || frontDeskAppointment.patientId,
+              providerId: appointment.providerId || frontDeskAppointment.providerId,
+              appointmentTypeId: appointment.appointmentTypeId || frontDeskAppointment.appointmentTypeId,
+              locationId: appointment.locationId || frontDeskAppointment.locationId,
+              scheduledStart: appointment.scheduledStart || frontDeskAppointment.scheduledStart,
+              scheduledEnd: appointment.scheduledEnd || frontDeskAppointment.scheduledEnd,
+            }
+          : appointment;
+      });
+      const scheduleSourceAppointments = enrichedAppointments.length > 0 ? enrichedAppointments : frontDeskAppointments;
       setBiopsySafety(
         biopsyRes
           ? {
@@ -577,12 +649,12 @@ export function HomePage() {
           : null,
       );
 
-      const todaysAllAppointments = appointments.filter((a: any) => isOnLocalDay(a.scheduledStart, todayStr));
-      const todaysAppointments = todaysAllAppointments.filter((a: any) => isAppointmentIncludedInOverview(a.status));
-      const frontDeskTodayAppointments = frontDeskAppointments
-        .filter((a: any) => isOnLocalDay(a.scheduledStart, todayStr))
-        .filter((a: any) => isAppointmentIncludedInOverview(a.status));
-      const dashboardAppointments = frontDeskTodayAppointments.length > 0 ? frontDeskTodayAppointments : todaysAppointments;
+      const todayScheduleAllAppointments = scheduleSourceAppointments
+        .filter((appointment: any) => isWithinDateRange(appointment.scheduledStart, todayRange.start, todayRange.end))
+        .filter((appointment: any) => matchesStoredScheduleFilters(appointment, scheduleContext));
+      const dashboardAppointments = todayScheduleAllAppointments.filter((appointment: any) =>
+        isAppointmentIncludedInOverview(appointment.status)
+      );
 
       const locationMap = new Map<string, string>();
       dashboardAppointments.forEach((appointment: any) => {
@@ -605,6 +677,9 @@ export function HomePage() {
       const scopedAppointments = dashboardAppointments.filter((appointment: any) =>
         effectiveOverviewLocation === 'all' ? true : appointment.locationId === effectiveOverviewLocation
       );
+      const scopedAllAppointments = todayScheduleAllAppointments.filter((appointment: any) =>
+        effectiveOverviewLocation === 'all' ? true : appointment.locationId === effectiveOverviewLocation
+      );
 
       const overviewAppointments = scopedAppointments.filter((appointment: any) =>
         isWithinCalendarWindow(appointment.scheduledStart)
@@ -612,9 +687,9 @@ export function HomePage() {
 
       const waitingCount = overviewAppointments.filter((a: any) => isCheckedIn(a.status)).length;
       const inRoomsCount = overviewAppointments.filter((a: any) => isInRooms(a.status)).length;
-      const checkoutCount = overviewAppointments.filter((a: any) => isCompletedVisit(a.status)).length;
-      const noShowCount = todaysAllAppointments.filter((a: any) => normalizeStatus(a.status) === 'no_show').length;
-      const cancelledCount = todaysAllAppointments.filter((a: any) => normalizeStatus(a.status) === 'cancelled').length;
+      const checkoutCount = scopedAppointments.filter((a: any) => isCompletedVisit(a.status)).length;
+      const noShowCount = scopedAllAppointments.filter((a: any) => normalizeStatus(a.status) === 'no_show').length;
+      const cancelledCount = scopedAllAppointments.filter((a: any) => normalizeStatus(a.status) === 'cancelled').length;
       const needsInsuranceVerification = scopedAppointments.filter((a: any) => a.insuranceVerified === false).length;
       const balanceDueAppointments = scopedAppointments.filter((a: any) =>
         centsFromDollars(a.outstandingBalance) > 0 || numberOrZero(a.paymentDueCents) > 0
@@ -663,11 +738,9 @@ export function HomePage() {
 
       const scheduleViewStartMs = scheduleRange.start.getTime();
       const scheduleViewEndMs = scheduleRange.end.getTime();
-      const scheduleViewAppointments = appointments.filter((a: any) => {
+      const scheduleViewAppointments = scheduleSourceAppointments.filter((a: any) => {
         if (!isAppointmentIncludedInOverview(a.status)) return false;
-        if (scheduleContext.providerFilter !== 'all' && a.providerId !== scheduleContext.providerFilter) return false;
-        if (scheduleContext.typeFilter !== 'all' && a.appointmentTypeId !== scheduleContext.typeFilter) return false;
-        if (scheduleContext.locationFilter !== 'all' && a.locationId !== scheduleContext.locationFilter) return false;
+        if (!matchesStoredScheduleFilters(a, scheduleContext)) return false;
 
         const appointmentStart = new Date(a.scheduledStart).getTime();
         if (Number.isNaN(appointmentStart)) return false;
@@ -682,7 +755,7 @@ export function HomePage() {
         scheduleContext.locationFilter !== 'all';
 
       setStats({
-        appointmentsCount: overviewAppointments.length,
+        appointmentsCount: scopedAppointments.length,
         checkedInCount: waitingCount,
         completedCount: checkoutCount,
         pendingTasks: tasks.filter((t: any) => isTaskPending(t.status)).length,
@@ -692,7 +765,12 @@ export function HomePage() {
         checkoutCount,
         scheduleViewCount: scheduleViewAppointments.length,
         scheduleViewMode: scheduleContext.viewMode,
-        scheduleDateLabel: scheduleDate.toLocaleDateString('en-US', {
+        scheduleDateLabel: todayDate.toLocaleDateString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+        }),
+        scheduleViewDateLabel: scheduleDate.toLocaleDateString('en-US', {
           weekday: 'short',
           month: 'short',
           day: 'numeric',
@@ -931,8 +1009,8 @@ export function HomePage() {
     },
     {
       label: 'Clinical work',
-      value: stats.teamNotesNeedingWork + stats.pendingLabOrders,
-      detail: `${stats.teamNotesNeedingWork} notes, ${stats.pendingLabOrders} lab/path orders`,
+      value: stats.unsignedNotesToday + stats.pendingLabOrders,
+      detail: `${stats.unsignedNotesToday} notes today, ${stats.pendingLabOrders} lab/path orders`,
       route: '/notes',
       icon: Stethoscope,
       tone: 'violet',
@@ -1132,7 +1210,7 @@ export function HomePage() {
           <div className="command-schedule-context">
             <Clock size={16} aria-hidden="true" />
             <span>
-              Current schedule view: <strong>{stats.scheduleViewCount}</strong> appointments, {stats.scheduleViewMode} view, {stats.scheduleDateLabel || 'today'}
+              Current schedule view: <strong>{stats.scheduleViewCount}</strong> appointments, {stats.scheduleViewMode} view, {stats.scheduleViewDateLabel || 'today'}
               {stats.scheduleHasFilters ? ', filtered' : ', unfiltered'}.
             </span>
           </div>

@@ -11,13 +11,15 @@ interface DropdownItem {
   label: string;
   path: string;
   section?: string;
+  module?: ModuleKey;
   requiresFeedbackAccess?: boolean;
 }
 
 interface NavItem {
   label: string;
   path: string;
-  module: ModuleKey;
+  module: ModuleKey | ModuleKey[];
+  activePaths?: string[];
   dropdown?: DropdownItem[];
 }
 
@@ -116,25 +118,19 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Rx',
+    label: 'Rx / ePA',
     path: '/rx',
-    module: 'rx',
+    activePaths: ['/rx', '/prior-auth'],
+    module: ['rx', 'epa'],
     dropdown: [
-      { label: 'All Prescriptions', path: '/rx' },
-      { label: 'New Rx', path: '/rx?action=new' },
-      { label: 'Refill Requests', path: '/rx?tab=refills' },
-      { label: 'Pending', path: '/rx?tab=pending' },
-    ]
-  },
-  {
-    label: 'ePA',
-    path: '/prior-auth',
-    module: 'epa',
-    dropdown: [
-      { label: 'All Prior Auths', path: '/prior-auth' },
-      { label: 'New Request', path: '/prior-auth?action=new' },
-      { label: 'Pending', path: '/prior-auth?status=pending' },
-      { label: 'Approved', path: '/prior-auth?status=approved' },
+      { label: 'All Prescriptions', path: '/rx', section: 'Rx', module: 'rx' },
+      { label: 'New Rx', path: '/rx?action=new', section: 'Rx', module: 'rx' },
+      { label: 'Refill Requests', path: '/rx?tab=refills', section: 'Rx', module: 'rx' },
+      { label: 'Pending Rx', path: '/rx?tab=pending', section: 'Rx', module: 'rx' },
+      { label: 'All Prior Auths', path: '/prior-auth', section: 'ePA', module: 'epa' },
+      { label: 'New ePA Request', path: '/prior-auth?action=new', section: 'ePA', module: 'epa' },
+      { label: 'Pending ePA', path: '/prior-auth?status=pending', section: 'ePA', module: 'epa' },
+      { label: 'Approved ePA', path: '/prior-auth?status=approved', section: 'ePA', module: 'epa' },
     ]
   },
   {
@@ -185,14 +181,18 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Documents',
+    label: 'Documents / Handouts',
     path: '/documents',
-    module: 'documents',
+    activePaths: ['/documents', '/handouts'],
+    module: ['documents', 'handouts'],
     dropdown: [
-      { label: 'All Documents', path: '/documents' },
-      { label: 'Upload', path: '/documents?action=upload' },
-      { label: 'Forms & Consents', path: '/documents?section=forms' },
-      { label: 'Recent', path: '/documents?filter=recent' },
+      { label: 'All Documents', path: '/documents', section: 'Documents', module: 'documents' },
+      { label: 'Upload', path: '/documents?action=upload', section: 'Documents', module: 'documents' },
+      { label: 'Forms & Consents', path: '/documents?section=forms', section: 'Documents', module: 'documents' },
+      { label: 'Recent Documents', path: '/documents?filter=recent', section: 'Documents', module: 'documents' },
+      { label: 'Browse Library', path: '/handouts', section: 'Handouts', module: 'handouts' },
+      { label: 'Assigned', path: '/handouts?tab=assigned', section: 'Handouts', module: 'handouts' },
+      { label: 'Custom', path: '/handouts?tab=custom', section: 'Handouts', module: 'handouts' },
     ]
   },
   {
@@ -203,16 +203,6 @@ const navItems: NavItem[] = [
       { label: 'All Photos', path: '/photos' },
       { label: 'Upload', path: '/photos?action=upload' },
       { label: 'Recent', path: '/photos?filter=recent' },
-    ]
-  },
-  {
-    label: 'Handouts',
-    path: '/handouts',
-    module: 'handouts',
-    dropdown: [
-      { label: 'Browse Library', path: '/handouts' },
-      { label: 'Assigned', path: '/handouts?tab=assigned' },
-      { label: 'Custom', path: '/handouts?tab=custom' },
     ]
   },
   {
@@ -230,25 +220,6 @@ const navItems: NavItem[] = [
       { label: 'Acne/Isotretinoin', path: '/reminders?tab=registry&registryTab=acne', section: 'Disease Registry' },
       { label: 'Chronic Therapy', path: '/reminders?tab=registry&registryTab=chronic_therapy', section: 'Disease Registry' },
       { label: 'Registry Alerts', path: '/reminders?tab=registry&registryTab=alerts', section: 'Disease Registry' },
-    ]
-  },
-  {
-    label: 'Analytics',
-    path: '/analytics',
-    module: 'analytics',
-    dropdown: [
-      { label: 'Dashboard', path: '/analytics', section: 'Analytics' },
-      { label: 'Financials', path: '/analytics?tab=financials', section: 'Analytics' },
-      { label: 'Clinical & Operational', path: '/analytics?tab=clinical', section: 'Analytics' },
-      { label: 'Compliance', path: '/analytics?tab=compliance', section: 'Analytics' },
-      { label: 'Inventory', path: '/analytics?tab=inventory', section: 'Analytics' },
-      { label: 'Dermatology', path: '/analytics?tab=dermatology', section: 'Analytics' },
-      { label: 'All Reports', path: '/reports', section: 'Patient Reports' },
-      { label: 'Appointments', path: '/reports?type=appointments', section: 'Patient Reports' },
-      { label: 'Financial', path: '/reports?type=financial', section: 'Patient Reports' },
-      { label: 'Clinical', path: '/reports?type=clinical', section: 'Patient Reports' },
-      { label: 'Patients', path: '/reports?type=patients', section: 'Patient Reports' },
-      { label: 'No-Shows', path: '/reports?type=no-shows', section: 'Patient Reports' },
     ]
   },
   {
@@ -323,36 +294,41 @@ const navItems: NavItem[] = [
     ]
   },
   {
-    label: 'Financials',
+    label: 'Financials / Analytics',
     path: '/financials',
-    module: 'financials',
+    activePaths: ['/financials', '/analytics', '/reports'],
+    module: ['financials', 'analytics'],
     dropdown: [
-      { label: 'Overview', path: '/financials' },
-      { label: 'Bills', path: '/financials?tab=bills' },
-      { label: 'Payments', path: '/financials?tab=payments' },
-      { label: 'Claims', path: '/claims' },
-      { label: 'Quotes', path: '/quotes' },
+      { label: 'Overview', path: '/financials', section: 'Financials', module: 'financials' },
+      { label: 'Bills', path: '/financials?tab=bills', section: 'Financials', module: 'financials' },
+      { label: 'Payments', path: '/financials?tab=payments', section: 'Financials', module: 'financials' },
+      { label: 'Dashboard', path: '/analytics', section: 'Analytics', module: 'analytics' },
+      { label: 'Financial Analytics', path: '/analytics?tab=financials', section: 'Analytics', module: 'analytics' },
+      { label: 'Clinical & Operational', path: '/analytics?tab=clinical', section: 'Analytics', module: 'analytics' },
+      { label: 'Compliance', path: '/analytics?tab=compliance', section: 'Analytics', module: 'analytics' },
+      { label: 'Inventory', path: '/analytics?tab=inventory', section: 'Analytics', module: 'analytics' },
+      { label: 'Dermatology', path: '/analytics?tab=dermatology', section: 'Analytics', module: 'analytics' },
+      { label: 'All Reports', path: '/reports', section: 'Reports', module: 'analytics' },
+      { label: 'Appointments', path: '/reports?type=appointments', section: 'Reports', module: 'analytics' },
+      { label: 'Financial', path: '/reports?type=financial', section: 'Reports', module: 'analytics' },
+      { label: 'Clinical', path: '/reports?type=clinical', section: 'Reports', module: 'analytics' },
+      { label: 'Patients', path: '/reports?type=patients', section: 'Reports', module: 'analytics' },
+      { label: 'No-Shows', path: '/reports?type=no-shows', section: 'Reports', module: 'analytics' },
     ]
   },
   {
-    label: 'Claims',
+    label: 'Claims / Clearinghouse',
     path: '/claims',
-    module: 'claims',
+    activePaths: ['/claims', '/clearinghouse'],
+    module: ['claims', 'clearinghouse'],
     dropdown: [
-      { label: 'All Claims', path: '/claims' },
-      { label: 'Pending', path: '/claims?status=pending' },
-      { label: 'Submitted', path: '/claims?status=submitted' },
-      { label: 'Denied', path: '/claims?status=denied' },
-    ]
-  },
-  {
-    label: 'Clearinghouse',
-    path: '/clearinghouse',
-    module: 'clearinghouse',
-    dropdown: [
-      { label: 'Dashboard', path: '/clearinghouse' },
-      { label: 'Submissions', path: '/clearinghouse?tab=submissions' },
-      { label: 'Responses', path: '/clearinghouse?tab=responses' },
+      { label: 'All Claims', path: '/claims', section: 'Claims', module: 'claims' },
+      { label: 'Pending', path: '/claims?status=pending', section: 'Claims', module: 'claims' },
+      { label: 'Submitted', path: '/claims?status=submitted', section: 'Claims', module: 'claims' },
+      { label: 'Denied', path: '/claims?status=denied', section: 'Claims', module: 'claims' },
+      { label: 'Dashboard', path: '/clearinghouse', section: 'Clearinghouse', module: 'clearinghouse' },
+      { label: 'Submissions', path: '/clearinghouse?tab=submissions', section: 'Clearinghouse', module: 'clearinghouse' },
+      { label: 'Responses', path: '/clearinghouse?tab=responses', section: 'Clearinghouse', module: 'clearinghouse' },
     ]
   },
   {
@@ -415,8 +391,16 @@ export function MainNav() {
   const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const userRole = useMemo(() => getEffectiveRoles(user), [user]);
 
+  const canAccessAnyModule = useCallback(
+    (modules: ModuleKey | ModuleKey[]) => {
+      const moduleList = Array.isArray(modules) ? modules : [modules];
+      return moduleList.some((module) => canAccessModule(userRole, module));
+    },
+    [userRole]
+  );
+
   // Filter nav items based on user role
-  const filteredNavItems = navItems.filter(item => canAccessModule(userRole, item.module));
+  const filteredNavItems = navItems.filter(item => canAccessAnyModule(item.module));
 
   // Hover handlers with position tracking for portal dropdown
   const handleMouseEnter = (itemPath: string, element: HTMLDivElement) => {
@@ -485,11 +469,12 @@ export function MainNav() {
     };
   }, []);
 
-  const isActive = (path: string) => {
-    if (path === '/home') {
+  const isActive = (item: NavItem) => {
+    const paths = [item.path, ...(item.activePaths || [])];
+    if (paths.includes('/home')) {
       return location.pathname === '/home' || location.pathname === '/';
     }
-    return location.pathname.startsWith(path);
+    return paths.some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`));
   };
 
   return (
@@ -507,8 +492,8 @@ export function MainNav() {
             >
               <NavLink
                 to={item.path}
-                className={`ema-nav-link ${isActive(item.path) ? 'active' : ''}`}
-                aria-current={isActive(item.path) ? 'page' : undefined}
+                className={`ema-nav-link ${isActive(item) ? 'active' : ''}`}
+                aria-current={isActive(item) ? 'page' : undefined}
                 aria-haspopup={item.dropdown ? 'true' : undefined}
                 aria-expanded={item.dropdown && hoveredItem === item.path ? 'true' : 'false'}
               >
@@ -547,7 +532,8 @@ export function MainNav() {
         const item = filteredNavItems.find(i => i.path === hoveredItem);
         if (!item?.dropdown) return null;
         const visibleDropdown = item.dropdown.filter((dropdownItem) => {
-          return !dropdownItem.requiresFeedbackAccess || canViewProfessionalFeedback(user);
+          if (dropdownItem.requiresFeedbackAccess && !canViewProfessionalFeedback(user)) return false;
+          return !dropdownItem.module || canAccessModule(userRole, dropdownItem.module);
         });
         if (visibleDropdown.length === 0) return null;
 

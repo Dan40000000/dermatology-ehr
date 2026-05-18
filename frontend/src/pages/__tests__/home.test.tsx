@@ -232,11 +232,11 @@ describe('HomePage', () => {
     expect(apiMocks.fetchUnreadCount).toHaveBeenCalledWith('tenant-1', 'token-1');
 
     const appointmentsCard = screen.getByText("Today's schedule").closest('.command-metric-card') as HTMLElement;
-    expect(within(appointmentsCard).getByText('3')).toBeInTheDocument();
+    expect(within(appointmentsCard).getByText('1')).toBeInTheDocument();
 
     const flowPanel = screen.getByText("Today's Patients").closest('.command-panel') as HTMLElement;
     const waitingTile = within(flowPanel).getAllByText('Waiting')[0].closest('.command-flow-tile') as HTMLElement;
-    expect(within(waitingTile).getByText('1')).toBeInTheDocument();
+    expect(within(waitingTile).getByText('0')).toBeInTheDocument();
 
     const inRoomsTile = within(flowPanel).getByText('In Rooms').closest('.command-flow-tile') as HTMLElement;
     expect(within(inRoomsTile).getByText('0')).toBeInTheDocument();

@@ -262,7 +262,7 @@ export class FrontDeskService {
           p.last_name as patient_last_name,
           p.phone as patient_phone,
           p.email as patient_email,
-          p.accessibility_profile as accessibility_profile,
+          COALESCE(to_jsonb(p)->'accessibility_profile', '{}'::jsonb) as accessibility_profile,
           a.provider_id,
           prov.full_name as provider_name,
           a.location_id,

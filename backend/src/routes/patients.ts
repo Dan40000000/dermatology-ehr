@@ -262,7 +262,7 @@ patientsRouter.get("/", requireAuth, requireModuleAccess("patients"), async (req
     pharmacyName: `pharmacy_name as "pharmacyName"`,
     pharmacyPhone: `pharmacy_phone as "pharmacyPhone"`,
     pharmacyAddress: `pharmacy_address as "pharmacyAddress"`,
-    accessibilityProfile: `accessibility_profile as "accessibilityProfile"`,
+    accessibilityProfile: `COALESCE(to_jsonb(patients)->'accessibility_profile', '{}'::jsonb) as "accessibilityProfile"`,
     createdAt: `created_at as "createdAt"`,
     updatedAt: `updated_at as "updatedAt"`,
     ssn: canViewSsn ? `ssn_last4 as "ssn"` : `null::text as "ssn"`,

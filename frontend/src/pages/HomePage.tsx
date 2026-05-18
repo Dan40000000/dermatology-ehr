@@ -95,6 +95,7 @@ interface HomeStats {
   scheduleViewDateLabel: string;
   scheduleHasFilters: boolean;
   pendingLabOrders: number;
+  notesWrittenToday: number;
   unsignedNotesToday: number;
   unreadMessageThreads: number;
   myNotesNeedingWork: number;
@@ -443,6 +444,7 @@ const INITIAL_STATS: HomeStats = {
   scheduleViewDateLabel: '',
   scheduleHasFilters: false,
   pendingLabOrders: 0,
+  notesWrittenToday: 0,
   unsignedNotesToday: 0,
   unreadMessageThreads: 0,
   myNotesNeedingWork: 0,
@@ -729,6 +731,9 @@ export function HomePage() {
       const unsignedNotesToday = encountersData.filter((encounter: Encounter) => {
         return isOnLocalDay(encounter.updatedAt || encounter.createdAt, todayStr) && isEncounterOpen(encounter.status);
       }).length;
+      const notesWrittenToday = encountersData.filter((encounter: Encounter) => {
+        return isOnLocalDay(encounter.updatedAt || encounter.createdAt, todayStr);
+      }).length;
 
       const myNotesNeedingWork = encountersData.filter((encounter: Encounter) => {
         return encounter.providerId === session.user.id && isEncounterOpen(encounter.status);
@@ -777,6 +782,7 @@ export function HomePage() {
         }),
         scheduleHasFilters,
         pendingLabOrders,
+        notesWrittenToday,
         unsignedNotesToday,
         unreadMessageThreads,
         myNotesNeedingWork,
@@ -1009,8 +1015,8 @@ export function HomePage() {
     },
     {
       label: 'Clinical work',
-      value: stats.unsignedNotesToday + stats.pendingLabOrders,
-      detail: `${stats.unsignedNotesToday} notes today, ${stats.pendingLabOrders} lab/path orders`,
+      value: stats.notesWrittenToday + stats.pendingLabOrders,
+      detail: `${stats.notesWrittenToday} notes written today, ${stats.pendingLabOrders} lab/path orders`,
       route: '/notes',
       icon: Stethoscope,
       tone: 'violet',
@@ -1210,7 +1216,7 @@ export function HomePage() {
           <div className="command-schedule-context">
             <Clock size={16} aria-hidden="true" />
             <span>
-              Current schedule view: <strong>{stats.scheduleViewCount}</strong> appointments, {stats.scheduleViewMode} view, {stats.scheduleViewDateLabel || 'today'}
+              Current schedule filters: <strong>{stats.scheduleViewCount}</strong> appointments in {stats.scheduleViewMode} view
               {stats.scheduleHasFilters ? ', filtered' : ', unfiltered'}.
             </span>
           </div>

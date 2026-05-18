@@ -1,5 +1,6 @@
 import { Router, Response } from "express";
 import { pool } from "../db/pool";
+import { getTableColumns } from "../db/schema";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { requireModuleAccess } from "../middleware/moduleAccess";
 import { rateLimit } from "../middleware/rateLimit";
@@ -348,8 +349,8 @@ analyticsRouter.get("/provider-productivity", async (req: AuthedRequest, res) =>
        count(distinct a.id) as appointments,
        coalesce(sum(c.amount_cents), 0) as revenue_cents
      from providers p
-     left join appointments a on a.provider_id = p.id and ${appointmentWhere.replace('a.tenant_id', 'a.tenant_id')}
-     left join encounters e on e.provider_id = p.id and ${encounterWhere.replace('e.tenant_id', 'e.tenant_id')}
+     left join appointments a on a.provider_id = p.id and ${appointmentWhere}
+     left join encounters e on e.provider_id = p.id and ${encounterWhere}
      left join patients pt on pt.id = e.patient_id
      left join charges c on c.encounter_id = e.id and ${chargeWhere.replace('c.tenant_id', 'c.tenant_id')}
      where p.tenant_id = $1
@@ -552,14 +553,17 @@ analyticsRouter.get("/appointments", async (req: AuthedRequest, res) => {
   const { startDate, endDate } = req.query;
   const params: any[] = [tenantId];
   let where = "tenant_id = $1";
+  let appointmentWhere = "a.tenant_id = $1";
 
   if (startDate) {
     params.push(startDate);
     where += ` and scheduled_start >= $${params.length}`;
+    appointmentWhere += ` and a.scheduled_start >= $${params.length}`;
   }
   if (endDate) {
     params.push(endDate);
     where += ` and scheduled_start <= $${params.length}`;
+    appointmentWhere += ` and a.scheduled_start <= $${params.length}`;
   }
 
   const [statusBreakdown, typeBreakdown, providerBreakdown, avgWaitTime] = await Promise.all([
@@ -571,7 +575,7 @@ analyticsRouter.get("/appointments", async (req: AuthedRequest, res) => {
       `select at.name as type_name, count(*) as count
        from appointments a
        join appointment_types at on at.id = a.appointment_type_id
-       where ${where}
+       where ${appointmentWhere}
        group by at.name
        order by count desc`,
       params
@@ -580,7 +584,7 @@ analyticsRouter.get("/appointments", async (req: AuthedRequest, res) => {
       `select p.full_name as provider_name, count(*) as count
        from appointments a
        join providers p on p.id = a.provider_id
-       where ${where}
+       where ${appointmentWhere}
        group by p.full_name
        order by count desc`,
       params
@@ -751,6 +755,17 @@ analyticsRouter.get("/patients", async (req: AuthedRequest, res) => {
 analyticsRouter.get("/providers", async (req: AuthedRequest, res) => {
   const tenantId = req.user!.tenantId;
   const { startDate, endDate } = req.query;
+  const appointmentColumns = await getTableColumns("appointments");
+  const visitStartExpr = appointmentColumns.has("checked_in_at")
+    ? "a.checked_in_at"
+    : appointmentColumns.has("arrived_at")
+      ? "a.arrived_at"
+      : "NULL::timestamptz";
+  const visitEndExpr = appointmentColumns.has("checked_out_at")
+    ? "a.checked_out_at"
+    : appointmentColumns.has("completed_at")
+      ? "a.completed_at"
+      : "NULL::timestamptz";
   const params: any[] = [tenantId];
   let appointmentWhere = "a.tenant_id = $1";
   let encounterWhere = "e.tenant_id = $1";
@@ -776,7 +791,11 @@ analyticsRouter.get("/providers", async (req: AuthedRequest, res) => {
        count(distinct e.id) as total_encounters,
        count(distinct e.patient_id) as unique_patients,
        coalesce(sum(c.amount_cents), 0) as revenue_cents,
-       coalesce(avg(extract(epoch from (a.checked_out_at - a.checked_in_at))/60), 0) as avg_visit_duration_minutes
+       coalesce(
+         avg(extract(epoch from (${visitEndExpr} - ${visitStartExpr}))/60)
+           filter (where ${visitEndExpr} is not null and ${visitStartExpr} is not null),
+         0
+       ) as avg_visit_duration_minutes
      from providers p
      left join appointments a on a.provider_id = p.id and ${appointmentWhere.replace('a.tenant_id', 'a.tenant_id')}
      left join encounters e on e.provider_id = p.id and ${encounterWhere.replace('e.tenant_id', 'e.tenant_id')}

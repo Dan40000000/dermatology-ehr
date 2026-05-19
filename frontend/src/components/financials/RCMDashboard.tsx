@@ -65,12 +65,22 @@ const DEFAULT_METRICS: RCMMetrics = {
 };
 
 const DEFAULT_AR_AGING: ARAgingBucket[] = [
-  { label: 'Current', range: '0-30 days', amountCents: 4250000, count: 45, percentage: 40, color: '#10b981' },
-  { label: '31-60', range: '31-60 days', amountCents: 2125000, count: 22, percentage: 20, color: '#f59e0b' },
-  { label: '61-90', range: '61-90 days', amountCents: 1062500, count: 12, percentage: 10, color: '#f97316' },
-  { label: '91-120', range: '91-120 days', amountCents: 1593750, count: 15, percentage: 15, color: '#ef4444' },
+  { label: 'Current', range: '0-30 days', amountCents: 4250000, count: 45, percentage: 40, color: '#047857' },
+  { label: '31-60', range: '31-60 days', amountCents: 2125000, count: 22, percentage: 20, color: '#92400e' },
+  { label: '61-90', range: '61-90 days', amountCents: 1062500, count: 12, percentage: 10, color: '#c2410c' },
+  { label: '91-120', range: '91-120 days', amountCents: 1593750, count: 15, percentage: 15, color: '#b91c1c' },
   { label: '120+', range: '120+ days', amountCents: 1593750, count: 18, percentage: 15, color: '#dc2626' },
 ];
+
+const accessibleBucketColor = (color: string): string => {
+  const palette: Record<string, string> = {
+    '#10b981': '#047857',
+    '#f59e0b': '#92400e',
+    '#f97316': '#c2410c',
+    '#ef4444': '#b91c1c',
+  };
+  return palette[color.toLowerCase()] || color;
+};
 
 export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_AGING, onDrillDown, activeDrillDown, rangeControl }: Props) {
   const [showTrends, setShowTrends] = useState(false);
@@ -158,8 +168,8 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
                       padding: '0.48rem 0.65rem',
                       border: 'none',
                       borderRadius: '7px',
-                      background: rangeControl.preset === preset ? '#059669' : 'transparent',
-                      color: rangeControl.preset === preset ? 'white' : '#6b7280',
+                      background: rangeControl.preset === preset ? '#047857' : 'transparent',
+                      color: rangeControl.preset === preset ? 'white' : '#374151',
                       fontWeight: '800',
                       fontSize: '0.82rem',
                       cursor: 'pointer',
@@ -186,7 +196,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
                     fontWeight: 700,
                   }}
                 />
-                <span style={{ color: '#6b7280', fontWeight: 800 }}>to</span>
+                <span style={{ color: '#374151', fontWeight: 800 }}>to</span>
                 <input
                   type="date"
                   aria-label="Overview end date"
@@ -334,7 +344,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
               borderRadius: '4px',
             }} />
           </div>
-          <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.5rem' }}>
+          <div style={{ fontSize: '0.75rem', color: '#4b5563', marginTop: '0.5rem' }}>
             Industry benchmark: 95%
           </div>
         </div>
@@ -515,7 +525,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
           <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.5rem' }}>
             Denial Rate
           </div>
-          <div style={{ fontSize: '1.5rem', fontWeight: '700', color: metrics.denialRate <= 5 ? '#059669' : '#f59e0b' }}>
+          <div style={{ fontSize: '1.5rem', fontWeight: '700', color: metrics.denialRate <= 5 ? '#047857' : '#92400e' }}>
             {metrics.denialRate.toFixed(1)}%
           </div>
         </div>
@@ -547,7 +557,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
           <div style={{ fontSize: '0.8rem', color: '#92400e', marginBottom: '0.5rem' }}>
             Claims in Queue
           </div>
-          <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#f59e0b' }}>
+          <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#92400e' }}>
             {metrics.claimsInQueue}
           </div>
         </div>
@@ -595,7 +605,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
             onClick={() => onDrillDown?.('ar-aging')}
             style={{
               padding: '0.5rem 1rem',
-              background: '#059669',
+              background: '#047857',
               color: 'white',
               border: 'none',
               borderRadius: '8px',
@@ -621,7 +631,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
                 key={bucket.label}
                 style={{
                   width: `${bucket.percentage}%`,
-                  background: bucket.color,
+                  background: accessibleBucketColor(bucket.color),
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -682,7 +692,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
                   width: '12px',
                   height: '12px',
                   borderRadius: '3px',
-                  background: bucket.color,
+                  background: accessibleBucketColor(bucket.color),
                 }} />
                 <span style={{ fontSize: '0.8rem', fontWeight: '600', color: '#374151' }}>
                   {bucket.range}

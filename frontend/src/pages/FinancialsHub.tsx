@@ -873,7 +873,7 @@ export function FinancialsHub() {
           amountCents: Number(bucket.totalBalanceCents || 0),
           count: Number(bucket.billCount || 0),
           percentage: totalArCents > 0 ? Number((((Number(bucket.totalBalanceCents || 0) / totalArCents) * 100)).toFixed(1)) : 0,
-          color: ['#10b981', '#f59e0b', '#f97316', '#ef4444', '#dc2626'][index] || '#6b7280',
+          color: ['#047857', '#92400e', '#c2410c', '#b91c1c', '#dc2626'][index] || '#374151',
         })),
       );
 
@@ -1086,7 +1086,7 @@ export function FinancialsHub() {
           amountCents: Number(bucket.totalBalanceCents || 0),
           count: Number(bucket.billCount || 0),
           percentage: totalArCents > 0 ? Number(((Number(bucket.totalBalanceCents || 0) / totalArCents) * 100).toFixed(1)) : 0,
-          color: ['#10b981', '#f59e0b', '#f97316', '#ef4444', '#dc2626'][index] || '#6b7280',
+          color: ['#047857', '#92400e', '#c2410c', '#b91c1c', '#dc2626'][index] || '#374151',
         })),
       );
       setDashboardMetrics({
@@ -2104,7 +2104,7 @@ export function FinancialsHub() {
                           No posted revenue in this snapshot yet.
                         </div>
                       ) : null}
-                      <div style={{ marginTop: '0.7rem', fontSize: '0.75rem', color: '#059669', fontWeight: 700 }}>
+                      <div style={{ marginTop: '0.7rem', fontSize: '0.75rem', color: '#047857', fontWeight: 700 }}>
                         Open breakdown
                       </div>
                     </button>

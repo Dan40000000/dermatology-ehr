@@ -236,6 +236,7 @@ export const config = {
     stripe: {
       secretKey: envVars.STRIPE_SECRET_KEY || '',
       publishableKey: envVars.STRIPE_PUBLISHABLE_KEY || '',
+      webhookSecret: envVars.STRIPE_WEBHOOK_SECRET || '',
     },
     phaxio: {
       apiKey: envVars.PHAXIO_API_KEY || '',

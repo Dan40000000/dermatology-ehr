@@ -10,6 +10,8 @@ import { getPracticeTimeZone } from "../lib/practiceTimeZone";
 import { getLivePortalBalance } from "./portalBilling";
 import { getPatientAllergySummaries, getPatientMedicationSummaries } from "../services/patientHealthRecord";
 import * as productSalesService from "../services/productSalesService";
+import { getIntegrationService } from "../services/integrationService";
+import config from "../config";
 
 export const patientPortalDataRouter = Router();
 
@@ -78,6 +80,11 @@ const portalStoreOrderSchema = z.object({
   notificationEmail: z.string().email().optional(),
   paymentReference: z.string().max(255).optional(),
   stripePaymentIntentId: z.string().max(255).optional(),
+});
+
+const portalStoreCheckoutSchema = portalStoreOrderSchema.omit({
+  paymentReference: true,
+  stripePaymentIntentId: true,
 });
 
 async function markPortalItemsRead(
@@ -255,6 +262,175 @@ patientPortalDataRouter.post("/store/orders", async (req: PatientPortalRequest, 
     logPatientPortalDataError("Portal store order error", error);
     return res.status(400).json({
       error: error instanceof Error ? error.message : "Failed to place store order",
+    });
+  }
+});
+
+/**
+ * POST /api/patient-portal-data/store/checkout-session
+ * Create a store order and start Stripe Checkout. In demo mode or without Stripe
+ * credentials, the order is completed with a mock payment so the workflow remains testable.
+ */
+patientPortalDataRouter.post("/store/checkout-session", async (req: PatientPortalRequest, res) => {
+  try {
+    const parsed = portalStoreCheckoutSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.format() });
+    }
+
+    const tenantId = req.patient!.tenantId;
+    const patientId = req.patient!.patientId;
+    const requestedProductIds = new Set(parsed.data.items.map((item) => item.productId));
+    const activeProducts = await productSalesService.getProducts(tenantId, { isActive: true });
+    const productsById = new Map(activeProducts.map((product) => [product.id, product]));
+
+    for (const productId of requestedProductIds) {
+      const product = productsById.get(productId);
+      if (!product) {
+        return res.status(404).json({ error: "One or more products are no longer available" });
+      }
+      if (product.category === "prescription") {
+        return res.status(400).json({ error: "Prescription products cannot be purchased through the store" });
+      }
+    }
+
+    const shippingMethod = parsed.data.shippingMethod || "standard";
+    const shippingFee = shippingMethod === "priority" ? 995 : shippingMethod === "pickup" ? 0 : 595;
+    const paymentReference = `stripe_checkout_pending_${Date.now()}`;
+    const integrationService = getIntegrationService(tenantId);
+    const paymentAdapter = await integrationService.getPaymentAdapter();
+    const useMockCheckout = paymentAdapter.isMockMode() || !paymentAdapter.hasStripeCredentials();
+
+    const sale = await productSalesService.createSale(
+      tenantId,
+      patientId,
+      parsed.data.items,
+      { method: "credit", reference: paymentReference },
+      `portal:${req.patient!.accountId}`,
+      undefined,
+      0,
+      useMockCheckout ? "completed" : "pending"
+    );
+
+    await productSalesService.createStoreFulfillment(tenantId, sale.id, patientId, {
+      channel: "patient_portal",
+      fulfillmentStatus: useMockCheckout ? "paid" : "awaiting_payment",
+      shippingMethod,
+      shippingFee,
+      shippingAddress: parsed.data.shippingAddress,
+      notificationEmail: parsed.data.notificationEmail || req.patient!.email,
+      notificationStatus: "queued",
+      stripePaymentStatus: useMockCheckout ? "paid" : "unpaid",
+    });
+
+    const origin = req.get("origin") || config.frontendUrl || "";
+    const baseUrl = origin || `${req.protocol}://${req.get("host")}`;
+    const orderPath = `/portal/store?orderId=${encodeURIComponent(sale.id)}&session_id={CHECKOUT_SESSION_ID}`;
+    const successUrl = `${baseUrl}${orderPath}&store_checkout=success`;
+    const cancelUrl = `${baseUrl}/portal/store?orderId=${encodeURIComponent(sale.id)}&store_checkout=cancelled`;
+    const checkout = await paymentAdapter.createCheckoutSession({
+      patientId,
+      customerEmail: req.patient!.email,
+      successUrl,
+      cancelUrl,
+      metadata: {
+        tenantId,
+        patientId,
+        saleId: sale.id,
+        source: "patient_portal_store",
+      },
+      lineItems: [
+        ...(sale.items || []).map((item) => ({
+          name: item.productName,
+          description: item.productSku,
+          unitAmountCents: item.unitPrice,
+          quantity: item.quantity,
+          productId: item.productId,
+          sku: item.productSku,
+        })),
+        ...(sale.tax > 0
+          ? [{ name: "Sales tax", unitAmountCents: sale.tax, quantity: 1 }]
+          : []),
+        ...(shippingFee > 0
+          ? [{ name: shippingMethod === "priority" ? "Priority delivery" : "Standard delivery", unitAmountCents: shippingFee, quantity: 1 }]
+          : []),
+      ],
+    });
+
+    await productSalesService.updateStoreFulfillment(tenantId, sale.id, {
+      stripeCheckoutSessionId: checkout.id,
+      stripePaymentIntentId: checkout.paymentIntentId || null,
+      stripePaymentStatus: checkout.paymentStatus,
+      fulfillmentStatus: checkout.paymentStatus === "paid" ? "paid" : undefined,
+    });
+
+    const paidOrder = checkout.paymentStatus === "paid"
+      ? await productSalesService.markStoreOrderPaid(tenantId, sale.id, {
+          stripeCheckoutSessionId: checkout.id,
+          stripePaymentIntentId: checkout.paymentIntentId || null,
+          stripePaymentStatus: checkout.paymentStatus,
+          paymentReference: checkout.id,
+        })
+      : null;
+    let pendingOrder = null;
+    if (!paidOrder) {
+      [pendingOrder] = await productSalesService.getStoreOrders(tenantId, { saleId: sale.id, limit: 1 });
+    }
+
+    return res.status(201).json({
+      checkout,
+      order: paidOrder || pendingOrder || sale,
+      sale,
+      paymentMode: checkout.mode,
+    });
+  } catch (error) {
+    logPatientPortalDataError("Portal store checkout error", error);
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : "Failed to start store checkout",
+    });
+  }
+});
+
+/**
+ * POST /api/patient-portal-data/store/checkout-session/:sessionId/sync
+ * Refresh a Stripe Checkout session after redirect and mark the order paid if Stripe reports payment.
+ */
+patientPortalDataRouter.post("/store/checkout-session/:sessionId/sync", async (req: PatientPortalRequest, res) => {
+  try {
+    const sessionId = String(req.params.sessionId || "");
+    if (!sessionId) return res.status(400).json({ error: "Missing checkout session" });
+
+    const tenantId = req.patient!.tenantId;
+    const patientId = req.patient!.patientId;
+    const integrationService = getIntegrationService(tenantId);
+    const paymentAdapter = await integrationService.getPaymentAdapter();
+    const checkout = await paymentAdapter.retrieveCheckoutSession(sessionId);
+    const metadata = checkout.metadata || {};
+
+    if (metadata.tenantId && metadata.tenantId !== tenantId) {
+      return res.status(404).json({ error: "Checkout session not found" });
+    }
+    if (metadata.patientId && metadata.patientId !== patientId) {
+      return res.status(404).json({ error: "Checkout session not found" });
+    }
+    if (!metadata.saleId) {
+      return res.status(400).json({ error: "Checkout session is missing order metadata" });
+    }
+
+    const order = checkout.paymentStatus === "paid"
+      ? await productSalesService.markStoreOrderPaid(tenantId, metadata.saleId, {
+          stripeCheckoutSessionId: checkout.id,
+          stripePaymentIntentId: checkout.paymentIntentId || null,
+          stripePaymentStatus: checkout.paymentStatus,
+          paymentReference: checkout.id,
+        })
+      : (await productSalesService.getStoreOrders(tenantId, { saleId: metadata.saleId, limit: 1 }))[0] || null;
+
+    return res.json({ checkout, order });
+  } catch (error) {
+    logPatientPortalDataError("Portal store checkout sync error", error);
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : "Failed to sync store checkout",
     });
   }
 });

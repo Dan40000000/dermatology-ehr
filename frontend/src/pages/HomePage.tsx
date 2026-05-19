@@ -1,23 +1,37 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  Activity,
   AlertTriangle,
   ArrowRight,
+  BadgeAlert,
   BarChart3,
   Bell,
   CalendarDays,
+  CircleDollarSign,
   ClipboardCheck,
+  ClipboardList,
+  ClipboardX,
   Clock,
   CreditCard,
+  DoorOpen,
   DollarSign,
+  FileCheck2,
   FileText,
+  Hourglass,
   Inbox,
   Mail,
+  ReceiptText,
   RefreshCw,
   Search,
   ShieldCheck,
   Stethoscope,
+  Store,
+  TimerReset,
+  UserCheck,
   UserPlus,
+  UsersRound,
+  WalletCards,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -31,6 +45,7 @@ import {
   fetchAppointments,
   fetchAppointmentTypes,
   fetchAvailability,
+  fetchCommandCenterSummary,
   fetchEncounters,
   fetchFrontDeskSchedule,
   fetchLocations,
@@ -43,16 +58,24 @@ import {
   fetchBiopsyCommandCenter,
   type BiopsyCommandCenterSummary,
   type BiopsySafetyItem,
+  type CommandCenterSummaryResponse,
   type TimeBlock,
 } from '../api';
 import {
   fetchARAging,
   fetchClaims,
+  fetchCollectionsTrend,
   fetchFinancialWorkQueue,
   fetchPaymentsSummary,
 } from '../api/financials';
-import { canAccessModule } from '../config/moduleAccess';
+import { canAccessModule, getModuleForPath, type ModuleKey } from '../config/moduleAccess';
 import { getEffectiveRoles } from '../utils/roles';
+import {
+  getClinicBusinessDate,
+  getDateKeyInPracticeTimeZone,
+  ISO_DATE_PATTERN,
+  setClinicBusinessDate,
+} from '../utils/practiceDateTime';
 import type { Appointment, AppointmentType, Availability, Location, Patient, Provider } from '../types';
 
 interface Encounter {
@@ -82,6 +105,7 @@ interface StoredScheduleContext {
 
 interface HomeStats {
   appointmentsCount: number;
+  activeAppointmentsCount: number;
   checkedInCount: number;
   completedCount: number;
   pendingTasks: number;
@@ -106,12 +130,17 @@ interface HomeStats {
   staleScheduledCount: number;
   noShowCount: number;
   cancelledCount: number;
+  revenueTodayCents: number;
   netCollectionsCents: number;
   patientCollectionsCents: number;
   payerCollectionsCents: number;
+  storeCollectionsCents: number;
+  collectionRateToday: number;
   claimsInQueue: number;
   claimsDeniedRejected: number;
   financialWorkQueueCount: number;
+  claimWorkQueueCount: number;
+  billingWorkQueueCount: number;
   arTotalCents: number;
   arOver90Cents: number;
 }
@@ -143,6 +172,43 @@ interface HomeSchedulePulse {
   attentionAppointments: HomeDashboardAppointment[];
 }
 
+interface HomeActionQueueItem {
+  id: string;
+  label: string;
+  value: string | number;
+  detail: string;
+  route: string;
+  access?: ModuleKey | ModuleKey[];
+  icon: LucideIcon;
+  tone: 'red' | 'amber' | 'emerald' | 'blue' | 'violet' | 'slate';
+}
+
+interface HomeProviderThroughput {
+  providerId: string;
+  providerName: string;
+  total: number;
+  active: number;
+  waiting: number;
+  inRooms: number;
+  completed: number;
+  stale: number;
+  longestDelayMinutes: number;
+  route: string;
+}
+
+interface HomeCommandQueues {
+  riskItems: HomeActionQueueItem[];
+  frontDeskItems: HomeActionQueueItem[];
+  readinessItems: HomeActionQueueItem[];
+  providerThroughput: HomeProviderThroughput[];
+}
+
+interface HomeDataHealth {
+  failedSources: string[];
+  lastUpdatedAt: string;
+  businessDate: string;
+}
+
 interface AppointmentFinderSelection {
   patientId: string;
   providerId: string;
@@ -157,6 +223,8 @@ const DASHBOARD_REFRESH_INTERVAL_MS = 30000;
 const CALENDAR_WINDOW_START_HOUR = 7;
 const CALENDAR_WINDOW_END_HOUR = 18;
 const HOME_FINDER_LOOKAHEAD_DAYS = 120;
+const WAITING_ROOM_RISK_MINUTES = 30;
+const ROOM_DWELL_RISK_MINUTES = 45;
 
 const toLocalIsoDate = (date: Date): string => {
   const year = date.getFullYear();
@@ -164,6 +232,10 @@ const toLocalIsoDate = (date: Date): string => {
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
+const getCommandBusinessDate = (): string => getClinicBusinessDate();
+
+const dateFromIsoDate = (dateKey: string): Date => new Date(`${dateKey}T12:00:00`);
 
 const isTaskPending = (status: string | undefined): boolean => {
   const normalized = String(status || '').toLowerCase();
@@ -313,6 +385,52 @@ const statusLabel = (value: unknown): string => {
 
 const centsFromDollars = (value: unknown): number => Math.round(numberOrZero(value) * 100);
 
+const getElapsedMinutes = (value: string | undefined, nowMs: number): number => {
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor((nowMs - parsed) / 60000));
+};
+
+const getAppointmentDelayMinutes = (appointment: any, nowMs: number): number => {
+  const explicitWait = numberOrZero(appointment.waitTimeMinutes);
+  if (explicitWait > 0) return explicitWait;
+
+  const status = normalizeStatus(appointment.status);
+  if (status === 'checked_in') {
+    return getElapsedMinutes(appointment.checkedInAt || appointment.checked_in_at || appointment.scheduledStart, nowMs);
+  }
+  if (status === 'in_room' || status === 'with_provider') {
+    return getElapsedMinutes(
+      appointment.roomedAt || appointment.roomed_at || appointment.inRoomAt || appointment.in_room_at || appointment.scheduledStart,
+      nowMs,
+    );
+  }
+  if (status === 'scheduled' && isStaleScheduledAppointment(appointment, nowMs)) {
+    return getElapsedMinutes(appointment.scheduledStart, nowMs);
+  }
+  return 0;
+};
+
+const isIntakeIncomplete = (appointment: any): boolean => {
+  const statusValue = String(
+    appointment.intakeStatus ||
+      appointment.formsStatus ||
+      appointment.patientFormsStatus ||
+      appointment.portalIntakeStatus ||
+      '',
+  ).toLowerCase();
+
+  return (
+    appointment.intakeComplete === false ||
+    appointment.formsComplete === false ||
+    appointment.requiredFormsComplete === false ||
+    statusValue === 'incomplete' ||
+    statusValue === 'missing' ||
+    statusValue === 'pending'
+  );
+};
+
 const getAppointmentPatientName = (appointment: any): string => {
   const explicit = String(appointment.patientName || '').trim();
   if (explicit) return explicit;
@@ -400,30 +518,59 @@ const matchesStoredScheduleFilters = (appointment: any, scheduleContext: StoredS
 };
 
 const isClaimInQueue = (claim: any): boolean =>
-  ['draft', 'ready', 'submitted', 'accepted'].includes(normalizeStatus(claim.status));
+  ['draft', 'coding_review', 'ready', 'submitted', 'accepted', 'partially_paid'].includes(normalizeStatus(claim.status));
+
+const getClaimBalanceCents = (claim: any): number =>
+  numberOrZero(claim.balanceCents ?? claim.balance_cents);
+
+const getClaimAgeDays = (claim: any): number => {
+  const reference = claim.serviceDate || claim.service_date || claim.createdAt || claim.created_at;
+  if (!reference) return 0;
+  const parsed = new Date(reference).getTime();
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor((Date.now() - parsed) / 86400000));
+};
 
 const isClaimAtRisk = (claim: any): boolean =>
   ['denied', 'rejected', 'appealed'].includes(normalizeStatus(claim.status)) ||
-  normalizeStatus(claim.scrubStatus) === 'failed';
+  normalizeStatus(claim.scrubStatus) === 'failed' ||
+  (getClaimBalanceCents(claim) > 0 && getClaimAgeDays(claim) > 300);
 
-const getCollectionsCents = (paymentsSummary: any) => {
-  const patientCollectionsCents =
+const getCommandCenterFinancials = (collectionsTrend: any, paymentsSummary: any) => {
+  const trendSummary = collectionsTrend?.summary || null;
+  const paymentPatientCollections =
     numberOrZero(paymentsSummary?.calculated?.postedPatientPaymentsCents) ||
     extractArray(paymentsSummary, ['patientPaymentsByMethod']).reduce(
       (sum, row) => sum + numberOrZero(row.totalCents),
       0,
     );
-  const payerCollectionsCents =
+  const paymentPayerCollections =
     numberOrZero(paymentsSummary?.calculated?.payerAppliedCents) ||
     numberOrZero(paymentsSummary?.payerPaymentsSummary?.appliedCents);
-  const netCollectionsCents =
-    numberOrZero(paymentsSummary?.calculated?.netCollectionsCents) ||
-    patientCollectionsCents + payerCollectionsCents;
+
+  const patientCollectionsCents = paymentsSummary
+    ? paymentPatientCollections
+    : numberOrZero(trendSummary?.totalPatientPaymentsCents);
+  const payerCollectionsCents = paymentsSummary
+    ? paymentPayerCollections
+    : numberOrZero(trendSummary?.totalPayerPaymentsCents);
+  const netCollectionsCents = patientCollectionsCents + payerCollectionsCents;
+  const revenueTodayCents =
+    numberOrZero(trendSummary?.totalRevenueEarnedCents) ||
+    numberOrZero(paymentsSummary?.calculated?.chargesInPeriodCents);
+  const storeCollectionsCents = numberOrZero(trendSummary?.totalStorePaymentsCents);
+  const totalCollectionsCents = netCollectionsCents + storeCollectionsCents;
+  const collectionRateToday =
+    numberOrZero(trendSummary?.collectionRate) ||
+    (revenueTodayCents > 0 ? Math.round((totalCollectionsCents / revenueTodayCents) * 100) : 0);
 
   return {
+    revenueTodayCents,
+    netCollectionsCents,
     patientCollectionsCents,
     payerCollectionsCents,
-    netCollectionsCents,
+    storeCollectionsCents,
+    collectionRateToday,
   };
 };
 
@@ -443,8 +590,22 @@ const getArAgingCents = (aging: any) => {
   return { arTotalCents, arOver90Cents };
 };
 
+const summaryNumber = (fallback: number, value: unknown): number =>
+  value === null || value === undefined ? fallback : numberOrZero(value);
+
+const getCommandSummaryFailedSourceLabels = (summary: CommandCenterSummaryResponse | null): string[] => {
+  if (!summary?.dataHealth?.failedSources) return [];
+  return summary.dataHealth.failedSources
+    .map((source) => {
+      if (typeof source === 'string') return source;
+      return source.source ? `command center ${source.source}` : null;
+    })
+    .filter((source): source is string => Boolean(source));
+};
+
 const INITIAL_STATS: HomeStats = {
   appointmentsCount: 0,
+  activeAppointmentsCount: 0,
   checkedInCount: 0,
   completedCount: 0,
   pendingTasks: 0,
@@ -469,14 +630,26 @@ const INITIAL_STATS: HomeStats = {
   staleScheduledCount: 0,
   noShowCount: 0,
   cancelledCount: 0,
+  revenueTodayCents: 0,
   netCollectionsCents: 0,
   patientCollectionsCents: 0,
   payerCollectionsCents: 0,
+  storeCollectionsCents: 0,
+  collectionRateToday: 0,
   claimsInQueue: 0,
   claimsDeniedRejected: 0,
   financialWorkQueueCount: 0,
+  claimWorkQueueCount: 0,
+  billingWorkQueueCount: 0,
   arTotalCents: 0,
   arOver90Cents: 0,
+};
+
+const INITIAL_COMMAND_QUEUES: HomeCommandQueues = {
+  riskItems: [],
+  frontDeskItems: [],
+  readinessItems: [],
+  providerThroughput: [],
 };
 
 export function HomePage() {
@@ -485,10 +658,17 @@ export function HomePage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
 
+  const [businessDate, setBusinessDate] = useState(() => getCommandBusinessDate());
   const [overviewLocationFilter, setOverviewLocationFilter] = useState('all');
   const [overviewLocationOptions, setOverviewLocationOptions] = useState<LocationScopeOption[]>([]);
   const [stats, setStats] = useState<HomeStats>(INITIAL_STATS);
   const [biopsySafety, setBiopsySafety] = useState<HomeBiopsySafety | null>(null);
+  const [commandQueues, setCommandQueues] = useState<HomeCommandQueues>(INITIAL_COMMAND_QUEUES);
+  const [dataHealth, setDataHealth] = useState<HomeDataHealth>({
+    failedSources: [],
+    lastUpdatedAt: '',
+    businessDate: '',
+  });
   const [schedulePulse, setSchedulePulse] = useState<HomeSchedulePulse>({
     nextAppointments: [],
     attentionAppointments: [],
@@ -526,6 +706,24 @@ export function HomePage() {
   };
 
   const effectiveRoles = useMemo(() => getEffectiveRoles(user || session?.user), [session?.user, user]);
+  const canAccessAnyModule = useCallback(
+    (module: ModuleKey | ModuleKey[] | undefined): boolean => {
+      if (!module) return true;
+      const modules = Array.isArray(module) ? module : [module];
+      return modules.some((moduleKey) => canAccessModule(effectiveRoles, moduleKey));
+    },
+    [effectiveRoles]
+  );
+  const canOpenAction = useCallback(
+    (action: { access?: ModuleKey | ModuleKey[]; route?: string }): boolean => {
+      if (action.access) return canAccessAnyModule(action.access);
+      if (!action.route) return true;
+      const pathname = action.route.split(/[?#]/)[0] || '/home';
+      const moduleKey = getModuleForPath(pathname);
+      return moduleKey ? canAccessAnyModule(moduleKey) : true;
+    },
+    [canAccessAnyModule]
+  );
   const canUseAppointmentFinder = useMemo(
     () => canAccessModule(effectiveRoles, 'schedule'),
     [effectiveRoles]
@@ -552,11 +750,20 @@ export function HomePage() {
 
     setLoading(true);
     try {
-      const todayStr = toLocalIsoDate(new Date());
+      const failedSources: string[] = [];
+      const safeLoad = async <T,>(label: string, request: Promise<T>, fallback: T): Promise<T> => {
+        try {
+          return await request;
+        } catch {
+          failedSources.push(label);
+          return fallback;
+        }
+      };
+      const todayStr = businessDate;
       const scheduleContext = loadStoredScheduleContext();
-      const todayDate = startOfDay(new Date());
+      const todayDate = startOfDay(dateFromIsoDate(todayStr));
       const todayRange = getScheduleViewRange(todayDate, 'day');
-      const scheduleDate = startOfDay(new Date());
+      const scheduleDate = startOfDay(dateFromIsoDate(todayStr));
       scheduleDate.setDate(scheduleDate.getDate() + scheduleContext.dayOffset);
       const scheduleRange = getScheduleViewRange(scheduleDate, scheduleContext.viewMode, scheduleContext.showWeekends);
 
@@ -571,6 +778,7 @@ export function HomePage() {
       const canLoadBiopsySafety = canAccessModule(effectiveRoles, 'labs');
       const canLoadFinancials = canAccessModule(effectiveRoles, 'financials');
       const canLoadClaims = canAccessModule(effectiveRoles, 'claims') || canAccessModule(effectiveRoles, 'clearinghouse') || canLoadFinancials;
+      const canLoadCommandSummary = canLoadAppointments || canLoadClaims || canLoadFinancials;
 
       const [
         appointmentsRes,
@@ -582,45 +790,56 @@ export function HomePage() {
         biopsyRes,
         claimsRes,
         financialWorkQueueRes,
+        collectionsTrendRes,
         paymentsSummaryRes,
         arAgingRes,
+        commandSummaryRes,
       ] = await Promise.all([
         canLoadAppointments
-          ? fetchAppointments(session.tenantId, session.accessToken, {
+          ? safeLoad('schedule', fetchAppointments(session.tenantId, session.accessToken, {
               startDate: toLocalIsoDate(queryStart),
               endDate: toLocalIsoDate(queryEnd),
-            })
+            }), { appointments: [] })
           : Promise.resolve({ appointments: [] }),
         canLoadAppointments
-          ? fetchFrontDeskSchedule(session.tenantId, session.accessToken).catch(() => null)
+          ? safeLoad('front desk timing', fetchFrontDeskSchedule(session.tenantId, session.accessToken, { date: todayStr }), null)
           : Promise.resolve(null),
         canLoadEncounters
-          ? fetchEncounters(session.tenantId, session.accessToken).catch(() => ({ encounters: [] }))
+          ? safeLoad('clinical notes', fetchEncounters(session.tenantId, session.accessToken), { encounters: [] })
           : Promise.resolve({ encounters: [] }),
-        fetchTasks(session.tenantId, session.accessToken),
+        safeLoad('tasks', fetchTasks(session.tenantId, session.accessToken), { tasks: [] }),
         canLoadOrders
-          ? fetchOrders(session.tenantId, session.accessToken).catch(() => ({ orders: [] }))
+          ? safeLoad('orders', fetchOrders(session.tenantId, session.accessToken), { orders: [] })
           : Promise.resolve({ orders: [] }),
         canLoadUnreadMessages
-          ? fetchUnreadCount(session.tenantId, session.accessToken).catch(() => ({ count: 0 }))
+          ? safeLoad('clinical inbox', fetchUnreadCount(session.tenantId, session.accessToken), { count: 0 })
           : Promise.resolve({ count: 0 }),
         canLoadBiopsySafety
-          ? fetchBiopsyCommandCenter(session.tenantId, session.accessToken).catch(() => null)
+          ? safeLoad('biopsy safety', fetchBiopsyCommandCenter(session.tenantId, session.accessToken), null)
           : Promise.resolve(null),
         canLoadClaims
-          ? fetchClaims({ tenantId: session.tenantId, accessToken: session.accessToken }).catch(() => ({ claims: [] }))
+          ? safeLoad('claims', fetchClaims({ tenantId: session.tenantId, accessToken: session.accessToken }), { claims: [] })
           : Promise.resolve({ claims: [] }),
         canLoadFinancials
-          ? fetchFinancialWorkQueue({ tenantId: session.tenantId, accessToken: session.accessToken }).catch(() => ({ items: [] }))
+          ? safeLoad('financial work queue', fetchFinancialWorkQueue({ tenantId: session.tenantId, accessToken: session.accessToken }), { items: [] })
           : Promise.resolve({ items: [] }),
         canLoadFinancials
-          ? fetchPaymentsSummary(
+          ? safeLoad('collections trend', fetchCollectionsTrend(
               { tenantId: session.tenantId, accessToken: session.accessToken },
-              { startDate: todayStr, endDate: todayStr },
-            ).catch(() => null)
+              { startDate: todayStr, endDate: todayStr, granularity: 'day' },
+            ), null)
           : Promise.resolve(null),
         canLoadFinancials
-          ? fetchARAging({ tenantId: session.tenantId, accessToken: session.accessToken }, { asOfDate: todayStr }).catch(() => null)
+          ? safeLoad('payments summary', fetchPaymentsSummary(
+              { tenantId: session.tenantId, accessToken: session.accessToken },
+              { startDate: todayStr, endDate: todayStr },
+            ), null)
+          : Promise.resolve(null),
+        canLoadFinancials
+          ? safeLoad('A/R aging', fetchARAging({ tenantId: session.tenantId, accessToken: session.accessToken }, { asOfDate: todayStr }), null)
+          : Promise.resolve(null),
+        canLoadCommandSummary
+          ? safeLoad('command center summary', fetchCommandCenterSummary(session.tenantId, session.accessToken, { date: todayStr }), null)
           : Promise.resolve(null),
       ]);
 
@@ -632,7 +851,21 @@ export function HomePage() {
       const unreadMessageThreads = Number(unreadRes.count || 0);
       const claims = extractArray(claimsRes, ['claims', 'data']);
       const financialWorkQueueItems = extractArray(financialWorkQueueRes, ['items', 'workQueue', 'data']);
-      const { patientCollectionsCents, payerCollectionsCents, netCollectionsCents } = getCollectionsCents(paymentsSummaryRes);
+      const openFinancialWorkQueueItems = financialWorkQueueItems.filter((item: any) => isTaskPending(item.status));
+      const claimWorkQueueCount = openFinancialWorkQueueItems.filter((item: any) =>
+        (item.claimId || item.claim_id) && !(item.billId || item.bill_id)
+      ).length;
+      const billingWorkQueueCount = openFinancialWorkQueueItems.filter((item: any) =>
+        item.billId || item.bill_id || !(item.claimId || item.claim_id)
+      ).length;
+      const {
+        revenueTodayCents,
+        patientCollectionsCents,
+        payerCollectionsCents,
+        netCollectionsCents,
+        storeCollectionsCents,
+        collectionRateToday,
+      } = getCommandCenterFinancials(collectionsTrendRes, paymentsSummaryRes);
       const { arTotalCents, arOver90Cents } = getArAgingCents(arAgingRes);
       const frontDeskByAppointmentId = new Map<string, any>();
       frontDeskAppointments.forEach((appointment: any) => {
@@ -701,6 +934,9 @@ export function HomePage() {
       const staleScheduledCount = scopedAllAppointments.filter((appointment: any) =>
         isStaleScheduledAppointment(appointment, nowMs)
       ).length;
+      const totalScheduleCount = scopedAllAppointments.filter((appointment: any) =>
+        isAppointmentIncludedInOverview(appointment.status)
+      ).length;
 
       const overviewAppointments = scopedAppointments.filter((appointment: any) =>
         isWithinCalendarWindow(appointment.scheduledStart)
@@ -763,7 +999,6 @@ export function HomePage() {
       const scheduleViewEndMs = scheduleRange.end.getTime();
       const scheduleViewAppointments = scheduleSourceAppointments.filter((a: any) => {
         if (!isAppointmentIncludedInOverview(a.status)) return false;
-        if (isStaleScheduledAppointment(a, nowMs)) return false;
         if (!matchesStoredScheduleFilters(a, scheduleContext)) return false;
 
         const appointmentStart = new Date(a.scheduledStart).getTime();
@@ -778,15 +1013,260 @@ export function HomePage() {
         scheduleContext.typeFilter !== 'all' ||
         scheduleContext.locationFilter !== 'all';
 
+      const waitingOverLimitCount = overviewAppointments.filter((appointment: any) =>
+        isCheckedIn(appointment.status) && getAppointmentDelayMinutes(appointment, nowMs) >= WAITING_ROOM_RISK_MINUTES
+      ).length;
+      const roomDwellOverLimitCount = overviewAppointments.filter((appointment: any) =>
+        isInRooms(appointment.status) && getAppointmentDelayMinutes(appointment, nowMs) >= ROOM_DWELL_RISK_MINUTES
+      ).length;
+      const upcomingThirtyMinuteCount = scopedAllAppointments.filter((appointment: any) => {
+        if (normalizeStatus(appointment.status) !== 'scheduled') return false;
+        const startMs = new Date(appointment.scheduledStart).getTime();
+        return Number.isFinite(startMs) && startMs >= nowMs && startMs <= nowMs + 30 * 60 * 1000;
+      }).length;
+      const intakeIncompleteCount = scopedAppointments.filter(isIntakeIncomplete).length;
+      const activeVisitNotClosedCount = scopedAppointments.filter((appointment: any) =>
+        ['checked_in', 'in_room', 'with_provider', 'checkout'].includes(normalizeStatus(appointment.status))
+      ).length;
+      const claimsCreatedToday = claims.filter((claim: any) =>
+        isOnLocalDay(claim.createdAt || claim.created_at || claim.submittedAt || claim.submitted_at || claim.serviceDate || claim.service_date, todayStr)
+      ).length;
+      const summarySchedule = commandSummaryRes?.schedule || null;
+      const summaryClaims = commandSummaryRes?.claims || null;
+      const summaryFinancials = commandSummaryRes?.financials || null;
+      const officialScheduleStats = {
+        appointmentsCount: summaryNumber(totalScheduleCount, summarySchedule?.appointmentsCount),
+        activeAppointmentsCount: summaryNumber(scopedAppointments.length, summarySchedule?.activeAppointmentsCount),
+        checkedInCount: summaryNumber(waitingCount, summarySchedule?.checkedInCount),
+        completedCount: summaryNumber(checkoutCount, summarySchedule?.completedCount),
+        waitingCount: summaryNumber(waitingCount, summarySchedule?.waitingCount),
+        inRoomsCount: summaryNumber(inRoomsCount, summarySchedule?.inRoomsCount),
+        checkoutCount: summaryNumber(checkoutCount, summarySchedule?.checkoutCount),
+        staleScheduledCount: summaryNumber(staleScheduledCount, summarySchedule?.staleScheduledCount),
+        noShowCount: summaryNumber(noShowCount, summarySchedule?.noShowCount),
+        cancelledCount: summaryNumber(cancelledCount, summarySchedule?.cancelledCount),
+        needsInsuranceVerification: summaryNumber(needsInsuranceVerification, summarySchedule?.needsInsuranceVerification),
+        balanceDueAppointments: summaryNumber(balanceDueAppointments, summarySchedule?.balanceDueAppointments),
+        copayDueCents: summaryNumber(copayDueCents, summarySchedule?.copayDueCents),
+      };
+      const officialFinancialStats = {
+        revenueTodayCents: summaryNumber(revenueTodayCents, summaryFinancials?.revenueTodayCents),
+        netCollectionsCents: summaryNumber(netCollectionsCents, summaryFinancials?.netCollectionsCents),
+        patientCollectionsCents: summaryNumber(patientCollectionsCents, summaryFinancials?.patientCollectionsCents),
+        payerCollectionsCents: summaryNumber(payerCollectionsCents, summaryFinancials?.payerCollectionsCents),
+        storeCollectionsCents: summaryNumber(storeCollectionsCents, summaryFinancials?.storeCollectionsCents),
+        collectionRateToday: summaryNumber(collectionRateToday, summaryFinancials?.collectionRateToday),
+        financialWorkQueueCount: summaryNumber(openFinancialWorkQueueItems.length, summaryFinancials?.financialWorkQueueCount),
+        claimWorkQueueCount: summaryNumber(claimWorkQueueCount, summaryFinancials?.claimWorkQueueCount),
+        billingWorkQueueCount: summaryNumber(billingWorkQueueCount, summaryFinancials?.billingWorkQueueCount),
+        arTotalCents: summaryNumber(arTotalCents, summaryFinancials?.arTotalCents),
+        arOver90Cents: summaryNumber(arOver90Cents, summaryFinancials?.arOver90Cents),
+      };
+      const officialClaimsStats = {
+        claimsInQueue: summaryNumber(claims.filter(isClaimInQueue).length, summaryClaims?.claimsInQueue),
+        claimsDeniedRejected: summaryNumber(claims.filter(isClaimAtRisk).length, summaryClaims?.claimsDeniedRejected),
+      };
+      const visitsNeedingClaimReview = Math.max(0, officialScheduleStats.checkoutCount - claimsCreatedToday);
+      const revenueCollectionGapCents = Math.max(0, officialFinancialStats.revenueTodayCents - officialFinancialStats.netCollectionsCents);
+      const loadedCriticalPathologyCount = biopsyRes?.queues?.critical?.length || 0;
+
+      const providerMap = new Map<string, HomeProviderThroughput>();
+      scopedAllAppointments
+        .filter((appointment: any) => isAppointmentIncludedInOverview(appointment.status))
+        .forEach((appointment: any) => {
+          const providerId = String(appointment.providerId || appointment.providerName || 'unassigned');
+          const existing = providerMap.get(providerId) || {
+            providerId,
+            providerName: String(appointment.providerName || 'Unassigned Provider'),
+            total: 0,
+            active: 0,
+            waiting: 0,
+            inRooms: 0,
+            completed: 0,
+            stale: 0,
+            longestDelayMinutes: 0,
+            route: '/schedule',
+          };
+          const status = normalizeStatus(appointment.status);
+          existing.total += 1;
+          if (!['completed', 'cancelled', 'no_show'].includes(status)) existing.active += 1;
+          if (isCheckedIn(status)) existing.waiting += 1;
+          if (isInRooms(status)) existing.inRooms += 1;
+          if (isCompletedVisit(status)) existing.completed += 1;
+          if (isStaleScheduledAppointment(appointment, nowMs)) existing.stale += 1;
+          existing.longestDelayMinutes = Math.max(existing.longestDelayMinutes, getAppointmentDelayMinutes(appointment, nowMs));
+          providerMap.set(providerId, existing);
+        });
+
+      const providerThroughput = Array.from(providerMap.values())
+        .sort((left, right) => {
+          const leftRisk = left.stale * 4 + left.waiting * 2 + left.inRooms;
+          const rightRisk = right.stale * 4 + right.waiting * 2 + right.inRooms;
+          if (rightRisk !== leftRisk) return rightRisk - leftRisk;
+          return right.total - left.total;
+        })
+        .slice(0, 5);
+
+      setCommandQueues({
+        riskItems: [
+          {
+            id: 'overdue-checkins',
+            label: 'Overdue check-ins',
+            value: officialScheduleStats.staleScheduledCount,
+            detail: 'Still scheduled past the check-in grace window',
+            route: '/schedule',
+            access: 'schedule',
+            icon: TimerReset,
+            tone: officialScheduleStats.staleScheduledCount > 0 ? 'red' : 'emerald',
+          },
+          {
+            id: 'long-wait',
+            label: `Waiting ${WAITING_ROOM_RISK_MINUTES}+ min`,
+            value: waitingOverLimitCount,
+            detail: 'Checked-in patients waiting longer than target',
+            route: `/office-flow?date=${todayStr}&status=checked_in`,
+            access: 'office_flow',
+            icon: Hourglass,
+            tone: waitingOverLimitCount > 0 ? 'amber' : 'emerald',
+          },
+          {
+            id: 'room-dwell',
+            label: `Rooms ${ROOM_DWELL_RISK_MINUTES}+ min`,
+            value: roomDwellOverLimitCount,
+            detail: 'Patients roomed longer than target',
+            route: `/office-flow?date=${todayStr}&status=in_room`,
+            access: 'office_flow',
+            icon: DoorOpen,
+            tone: roomDwellOverLimitCount > 0 ? 'amber' : 'emerald',
+          },
+          {
+            id: 'claim-exceptions',
+            label: 'Claim exceptions',
+            value: officialClaimsStats.claimsDeniedRejected,
+            detail: 'Denied, rejected, appealed, or aging claims',
+            route: `/claims?queue=denials&status=denied&startDate=${todayStr}&endDate=${todayStr}`,
+            access: 'claims',
+            icon: BadgeAlert,
+            tone: officialClaimsStats.claimsDeniedRejected > 0 ? 'red' : 'emerald',
+          },
+        ],
+        frontDeskItems: [
+          {
+            id: 'arriving-soon',
+            label: 'Arriving next 30',
+            value: upcomingThirtyMinuteCount,
+            detail: 'Scheduled arrivals that need readiness checks now',
+            route: '/schedule',
+            access: 'schedule',
+            icon: UserCheck,
+            tone: upcomingThirtyMinuteCount > 0 ? 'blue' : 'slate',
+          },
+          {
+            id: 'insurance',
+            label: 'Insurance not verified',
+            value: officialScheduleStats.needsInsuranceVerification,
+            detail: 'Eligibility or coverage checks blocking a clean visit',
+            route: '/front-desk',
+            access: 'office_flow',
+            icon: ClipboardCheck,
+            tone: officialScheduleStats.needsInsuranceVerification > 0 ? 'amber' : 'emerald',
+          },
+          {
+            id: 'balances',
+            label: 'Balances / copays',
+            value: officialScheduleStats.balanceDueAppointments,
+            detail: `${currencyFromCents(officialScheduleStats.copayDueCents)} in expected copays`,
+            route: '/front-desk',
+            access: 'office_flow',
+            icon: CircleDollarSign,
+            tone: officialScheduleStats.balanceDueAppointments > 0 ? 'amber' : 'emerald',
+          },
+          {
+            id: 'forms',
+            label: 'Forms incomplete',
+            value: intakeIncompleteCount,
+            detail: 'Intake, consent, or portal paperwork still incomplete',
+            route: '/documents?section=forms',
+            access: 'documents',
+            icon: ClipboardList,
+            tone: intakeIncompleteCount > 0 ? 'amber' : 'emerald',
+          },
+        ],
+        readinessItems: [
+          {
+            id: 'status-cleanup',
+            label: 'Schedule cleanup',
+            value: officialScheduleStats.staleScheduledCount,
+            detail: 'Appointments still scheduled after their visit window',
+            route: '/schedule',
+            access: 'schedule',
+            icon: ClipboardX,
+            tone: officialScheduleStats.staleScheduledCount > 0 ? 'red' : 'emerald',
+          },
+          {
+            id: 'visit-closeout',
+            label: 'Visits not checked out',
+            value: activeVisitNotClosedCount,
+            detail: 'Waiting, roomed, provider, or checkout statuses still open',
+            route: '/office-flow',
+            access: 'office_flow',
+            icon: UsersRound,
+            tone: activeVisitNotClosedCount > 0 ? 'amber' : 'emerald',
+          },
+          {
+            id: 'unsigned-notes',
+            label: 'Unsigned notes',
+            value: unsignedNotesToday,
+            detail: `Notes from ${todayStr} that still need completion or signature`,
+            route: '/notes?tab=unsigned',
+            access: 'notes',
+            icon: FileCheck2,
+            tone: unsignedNotesToday > 0 ? 'amber' : 'emerald',
+          },
+          {
+            id: 'claims-review',
+            label: 'Claims to create/review',
+            value: visitsNeedingClaimReview,
+            detail: `${claimsCreatedToday} claims created for ${todayStr} from completed visits`,
+            route: `/claims?startDate=${todayStr}&endDate=${todayStr}`,
+            access: 'claims',
+            icon: ReceiptText,
+            tone: visitsNeedingClaimReview > 0 ? 'amber' : 'emerald',
+          },
+          {
+            id: 'payments-gap',
+            label: 'Collection gap',
+            value: currencyFromCents(revenueCollectionGapCents),
+            detail: 'Posted revenue not yet matched by collections today',
+            route: `/financials?tab=payments&startDate=${todayStr}&endDate=${todayStr}`,
+            access: 'financials',
+            icon: WalletCards,
+            tone: revenueCollectionGapCents > 0 ? 'amber' : 'emerald',
+          },
+          {
+            id: 'safety-closeout',
+            label: 'Safety closeout',
+            value: loadedCriticalPathologyCount,
+            detail: 'Critical pathology follow-up before end of day',
+            route: '/biopsies',
+            access: 'labs',
+            icon: ShieldCheck,
+            tone: loadedCriticalPathologyCount > 0 ? 'red' : 'emerald',
+          },
+        ],
+        providerThroughput,
+      });
+
       setStats({
-        appointmentsCount: scopedAppointments.length,
-        checkedInCount: waitingCount,
-        completedCount: checkoutCount,
+        appointmentsCount: officialScheduleStats.appointmentsCount,
+        activeAppointmentsCount: officialScheduleStats.activeAppointmentsCount,
+        checkedInCount: officialScheduleStats.checkedInCount,
+        completedCount: officialScheduleStats.completedCount,
         pendingTasks: tasks.filter((t: any) => isTaskPending(t.status)).length,
         openEncounters: teamNotesNeedingWork,
-        waitingCount,
-        inRoomsCount,
-        checkoutCount,
+        waitingCount: officialScheduleStats.waitingCount,
+        inRoomsCount: officialScheduleStats.inRoomsCount,
+        checkoutCount: officialScheduleStats.checkoutCount,
         scheduleViewCount: scheduleViewAppointments.length,
         scheduleViewMode: scheduleContext.viewMode,
         scheduleDateLabel: todayDate.toLocaleDateString('en-US', {
@@ -806,27 +1286,50 @@ export function HomePage() {
         unreadMessageThreads,
         myNotesNeedingWork,
         teamNotesNeedingWork,
-        needsInsuranceVerification,
-        balanceDueAppointments,
-        copayDueCents,
-        staleScheduledCount,
-        noShowCount,
-        cancelledCount,
-        netCollectionsCents,
-        patientCollectionsCents,
-        payerCollectionsCents,
-        claimsInQueue: claims.filter(isClaimInQueue).length,
-        claimsDeniedRejected: claims.filter(isClaimAtRisk).length,
-        financialWorkQueueCount: financialWorkQueueItems.filter((item: any) => isTaskPending(item.status)).length,
-        arTotalCents,
-        arOver90Cents,
+        needsInsuranceVerification: officialScheduleStats.needsInsuranceVerification,
+        balanceDueAppointments: officialScheduleStats.balanceDueAppointments,
+        copayDueCents: officialScheduleStats.copayDueCents,
+        staleScheduledCount: officialScheduleStats.staleScheduledCount,
+        noShowCount: officialScheduleStats.noShowCount,
+        cancelledCount: officialScheduleStats.cancelledCount,
+        revenueTodayCents: officialFinancialStats.revenueTodayCents,
+        netCollectionsCents: officialFinancialStats.netCollectionsCents,
+        patientCollectionsCents: officialFinancialStats.patientCollectionsCents,
+        payerCollectionsCents: officialFinancialStats.payerCollectionsCents,
+        storeCollectionsCents: officialFinancialStats.storeCollectionsCents,
+        collectionRateToday: officialFinancialStats.collectionRateToday,
+        claimsInQueue: officialClaimsStats.claimsInQueue,
+        claimsDeniedRejected: officialClaimsStats.claimsDeniedRejected,
+        financialWorkQueueCount: officialFinancialStats.financialWorkQueueCount,
+        claimWorkQueueCount: officialFinancialStats.claimWorkQueueCount,
+        billingWorkQueueCount: officialFinancialStats.billingWorkQueueCount,
+        arTotalCents: officialFinancialStats.arTotalCents,
+        arOver90Cents: officialFinancialStats.arOver90Cents,
+      });
+      setDataHealth({
+        failedSources: Array.from(new Set([...failedSources, ...getCommandSummaryFailedSourceLabels(commandSummaryRes)])),
+        lastUpdatedAt: new Date().toISOString(),
+        businessDate: todayStr,
       });
     } catch (err: any) {
+      setDataHealth((current) => ({
+        ...current,
+        failedSources: Array.from(new Set([...current.failedSources, 'command center'])),
+        lastUpdatedAt: new Date().toISOString(),
+      }));
       showError(err.message || 'Failed to load dashboard');
     } finally {
       setLoading(false);
     }
-  }, [effectiveRoles, overviewLocationFilter, session, showError]);
+  }, [businessDate, effectiveRoles, overviewLocationFilter, session, showError]);
+
+  const handleBusinessDateChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const nextDate = event.target.value;
+    if (!ISO_DATE_PATTERN.test(nextDate)) return;
+
+    setClinicBusinessDate(nextDate);
+    setBusinessDate(nextDate);
+  }, []);
 
   const loadAppointmentFinderData = useCallback(
     async ({ force = false }: { force?: boolean } = {}) => {
@@ -1008,38 +1511,81 @@ export function HomePage() {
 
   const criticalPathologyCount = biopsySafety?.critical.length || 0;
   const totalPathologyOpenLoops = biopsySafety?.summary.total_open_loops || 0;
-  const commandRiskCount =
+  const commandUrgentCount =
     criticalPathologyCount +
     stats.claimsDeniedRejected +
-    stats.financialWorkQueueCount +
     stats.needsInsuranceVerification +
-    stats.balanceDueAppointments;
+    stats.balanceDueAppointments +
+    stats.staleScheduledCount;
+  const commandBacklogCount = stats.billingWorkQueueCount;
   const operationalCompletionRate =
     stats.appointmentsCount > 0 ? Math.round((stats.completedCount / stats.appointmentsCount) * 100) : 0;
+  const isCurrentBusinessDate = businessDate === getDateKeyInPracticeTimeZone(new Date());
+  const dayScopeLabel = isCurrentBusinessDate ? "Today's" : 'Selected day';
+  const dayScopeLower = isCurrentBusinessDate ? 'today' : 'selected day';
+  const withBusinessDateRoute = (route: string): string => {
+    const [pathAndQuery, hash] = route.split('#');
+    const [pathname, query = ''] = pathAndQuery.split('?');
+    const params = new URLSearchParams(query);
+
+    if (pathname === '/schedule' || pathname === '/office-flow') {
+      params.set('date', businessDate);
+    }
+    if (pathname === '/financials' || pathname === '/claims') {
+      params.set('startDate', businessDate);
+      params.set('endDate', businessDate);
+    }
+
+    const queryString = params.toString();
+    return `${pathname}${queryString ? `?${queryString}` : ''}${hash ? `#${hash}` : ''}`;
+  };
 
   const commandMetrics: Array<{
     label: string;
     value: string | number;
     detail: string;
     route: string;
+    access?: ModuleKey | ModuleKey[];
     icon: LucideIcon;
     tone: 'blue' | 'emerald' | 'amber' | 'red' | 'violet' | 'slate';
   }> = [
     {
-      label: "Today's schedule",
+      label: `${dayScopeLabel} schedule`,
       value: stats.appointmentsCount,
       detail: `${stats.waitingCount} waiting, ${stats.inRoomsCount} in rooms, ${stats.completedCount} completed${
         stats.staleScheduledCount > 0 ? `, ${stats.staleScheduledCount} need status` : ''
       }`,
-      route: '/schedule',
+      route: withBusinessDateRoute('/schedule'),
+      access: 'schedule',
       icon: CalendarDays,
       tone: 'blue',
     },
     {
+      label: `Revenue ${dayScopeLower}`,
+      value: currencyFromCents(stats.revenueTodayCents),
+      detail: `${currencyFromCents(stats.netCollectionsCents)} clinical collections${
+        stats.storeCollectionsCents > 0 ? `, ${currencyFromCents(stats.storeCollectionsCents)} store` : ''
+      }`,
+      route: withBusinessDateRoute('/financials'),
+      access: 'financials',
+      icon: DollarSign,
+      tone: 'emerald',
+    },
+    {
+      label: `Collections ${dayScopeLower}`,
+      value: currencyFromCents(stats.netCollectionsCents),
+      detail: `${currencyFromCents(stats.patientCollectionsCents)} patient, ${currencyFromCents(stats.payerCollectionsCents)} payer`,
+      route: withBusinessDateRoute('/financials'),
+      access: 'financials',
+      icon: CreditCard,
+      tone: 'emerald',
+    },
+    {
       label: 'Clinical work',
       value: stats.notesWrittenToday + stats.pendingLabOrders,
-      detail: `${stats.notesWrittenToday} notes written today, ${stats.pendingLabOrders} lab/path orders`,
+      detail: `${stats.notesWrittenToday} notes written ${dayScopeLower}, ${stats.pendingLabOrders} lab/path orders`,
       route: '/notes',
+      access: ['notes', 'orders'],
       icon: Stethoscope,
       tone: 'violet',
     },
@@ -1048,34 +1594,29 @@ export function HomePage() {
       value: stats.needsInsuranceVerification + stats.balanceDueAppointments,
       detail: `${stats.needsInsuranceVerification} insurance checks, ${stats.balanceDueAppointments} balances`,
       route: '/front-desk',
+      access: 'office_flow',
       icon: ClipboardCheck,
       tone: 'amber',
     },
     {
       label: 'Revenue cycle',
-      value: stats.claimsInQueue + stats.claimsDeniedRejected + stats.financialWorkQueueCount,
-      detail: `${stats.claimsInQueue} claims active, ${stats.claimsDeniedRejected} at risk`,
-      route: '/financials',
+      value: stats.claimsInQueue + stats.claimsDeniedRejected + stats.billingWorkQueueCount,
+      detail: `${stats.claimsInQueue} active, ${stats.claimsDeniedRejected} urgent, ${stats.billingWorkQueueCount} backlog`,
+      route: canAccessAnyModule('financials') ? withBusinessDateRoute('/financials') : withBusinessDateRoute('/claims'),
+      access: ['financials', 'claims'],
       icon: DollarSign,
-      tone: stats.claimsDeniedRejected + stats.financialWorkQueueCount > 0 ? 'red' : 'emerald',
-    },
-    {
-      label: 'Collections today',
-      value: currencyFromCents(stats.netCollectionsCents),
-      detail: `${currencyFromCents(stats.patientCollectionsCents)} patient, ${currencyFromCents(stats.payerCollectionsCents)} payer`,
-      route: '/financials',
-      icon: CreditCard,
-      tone: 'emerald',
+      tone: stats.claimsDeniedRejected > 0 ? 'red' : stats.billingWorkQueueCount > 0 ? 'amber' : 'emerald',
     },
     {
       label: 'Clinical Inbox',
       value: stats.unreadMessageThreads,
       detail: `${stats.pendingTasks} open tasks, ${stats.unreadMessageThreads} unread threads`,
       route: '/clinical-inbox',
+      access: 'clinical_inbox',
       icon: Inbox,
       tone: stats.unreadMessageThreads > 0 ? 'amber' : 'slate',
     },
-  ];
+  ].filter(canOpenAction);
 
   const priorityItems = [
     {
@@ -1083,22 +1624,34 @@ export function HomePage() {
       value: criticalPathologyCount,
       detail: `${totalPathologyOpenLoops} open biopsy loops`,
       route: '/biopsies',
+      access: 'labs',
       icon: ShieldCheck,
       severity: criticalPathologyCount > 0 ? 'critical' : 'steady',
     },
     {
-      label: 'Claim and billing exceptions',
-      value: stats.claimsDeniedRejected + stats.financialWorkQueueCount,
-      detail: `${stats.claimsDeniedRejected} claim risks, ${stats.financialWorkQueueCount} work queue items`,
-      route: '/financials',
+      label: 'Claim exceptions',
+      value: stats.claimsDeniedRejected,
+      detail: `${stats.claimsDeniedRejected} denied, rejected, appealed, or at-risk claims`,
+      route: withBusinessDateRoute('/claims?queue=denials&status=denied'),
+      access: 'claims',
       icon: AlertTriangle,
-      severity: stats.claimsDeniedRejected + stats.financialWorkQueueCount > 0 ? 'critical' : 'steady',
+      severity: stats.claimsDeniedRejected > 0 ? 'critical' : 'steady',
+    },
+    {
+      label: 'Billing backlog',
+      value: stats.billingWorkQueueCount,
+      detail: `${currencyFromCents(stats.arTotalCents)} open A/R; ${currencyFromCents(stats.arOver90Cents)} older than 90 days`,
+      route: withBusinessDateRoute('/financials?tab=bills'),
+      access: 'financials',
+      icon: CreditCard,
+      severity: stats.billingWorkQueueCount > 0 ? 'warning' : 'steady',
     },
     {
       label: 'Patient-ready blockers',
       value: stats.needsInsuranceVerification + stats.balanceDueAppointments,
       detail: `${stats.needsInsuranceVerification} insurance, ${currencyFromCents(stats.copayDueCents)} copays due`,
       route: '/front-desk',
+      access: 'office_flow',
       icon: ClipboardCheck,
       severity: stats.needsInsuranceVerification + stats.balanceDueAppointments > 0 ? 'warning' : 'steady',
     },
@@ -1107,34 +1660,126 @@ export function HomePage() {
       value: stats.myNotesNeedingWork + stats.pendingLabOrders,
       detail: `${stats.myNotesNeedingWork} my notes, ${stats.pendingLabOrders} lab/path orders`,
       route: '/notes',
+      access: ['notes', 'orders'],
       icon: FileText,
       severity: stats.myNotesNeedingWork + stats.pendingLabOrders > 0 ? 'warning' : 'steady',
     },
-  ];
+  ].filter(canOpenAction);
 
   const quickActions = [
-    { label: 'New Patient', route: '/patients/new', icon: UserPlus },
-    { label: 'Schedule', route: '/schedule', icon: CalendarDays },
-    { label: 'Tasks', route: '/tasks', icon: ClipboardCheck },
-    { label: 'Financials', route: '/financials', icon: DollarSign },
-    { label: 'Analytics', route: '/analytics', icon: BarChart3 },
-    { label: 'Clinical Inbox', route: '/clinical-inbox', icon: Inbox },
-    { label: 'Mail', route: '/mail', icon: Mail },
-  ];
+    { label: 'New Patient', route: '/patients/new', access: 'patients' as ModuleKey, icon: UserPlus },
+    { label: 'Schedule', route: withBusinessDateRoute('/schedule'), access: 'schedule' as ModuleKey, icon: CalendarDays },
+    { label: 'Tasks', route: '/tasks', access: 'tasks' as ModuleKey, icon: ClipboardCheck },
+    { label: 'Financials', route: withBusinessDateRoute('/financials'), access: 'financials' as ModuleKey, icon: DollarSign },
+    { label: 'Analytics', route: '/analytics', access: 'analytics' as ModuleKey, icon: BarChart3 },
+    { label: 'Clinical Inbox', route: '/clinical-inbox', access: 'clinical_inbox' as ModuleKey, icon: Inbox },
+    { label: 'Mail', route: '/mail', access: 'mail' as ModuleKey, icon: Mail },
+  ].filter(canOpenAction);
+
+  const revenuePulseItems: HomeActionQueueItem[] = [
+    {
+      id: 'expected-revenue',
+      label: 'Expected clinical revenue',
+      value: currencyFromCents(stats.revenueTodayCents),
+      detail: 'Posted clinical revenue in the selected day',
+      route: withBusinessDateRoute('/financials'),
+      access: 'financials',
+      icon: DollarSign,
+      tone: stats.revenueTodayCents > 0 ? 'emerald' : 'slate',
+    },
+    {
+      id: 'collected-revenue',
+      label: 'Collected so far',
+      value: currencyFromCents(stats.netCollectionsCents),
+      detail: `${currencyFromCents(stats.patientCollectionsCents)} patient · ${currencyFromCents(stats.payerCollectionsCents)} payer`,
+      route: withBusinessDateRoute('/financials?tab=payments'),
+      access: 'financials',
+      icon: WalletCards,
+      tone: stats.netCollectionsCents > 0 ? 'emerald' : 'slate',
+    },
+    {
+      id: 'collection-gap',
+      label: 'Collection opportunity',
+      value: currencyFromCents(Math.max(0, stats.revenueTodayCents - stats.netCollectionsCents)),
+      detail: `${stats.collectionRateToday}% collection rate ${dayScopeLower}`,
+      route: withBusinessDateRoute('/financials?tab=payments'),
+      access: 'financials',
+      icon: CircleDollarSign,
+      tone: stats.revenueTodayCents > stats.netCollectionsCents ? 'amber' : 'emerald',
+    },
+    {
+      id: 'store-revenue',
+      label: 'Store revenue',
+      value: currencyFromCents(stats.storeCollectionsCents),
+      detail: 'Retail payments tied to the office store',
+      route: '/store-ops?tab=payments',
+      access: 'store',
+      icon: Store,
+      tone: stats.storeCollectionsCents > 0 ? 'emerald' : 'slate',
+    },
+  ].filter(canOpenAction);
+
+  const visibleCommandQueues: HomeCommandQueues = {
+    riskItems: commandQueues.riskItems.filter(canOpenAction),
+    frontDeskItems: commandQueues.frontDeskItems.filter(canOpenAction),
+    readinessItems: commandQueues.readinessItems.filter(canOpenAction),
+    providerThroughput: canAccessAnyModule('schedule') ? commandQueues.providerThroughput : [],
+  };
+  const showRevenuePulsePanel = revenuePulseItems.length > 0;
+  const showFrontDeskPanel = canAccessAnyModule('office_flow') || visibleCommandQueues.frontDeskItems.length > 0;
+  const showProviderThroughputPanel = canAccessAnyModule('schedule');
+  const showPatientFlowSection = canAccessAnyModule(['schedule', 'office_flow']);
+  const showClinicalWorkSection = canAccessAnyModule(['notes', 'orders', 'labs']);
+  const showRevenueCycleSection = canAccessAnyModule('financials');
+
+  const renderQueueItems = (items: HomeActionQueueItem[], emptyLabel: string) => (
+    items.length === 0 ? (
+      <div className="command-empty-state">{emptyLabel}</div>
+    ) : (
+      items.map((item) => {
+        const Icon = item.icon;
+        return (
+          <button
+            type="button"
+            key={item.id}
+            className={`command-insight-row command-insight-row--${item.tone}`}
+            onClick={() => navigate(item.route)}
+          >
+            <span className="command-insight-row__icon">
+              <Icon size={17} aria-hidden="true" />
+            </span>
+            <span>
+              <strong>{item.label}</strong>
+              <small>{item.detail}</small>
+            </span>
+            <b>{loading ? '-' : item.value}</b>
+          </button>
+        );
+      })
+    )
+  );
 
   return (
     <div className="home-page command-center-page">
       <header className="command-center-hero">
         <div className="command-center-hero__copy">
-          <div className="command-center-kicker">Today's Overview</div>
+          <div className="command-center-kicker">{dayScopeLabel} Overview</div>
           <h1>Practice Command Center</h1>
           <div className="command-center-hero__meta">
             <span>{stats.scheduleDateLabel || new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
             <span>{operationalCompletionRate}% complete</span>
-            <span>{commandRiskCount} items need attention</span>
+            <span>{commandUrgentCount} urgent today</span>
+            <span>{commandBacklogCount} billing backlog</span>
           </div>
         </div>
         <div className="command-center-toolbar">
+          <label htmlFor="home-business-date">Business date</label>
+          <input
+            id="home-business-date"
+            type="date"
+            value={businessDate}
+            onChange={handleBusinessDateChange}
+          />
           <label htmlFor="home-overview-location">Location</label>
           <select
             id="home-overview-location"
@@ -1153,6 +1798,15 @@ export function HomePage() {
           </button>
         </div>
       </header>
+
+      {dataHealth.failedSources.length > 0 && (
+        <section className="command-data-health" role="status" aria-live="polite">
+          <AlertTriangle size={17} aria-hidden="true" />
+          <span>
+            Data unavailable for {dataHealth.failedSources.join(', ')}. Counts from those areas are hidden or incomplete until the next refresh.
+          </span>
+        </section>
+      )}
 
       <section className="command-metric-grid" aria-label="Command center metrics">
         {loading ? (
@@ -1209,12 +1863,135 @@ export function HomePage() {
         })}
       </section>
 
+      <section className="command-insight-grid" aria-label="Command center action queues">
+        <div className="command-insight-panel">
+          <div className="command-insight-panel__header">
+            <span className="command-insight-panel__icon command-insight-panel__icon--red">
+              <Activity size={17} aria-hidden="true" />
+            </span>
+            <div>
+              <p>{dayScopeLabel} Risk Queue</p>
+              <h2>Problems to pull forward</h2>
+            </div>
+          </div>
+          <div className="command-insight-stack">
+            {renderQueueItems(visibleCommandQueues.riskItems, 'No urgent operational risks in this view.')}
+          </div>
+        </div>
+
+        {showRevenuePulsePanel && (
+          <div className="command-insight-panel">
+            <div className="command-insight-panel__header">
+              <span className="command-insight-panel__icon command-insight-panel__icon--emerald">
+                <CircleDollarSign size={17} aria-hidden="true" />
+              </span>
+              <div>
+                <p>Revenue Pulse</p>
+                <h2>Money moving {dayScopeLower}</h2>
+              </div>
+            </div>
+            <div className="command-insight-stack">
+              {renderQueueItems(revenuePulseItems, 'No revenue activity posted yet.')}
+            </div>
+          </div>
+        )}
+
+        {showFrontDeskPanel && (
+          <div className="command-insight-panel">
+            <div className="command-insight-panel__header">
+              <span className="command-insight-panel__icon command-insight-panel__icon--blue">
+                <UserCheck size={17} aria-hidden="true" />
+              </span>
+              <div>
+                <p>Front Desk Command</p>
+                <h2>Ready before arrival</h2>
+              </div>
+            </div>
+            <div className="command-insight-stack">
+              {renderQueueItems(visibleCommandQueues.frontDeskItems, 'No front desk blockers right now.')}
+            </div>
+          </div>
+        )}
+
+        {showProviderThroughputPanel && (
+          <div className="command-insight-panel">
+            <div className="command-insight-panel__header">
+              <span className="command-insight-panel__icon command-insight-panel__icon--violet">
+                <UsersRound size={17} aria-hidden="true" />
+              </span>
+              <div>
+                <p>Provider Throughput</p>
+                <h2>Who is running hot</h2>
+              </div>
+            </div>
+            <div className="command-provider-list">
+              {visibleCommandQueues.providerThroughput.length === 0 ? (
+                <div className="command-empty-state">No provider schedule volume in this view.</div>
+              ) : (
+                visibleCommandQueues.providerThroughput.map((provider) => {
+                  const providerStatus = provider.stale > 0
+                    ? 'Needs cleanup'
+                    : provider.longestDelayMinutes >= WAITING_ROOM_RISK_MINUTES
+                      ? 'Running behind'
+                      : provider.active > 0
+                        ? 'In motion'
+                        : 'Clear';
+                  const providerTone = provider.stale > 0 || provider.longestDelayMinutes >= ROOM_DWELL_RISK_MINUTES
+                    ? 'red'
+                    : provider.longestDelayMinutes >= WAITING_ROOM_RISK_MINUTES
+                      ? 'amber'
+                      : 'emerald';
+                  return (
+                    <button
+                      type="button"
+                      key={provider.providerId}
+                      className={`command-provider-row command-provider-row--${providerTone}`}
+                      onClick={() => {
+                        if (provider.providerId !== 'unassigned') {
+                          localStorage.setItem('sched:provider', provider.providerId);
+                          localStorage.setItem('sched:viewMode', 'day');
+                        }
+                        navigate(withBusinessDateRoute('/schedule?view=day'));
+                      }}
+                    >
+                      <span>
+                        <strong>{provider.providerName}</strong>
+                        <small>
+                          {provider.total} scheduled · {provider.completed} seen · {provider.waiting} waiting · {provider.inRooms} roomed
+                        </small>
+                      </span>
+                      <em>{providerStatus}</em>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="command-insight-panel command-insight-panel--wide">
+          <div className="command-insight-panel__header">
+            <span className="command-insight-panel__icon command-insight-panel__icon--amber">
+              <FileCheck2 size={17} aria-hidden="true" />
+            </span>
+            <div>
+              <p>End-of-Day Readiness</p>
+              <h2>Close before everyone leaves</h2>
+            </div>
+          </div>
+          <div className="command-readiness-grid">
+            {renderQueueItems(visibleCommandQueues.readinessItems, 'Nothing is blocking end-of-day closeout.')}
+          </div>
+        </div>
+      </section>
+
       <section className="command-center-grid" aria-label="Daily operations command center">
+        {showPatientFlowSection && (
         <div className="command-panel command-panel--wide">
           <div className="command-panel__header">
             <div>
               <p>Patient Flow</p>
-              <h2>Today's Patients</h2>
+              <h2>{dayScopeLabel} Patients</h2>
             </div>
             <button type="button" className="command-link-btn" onClick={() => navigate('/front-desk')}>
               Front Desk <ArrowRight size={15} aria-hidden="true" />
@@ -1222,7 +1999,7 @@ export function HomePage() {
           </div>
           <div className="command-flow-row">
             {[
-              { label: 'Scheduled', value: stats.appointmentsCount, tone: 'blue' },
+      { label: isCurrentBusinessDate ? 'Today' : 'Selected', value: stats.appointmentsCount, tone: 'blue' },
               { label: 'Waiting', value: stats.waitingCount, tone: 'amber' },
               { label: 'In Rooms', value: stats.inRoomsCount, tone: 'violet' },
               { label: 'Completed', value: stats.completedCount, tone: 'emerald' },
@@ -1239,7 +2016,7 @@ export function HomePage() {
             <Clock size={16} aria-hidden="true" />
             <span>
               Current schedule filters: <strong>{stats.scheduleViewCount}</strong> appointments in {stats.scheduleViewMode} view
-              {stats.scheduleHasFilters ? ', filtered' : ', unfiltered'}.
+              {stats.scheduleHasFilters ? ', filtered' : ', unfiltered'}; {stats.activeAppointmentsCount} active.
             </span>
           </div>
           <div className="command-list-grid">
@@ -1293,7 +2070,9 @@ export function HomePage() {
             </div>
           </div>
         </div>
+        )}
 
+        {showClinicalWorkSection && (
         <div className="command-panel">
           <div className="command-panel__header">
             <div>
@@ -1317,7 +2096,7 @@ export function HomePage() {
               <ClipboardCheck size={17} aria-hidden="true" />
               <span>
                 <strong>Pending Lab/Path Orders</strong>
-                <small>Unsigned notes today: {stats.unsignedNotesToday}</small>
+                <small>Unsigned notes {dayScopeLower}: {stats.unsignedNotesToday}</small>
               </span>
               <b>{loading ? '-' : stats.pendingLabOrders}</b>
             </button>
@@ -1331,7 +2110,9 @@ export function HomePage() {
             </button>
           </div>
         </div>
+        )}
 
+        {showRevenueCycleSection && (
         <div className="command-panel">
           <div className="command-panel__header">
             <div>
@@ -1344,8 +2125,16 @@ export function HomePage() {
           </div>
           <div className="command-money-grid">
             <div>
+              <span>{currencyFromCents(stats.revenueTodayCents)}</span>
+              <p>Revenue {dayScopeLower}</p>
+            </div>
+            <div>
               <span>{currencyFromCents(stats.netCollectionsCents)}</span>
-              <p>Collections today</p>
+              <p>Clinical collections</p>
+            </div>
+            <div>
+              <span>{stats.collectionRateToday}%</span>
+              <p>Collection rate</p>
             </div>
             <div>
               <span>{stats.claimsInQueue}</span>
@@ -1353,7 +2142,7 @@ export function HomePage() {
             </div>
             <div>
               <span>{stats.claimsDeniedRejected}</span>
-              <p>Denied/rejected</p>
+              <p>At-risk claims</p>
             </div>
             <div>
               <span>{currencyFromCents(stats.arOver90Cents)}</span>
@@ -1364,14 +2153,17 @@ export function HomePage() {
             <AlertTriangle size={17} aria-hidden="true" />
             <span>
               <strong>Financial work queue</strong>
-              <small>{currencyFromCents(stats.arTotalCents)} total open A/R</small>
+              <small>
+                {currencyFromCents(stats.arTotalCents)} open A/R · {stats.claimWorkQueueCount} claim denials, {stats.billingWorkQueueCount} billing
+              </small>
             </span>
             <b>{loading ? '-' : stats.financialWorkQueueCount}</b>
           </button>
         </div>
+        )}
       </section>
 
-      {biopsySafety && totalPathologyOpenLoops > 0 && (
+      {canAccessAnyModule('labs') && biopsySafety && totalPathologyOpenLoops > 0 && (
         <section className="command-pathology-banner" aria-label="Pathology safety alerts">
           <div>
             <p>Pathology Safety Alerts</p>

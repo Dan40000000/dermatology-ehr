@@ -1,7 +1,14 @@
 import { useState } from 'react';
+import type { CSSProperties } from 'react';
+
+type DashboardRangePreset = 'today' | 'week' | 'mtd' | 'custom';
 
 interface RCMMetrics {
   totalClinicalCollections: number;
+  storeRevenueCents?: number;
+  badDebtCents?: number;
+  collectionsReferralBalanceCents?: number;
+  collectionsReferralCount?: number;
   netCollectionRatio: number;
   adjustmentsWriteoffs: number;
   daysSalesOutstanding: number;
@@ -25,10 +32,28 @@ interface Props {
   metrics?: RCMMetrics;
   arAging?: ARAgingBucket[];
   onDrillDown?: (metric: string) => void;
+  activeDrillDown?: string | null;
+  rangeControl?: {
+    preset: DashboardRangePreset;
+    startDate: string;
+    endDate: string;
+    rangeLabel: string;
+    loading?: boolean;
+    currentWeekRangeLabel: string;
+    currentWeekClinicalCollectionsCents: number;
+    onPresetChange: (preset: DashboardRangePreset) => void;
+    onStartDateChange: (value: string) => void;
+    onEndDateChange: (value: string) => void;
+    onApplyCustomRange: () => void;
+  };
 }
 
 const DEFAULT_METRICS: RCMMetrics = {
   totalClinicalCollections: 12750000, // $127,500
+  storeRevenueCents: 0,
+  badDebtCents: 0,
+  collectionsReferralBalanceCents: 0,
+  collectionsReferralCount: 0,
   netCollectionRatio: 94.5,
   adjustmentsWriteoffs: 425000, // $4,250
   daysSalesOutstanding: 28,
@@ -47,8 +72,7 @@ const DEFAULT_AR_AGING: ARAgingBucket[] = [
   { label: '120+', range: '120+ days', amountCents: 1593750, count: 18, percentage: 15, color: '#dc2626' },
 ];
 
-export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_AGING, onDrillDown }: Props) {
-  const [selectedPeriod, setSelectedPeriod] = useState<'mtd' | 'qtd' | 'ytd'>('mtd');
+export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_AGING, onDrillDown, activeDrillDown, rangeControl }: Props) {
   const [showTrends, setShowTrends] = useState(false);
 
   const formatCurrency = (cents: number) => {
@@ -61,6 +85,27 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
   };
 
   const totalAR = arAging.reduce((sum, bucket) => sum + bucket.amountCents, 0);
+  const clinicalCollectionsLabel = rangeControl?.preset === 'today'
+    ? 'Today Clinical Collections'
+    : rangeControl?.preset === 'week'
+      ? 'Current Week Clinical Collections'
+      : rangeControl?.preset === 'mtd'
+        ? 'MTD Clinical Collections'
+        : 'Selected Range Clinical Collections';
+
+  const drillableCardStyle = (metric: string, base: CSSProperties): CSSProperties => ({
+    ...base,
+    outline: activeDrillDown === metric ? '3px solid rgba(5, 150, 105, 0.32)' : 'none',
+    position: 'relative',
+  });
+
+  const secondaryCardStyle = (metric: string, base: CSSProperties): CSSProperties =>
+    drillableCardStyle(metric, {
+      ...base,
+      cursor: 'pointer',
+      border: activeDrillDown === metric ? '2px solid #10b981' : '1px solid transparent',
+      transition: 'all 0.2s ease',
+    });
 
   return (
     <div className="rcm-dashboard">
@@ -79,37 +124,105 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
             marginBottom: '0.25rem',
           }}>Revenue Cycle Management</h2>
           <p style={{ color: '#6b7280', fontSize: '0.95rem' }}>
-            Key performance indicators for your practice
+            Key performance indicators for {rangeControl?.rangeLabel || 'your practice'}
           </p>
+          {rangeControl && (
+            <div style={{ marginTop: '0.55rem', color: '#047857', fontSize: '0.84rem', fontWeight: 800 }}>
+              Current week: {rangeControl.currentWeekRangeLabel} · {formatCurrency(rangeControl.currentWeekClinicalCollectionsCents)} clinical collections
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <div style={{
-            background: '#f3f4f6',
-            borderRadius: '8px',
-            padding: '4px',
-            display: 'flex',
-            gap: '4px',
-          }}>
-            {(['mtd', 'qtd', 'ytd'] as const).map(period => (
-              <button
-                key={period}
-                onClick={() => setSelectedPeriod(period)}
-                style={{
-                  padding: '0.5rem 1rem',
-                  border: 'none',
-                  borderRadius: '6px',
-                  background: selectedPeriod === period ? '#059669' : 'transparent',
-                  color: selectedPeriod === period ? 'white' : '#6b7280',
-                  fontWeight: '600',
-                  fontSize: '0.85rem',
-                  cursor: 'pointer',
-                  textTransform: 'uppercase',
-                }}
-              >
-                {period}
-              </button>
-            ))}
-          </div>
+          {rangeControl && (
+            <div style={{
+              background: '#f3f4f6',
+              borderRadius: '10px',
+              padding: '6px',
+              display: 'grid',
+              gridTemplateColumns: '1fr',
+              gap: '6px',
+              minWidth: '430px',
+              maxWidth: '520px',
+            }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 0.8fr', gap: '5px' }}>
+                {([
+                  ['today', 'Current Day'],
+                  ['week', 'Current Week'],
+                  ['mtd', 'MTD'],
+                ] as Array<[DashboardRangePreset, string]>).map(([preset, label]) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => rangeControl.onPresetChange(preset)}
+                    style={{
+                      padding: '0.48rem 0.65rem',
+                      border: 'none',
+                      borderRadius: '7px',
+                      background: rangeControl.preset === preset ? '#059669' : 'transparent',
+                      color: rangeControl.preset === preset ? 'white' : '#6b7280',
+                      fontWeight: '800',
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr auto', gap: '6px', alignItems: 'center' }}>
+                <input
+                  type="date"
+                  aria-label="Overview start date"
+                  value={rangeControl.startDate}
+                  onChange={(event) => rangeControl.onStartDateChange(event.target.value)}
+                  style={{
+                    minWidth: 0,
+                    padding: '0.46rem 0.55rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '7px',
+                    background: '#ffffff',
+                    color: '#374151',
+                    fontWeight: 700,
+                  }}
+                />
+                <span style={{ color: '#6b7280', fontWeight: 800 }}>to</span>
+                <input
+                  type="date"
+                  aria-label="Overview end date"
+                  value={rangeControl.endDate}
+                  onChange={(event) => rangeControl.onEndDateChange(event.target.value)}
+                  style={{
+                    minWidth: 0,
+                    padding: '0.46rem 0.55rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '7px',
+                    background: '#ffffff',
+                    color: '#374151',
+                    fontWeight: 700,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={rangeControl.onApplyCustomRange}
+                  disabled={rangeControl.loading}
+                  style={{
+                    padding: '0.48rem 0.8rem',
+                    border: 'none',
+                    borderRadius: '7px',
+                    background: rangeControl.loading ? '#9ca3af' : '#0f766e',
+                    color: '#ffffff',
+                    fontWeight: '800',
+                    fontSize: '0.82rem',
+                    cursor: rangeControl.loading ? 'wait' : 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {rangeControl.loading ? 'Loading...' : 'Apply'}
+                </button>
+              </div>
+            </div>
+          )}
           <button
             onClick={() => setShowTrends(!showTrends)}
             style={{
@@ -138,17 +251,17 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
         gap: '1.5rem',
         marginBottom: '2rem',
       }}>
-        {/* Total Clinical Collections */}
+        {/* Month-to-Date Clinical Collections */}
         <div
           onClick={() => onDrillDown?.('collections')}
-          style={{
+          style={drillableCardStyle('collections', {
             background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
             borderRadius: '16px',
             padding: '1.5rem',
             color: 'white',
             cursor: 'pointer',
             transition: 'all 0.2s ease',
-          }}
+          })}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
             e.currentTarget.style.boxShadow = '0 12px 24px rgba(5, 150, 105, 0.3)';
@@ -159,7 +272,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
           }}
         >
           <div style={{ fontSize: '0.85rem', opacity: 0.9, marginBottom: '0.5rem', fontWeight: '600' }}>
-            MTD Clinical Collections
+            {clinicalCollectionsLabel}
           </div>
           <div style={{ fontSize: '2.25rem', fontWeight: '800', marginBottom: '0.5rem' }}>
             {formatCurrency(metrics.totalClinicalCollections)}
@@ -175,14 +288,14 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
         {/* Net Collection Ratio */}
         <div
           onClick={() => onDrillDown?.('collection-ratio')}
-          style={{
+          style={drillableCardStyle('collection-ratio', {
             background: 'white',
             borderRadius: '16px',
             padding: '1.5rem',
             border: '2px solid #e5e7eb',
             cursor: 'pointer',
             transition: 'all 0.2s ease',
-          }}
+          })}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
             e.currentTarget.style.boxShadow = '0 12px 24px rgba(0, 0, 0, 0.1)';
@@ -229,14 +342,14 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
         {/* Days Sales Outstanding */}
         <div
           onClick={() => onDrillDown?.('dso')}
-          style={{
+          style={drillableCardStyle('dso', {
             background: 'white',
             borderRadius: '16px',
             padding: '1.5rem',
             border: '2px solid #e5e7eb',
             cursor: 'pointer',
             transition: 'all 0.2s ease',
-          }}
+          })}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
             e.currentTarget.style.boxShadow = '0 12px 24px rgba(0, 0, 0, 0.1)';
@@ -271,14 +384,14 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
         {/* First Pass Claim Rate */}
         <div
           onClick={() => onDrillDown?.('first-pass')}
-          style={{
+          style={drillableCardStyle('first-pass', {
             background: 'white',
             borderRadius: '16px',
             padding: '1.5rem',
             border: '2px solid #e5e7eb',
             cursor: 'pointer',
             transition: 'all 0.2s ease',
-          }}
+          })}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'translateY(-4px)';
             e.currentTarget.style.boxShadow = '0 12px 24px rgba(0, 0, 0, 0.1)';
@@ -329,11 +442,13 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
         gap: '1rem',
         marginBottom: '2rem',
       }}>
-        <div style={{
+        <div
+          onClick={() => onDrillDown?.('adjustments')}
+          style={secondaryCardStyle('adjustments', {
           background: '#f9fafb',
           borderRadius: '12px',
           padding: '1.25rem',
-        }}>
+        })}>
           <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.5rem' }}>
             Adjustments & Write-offs
           </div>
@@ -342,11 +457,61 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
           </div>
         </div>
 
-        <div style={{
+        <div
+          onClick={() => onDrillDown?.('store-revenue')}
+          style={secondaryCardStyle('store-revenue', {
+          background: '#ecfdf5',
+          borderRadius: '12px',
+          padding: '1.25rem',
+        })}>
+          <div style={{ fontSize: '0.8rem', color: '#047857', marginBottom: '0.5rem' }}>
+            Store Revenue
+          </div>
+          <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#047857' }}>
+            {formatCurrency(metrics.storeRevenueCents || 0)}
+          </div>
+        </div>
+
+        <div
+          onClick={() => onDrillDown?.('bad-debt')}
+          style={secondaryCardStyle('bad-debt', {
+          background: '#fff7ed',
+          borderRadius: '12px',
+          padding: '1.25rem',
+        })}>
+          <div style={{ fontSize: '0.8rem', color: '#9a3412', marginBottom: '0.5rem' }}>
+            Bad Debt / Loss
+          </div>
+          <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#c2410c' }}>
+            {formatCurrency(metrics.badDebtCents || 0)}
+          </div>
+        </div>
+
+        <div
+          onClick={() => onDrillDown?.('collections-referrals')}
+          style={secondaryCardStyle('collections-referrals', {
+          background: '#fee2e2',
+          borderRadius: '12px',
+          padding: '1.25rem',
+        })}>
+          <div style={{ fontSize: '0.8rem', color: '#991b1b', marginBottom: '0.5rem' }}>
+            Sent to Collections
+          </div>
+          <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#b91c1c' }}>
+            {formatCurrency(metrics.collectionsReferralBalanceCents || 0)}
+          </div>
+          <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: '#991b1b' }}>
+            {metrics.collectionsReferralCount || 0} account{(metrics.collectionsReferralCount || 0) === 1 ? '' : 's'}
+          </div>
+        </div>
+
+        <div
+          onClick={() => onDrillDown?.('denial-rate')}
+          style={secondaryCardStyle('denial-rate', {
           background: '#f9fafb',
           borderRadius: '12px',
           padding: '1.25rem',
-        }}>
+        })}>
           <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.5rem' }}>
             Denial Rate
           </div>
@@ -355,11 +520,13 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
           </div>
         </div>
 
-        <div style={{
+        <div
+          onClick={() => onDrillDown?.('avg-days-to-pay')}
+          style={secondaryCardStyle('avg-days-to-pay', {
           background: '#f9fafb',
           borderRadius: '12px',
           padding: '1.25rem',
-        }}>
+        })}>
           <div style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.5rem' }}>
             Avg Days to Pay
           </div>
@@ -373,6 +540,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
           borderRadius: '12px',
           padding: '1.25rem',
           cursor: 'pointer',
+          border: activeDrillDown === 'claims-queue' ? '2px solid #10b981' : '1px solid transparent',
         }}
         onClick={() => onDrillDown?.('claims-queue')}
         >
@@ -389,11 +557,12 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
           borderRadius: '12px',
           padding: '1.25rem',
           cursor: 'pointer',
+          border: activeDrillDown === 'appeals' ? '2px solid #10b981' : '1px solid transparent',
         }}
         onClick={() => onDrillDown?.('appeals')}
         >
           <div style={{ fontSize: '0.8rem', color: '#991b1b', marginBottom: '0.5rem' }}>
-            Pending Appeals
+            At-Risk Claims
           </div>
           <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#dc2626' }}>
             {metrics.pendingAppeals}
@@ -447,7 +616,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
             borderRadius: '8px',
             overflow: 'hidden',
           }}>
-            {arAging.map((bucket, index) => (
+            {arAging.map((bucket) => (
               <div
                 key={bucket.label}
                 style={{
@@ -463,6 +632,7 @@ export function RCMDashboard({ metrics = DEFAULT_METRICS, arAging = DEFAULT_AR_A
                   transition: 'all 0.2s ease',
                 }}
                 title={`${bucket.label}: ${formatCurrency(bucket.amountCents)} (${bucket.count} accounts)`}
+                onClick={() => onDrillDown?.('ar-aging')}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.opacity = '0.8';
                 }}

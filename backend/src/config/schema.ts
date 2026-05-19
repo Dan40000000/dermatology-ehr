@@ -139,6 +139,7 @@ export const envSchema = z.object({
 
   STRIPE_SECRET_KEY: stringOptional,
   STRIPE_PUBLISHABLE_KEY: stringOptional,
+  STRIPE_WEBHOOK_SECRET: stringOptional,
   PHAXIO_API_KEY: stringOptional,
   PHAXIO_API_SECRET: stringOptional,
   PHAXIO_FROM_NUMBER: stringOptional,

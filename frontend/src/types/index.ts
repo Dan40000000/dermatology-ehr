@@ -1487,7 +1487,7 @@ export type PaymentMethod = 'cash' | 'credit' | 'debit' | 'check' | 'insurance' 
 export type SaleStatus = 'pending' | 'completed' | 'refunded' | 'cancelled';
 export type InventoryTransactionType = 'received' | 'sold' | 'adjustment' | 'return' | 'damaged' | 'expired';
 export type DiscountType = 'percentage' | 'fixed' | 'loyalty';
-export type StoreFulfillmentStatus = 'paid' | 'packing' | 'label_created' | 'shipped' | 'delivered' | 'exception' | 'cancelled';
+export type StoreFulfillmentStatus = 'awaiting_payment' | 'paid' | 'packing' | 'label_created' | 'shipped' | 'delivered' | 'exception' | 'cancelled';
 export type StoreNotificationStatus = 'queued' | 'sent' | 'failed' | 'muted';
 export type StoreShippingMethod = 'standard' | 'priority' | 'pickup';
 
@@ -1527,6 +1527,7 @@ export interface SaleItemDetail {
   lineTotal: number;
   productName: string;
   productSku: string;
+  imageUrl?: string;
 }
 
 export interface Sale {
@@ -1596,7 +1597,7 @@ export interface CreateProductData {
   cost?: number;
   inventoryCount?: number;
   reorderPoint?: number;
-  imageUrl?: string;
+  imageUrl?: string | null;
   barcode?: string;
 }
 
@@ -1610,7 +1611,7 @@ export interface UpdateProductData {
   cost?: number;
   reorderPoint?: number;
   isActive?: boolean;
-  imageUrl?: string;
+  imageUrl?: string | null;
   barcode?: string;
 }
 

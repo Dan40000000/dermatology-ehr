@@ -36,6 +36,8 @@ describe('moduleAccess', () => {
 
   it('maps path to module key', () => {
     expect(getModuleForPath('/patients/123')).toBe('patients');
+    expect(getModuleForPath('/front-desk')).toBe('office_flow');
+    expect(getModuleForPath('/biopsies')).toBe('labs');
   });
 
   it('maps legacy registry and recall routes into reminders access', () => {

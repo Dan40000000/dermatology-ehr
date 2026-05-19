@@ -198,11 +198,12 @@ export async function fetchAppointments(
 export async function fetchFrontDeskSchedule(
   tenantId: string,
   accessToken: string,
-  filters?: { providerId?: string; status?: string }
+  filters?: { providerId?: string; status?: string; date?: string }
 ) {
   const params = new URLSearchParams();
   if (filters?.providerId) params.append('providerId', filters.providerId);
   if (filters?.status) params.append('status', filters.status);
+  if (filters?.date) params.append('date', filters.date);
 
   const queryString = params.toString();
   const url = queryString ? `${API_BASE}/api/front-desk/today?${queryString}` : `${API_BASE}/api/front-desk/today`;
@@ -215,6 +216,72 @@ export async function fetchFrontDeskSchedule(
   });
   if (!res.ok) {
     throw new Error("Failed to load front desk schedule");
+  }
+  return res.json();
+}
+
+export interface CommandCenterSummaryResponse {
+  businessDate: string;
+  practiceTimeZone: string;
+  generatedAt: string;
+  dataHealth?: {
+    failedSources?: Array<{ source?: string; message?: string } | string>;
+  };
+  schedule?: {
+    appointmentsCount?: number;
+    activeAppointmentsCount?: number;
+    checkedInCount?: number;
+    completedCount?: number;
+    waitingCount?: number;
+    inRoomsCount?: number;
+    checkoutCount?: number;
+    staleScheduledCount?: number;
+    noShowCount?: number;
+    cancelledCount?: number;
+    needsInsuranceVerification?: number;
+    balanceDueAppointments?: number;
+    copayDueCents?: number;
+  } | null;
+  claims?: {
+    claimsInQueue?: number;
+    claimsDeniedRejected?: number;
+  } | null;
+  financials?: {
+    revenueTodayCents?: number;
+    netCollectionsCents?: number;
+    patientCollectionsCents?: number;
+    payerCollectionsCents?: number;
+    storeCollectionsCents?: number;
+    collectionRateToday?: number;
+    financialWorkQueueCount?: number;
+    claimWorkQueueCount?: number;
+    billingWorkQueueCount?: number;
+    arTotalCents?: number;
+    arOver90Cents?: number;
+  } | null;
+}
+
+export async function fetchCommandCenterSummary(
+  tenantId: string,
+  accessToken: string,
+  options?: { date?: string }
+): Promise<CommandCenterSummaryResponse> {
+  const params = new URLSearchParams();
+  if (options?.date) params.append('date', options.date);
+  const queryString = params.toString();
+  const url = queryString
+    ? `${API_BASE}/api/command-center/summary?${queryString}`
+    : `${API_BASE}/api/command-center/summary`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to load command center summary');
   }
   return res.json();
 }

@@ -18,6 +18,22 @@ type ActiveTab = 'claims' | 'payments';
 type ClaimUiStatus = ClaimStatus | 'denied' | 'appealed' | 'partially_paid';
 type QueueFilter = 'all' | 'coding_review' | 'ready' | 'pending' | 'denials' | 'payment' | 'appeals' | 'filing_risk';
 
+const CLAIM_TABS: ActiveTab[] = ['claims', 'payments'];
+const CLAIM_STATUS_FILTERS: Array<ClaimUiStatus | 'all'> = [
+  'all',
+  'draft',
+  'coding_review',
+  'ready',
+  'submitted',
+  'accepted',
+  'rejected',
+  'denied',
+  'paid',
+  'appealed',
+  'partially_paid',
+];
+const CLAIM_QUEUE_FILTERS: QueueFilter[] = ['all', 'coding_review', 'ready', 'pending', 'denials', 'payment', 'appeals', 'filing_risk'];
+
 interface ClaimRecord {
   id: string;
   patientId: string;
@@ -50,12 +66,15 @@ interface AgingBucket {
 
 interface MetricsSnapshot {
   totalClaims: number;
+  activeCount: number;
+  atRiskCount: number;
   totalBilledCents: number;
   totalOutstandingCents: number;
   totalPaidCents: number;
   pendingCount: number;
   denialCount: number;
   paidCount: number;
+  paymentQueueCount: number;
   firstPassPaidRate: number;
   denialRate: number;
   avgDaysInAR: number;
@@ -405,16 +424,7 @@ function claimQueue(claim: ClaimRecord): QueueFilter {
   if (claim.status === 'ready') {
     return 'ready';
   }
-  if (claim.status === 'submitted' || claim.status === 'accepted') {
-    if (age > 300 && claim.balanceCents > 0) {
-      return 'filing_risk';
-    }
-    if (claim.status === 'accepted' && claim.balanceCents > 0) {
-      return 'payment';
-    }
-    return 'pending';
-  }
-  if (claim.status === 'rejected' || claim.status === 'denied') {
+  if (claim.status === 'rejected' || claim.status === 'denied' || claim.scrubStatus === 'failed') {
     if ((claim.appealStatus || '').toLowerCase() === 'submitted') {
       return 'appeals';
     }
@@ -423,10 +433,38 @@ function claimQueue(claim: ClaimRecord): QueueFilter {
   if (claim.status === 'appealed') {
     return 'appeals';
   }
+  if (age > 300 && claim.balanceCents > 0) {
+    return 'filing_risk';
+  }
+  if (claim.status === 'submitted' || claim.status === 'accepted') {
+    if (claim.status === 'accepted' && claim.balanceCents > 0) {
+      return 'payment';
+    }
+    return 'pending';
+  }
   if (claim.status === 'partially_paid') {
     return 'payment';
   }
   return 'all';
+}
+
+function isActiveClaimWork(claim: ClaimRecord): boolean {
+  return ['draft', 'coding_review', 'ready', 'submitted', 'accepted', 'partially_paid'].includes(claim.status);
+}
+
+function hasDenialFriction(claim: ClaimRecord): boolean {
+  return (
+    ['rejected', 'denied', 'appealed'].includes(claim.status) ||
+    claim.scrubStatus === 'failed'
+  );
+}
+
+function isAtRiskClaim(claim: ClaimRecord): boolean {
+  return hasDenialFriction(claim) || (claim.balanceCents > 0 && getDaysSince(claim.serviceDate || claim.createdAt) > 300);
+}
+
+function isPaymentQueueClaim(claim: ClaimRecord): boolean {
+  return claim.balanceCents > 0 && ['accepted', 'submitted', 'partially_paid'].includes(claim.status);
 }
 
 function getNextAction(claim: ClaimRecord): string {
@@ -556,15 +594,18 @@ function normalizeClaimRecord(raw: Record<string, unknown>, patients: Patient[])
 
 function computeMetrics(claims: ClaimRecord[]): MetricsSnapshot {
   const totalClaims = claims.length;
+  const activeCount = claims.filter(isActiveClaimWork).length;
+  const atRiskCount = claims.filter(isAtRiskClaim).length;
   const totalBilledCents = claims.reduce((sum, claim) => sum + claim.totalBilledCents, 0);
   const totalPaidCents = claims.reduce((sum, claim) => sum + claim.paidAmountCents, 0);
   const totalOutstandingCents = claims.reduce((sum, claim) => sum + claim.balanceCents, 0);
 
   const pendingCount = claims.filter((claim) => claim.status === 'submitted' || claim.status === 'accepted').length;
-  const denialCount = claims.filter((claim) => claim.status === 'rejected' || claim.status === 'denied').length;
+  const denialCount = claims.filter(hasDenialFriction).length;
   const paidCount = claims.filter((claim) => claim.status === 'paid').length;
+  const paymentQueueCount = claims.filter(isPaymentQueueClaim).length;
 
-  const adjudicatedCount = claims.filter((claim) => ['submitted', 'accepted', 'rejected', 'denied', 'paid'].includes(claim.status)).length;
+  const adjudicatedCount = claims.filter((claim) => !['draft', 'coding_review', 'ready'].includes(claim.status)).length;
   const firstPassPaidRate = adjudicatedCount ? (paidCount / adjudicatedCount) * 100 : 0;
   const denialRate = adjudicatedCount ? (denialCount / adjudicatedCount) * 100 : 0;
 
@@ -611,12 +652,15 @@ function computeMetrics(claims: ClaimRecord[]): MetricsSnapshot {
 
   return {
     totalClaims,
+    activeCount,
+    atRiskCount,
     totalBilledCents,
     totalOutstandingCents,
     totalPaidCents,
     pendingCount,
     denialCount,
     paidCount,
+    paymentQueueCount,
     firstPassPaidRate,
     denialRate,
     avgDaysInAR,
@@ -725,7 +769,9 @@ export function ClaimsPage() {
   const { session } = useAuth();
   const { showSuccess, showError } = useToast();
   const { claimId: routeClaimId } = useParams<{ claimId?: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const startDateParam = searchParams.get('startDate') || undefined;
+  const endDateParam = searchParams.get('endDate') || startDateParam;
 
   const [loading, setLoading] = useState(true);
   const [claims, setClaims] = useState<ClaimRecord[]>([]);
@@ -750,6 +796,40 @@ export function ClaimsPage() {
   const [checkNumber, setCheckNumber] = useState('');
   const [paymentNotes, setPaymentNotes] = useState('');
 
+  useEffect(() => {
+    const requestedTab = searchParams.get('tab');
+    if (requestedTab && CLAIM_TABS.includes(requestedTab as ActiveTab)) {
+      setActiveTab(requestedTab as ActiveTab);
+    }
+
+    const requestedStatus = searchParams.get('status');
+    if (requestedStatus && CLAIM_STATUS_FILTERS.includes(requestedStatus as ClaimUiStatus | 'all')) {
+      setStatusFilter(requestedStatus as ClaimUiStatus | 'all');
+    }
+
+    const requestedQueue = searchParams.get('queue');
+    if (requestedQueue && CLAIM_QUEUE_FILTERS.includes(requestedQueue as QueueFilter)) {
+      setQueueFilter(requestedQueue as QueueFilter);
+    } else if (requestedStatus === 'denied' || requestedStatus === 'rejected') {
+      setQueueFilter('denials');
+    } else if (requestedStatus === 'appealed') {
+      setQueueFilter('appeals');
+    }
+  }, [searchParams]);
+
+  const updateUrlFilter = useCallback(
+    (key: string, value: string) => {
+      const next = new URLSearchParams(searchParams);
+      if (!value || value === 'all') {
+        next.delete(key);
+      } else {
+        next.set(key, value);
+      }
+      setSearchParams(next);
+    },
+    [searchParams, setSearchParams]
+  );
+
   const loadData = useCallback(async () => {
     if (!session) return;
 
@@ -764,7 +844,11 @@ export function ClaimsPage() {
 
     try {
       const [claimsRes, patientsRes] = await Promise.all([
-        fetchClaims(session.tenantId, session.accessToken, statusFilter !== 'all' ? { status: statusFilter } : {}),
+        fetchClaims(session.tenantId, session.accessToken, {
+          ...(statusFilter !== 'all' ? { status: statusFilter } : {}),
+          ...(startDateParam ? { startDate: startDateParam } : {}),
+          ...(endDateParam ? { endDate: endDateParam } : {}),
+        }),
         fetchPatients(session.tenantId, session.accessToken),
       ]);
 
@@ -772,8 +856,8 @@ export function ClaimsPage() {
       const incomingClaims = Array.isArray(claimsRes.claims) ? claimsRes.claims : [];
 
       if (!incomingClaims.length) {
-        setUsingDemoData(true);
-        setClaims(DEMO_CLAIMS_RAW.map((raw) => normalizeClaimRecord(raw, DEMO_PATIENTS)));
+        setUsingDemoData(false);
+        setClaims([]);
       } else {
         setUsingDemoData(false);
         setClaims(incomingClaims.map((raw: Record<string, unknown>) => normalizeClaimRecord(raw, resolvedPatients)));
@@ -792,7 +876,7 @@ export function ClaimsPage() {
     } finally {
       setLoading(false);
     }
-  }, [session, statusFilter, showError, forceDemoData]);
+  }, [endDateParam, forceDemoData, session, showError, startDateParam, statusFilter]);
 
   useEffect(() => {
     void loadData();
@@ -1222,10 +1306,7 @@ export function ClaimsPage() {
       .slice(0, 10);
   }, [claims]);
 
-  const paymentQueueClaims = useMemo(
-    () => claims.filter((claim) => claim.balanceCents > 0 && (claim.status === 'accepted' || claim.status === 'submitted' || claim.status === 'partially_paid')),
-    [claims]
-  );
+  const paymentQueueClaims = useMemo(() => claims.filter(isPaymentQueueClaim), [claims]);
 
   const recentPayments = useMemo<CachedPaymentRow[]>(() => {
     const rows: CachedPaymentRow[] = [];
@@ -1296,7 +1377,7 @@ export function ClaimsPage() {
 
       {usingDemoData && (
         <div className="claims-demo-banner">
-          Demo mode: no live claims were found, so temporary sample claims were loaded for testing.
+          Demo dataset active for claims testing.
         </div>
       )}
 
@@ -1304,6 +1385,14 @@ export function ClaimsPage() {
         <div className="stat-card">
           <div className="stat-value">{metrics.totalClaims}</div>
           <div className="stat-label">Total Claims</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{metrics.activeCount}</div>
+          <div className="stat-label">Active Work</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{metrics.atRiskCount}</div>
+          <div className="stat-label">At-Risk Claims</div>
         </div>
         <div className="stat-card">
           <div className="stat-value">{formatCurrency(metrics.totalBilledCents)}</div>
@@ -1318,8 +1407,8 @@ export function ClaimsPage() {
           <div className="stat-label">Awaiting Payer</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{metrics.denialCount}</div>
-          <div className="stat-label">Denials/Rejections</div>
+          <div className="stat-value">{metrics.paymentQueueCount}</div>
+          <div className="stat-label">Payment Queue</div>
         </div>
         <div className="stat-card">
           <div className="stat-value">{metrics.firstPassPaidRate.toFixed(1)}%</div>
@@ -1331,14 +1420,20 @@ export function ClaimsPage() {
         <button
           type="button"
           className={`tab ${activeTab === 'claims' ? 'active' : ''}`}
-          onClick={() => setActiveTab('claims')}
+          onClick={() => {
+            setActiveTab('claims');
+            updateUrlFilter('tab', 'claims');
+          }}
         >
           Claims Workbench
         </button>
         <button
           type="button"
           className={`tab ${activeTab === 'payments' ? 'active' : ''}`}
-          onClick={() => setActiveTab('payments')}
+          onClick={() => {
+            setActiveTab('payments');
+            updateUrlFilter('tab', 'payments');
+          }}
         >
           Payment Posting
         </button>
@@ -1364,7 +1459,10 @@ export function ClaimsPage() {
                       key={key}
                       type="button"
                       className={`btn-sm claims-queue-btn ${queueFilter === key ? 'btn-primary' : 'btn-secondary'}`}
-                      onClick={() => setQueueFilter(key)}
+                      onClick={() => {
+                        setQueueFilter(key);
+                        updateUrlFilter('queue', key);
+                      }}
                     >
                       <span className="claims-queue-label">{label}</span>
                       <strong className="claims-queue-count">{queueCounts[key]}</strong>
@@ -1372,7 +1470,14 @@ export function ClaimsPage() {
                   ))}
                 </div>
                 <div className="claims-queue-clear">
-                  <button type="button" className="btn-sm btn-secondary" onClick={() => setQueueFilter('all')}>
+                  <button
+                    type="button"
+                    className="btn-sm btn-secondary"
+                    onClick={() => {
+                      setQueueFilter('all');
+                      updateUrlFilter('queue', 'all');
+                    }}
+                  >
                     Clear Queue Filter
                   </button>
                 </div>
@@ -1399,7 +1504,7 @@ export function ClaimsPage() {
                   </tbody>
                 </table>
                 <div className="muted claims-micro-copy">
-                  Avg days in A/R: {metrics.avgDaysInAR.toFixed(1)} days | Denial rate: {metrics.denialRate.toFixed(1)}%
+                  Avg days in A/R: {metrics.avgDaysInAR.toFixed(1)} days | Denial/appeal rate: {metrics.denialRate.toFixed(1)}%
                 </div>
               </div>
 
@@ -1511,7 +1616,11 @@ export function ClaimsPage() {
                   <label>Status Filter</label>
                   <select
                     value={statusFilter}
-                    onChange={(event) => setStatusFilter(event.target.value as ClaimUiStatus | 'all')}
+                    onChange={(event) => {
+                      const nextStatus = event.target.value as ClaimUiStatus | 'all';
+                      setStatusFilter(nextStatus);
+                      updateUrlFilter('status', nextStatus);
+                    }}
                   >
                     <option value="all">All Statuses</option>
                     <option value="draft">Draft</option>

@@ -300,12 +300,6 @@ function addLocalDays(date: Date, days: number) {
   return next;
 }
 
-function setUtcTime(date: Date, hour: number, minute: number) {
-  const next = new Date(date);
-  next.setUTCHours(hour, minute, 0, 0);
-  return next;
-}
-
 function setLocalTime(date: Date, hour: number, minute: number) {
   const next = new Date(date);
   next.setHours(hour, minute, 0, 0);
@@ -516,7 +510,7 @@ function chooseCandidate(
 export function createSyntheticPracticeData(basePatients: Partial<DemoPatient>[], totalSchedulePatients: number): PracticeData {
   const random = createSeededRandom(20260427);
   const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
+  today.setHours(0, 0, 0, 0);
 
   const normalizedBasePatients = basePatients.map((patient, index) => enrichPatient(patient, index));
   const generatedCount = Math.max(totalSchedulePatients - normalizedBasePatients.length, 0);
@@ -546,7 +540,7 @@ export function createSyntheticPracticeData(basePatients: Partial<DemoPatient>[]
     const provider = PROVIDERS.find((item) => item.id === patient.preferredProviderId) || PROVIDERS[0]!;
     const location = LOCATIONS[hashString(patient.id) % LOCATIONS.length]!;
     const baseType = patient.condition.appointmentTypes[0]!;
-    const completedDate = setUtcTime(addDays(today, -(15 + Math.floor(random() * 210))), 8 + Math.floor(random() * 7), random() > 0.5 ? 0 : 30);
+    const completedDate = setLocalTime(addLocalDays(today, -(15 + Math.floor(random() * 210))), 8 + Math.floor(random() * 7), random() > 0.5 ? 0 : 30);
     const completedEnd = new Date(completedDate.getTime() + (baseType.duration * 60 * 1000));
     const appointmentId = `appt-${patient.id}-completed`;
     const encounterId = `enc-${patient.id}-completed`;
@@ -653,20 +647,20 @@ export function createSyntheticPracticeData(basePatients: Partial<DemoPatient>[]
       createdAt: completedEnd.toISOString(),
     });
 
-    nextEligibleAt.set(patient.id, addDays(completedDate, patient.cadenceDays));
+    nextEligibleAt.set(patient.id, addLocalDays(completedDate, patient.cadenceDays));
     futureCounts.set(patient.id, 0);
   }
 
   for (const provider of PROVIDERS) {
     const providerPatients = providerPools.get(provider.id) || [];
     for (let dayOffset = 0; dayOffset <= 180; dayOffset += 1) {
-      const scheduleDate = addDays(today, dayOffset);
-      const dayOfWeek = scheduleDate.getUTCDay();
+      const scheduleDate = addLocalDays(today, dayOffset);
+      const dayOfWeek = scheduleDate.getDay();
       if (dayOfWeek === 0 || dayOfWeek === 6) continue;
       if (random() < provider.daySkipChance) continue;
 
       const appointmentsPerDay = provider.minDaily + Math.floor(random() * (provider.maxDaily - provider.minDaily + 1));
-      let cursor = setUtcTime(scheduleDate, provider.startHour, random() > 0.5 ? 0 : 15);
+      let cursor = setLocalTime(scheduleDate, provider.startHour, random() > 0.5 ? 0 : 15);
 
       for (let slotIndex = 0; slotIndex < appointmentsPerDay; slotIndex += 1) {
         const available = providerPatients.filter((patient) => {
@@ -684,7 +678,7 @@ export function createSyntheticPracticeData(basePatients: Partial<DemoPatient>[]
         const appointmentType = pick(candidate.condition.appointmentTypes, random);
         const start = new Date(cursor);
         const end = new Date(start.getTime() + appointmentType.duration * 60 * 1000);
-        if (end.getUTCHours() > provider.endHour || (end.getUTCHours() === provider.endHour && end.getUTCMinutes() > 0)) break;
+        if (end.getHours() > provider.endHour || (end.getHours() === provider.endHour && end.getMinutes() > 0)) break;
 
         const location = LOCATIONS[Math.floor(random() * LOCATIONS.length)]!;
         const status = dayOffset <= 1
@@ -692,7 +686,7 @@ export function createSyntheticPracticeData(basePatients: Partial<DemoPatient>[]
           : (random() < 0.06 ? 'cancelled' : 'scheduled');
 
         appointments.push({
-          id: `appt-${provider.id}-${isoDate(scheduleDate)}-${String(slotIndex + 1).padStart(2, '0')}`,
+          id: `appt-${provider.id}-${localDateKey(scheduleDate)}-${String(slotIndex + 1).padStart(2, '0')}`,
           tenantId: 'tenant-demo',
           patientId: candidate.id,
           patientName: `${candidate.firstName} ${candidate.lastName}`,
@@ -706,12 +700,12 @@ export function createSyntheticPracticeData(basePatients: Partial<DemoPatient>[]
           scheduledEnd: end.toISOString(),
           status,
           chiefComplaint: candidate.condition.chiefComplaint,
-          createdAt: addDays(start, -12).toISOString(),
+          createdAt: addLocalDays(start, -12).toISOString(),
         });
 
         futureCounts.set(candidate.id, (futureCounts.get(candidate.id) || 0) + 1);
         const jitter = Math.floor(random() * 18) - 6;
-        nextEligibleAt.set(candidate.id, addDays(scheduleDate, candidate.cadenceDays + jitter));
+        nextEligibleAt.set(candidate.id, addLocalDays(scheduleDate, candidate.cadenceDays + jitter));
 
         const gapMinutes = 15 + (random() > 0.55 ? 15 : 0) + (random() > 0.85 ? 15 : 0);
         cursor = new Date(end.getTime() + gapMinutes * 60 * 1000);

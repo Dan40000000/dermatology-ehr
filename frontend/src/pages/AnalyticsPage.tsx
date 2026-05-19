@@ -629,9 +629,10 @@ export function AnalyticsPage() {
     toNumber(collectionsSummary?.collectionRate) ||
     toNumber(monthlySnapshot?.collectionRate) ||
     (selectedRevenueCents > 0 ? (selectedCollectionsCents / selectedRevenueCents) * 100 : 0);
+  const arBucketTotalCents = arBuckets.reduce((sum, bucket) => sum + toNumber(bucket.totalBalanceCents), 0);
   const outstandingArCents =
-    toNumber(paymentsSummary?.receivables?.outstandingBalanceCents) ||
-    arBuckets.reduce((sum, bucket) => sum + toNumber(bucket.totalBalanceCents), 0);
+    arBucketTotalCents ||
+    toNumber(paymentsSummary?.receivables?.outstandingBalanceCents);
   const overdueArCents = toNumber(paymentsSummary?.receivables?.overdueBalanceCents);
   const ar90PlusCents = arBuckets
     .filter((bucket) => ['91-120', '120+', '90+', '91_plus'].includes(String(bucket.key)))
@@ -691,12 +692,12 @@ export function AnalyticsPage() {
   };
   const readyClaims = claimStatusCount(['draft', 'ready']);
   const clearinghouseClaims = claimStatusCount(['submitted', 'accepted']);
-  const paidClaims = claimStatusCount(['paid', 'partially_paid', 'partial']);
+  const paidClaims = claimStatusCount(['paid']);
   const deniedClaims = claimStatusCount(['denied', 'rejected', 'appealed']);
   const adjudicatedClaims = financialClaims.filter((claim) => !['draft', 'ready'].includes(normalizeStatus(claim.status)));
   const denialRate = adjudicatedClaims.length > 0 ? (deniedClaims / adjudicatedClaims.length) * 100 : 0;
   const firstPassRate = adjudicatedClaims.length > 0 ? (paidClaims / adjudicatedClaims.length) * 100 : 0;
-  const claimsNeedingAction = deniedClaims + financialWorkQueue.length;
+  const claimsNeedingAction = financialWorkQueue.length;
   const unappliedCashCents = toNumber(paymentsSummary?.payerPaymentsSummary?.unappliedCents);
   const workQueueCritical = financialWorkQueue.filter((item) => ['critical', 'error'].includes(String(item.severity || '').toLowerCase())).length;
   const billsByStatusTotal = billsSummary.reduce((sum, row) => sum + toNumber(row.count), 0);

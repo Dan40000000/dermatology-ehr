@@ -3,8 +3,15 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { Skeleton, Modal, ExportButtons } from '../components/ui';
+import { Search, Sparkles } from 'lucide-react';
 import type { ExportColumn } from '../utils/export';
 import { formatDate as formatExportDate, formatPhone } from '../utils/export';
+import {
+  getConfiguredClinicBusinessDate,
+  getDayOffsetFromClinicToday,
+  ISO_DATE_PATTERN,
+  setClinicBusinessDate,
+} from '../utils/practiceDateTime';
 import {
   deliverCombinedDowntimePackets,
   deliverDowntimePacket,
@@ -63,6 +70,7 @@ import {
 
 type ScheduleViewMode = 'day' | 'week' | 'month';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const END_OF_DAY_CLEANUP_REASON = 'End-of-day cleanup: appointment was still scheduled after the check-in grace window.';
 
 function isLaserAppointmentType(appointmentTypeName?: string): boolean {
   return /laser/i.test(appointmentTypeName || '');
@@ -376,6 +384,7 @@ export function SchedulePage() {
   const appointmentIdParam = searchParams.get('appointmentId');
   const reasonParam = searchParams.get('reason');
   const viewParam = searchParams.get('view');
+  const dateParam = searchParams.get('date');
   const handledQueryRef = useRef<{ patientId: string | null; appointmentId: string | null }>({
     patientId: null,
     appointmentId: null,
@@ -401,6 +410,10 @@ export function SchedulePage() {
 
   // Schedule state - Initialize from URL parameter or localStorage
   const [dayOffset, setDayOffset] = useState(() => {
+    const configuredDate = getConfiguredClinicBusinessDate();
+    if (configuredDate && ISO_DATE_PATTERN.test(configuredDate)) {
+      return getDayOffsetFromClinicToday(configuredDate);
+    }
     const stored = Number(localStorage.getItem('sched:dayOffset') || 0);
     return Number.isNaN(stored) ? 0 : stored;
   });
@@ -444,6 +457,9 @@ export function SchedulePage() {
   const [noShowAppointment, setNoShowAppointment] = useState<Appointment | null>(null);
   const [noShowReason, setNoShowReason] = useState('');
   const [noShowActionId, setNoShowActionId] = useState<string | null>(null);
+  const [showEndOfDayCleanupModal, setShowEndOfDayCleanupModal] = useState(false);
+  const [endOfDayCleanupReason, setEndOfDayCleanupReason] = useState(END_OF_DAY_CLEANUP_REASON);
+  const [endOfDayCleanupRunning, setEndOfDayCleanupRunning] = useState(false);
   const [downtimePacketAction, setDowntimePacketAction] = useState<'idle' | 'running'>('idle');
   const [downtimeClock, setDowntimeClock] = useState(() => Date.now());
   const [downtimeDevice] = useState<DowntimeBrowserDevice>(() => getOrCreateDowntimeBrowserDevice());
@@ -488,6 +504,16 @@ export function SchedulePage() {
     if (!isValidViewParam) return;
     setViewMode((prev) => (prev === viewParam ? prev : viewParam));
   }, [viewParam]);
+
+  useEffect(() => {
+    if (!dateParam || !ISO_DATE_PATTERN.test(dateParam)) return;
+    const nextOffset = getDayOffsetFromClinicToday(dateParam);
+    setClinicBusinessDate(dateParam);
+    localStorage.setItem('sched:dayOffset', String(nextOffset));
+    localStorage.setItem('sched:viewMode', 'day');
+    setDayOffset(nextOffset);
+    setViewMode('day');
+  }, [dateParam]);
 
   useEffect(() => {
     if (!appointmentIdParam || handledQueryRef.current.appointmentId === appointmentIdParam) return;
@@ -786,7 +812,7 @@ export function SchedulePage() {
         fetchPatients(session.tenantId, session.accessToken),
         fetchTimeBlocks(session.tenantId, session.accessToken).catch(() => []),
         canLoadFrontDeskSchedule
-          ? fetchFrontDeskSchedule(session.tenantId, session.accessToken).catch(() => ({ appointments: [] }))
+          ? fetchFrontDeskSchedule(session.tenantId, session.accessToken, { date: formatDate(selectedDate) }).catch(() => ({ appointments: [] }))
           : Promise.resolve({ appointments: [] }),
         canLoadPriorAuths ? fetchPriorAuths(session.tenantId, session.accessToken).catch(() => []) : Promise.resolve([]),
       ]);
@@ -1801,6 +1827,51 @@ export function SchedulePage() {
     }
   };
 
+  const openEndOfDayCleanupModal = () => {
+    setEndOfDayCleanupReason(END_OF_DAY_CLEANUP_REASON);
+    setShowEndOfDayCleanupModal(true);
+  };
+
+  const closeEndOfDayCleanupModal = () => {
+    if (endOfDayCleanupRunning) return;
+    setShowEndOfDayCleanupModal(false);
+  };
+
+  const handleConfirmEndOfDayCleanup = async () => {
+    if (!session) return;
+    const eligibleAppointments = overdueCheckInAppointments.filter((appt) => isAppointmentOverdueCheckIn(appt));
+    if (eligibleAppointments.length === 0) {
+      showSuccess('No overdue scheduled appointments need cleanup.');
+      setShowEndOfDayCleanupModal(false);
+      return;
+    }
+
+    const reason = endOfDayCleanupReason.trim() || END_OF_DAY_CLEANUP_REASON;
+    setEndOfDayCleanupRunning(true);
+    try {
+      const results = await Promise.allSettled(
+        eligibleAppointments.map((appt) =>
+          updateAppointmentStatus(session.tenantId, session.accessToken, appt.id, 'no_show', { reason })
+        )
+      );
+      const completedCount = results.filter((result) => result.status === 'fulfilled').length;
+      const failedCount = results.length - completedCount;
+      if (completedCount > 0) {
+        showSuccess(`End-of-day cleanup marked ${completedCount} appointment${completedCount === 1 ? '' : 's'} as no-show.`);
+      }
+      if (failedCount > 0) {
+        showError(`${failedCount} appointment${failedCount === 1 ? '' : 's'} could not be cleaned up. Review the remaining queue.`);
+      } else {
+        setShowEndOfDayCleanupModal(false);
+      }
+      await loadData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to run end-of-day cleanup');
+    } finally {
+      setEndOfDayCleanupRunning(false);
+    }
+  };
+
 const handleUndoNoShow = async (appt: Appointment) => {
   if (!session) return;
   if (appt.status !== 'no_show') {
@@ -2208,20 +2279,25 @@ const handleUndoNoShow = async (appt: Appointment) => {
         </button>
         <button
           type="button"
-          className="ema-action-btn"
+          className="ema-action-btn schedule-smart-finder-btn"
           onClick={() => setShowAppointmentFinder(true)}
           style={{
-            background: showAppointmentFinder ? 'linear-gradient(to bottom, #06b6d4 0%, #0891b2 100%)' : 'linear-gradient(to bottom, #ffffff 0%, #f3f4f6 100%)',
-            border: showAppointmentFinder ? 'none' : '1px solid #d1d5db',
-            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-            color: showAppointmentFinder ? '#ffffff' : '#374151',
-            padding: '0.5rem 1rem',
+            background: showAppointmentFinder
+              ? 'linear-gradient(135deg, #0f766e 0%, #0e7490 50%, #1d4ed8 100%)'
+              : 'linear-gradient(135deg, #0f766e 0%, #0e7490 52%, #2563eb 100%)',
+            border: '1px solid rgba(255,255,255,0.18)',
+            boxShadow: '0 8px 18px rgba(14, 116, 144, 0.28)',
+            color: '#ffffff',
+            padding: '0.55rem 1rem',
             borderRadius: '6px',
-            fontWeight: 500,
+            fontWeight: 800,
           }}
         >
-          <span style={{ marginRight: '0.5rem' }}>🔍</span>
-          Appointment Finder
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', marginRight: '0.25rem' }}>
+            <Sparkles size={15} />
+            <Search size={15} />
+          </span>
+          Smart Appointment Finder
         </button>
         <button
           type="button"
@@ -2500,6 +2576,22 @@ const handleUndoNoShow = async (appt: Appointment) => {
           <span style={{ fontWeight: 600, color: '#9a3412' }}>
             {overdueCheckInAppointments.length} overdue check-in appointments need review
           </span>
+          <button
+            type="button"
+            onClick={openEndOfDayCleanupModal}
+            style={{
+              background: '#9a3412',
+              border: '1px solid #9a3412',
+              borderRadius: '6px',
+              padding: '0.3rem 0.7rem',
+              fontSize: '0.75rem',
+              color: '#ffffff',
+              cursor: 'pointer',
+              fontWeight: 700
+            }}
+          >
+            End-of-Day Cleanup
+          </button>
           {overdueCheckInAppointments.slice(0, 3).map((appt) => (
             <button
               key={appt.id}
@@ -3350,6 +3442,120 @@ const handleUndoNoShow = async (appt: Appointment) => {
               }}
             >
               {noShowActionId === noShowAppointment?.id ? 'Marking...' : 'Confirm No-Show'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showEndOfDayCleanupModal}
+        title="End-of-Day Schedule Cleanup"
+        onClose={closeEndOfDayCleanupModal}
+      >
+        <div style={{ padding: '1rem', minWidth: '460px', maxWidth: '640px' }}>
+          <div
+            style={{
+              border: '1px solid #fed7aa',
+              background: '#fff7ed',
+              color: '#9a3412',
+              borderRadius: '8px',
+              padding: '0.85rem',
+              fontSize: '0.875rem',
+              fontWeight: 700,
+              marginBottom: '1rem',
+            }}
+          >
+            This will mark every still-scheduled appointment past the {NO_SHOW_CHECK_IN_GRACE_MINUTES}-minute check-in grace window as no-show.
+          </div>
+
+          <div style={{ display: 'grid', gap: '0.55rem', maxHeight: '16rem', overflowY: 'auto', marginBottom: '1rem' }}>
+            {overdueCheckInAppointments.length === 0 ? (
+              <div style={{ color: '#166534', fontWeight: 700 }}>No overdue scheduled appointments are in this view.</div>
+            ) : (
+              overdueCheckInAppointments.map((appt) => (
+                <div
+                  key={appt.id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(0, 1fr) auto',
+                    gap: '0.75rem',
+                    alignItems: 'center',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '8px',
+                    padding: '0.7rem 0.8rem',
+                    background: '#ffffff',
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <strong style={{ display: 'block', color: '#111827' }}>{appt.patientName}</strong>
+                    <span style={{ display: 'block', color: '#6b7280', fontSize: '0.82rem' }}>
+                      {new Date(appt.scheduledStart).toLocaleString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}{' '}
+                      · {appt.providerName || 'Provider'} · {appt.appointmentTypeName || 'Visit'}
+                    </span>
+                  </div>
+                  <span style={{ color: '#9a3412', fontSize: '0.78rem', fontWeight: 800 }}>
+                    scheduled
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+
+          <label style={{ display: 'grid', gap: '0.35rem', color: '#374151', fontSize: '0.8125rem', fontWeight: 700, marginBottom: '1rem' }}>
+            Cleanup note
+            <textarea
+              value={endOfDayCleanupReason}
+              onChange={(event) => setEndOfDayCleanupReason(event.target.value)}
+              rows={3}
+              disabled={endOfDayCleanupRunning}
+              style={{
+                width: '100%',
+                padding: '0.55rem 0.65rem',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                fontSize: '0.875rem',
+                resize: 'vertical',
+              }}
+            />
+          </label>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+            <button
+              type="button"
+              onClick={closeEndOfDayCleanupModal}
+              disabled={endOfDayCleanupRunning}
+              style={{
+                padding: '0.5rem 0.875rem',
+                borderRadius: '6px',
+                border: '1px solid #d1d5db',
+                background: '#ffffff',
+                color: '#374151',
+                fontWeight: 500,
+              }}
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmEndOfDayCleanup}
+              disabled={endOfDayCleanupRunning || overdueCheckInAppointments.length === 0}
+              style={{
+                padding: '0.5rem 0.875rem',
+                borderRadius: '6px',
+                border: 'none',
+                background: 'linear-gradient(to bottom, #f97316 0%, #ea580c 100%)',
+                color: '#ffffff',
+                fontWeight: 700,
+                boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
+                opacity: endOfDayCleanupRunning || overdueCheckInAppointments.length === 0 ? 0.65 : 1,
+              }}
+            >
+              {endOfDayCleanupRunning ? 'Cleaning Up...' : `Mark ${overdueCheckInAppointments.length} No-Show`}
             </button>
           </div>
         </div>

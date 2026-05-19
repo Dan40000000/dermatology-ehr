@@ -14,6 +14,7 @@ import {
   getDateKeyInTimeZone,
   getUtcRangeForPracticeDate,
 } from '../lib/practiceTimeZone';
+import { ensureStoreSchemaAndCatalog } from './productSalesService';
 
 export interface FinancialSnapshotPeriod {
   key: 'daily' | 'weekly' | 'monthly';
@@ -23,6 +24,10 @@ export interface FinancialSnapshotPeriod {
   actualRevenueCents: number;
   benchmarkRevenueCents: number;
   standaloneRevenueCents: number;
+  storeRevenueCents: number;
+  badDebtCents: number;
+  collectionsReferralBalanceCents: number;
+  collectionsReferralCount: number;
   totalRevenueCents: number;
   collectionsCents: number;
   avgRevenuePerVisitCents: number;
@@ -47,7 +52,7 @@ interface AppointmentRevenueRow {
 }
 
 interface CollectionRow {
-  collected_on: string;
+  collected_on: string | Date;
   amount_cents: string | number | null;
 }
 
@@ -61,7 +66,28 @@ interface StandaloneBillRevenueRow {
   line_descriptions: string | null;
 }
 
-function parseSnapshotDate(value: string): Date | null {
+interface ProductSaleRevenueRow {
+  sale_id: string;
+  sold_on: string;
+  total_cents: string | number | null;
+}
+
+interface BadDebtRow {
+  bill_id: string;
+  written_off_on: string;
+  amount_cents: string | number | null;
+}
+
+interface CollectionsReferralRow {
+  referred_on: string;
+  balance_cents: string | number | null;
+}
+
+function parseSnapshotDate(value: Date | string): Date | null {
+  if (value instanceof Date) {
+    return value;
+  }
+
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     try {
       return getUtcRangeForPracticeDate(value).start;
@@ -135,6 +161,10 @@ function buildEmptyPeriod(
     actualRevenueCents: 0,
     benchmarkRevenueCents: 0,
     standaloneRevenueCents: 0,
+    storeRevenueCents: 0,
+    badDebtCents: 0,
+    collectionsReferralBalanceCents: 0,
+    collectionsReferralCount: 0,
     totalRevenueCents: 0,
     collectionsCents: 0,
     avgRevenuePerVisitCents: 0,
@@ -169,6 +199,8 @@ function addRevenueCategory(
 }
 
 export async function getFinancialSnapshots(tenantId: string): Promise<FinancialSnapshots> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
   const now = new Date();
   const todayDateKey = getDateKeyInTimeZone(now);
   const weeklyStartDateKey = addDaysToDateKey(todayDateKey, -6);
@@ -178,7 +210,15 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
   const monthlyStart = startOfPracticeDate(monthlyStartDateKey);
   const maxStart = monthlyStart;
 
-  const [appointmentRevenueResult, patientCollectionsResult, payerCollectionsResult, standaloneRevenueResult] =
+  const [
+    appointmentRevenueResult,
+    patientCollectionsResult,
+    payerCollectionsResult,
+    standaloneRevenueResult,
+    productSalesResult,
+    badDebtResult,
+    collectionsReferralResult,
+  ] =
     await Promise.all([
     pool.query(
       `SELECT
@@ -261,6 +301,64 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
        GROUP BY b.id, b.bill_date, b.total_charges_cents, b.notes`,
       [tenantId, monthlyStartDateKey, todayDateKey]
     ),
+    pool.query(
+      `SELECT
+         ps.id AS sale_id,
+         ps.sale_date::date::text AS sold_on,
+         COALESCE(ps.total, 0) + COALESCE(sof.shipping_fee, 0) AS total_cents
+       FROM product_sales ps
+       LEFT JOIN store_order_fulfillments sof
+         ON sof.sale_id::text = ps.id::text
+        AND sof.tenant_id = ps.tenant_id
+       WHERE ps.tenant_id = $1
+         AND ps.status = 'completed'
+         AND COALESCE(sof.stripe_payment_status, 'paid') IN ('paid', 'succeeded')
+         AND ps.sale_date >= $2
+         AND ps.sale_date <= $3`,
+      [tenantId, maxStart.toISOString(), now.toISOString()]
+    ).catch((error) => {
+      if ((error as any)?.code === '42P01' || (error as any)?.code === '42703') {
+        return { rows: [] };
+      }
+      throw error;
+    }),
+    pool.query(
+      `SELECT
+         b.id AS bill_id,
+         COALESCE(b.written_off_at, b.updated_at)::date::text AS written_off_on,
+         GREATEST(0, COALESCE(b.adjustment_amount_cents, 0)) AS amount_cents
+       FROM bills b
+       WHERE b.tenant_id = $1
+         AND (b.status = 'written_off' OR b.follow_up_status = 'write_off' OR b.written_off_at IS NOT NULL)
+         AND COALESCE(b.written_off_at, b.updated_at) >= $2
+         AND COALESCE(b.written_off_at, b.updated_at) <= $3`,
+      [tenantId, maxStart.toISOString(), now.toISOString()]
+    ).catch((error) => {
+      if ((error as any)?.code === '42703') {
+        return { rows: [] };
+      }
+      throw error;
+    }),
+    pool.query(
+      `SELECT
+         COALESCE(b.collections_flagged_at, b.updated_at)::date::text AS referred_on,
+         COALESCE(b.balance_cents, 0) AS balance_cents
+       FROM bills b
+       WHERE b.tenant_id = $1
+         AND COALESCE(b.balance_cents, 0) > 0
+         AND b.status NOT IN ('paid', 'cancelled', 'written_off')
+         AND (
+           b.follow_up_status = 'collections'
+           OR b.collections_status IN ('flagged', 'sent_to_collections')
+         )
+         AND COALESCE(b.collections_flagged_at, b.updated_at) <= $2`,
+      [tenantId, now.toISOString()]
+    ).catch((error) => {
+      if ((error as any)?.code === '42703') {
+        return { rows: [] };
+      }
+      throw error;
+    }),
   ]);
 
   const periods: Array<{ key: FinancialSnapshotPeriod['key']; label: string; start: Date; rangeLabel: string }> = [
@@ -350,6 +448,34 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
     }
   }
 
+  const productSales = Array.isArray(productSalesResult.rows)
+    ? (productSalesResult.rows as ProductSaleRevenueRow[])
+    : [];
+
+  for (const sale of productSales) {
+    const soldOn = parseSnapshotDate(sale.sold_on);
+    if (!soldOn) {
+      continue;
+    }
+
+    const totalRevenueCents = parseCents(sale.total_cents);
+    if (totalRevenueCents <= 0) {
+      continue;
+    }
+
+    for (const period of periods) {
+      if (soldOn < period.start || soldOn > now) {
+        continue;
+      }
+
+      const bucket = snapshots[period.key];
+      bucket.storeRevenueCents += totalRevenueCents;
+      bucket.totalRevenueCents += totalRevenueCents;
+      bucket.collectionsCents += totalRevenueCents;
+      addRevenueCategory(categoryAccumulators[period.key], 'product_sale', totalRevenueCents);
+    }
+  }
+
   const collectionRows = [
     ...(Array.isArray(patientCollectionsResult.rows) ? (patientCollectionsResult.rows as CollectionRow[]) : []),
     ...(Array.isArray(payerCollectionsResult.rows) ? (payerCollectionsResult.rows as CollectionRow[]) : []),
@@ -368,6 +494,40 @@ export async function getFinancialSnapshots(tenantId: string): Promise<Financial
       }
 
       snapshots[period.key].collectionsCents += amountCents;
+    }
+  }
+
+  const badDebtRows = Array.isArray(badDebtResult.rows)
+    ? (badDebtResult.rows as BadDebtRow[])
+    : [];
+  for (const badDebt of badDebtRows) {
+    const writtenOffOn = parseSnapshotDate(badDebt.written_off_on);
+    if (!writtenOffOn) {
+      continue;
+    }
+    const amountCents = parseCents(badDebt.amount_cents);
+    if (amountCents <= 0) {
+      continue;
+    }
+    for (const period of periods) {
+      if (writtenOffOn < period.start || writtenOffOn > now) {
+        continue;
+      }
+      snapshots[period.key].badDebtCents += amountCents;
+    }
+  }
+
+  const referralRows = Array.isArray(collectionsReferralResult.rows)
+    ? (collectionsReferralResult.rows as CollectionsReferralRow[])
+    : [];
+  for (const referral of referralRows) {
+    const balanceCents = parseCents(referral.balance_cents);
+    if (balanceCents <= 0) {
+      continue;
+    }
+    for (const period of periods) {
+      snapshots[period.key].collectionsReferralBalanceCents += balanceCents;
+      snapshots[period.key].collectionsReferralCount += 1;
     }
   }
 

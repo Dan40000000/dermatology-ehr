@@ -38,7 +38,7 @@ const billUpdateSchema = z.object({
 });
 
 const billActionSchema = z.object({
-  action: z.enum(["send_statement", "set_payment_plan", "flag_collections", "write_off", "add_note"]),
+  action: z.enum(["send_statement", "set_payment_plan", "flag_collections", "send_to_collections", "write_off", "add_note"]),
   note: z.string().max(1000).optional(),
   amountCents: z.number().int().min(0).optional(),
 });
@@ -445,6 +445,11 @@ billsRouter.post("/:id/actions", requireAuth, requireRoles(["admin", "billing", 
       addUpdate("follow_up_status", "collections");
       updateParts.push("collections_flagged_at = coalesce(collections_flagged_at, now())");
       if (note) addUpdate("billing_internal_note", note);
+    } else if (action === "send_to_collections") {
+      addUpdate("collections_status", "sent_to_collections");
+      addUpdate("follow_up_status", "collections");
+      updateParts.push("collections_flagged_at = coalesce(collections_flagged_at, now())");
+      addUpdate("billing_internal_note", note || "Debt referred to external collections");
     } else if (action === "write_off") {
       const writeOffCents = Math.min(Math.max(0, amountCents ?? currentBalanceCents), currentBalanceCents);
       if (writeOffCents <= 0) {

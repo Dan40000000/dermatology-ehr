@@ -249,9 +249,11 @@ export class FrontDeskService {
   /**
    * Get today's schedule with all relevant details
    */
-  async getTodaySchedule(tenantId: string, providerId?: string, statusFilter?: string): Promise<AppointmentWithDetails[]> {
+  async getTodaySchedule(tenantId: string, providerId?: string, statusFilter?: string, dateKey?: string): Promise<AppointmentWithDetails[]> {
     try {
-      const dayWindow = this.getPracticeDayWindow();
+      const dayWindow = this.getPracticeDayWindow(
+        dateKey && /^\d{4}-\d{2}-\d{2}$/.test(dateKey) ? new Date(`${dateKey}T12:00:00`) : new Date(),
+      );
 
       let query = `
         SELECT

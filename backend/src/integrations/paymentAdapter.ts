@@ -95,6 +95,27 @@ export interface RecurringPayment {
   completedPayments: number;
 }
 
+export interface CheckoutLineItem {
+  name: string;
+  description?: string;
+  unitAmountCents: number;
+  quantity: number;
+  productId?: string;
+  sku?: string;
+}
+
+export interface CheckoutSessionResult {
+  id: string;
+  url?: string;
+  paymentIntentId?: string;
+  paymentStatus: 'paid' | 'unpaid' | 'no_payment_required';
+  amountTotal: number;
+  currency: string;
+  mode: 'stripe' | 'mock';
+  metadata?: Record<string, string>;
+  createdAt: string;
+}
+
 export interface Patient {
   id: string;
   firstName: string;
@@ -118,6 +139,14 @@ export class PaymentAdapter extends BaseAdapter {
 
   getProvider(): string {
     return 'stripe';
+  }
+
+  hasStripeCredentials(): boolean {
+    return this.getStripeSecretKey().length > 0;
+  }
+
+  isMockMode(): boolean {
+    return this.useMock;
   }
 
   /**
@@ -204,6 +233,75 @@ export class PaymentAdapter extends BaseAdapter {
       logger.error('Failed to create payment intent', { patientId, error: error.message });
       throw error;
     }
+  }
+
+  /**
+   * Create a hosted Stripe Checkout session for store orders.
+   */
+  async createCheckoutSession(input: {
+    patientId: string;
+    lineItems: CheckoutLineItem[];
+    successUrl: string;
+    cancelUrl: string;
+    metadata?: Record<string, string>;
+    customerEmail?: string;
+  }): Promise<CheckoutSessionResult> {
+    const startTime = Date.now();
+    const amountCents = input.lineItems.reduce(
+      (sum, item) => sum + Math.max(0, item.unitAmountCents) * Math.max(1, item.quantity),
+      0
+    );
+
+    logger.info('Creating Stripe Checkout session', {
+      patientId: input.patientId,
+      amountCents,
+    });
+
+    try {
+      const useMockCheckout = this.useMock || !this.hasStripeCredentials();
+      const session = useMockCheckout
+        ? await this.mockCreateCheckoutSession(input, amountCents)
+        : await this.withRetry(() => this.realCreateCheckoutSession(input));
+
+      await this.logIntegration({
+        direction: 'outbound',
+        endpoint: '/v1/checkout/sessions',
+        method: 'POST',
+        request: {
+          patientId: input.patientId,
+          amountCents,
+          lineItemCount: input.lineItems.length,
+        },
+        response: { sessionId: session.id, paymentStatus: session.paymentStatus, mode: session.mode },
+        status: 'success',
+        durationMs: Date.now() - startTime,
+      });
+
+      return session;
+    } catch (error: any) {
+      logger.error('Failed to create Stripe Checkout session', { patientId: input.patientId, error: error.message });
+      throw error;
+    }
+  }
+
+  async retrieveCheckoutSession(sessionId: string): Promise<CheckoutSessionResult> {
+    if (this.useMock || sessionId.startsWith('cs_mock_') || !this.hasStripeCredentials()) {
+      return {
+        id: sessionId,
+        paymentStatus: 'paid',
+        amountTotal: 0,
+        currency: 'usd',
+        mode: 'mock',
+        createdAt: new Date().toISOString(),
+      };
+    }
+
+    const stripe = this.getStripeClient();
+    const session = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: ['payment_intent'],
+    });
+
+    return this.mapCheckoutSession(session);
   }
 
   /**
@@ -675,6 +773,33 @@ export class PaymentAdapter extends BaseAdapter {
     };
   }
 
+  private async mockCreateCheckoutSession(
+    input: {
+      patientId: string;
+      lineItems: CheckoutLineItem[];
+      successUrl: string;
+      cancelUrl: string;
+      metadata?: Record<string, string>;
+      customerEmail?: string;
+    },
+    amountCents: number
+  ): Promise<CheckoutSessionResult> {
+    await this.sleep(250 + Math.random() * 300);
+
+    const id = `cs_mock_${crypto.randomUUID().replace(/-/g, '')}`;
+    return {
+      id,
+      url: undefined,
+      paymentIntentId: `pi_mock_${crypto.randomUUID().replace(/-/g, '')}`,
+      paymentStatus: 'paid',
+      amountTotal: amountCents,
+      currency: 'usd',
+      mode: 'mock',
+      metadata: input.metadata,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
   // ============================================================================
   // Real API Implementations (placeholders)
   // ============================================================================
@@ -902,6 +1027,50 @@ export class PaymentAdapter extends BaseAdapter {
     };
   }
 
+  private async realCreateCheckoutSession(input: {
+    patientId: string;
+    lineItems: CheckoutLineItem[];
+    successUrl: string;
+    cancelUrl: string;
+    metadata?: Record<string, string>;
+    customerEmail?: string;
+  }): Promise<CheckoutSessionResult> {
+    const stripe = this.getStripeClient();
+    const customerId = await this.getOrCreateCustomer(input.patientId);
+    const metadata = this.normalizeMetadata(input.metadata);
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: 'payment',
+        customer: customerId,
+        customer_email: customerId ? undefined : input.customerEmail || undefined,
+        success_url: input.successUrl,
+        cancel_url: input.cancelUrl,
+        metadata,
+        payment_intent_data: {
+          metadata,
+        },
+        line_items: input.lineItems.map((item) => ({
+          quantity: Math.max(1, item.quantity),
+          price_data: {
+            currency: 'usd',
+            unit_amount: Math.max(0, item.unitAmountCents),
+            product_data: {
+              name: item.name,
+              description: item.description || undefined,
+              metadata: this.normalizeMetadata({
+                productId: item.productId || '',
+                sku: item.sku || '',
+              }),
+            },
+          },
+        })),
+      },
+      metadata?.saleId ? { idempotencyKey: `store-checkout-${metadata.saleId}` } : undefined
+    );
+
+    return this.mapCheckoutSession(session);
+  }
+
   // ============================================================================
   // Helper Methods
   // ============================================================================
@@ -1031,6 +1200,25 @@ export class PaymentAdapter extends BaseAdapter {
     if (status === 'paused' || status === 'past_due' || status === 'unpaid') return 'paused';
     if (status === 'canceled' || status === 'incomplete_expired') return 'cancelled';
     return 'active';
+  }
+
+  private mapCheckoutSession(session: Stripe.Checkout.Session): CheckoutSessionResult {
+    const paymentIntent =
+      typeof session.payment_intent === 'string'
+        ? session.payment_intent
+        : session.payment_intent?.id;
+
+    return {
+      id: session.id,
+      url: session.url || undefined,
+      paymentIntentId: paymentIntent || undefined,
+      paymentStatus: session.payment_status,
+      amountTotal: session.amount_total || 0,
+      currency: session.currency || 'usd',
+      mode: 'stripe',
+      metadata: session.metadata || undefined,
+      createdAt: new Date(session.created * 1000).toISOString(),
+    };
   }
 }
 

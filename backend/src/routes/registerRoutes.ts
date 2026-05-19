@@ -108,6 +108,7 @@ import { billsRouter } from "./bills";
 import { financialMetricsRouter } from "./financialMetrics";
 import { integrationsRouter } from "./integrations";
 import { frontDeskRouter } from "./frontDesk";
+import { commandCenterRouter } from "./commandCenter";
 import { eligibilityRouter } from "./eligibility";
 import { checkInRouter } from "./checkIn";
 import { billingRouter } from "./billing";
@@ -148,6 +149,7 @@ import { publicPagesRouter } from "./publicPages";
 import { downtimePacketsRouter } from "./downtimePackets";
 import { professionalFeedbackRouter } from "./professionalFeedback";
 import { publicBillPayRouter } from "./publicBillPay";
+import { stripeWebhooksRouter } from "./stripeWebhooks";
 
 export function registerRoutes(app: Express) {
   const requireRevenueCycleAccess = [requireAuth, requireRoles(REVENUE_CYCLE_ROLES)];
@@ -156,6 +158,7 @@ export function registerRoutes(app: Express) {
 
   app.use("/health", healthRouter);
   app.use("/public", publicPagesRouter);
+  app.use("/api/stripe", stripeWebhooksRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/professional-feedback", professionalFeedbackRouter);
   app.use("/api/public-bill-pay", portalLimiter, publicBillPayRouter);
@@ -233,6 +236,7 @@ export function registerRoutes(app: Express) {
   // Moving all /api/procedure-sites/* routes to their own mount point would require refactoring
   // For now, the routes are available at /api/body-map-markers/procedure-sites
   app.use("/api/front-desk", frontDeskRouter);
+  app.use("/api/command-center", commandCenterRouter);
   app.use("/api/sms", smsRouter);
   app.use("/api/sms-consent", smsConsentRouter);
   app.use("/api/sms-audit", smsAuditRouter);

@@ -12,6 +12,8 @@ import {
   Search,
   Send,
   Truck,
+  Upload,
+  X,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -27,6 +29,7 @@ import {
   updateProduct,
   updateStoreOrderFulfillment,
 } from '../api';
+import { getProductImageUrl } from '../utils/productImages';
 import type {
   InventoryStatus,
   Product,
@@ -50,6 +53,7 @@ interface ProductForm {
   cost: string;
   inventoryCount: string;
   reorderPoint: string;
+  imageUrl: string;
 }
 
 interface OrderDraft {
@@ -67,6 +71,7 @@ interface ProductDraft {
   cost: string;
   reorderPoint: string;
   isActive: boolean;
+  imageUrl: string;
 }
 
 const EMPTY_PRODUCT_FORM: ProductForm = {
@@ -79,6 +84,7 @@ const EMPTY_PRODUCT_FORM: ProductForm = {
   cost: '',
   inventoryCount: '0',
   reorderPoint: '5',
+  imageUrl: '',
 };
 
 const CATEGORY_OPTIONS: Array<{ value: ProductCategory | 'all'; label: string }> = [
@@ -91,6 +97,7 @@ const CATEGORY_OPTIONS: Array<{ value: ProductCategory | 'all'; label: string }>
 ];
 
 const FULFILLMENT_LABELS: Record<StoreFulfillmentStatus, string> = {
+  awaiting_payment: 'Awaiting Payment',
   paid: 'Paid',
   packing: 'Packing',
   label_created: 'Label Created',
@@ -164,7 +171,32 @@ function buildProductDraft(product: Product): ProductDraft {
     cost: centsToDollars(product.cost),
     reorderPoint: String(product.reorderPoint),
     isActive: product.isActive,
+    imageUrl: product.imageUrl || '',
   };
+}
+
+function readImageFile(file: File): Promise<string> {
+  if (!file.type.startsWith('image/')) {
+    return Promise.reject(new Error('Choose an image file'));
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    return Promise.reject(new Error('Product images must be 5 MB or smaller'));
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Failed to read image file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function ProductThumb({ product, compact = false }: { product: Pick<Product, 'name' | 'brand' | 'category' | 'sku' | 'imageUrl'>; compact?: boolean }) {
+  return (
+    <div className={compact ? 'store-ops-product-thumb compact' : 'store-ops-product-thumb'}>
+      <img src={getProductImageUrl(product)} alt="" />
+    </div>
+  );
 }
 
 export function StoreOperationsPage() {
@@ -293,6 +325,10 @@ export function StoreOperationsPage() {
     () => new Map(products.map((product) => [product.id, product.cost])),
     [products]
   );
+  const productsById = useMemo(
+    () => new Map(products.map((product) => [product.id, product])),
+    [products]
+  );
   const estimatedCogs = useMemo(
     () => orders.reduce((sum, order) => sum + (order.items || []).reduce((itemSum, item) => {
       return itemSum + (productCostById.get(item.productId) || 0) * item.quantity;
@@ -320,6 +356,16 @@ export function StoreOperationsPage() {
     }));
   };
 
+  const handleImageUpload = async (file: File | undefined, onImage: (imageUrl: string) => void) => {
+    if (!file) return;
+    try {
+      const imageUrl = await readImageFile(file);
+      onImage(imageUrl);
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'Failed to load product image');
+    }
+  };
+
   const handleCreateProduct = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!session || saving) return;
@@ -340,6 +386,7 @@ export function StoreOperationsPage() {
         cost: dollarsToCents(productForm.cost),
         inventoryCount: Number.parseInt(productForm.inventoryCount, 10) || 0,
         reorderPoint: Number.parseInt(productForm.reorderPoint, 10) || 0,
+        imageUrl: productForm.imageUrl.trim() || undefined,
       });
       setProductForm(EMPTY_PRODUCT_FORM);
       showSuccess('Product added to store');
@@ -363,9 +410,11 @@ export function StoreOperationsPage() {
         cost: dollarsToCents(draft.cost),
         reorderPoint: Number.parseInt(draft.reorderPoint, 10) || 0,
         isActive: draft.isActive,
+        imageUrl: draft.imageUrl.trim() || null,
       });
       setProducts((current) => current.map((item) => item.id === product.id ? response.product : item));
-      showSuccess('Product pricing updated');
+      setProductDrafts((current) => ({ ...current, [product.id]: buildProductDraft(response.product) }));
+      showSuccess('Product details updated');
     } catch (error) {
       console.error('Failed to update store product:', error);
       showError(error instanceof Error ? error.message : 'Failed to update product');
@@ -550,10 +599,34 @@ export function StoreOperationsPage() {
                               {FULFILLMENT_LABELS[draft.fulfillmentStatus]}
                             </span>
                           </div>
-                          <div className="store-ops-order-items">
-                            {(order.items || []).map((item) => (
-                              <span key={item.id}>{item.quantity}x {item.productName}</span>
-                            ))}
+                          <div className="store-ops-order-items" aria-label={`Items in order for ${patientName(order)}`}>
+                            {(order.items || []).length === 0 ? (
+                              <div className="store-ops-order-line empty">No line items attached.</div>
+                            ) : (
+                              (order.items || []).map((item) => {
+                                const product = productsById.get(item.productId);
+                                const imageProduct = {
+                                  id: item.productId,
+                                  name: item.productName,
+                                  brand: product?.brand || '',
+                                  category: product?.category || 'skincare',
+                                  sku: item.productSku,
+                                  imageUrl: item.imageUrl || product?.imageUrl,
+                                };
+                                return (
+                                  <div key={item.id} className="store-ops-order-line">
+                                    <ProductThumb product={imageProduct} compact />
+                                    <div className="store-ops-order-line-copy">
+                                      <strong>{item.productName}</strong>
+                                      <span>{item.productSku || 'No SKU'}</span>
+                                    </div>
+                                    <span className="store-ops-order-line-qty">Qty {item.quantity}</span>
+                                    <span>{formatCurrency(item.unitPrice)} ea</span>
+                                    <strong>{formatCurrency(item.lineTotal)}</strong>
+                                  </div>
+                                );
+                              })
+                            )}
                           </div>
                           <div className="store-ops-order-controls">
                             <label>
@@ -652,52 +725,89 @@ export function StoreOperationsPage() {
                     const margin = product.price > 0 ? Math.round(((product.price - product.cost) / product.price) * 100) : 0;
                     return (
                       <article key={product.id} className={!draft.isActive ? 'inactive' : ''}>
-                        <div>
-                          <strong>{product.name}</strong>
-                          <span>{product.sku} · {product.brand || 'No brand'} · {product.category.replace('_', ' ')}</span>
+                        <div className="store-ops-product-identity">
+                          <ProductThumb product={{ ...product, imageUrl: draft.imageUrl }} compact />
+                          <div>
+                            <strong>{product.name}</strong>
+                            <span>{product.sku} · {product.brand || 'No brand'} · {product.category.replace('_', ' ')}</span>
+                          </div>
                         </div>
-                        <label>
-                          Price
-                          <input
-                            aria-label={`Price for ${product.name}`}
-                            value={draft.price}
-                            onChange={(event) => updateProductDraft(product.id, { price: event.target.value })}
-                            inputMode="decimal"
-                          />
-                        </label>
-                        <label>
-                          Cost
-                          <input
-                            aria-label={`Cost for ${product.name}`}
-                            value={draft.cost}
-                            onChange={(event) => updateProductDraft(product.id, { cost: event.target.value })}
-                            inputMode="decimal"
-                          />
-                        </label>
-                        <label>
-                          Reorder
-                          <input
-                            aria-label={`Reorder point for ${product.name}`}
-                            value={draft.reorderPoint}
-                            onChange={(event) => updateProductDraft(product.id, { reorderPoint: event.target.value })}
-                            inputMode="numeric"
-                          />
-                        </label>
-                        <div className="store-ops-product-stock">
-                          <span>{product.inventoryCount} on hand</span>
-                          <span>{margin}% margin</span>
+                        <div className="store-ops-product-controls">
+                          <label>
+                            Price
+                            <input
+                              aria-label={`Price for ${product.name}`}
+                              value={draft.price}
+                              onChange={(event) => updateProductDraft(product.id, { price: event.target.value })}
+                              inputMode="decimal"
+                            />
+                          </label>
+                          <label>
+                            Cost
+                            <input
+                              aria-label={`Cost for ${product.name}`}
+                              value={draft.cost}
+                              onChange={(event) => updateProductDraft(product.id, { cost: event.target.value })}
+                              inputMode="decimal"
+                            />
+                          </label>
+                          <label>
+                            Reorder
+                            <input
+                              aria-label={`Reorder point for ${product.name}`}
+                              value={draft.reorderPoint}
+                              onChange={(event) => updateProductDraft(product.id, { reorderPoint: event.target.value })}
+                              inputMode="numeric"
+                            />
+                          </label>
+                          <div className="store-ops-product-stock">
+                            <span>{product.inventoryCount} on hand</span>
+                            <span>{margin}% margin</span>
+                          </div>
+                          <label className="store-ops-check">
+                            <input
+                              type="checkbox"
+                              checked={draft.isActive}
+                              onChange={(event) => updateProductDraft(product.id, { isActive: event.target.checked })}
+                            />
+                            Active
+                          </label>
+                          <button type="button" onClick={() => handleSaveProduct(product)} disabled={saving}>
+                            Save
+                          </button>
                         </div>
-                        <label className="store-ops-check">
-                          <input
-                            type="checkbox"
-                            checked={draft.isActive}
-                            onChange={(event) => updateProductDraft(product.id, { isActive: event.target.checked })}
-                          />
-                          Active
-                        </label>
-                        <button type="button" onClick={() => handleSaveProduct(product)} disabled={saving}>
-                          Save
-                        </button>
+                        <div className="store-ops-product-image-manager">
+                          <ProductThumb product={{ ...product, imageUrl: draft.imageUrl }} />
+                          <label>
+                            Image URL
+                            <input
+                              aria-label={`Image URL for ${product.name}`}
+                              value={draft.imageUrl}
+                              onChange={(event) => updateProductDraft(product.id, { imageUrl: event.target.value })}
+                              placeholder="https://... or upload"
+                            />
+                          </label>
+                          <label className="store-ops-upload-button">
+                            <Upload size={15} />
+                            Upload
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(event) => {
+                                void handleImageUpload(event.target.files?.[0], (imageUrl) => updateProductDraft(product.id, { imageUrl }));
+                                event.currentTarget.value = '';
+                              }}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="store-ops-clear-image"
+                            onClick={() => updateProductDraft(product.id, { imageUrl: '' })}
+                          >
+                            <X size={15} />
+                            Clear
+                          </button>
+                        </div>
                       </article>
                     );
                   })}
@@ -751,6 +861,50 @@ export function StoreOperationsPage() {
                     Description
                     <textarea value={productForm.description} onChange={(event) => setProductForm((current) => ({ ...current, description: event.target.value }))} />
                   </label>
+                  <div className="store-ops-image-field">
+                    <span>Product image</span>
+                    <div className="store-ops-image-editor">
+                      <ProductThumb
+                        product={{
+                          name: productForm.name || 'New Product',
+                          brand: productForm.brand || 'Office Store',
+                          category: productForm.category,
+                          sku: productForm.sku || 'NEW',
+                          imageUrl: productForm.imageUrl,
+                        }}
+                      />
+                      <div className="store-ops-image-controls">
+                        <input
+                          aria-label="Product image URL"
+                          value={productForm.imageUrl}
+                          onChange={(event) => setProductForm((current) => ({ ...current, imageUrl: event.target.value }))}
+                          placeholder="https://... or upload a file"
+                        />
+                        <div>
+                          <label className="store-ops-upload-button">
+                            <Upload size={15} />
+                            Upload
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(event) => {
+                                void handleImageUpload(event.target.files?.[0], (imageUrl) => setProductForm((current) => ({ ...current, imageUrl })));
+                                event.currentTarget.value = '';
+                              }}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="store-ops-clear-image"
+                            onClick={() => setProductForm((current) => ({ ...current, imageUrl: '' }))}
+                          >
+                            <X size={15} />
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                   <button type="submit" disabled={saving}>
                     <Plus size={16} />
                     Add Product
@@ -771,7 +925,7 @@ export function StoreOperationsPage() {
                       <article key={order.id}>
                         <div>
                           <strong>{patientName(order)}</strong>
-                          <span>{order.shippingMethod} · {order.items?.map((item) => item.productName).join(', ') || 'No items'}</span>
+                          <span>{order.shippingMethod} · {order.items?.map((item) => `${item.quantity}x ${item.productName}`).join(' · ') || 'No items'}</span>
                         </div>
                         <select
                           aria-label={`Shipping method for ${patientName(order)}`}

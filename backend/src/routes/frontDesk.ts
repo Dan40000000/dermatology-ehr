@@ -46,13 +46,14 @@ frontDeskRouter.get(
   requireRoles(['admin', 'front_desk', 'ma', 'provider']),
   async (req: AuthedRequest, res) => {
     try {
-      const { providerId, status } = req.query;
+      const { providerId, status, date } = req.query;
       const tenantId = req.tenantId!;
 
       const schedule = await frontDeskService.getTodaySchedule(
         tenantId,
         providerId as string | undefined,
-        status as string | undefined
+        status as string | undefined,
+        date as string | undefined
       );
 
       res.json({ appointments: schedule });

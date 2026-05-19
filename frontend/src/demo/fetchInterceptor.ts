@@ -57,6 +57,7 @@ import {
   updateDemoFeeSchedule,
   updateDemoFeeScheduleItem,
 } from './demoRevenueCycle';
+import { getDefaultProductImageUrlForSku, isLegacyGeneratedProductImageUrl } from '../utils/productImages';
 
 const DEMO_BOOKED_APPOINTMENTS_KEY = 'demoBookedAppointments';
 const DEMO_TELEHEALTH_SESSIONS_KEY = 'demoTelehealthSessions.v1';
@@ -240,6 +241,7 @@ const DEFAULT_DEMO_STORE_PRODUCTS: DemoItem[] = DEMO_STORE_PRODUCT_SEED.map(([
   inventoryCount,
   reorderPoint,
   isActive: true,
+  imageUrl: getDefaultProductImageUrlForSku(sku) || '',
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 }));
@@ -509,7 +511,14 @@ function readDemoStoreProducts(): DemoItem[] {
 
   const bySku = new Map<string, DemoItem>();
   for (const product of DEFAULT_DEMO_STORE_PRODUCTS) bySku.set(String(product.sku), product);
-  for (const product of stored) bySku.set(String(product.sku), { ...bySku.get(String(product.sku)), ...product });
+  for (const product of stored) {
+    const sku = String(product.sku);
+    const merged = { ...bySku.get(sku), ...product };
+    if (!merged.imageUrl || isLegacyGeneratedProductImageUrl(String(merged.imageUrl))) {
+      merged.imageUrl = getDefaultProductImageUrlForSku(sku) || '';
+    }
+    bySku.set(sku, merged);
+  }
   return Array.from(bySku.values());
 }
 
@@ -2619,6 +2628,7 @@ function handleProviderRoute(
       inventoryCount: Number(body?.inventoryCount || 0),
       reorderPoint: Number(body?.reorderPoint || 5),
       isActive: true,
+      imageUrl: body?.imageUrl ? String(body.imageUrl) : '',
       createdAt: now,
       updatedAt: now,
     };
@@ -3064,6 +3074,81 @@ function handleProviderRoute(
         outstandingBalance: getDemoOutstandingBalanceForAppointment(appointment),
       }));
     return mockResponse({ appointments });
+  }
+
+  if (path === '/api/command-center/summary' && method.toUpperCase() === 'GET') {
+    const businessDate = params.get('date') || new Date().toISOString().split('T')[0];
+    const dateParams = new URLSearchParams({ date: businessDate });
+    const dayAppointments = filterAppointments(getAllAppointments(), dateParams);
+    const includedAppointments = dayAppointments.filter((appointment) => String(appointment.status || '').toLowerCase() !== 'cancelled');
+    const activeAppointments = includedAppointments.filter((appointment) => {
+      const status = String(appointment.status || '').toLowerCase();
+      return !['completed', 'checked_out', 'cancelled', 'no_show'].includes(status);
+    });
+    const staleScheduledCount = includedAppointments.filter((appointment) => {
+      const status = String(appointment.status || '').toLowerCase();
+      if (status !== 'scheduled') return false;
+      const reference = String(appointment.scheduledEnd || appointment.scheduledStart || '');
+      const scheduledMs = new Date(reference).getTime();
+      return Number.isFinite(scheduledMs) && scheduledMs + 15 * 60 * 1000 < Date.now();
+    }).length;
+    const claims = queryDemoClaims(new URLSearchParams()).claims || [];
+    const claimsInQueue = claims.filter((claim: DemoItem) =>
+      ['draft', 'coding_review', 'ready', 'submitted', 'accepted', 'partially_paid'].includes(String(claim.status || '').toLowerCase())
+    ).length;
+    const claimsDeniedRejected = claims.filter((claim: DemoItem) =>
+      ['denied', 'rejected', 'appealed'].includes(String(claim.status || '').toLowerCase()) ||
+      String(claim.scrubStatus || claim.scrub_status || '').toLowerCase() === 'failed'
+    ).length;
+    const collectionsTrend = getDemoCollectionsTrend(businessDate, businessDate, 'day');
+    const paymentsSummary = getDemoPaymentsSummary(businessDate, businessDate);
+    const arAging = getDemoARAging(businessDate);
+    const financialWorkQueue = queryDemoFinancialWorkQueue(new URLSearchParams('status=open')).items || [];
+    const patientCollectionsCents = Number(collectionsTrend.summary?.totalPatientPaymentsCents || paymentsSummary.calculated?.postedPatientPaymentsCents || 0);
+    const payerCollectionsCents = Number(collectionsTrend.summary?.totalPayerPaymentsCents || paymentsSummary.calculated?.payerAppliedCents || 0);
+    const storeCollectionsCents = Number(collectionsTrend.summary?.totalStorePaymentsCents || 0);
+    const revenueTodayCents = Number(collectionsTrend.summary?.totalRevenueEarnedCents || paymentsSummary.calculated?.chargesInPeriodCents || 0);
+    const netCollectionsCents = patientCollectionsCents + payerCollectionsCents;
+    const totalCollectionsCents = netCollectionsCents + storeCollectionsCents;
+
+    return mockResponse({
+      businessDate,
+      practiceTimeZone: 'America/Denver',
+      generatedAt: new Date().toISOString(),
+      dataHealth: { failedSources: [] },
+      schedule: {
+        appointmentsCount: includedAppointments.length,
+        activeAppointmentsCount: activeAppointments.length,
+        checkedInCount: includedAppointments.filter((appointment) => String(appointment.status || '').toLowerCase() === 'checked_in').length,
+        completedCount: includedAppointments.filter((appointment) => ['completed', 'checked_out'].includes(String(appointment.status || '').toLowerCase())).length,
+        waitingCount: includedAppointments.filter((appointment) => String(appointment.status || '').toLowerCase() === 'checked_in').length,
+        inRoomsCount: includedAppointments.filter((appointment) => ['in_room', 'with_provider'].includes(String(appointment.status || '').toLowerCase())).length,
+        checkoutCount: includedAppointments.filter((appointment) => ['completed', 'checked_out'].includes(String(appointment.status || '').toLowerCase())).length,
+        staleScheduledCount,
+        noShowCount: includedAppointments.filter((appointment) => String(appointment.status || '').toLowerCase() === 'no_show').length,
+        cancelledCount: dayAppointments.filter((appointment) => String(appointment.status || '').toLowerCase() === 'cancelled').length,
+        needsInsuranceVerification: activeAppointments.filter((appointment) => appointment.insuranceVerified === false).length,
+        balanceDueAppointments: activeAppointments.filter((appointment) => getDemoOutstandingBalanceForAppointment(appointment) > 0).length,
+        copayDueCents: activeAppointments.reduce((sum, appointment) => sum + Math.round(getDemoCopayAmountForAppointment(appointment) * 100), 0),
+      },
+      claims: {
+        claimsInQueue,
+        claimsDeniedRejected,
+      },
+      financials: {
+        revenueTodayCents,
+        netCollectionsCents,
+        patientCollectionsCents,
+        payerCollectionsCents,
+        storeCollectionsCents,
+        collectionRateToday: revenueTodayCents > 0 ? Math.round((totalCollectionsCents / revenueTodayCents) * 100) : 0,
+        financialWorkQueueCount: financialWorkQueue.length,
+        claimWorkQueueCount: financialWorkQueue.filter((item: DemoItem) => item.claimId && !item.billId).length,
+        billingWorkQueueCount: financialWorkQueue.filter((item: DemoItem) => item.billId || !item.claimId).length,
+        arTotalCents: Number(arAging.totals?.totalBalanceCents || 0),
+        arOver90Cents: Number(arAging.totals?.over90BalanceCents || 0),
+      },
+    });
   }
 
   if (path.startsWith('/api/front-desk/check-in/') && method.toUpperCase() === 'POST') {
@@ -4109,7 +4194,10 @@ function handlePortalRoute(
     });
   }
 
-  if (path === '/api/patient-portal-data/store/orders' && method.toUpperCase() === 'POST') {
+  if (
+    (path === '/api/patient-portal-data/store/orders' || path === '/api/patient-portal-data/store/checkout-session')
+    && method.toUpperCase() === 'POST'
+  ) {
     const items = Array.isArray(body?.items) ? body.items : [];
     if (items.length === 0) return mockResponse({ error: 'At least one item is required' }, 400);
 
@@ -4143,6 +4231,7 @@ function handlePortalRoute(
         lineTotal,
         productName: product.name,
         productSku: product.sku,
+        imageUrl: product.imageUrl,
       });
     }
 
@@ -4183,7 +4272,36 @@ function handlePortalRoute(
 
     writeDemoStoreProducts(updatedProducts);
     writeDemoStoreOrders([order, ...readDemoStoreOrders()]);
-    return mockResponse({ order, sale: order }, 201);
+    return mockResponse({
+      checkout: {
+        id: order.stripePaymentIntentId,
+        paymentStatus: 'paid',
+        amountTotal: order.total,
+        currency: 'usd',
+        mode: 'mock',
+        createdAt: now,
+      },
+      order,
+      sale: order,
+      paymentMode: 'mock',
+    }, 201);
+  }
+
+  if (path.startsWith('/api/patient-portal-data/store/checkout-session/') && path.endsWith('/sync') && method.toUpperCase() === 'POST') {
+    const sessionId = decodeURIComponent(path.split('/').slice(-2)[0] || '');
+    const order = readDemoStoreOrders().find((item) => String(item.stripePaymentIntentId) === sessionId || String(item.id) === sessionId);
+    if (!order) return mockResponse({ error: 'Checkout session not found' }, 404);
+    return mockResponse({
+      checkout: {
+        id: sessionId,
+        paymentStatus: 'paid',
+        amountTotal: order.total,
+        currency: 'usd',
+        mode: 'mock',
+        createdAt: order.createdAt,
+      },
+      order,
+    });
   }
 
   if (path.startsWith('/api/patient-portal-data/appointments')) {

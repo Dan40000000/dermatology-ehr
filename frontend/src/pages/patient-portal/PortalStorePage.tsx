@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { CheckCircle, CreditCard, Minus, Package, Plus, Search, ShoppingCart, Truck } from 'lucide-react';
 import { PatientPortalLayout } from '../../components/patient-portal/PatientPortalLayout';
 import { patientPortalFetch, usePatientPortalAuth } from '../../contexts/PatientPortalAuthContext';
+import { getProductImageUrl } from '../../utils/productImages';
 import type { Product, StoreShippingAddress } from '../../types';
 
 interface CartLine {
@@ -54,6 +56,7 @@ function productSearchText(product: Product): string {
 
 export function PortalStorePage() {
   const { patient } = usePatientPortalAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,6 +109,64 @@ export function PortalStorePage() {
     };
   }, []);
 
+  useEffect(() => {
+    const sessionId = searchParams.get('session_id');
+    const checkoutStatus = searchParams.get('store_checkout');
+    if (checkoutStatus === 'cancelled') {
+      setError('Checkout was cancelled. No payment was captured.');
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('session_id');
+      nextParams.delete('store_checkout');
+      nextParams.delete('orderId');
+      setSearchParams(nextParams, { replace: true });
+      return;
+    }
+
+    if (!sessionId || checkoutStatus !== 'success') return;
+
+    let cancelled = false;
+    const syncCheckout = async () => {
+      try {
+        setPlacingOrder(true);
+        setError(null);
+        const response = await patientPortalFetch(`/api/patient-portal-data/store/checkout-session/${encodeURIComponent(sessionId)}/sync`, {
+          method: 'POST',
+        });
+        const order = response.order;
+        if (!cancelled && order) {
+          setConfirmation({
+            id: order.id,
+            total: order.total || 0,
+            fulfillmentStatus: order.fulfillmentStatus,
+            trackingNumber: order.trackingNumber,
+          });
+          const refreshed = await patientPortalFetch('/api/patient-portal-data/store/products');
+          if (!cancelled) {
+            setProducts((refreshed.products || []).filter((product: Product) => product.category !== 'prescription'));
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Payment was received, but order sync needs review.');
+        }
+      } finally {
+        if (!cancelled) {
+          setPlacingOrder(false);
+          const nextParams = new URLSearchParams(searchParams);
+          nextParams.delete('session_id');
+          nextParams.delete('store_checkout');
+          nextParams.delete('orderId');
+          setSearchParams(nextParams, { replace: true });
+        }
+      }
+    };
+
+    void syncCheckout();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, setSearchParams]);
+
   const visibleProducts = useMemo(() => {
     const normalizedSearch = searchQuery.trim().toLowerCase();
     const concern = CONCERN_FILTERS.find((filter) => filter.value === concernFilter);
@@ -136,7 +197,7 @@ export function PortalStorePage() {
     [cart]
   );
   const tax = Math.round(subtotal * TAX_RATE);
-  const shippingFee = shippingMethod === 'priority' ? 995 : shippingMethod === 'standard' ? 595 : 0;
+  const shippingFee = cart.length > 0 ? (shippingMethod === 'priority' ? 995 : shippingMethod === 'standard' ? 595 : 0) : 0;
   const total = subtotal + tax + shippingFee;
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
@@ -186,8 +247,7 @@ export function PortalStorePage() {
     try {
       setPlacingOrder(true);
       setError(null);
-      const paymentReference = `stripe_portal_${Date.now()}`;
-      const response = await patientPortalFetch('/api/patient-portal-data/store/orders', {
+      const response = await patientPortalFetch('/api/patient-portal-data/store/checkout-session', {
         method: 'POST',
         body: JSON.stringify({
           items: cart.map((line) => ({
@@ -197,10 +257,13 @@ export function PortalStorePage() {
           shippingAddress,
           shippingMethod,
           notificationEmail: patient?.email,
-          paymentReference,
-          stripePaymentIntentId: paymentReference,
         }),
       });
+
+      if (response.checkout?.url) {
+        window.location.assign(response.checkout.url);
+        return;
+      }
 
       const order = response.order || response.sale;
       setConfirmation({
@@ -268,6 +331,7 @@ export function PortalStorePage() {
                   setConcernFilter('all');
                 }}
               >
+                <img src={getProductImageUrl(product)} alt="" />
                 <span>{categoryLabel(product.category)}</span>
                 <strong>{product.name}</strong>
                 <small>{formatCurrency(product.price)}</small>
@@ -332,11 +396,7 @@ export function PortalStorePage() {
                   return (
                     <article key={product.id} className="portal-store-product">
                       <div className="portal-store-product-media">
-                        {product.imageUrl ? (
-                          <img src={product.imageUrl} alt="" />
-                        ) : (
-                          <Package size={34} />
-                        )}
+                        <img src={getProductImageUrl(product)} alt="" />
                       </div>
                       <div className="portal-store-product-copy">
                         <span>{categoryLabel(product.category)}</span>
@@ -377,9 +437,12 @@ export function PortalStorePage() {
                 <div className="portal-store-cart-lines">
                   {cart.map((line) => (
                     <div key={line.product.id} className="portal-store-cart-line">
-                      <div>
-                        <strong>{line.product.name}</strong>
-                        <span>{formatCurrency(line.product.price)} each</span>
+                      <div className="portal-store-cart-product">
+                        <img src={getProductImageUrl(line.product)} alt="" />
+                        <div>
+                          <strong>{line.product.name}</strong>
+                          <span>{formatCurrency(line.product.price)} each</span>
+                        </div>
                       </div>
                       <div className="portal-store-qty">
                         <button

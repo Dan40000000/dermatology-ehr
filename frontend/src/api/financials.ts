@@ -64,7 +64,7 @@ export async function resolveFinancialWorkQueueItem(options: FetchOptions, itemI
 }
 
 export async function postBillAction(options: FetchOptions, billId: string, data: {
-  action: 'send_statement' | 'set_payment_plan' | 'flag_collections' | 'write_off' | 'add_note';
+  action: 'send_statement' | 'set_payment_plan' | 'flag_collections' | 'send_to_collections' | 'write_off' | 'add_note';
   note?: string;
   amountCents?: number;
 }) {

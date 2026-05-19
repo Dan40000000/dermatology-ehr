@@ -8,6 +8,10 @@ jest.mock("../../db/pool", () => ({
   },
 }));
 
+jest.mock("../productSalesService", () => ({
+  ensureStoreSchemaAndCatalog: jest.fn().mockResolvedValue(undefined),
+}));
+
 const queryMock = pool.query as jest.Mock;
 
 beforeEach(() => {
@@ -87,16 +91,45 @@ describe("financialSnapshotService", () => {
             line_descriptions: "No-show fee (missed appointment)",
           },
         ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            sale_id: "sale-1",
+            sold_on: "2026-03-11",
+            total_cents: "6250",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            bill_id: "bill-writeoff-1",
+            written_off_on: "2026-03-11",
+            amount_cents: "1200",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            referred_on: "2026-03-10",
+            balance_cents: "8000",
+          },
+        ],
       });
 
     const snapshots = await getFinancialSnapshots("tenant-1");
 
     expect(queryMock.mock.calls[1][0]).toContain("payment_date::date::text AS collected_on");
     expect(queryMock.mock.calls[2][0]).toContain("payment_date::date::text AS collected_on");
-    expect(snapshots.daily.totalRevenueCents).toBe(38360);
+    expect(snapshots.daily.totalRevenueCents).toBe(44610);
     expect(snapshots.daily.benchmarkRevenueCents).toBe(13360);
     expect(snapshots.daily.standaloneRevenueCents).toBe(5000);
-    expect(snapshots.daily.collectionsCents).toBe(5000);
+    expect(snapshots.daily.storeRevenueCents).toBe(6250);
+    expect(snapshots.daily.badDebtCents).toBe(1200);
+    expect(snapshots.daily.collectionsReferralBalanceCents).toBe(8000);
+    expect(snapshots.daily.collectionsCents).toBe(11250);
     expect(snapshots.daily.completedAppointments).toBe(2);
     expect(snapshots.daily.revenueCategories[0]).toMatchObject({
       key: "procedure",
@@ -105,13 +138,15 @@ describe("financialSnapshotService", () => {
     expect(snapshots.daily.revenueCategories).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ key: "no_show_fee", revenueCents: 5000 }),
+        expect.objectContaining({ key: "product_sale", revenueCents: 6250 }),
       ]),
     );
 
-    expect(snapshots.weekly.totalRevenueCents).toBe(47921);
+    expect(snapshots.weekly.totalRevenueCents).toBe(54171);
     expect(snapshots.weekly.benchmarkRevenueCents).toBe(22921);
     expect(snapshots.weekly.standaloneRevenueCents).toBe(5000);
-    expect(snapshots.weekly.collectionsCents).toBe(19000);
+    expect(snapshots.weekly.storeRevenueCents).toBe(6250);
+    expect(snapshots.weekly.collectionsCents).toBe(25250);
     expect(snapshots.weekly.completedAppointments).toBe(3);
     expect(snapshots.weekly.benchmarkVisitsCount).toBe(2);
   });

@@ -88,7 +88,14 @@ app.use(cors({
 }));
 
 // Body parsing
-app.use(express.json({ limit: "10mb" })); // Increased limit for base64 images
+app.use(express.json({
+  limit: "10mb",
+  verify: (req: any, _res, buf) => {
+    if (req.originalUrl === "/api/stripe/webhook") {
+      req.rawBody = Buffer.from(buf);
+    }
+  },
+})); // Increased limit for base64 images
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // Setup upload directory

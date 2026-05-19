@@ -21,6 +21,10 @@ jest.mock("../../services/financialSnapshotService", () => ({
   getFinancialSnapshots: jest.fn(),
 }));
 
+jest.mock("../../services/productSalesService", () => ({
+  ensureStoreSchemaAndCatalog: jest.fn().mockResolvedValue(undefined),
+}));
+
 const app = express();
 app.use(express.json());
 app.use("/financial-metrics", financialMetricsRouter);

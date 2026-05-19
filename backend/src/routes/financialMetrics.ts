@@ -3,6 +3,7 @@ import { pool } from "../db/pool";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { logger } from "../lib/logger";
 import { getFinancialSnapshots } from "../services/financialSnapshotService";
+import { ensureStoreSchemaAndCatalog } from "../services/productSalesService";
 import {
   classifyRevenueCategory,
   revenueCategoryLabel,
@@ -21,6 +22,10 @@ type TrendPoint = {
   revenueEarnedCents: number;
   patientPaymentsCents: number;
   payerPaymentsCents: number;
+  storePaymentsCents: number;
+  badDebtCents?: number;
+  collectionsReferralBalanceCents?: number;
+  collectionsReferralCount?: number;
   paymentCount: number;
   billCount: number;
   revenueCategories?: RevenueCategorySummary[];
@@ -34,6 +39,7 @@ type RevenueCategoryDetailRow = {
   cpt_codes: string | null;
   line_descriptions: string | null;
   encounter_id: string | null;
+  category_override?: RevenueCategoryKey | null;
 };
 
 function toSafeErrorMessage(error: unknown): string {
@@ -330,7 +336,9 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
   }
 
   try {
-    const [trendResult, revenueCategoryResult] = await Promise.all([
+    await ensureStoreSchemaAndCatalog(tenantId);
+
+    const [trendResult, revenueCategoryResult, badDebtTrendResult, collectionsReferralResult] = await Promise.all([
       pool.query(
       `with days as (
          select generate_series($2::date, $3::date, interval '1 day')::date as day
@@ -357,6 +365,22 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
            and payment_date >= $2
            and payment_date <= $3
          group by payment_date::date
+       ),
+       store_payments as (
+         select
+           ps.sale_date::date as day,
+           coalesce(sum(coalesce(ps.total, 0) + coalesce(sof.shipping_fee, 0)), 0) as store_payments_cents,
+           count(*) as store_payment_count
+         from product_sales ps
+         left join store_order_fulfillments sof
+           on sof.sale_id::text = ps.id::text
+          and sof.tenant_id = ps.tenant_id
+         where ps.tenant_id = $1
+           and ps.status = 'completed'
+           and coalesce(sof.stripe_payment_status, 'paid') in ('paid', 'succeeded')
+           and ps.sale_date::date >= $2::date
+           and ps.sale_date::date <= $3::date
+         group by ps.sale_date::date
        ),
        appointment_revenue as (
          select
@@ -390,6 +414,20 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
            and bill_date >= $2
            and bill_date <= $3
        ),
+       store_revenue as (
+         select
+           ps.sale_date::date as day,
+           coalesce(ps.total, 0) + coalesce(sof.shipping_fee, 0) as revenue_earned_cents
+         from product_sales ps
+         left join store_order_fulfillments sof
+           on sof.sale_id::text = ps.id::text
+          and sof.tenant_id = ps.tenant_id
+         where ps.tenant_id = $1
+           and ps.status = 'completed'
+           and coalesce(sof.stripe_payment_status, 'paid') in ('paid', 'succeeded')
+           and ps.sale_date::date >= $2::date
+           and ps.sale_date::date <= $3::date
+       ),
        revenue_items as (
          select day, revenue_earned_cents
          from appointment_revenue
@@ -397,6 +435,10 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
          union all
          select day, revenue_earned_cents
          from standalone_bill_revenue
+         where revenue_earned_cents > 0
+         union all
+         select day, revenue_earned_cents
+         from store_revenue
          where revenue_earned_cents > 0
        ),
        revenue as (
@@ -411,13 +453,15 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
          d.day::text as date,
          coalesce(p.patient_payments_cents, 0) as patient_payments_cents,
          coalesce(py.payer_payments_cents, 0) as payer_payments_cents,
-         (coalesce(p.patient_payments_cents, 0) + coalesce(py.payer_payments_cents, 0)) as payments_collected_cents,
+         coalesce(sp.store_payments_cents, 0) as store_payments_cents,
+         (coalesce(p.patient_payments_cents, 0) + coalesce(py.payer_payments_cents, 0) + coalesce(sp.store_payments_cents, 0)) as payments_collected_cents,
          coalesce(r.revenue_earned_cents, 0) as revenue_earned_cents,
-         (coalesce(p.patient_payment_count, 0) + coalesce(py.payer_payment_count, 0)) as payment_count,
+         (coalesce(p.patient_payment_count, 0) + coalesce(py.payer_payment_count, 0) + coalesce(sp.store_payment_count, 0)) as payment_count,
          coalesce(r.bill_count, 0) as bill_count
        from days d
        left join patient p on p.day = d.day
        left join payer py on py.day = d.day
+       left join store_payments sp on sp.day = d.day
        left join revenue r on r.day = d.day
        order by d.day asc`,
       [tenantId, startDate, endDate],
@@ -436,7 +480,8 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
              max(at.name) as appointment_type_name,
              string_agg(distinct coalesce(c.cpt_code, ''), ',') as cpt_codes,
              string_agg(distinct coalesce(c.description, ''), ' | ') as line_descriptions,
-             max(e.id)::text as encounter_id
+             max(e.id)::text as encounter_id,
+             null::text as category_override
            from appointments a
            join appointment_types at
              on at.id = a.appointment_type_id
@@ -460,7 +505,8 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
              max(at.name) as appointment_type_name,
              string_agg(distinct coalesce(bli.cpt_code, ''), ',') as cpt_codes,
              string_agg(distinct coalesce(bli.description, ''), ' | ') as line_descriptions,
-             b.encounter_id::text as encounter_id
+             b.encounter_id::text as encounter_id,
+             null::text as category_override
            from bills b
            left join bill_line_items bli
              on bli.bill_id = b.id
@@ -478,6 +524,29 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
              and b.bill_date >= $2
              and b.bill_date <= $3
            group by b.id, b.bill_date, b.total_charges_cents, b.notes, b.encounter_id
+         ),
+         store_revenue as (
+           select
+             ps.sale_date::date::text as day,
+             coalesce(ps.total, 0) + coalesce(sof.shipping_fee, 0) as total_charges_cents,
+             'Patient portal store order'::text as notes,
+             null::text as appointment_type_name,
+             'STORE'::text as cpt_codes,
+             string_agg(distinct coalesce(psi.product_name, 'Store product'), ' | ') as line_descriptions,
+             null::text as encounter_id,
+             'product_sale'::text as category_override
+           from product_sales ps
+           left join store_order_fulfillments sof
+             on sof.sale_id::text = ps.id::text
+            and sof.tenant_id = ps.tenant_id
+           left join product_sale_items psi
+             on psi.sale_id::text = ps.id::text
+           where ps.tenant_id = $1
+             and ps.status = 'completed'
+             and coalesce(sof.stripe_payment_status, 'paid') in ('paid', 'succeeded')
+             and ps.sale_date::date >= $2::date
+             and ps.sale_date::date <= $3::date
+           group by ps.id, ps.sale_date, ps.total, sof.shipping_fee
          )
          select *
          from appointment_revenue
@@ -485,9 +554,53 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
          union all
          select *
          from standalone_bill_revenue
+         where total_charges_cents > 0
+         union all
+         select *
+         from store_revenue
          where total_charges_cents > 0`,
         [tenantId, startDate, endDate],
       ),
+      pool.query(
+        `select
+           coalesce(written_off_at, updated_at)::date::text as day,
+           coalesce(sum(greatest(0, coalesce(adjustment_amount_cents, 0))), 0) as bad_debt_cents
+         from bills
+         where tenant_id = $1
+           and (status = 'written_off' or follow_up_status = 'write_off' or written_off_at is not null)
+           and coalesce(written_off_at, updated_at)::date >= $2::date
+           and coalesce(written_off_at, updated_at)::date <= $3::date
+         group by coalesce(written_off_at, updated_at)::date`,
+        [tenantId, startDate, endDate],
+      ).catch((error) => {
+        if ((error as any)?.code === "42703") {
+          return { rows: [] };
+        }
+        throw error;
+      }),
+      pool.query(
+        `select
+           coalesce(collections_flagged_at, updated_at)::date::text as day,
+           coalesce(sum(balance_cents), 0) as collections_referral_balance_cents,
+           count(*) as collections_referral_count
+         from bills
+         where tenant_id = $1
+           and coalesce(balance_cents, 0) > 0
+           and status not in ('paid', 'cancelled', 'written_off')
+           and (
+             follow_up_status = 'collections'
+             or collections_status in ('flagged', 'sent_to_collections')
+           )
+           and coalesce(collections_flagged_at, updated_at)::date >= $2::date
+           and coalesce(collections_flagged_at, updated_at)::date <= $3::date
+         group by coalesce(collections_flagged_at, updated_at)::date`,
+        [tenantId, startDate, endDate],
+      ).catch((error) => {
+        if ((error as any)?.code === "42703") {
+          return { rows: [] };
+        }
+        throw error;
+      }),
     ]);
 
     const dailyPoints: TrendPoint[] = trendResult.rows.map((row: any) => ({
@@ -497,9 +610,28 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
       revenueEarnedCents: Number(row.revenue_earned_cents || 0),
       patientPaymentsCents: Number(row.patient_payments_cents || 0),
       payerPaymentsCents: Number(row.payer_payments_cents || 0),
+      storePaymentsCents: Number(row.store_payments_cents || 0),
       paymentCount: Number(row.payment_count || 0),
       billCount: Number(row.bill_count || 0),
     }));
+
+    const badDebtByDay = new Map<string, number>();
+    (Array.isArray(badDebtTrendResult.rows) ? badDebtTrendResult.rows : []).forEach((row: any) => {
+      badDebtByDay.set(String(row.day), Number(row.bad_debt_cents || 0));
+    });
+    const collectionsReferralByDay = new Map<string, { balanceCents: number; count: number }>();
+    (Array.isArray(collectionsReferralResult.rows) ? collectionsReferralResult.rows : []).forEach((row: any) => {
+      collectionsReferralByDay.set(String(row.day), {
+        balanceCents: Number(row.collections_referral_balance_cents || 0),
+        count: Number(row.collections_referral_count || 0),
+      });
+    });
+    dailyPoints.forEach((point) => {
+      point.badDebtCents = badDebtByDay.get(point.bucketStartDate) || 0;
+      const referral = collectionsReferralByDay.get(point.bucketStartDate);
+      point.collectionsReferralBalanceCents = referral?.balanceCents || 0;
+      point.collectionsReferralCount = referral?.count || 0;
+    });
 
     const categoryRows = Array.isArray(revenueCategoryResult.rows)
       ? (revenueCategoryResult.rows as RevenueCategoryDetailRow[])
@@ -513,13 +645,15 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
         return;
       }
 
-      const categoryKey = classifyRevenueCategory({
-        appointmentTypeName: row.appointment_type_name,
-        notes: row.notes,
-        cptCodes: row.cpt_codes,
-        lineDescriptions: row.line_descriptions,
-        encounterBacked: Boolean(row.encounter_id),
-      });
+      const categoryKey =
+        row.category_override ||
+        classifyRevenueCategory({
+          appointmentTypeName: row.appointment_type_name,
+          notes: row.notes,
+          cptCodes: row.cpt_codes,
+          lineDescriptions: row.line_descriptions,
+          encounterBacked: Boolean(row.encounter_id),
+        });
       const accumulator = dailyCategoryAccumulators.get(day) || createRevenueCategoryAccumulator();
       addRevenueCategory(accumulator, categoryKey, amountCents);
       dailyCategoryAccumulators.set(day, accumulator);
@@ -554,6 +688,12 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
         existing.revenueEarnedCents += point.revenueEarnedCents;
         existing.patientPaymentsCents += point.patientPaymentsCents;
         existing.payerPaymentsCents += point.payerPaymentsCents;
+        existing.storePaymentsCents += point.storePaymentsCents;
+        existing.badDebtCents = (existing.badDebtCents || 0) + (point.badDebtCents || 0);
+        existing.collectionsReferralBalanceCents =
+          (existing.collectionsReferralBalanceCents || 0) + (point.collectionsReferralBalanceCents || 0);
+        existing.collectionsReferralCount =
+          (existing.collectionsReferralCount || 0) + (point.collectionsReferralCount || 0);
         existing.paymentCount += point.paymentCount;
         existing.billCount += point.billCount;
         const accumulator = bucketedCategories.get(key) || createRevenueCategoryAccumulator();
@@ -580,6 +720,10 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
         acc.totalRevenueEarnedCents += point.revenueEarnedCents;
         acc.totalPatientPaymentsCents += point.patientPaymentsCents;
         acc.totalPayerPaymentsCents += point.payerPaymentsCents;
+        acc.totalStorePaymentsCents += point.storePaymentsCents;
+        acc.totalBadDebtCents += point.badDebtCents || 0;
+        acc.collectionsReferralBalanceCents += point.collectionsReferralBalanceCents || 0;
+        acc.collectionsReferralCount += point.collectionsReferralCount || 0;
         acc.totalPaymentCount += point.paymentCount;
         acc.totalBillCount += point.billCount;
         return acc;
@@ -589,6 +733,10 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
         totalRevenueEarnedCents: 0,
         totalPatientPaymentsCents: 0,
         totalPayerPaymentsCents: 0,
+        totalStorePaymentsCents: 0,
+        totalBadDebtCents: 0,
+        collectionsReferralBalanceCents: 0,
+        collectionsReferralCount: 0,
         totalPaymentCount: 0,
         totalBillCount: 0,
       },
@@ -599,13 +747,15 @@ financialMetricsRouter.get("/collections-trend", requireAuth, async (req: Authed
       if (amountCents <= 0) {
         return;
       }
-      const categoryKey = classifyRevenueCategory({
-        appointmentTypeName: row.appointment_type_name,
-        notes: row.notes,
-        cptCodes: row.cpt_codes,
-        lineDescriptions: row.line_descriptions,
-        encounterBacked: Boolean(row.encounter_id),
-      });
+      const categoryKey =
+        row.category_override ||
+        classifyRevenueCategory({
+          appointmentTypeName: row.appointment_type_name,
+          notes: row.notes,
+          cptCodes: row.cpt_codes,
+          lineDescriptions: row.line_descriptions,
+          encounterBacked: Boolean(row.encounter_id),
+        });
       addRevenueCategory(summaryCategoryAccumulator, categoryKey, amountCents);
     });
 

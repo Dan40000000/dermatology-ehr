@@ -8,6 +8,21 @@ const productCategorySchema = z.enum(['skincare', 'sunscreen', 'cosmetic', 'pres
 const paymentMethodSchema = z.enum(['cash', 'credit', 'debit', 'check', 'insurance', 'gift_card']);
 const transactionTypeSchema = z.enum(['received', 'sold', 'adjustment', 'return', 'damaged', 'expired']);
 const discountTypeSchema = z.enum(['percentage', 'fixed', 'loyalty']);
+const productImageSchema = z
+  .union([
+    z.string().url().refine((value) => /^https?:\/\//i.test(value), {
+      message: 'Image URL must use http or https',
+    }),
+    z.string().max(500).regex(/^\/images\/[a-z0-9/_-]+\.(?:png|jpe?g|webp|gif|svg)$/i, {
+      message: 'Internal image path must point to a supported image asset',
+    }),
+    z.string().max(6_000_000).refine((value) => /^data:image\/(?:png|jpe?g|webp|gif|svg\+xml);(?:base64|utf8),/i.test(value), {
+      message: 'Uploaded product image must be PNG, JPG, WebP, GIF, or SVG data',
+    }),
+    z.literal(''),
+    z.null(),
+  ])
+  .optional();
 
 const createProductSchema = z.object({
   sku: z.string().min(1).max(100),
@@ -19,7 +34,7 @@ const createProductSchema = z.object({
   cost: z.number().int().min(0).optional(),
   inventoryCount: z.number().int().min(0).optional(),
   reorderPoint: z.number().int().min(0).optional(),
-  imageUrl: z.string().url().optional(),
+  imageUrl: productImageSchema,
   barcode: z.string().max(100).optional(),
 });
 
@@ -33,7 +48,7 @@ const updateProductSchema = z.object({
   cost: z.number().int().min(0).optional(),
   reorderPoint: z.number().int().min(0).optional(),
   isActive: z.boolean().optional(),
-  imageUrl: z.string().url().optional(),
+  imageUrl: productImageSchema,
   barcode: z.string().max(100).optional(),
 });
 
@@ -53,7 +68,7 @@ const createSaleSchema = z.object({
   discountAmount: z.number().int().min(0).optional(),
 });
 
-const storeFulfillmentStatusSchema = z.enum(['paid', 'packing', 'label_created', 'shipped', 'delivered', 'exception', 'cancelled']);
+const storeFulfillmentStatusSchema = z.enum(['awaiting_payment', 'paid', 'packing', 'label_created', 'shipped', 'delivered', 'exception', 'cancelled']);
 const storeNotificationStatusSchema = z.enum(['queued', 'sent', 'failed', 'muted']);
 const storeShippingMethodSchema = z.enum(['standard', 'priority', 'pickup']);
 
@@ -65,6 +80,7 @@ const updateStoreFulfillmentSchema = z.object({
   trackingNumber: z.string().max(120).nullable().optional(),
   notificationEmail: z.string().email().nullable().optional(),
   notificationStatus: storeNotificationStatusSchema.optional(),
+  stripeCheckoutSessionId: z.string().max(255).nullable().optional(),
   stripePaymentIntentId: z.string().max(255).nullable().optional(),
   stripePaymentStatus: z.string().max(80).optional(),
 });

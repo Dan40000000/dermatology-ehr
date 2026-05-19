@@ -17,6 +17,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchAppointmentTypes: vi.fn(),
   fetchAvailability: vi.fn(),
   fetchBiopsyCommandCenter: vi.fn(),
+  fetchCommandCenterSummary: vi.fn(),
   fetchEncounters: vi.fn(),
   fetchFrontDeskSchedule: vi.fn(),
   fetchLocations: vi.fn(),
@@ -31,6 +32,7 @@ const apiMocks = vi.hoisted(() => ({
 const financialApiMocks = vi.hoisted(() => ({
   fetchARAging: vi.fn(),
   fetchClaims: vi.fn(),
+  fetchCollectionsTrend: vi.fn(),
   fetchFinancialWorkQueue: vi.fn(),
   fetchPaymentsSummary: vi.fn(),
 }));
@@ -179,6 +181,7 @@ describe('HomePage', () => {
       },
       queues: { critical: [] },
     });
+    apiMocks.fetchCommandCenterSummary.mockResolvedValue(null);
     apiMocks.fetchPatients.mockResolvedValue({ patients: [] });
     apiMocks.fetchProviders.mockResolvedValue({ providers: [] });
     apiMocks.fetchLocations.mockResolvedValue({ locations: [] });
@@ -187,6 +190,15 @@ describe('HomePage', () => {
     apiMocks.fetchTimeBlocks.mockResolvedValue([]);
     apiMocks.createAppointment.mockResolvedValue({ appointment: { id: 'appt-new' } });
     financialApiMocks.fetchClaims.mockResolvedValue({ claims: [] });
+    financialApiMocks.fetchCollectionsTrend.mockResolvedValue({
+      summary: {
+        totalRevenueEarnedCents: 0,
+        totalPatientPaymentsCents: 0,
+        totalPayerPaymentsCents: 0,
+        totalStorePaymentsCents: 0,
+        collectionRate: 0,
+      },
+    });
     financialApiMocks.fetchFinancialWorkQueue.mockResolvedValue({ items: [] });
     financialApiMocks.fetchPaymentsSummary.mockResolvedValue({
       calculated: {
@@ -225,11 +237,20 @@ describe('HomePage', () => {
         endDate: expect.any(String),
       })
     );
-    expect(apiMocks.fetchFrontDeskSchedule).toHaveBeenCalledWith('tenant-1', 'token-1');
+    expect(apiMocks.fetchFrontDeskSchedule).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      expect.objectContaining({ date: expect.any(String) })
+    );
     expect(apiMocks.fetchEncounters).toHaveBeenCalledWith('tenant-1', 'token-1');
     expect(apiMocks.fetchTasks).toHaveBeenCalledWith('tenant-1', 'token-1');
     expect(apiMocks.fetchOrders).toHaveBeenCalledWith('tenant-1', 'token-1');
     expect(apiMocks.fetchUnreadCount).toHaveBeenCalledWith('tenant-1', 'token-1');
+    expect(apiMocks.fetchCommandCenterSummary).toHaveBeenCalledWith(
+      'tenant-1',
+      'token-1',
+      expect.objectContaining({ date: expect.any(String) })
+    );
 
     const appointmentsCard = screen.getByText("Today's schedule").closest('.command-metric-card') as HTMLElement;
     expect(within(appointmentsCard).getByText('1')).toBeInTheDocument();
@@ -263,6 +284,14 @@ describe('HomePage', () => {
       expect(within(refreshedAppointmentsCard).getByText('1')).toBeInTheDocument();
     });
 
+    const businessDateInput = screen.getByLabelText('Business date') as HTMLInputElement;
+    fireEvent.change(businessDateInput, { target: { value: '2026-05-18' } });
+    await waitFor(() => {
+      expect(localStorage.getItem('clinic:businessDate')).toBe('2026-05-18');
+      expect(screen.getByText('Selected day schedule')).toBeInTheDocument();
+      expect(apiMocks.fetchCommandCenterSummary.mock.calls.some((call) => call[2]?.date === '2026-05-18')).toBe(true);
+    });
+
     fireEvent.click(screen.getAllByRole('button', { name: /New Patient/i })[0]);
     expect(navigateMock).toHaveBeenCalledWith('/patients/new');
 
@@ -272,6 +301,244 @@ describe('HomePage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Regulatory Reporting/i }));
     fireEvent.click(screen.getByRole('button', { name: 'MIPS Report' }));
     expect(navigateMock).toHaveBeenCalledWith('/reports?type=regulatory');
+  }, 20000);
+
+  it('prefers backend command center summary metrics when available', async () => {
+    authMocks.session = {
+      tenantId: 'tenant-1',
+      accessToken: 'token-1',
+      user: { id: 'admin-1', role: 'admin', roles: ['admin'] },
+    };
+    authMocks.user = { id: 'admin-1', role: 'admin', roles: ['admin'] };
+    apiMocks.fetchCommandCenterSummary.mockResolvedValue({
+      businessDate: '2026-05-18',
+      practiceTimeZone: 'America/Denver',
+      generatedAt: '2026-05-18T16:00:00.000Z',
+      dataHealth: { failedSources: [] },
+      schedule: {
+        appointmentsCount: 12,
+        activeAppointmentsCount: 4,
+        checkedInCount: 2,
+        completedCount: 8,
+        waitingCount: 2,
+        inRoomsCount: 1,
+        checkoutCount: 8,
+        staleScheduledCount: 1,
+        noShowCount: 1,
+        cancelledCount: 0,
+        needsInsuranceVerification: 3,
+        balanceDueAppointments: 2,
+        copayDueCents: 7000,
+      },
+      claims: {
+        claimsInQueue: 6,
+        claimsDeniedRejected: 2,
+      },
+      financials: {
+        revenueTodayCents: 410000,
+        netCollectionsCents: 330000,
+        patientCollectionsCents: 90000,
+        payerCollectionsCents: 240000,
+        storeCollectionsCents: 35000,
+        collectionRateToday: 89,
+        financialWorkQueueCount: 5,
+        claimWorkQueueCount: 3,
+        billingWorkQueueCount: 2,
+        arTotalCents: 1200000,
+        arOver90Cents: 250000,
+      },
+    });
+
+    render(<HomePage />);
+
+    await waitFor(() => expect(apiMocks.fetchCommandCenterSummary).toHaveBeenCalled());
+
+    const appointmentsCard = screen.getByText("Today's schedule").closest('.command-metric-card') as HTMLElement;
+    expect(within(appointmentsCard).getByText('12')).toBeInTheDocument();
+
+    const revenueCard = screen
+      .getAllByText('Revenue today')
+      .map((node) => node.closest('.command-metric-card'))
+      .find(Boolean) as HTMLElement;
+    expect(within(revenueCard).getByText('$4,100')).toBeInTheDocument();
+
+    const claimsCard = screen.getByText('Revenue cycle').closest('.command-metric-card') as HTMLElement;
+    expect(within(claimsCard).getByText(/6 active, 2 urgent, 2 backlog/i)).toBeInTheDocument();
+  }, 20000);
+
+  it('renders command action queues and routes each work item to its owning page', async () => {
+    authMocks.session = {
+      tenantId: 'tenant-1',
+      accessToken: 'token-1',
+      user: { id: 'admin-1', role: 'admin', roles: ['admin'] },
+    };
+    authMocks.user = { id: 'admin-1', role: 'admin', roles: ['admin'] };
+
+    const now = new Date();
+    const checkedInAt = new Date(now.getTime() - 45 * 60 * 1000);
+    const roomedAt = new Date(now.getTime() - 50 * 60 * 1000);
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    const tenMinutesFromNow = new Date(now.getTime() + 10 * 60 * 1000);
+    const commandAppointments = [
+      {
+        id: 'cmd-appt-1',
+        patientId: 'patient-1',
+        providerId: 'provider-1',
+        providerName: 'Dr. Test Provider',
+        appointmentTypeId: 'type-1',
+        locationId: 'loc-1',
+        locationName: 'Main Clinic',
+        status: 'checked_in',
+        scheduledStart: checkedInAt.toISOString(),
+        checkedInAt: checkedInAt.toISOString(),
+        waitTimeMinutes: 45,
+        insuranceVerified: false,
+        copayAmount: 35,
+        outstandingBalance: 120,
+        intakeComplete: false,
+      },
+      {
+        id: 'cmd-appt-2',
+        patientId: 'patient-2',
+        providerId: 'provider-1',
+        providerName: 'Dr. Test Provider',
+        appointmentTypeId: 'type-1',
+        locationId: 'loc-1',
+        locationName: 'Main Clinic',
+        status: 'in_room',
+        scheduledStart: roomedAt.toISOString(),
+        roomedAt: roomedAt.toISOString(),
+      },
+      {
+        id: 'cmd-appt-3',
+        patientId: 'patient-3',
+        providerId: 'provider-2',
+        providerName: 'Dr. Backup Provider',
+        appointmentTypeId: 'type-1',
+        locationId: 'loc-1',
+        locationName: 'Main Clinic',
+        status: 'scheduled',
+        scheduledStart: tenMinutesFromNow.toISOString(),
+      },
+      {
+        id: 'cmd-appt-4',
+        patientId: 'patient-4',
+        providerId: 'provider-2',
+        providerName: 'Dr. Backup Provider',
+        appointmentTypeId: 'type-1',
+        locationId: 'loc-1',
+        locationName: 'Main Clinic',
+        status: 'scheduled',
+        scheduledStart: oneHourAgo.toISOString(),
+        scheduledEnd: oneHourAgo.toISOString(),
+      },
+      {
+        id: 'cmd-appt-5',
+        patientId: 'patient-5',
+        providerId: 'provider-1',
+        providerName: 'Dr. Test Provider',
+        appointmentTypeId: 'type-1',
+        locationId: 'loc-1',
+        locationName: 'Main Clinic',
+        status: 'completed',
+        scheduledStart: now.toISOString(),
+      },
+    ];
+
+    apiMocks.fetchAppointments.mockResolvedValue({ appointments: commandAppointments });
+    apiMocks.fetchFrontDeskSchedule.mockResolvedValue({ appointments: commandAppointments });
+    apiMocks.fetchBiopsyCommandCenter.mockResolvedValue({
+      summary: {
+        total_open_loops: 1,
+        pending_review: 1,
+        needs_patient_notification: 0,
+        needs_treatment_scheduling: 0,
+      },
+      queues: {
+        critical: [
+          {
+            id: 'path-1',
+            patientId: 'patient-1',
+            patientName: 'Patient One',
+            providerName: 'Dr. Test Provider',
+            stage: 'pending_review',
+            severity: 'critical',
+          },
+        ],
+      },
+    });
+    financialApiMocks.fetchClaims.mockResolvedValue({
+      claims: [
+        { id: 'claim-1', status: 'denied', balanceCents: 15000, serviceDate: now.toISOString() },
+      ],
+    });
+    financialApiMocks.fetchCollectionsTrend.mockResolvedValue({
+      summary: {
+        totalRevenueEarnedCents: 100000,
+        totalPatientPaymentsCents: 15000,
+        totalPayerPaymentsCents: 25000,
+        totalStorePaymentsCents: 5000,
+        collectionRate: 45,
+      },
+    });
+    financialApiMocks.fetchPaymentsSummary.mockResolvedValue({
+      calculated: {
+        postedPatientPaymentsCents: 15000,
+        payerAppliedCents: 25000,
+        netCollectionsCents: 40000,
+        chargesInPeriodCents: 100000,
+      },
+    });
+    financialApiMocks.fetchFinancialWorkQueue.mockResolvedValue({
+      items: [
+        { id: 'work-1', status: 'open', claimId: 'claim-1' },
+        { id: 'work-2', status: 'open', billId: 'bill-1' },
+      ],
+    });
+    financialApiMocks.fetchARAging.mockResolvedValue({
+      totals: { totalBalanceCents: 300000, over90BalanceCents: 75000 },
+      buckets: [],
+    });
+
+    render(<HomePage />);
+
+    await waitFor(() => expect(screen.getByText(/Risk Queue/i)).toBeInTheDocument());
+
+    expect(screen.getByText('Revenue Pulse')).toBeInTheDocument();
+    expect(screen.getByText('Front Desk Command')).toBeInTheDocument();
+    expect(screen.getByText('Provider Throughput')).toBeInTheDocument();
+    expect(screen.getByText('End-of-Day Readiness')).toBeInTheDocument();
+
+    const riskPanel = screen.getByText(/Risk Queue/i).closest('.command-insight-panel') as HTMLElement;
+    const revenuePanel = screen.getByText('Revenue Pulse').closest('.command-insight-panel') as HTMLElement;
+    const frontDeskPanel = screen.getByText('Front Desk Command').closest('.command-insight-panel') as HTMLElement;
+    const providerPanel = screen.getByText('Provider Throughput').closest('.command-insight-panel') as HTMLElement;
+    const readinessPanel = screen.getByText('End-of-Day Readiness').closest('.command-insight-panel') as HTMLElement;
+
+    expect(within(riskPanel).getByText('Waiting 30+ min')).toBeInTheDocument();
+    expect(within(riskPanel).getByText('Claim exceptions')).toBeInTheDocument();
+    expect(within(revenuePanel).getByText('Collected so far')).toBeInTheDocument();
+    expect(within(frontDeskPanel).getByText('Forms incomplete')).toBeInTheDocument();
+    expect(within(providerPanel).getByText('Dr. Test Provider')).toBeInTheDocument();
+    expect(within(readinessPanel).getByText('Safety closeout')).toBeInTheDocument();
+
+    navigateMock.mockClear();
+    fireEvent.click(within(riskPanel).getByRole('button', { name: /Waiting 30\+ min/i }));
+    expect(navigateMock).toHaveBeenCalledWith(expect.stringMatching(/^\/office-flow\?date=\d{4}-\d{2}-\d{2}&status=checked_in$/));
+
+    fireEvent.click(within(revenuePanel).getByRole('button', { name: /Collected so far/i }));
+    expect(navigateMock).toHaveBeenCalledWith(expect.stringMatching(/^\/financials\?tab=payments&startDate=\d{4}-\d{2}-\d{2}&endDate=\d{4}-\d{2}-\d{2}$/));
+
+    fireEvent.click(within(frontDeskPanel).getByRole('button', { name: /Forms incomplete/i }));
+    expect(navigateMock).toHaveBeenCalledWith('/documents?section=forms');
+
+    fireEvent.click(within(readinessPanel).getByRole('button', { name: /Safety closeout/i }));
+    expect(navigateMock).toHaveBeenCalledWith('/biopsies');
+
+    fireEvent.click(within(providerPanel).getByRole('button', { name: /Dr\. Test Provider/i }));
+    expect(localStorage.getItem('sched:provider')).toBe('provider-1');
+    expect(localStorage.getItem('sched:viewMode')).toBe('day');
+    expect(navigateMock).toHaveBeenCalledWith(expect.stringMatching(/^\/schedule\?view=day&date=\d{4}-\d{2}-\d{2}$/));
   }, 20000);
 
   it('validates and submits reminder modal', async () => {
@@ -329,7 +596,8 @@ describe('HomePage', () => {
 
     render(<HomePage />);
 
-    await waitFor(() => expect(toastMocks.showError).toHaveBeenCalledWith('load failed'));
+    await waitFor(() => expect(screen.getByText(/Data unavailable for schedule/i)).toBeInTheDocument());
+    expect(toastMocks.showError).not.toHaveBeenCalledWith('load failed');
   });
 
   it('does not request clinical dashboard data for non-clinical roles', async () => {
@@ -366,5 +634,27 @@ describe('HomePage', () => {
     expect(apiMocks.fetchEncounters).not.toHaveBeenCalled();
     expect(apiMocks.fetchOrders).not.toHaveBeenCalled();
     expect(apiMocks.fetchUnreadCount).not.toHaveBeenCalled();
+  });
+
+  it('filters command center actions by role access', async () => {
+    authMocks.session = {
+      tenantId: 'tenant-1',
+      accessToken: 'token-1',
+      user: { id: 'front-desk-1', role: 'front_desk', roles: ['front_desk'] },
+    };
+    authMocks.user = { id: 'front-desk-1', role: 'front_desk', roles: ['front_desk'] };
+
+    render(<HomePage />);
+
+    await waitFor(() => expect(apiMocks.fetchAppointments).toHaveBeenCalled());
+
+    expect(screen.queryByText('Revenue today')).not.toBeInTheDocument();
+    expect(screen.queryByText('Clinical work')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Financials$/i })).not.toBeInTheDocument();
+    expect(screen.getByText('Patient access')).toBeInTheDocument();
+    expect(screen.getByText('Front Desk Command')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Revenue cycle/i }));
+    expect(navigateMock).toHaveBeenCalledWith(expect.stringMatching(/^\/claims\?startDate=\d{4}-\d{2}-\d{2}&endDate=\d{4}-\d{2}-\d{2}$/));
   });
 });

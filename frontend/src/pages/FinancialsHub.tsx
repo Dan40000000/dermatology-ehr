@@ -8,6 +8,18 @@ import { PatientPaymentPortal } from '../components/financials/PatientPaymentPor
 import { PremiumAnalytics } from '../components/financials/PremiumAnalytics';
 import { FeeSchedulePage } from './FeeSchedulePage';
 import {
+  BarChart3,
+  CalendarRange,
+  CreditCard,
+  FileSpreadsheet,
+  Landmark,
+  LayoutDashboard,
+  PieChart,
+  ReceiptText,
+  ShieldCheck,
+  type LucideIcon,
+} from 'lucide-react';
+import {
   fetchARAging,
   fetchBills,
   fetchBillsSummary,
@@ -19,15 +31,17 @@ import {
   postBillAction,
   resolveFinancialWorkQueueItem,
 } from '../api/financials';
+import { getClinicBusinessDate, ISO_DATE_PATTERN } from '../utils/practiceDateTime';
 
 type TabType = 'dashboard' | 'snapshots' | 'insurance' | 'bills' | 'payments' | 'analytics' | 'fees' | 'statements' | 'reports';
 type SnapshotPagePeriod = SnapshotMetricCard['key'] | 'custom';
+type DashboardRangePreset = 'today' | 'week' | 'mtd' | 'custom';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface TabConfig {
   key: TabType;
   label: string;
-  icon: string;
+  icon: LucideIcon;
   description: string;
 }
 
@@ -42,6 +56,10 @@ interface SnapshotMetricCard {
   benchmarkVisitsCount: number;
   collectionRate: number;
   standaloneRevenueCents: number;
+  storeRevenueCents: number;
+  badDebtCents: number;
+  collectionsReferralBalanceCents: number;
+  collectionsReferralCount: number;
   revenueCategories: RevenueCategorySummary[];
 }
 
@@ -64,6 +82,10 @@ interface SnapshotTrendSummary {
   totalRevenueEarnedCents: number;
   totalPatientPaymentsCents: number;
   totalPayerPaymentsCents: number;
+  totalStorePaymentsCents: number;
+  totalBadDebtCents: number;
+  collectionsReferralBalanceCents: number;
+  collectionsReferralCount: number;
   totalPaymentCount: number;
   totalBillCount: number;
   dayCount: number;
@@ -75,6 +97,10 @@ interface SnapshotTrendSummary {
 
 interface DashboardRcmMetrics {
   totalClinicalCollections: number;
+  storeRevenueCents: number;
+  badDebtCents: number;
+  collectionsReferralBalanceCents: number;
+  collectionsReferralCount: number;
   netCollectionRatio: number;
   adjustmentsWriteoffs: number;
   daysSalesOutstanding: number;
@@ -230,13 +256,47 @@ function addDays(baseIsoDate: string, days: number): string {
   return toIsoDate(date);
 }
 
+function startOfCurrentWeek(today = toIsoDate(new Date())): string {
+  const date = new Date(`${today}T00:00:00Z`);
+  const day = date.getUTCDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  date.setUTCDate(date.getUTCDate() + offset);
+  return toIsoDate(date);
+}
+
+function getDashboardRange(preset: DashboardRangePreset, startDate?: string, endDate?: string) {
+  const today = getClinicBusinessDate();
+  if (preset === 'today') {
+    return { startDate: today, endDate: today };
+  }
+  if (preset === 'week') {
+    return { startDate: startOfCurrentWeek(today), endDate: today };
+  }
+  if (preset === 'mtd') {
+    const now = new Date(`${today}T00:00:00Z`);
+    return {
+      startDate: toIsoDate(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))),
+      endDate: today,
+    };
+  }
+  return {
+    startDate: startDate || today,
+    endDate: endDate || startDate || today,
+  };
+}
+
+function formatRangeLabel(startDate: string, endDate: string): string {
+  if (startDate === endDate) return formatIsoDateForUi(startDate);
+  return `${formatIsoDateForUi(startDate)} to ${formatIsoDateForUi(endDate)}`;
+}
+
 function getSnapshotRange(period: SnapshotPagePeriod, startDate?: string | null, endDate?: string | null) {
   const hasExplicitRange = Boolean(startDate && endDate);
   if (hasExplicitRange) {
     return { startDate: startDate!, endDate: endDate! };
   }
 
-  const today = toIsoDate(new Date());
+  const today = getClinicBusinessDate();
   if (period === 'daily') {
     return { startDate: today, endDate: today };
   }
@@ -244,7 +304,7 @@ function getSnapshotRange(period: SnapshotPagePeriod, startDate?: string | null,
     return { startDate: addDays(today, -6), endDate: today };
   }
   if (period === 'monthly') {
-    const now = new Date();
+    const now = new Date(`${today}T00:00:00Z`);
     const firstDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
     return { startDate: toIsoDate(firstDay), endDate: today };
   }
@@ -342,6 +402,41 @@ function getClaimProcedureLabels(claim: FinancialClaim): string[] {
       .filter(Boolean);
   }
   return [];
+}
+
+function getClaimDateIso(claim: FinancialClaim): string {
+  return String(claim.serviceDate || claim.createdAt || claim.submittedAt || claim.updatedAt || '').slice(0, 10);
+}
+
+function getClaimAgeDays(claim: FinancialClaim): number {
+  const referenceDate = getClaimDateIso(claim);
+  if (!referenceDate) return 0;
+  const parsed = new Date(`${referenceDate}T00:00:00Z`).getTime();
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor((Date.now() - parsed) / DAY_MS));
+}
+
+function isActiveClaimWork(claim: FinancialClaim): boolean {
+  return ['draft', 'coding_review', 'ready', 'submitted', 'accepted', 'partially_paid'].includes(normalizeClaimStatus(claim.status));
+}
+
+function hasClaimDenialFriction(claim: FinancialClaim): boolean {
+  return (
+    ['denied', 'rejected', 'appealed'].includes(normalizeClaimStatus(claim.status)) ||
+    normalizeClaimStatus(claim.scrubStatus) === 'failed'
+  );
+}
+
+function isAtRiskClaim(claim: FinancialClaim): boolean {
+  return hasClaimDenialFriction(claim) || (getClaimBalanceCents(claim) > 0 && getClaimAgeDays(claim) > 300);
+}
+
+function getBillDateIso(bill: FinancialBill): string {
+  return String(bill.billDate || bill.dueDate || '').slice(0, 10);
+}
+
+function isIsoInRange(isoDate: string, startDate: string, endDate: string): boolean {
+  return Boolean(isoDate) && isoDate >= startDate && isoDate <= endDate;
 }
 
 function calculatePayerPerformance(
@@ -562,15 +657,15 @@ function calculatePayerPerformance(
 }
 
 const TABS: TabConfig[] = [
-  { key: 'dashboard', label: 'Overview', icon: '', description: 'Key metrics & A/R overview' },
-  { key: 'snapshots', label: 'Snapshots', icon: '', description: 'Daily, weekly, monthly deep dives' },
-  { key: 'insurance', label: 'Insurance', icon: '', description: 'Payer time, money & denials' },
-  { key: 'bills', label: 'Bills', icon: '', description: 'Patient billing & statements' },
-  { key: 'payments', label: 'Payments', icon: '', description: 'Patient payments & plans' },
-  { key: 'analytics', label: 'Analytics', icon: '', description: 'Premium analytics & reports' },
-  { key: 'fees', label: 'Fee Schedule', icon: '', description: 'Manage fees & contracts' },
-  { key: 'statements', label: 'Statements', icon: '', description: 'Patient statements' },
-  { key: 'reports', label: 'Reports', icon: '', description: 'Financial reports' },
+  { key: 'dashboard', label: 'Overview', icon: LayoutDashboard, description: 'Key metrics & A/R overview' },
+  { key: 'snapshots', label: 'Snapshots', icon: CalendarRange, description: 'Daily, weekly, monthly deep dives' },
+  { key: 'insurance', label: 'Insurance', icon: ShieldCheck, description: 'Payer time, money & denials' },
+  { key: 'bills', label: 'Bills', icon: ReceiptText, description: 'Patient billing & statements' },
+  { key: 'payments', label: 'Payments', icon: CreditCard, description: 'Patient payments & plans' },
+  { key: 'analytics', label: 'Analytics', icon: BarChart3, description: 'Premium analytics & reports' },
+  { key: 'fees', label: 'Fee Schedule', icon: Landmark, description: 'Manage fees & contracts' },
+  { key: 'statements', label: 'Statements', icon: FileSpreadsheet, description: 'Patient statements' },
+  { key: 'reports', label: 'Reports', icon: PieChart, description: 'Financial reports' },
 ];
 
 export function FinancialsHub() {
@@ -608,6 +703,10 @@ export function FinancialsHub() {
     benchmarkVisitsCount: 0,
     collectionRate: 0,
     standaloneRevenueCents: 0,
+    storeRevenueCents: 0,
+    badDebtCents: 0,
+    collectionsReferralBalanceCents: 0,
+    collectionsReferralCount: 0,
     revenueCategories: [],
   });
 
@@ -619,6 +718,10 @@ export function FinancialsHub() {
   });
   const [dashboardMetrics, setDashboardMetrics] = useState<DashboardRcmMetrics>({
     totalClinicalCollections: 0,
+    storeRevenueCents: 0,
+    badDebtCents: 0,
+    collectionsReferralBalanceCents: 0,
+    collectionsReferralCount: 0,
     netCollectionRatio: 0,
     adjustmentsWriteoffs: 0,
     daysSalesOutstanding: 0,
@@ -632,6 +735,18 @@ export function FinancialsHub() {
   const [recentBills, setRecentBills] = useState<FinancialBill[]>([]);
   const [financialClaims, setFinancialClaims] = useState<FinancialClaim[]>([]);
   const [financialWorkQueue, setFinancialWorkQueue] = useState<FinancialWorkQueueItem[]>([]);
+  const initialDashboardRange = getDashboardRange('today');
+  const [dashboardRangePreset, setDashboardRangePreset] = useState<DashboardRangePreset>('today');
+  const [dashboardStartDate, setDashboardStartDate] = useState(initialDashboardRange.startDate);
+  const [dashboardEndDate, setDashboardEndDate] = useState(initialDashboardRange.endDate);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState('');
+  const [dashboardTrendData, setDashboardTrendData] = useState<any[]>([]);
+  const [dashboardTrendSummary, setDashboardTrendSummary] = useState<SnapshotTrendSummary | null>(null);
+  const [dashboardPaymentsSummary, setDashboardPaymentsSummary] = useState<any>(null);
+  const [dashboardBillsSummary, setDashboardBillsSummary] = useState<any>(null);
+  const [dashboardWeekSummary, setDashboardWeekSummary] = useState<SnapshotTrendSummary | null>(null);
+  const [dashboardDrilldownMetric, setDashboardDrilldownMetric] = useState<string | null>(null);
 
   // Get active tab from URL, default to 'dashboard' if not specified
   const tabFromUrl = searchParams.get('tab') as TabType | null;
@@ -666,7 +781,7 @@ export function FinancialsHub() {
         fetchFinancialMetrics({
           tenantId: session.tenantId,
           accessToken: session.accessToken,
-        }),
+        }, today),
         fetchPaymentsSummary(
           {
             tenantId: session.tenantId,
@@ -712,14 +827,16 @@ export function FinancialsHub() {
         : 0;
       const payerPaymentsTotal = Number(paymentsSummary?.payerPaymentsSummary?.appliedCents || 0);
       const totalPaymentsCollected = payerPaymentsTotal + patientPaymentsTotal;
-      const monthlyRevenue = Number(snapshots?.monthly?.totalRevenueCents || 0);
+      const monthlySnapshot = snapshots?.monthly || {};
+      const monthlyRevenue = Number(monthlySnapshot.totalRevenueCents || 0);
       const adjustmentsWriteoffs = Math.max(
         0,
         monthlyRevenue - totalPaymentsCollected - Number(paymentsSummary?.receivables?.outstandingBalanceCents || 0),
       );
-      const adjudicatedClaims = claims.filter((claim: any) => !['draft', 'ready'].includes(String(claim.status || '')));
-      const paidClaims = claims.filter((claim: any) => String(claim.status || '') === 'paid');
-      const deniedClaims = claims.filter((claim: any) => ['denied', 'rejected'].includes(String(claim.status || '')));
+      const adjudicatedClaims = claims.filter((claim: any) => !['draft', 'coding_review', 'ready'].includes(normalizeClaimStatus(claim.status)));
+      const paidClaims = claims.filter((claim: any) => ['paid', 'partially_paid'].includes(normalizeClaimStatus(claim.status)) || getClaimPaidCents(claim));
+      const fullyPaidClaims = claims.filter((claim: any) => normalizeClaimStatus(claim.status) === 'paid');
+      const deniedClaims = claims.filter((claim: any) => hasClaimDenialFriction(claim));
       const avgDaysToPay = paidClaims.length
         ? paidClaims.reduce((sum: number, claim: any) => {
             const serviceDate = new Date(`${String(claim.serviceDate || claim.createdAt || today)}T00:00:00Z`).getTime();
@@ -735,14 +852,18 @@ export function FinancialsHub() {
 
       setDashboardMetrics({
         totalClinicalCollections: Number(paymentsSummary?.calculated?.netCollectionsCents || totalPaymentsCollected),
+        storeRevenueCents: Number(monthlySnapshot.storeRevenueCents || 0),
+        badDebtCents: Number(monthlySnapshot.badDebtCents || 0),
+        collectionsReferralBalanceCents: Number(monthlySnapshot.collectionsReferralBalanceCents || 0),
+        collectionsReferralCount: Number(monthlySnapshot.collectionsReferralCount || 0),
         netCollectionRatio: Number(paymentsSummary?.calculated?.netCollectionRate || snapshots?.monthly?.collectionRate || 0),
         adjustmentsWriteoffs,
         daysSalesOutstanding: totalArCents > 0 ? Number((dsoWeightedDays / totalArCents).toFixed(1)) : 0,
-        firstPassClaimRate: adjudicatedClaims.length ? Number(((paidClaims.length / adjudicatedClaims.length) * 100).toFixed(1)) : 0,
+        firstPassClaimRate: adjudicatedClaims.length ? Number(((fullyPaidClaims.length / adjudicatedClaims.length) * 100).toFixed(1)) : 0,
         denialRate: adjudicatedClaims.length ? Number(((deniedClaims.length / adjudicatedClaims.length) * 100).toFixed(1)) : 0,
         avgDaysToPay: Number(avgDaysToPay.toFixed(1)),
-        claimsInQueue: claims.filter((claim: any) => ['draft', 'ready', 'submitted', 'accepted'].includes(String(claim.status || ''))).length,
-        pendingAppeals: claims.filter((claim: any) => ['appealed', 'denied', 'rejected'].includes(String(claim.status || ''))).length,
+        claimsInQueue: claims.filter((claim: any) => isActiveClaimWork(claim)).length,
+        pendingAppeals: claims.filter((claim: any) => isAtRiskClaim(claim)).length,
       });
 
       setDashboardARAging(
@@ -781,6 +902,26 @@ export function FinancialsHub() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (activeTab !== 'dashboard') {
+      return;
+    }
+
+    const requestedStartDate = searchParams.get('startDate');
+    const requestedEndDate = searchParams.get('endDate') || requestedStartDate;
+    if (!requestedStartDate || !requestedEndDate) {
+      return;
+    }
+    if (!ISO_DATE_PATTERN.test(requestedStartDate) || !ISO_DATE_PATTERN.test(requestedEndDate)) {
+      return;
+    }
+
+    setDashboardRangePreset('custom');
+    setDashboardStartDate(requestedStartDate);
+    setDashboardEndDate(requestedEndDate);
+    setDashboardDrilldownMetric(null);
+  }, [activeTab, searchParams]);
 
   useEffect(() => {
     if (activeTab !== 'snapshots') {
@@ -853,6 +994,132 @@ export function FinancialsHub() {
     loadSnapshotBreakdown(snapshotStartDate, snapshotEndDate);
   }, [activeTab, snapshotStartDate, snapshotEndDate, loadSnapshotBreakdown]);
 
+  const loadDashboardBreakdown = useCallback(async (startDate: string, endDate: string) => {
+    if (!session) {
+      return;
+    }
+
+    setDashboardLoading(true);
+    setDashboardError('');
+    try {
+      const currentWeekRange = getDashboardRange('week');
+      const [trendResponse, paymentsResponse, agingResponse, billsResponse, weekTrendResponse] = await Promise.all([
+        fetchCollectionsTrend(
+          {
+            tenantId: session.tenantId,
+            accessToken: session.accessToken,
+          },
+          { startDate, endDate, granularity: 'day' },
+        ),
+        fetchPaymentsSummary(
+          {
+            tenantId: session.tenantId,
+            accessToken: session.accessToken,
+          },
+          { startDate, endDate },
+        ),
+        fetchARAging(
+          {
+            tenantId: session.tenantId,
+            accessToken: session.accessToken,
+          },
+          { asOfDate: endDate },
+        ),
+        fetchBillsSummary(
+          {
+            tenantId: session.tenantId,
+            accessToken: session.accessToken,
+          },
+          { startDate, endDate },
+        ),
+        fetchCollectionsTrend(
+          {
+            tenantId: session.tenantId,
+            accessToken: session.accessToken,
+          },
+          { startDate: currentWeekRange.startDate, endDate: currentWeekRange.endDate, granularity: 'day' },
+        ),
+      ]);
+
+      const trendSummary = (trendResponse?.summary || null) as SnapshotTrendSummary | null;
+      const paymentsSummary = paymentsResponse || null;
+      const agingBuckets = Array.isArray(agingResponse?.buckets) ? agingResponse.buckets : [];
+      const totalArCents = agingBuckets.reduce((sum: number, bucket: any) => sum + Number(bucket.totalBalanceCents || 0), 0);
+      const payerPaymentsTotal = Number(paymentsSummary?.payerPaymentsSummary?.appliedCents || 0);
+      const patientPaymentsTotal = Array.isArray(paymentsSummary?.patientPaymentsByMethod)
+        ? paymentsSummary.patientPaymentsByMethod.reduce((sum: number, row: any) => sum + Number(row.totalCents || 0), 0)
+        : 0;
+      const clinicalCollections = payerPaymentsTotal + patientPaymentsTotal;
+      const rangeClaims = financialClaims.filter((claim) => isIsoInRange(getClaimDateIso(claim), startDate, endDate));
+      const activeClaimBacklog = financialClaims.filter(isActiveClaimWork);
+      const atRiskClaimBacklog = financialClaims.filter(isAtRiskClaim);
+      const adjudicatedClaims = rangeClaims.filter((claim) => !['draft', 'coding_review', 'ready'].includes(normalizeClaimStatus(claim.status)));
+      const paidClaims = rangeClaims.filter((claim) => ['paid', 'partially_paid'].includes(normalizeClaimStatus(claim.status)) || getClaimPaidCents(claim) > 0);
+      const fullyPaidClaims = rangeClaims.filter((claim) => normalizeClaimStatus(claim.status) === 'paid');
+      const deniedClaims = rangeClaims.filter(hasClaimDenialFriction);
+      const avgDaysToPay = average(
+        paidClaims
+          .map((claim) => daysBetweenDates(claim.serviceDate || claim.createdAt, getClaimFinalizedDate(claim)))
+          .filter((value): value is number => value !== null),
+      );
+      const dsoWeightedDays = agingBuckets.reduce((sum: number, bucket: any) => {
+        const key = String(bucket.key || '');
+        const midpoint = key === '0-30' ? 15 : key === '31-60' ? 45 : key === '61-90' ? 75 : key === '91-120' ? 105 : 135;
+        return sum + midpoint * Number(bucket.totalBalanceCents || 0);
+      }, 0);
+      const revenueEarned = Number(trendSummary?.totalRevenueEarnedCents || 0);
+      const outstandingBalance = Number(paymentsSummary?.receivables?.outstandingBalanceCents || 0);
+      const inferredWriteoffs = Math.max(
+        0,
+        revenueEarned - clinicalCollections - Number(trendSummary?.totalStorePaymentsCents || 0) - outstandingBalance,
+      );
+
+      setDashboardTrendData(Array.isArray(trendResponse?.data) ? trendResponse.data : []);
+      setDashboardTrendSummary(trendSummary);
+      setDashboardPaymentsSummary(paymentsSummary);
+      setDashboardBillsSummary(billsResponse || null);
+      setDashboardWeekSummary((weekTrendResponse?.summary || null) as SnapshotTrendSummary | null);
+      setDashboardARAging(
+        agingBuckets.map((bucket: any, index: number) => ({
+          label: bucket.key === '0-30' ? 'Current' : String(bucket.label || bucket.key || ''),
+          range: String(bucket.label || bucket.key || ''),
+          amountCents: Number(bucket.totalBalanceCents || 0),
+          count: Number(bucket.billCount || 0),
+          percentage: totalArCents > 0 ? Number(((Number(bucket.totalBalanceCents || 0) / totalArCents) * 100).toFixed(1)) : 0,
+          color: ['#10b981', '#f59e0b', '#f97316', '#ef4444', '#dc2626'][index] || '#6b7280',
+        })),
+      );
+      setDashboardMetrics({
+        totalClinicalCollections: clinicalCollections,
+        storeRevenueCents: Number(trendSummary?.totalStorePaymentsCents || 0),
+        badDebtCents: Number(trendSummary?.totalBadDebtCents || 0),
+        collectionsReferralBalanceCents: Number(trendSummary?.collectionsReferralBalanceCents || 0),
+        collectionsReferralCount: Number(trendSummary?.collectionsReferralCount || 0),
+        netCollectionRatio: Number(paymentsSummary?.calculated?.netCollectionRate || trendSummary?.collectionRate || 0),
+        adjustmentsWriteoffs: inferredWriteoffs,
+        daysSalesOutstanding: totalArCents > 0 ? Number((dsoWeightedDays / totalArCents).toFixed(1)) : 0,
+        firstPassClaimRate: adjudicatedClaims.length ? Number(((fullyPaidClaims.length / adjudicatedClaims.length) * 100).toFixed(1)) : 0,
+        denialRate: adjudicatedClaims.length ? Number(((deniedClaims.length / adjudicatedClaims.length) * 100).toFixed(1)) : 0,
+        avgDaysToPay: Number(avgDaysToPay.toFixed(1)),
+        claimsInQueue: activeClaimBacklog.length,
+        pendingAppeals: atRiskClaimBacklog.length,
+      });
+    } catch (error: any) {
+      const message = error?.message || 'Unable to load overview breakdown';
+      setDashboardError(message);
+      showError(message);
+    } finally {
+      setDashboardLoading(false);
+    }
+  }, [financialClaims, session, showError]);
+
+  useEffect(() => {
+    if (activeTab !== 'dashboard' || !dashboardStartDate || !dashboardEndDate) {
+      return;
+    }
+    loadDashboardBreakdown(dashboardStartDate, dashboardEndDate);
+  }, [activeTab, dashboardStartDate, dashboardEndDate, loadDashboardBreakdown]);
+
   // Handler to change tabs and update URL
   const handleTabChange = (tab: TabType) => {
     if (tab === 'snapshots') {
@@ -885,6 +1152,28 @@ export function FinancialsHub() {
     });
   };
 
+  const applyDashboardPreset = (preset: DashboardRangePreset) => {
+    const nextRange = getDashboardRange(preset, dashboardStartDate, dashboardEndDate);
+    setDashboardRangePreset(preset);
+    setDashboardStartDate(nextRange.startDate);
+    setDashboardEndDate(nextRange.endDate);
+    setDashboardDrilldownMetric(null);
+  };
+
+  const applyDashboardCustomRange = () => {
+    if (!dashboardStartDate || !dashboardEndDate) {
+      showError('Select both a start date and end date');
+      return;
+    }
+    if (dashboardStartDate > dashboardEndDate) {
+      showError('Start date must be on or before end date');
+      return;
+    }
+    setDashboardRangePreset('custom');
+    setDashboardDrilldownMetric(null);
+    loadDashboardBreakdown(dashboardStartDate, dashboardEndDate);
+  };
+
   const applySnapshotDateRange = () => {
     if (!snapshotStartDate || !snapshotEndDate) {
       showError('Select both a start date and end date');
@@ -903,10 +1192,7 @@ export function FinancialsHub() {
   };
 
   const handleDrillDown = (metric: string) => {
-    showSuccess(`Drilling down into: ${metric}`);
-    // Navigate to specific views based on metric
-    if (metric === 'claims-queue') navigate('/claims');
-    if (metric === 'ar-aging') handleTabChange('analytics');
+    setDashboardDrilldownMetric((current) => (current === metric ? null : metric));
   };
 
   const handleClaimSelect = (claimId: string) => {
@@ -935,7 +1221,7 @@ export function FinancialsHub() {
 
   const handleBillAction = async (
     bill: FinancialBill,
-    action: 'send_statement' | 'set_payment_plan' | 'flag_collections' | 'write_off' | 'add_note',
+    action: 'send_statement' | 'set_payment_plan' | 'flag_collections' | 'send_to_collections' | 'write_off' | 'add_note',
   ) => {
     if (!session) return;
 
@@ -943,6 +1229,7 @@ export function FinancialsHub() {
       send_statement: 'Statement sent',
       set_payment_plan: 'Payment plan started',
       flag_collections: 'Collections flag added',
+      send_to_collections: 'Debt sent to collections',
       write_off: 'Balance written off',
       add_note: 'Billing note added',
     };
@@ -964,9 +1251,11 @@ export function FinancialsHub() {
                 ? `Payment plan opened from A/R workqueue for bill ${bill.billNumber || bill.id}`
                 : action === 'flag_collections'
                   ? `Collections review flag from A/R workqueue for bill ${bill.billNumber || bill.id}`
-                  : action === 'write_off'
-                    ? `Administrative write-off from A/R workqueue for bill ${bill.billNumber || bill.id}`
-                    : `Billing note added from A/R workqueue for bill ${bill.billNumber || bill.id}`,
+                  : action === 'send_to_collections'
+                    ? `Debt referred to collections from A/R workqueue for bill ${bill.billNumber || bill.id}`
+                    : action === 'write_off'
+                      ? `Administrative write-off from A/R workqueue for bill ${bill.billNumber || bill.id}`
+                      : `Billing note added from A/R workqueue for bill ${bill.billNumber || bill.id}`,
         },
       );
       showSuccess(actionLabels[action]);
@@ -1034,6 +1323,10 @@ export function FinancialsHub() {
       totalRevenueEarnedCents: 0,
       totalPatientPaymentsCents: 0,
       totalPayerPaymentsCents: 0,
+      totalStorePaymentsCents: 0,
+      totalBadDebtCents: 0,
+      collectionsReferralBalanceCents: 0,
+      collectionsReferralCount: 0,
       totalPaymentCount: 0,
       totalBillCount: 0,
       dayCount: 0,
@@ -1093,11 +1386,368 @@ export function FinancialsHub() {
   };
   const formatPercent = (value: number) => `${Number(value || 0).toFixed(1)}%`;
   const insuranceAnalytics = calculatePayerPerformance(financialClaims, recentBills, financialWorkQueue);
+  const dashboardRangeLabel = formatRangeLabel(dashboardStartDate, dashboardEndDate);
+  const currentWeekRange = getDashboardRange('week');
+  const currentWeekRangeLabel = formatRangeLabel(currentWeekRange.startDate, currentWeekRange.endDate);
+  const dashboardSummary: SnapshotTrendSummary =
+    dashboardTrendSummary ||
+    {
+      totalPaymentsCollectedCents: 0,
+      totalRevenueEarnedCents: 0,
+      totalPatientPaymentsCents: 0,
+      totalPayerPaymentsCents: 0,
+      totalStorePaymentsCents: 0,
+      totalBadDebtCents: 0,
+      collectionsReferralBalanceCents: 0,
+      collectionsReferralCount: 0,
+      totalPaymentCount: 0,
+      totalBillCount: 0,
+      dayCount: 0,
+      avgDailyPaymentsCollectedCents: 0,
+      avgDailyRevenueEarnedCents: 0,
+      collectionRate: 0,
+      revenueCategories: [],
+    };
+  const dashboardRangeClaims = financialClaims.filter((claim) => isIsoInRange(getClaimDateIso(claim), dashboardStartDate, dashboardEndDate));
+  const dashboardAllActiveClaims = financialClaims.filter(isActiveClaimWork);
+  const dashboardAllAtRiskClaims = financialClaims.filter(isAtRiskClaim);
+  const dashboardRangeBills = recentBills.filter((bill) => isIsoInRange(getBillDateIso(bill), dashboardStartDate, dashboardEndDate));
+  const dashboardDeniedClaims = dashboardRangeClaims.filter(hasClaimDenialFriction);
+  const dashboardPaidClaims = dashboardRangeClaims.filter((claim) =>
+    ['paid', 'partially_paid'].includes(normalizeClaimStatus(claim.status)) || getClaimPaidCents(claim) > 0,
+  );
+  const dashboardQueuedClaims = dashboardAllActiveClaims;
+  const dashboardPaymentMethods = Array.isArray(dashboardPaymentsSummary?.patientPaymentsByMethod)
+    ? dashboardPaymentsSummary.patientPaymentsByMethod
+    : [];
+  const dashboardBillsByStatus = Array.isArray(dashboardBillsSummary?.billsByStatus)
+    ? dashboardBillsSummary.billsByStatus
+    : [];
+  const drilldownMeta: Record<string, { title: string; subtitle: string; action?: string; actionTarget?: TabType | 'claims' | 'bills' | 'payments' }> = {
+    collections: {
+      title: 'Clinical Collections Detail',
+      subtitle: 'Patient and payer payments collected in the selected overview range. Store revenue is shown separately.',
+      action: 'Open Payments',
+      actionTarget: 'payments',
+    },
+    'collection-ratio': {
+      title: 'Net Collection Ratio Detail',
+      subtitle: 'Payments collected compared with earned clinical revenue for this range.',
+      action: 'Open Analytics',
+      actionTarget: 'analytics',
+    },
+    dso: {
+      title: 'Days Sales Outstanding Detail',
+      subtitle: 'A/R aging as of the end of the selected range.',
+      action: 'Open Bills',
+      actionTarget: 'bills',
+    },
+    'first-pass': {
+      title: 'First Pass Claim Detail',
+      subtitle: 'Claims in the selected range that moved through adjudication without denial friction.',
+      action: 'Open Claims',
+      actionTarget: 'claims',
+    },
+    adjustments: {
+      title: 'Adjustments and Write-Off Detail',
+      subtitle: 'Inferred variance between earned revenue, collected payments, store payments, and open receivables.',
+      action: 'Open Bills',
+      actionTarget: 'bills',
+    },
+    'store-revenue': {
+      title: 'Store Revenue Detail',
+      subtitle: 'Retail product payments captured in this overview range.',
+      action: 'Open Analytics',
+      actionTarget: 'analytics',
+    },
+    'bad-debt': {
+      title: 'Bad Debt and Loss Detail',
+      subtitle: 'Losses, write-offs, and debt moving toward collections in the selected range.',
+      action: 'Open Bills',
+      actionTarget: 'bills',
+    },
+    'collections-referrals': {
+      title: 'Sent to Collections Detail',
+      subtitle: 'Accounts and balances flagged or sent to collections.',
+      action: 'Open Bills',
+      actionTarget: 'bills',
+    },
+    'denial-rate': {
+      title: 'Denial Rate Detail',
+      subtitle: 'Denied, rejected, or appealed claims in the selected range.',
+      action: 'Open Claims',
+      actionTarget: 'claims',
+    },
+    'avg-days-to-pay': {
+      title: 'Average Days to Pay Detail',
+      subtitle: 'Paid claims and their service-to-payment timing.',
+      action: 'Open Claims',
+      actionTarget: 'claims',
+    },
+    'claims-queue': {
+      title: 'Claims Queue Detail',
+      subtitle: 'Draft, ready, submitted, or accepted claims that still need revenue-cycle movement.',
+      action: 'Open Claims',
+      actionTarget: 'claims',
+    },
+    appeals: {
+      title: 'At-Risk Claims Detail',
+      subtitle: 'Denied, rejected, appealed, scrub-failed, and filing-risk claims that need billing follow-up.',
+      action: 'Open Claims',
+      actionTarget: 'claims',
+    },
+    'ar-aging': {
+      title: 'A/R Aging Detail',
+      subtitle: 'Receivables bucketed by age as of the selected range end date.',
+      action: 'Open Bills',
+      actionTarget: 'bills',
+    },
+  };
+  const activeDrilldownMeta = dashboardDrilldownMetric ? drilldownMeta[dashboardDrilldownMetric] || drilldownMeta.collections : null;
 
-  // ─── Tab label map for sidebar ───────────────────────────────────────────
-  const tabIcons: Record<TabType, string> = {
-    dashboard: '◈', snapshots: '◉', insurance: '◇', bills: '◧', payments: '◨',
-    analytics: '◎', fees: '◫', statements: '◪', reports: '◩',
+  const openDrilldownTarget = (target?: TabType | 'claims' | 'bills' | 'payments') => {
+    if (!target) return;
+    if (target === 'claims') {
+      if (dashboardDrilldownMetric === 'denial-rate') {
+        navigate('/claims?queue=denials&status=denied');
+        return;
+      }
+      if (dashboardDrilldownMetric === 'appeals') {
+        navigate('/claims?queue=appeals&status=appealed');
+        return;
+      }
+      if (dashboardDrilldownMetric === 'claims-queue') {
+        navigate('/claims?queue=pending');
+        return;
+      }
+      navigate('/claims');
+      return;
+    }
+    if (target === 'bills') {
+      handleTabChange('bills');
+      return;
+    }
+    if (target === 'payments') {
+      handleTabChange('payments');
+      return;
+    }
+    handleTabChange(target);
+  };
+
+  const renderClaimRows = (claims: FinancialClaim[]) => (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
+      <thead>
+        <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+          <th style={{ padding: '0.6rem', textAlign: 'left' }}>Claim</th>
+          <th style={{ padding: '0.6rem', textAlign: 'left' }}>Payer</th>
+          <th style={{ padding: '0.6rem', textAlign: 'left' }}>Service Date</th>
+          <th style={{ padding: '0.6rem', textAlign: 'right' }}>Charges</th>
+          <th style={{ padding: '0.6rem', textAlign: 'right' }}>Paid</th>
+          <th style={{ padding: '0.6rem', textAlign: 'right' }}>Balance</th>
+          <th style={{ padding: '0.6rem', textAlign: 'center' }}>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {claims.length === 0 ? (
+          <tr>
+            <td colSpan={7} style={{ padding: '0.9rem', textAlign: 'center', color: '#6b7280' }}>No matching claims for this range.</td>
+          </tr>
+        ) : (
+          claims.slice(0, 8).map((claim) => (
+            <tr key={claim.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+              <td style={{ padding: '0.6rem', fontWeight: 800 }}>{claim.claimNumber || claim.id}</td>
+              <td style={{ padding: '0.6rem' }}>{getClaimPayer(claim)}</td>
+              <td style={{ padding: '0.6rem' }}>{formatIsoDateForUi(getClaimDateIso(claim))}</td>
+              <td style={{ padding: '0.6rem', textAlign: 'right' }}>{formatCurrency(getClaimChargeCents(claim))}</td>
+              <td style={{ padding: '0.6rem', textAlign: 'right', color: '#047857', fontWeight: 800 }}>{formatCurrency(getClaimPaidCents(claim))}</td>
+              <td style={{ padding: '0.6rem', textAlign: 'right', color: getClaimBalanceCents(claim) > 0 ? '#991b1b' : '#047857', fontWeight: 800 }}>
+                {formatCurrency(getClaimBalanceCents(claim))}
+              </td>
+              <td style={{ padding: '0.6rem', textAlign: 'center', textTransform: 'capitalize' }}>{normalizeClaimStatus(claim.status).replace(/_/g, ' ') || 'unknown'}</td>
+            </tr>
+          ))
+        )}
+      </tbody>
+    </table>
+  );
+
+  const renderDashboardDrilldown = () => {
+    if (!activeDrilldownMeta || !dashboardDrilldownMetric) return null;
+    const isClaimsMetric = ['first-pass', 'denial-rate', 'avg-days-to-pay', 'claims-queue', 'appeals'].includes(dashboardDrilldownMetric);
+    const claimRows =
+      dashboardDrilldownMetric === 'claims-queue'
+        ? dashboardQueuedClaims
+        : dashboardDrilldownMetric === 'appeals'
+          ? dashboardAllAtRiskClaims
+        : dashboardDrilldownMetric === 'denial-rate'
+          ? dashboardDeniedClaims
+          : dashboardDrilldownMetric === 'avg-days-to-pay'
+            ? dashboardPaidClaims
+            : dashboardRangeClaims;
+
+    return (
+      <section style={{
+        marginTop: '1.25rem',
+        border: '1px solid #d1fae5',
+        borderRadius: '16px',
+        background: '#ffffff',
+        overflow: 'hidden',
+        boxShadow: '0 10px 28px rgba(15, 23, 42, 0.08)',
+      }}>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: '1rem',
+          alignItems: 'flex-start',
+          padding: '1rem',
+          background: '#f0fdf4',
+          borderBottom: '1px solid #d1fae5',
+        }}>
+          <div>
+            <h3 style={{ margin: 0, color: '#064e3b', fontSize: '1.1rem', fontWeight: 900 }}>{activeDrilldownMeta.title}</h3>
+            <p style={{ margin: '0.25rem 0 0', color: '#047857', fontSize: '0.86rem' }}>
+              {activeDrilldownMeta.subtitle} Viewing {dashboardRangeLabel}.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {activeDrilldownMeta.action && (
+              <button
+                type="button"
+                onClick={() => openDrilldownTarget(activeDrilldownMeta.actionTarget)}
+                style={{
+                  border: '1px solid #10b981',
+                  background: '#059669',
+                  color: '#ffffff',
+                  borderRadius: '8px',
+                  padding: '0.5rem 0.8rem',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                {activeDrilldownMeta.action}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setDashboardDrilldownMetric(null)}
+              style={{
+                border: '1px solid #a7f3d0',
+                background: '#ffffff',
+                color: '#065f46',
+                borderRadius: '8px',
+                padding: '0.5rem 0.8rem',
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+
+        <div style={{ padding: '1rem', display: 'grid', gap: '1rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.75rem' }}>
+            {[
+              { label: 'Clinical Collections', value: formatCurrency(dashboardMetrics.totalClinicalCollections), tone: '#047857' },
+              { label: 'Revenue Earned', value: formatCurrency(dashboardSummary.totalRevenueEarnedCents), tone: '#166534' },
+              { label: 'Store Revenue', value: formatCurrency(dashboardSummary.totalStorePaymentsCents || dashboardMetrics.storeRevenueCents), tone: '#0f766e' },
+              { label: 'Open A/R', value: formatCurrency(Number(dashboardPaymentsSummary?.receivables?.outstandingBalanceCents || 0)), tone: '#991b1b' },
+              { label: 'Claims', value: `${isClaimsMetric ? claimRows.length : dashboardRangeClaims.length}`, tone: '#1d4ed8' },
+              { label: 'Bills', value: `${dashboardRangeBills.length}`, tone: '#6d28d9' },
+            ].map((item) => (
+              <div key={item.label} style={{ border: '1px solid #e5e7eb', borderRadius: '12px', padding: '0.85rem', background: '#f8fafc' }}>
+                <div style={{ color: '#6b7280', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 800 }}>{item.label}</div>
+                <div style={{ color: item.tone, fontSize: '1.25rem', fontWeight: 900, marginTop: '0.3rem' }}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {isClaimsMetric ? (
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', overflowX: 'auto' }}>
+              {renderClaimRows(claimRows)}
+            </div>
+          ) : dashboardDrilldownMetric === 'ar-aging' || dashboardDrilldownMetric === 'dso' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem' }}>
+              {dashboardARAging.map((bucket) => (
+                <div key={bucket.range} style={{ border: `1px solid ${bucket.color}`, borderRadius: '12px', padding: '0.85rem', background: '#ffffff' }}>
+                  <div style={{ color: bucket.color, fontWeight: 900, fontSize: '0.78rem', textTransform: 'uppercase' }}>{bucket.range}</div>
+                  <div style={{ color: '#111827', fontSize: '1.25rem', fontWeight: 900, marginTop: '0.3rem' }}>{formatCurrency(bucket.amountCents)}</div>
+                  <div style={{ color: '#6b7280', fontSize: '0.8rem', marginTop: '0.2rem' }}>{bucket.count} account{bucket.count === 1 ? '' : 's'}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 0.9fr) minmax(320px, 1.1fr)', gap: '1rem', alignItems: 'start' }}>
+              <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', overflow: 'hidden' }}>
+                <div style={{ padding: '0.8rem 0.9rem', fontWeight: 800, borderBottom: '1px solid #f3f4f6' }}>Payment Mix</div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
+                  <tbody>
+                    <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '0.6rem' }}>Payer payments</td>
+                      <td style={{ padding: '0.6rem', textAlign: 'right', fontWeight: 800 }}>{formatCurrency(dashboardSummary.totalPayerPaymentsCents || Number(dashboardPaymentsSummary?.payerPaymentsSummary?.appliedCents || 0))}</td>
+                    </tr>
+                    <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '0.6rem' }}>Patient payments</td>
+                      <td style={{ padding: '0.6rem', textAlign: 'right', fontWeight: 800 }}>{formatCurrency(dashboardSummary.totalPatientPaymentsCents || 0)}</td>
+                    </tr>
+                    <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '0.6rem' }}>Store payments</td>
+                      <td style={{ padding: '0.6rem', textAlign: 'right', fontWeight: 800 }}>{formatCurrency(dashboardSummary.totalStorePaymentsCents || 0)}</td>
+                    </tr>
+                    {dashboardPaymentMethods.map((row: any) => (
+                      <tr key={String(row.paymentMethod)} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={{ padding: '0.6rem', textTransform: 'capitalize' }}>Patient: {String(row.paymentMethod || 'other').replace(/_/g, ' ')}</td>
+                        <td style={{ padding: '0.6rem', textAlign: 'right', fontWeight: 800 }}>{formatCurrency(Number(row.totalCents || 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', overflowX: 'auto' }}>
+                <div style={{ padding: '0.8rem 0.9rem', fontWeight: 800, borderBottom: '1px solid #f3f4f6' }}>Daily Detail</div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem', minWidth: '640px' }}>
+                  <thead>
+                    <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                      <th style={{ padding: '0.6rem', textAlign: 'left' }}>Date</th>
+                      <th style={{ padding: '0.6rem', textAlign: 'right' }}>Revenue</th>
+                      <th style={{ padding: '0.6rem', textAlign: 'right' }}>Payments</th>
+                      <th style={{ padding: '0.6rem', textAlign: 'right' }}>Patient</th>
+                      <th style={{ padding: '0.6rem', textAlign: 'right' }}>Payer</th>
+                      <th style={{ padding: '0.6rem', textAlign: 'right' }}>Store</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dashboardTrendData.map((point: any) => (
+                      <tr key={point.bucketStartDate} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={{ padding: '0.6rem' }}>{formatIsoDateForUi(point.bucketStartDate)}</td>
+                        <td style={{ padding: '0.6rem', textAlign: 'right' }}>{formatCurrency(Number(point.revenueEarnedCents || 0))}</td>
+                        <td style={{ padding: '0.6rem', textAlign: 'right' }}>{formatCurrency(Number(point.paymentsCollectedCents || 0))}</td>
+                        <td style={{ padding: '0.6rem', textAlign: 'right' }}>{formatCurrency(Number(point.patientPaymentsCents || 0))}</td>
+                        <td style={{ padding: '0.6rem', textAlign: 'right' }}>{formatCurrency(Number(point.payerPaymentsCents || 0))}</td>
+                        <td style={{ padding: '0.6rem', textAlign: 'right' }}>{formatCurrency(Number(point.storePaymentsCents || 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {dashboardBillsByStatus.length > 0 && (
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', padding: '0.85rem', background: '#f8fafc' }}>
+              <div style={{ fontWeight: 900, color: '#111827', marginBottom: '0.55rem' }}>Bills in This Range</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                {dashboardBillsByStatus.map((row: any) => (
+                  <span key={String(row.status)} style={{ borderRadius: '999px', background: '#ffffff', border: '1px solid #e5e7eb', padding: '0.35rem 0.65rem', fontWeight: 800, color: '#374151', fontSize: '0.8rem' }}>
+                    {String(row.status || 'unknown').replace(/_/g, ' ')}: {Number(row.count || 0)} · {formatCurrency(Number(row.totalChargesCents || 0))}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+    );
   };
 
   return (
@@ -1206,6 +1856,7 @@ export function FinancialsHub() {
             <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
               {TABS.map(tab => {
                 const isActive = activeTab === tab.key;
+                const Icon = tab.icon;
                 return (
                   <button
                     key={tab.key}
@@ -1229,11 +1880,17 @@ export function FinancialsHub() {
                     onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
                   >
                     <span style={{
-                      fontSize: '0.9rem',
+                      width: '1.8rem',
+                      height: '1.8rem',
+                      borderRadius: '8px',
+                      background: isActive ? '#DCFCE7' : '#F8FAFC',
                       color: isActive ? '#059669' : '#9CA3AF',
                       flexShrink: 0,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
                     }}>
-                      {tabIcons[tab.key]}
+                      <Icon size={16} strokeWidth={2.2} aria-hidden="true" />
                     </span>
                     {!sidebarCollapsed && (
                       <div style={{ minWidth: 0 }}>
@@ -1333,6 +1990,30 @@ export function FinancialsHub() {
                             Fees/Other {formatCurrency(card.standaloneRevenueCents)}
                           </div>
                         ) : null}
+                        {card.storeRevenueCents > 0 ? (
+                          <div style={{
+                            padding: '0.3rem 0.58rem',
+                            borderRadius: '999px',
+                            background: '#ecfdf5',
+                            color: '#047857',
+                            fontSize: '0.72rem',
+                            fontWeight: '800',
+                          }}>
+                            Store {formatCurrency(card.storeRevenueCents)}
+                          </div>
+                        ) : null}
+                        {card.badDebtCents > 0 ? (
+                          <div style={{
+                            padding: '0.3rem 0.58rem',
+                            borderRadius: '999px',
+                            background: '#fee2e2',
+                            color: '#991b1b',
+                            fontSize: '0.72rem',
+                            fontWeight: '800',
+                          }}>
+                            Loss {formatCurrency(card.badDebtCents)}
+                          </div>
+                        ) : null}
                       </div>
 
                       <div
@@ -1352,6 +2033,7 @@ export function FinancialsHub() {
                           { label: 'Avg / Visit', value: formatCurrency(card.avgRevenuePerVisitCents), tone: '#374151' },
                           { label: 'Collection Rate', value: `${card.collectionRate.toFixed(1)}%`, tone: card.collectionRate >= 90 ? '#059669' : '#374151' },
                           { label: 'Benchmarked Visits', value: `${card.benchmarkVisitsCount}`, tone: '#065f46' },
+                          { label: 'Collections Queue', value: formatCurrency(card.collectionsReferralBalanceCents || 0), tone: (card.collectionsReferralBalanceCents || 0) > 0 ? '#b91c1c' : '#374151' },
                         ].map((metric, index) => (
                           <div
                             key={`${card.key}-${metric.label}`}
@@ -1360,8 +2042,8 @@ export function FinancialsHub() {
                               justifyContent: 'space-between',
                               alignItems: 'center',
                               gap: '0.75rem',
-                              paddingBottom: index === 3 ? 0 : '0.5rem',
-                              borderBottom: index === 3 ? 'none' : '1px solid #e5e7eb',
+                              paddingBottom: index === 4 ? 0 : '0.5rem',
+                              borderBottom: index === 4 ? 'none' : '1px solid #e5e7eb',
                             }}
                           >
                             <span style={{ fontSize: '0.78rem', color: '#6b7280', fontWeight: 700 }}>
@@ -1455,11 +2137,47 @@ export function FinancialsHub() {
           }}>
             {/* Dashboard Tab (Overview) */}
             {activeTab === 'dashboard' && (
-              <RCMDashboard
-                metrics={dashboardMetrics}
-                arAging={dashboardARAging}
-                onDrillDown={handleDrillDown}
-              />
+              <>
+                {dashboardError && (
+                  <div style={{
+                    border: '1px solid #fecaca',
+                    background: '#fef2f2',
+                    color: '#991b1b',
+                    padding: '0.85rem 1rem',
+                    borderRadius: '10px',
+                    marginBottom: '1rem',
+                    fontWeight: 700,
+                  }}>
+                    {dashboardError}
+                  </div>
+                )}
+                <RCMDashboard
+                  metrics={dashboardMetrics}
+                  arAging={dashboardARAging}
+                  onDrillDown={handleDrillDown}
+                  activeDrillDown={dashboardDrilldownMetric}
+                  rangeControl={{
+                    preset: dashboardRangePreset,
+                    startDate: dashboardStartDate,
+                    endDate: dashboardEndDate,
+                    rangeLabel: dashboardRangeLabel,
+                    loading: dashboardLoading,
+                    currentWeekRangeLabel,
+                    currentWeekClinicalCollectionsCents: Number(dashboardWeekSummary?.totalPayerPaymentsCents || 0) + Number(dashboardWeekSummary?.totalPatientPaymentsCents || 0),
+                    onPresetChange: applyDashboardPreset,
+                    onStartDateChange: (value) => {
+                      setDashboardRangePreset('custom');
+                      setDashboardStartDate(value);
+                    },
+                    onEndDateChange: (value) => {
+                      setDashboardRangePreset('custom');
+                      setDashboardEndDate(value);
+                    },
+                    onApplyCustomRange: applyDashboardCustomRange,
+                  }}
+                />
+                {renderDashboardDrilldown()}
+              </>
             )}
 
             {/* Snapshots Tab */}
@@ -1611,6 +2329,9 @@ export function FinancialsHub() {
                         { label: 'Payments Collected', value: formatCurrency(snapshotSummary.totalPaymentsCollectedCents), color: '#1d4ed8' },
                         { label: 'Patient Payments', value: formatCurrency(snapshotSummary.totalPatientPaymentsCents), color: '#7c3aed' },
                         { label: 'Payer Payments', value: formatCurrency(snapshotSummary.totalPayerPaymentsCents), color: '#0f766e' },
+                        { label: 'Store Revenue', value: formatCurrency(snapshotSummary.totalStorePaymentsCents || 0), color: '#047857' },
+                        { label: 'Bad Debt / Loss', value: formatCurrency(snapshotSummary.totalBadDebtCents || 0), color: '#c2410c' },
+                        { label: 'Collections Referrals', value: `${formatCurrency(snapshotSummary.collectionsReferralBalanceCents || 0)} · ${snapshotSummary.collectionsReferralCount || 0}`, color: '#b91c1c' },
                         { label: 'Net Collection Rate', value: Number(snapshotCalculated.netCollectionRate || snapshotSummary.collectionRate || 0).toFixed(1) + '%', color: '#92400e' },
                         { label: 'Outstanding A/R', value: formatCurrency(Number(snapshotReceivables.outstandingBalanceCents || 0)), color: '#991b1b' },
                       ].map((item) => (
@@ -2647,6 +3368,23 @@ export function FinancialsHub() {
                               }}
                             >
                               Collections
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleBillAction(bill, 'send_to_collections')}
+                              disabled={(bill.balanceCents || 0) <= 0}
+                              style={{
+                                padding: '0.4rem 0.75rem',
+                                background: (bill.balanceCents || 0) <= 0 ? '#f3f4f6' : '#7f1d1d',
+                                color: (bill.balanceCents || 0) <= 0 ? '#9ca3af' : 'white',
+                                border: '1px solid #991b1b',
+                                borderRadius: '6px',
+                                fontSize: '0.8rem',
+                                cursor: (bill.balanceCents || 0) <= 0 ? 'not-allowed' : 'pointer',
+                                fontWeight: 700,
+                              }}
+                            >
+                              Send Debt
                             </button>
                           </div>
                         </td>

@@ -1,8 +1,11 @@
 import { ALL_APPOINTMENTS, ALL_PATIENTS } from './demoData';
 
+// Demo financial rows intentionally carry mixed backend-shaped payloads.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DemoItem = Record<string, any>;
 
 const STORAGE_KEY = 'demoRevenueCycleState.v1';
+const DEMO_STORE_ORDERS_KEY = 'demoStoreOrders.v1';
 const TENANT_ID = 'tenant-demo';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -321,7 +324,7 @@ function buildBaseState(): DemoRevenueCycleState {
 
     let patientPaidCents = 0;
     let payerPaidCents = 0;
-    let adjustmentCents = payerName === 'Self-Pay' ? 0 : Math.max(0, totalCents - allowedCents);
+    const adjustmentCents = payerName === 'Self-Pay' ? 0 : Math.max(0, totalCents - allowedCents);
     let scrubStatus: DemoClaimState['scrubStatus'] = 'pending';
     let eraPosted = false;
     let reconciled = false;
@@ -365,7 +368,6 @@ function buildBaseState(): DemoRevenueCycleState {
       }
     }
 
-    const resolvedCents = Math.min(totalCents, patientPaidCents + payerPaidCents + adjustmentCents);
     const updatedAt = status === 'draft' || status === 'ready'
       ? `${serviceDate}T18:00:00Z`
       : `${addDays(serviceDate, Math.min(28, Math.max(1, Math.floor(ageDays * 0.3) || 1)))}T16:00:00Z`;
@@ -442,6 +444,28 @@ function readState(): DemoRevenueCycleState {
   } catch {
     return buildBaseState();
   }
+}
+
+function readDemoStoreOrdersForFinancials(): DemoItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(DEMO_STORE_ORDERS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getCompletedDemoStoreOrdersForFinancials(): DemoItem[] {
+  return readDemoStoreOrdersForFinancials()
+    .filter((order) => String(order.status || 'completed') === 'completed');
+}
+
+function getStoreRevenueCents(startDate?: string | null, endDate?: string | null): number {
+  return getCompletedDemoStoreOrdersForFinancials()
+    .filter((order) => inRange(String(order.saleDate || order.createdAt || '').slice(0, 10), startDate, endDate))
+    .reduce((sum, order) => sum + Number(order.total || 0), 0);
 }
 
 function writeState(state: DemoRevenueCycleState) {
@@ -762,6 +786,10 @@ function bucketClaimsByDate(state: DemoRevenueCycleState, startDate?: string | n
       paymentsCollectedCents: 0,
       patientPaymentsCents: 0,
       payerPaymentsCents: 0,
+      storePaymentsCents: 0,
+      badDebtCents: 0,
+      collectionsReferralBalanceCents: 0,
+      collectionsReferralCount: 0,
       billCount: 0,
       paymentCount: 0,
       revenueCategories: [] as DemoItem[],
@@ -789,6 +817,10 @@ function bucketClaimsByDate(state: DemoRevenueCycleState, startDate?: string | n
       paymentsCollectedCents: 0,
       patientPaymentsCents: 0,
       payerPaymentsCents: 0,
+      storePaymentsCents: 0,
+      badDebtCents: 0,
+      collectionsReferralBalanceCents: 0,
+      collectionsReferralCount: 0,
       billCount: 0,
       paymentCount: 0,
       revenueCategories: [] as DemoItem[],
@@ -803,6 +835,38 @@ function bucketClaimsByDate(state: DemoRevenueCycleState, startDate?: string | n
     revenueByBucket.set(bucket, existing);
   }
 
+  for (const order of getCompletedDemoStoreOrdersForFinancials()) {
+    const orderDate = String(order.saleDate || order.createdAt || '').slice(0, 10);
+    if (!inRange(orderDate, startDate, endDate)) continue;
+    const bucket = toBucket(orderDate);
+    const existing = revenueByBucket.get(bucket) || {
+      bucketStartDate: bucket,
+      revenueEarnedCents: 0,
+      paymentsCollectedCents: 0,
+      patientPaymentsCents: 0,
+      payerPaymentsCents: 0,
+      storePaymentsCents: 0,
+      badDebtCents: 0,
+      collectionsReferralBalanceCents: 0,
+      collectionsReferralCount: 0,
+      billCount: 0,
+      paymentCount: 0,
+      revenueCategories: [] as DemoItem[],
+    };
+    const amount = Number(order.total || 0);
+    existing.revenueEarnedCents += amount;
+    existing.paymentsCollectedCents += amount;
+    existing.storePaymentsCents += amount;
+    existing.paymentCount += 1;
+    const categories = new Map<string, DemoItem>(existing.revenueCategories.map((item: DemoItem) => [item.key, item]));
+    const current = categories.get('product_sale') || { key: 'product_sale', label: 'Product Sales', revenueCents: 0, itemCount: 0 };
+    current.revenueCents += amount;
+    current.itemCount += 1;
+    categories.set('product_sale', current);
+    existing.revenueCategories = [...categories.values()];
+    revenueByBucket.set(bucket, existing);
+  }
+
   for (const bill of bills) {
     const billDate = String(bill.createdAt || '').slice(0, 10);
     if (!inRange(billDate, startDate, endDate)) continue;
@@ -813,6 +877,10 @@ function bucketClaimsByDate(state: DemoRevenueCycleState, startDate?: string | n
       paymentsCollectedCents: 0,
       patientPaymentsCents: 0,
       payerPaymentsCents: 0,
+      storePaymentsCents: 0,
+      badDebtCents: 0,
+      collectionsReferralBalanceCents: 0,
+      collectionsReferralCount: 0,
       billCount: 0,
       paymentCount: 0,
       revenueCategories: [] as DemoItem[],
@@ -827,6 +895,10 @@ function bucketClaimsByDate(state: DemoRevenueCycleState, startDate?: string | n
     totalRevenueEarnedCents: data.reduce((sum, row) => sum + row.revenueEarnedCents, 0),
     totalPatientPaymentsCents: data.reduce((sum, row) => sum + row.patientPaymentsCents, 0),
     totalPayerPaymentsCents: data.reduce((sum, row) => sum + row.payerPaymentsCents, 0),
+    totalStorePaymentsCents: data.reduce((sum, row) => sum + Number(row.storePaymentsCents || 0), 0),
+    totalBadDebtCents: data.reduce((sum, row) => sum + Number(row.badDebtCents || 0), 0),
+    collectionsReferralBalanceCents: data.reduce((sum, row) => sum + Number(row.collectionsReferralBalanceCents || 0), 0),
+    collectionsReferralCount: data.reduce((sum, row) => sum + Number(row.collectionsReferralCount || 0), 0),
     totalPaymentCount: data.reduce((sum, row) => sum + row.paymentCount, 0),
     totalBillCount: data.reduce((sum, row) => sum + row.billCount, 0),
     dayCount: Math.max(1, data.length),
@@ -859,6 +931,10 @@ function bucketClaimsByDate(state: DemoRevenueCycleState, startDate?: string | n
       paymentsCollectedCents: 0,
       patientPaymentsCents: 0,
       payerPaymentsCents: 0,
+      storePaymentsCents: 0,
+      badDebtCents: 0,
+      collectionsReferralBalanceCents: 0,
+      collectionsReferralCount: 0,
       billCount: 0,
       paymentCount: 0,
       revenueCategories: [],
@@ -871,10 +947,11 @@ function bucketClaimsByDate(state: DemoRevenueCycleState, startDate?: string | n
 function buildDashboardSnapshot(state: DemoRevenueCycleState, startDate: string, endDate: string, key: 'daily' | 'weekly' | 'monthly', label: string, rangeLabel: string) {
   const claims = state.claims.filter((claim) => inRange(claim.serviceDate, startDate, endDate));
   const completedAppointments = claims.length;
-  const totalRevenueCents = claims.reduce((sum, claim) => sum + claim.totalCents, 0);
+  const storeRevenueCents = getStoreRevenueCents(startDate, endDate);
+  const totalRevenueCents = claims.reduce((sum, claim) => sum + claim.totalCents, 0) + storeRevenueCents;
   const payerPayments = claims.reduce((sum, claim) => sum + claim.payerPaidCents, 0);
   const patientPayments = claims.reduce((sum, claim) => sum + claim.patientPaidCents, 0);
-  const collectionsCents = payerPayments + patientPayments;
+  const collectionsCents = payerPayments + patientPayments + storeRevenueCents;
   const categoryMap = new Map<string, DemoItem>();
   for (const claim of claims) {
     for (const charge of claim.charges) {
@@ -883,6 +960,14 @@ function buildDashboardSnapshot(state: DemoRevenueCycleState, startDate: string,
       item.itemCount += 1;
       categoryMap.set(charge.category, item);
     }
+  }
+  if (storeRevenueCents > 0) {
+    categoryMap.set('product_sale', {
+      key: 'product_sale',
+      label: 'Product Sales',
+      revenueCents: storeRevenueCents,
+      itemCount: getCompletedDemoStoreOrdersForFinancials().filter((order) => inRange(String(order.saleDate || order.createdAt || '').slice(0, 10), startDate, endDate)).length,
+    });
   }
 
   return {
@@ -894,18 +979,25 @@ function buildDashboardSnapshot(state: DemoRevenueCycleState, startDate: string,
     collectionsCents,
     avgRevenuePerVisitCents: completedAppointments ? Math.round(totalRevenueCents / completedAppointments) : 0,
     collectionRate: totalRevenueCents ? Number(((collectionsCents / totalRevenueCents) * 100).toFixed(1)) : 0,
-    benchmarkVisitsCount: completedAppointments + Math.max(1, Math.round(completedAppointments * 0.08)),
+    benchmarkVisitsCount: completedAppointments,
     standaloneRevenueCents: claims.filter((claim) => claim.charges.length === 1).reduce((sum, claim) => sum + claim.totalCents, 0),
+    storeRevenueCents,
+    badDebtCents: 0,
+    collectionsReferralBalanceCents: 0,
+    collectionsReferralCount: 0,
     revenueCategories: [...categoryMap.values()],
   };
 }
 
 export function getDemoFinancialDashboard(date?: string) {
   const state = readState();
-  const mostRecentServiceDate = state.claims
-    .map((claim) => claim.serviceDate)
+  const mostRecentFinancialDate = [
+    ...state.claims.map((claim) => claim.serviceDate),
+    ...getCompletedDemoStoreOrdersForFinancials().map((order) => String(order.saleDate || order.createdAt || '').slice(0, 10)),
+  ]
+    .filter(Boolean)
     .sort((left, right) => right.localeCompare(left))[0];
-  const today = date || mostRecentServiceDate || toIsoDate(new Date());
+  const today = date || mostRecentFinancialDate || toIsoDate(new Date());
   return {
     snapshots: {
       daily: buildDashboardSnapshot(state, today, today, 'daily', 'Daily Snapshot', new Date(`${today}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })),

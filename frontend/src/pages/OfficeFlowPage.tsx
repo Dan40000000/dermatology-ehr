@@ -17,6 +17,7 @@ import {
 } from '../api';
 import type { Appointment, Patient, Provider } from '../types';
 import { setActiveEncounter } from '../utils/activeEncounter';
+import { getClinicBusinessDate, ISO_DATE_PATTERN, setClinicBusinessDate } from '../utils/practiceDateTime';
 
 const AUTO_REFRESH_INTERVAL_MS = 15000;
 
@@ -125,6 +126,8 @@ export function OfficeFlowPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const statusParam = searchParams.get('status');
+  const dateParam = searchParams.get('date');
+  const businessDate = dateParam && ISO_DATE_PATTERN.test(dateParam) ? dateParam : getClinicBusinessDate();
 
   const [loading, setLoading] = useState(true);
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -150,7 +153,7 @@ export function OfficeFlowPage() {
     setLoading(true);
     try {
       const [scheduleRes, patientsRes, providersRes, roomsRes, activeFlowsRes] = await Promise.all([
-        fetchFrontDeskSchedule(session.tenantId, session.accessToken),
+        fetchFrontDeskSchedule(session.tenantId, session.accessToken, { date: businessDate }),
         fetchPatients(session.tenantId, session.accessToken),
         fetchProviders(session.tenantId, session.accessToken),
         fetchExamRooms(session.tenantId, session.accessToken).catch(() => ({ rooms: [] })),
@@ -226,7 +229,12 @@ export function OfficeFlowPage() {
     } finally {
       setLoading(false);
     }
-  }, [session, showError]);
+  }, [businessDate, session, showError]);
+
+  useEffect(() => {
+    if (!dateParam || !ISO_DATE_PATTERN.test(dateParam)) return;
+    setClinicBusinessDate(dateParam);
+  }, [dateParam]);
 
   useEffect(() => {
     loadData();

@@ -7,7 +7,7 @@ export type PaymentMethod = 'cash' | 'credit' | 'debit' | 'check' | 'insurance' 
 export type SaleStatus = 'pending' | 'completed' | 'refunded' | 'cancelled';
 export type TransactionType = 'received' | 'sold' | 'adjustment' | 'return' | 'damaged' | 'expired';
 export type DiscountType = 'percentage' | 'fixed' | 'loyalty';
-export type StoreFulfillmentStatus = 'paid' | 'packing' | 'label_created' | 'shipped' | 'delivered' | 'exception' | 'cancelled';
+export type StoreFulfillmentStatus = 'awaiting_payment' | 'paid' | 'packing' | 'label_created' | 'shipped' | 'delivered' | 'exception' | 'cancelled';
 export type StoreNotificationStatus = 'queued' | 'sent' | 'failed' | 'muted';
 export type StoreShippingMethod = 'standard' | 'priority' | 'pickup';
 
@@ -71,6 +71,7 @@ export interface SaleItemDetail {
   lineTotal: number;
   productName: string;
   productSku: string;
+  imageUrl?: string;
 }
 
 export interface ProductRecommendation {
@@ -136,6 +137,7 @@ export interface StoreOrder extends Sale {
   notificationEmail?: string;
   notificationStatus: StoreNotificationStatus;
   lastNotificationAt?: string;
+  stripeCheckoutSessionId?: string;
   stripePaymentIntentId?: string;
   stripePaymentStatus: string;
   createdAt?: string;
@@ -152,6 +154,7 @@ export interface StoreFulfillmentInput {
   shippingAddress?: StoreShippingAddress | Record<string, unknown>;
   notificationEmail?: string | null;
   notificationStatus?: StoreNotificationStatus;
+  stripeCheckoutSessionId?: string | null;
   stripePaymentIntentId?: string | null;
   stripePaymentStatus?: string;
 }
@@ -170,6 +173,130 @@ interface StoreCatalogSeedProduct {
   cost: number;
   inventoryCount: number;
   reorderPoint: number;
+  imageUrl?: string;
+}
+
+const PRODUCT_IMAGE_BASE_PATH = '/images/products';
+
+const DEFAULT_PRODUCT_IMAGES_BY_SKU: Record<string, string> = {
+  'SPF-TINT-50': 'sunscreen-mineral-tube.jpg',
+  'SPF-CLEAR-46': 'sunscreen-beach-bottle.jpg',
+  'SPF-MIN-MATTE': 'sunscreen-tube-stone.jpg',
+  'SPF-BODY-50': 'sunscreen-beach-bottle.jpg',
+  'SPF-KIDS-MIN': 'sunscreen-beach-bottle.jpg',
+  'SPF-STICK-SPORT': 'sunscreen-stick-style.jpg',
+  'SPF-POWDER-BRUSH': 'powder-brush-compact.jpg',
+  'SPF-LIP-BALM': 'lip-balm-hand.jpg',
+  'SPF-ROSACEA-TINT': 'sunscreen-mineral-tube.jpg',
+  'SPF-MELASMA-DEF': 'sunscreen-tube-stone.jpg',
+  'CLN-GENTLE-GEL': 'cleanser-bottle-neutral.jpg',
+  'CLN-HYD-CREAM': 'cleanser-pump-white.jpg',
+  'CLN-ACNE-SA': 'cleanser-bottle-neutral.jpg',
+  'CLN-BPO-4': 'skincare-tube-yellow.jpg',
+  'CLN-ECZEMA': 'cream-tube-brown.jpg',
+  'CRM-BARRIER': 'cream-cerave-style.jpg',
+  'LOT-LIGHT-DAILY': 'skincare-set-bottles.jpg',
+  'CRM-RICH-REPAIR': 'cream-jar-blue.jpg',
+  'OINT-HEALING': 'ointment-hand-jar.jpg',
+  'CRM-HAND-ECZEMA': 'cream-tube-brown.jpg',
+  'ACNE-BPO-SPOT': 'skincare-tube-yellow.jpg',
+  'ACNE-ADAP-01': 'serum-effaclar-style.jpg',
+  'ACNE-SA-PADS': 'cotton-pads-skincare.jpg',
+  'ACNE-NIACIN-10': 'serum-white-surface.jpg',
+  'ACNE-PATCH-XL': 'first-aid-flatlay.jpg',
+  'ACNE-BODY-SPRAY': 'skincare-floral-bottle.jpg',
+  'AZE-REDNESS-10': 'serum-dropper-hand.jpg',
+  'SER-VITC-15': 'serum-ampoules.jpg',
+  'SER-HA-HYDRATE': 'serum-bottles-beige.jpg',
+  'RETINOL-03': 'serum-pink-hand.jpg',
+  'RETINAL-ADV': 'cream-jar-purple.jpg',
+  'EYE-PEPTIDE': 'cream-jar-red.jpg',
+  'PAD-GLYCOLIC-10': 'cotton-pads-skincare.jpg',
+  'SER-TRANEX': 'serum-dropper-minimal.jpg',
+  'SER-GROWTH': 'serum-hand-natural.jpg',
+  'CRM-NECK-FIRM': 'cream-jars-linen.jpg',
+  'CRM-LIPID-RESTORE': 'cream-jars-soft.jpg',
+  'POST-LASER-KIT': 'first-aid-supplies.jpg',
+  'POST-PEEL-KIT': 'skincare-marble-set.jpg',
+  'POST-BIOPSY-KIT': 'first-aid-flatlay.jpg',
+  'SCAR-SIL-GEL': 'ointment-hand-jar.jpg',
+  'SCAR-SIL-SHEETS': 'first-aid-kit-pink.jpg',
+  'POST-HYDRO-BAND': 'first-aid-gray-kit.jpg',
+  'POST-COOL-MASK': 'cotton-pads-wood.jpg',
+  'POST-BARRIER-BALM': 'ointment-hand-jar.jpg',
+  'POST-SCAR-SPF': 'sunscreen-stick-style.jpg',
+  'POST-SOAK-KIT': 'first-aid-supplies.jpg',
+  'HAIR-MINOX-FOAM': 'skincare-set-bottles.jpg',
+  'HAIR-SCALP-SERUM': 'serum-white-surface.jpg',
+  'NAIL-REPAIR-LACQ': 'nail-polish-silver.jpg',
+};
+
+function defaultProductImageUrlForSku(sku: string): string | undefined {
+  const imageName = DEFAULT_PRODUCT_IMAGES_BY_SKU[sku.trim().toUpperCase()];
+  return imageName ? `${PRODUCT_IMAGE_BASE_PATH}/${imageName}` : undefined;
+}
+
+const SEED_IMAGE_PALETTES: Record<ProductCategory, { background: string; accent: string; text: string }> = {
+  sunscreen: { background: '#fff7ed', accent: '#f59e0b', text: '#78350f' },
+  skincare: { background: '#ecfeff', accent: '#0f766e', text: '#134e4a' },
+  cosmetic: { background: '#fdf2f8', accent: '#db2777', text: '#831843' },
+  post_procedure: { background: '#eff6ff', accent: '#2563eb', text: '#1e3a8a' },
+  prescription: { background: '#f8fafc', accent: '#64748b', text: '#334155' },
+};
+
+function escapeSeedImageText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function seedCategoryLabel(category: ProductCategory): string {
+  if (category === 'post_procedure') return 'Post Procedure';
+  return category.charAt(0).toUpperCase() + category.slice(1);
+}
+
+function splitSeedImageName(name: string): [string, string] {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= 3) return [words.join(' '), ''];
+  return [words.slice(0, 3).join(' '), words.slice(3, 6).join(' ')];
+}
+
+function buildSeedProductImageUrl(product: StoreCatalogSeedProduct): string {
+  const palette = SEED_IMAGE_PALETTES[product.category] || SEED_IMAGE_PALETTES.skincare;
+  const [lineOne, lineTwo] = splitSeedImageName(product.name);
+  const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="600" viewBox="0 0 900 600">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="${palette.background}"/>
+      <stop offset="1" stop-color="#ffffff"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="20" stdDeviation="18" flood-color="#0f172a" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <rect width="900" height="600" fill="url(#bg)"/>
+  <circle cx="760" cy="98" r="96" fill="${palette.accent}" opacity="0.14"/>
+  <circle cx="134" cy="488" r="132" fill="${palette.accent}" opacity="0.10"/>
+  <g filter="url(#shadow)">
+    <rect x="338" y="94" width="224" height="392" rx="34" fill="#ffffff"/>
+    <rect x="392" y="58" width="116" height="66" rx="18" fill="${palette.accent}"/>
+    <rect x="376" y="210" width="148" height="128" rx="18" fill="${palette.accent}" opacity="0.14"/>
+    <rect x="394" y="226" width="112" height="20" rx="10" fill="${palette.accent}" opacity="0.38"/>
+    <rect x="394" y="260" width="112" height="12" rx="6" fill="${palette.accent}" opacity="0.24"/>
+    <rect x="394" y="284" width="88" height="12" rx="6" fill="${palette.accent}" opacity="0.20"/>
+    <text x="450" y="378" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="800" fill="${palette.text}">${escapeSeedImageText(product.brand)}</text>
+    <text x="450" y="418" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#475569">${escapeSeedImageText(product.sku)}</text>
+  </g>
+  <text x="58" y="82" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="900" fill="${palette.accent}" letter-spacing="0">${escapeSeedImageText(seedCategoryLabel(product.category).toUpperCase())}</text>
+  <text x="58" y="142" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="900" fill="${palette.text}">${escapeSeedImageText(lineOne)}</text>
+  ${lineTwo ? `<text x="58" y="192" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="800" fill="${palette.text}" opacity="0.84">${escapeSeedImageText(lineTwo)}</text>` : ''}
+</svg>`;
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg.trim())}`;
 }
 
 const EXPANDED_STORE_CATALOG: StoreCatalogSeedProduct[] = [
@@ -227,7 +354,7 @@ const EXPANDED_STORE_CATALOG: StoreCatalogSeedProduct[] = [
 
 const storeReadyTenants = new Set<string>();
 
-async function ensureStoreSchemaAndCatalog(tenantId: string): Promise<void> {
+export async function ensureStoreSchemaAndCatalog(tenantId: string): Promise<void> {
   if (storeReadyTenants.has(tenantId)) return;
 
   const client = await pool.connect();
@@ -255,6 +382,10 @@ async function ensureStoreSchemaAndCatalog(tenantId: string): Promise<void> {
         created_by TEXT,
         UNIQUE(tenant_id, sku)
       )
+    `);
+    await client.query(`
+      ALTER TABLE products
+        ADD COLUMN IF NOT EXISTS image_url TEXT
     `);
     await client.query(`
       CREATE TABLE IF NOT EXISTS product_sales (
@@ -387,6 +518,7 @@ async function ensureStoreSchemaAndCatalog(tenantId: string): Promise<void> {
         notification_email TEXT,
         notification_status TEXT NOT NULL DEFAULT 'queued',
         last_notification_at TIMESTAMPTZ,
+        stripe_checkout_session_id TEXT,
         stripe_payment_intent_id TEXT,
         stripe_payment_status TEXT NOT NULL DEFAULT 'paid',
         created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -403,6 +535,10 @@ async function ensureStoreSchemaAndCatalog(tenantId: string): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_product_sale_items_sale ON product_sale_items(sale_id);
       CREATE INDEX IF NOT EXISTS idx_store_fulfillments_tenant ON store_order_fulfillments(tenant_id);
       CREATE INDEX IF NOT EXISTS idx_store_fulfillments_sale ON store_order_fulfillments(sale_id);
+    `);
+    await client.query(`
+      ALTER TABLE store_order_fulfillments
+        ADD COLUMN IF NOT EXISTS stripe_checkout_session_id TEXT
     `);
     await client.query(`
       CREATE OR REPLACE FUNCTION decrease_product_inventory_on_sale()
@@ -461,8 +597,8 @@ async function ensureStoreSchemaAndCatalog(tenantId: string): Promise<void> {
       await client.query(
         `INSERT INTO products (
           id, tenant_id, sku, name, description, category, brand, price, cost,
-          inventory_count, reorder_point, is_active, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, NOW(), NOW())
+          inventory_count, reorder_point, is_active, image_url, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, $12, NOW(), NOW())
         ON CONFLICT (tenant_id, sku) DO UPDATE SET
           name = EXCLUDED.name,
           description = EXCLUDED.description,
@@ -471,6 +607,11 @@ async function ensureStoreSchemaAndCatalog(tenantId: string): Promise<void> {
           price = EXCLUDED.price,
           cost = EXCLUDED.cost,
           reorder_point = EXCLUDED.reorder_point,
+          image_url = CASE
+            WHEN products.image_url IS NULL OR products.image_url = '' THEN EXCLUDED.image_url
+            WHEN products.image_url LIKE 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22900%22%20height%3D%22600%22%20viewBox%3D%220%200%20900%20600%22%' THEN EXCLUDED.image_url
+            ELSE products.image_url
+          END,
           is_active = true,
           updated_at = NOW()`,
         [
@@ -485,6 +626,7 @@ async function ensureStoreSchemaAndCatalog(tenantId: string): Promise<void> {
           product.cost,
           product.inventoryCount,
           product.reorderPoint,
+          product.imageUrl || defaultProductImageUrlForSku(product.sku) || buildSeedProductImageUrl(product),
         ]
       );
     }
@@ -509,7 +651,8 @@ export async function createSale(
   paymentInfo: PaymentInfo,
   soldBy: string,
   encounterId?: string,
-  discountAmount?: number
+  discountAmount?: number,
+  status: SaleStatus = 'completed'
 ): Promise<Sale> {
   await ensureStoreSchemaAndCatalog(tenantId);
   const client = await pool.connect();
@@ -525,7 +668,7 @@ export async function createSale(
     for (const item of items) {
       // Get product info
       const productResult = await client.query(
-        `SELECT id, sku, name, price, inventory_count, is_active
+        `SELECT id, sku, name, price, inventory_count, is_active, image_url
          FROM products
          WHERE id = $1 AND tenant_id = $2`,
         [item.productId, tenantId]
@@ -561,6 +704,7 @@ export async function createSale(
         lineTotal,
         productName: product.name,
         productSku: product.sku,
+        imageUrl: product.image_url || undefined,
       });
     }
 
@@ -576,7 +720,7 @@ export async function createSale(
         id, tenant_id, patient_id, encounter_id, sold_by,
         sale_date, subtotal, tax, discount, total,
         payment_method, payment_reference, status
-      ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9, $10, $11, 'completed')`,
+      ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9, $10, $11, $12)`,
       [
         saleId,
         tenantId,
@@ -589,6 +733,7 @@ export async function createSale(
         total,
         paymentInfo.method,
         paymentInfo.reference || null,
+        status,
       ]
     );
 
@@ -628,7 +773,7 @@ export async function createSale(
       total,
       paymentMethod: paymentInfo.method,
       paymentReference: paymentInfo.reference,
-      status: 'completed',
+      status,
       items: saleItems,
     };
   } catch (error) {
@@ -1102,7 +1247,7 @@ export async function createProduct(
     cost?: number;
     inventoryCount?: number;
     reorderPoint?: number;
-    imageUrl?: string;
+    imageUrl?: string | null;
     barcode?: string;
   },
   createdBy?: string
@@ -1160,7 +1305,7 @@ export async function updateProduct(
     cost: number;
     reorderPoint: number;
     isActive: boolean;
-    imageUrl: string;
+    imageUrl: string | null;
     barcode: string;
   }>
 ): Promise<Product | null> {
@@ -1208,7 +1353,7 @@ export async function updateProduct(
   }
   if (data.imageUrl !== undefined) {
     updates.push(`image_url = $${paramCount++}`);
-    values.push(data.imageUrl);
+    values.push(data.imageUrl || null);
   }
   if (data.barcode !== undefined) {
     updates.push(`barcode = $${paramCount++}`);
@@ -1349,6 +1494,7 @@ function normalizeStoreOrderRow(row: any): StoreOrder {
     notificationEmail: row.notificationEmail || undefined,
     notificationStatus: row.notificationStatus || 'queued',
     lastNotificationAt: toIsoString(row.lastNotificationAt),
+    stripeCheckoutSessionId: row.stripeCheckoutSessionId || undefined,
     stripePaymentIntentId: row.stripePaymentIntentId || undefined,
     stripePaymentStatus: row.stripePaymentStatus || 'paid',
     createdAt: toIsoString(row.createdAt),
@@ -1362,13 +1508,15 @@ async function attachSaleItems(orders: StoreOrder[]): Promise<StoreOrder[]> {
   const saleIds = orders.map((order) => order.id);
   const itemsResult = await pool.query(
     `SELECT
-       sale_id as "saleId", id, product_id as "productId",
-       quantity, unit_price as "unitPrice", discount_amount as "discountAmount",
-       line_total as "lineTotal", product_name as "productName",
-       product_sku as "productSku"
-     FROM product_sale_items
-     WHERE sale_id::text = ANY($1::text[])
-     ORDER BY product_name`,
+       psi.sale_id as "saleId", psi.id, psi.product_id as "productId",
+       psi.quantity, psi.unit_price as "unitPrice", psi.discount_amount as "discountAmount",
+       psi.line_total as "lineTotal", psi.product_name as "productName",
+       psi.product_sku as "productSku",
+       p.image_url as "imageUrl"
+     FROM product_sale_items psi
+     LEFT JOIN products p ON p.id::text = psi.product_id::text
+     WHERE psi.sale_id::text = ANY($1::text[])
+     ORDER BY psi.product_name`,
     [saleIds]
   );
 
@@ -1386,6 +1534,7 @@ async function attachSaleItems(orders: StoreOrder[]): Promise<StoreOrder[]> {
       lineTotal: Number(item.lineTotal) || 0,
       productName: item.productName,
       productSku: item.productSku,
+      imageUrl: item.imageUrl || undefined,
     });
     bySale.set(saleId, current);
   }
@@ -1442,7 +1591,7 @@ async function getStoreOrdersWithoutFulfillment(
        'standard' as "shippingMethod", NULL as carrier,
        NULL as "trackingNumber", '{}'::jsonb as "shippingAddress",
        p.email as "notificationEmail", 'queued' as "notificationStatus",
-       NULL as "lastNotificationAt", ps.payment_reference as "stripePaymentIntentId",
+       NULL as "lastNotificationAt", NULL as "stripeCheckoutSessionId", ps.payment_reference as "stripePaymentIntentId",
        CASE WHEN ps.status = 'completed' THEN 'paid' ELSE ps.status END as "stripePaymentStatus",
        ps.created_at as "createdAt", ps.updated_at as "updatedAt"
      FROM product_sales ps
@@ -1532,6 +1681,7 @@ export async function getStoreOrders(
          COALESCE(sof.notification_email, p.email) as "notificationEmail",
          COALESCE(sof.notification_status, 'queued') as "notificationStatus",
          sof.last_notification_at as "lastNotificationAt",
+         sof.stripe_checkout_session_id as "stripeCheckoutSessionId",
          COALESCE(sof.stripe_payment_intent_id, ps.payment_reference) as "stripePaymentIntentId",
          COALESCE(sof.stripe_payment_status, CASE WHEN ps.status = 'completed' THEN 'paid' ELSE ps.status END) as "stripePaymentStatus",
          COALESCE(sof.created_at, ps.created_at) as "createdAt",
@@ -1568,11 +1718,11 @@ export async function createStoreFulfillment(
        id, tenant_id, sale_id, patient_id, channel, fulfillment_status,
          shipping_method, shipping_fee, carrier, tracking_number, shipping_address,
          notification_email, notification_status, last_notification_at,
-         stripe_payment_intent_id, stripe_payment_status
+         stripe_checkout_session_id, stripe_payment_intent_id, stripe_payment_status
        ) VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13,
          CASE WHEN $13 IN ('sent', 'failed') THEN NOW() ELSE NULL END,
-         $14, $15
+         $14, $15, $16
        )
        ON CONFLICT (sale_id) DO UPDATE SET
          channel = EXCLUDED.channel,
@@ -1588,6 +1738,7 @@ export async function createStoreFulfillment(
            WHEN EXCLUDED.notification_status IN ('sent', 'failed') THEN NOW()
            ELSE store_order_fulfillments.last_notification_at
          END,
+         stripe_checkout_session_id = EXCLUDED.stripe_checkout_session_id,
          stripe_payment_intent_id = EXCLUDED.stripe_payment_intent_id,
          stripe_payment_status = EXCLUDED.stripe_payment_status,
          updated_at = NOW()`,
@@ -1605,6 +1756,7 @@ export async function createStoreFulfillment(
         JSON.stringify(data.shippingAddress || {}),
         data.notificationEmail || null,
         data.notificationStatus || 'queued',
+        data.stripeCheckoutSessionId || null,
         data.stripePaymentIntentId || null,
         data.stripePaymentStatus || 'paid',
       ]
@@ -1655,6 +1807,7 @@ export async function updateStoreFulfillment(
         updates.push('last_notification_at = NOW()');
       }
     }
+    if (data.stripeCheckoutSessionId !== undefined) addUpdate('stripe_checkout_session_id', data.stripeCheckoutSessionId);
     if (data.stripePaymentIntentId !== undefined) addUpdate('stripe_payment_intent_id', data.stripePaymentIntentId);
     if (data.stripePaymentStatus !== undefined) addUpdate('stripe_payment_status', data.stripePaymentStatus);
 
@@ -1679,6 +1832,76 @@ export async function updateStoreFulfillment(
     }
     throw error;
   }
+}
+
+export async function markStoreOrderPaid(
+  tenantId: string,
+  saleId: string,
+  data: {
+    stripeCheckoutSessionId?: string | null;
+    stripePaymentIntentId?: string | null;
+    stripePaymentStatus?: string;
+    paymentReference?: string | null;
+  } = {}
+): Promise<StoreOrder | null> {
+  await ensureStoreSchemaAndCatalog(tenantId);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const saleResult = await client.query(
+      `UPDATE product_sales
+       SET status = 'completed',
+           payment_reference = COALESCE($3, payment_reference),
+           updated_at = NOW()
+       WHERE id::text = $1 AND tenant_id = $2
+       RETURNING id, patient_id`,
+      [saleId, tenantId, data.paymentReference || data.stripeCheckoutSessionId || data.stripePaymentIntentId || null]
+    );
+
+    if (!saleResult.rowCount) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    const patientId = saleResult.rows[0].patient_id;
+    await client.query(
+      `INSERT INTO store_order_fulfillments (
+         id, tenant_id, sale_id, patient_id, channel, fulfillment_status,
+         stripe_checkout_session_id, stripe_payment_intent_id, stripe_payment_status,
+         notification_status, created_at, updated_at
+       ) VALUES ($1, $2, $3, $4, 'patient_portal', 'paid', $5, $6, $7, 'queued', NOW(), NOW())
+       ON CONFLICT (sale_id) DO UPDATE SET
+         fulfillment_status = CASE
+           WHEN store_order_fulfillments.fulfillment_status = 'awaiting_payment' THEN 'paid'
+           ELSE store_order_fulfillments.fulfillment_status
+         END,
+         stripe_checkout_session_id = COALESCE(EXCLUDED.stripe_checkout_session_id, store_order_fulfillments.stripe_checkout_session_id),
+         stripe_payment_intent_id = COALESCE(EXCLUDED.stripe_payment_intent_id, store_order_fulfillments.stripe_payment_intent_id),
+         stripe_payment_status = EXCLUDED.stripe_payment_status,
+         updated_at = NOW()`,
+      [
+        crypto.randomUUID(),
+        tenantId,
+        saleId,
+        patientId,
+        data.stripeCheckoutSessionId || null,
+        data.stripePaymentIntentId || null,
+        data.stripePaymentStatus || 'paid',
+      ]
+    );
+
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  const [order] = await getStoreOrders(tenantId, { saleId, limit: 1 });
+  return order || null;
 }
 
 /**

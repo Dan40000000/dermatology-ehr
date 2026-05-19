@@ -191,8 +191,13 @@ describe('Store flows', () => {
       if (endpoint === '/api/patient-portal-data/store/products') {
         return Promise.resolve({ products: [demoProduct] });
       }
-      if (endpoint === '/api/patient-portal-data/store/orders' && options?.method === 'POST') {
+      if (endpoint === '/api/patient-portal-data/store/checkout-session' && options?.method === 'POST') {
         return Promise.resolve({
+          checkout: {
+            id: 'cs_mock_store',
+            paymentStatus: 'paid',
+            mode: 'mock',
+          },
           order: {
             id: demoOrder.id,
             total: 7794,
@@ -203,7 +208,11 @@ describe('Store flows', () => {
       return Promise.resolve({});
     });
 
-    render(<PortalStorePage />);
+    render(
+      <MemoryRouter>
+        <PortalStorePage />
+      </MemoryRouter>
+    );
 
     expect(await screen.findByText('Barrier Repair Cream')).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Add Barrier Repair Cream to cart'));
@@ -215,14 +224,14 @@ describe('Store flows', () => {
 
     await waitFor(() =>
       expect(patientPortalFetchMock).toHaveBeenCalledWith(
-        '/api/patient-portal-data/store/orders',
+        '/api/patient-portal-data/store/checkout-session',
         expect.objectContaining({
           method: 'POST',
           body: expect.any(String),
         })
       )
     );
-    const [, orderOptions] = patientPortalFetchMock.mock.calls.find(([endpoint]) => endpoint === '/api/patient-portal-data/store/orders')!;
+    const [, orderOptions] = patientPortalFetchMock.mock.calls.find(([endpoint]) => endpoint === '/api/patient-portal-data/store/checkout-session')!;
     expect(JSON.parse(String(orderOptions.body))).toEqual(expect.objectContaining({
       shippingMethod: 'standard',
       items: [{ productId: demoProduct.id, quantity: 1 }],

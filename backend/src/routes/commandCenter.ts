@@ -170,7 +170,7 @@ async function loadScheduleSummary(
          and a.scheduled_start < $3::timestamptz
      )
      select
-       count(*) filter (where status <> 'cancelled') as appointments_count,
+       count(*) as appointments_count,
        count(*) filter (where status not in ('completed', 'checked_out', 'cancelled', 'no_show')) as active_appointments_count,
        count(*) filter (where status = 'checked_in') as checked_in_count,
        count(*) filter (where status in ('completed', 'checked_out')) as completed_count,

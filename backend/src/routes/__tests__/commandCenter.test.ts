@@ -144,6 +144,10 @@ describe("Command Center routes", () => {
     expect(res.body.financials.financialWorkQueueCount).toBe(6);
     expect(res.body.financials.arOver90Cents).toBe(250000);
     expect(res.body.dataHealth.failedSources).toEqual([]);
+
+    const scheduleSql = String(queryMock.mock.calls.find(([sql]) => String(sql).includes("with day_appointments"))?.[0] || "");
+    expect(scheduleSql).toContain("count(*) as appointments_count");
+    expect(scheduleSql).not.toContain("status <> 'cancelled') as appointments_count");
   });
 
   it("hides financial metrics from front desk users while keeping claims visible", async () => {

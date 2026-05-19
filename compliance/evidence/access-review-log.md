@@ -2,6 +2,7 @@
 
 | Date | Environment | Reviewer | Scope | Outcome | Follow-ups |
 |---|---|---|---|---|---|
+| 2026-05-19 | Production | Platform Security | Admin, billing, provider, ma, front desk, and patient portal role boundaries | Complete | Keep production break-glass access limited to documented emergency workflow; next quarterly review due in August 2026 |
 | 2026-02-16 | Staging | Platform Security | Admin, billing, provider, ma role boundaries | Complete | Confirm JIT elevation design for production break-glass access |
 
 ## Review Expectations

@@ -803,6 +803,76 @@ function quoteIdentifier(value: string): string {
   return `"${value.replace(/"/g, "\"\"")}"`;
 }
 
+async function foreignKeyReferences(referencedTable: string): Promise<Array<{ table_name: string; column_name: string }>> {
+  return query<{ table_name: string; column_name: string }>(
+    `select distinct tc.table_name, kcu.column_name
+       from information_schema.table_constraints tc
+       join information_schema.key_column_usage kcu
+         on tc.constraint_name = kcu.constraint_name
+        and tc.table_schema = kcu.table_schema
+       join information_schema.constraint_column_usage ccu
+         on ccu.constraint_name = tc.constraint_name
+        and ccu.table_schema = tc.table_schema
+      where tc.constraint_type = 'FOREIGN KEY'
+        and tc.table_schema = 'public'
+        and ccu.table_name = $1
+        and ccu.column_name = 'id'
+      order by tc.table_name, kcu.column_name`,
+    [referencedTable],
+  );
+}
+
+async function tableHasIdColumn(tableName: string): Promise<boolean> {
+  const rows = await query<{ exists: boolean }>(
+    `select exists (
+       select 1
+         from information_schema.columns
+        where table_schema = 'public'
+          and table_name = $1
+          and column_name = 'id'
+     )`,
+    [tableName],
+  );
+  return rows[0]?.exists === true;
+}
+
+async function deleteRowsByIdCascade(tableName: string, ids: string[], visited = new Set<string>()): Promise<void> {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  if (uniqueIds.length === 0) return;
+
+  const visitKey = `${tableName}:${uniqueIds.sort().join("|")}`;
+  if (visited.has(visitKey)) return;
+  visited.add(visitKey);
+
+  const references = await foreignKeyReferences(tableName);
+  for (const reference of references) {
+    const childTable = reference.table_name;
+    const childColumn = reference.column_name;
+
+    if (await tableHasIdColumn(childTable)) {
+      const childRows = await query<{ id: string }>(
+        `select id::text
+           from ${quoteIdentifier(childTable)}
+          where ${quoteIdentifier(childColumn)}::text = any($1::text[])`,
+        [uniqueIds],
+      );
+      await deleteRowsByIdCascade(childTable, childRows.map((row) => row.id), visited);
+    } else {
+      await pool.query(
+        `delete from ${quoteIdentifier(childTable)}
+          where ${quoteIdentifier(childColumn)}::text = any($1::text[])`,
+        [uniqueIds],
+      );
+    }
+  }
+
+  await pool.query(
+    `delete from ${quoteIdentifier(tableName)}
+      where id::text = any($1::text[])`,
+    [uniqueIds],
+  );
+}
+
 async function resetStaleClinicDateAppointments(): Promise<void> {
   const staleRows = await query<{ id: string }>(
     `select id
@@ -815,36 +885,7 @@ async function resetStaleClinicDateAppointments(): Promise<void> {
   const staleAppointmentIds = staleRows.map((row) => row.id).filter(Boolean);
   if (staleAppointmentIds.length === 0) return;
 
-  const referenceRows = await query<{ table_name: string; column_name: string }>(
-    `select distinct tc.table_name, kcu.column_name
-       from information_schema.table_constraints tc
-       join information_schema.key_column_usage kcu
-         on tc.constraint_name = kcu.constraint_name
-        and tc.table_schema = kcu.table_schema
-       join information_schema.constraint_column_usage ccu
-         on ccu.constraint_name = tc.constraint_name
-        and ccu.table_schema = tc.table_schema
-      where tc.constraint_type = 'FOREIGN KEY'
-        and tc.table_schema = 'public'
-        and ccu.table_name = 'appointments'
-        and ccu.column_name = 'id'
-      order by tc.table_name, kcu.column_name`,
-  );
-
-  for (const reference of referenceRows) {
-    await pool.query(
-      `delete from ${quoteIdentifier(reference.table_name)}
-        where ${quoteIdentifier(reference.column_name)}::text = any($1::text[])`,
-      [staleAppointmentIds],
-    );
-  }
-
-  await pool.query(
-    `delete from appointments
-      where tenant_id = $1
-        and id = any($2::text[])`,
-    [TENANT_ID, staleAppointmentIds],
-  );
+  await deleteRowsByIdCascade("appointments", staleAppointmentIds);
 
   console.log(`Removed ${staleAppointmentIds.length} stale appointments from ${CLINIC_DATE} before reseeding.`);
 }

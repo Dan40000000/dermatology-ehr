@@ -1808,7 +1808,7 @@ export function FinancialsHub() {
             onClick={() => handleTabChange('reports')}
             style={{
               padding: '8px 18px',
-              background: '#059669',
+              background: '#047857',
               color: 'white',
               border: 'none',
               borderRadius: '8px',
@@ -1866,7 +1866,7 @@ export function FinancialsHub() {
                       padding: sidebarCollapsed ? '10px' : '9px 12px',
                       background: isActive ? '#F0FDF4' : 'transparent',
                       border: 'none',
-                      borderLeft: `3px solid ${isActive ? '#059669' : 'transparent'}`,
+                      borderLeft: `3px solid ${isActive ? '#047857' : 'transparent'}`,
                       borderRadius: isActive ? '0 8px 8px 0' : '0 8px 8px 0',
                       cursor: 'pointer',
                       textAlign: 'left',
@@ -1884,7 +1884,7 @@ export function FinancialsHub() {
                       height: '1.8rem',
                       borderRadius: '8px',
                       background: isActive ? '#DCFCE7' : '#F8FAFC',
-                      color: isActive ? '#059669' : '#9CA3AF',
+                      color: isActive ? '#047857' : '#4B5563',
                       flexShrink: 0,
                       display: 'inline-flex',
                       alignItems: 'center',
@@ -1896,7 +1896,7 @@ export function FinancialsHub() {
                       <div style={{ minWidth: 0 }}>
                         <div style={{
                           fontWeight: 600,
-                          color: isActive ? '#059669' : '#374151',
+                          color: isActive ? '#065F46' : '#374151',
                           fontSize: '0.88rem',
                           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                         }}>
@@ -1904,7 +1904,7 @@ export function FinancialsHub() {
                         </div>
                         <div style={{
                           fontSize: '0.72rem',
-                          color: '#9CA3AF',
+                          color: '#4B5563',
                           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                         }}>
                           {tab.description}
@@ -2121,7 +2121,9 @@ export function FinancialsHub() {
         </aside>
 
         {/* ── Main content ── */}
-        <main style={{
+        <div
+          aria-label="Financials workspace"
+          style={{
           flex: 1,
           height: '100%',
           overflowY: 'auto',  /* independent scroll — no background bleed */
@@ -3830,7 +3832,7 @@ export function FinancialsHub() {
               </div>
             )}
           </div>
-        </main>
+        </div>
       </div>
     </div>
   );

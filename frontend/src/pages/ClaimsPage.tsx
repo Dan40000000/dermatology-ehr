@@ -1444,7 +1444,7 @@ export function ClaimsPage() {
           <Panel title="Operational Snapshot">
             <div className="claims-snapshot-grid">
               <div>
-                <h3 className="claims-section-heading">Work Queues</h3>
+                <h2 className="claims-section-heading">Work Queues</h2>
                 <div className="claims-queue-grid">
                   {([
                     ['coding_review', 'Coding Review'],
@@ -1484,7 +1484,7 @@ export function ClaimsPage() {
               </div>
 
               <div>
-                <h3 className="claims-section-heading">A/R Aging Buckets</h3>
+                <h2 className="claims-section-heading">A/R Aging Buckets</h2>
                 <table className="claims-compact-table">
                   <thead>
                     <tr>
@@ -1509,7 +1509,7 @@ export function ClaimsPage() {
               </div>
 
               <div className="claims-wide-row">
-                <h3 className="claims-section-heading">Top Denial / Rejection Reasons</h3>
+                <h2 className="claims-section-heading">Top Denial / Rejection Reasons</h2>
                 {denialReasonRows.length === 0 ? (
                   <div className="muted claims-empty-note">
                     No denials/rejections in the current dataset.
@@ -1542,7 +1542,7 @@ export function ClaimsPage() {
           <Panel title="Follow-up Priorities">
             <div className="claims-followup-grid">
               <div>
-                <h3 className="claims-section-heading">Claims Requiring Action</h3>
+                <h2 className="claims-section-heading">Claims Requiring Action</h2>
                 <table className="claims-compact-table">
                   <thead>
                     <tr>
@@ -1576,7 +1576,7 @@ export function ClaimsPage() {
               </div>
 
               <div>
-                <h3 className="claims-section-heading">Payer Performance</h3>
+                <h2 className="claims-section-heading">Payer Performance</h2>
                 <table className="claims-compact-table">
                   <thead>
                     <tr>
@@ -1615,6 +1615,7 @@ export function ClaimsPage() {
                 <div className="form-field">
                   <label>Status Filter</label>
                   <select
+                    aria-label="Claim status filter"
                     value={statusFilter}
                     onChange={(event) => {
                       const nextStatus = event.target.value as ClaimUiStatus | 'all';
@@ -2102,7 +2103,7 @@ export function ClaimsPage() {
             <div className="form-row">
               <div className="form-field">
                 <label>Payment Method</label>
-                <select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
+                <select aria-label="Payment method" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
                   <option value="">Select...</option>
                   <option value="check">Check</option>
                   <option value="eft">EFT</option>

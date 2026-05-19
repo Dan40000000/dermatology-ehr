@@ -2672,7 +2672,9 @@ const handleUndoNoShow = async (appt: Appointment) => {
       <table className="ema-table">
         <thead>
           <tr>
-            <th style={{ width: '40px' }}></th>
+            <th style={{ width: '40px' }}>
+              <span className="sr-only">Selection</span>
+            </th>
             <th>Time</th>
             <th>Patient</th>
             <th>Provider</th>

@@ -44,6 +44,7 @@ import { useAutosave } from '../hooks/useAutosave';
 import { ScribeSummaryCard } from '../components/ScribeSummaryCard';
 import { clearActiveEncounter, setActiveEncounter } from '../utils/activeEncounter';
 import { isCosmeticProcedure } from '../utils/procedureCatalog';
+import { cleanAiDiagnosisDescription, isAiSuggestedDiagnosis } from '../utils/diagnosisReview';
 import {
   buildDiagnoses,
   buildSummaryText,
@@ -631,6 +632,21 @@ export function EncounterPage() {
       loadData();
     } catch (err: any) {
       showError(err.message || 'Failed to delete diagnosis');
+    }
+  };
+
+  const handleConfirmAiDiagnosis = async (diagnosis: EncounterDiagnosis) => {
+    if (!session) return;
+
+    try {
+      await updateDiagnosis(session.tenantId, session.accessToken, diagnosis.id, {
+        description: cleanAiDiagnosisDescription(diagnosis.description) || diagnosis.description || 'Diagnosis',
+        isPrimary: diagnosis.isPrimary,
+      });
+      showSuccess('Diagnosis confirmed for the encounter');
+      loadData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to confirm diagnosis');
     }
   };
 
@@ -2056,10 +2072,30 @@ export function EncounterPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {diagnoses.map((dx) => (
-                      <tr key={dx.id}>
+                    {diagnoses.map((dx) => {
+                      const isAiSuggestion = isAiSuggestedDiagnosis(dx);
+                      return (
+                        <tr key={dx.id}>
                         <td style={{ fontWeight: 600, color: '#0369a1' }}>{dx.icd10Code}</td>
-                        <td>{dx.description}</td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <span>{isAiSuggestion ? cleanAiDiagnosisDescription(dx.description) : dx.description}</span>
+                            {isAiSuggestion && (
+                              <span style={{
+                                padding: '0.18rem 0.5rem',
+                                background: '#fffbeb',
+                                color: '#92400e',
+                                border: '1px solid #fde68a',
+                                borderRadius: '999px',
+                                fontSize: '0.68rem',
+                                fontWeight: 800,
+                                textTransform: 'uppercase',
+                              }}>
+                                Needs review
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td>
                           {dx.isPrimary ? (
                             <span style={{
@@ -2094,6 +2130,27 @@ export function EncounterPage() {
                           )}
                         </td>
                         <td>
+                          {isAiSuggestion && (
+                            <button
+                              type="button"
+                              onClick={() => handleConfirmAiDiagnosis(dx)}
+                              disabled={isLocked}
+                              style={{
+                                padding: '0.25rem 0.5rem',
+                                background: '#ecfdf5',
+                                color: '#047857',
+                                border: '1px solid #86efac',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                cursor: isLocked ? 'not-allowed' : 'pointer',
+                                opacity: isLocked ? 0.6 : 1,
+                                marginRight: '0.35rem',
+                                fontWeight: 700,
+                              }}
+                            >
+                              Confirm
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleDeleteDiagnosis(dx.id)}
@@ -2112,8 +2169,9 @@ export function EncounterPage() {
                             Delete
                           </button>
                         </td>
-                      </tr>
-                    ))}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}

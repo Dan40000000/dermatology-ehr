@@ -1235,7 +1235,7 @@ export function HomePage() {
             label: 'Collection gap',
             value: currencyFromCents(revenueCollectionGapCents),
             detail: 'Posted revenue not yet matched by collections today',
-            route: `/financials?tab=payments&startDate=${todayStr}&endDate=${todayStr}`,
+            route: `/financials?tab=revenue&startDate=${todayStr}&endDate=${todayStr}`,
             access: 'financials',
             icon: WalletCards,
             tone: revenueCollectionGapCents > 0 ? 'amber' : 'emerald',
@@ -1559,7 +1559,7 @@ export function HomePage() {
       detail: `${currencyFromCents(stats.netCollectionsCents)} clinical collections${
         stats.storeCollectionsCents > 0 ? `, ${currencyFromCents(stats.storeCollectionsCents)} store` : ''
       }`,
-      route: withBusinessDateRoute('/financials'),
+      route: withBusinessDateRoute('/financials?tab=revenue'),
       access: 'financials',
       icon: DollarSign,
       tone: 'emerald',
@@ -1568,7 +1568,7 @@ export function HomePage() {
       label: `Collections ${dayScopeLower}`,
       value: currencyFromCents(stats.netCollectionsCents),
       detail: `${currencyFromCents(stats.patientCollectionsCents)} patient, ${currencyFromCents(stats.payerCollectionsCents)} payer`,
-      route: withBusinessDateRoute('/financials'),
+      route: withBusinessDateRoute('/financials?tab=payments'),
       access: 'financials',
       icon: CreditCard,
       tone: 'emerald',
@@ -1675,7 +1675,7 @@ export function HomePage() {
       label: 'Expected clinical revenue',
       value: currencyFromCents(stats.revenueTodayCents),
       detail: 'Posted clinical revenue in the selected day',
-      route: withBusinessDateRoute('/financials'),
+      route: withBusinessDateRoute('/financials?tab=revenue'),
       access: 'financials',
       icon: DollarSign,
       tone: stats.revenueTodayCents > 0 ? 'emerald' : 'slate',
@@ -1695,7 +1695,7 @@ export function HomePage() {
       label: 'Collection opportunity',
       value: currencyFromCents(Math.max(0, stats.revenueTodayCents - stats.netCollectionsCents)),
       detail: `${stats.collectionRateToday}% collection rate ${dayScopeLower}`,
-      route: withBusinessDateRoute('/financials?tab=payments'),
+      route: withBusinessDateRoute('/financials?tab=revenue'),
       access: 'financials',
       icon: CircleDollarSign,
       tone: stats.revenueTodayCents > stats.netCollectionsCents ? 'amber' : 'emerald',
@@ -2112,7 +2112,7 @@ export function HomePage() {
               <p>Revenue Cycle</p>
               <h2>Money Watch</h2>
             </div>
-            <button type="button" className="command-link-btn" onClick={() => navigate('/financials')}>
+            <button type="button" className="command-link-btn" onClick={() => navigate('/financials?tab=revenue')}>
               Financials <ArrowRight size={15} aria-hidden="true" />
             </button>
           </div>
@@ -2142,7 +2142,7 @@ export function HomePage() {
               <p>A/R over 90</p>
             </div>
           </div>
-          <button type="button" className="command-work-row command-work-row--tight" onClick={() => navigate('/financials')}>
+          <button type="button" className="command-work-row command-work-row--tight" onClick={() => navigate('/financials?tab=bills')}>
             <AlertTriangle size={17} aria-hidden="true" />
             <span>
               <strong>Financial work queue</strong>

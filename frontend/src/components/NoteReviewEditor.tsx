@@ -226,7 +226,7 @@ export function NoteReviewEditor({ noteId, onApproved, onRejected }: NoteReviewE
 
       const actions = applyResult.structuredActions;
       const actionMessage = actions
-        ? `structured actions: ${actions.diagnosesCreated} diagnoses, ${actions.ordersCreated} orders, ${actions.tasksCreated} tasks, ${actions.billingReviewItemsCreated || 0} billing reviews`
+        ? `structured actions: ${actions.diagnosesCreated} diagnosis suggestions, ${actions.ordersCreated} orders, ${actions.tasksCreated} tasks, ${actions.billingReviewItemsCreated || 0} billing reviews`
         : 'structured actions reviewed';
       showSuccess(`AI note posted to appointment; ${summaryMessage}; ${actionMessage}`);
       await loadData();

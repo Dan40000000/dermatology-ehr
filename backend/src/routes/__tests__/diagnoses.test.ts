@@ -118,6 +118,16 @@ describe("Diagnoses routes", () => {
     expect(res.body.success).toBe(true);
   });
 
+  it("PUT /diagnoses/:id updates description without changing primary status", async () => {
+    queryMock
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ encounter_id: "enc-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const res = await request(app).put("/diagnoses/dx-1").send({ description: "Atopic dermatitis" });
+    expect(res.status).toBe(200);
+    expect(queryMock.mock.calls[2][0]).toContain("description = $1");
+    expect(queryMock.mock.calls[2][1]).toEqual(["Atopic dermatitis", "dx-1", "tenant-1"]);
+  });
+
   it("DELETE /diagnoses/:id deletes diagnosis", async () => {
     queryMock
       .mockResolvedValueOnce({ rows: [{ encounter_id: "enc-1", icd10_code: "L40.0" }] })

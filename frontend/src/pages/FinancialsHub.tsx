@@ -17,6 +17,7 @@ import {
   PieChart,
   ReceiptText,
   ShieldCheck,
+  TrendingUp,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -33,7 +34,7 @@ import {
 } from '../api/financials';
 import { getClinicBusinessDate, ISO_DATE_PATTERN } from '../utils/practiceDateTime';
 
-type TabType = 'dashboard' | 'snapshots' | 'insurance' | 'bills' | 'payments' | 'analytics' | 'fees' | 'statements' | 'reports';
+type TabType = 'dashboard' | 'revenue' | 'snapshots' | 'insurance' | 'bills' | 'payments' | 'analytics' | 'fees' | 'statements' | 'reports';
 type SnapshotPagePeriod = SnapshotMetricCard['key'] | 'custom';
 type DashboardRangePreset = 'today' | 'week' | 'mtd' | 'custom';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -658,6 +659,7 @@ function calculatePayerPerformance(
 
 const TABS: TabConfig[] = [
   { key: 'dashboard', label: 'Overview', icon: LayoutDashboard, description: 'Key metrics & A/R overview' },
+  { key: 'revenue', label: 'Revenue', icon: TrendingUp, description: 'Revenue mix, gaps & category story' },
   { key: 'snapshots', label: 'Snapshots', icon: CalendarRange, description: 'Daily, weekly, monthly deep dives' },
   { key: 'insurance', label: 'Insurance', icon: ShieldCheck, description: 'Payer time, money & denials' },
   { key: 'bills', label: 'Bills', icon: ReceiptText, description: 'Patient billing & statements' },
@@ -904,7 +906,7 @@ export function FinancialsHub() {
   }, [loadData]);
 
   useEffect(() => {
-    if (activeTab !== 'dashboard') {
+    if (activeTab !== 'dashboard' && activeTab !== 'revenue') {
       return;
     }
 
@@ -1114,7 +1116,7 @@ export function FinancialsHub() {
   }, [financialClaims, session, showError]);
 
   useEffect(() => {
-    if (activeTab !== 'dashboard' || !dashboardStartDate || !dashboardEndDate) {
+    if ((activeTab !== 'dashboard' && activeTab !== 'revenue') || !dashboardStartDate || !dashboardEndDate) {
       return;
     }
     loadDashboardBreakdown(dashboardStartDate, dashboardEndDate);
@@ -1139,6 +1141,15 @@ export function FinancialsHub() {
       return;
     }
 
+    if (tab === 'revenue') {
+      setSearchParams({
+        tab,
+        startDate: dashboardStartDate,
+        endDate: dashboardEndDate,
+      });
+      return;
+    }
+
     setSearchParams({ tab });
   };
 
@@ -1158,6 +1169,13 @@ export function FinancialsHub() {
     setDashboardStartDate(nextRange.startDate);
     setDashboardEndDate(nextRange.endDate);
     setDashboardDrilldownMetric(null);
+    if (activeTab === 'revenue') {
+      setSearchParams({
+        tab: 'revenue',
+        startDate: nextRange.startDate,
+        endDate: nextRange.endDate,
+      });
+    }
   };
 
   const applyDashboardCustomRange = () => {
@@ -1171,6 +1189,13 @@ export function FinancialsHub() {
     }
     setDashboardRangePreset('custom');
     setDashboardDrilldownMetric(null);
+    if (activeTab === 'revenue') {
+      setSearchParams({
+        tab: 'revenue',
+        startDate: dashboardStartDate,
+        endDate: dashboardEndDate,
+      });
+    }
     loadDashboardBreakdown(dashboardStartDate, dashboardEndDate);
   };
 
@@ -1423,6 +1448,55 @@ export function FinancialsHub() {
   const dashboardBillsByStatus = Array.isArray(dashboardBillsSummary?.billsByStatus)
     ? dashboardBillsSummary.billsByStatus
     : [];
+  const revenueCategories = (dashboardSummary.revenueCategories || [])
+    .filter((category) => Number(category.revenueCents || 0) > 0)
+    .sort((left, right) => Number(right.revenueCents || 0) - Number(left.revenueCents || 0));
+  const revenueCategoryTotalCents = revenueCategories.reduce((sum, category) => sum + Number(category.revenueCents || 0), 0);
+  const rangeClinicalCollectionsCents =
+    Number(dashboardSummary.totalPayerPaymentsCents || 0) + Number(dashboardSummary.totalPatientPaymentsCents || 0);
+  const rangeStoreRevenueCents = Number(dashboardSummary.totalStorePaymentsCents || 0);
+  const rangeTotalCashInCents = rangeClinicalCollectionsCents + rangeStoreRevenueCents;
+  const revenueCollectionGapCents = Math.max(0, Number(dashboardSummary.totalRevenueEarnedCents || 0) - rangeTotalCashInCents);
+  const openRevenueRiskCents = dashboardRangeBills
+    .filter((bill) => !['paid', 'written_off', 'cancelled'].includes(String(bill.status || '')))
+    .reduce((sum, bill) => sum + Number(bill.balanceCents || 0), 0);
+  const payerRevenueExpectedCents = dashboardRangeClaims.reduce((sum, claim) => sum + getClaimExpectedPayerCents(claim), 0);
+  const payerRevenuePaidCents = dashboardRangeClaims.reduce((sum, claim) => sum + getClaimPaidCents(claim), 0);
+  const payerRevenueGapCents = Math.max(0, payerRevenueExpectedCents - payerRevenuePaidCents);
+  const bestRevenueDay = dashboardTrendData.reduce((best: any | null, point: any) =>
+    !best || Number(point.revenueEarnedCents || 0) > Number(best.revenueEarnedCents || 0) ? point : best,
+  null);
+  const largestGapDay = dashboardTrendData.reduce((largest: any | null, point: any) => {
+    const gap = Math.max(0, Number(point.revenueEarnedCents || 0) - Number(point.paymentsCollectedCents || 0));
+    const largestGap = largest ? Math.max(0, Number(largest.revenueEarnedCents || 0) - Number(largest.paymentsCollectedCents || 0)) : -1;
+    return gap > largestGap ? point : largest;
+  }, null);
+  const revenueInsights = [
+    {
+      label: 'Revenue earned, not collected',
+      value: formatCurrency(revenueCollectionGapCents),
+      detail: 'Posted charges and product revenue that have not converted to cash in this range.',
+      tone: revenueCollectionGapCents > 0 ? '#92400e' : '#047857',
+    },
+    {
+      label: 'Insurance expected gap',
+      value: formatCurrency(payerRevenueGapCents),
+      detail: 'Expected payer dollars still missing from claims in the selected range.',
+      tone: payerRevenueGapCents > 0 ? '#991b1b' : '#047857',
+    },
+    {
+      label: 'Open bill exposure',
+      value: formatCurrency(openRevenueRiskCents),
+      detail: 'Patient or insurance balances still open on bills in this date window.',
+      tone: openRevenueRiskCents > 0 ? '#7c2d12' : '#047857',
+    },
+    {
+      label: 'Bad debt and write-offs',
+      value: formatCurrency(Number(dashboardSummary.totalBadDebtCents || dashboardMetrics.badDebtCents || 0)),
+      detail: 'Revenue loss posted through write-offs or bad-debt movement.',
+      tone: Number(dashboardSummary.totalBadDebtCents || dashboardMetrics.badDebtCents || 0) > 0 ? '#991b1b' : '#047857',
+    },
+  ];
   const drilldownMeta: Record<string, { title: string; subtitle: string; action?: string; actionTarget?: TabType | 'claims' | 'bills' | 'payments' }> = {
     collections: {
       title: 'Clinical Collections Detail',
@@ -1433,8 +1507,8 @@ export function FinancialsHub() {
     'collection-ratio': {
       title: 'Net Collection Ratio Detail',
       subtitle: 'Payments collected compared with earned clinical revenue for this range.',
-      action: 'Open Analytics',
-      actionTarget: 'analytics',
+      action: 'Open Revenue',
+      actionTarget: 'revenue',
     },
     dso: {
       title: 'Days Sales Outstanding Detail',
@@ -1457,8 +1531,8 @@ export function FinancialsHub() {
     'store-revenue': {
       title: 'Store Revenue Detail',
       subtitle: 'Retail product payments captured in this overview range.',
-      action: 'Open Analytics',
-      actionTarget: 'analytics',
+      action: 'Open Revenue',
+      actionTarget: 'revenue',
     },
     'bad-debt': {
       title: 'Bad Debt and Loss Detail',
@@ -1749,6 +1823,228 @@ export function FinancialsHub() {
       </section>
     );
   };
+
+  const renderRevenuePage = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      {dashboardError && (
+        <div style={{
+          border: '1px solid #fecaca',
+          background: '#fef2f2',
+          color: '#991b1b',
+          padding: '0.85rem 1rem',
+          borderRadius: '10px',
+          fontWeight: 700,
+        }}>
+          {dashboardError}
+        </div>
+      )}
+
+      <section style={{
+        border: '1px solid #d1fae5',
+        background: '#f0fdf4',
+        borderRadius: '14px',
+        padding: '1rem',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '1.45rem', color: '#064e3b', fontWeight: 900 }}>Revenue</h2>
+            <p style={{ margin: '0.35rem 0 0', color: '#047857', fontSize: '0.9rem' }}>
+              Revenue earned, category mix, collection gaps, and loss risk for {dashboardRangeLabel}.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {(['today', 'week', 'mtd'] as DashboardRangePreset[]).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => applyDashboardPreset(preset)}
+                style={{
+                  border: dashboardRangePreset === preset ? '1px solid #047857' : '1px solid #bbf7d0',
+                  background: dashboardRangePreset === preset ? '#047857' : '#ffffff',
+                  color: dashboardRangePreset === preset ? '#ffffff' : '#065f46',
+                  borderRadius: '8px',
+                  padding: '0.48rem 0.7rem',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  textTransform: 'uppercase',
+                  fontSize: '0.75rem',
+                }}
+              >
+                {preset === 'mtd' ? 'MTD' : preset}
+              </button>
+            ))}
+            <input
+              aria-label="Revenue start date"
+              type="date"
+              value={dashboardStartDate}
+              onChange={(event) => {
+                setDashboardRangePreset('custom');
+                setDashboardStartDate(event.target.value);
+              }}
+              style={{ border: '1px solid #bbf7d0', borderRadius: '8px', padding: '0.45rem 0.55rem', fontWeight: 700 }}
+            />
+            <input
+              aria-label="Revenue end date"
+              type="date"
+              value={dashboardEndDate}
+              onChange={(event) => {
+                setDashboardRangePreset('custom');
+                setDashboardEndDate(event.target.value);
+              }}
+              style={{ border: '1px solid #bbf7d0', borderRadius: '8px', padding: '0.45rem 0.55rem', fontWeight: 700 }}
+            />
+            <button
+              type="button"
+              onClick={applyDashboardCustomRange}
+              style={{
+                border: '1px solid #047857',
+                background: '#ffffff',
+                color: '#047857',
+                borderRadius: '8px',
+                padding: '0.48rem 0.75rem',
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.85rem' }}>
+        {[
+          { label: 'Revenue Earned', value: formatCurrency(dashboardSummary.totalRevenueEarnedCents), detail: `${dashboardSummary.totalBillCount} revenue item${dashboardSummary.totalBillCount === 1 ? '' : 's'}`, tone: '#065f46' },
+          { label: 'Clinical Collections', value: formatCurrency(rangeClinicalCollectionsCents), detail: `${formatPercent(dashboardSummary.collectionRate)} total collection rate`, tone: '#047857' },
+          { label: 'Store Revenue', value: formatCurrency(rangeStoreRevenueCents), detail: 'Patient portal product sales and shipping', tone: '#0f766e' },
+          { label: 'Cash In', value: formatCurrency(rangeTotalCashInCents), detail: `${dashboardSummary.totalPaymentCount} posted payment${dashboardSummary.totalPaymentCount === 1 ? '' : 's'}`, tone: '#1d4ed8' },
+          { label: 'Revenue Gap', value: formatCurrency(revenueCollectionGapCents), detail: 'Earned revenue not yet collected', tone: revenueCollectionGapCents > 0 ? '#92400e' : '#047857' },
+        ].map((card) => (
+          <div key={card.label} style={{ border: '1px solid #e5e7eb', borderRadius: '12px', background: '#ffffff', padding: '1rem', boxShadow: '0 1px 6px rgba(15,23,42,0.06)' }}>
+            <div style={{ color: '#6b7280', fontSize: '0.72rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{card.label}</div>
+            <div style={{ color: card.tone, fontSize: '1.5rem', fontWeight: 950, marginTop: '0.35rem' }}>{card.value}</div>
+            <div style={{ color: '#64748b', fontSize: '0.82rem', marginTop: '0.25rem' }}>{card.detail}</div>
+          </div>
+        ))}
+      </section>
+
+      <section style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 0.95fr) minmax(340px, 1.05fr)', gap: '1rem', alignItems: 'start' }}>
+        <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', background: '#ffffff', overflow: 'hidden' }}>
+          <div style={{ padding: '0.95rem 1rem', borderBottom: '1px solid #f3f4f6' }}>
+            <h3 style={{ margin: 0, fontSize: '1rem', color: '#111827', fontWeight: 900 }}>Revenue Mix</h3>
+            <p style={{ margin: '0.2rem 0 0', color: '#6b7280', fontSize: '0.82rem' }}>Clinical, cosmetic, store, and fee categories for the selected range.</p>
+          </div>
+          <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+            {revenueCategories.length === 0 ? (
+              <div style={{ color: '#6b7280', fontStyle: 'italic' }}>No categorized revenue posted in this range.</div>
+            ) : revenueCategories.map((category) => {
+              const percent = revenueCategoryTotalCents > 0 ? (Number(category.revenueCents || 0) / revenueCategoryTotalCents) * 100 : 0;
+              return (
+                <div key={category.key} style={{ display: 'grid', gap: '0.35rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 900, color: '#111827' }}>{category.label}</div>
+                      <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>{category.itemCount} item{category.itemCount === 1 ? '' : 's'} · {formatPercent(percent)} of categorized revenue</div>
+                    </div>
+                    <div style={{ fontWeight: 950, color: '#065f46', textAlign: 'right' }}>{formatCurrency(category.revenueCents)}</div>
+                  </div>
+                  <div style={{ height: '9px', borderRadius: '999px', background: '#f1f5f9', overflow: 'hidden' }}>
+                    <div style={{ width: `${Math.min(100, percent)}%`, height: '100%', background: '#10b981', borderRadius: '999px' }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ border: '1px solid #e5e7eb', borderRadius: '12px', background: '#ffffff', overflow: 'hidden' }}>
+          <div style={{ padding: '0.95rem 1rem', borderBottom: '1px solid #f3f4f6' }}>
+            <h3 style={{ margin: 0, fontSize: '1rem', color: '#111827', fontWeight: 900 }}>Revenue Story</h3>
+            <p style={{ margin: '0.2rem 0 0', color: '#6b7280', fontSize: '0.82rem' }}>What matters financially in this range.</p>
+          </div>
+          <div style={{ padding: '1rem', display: 'grid', gap: '0.75rem' }}>
+            {revenueInsights.map((insight) => (
+              <div key={insight.label} style={{ border: '1px solid #e5e7eb', borderRadius: '10px', padding: '0.85rem', background: '#f8fafc' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'flex-start' }}>
+                  <div style={{ fontWeight: 900, color: '#111827' }}>{insight.label}</div>
+                  <div style={{ fontWeight: 950, color: insight.tone, textAlign: 'right' }}>{insight.value}</div>
+                </div>
+                <div style={{ color: '#64748b', fontSize: '0.82rem', marginTop: '0.3rem' }}>{insight.detail}</div>
+              </div>
+            ))}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.65rem' }}>
+              <div style={{ border: '1px solid #dbeafe', borderRadius: '10px', padding: '0.85rem', background: '#eff6ff' }}>
+                <div style={{ color: '#1d4ed8', fontWeight: 900, fontSize: '0.78rem', textTransform: 'uppercase' }}>Top Day</div>
+                <div style={{ color: '#111827', fontWeight: 950, marginTop: '0.25rem' }}>
+                  {bestRevenueDay ? formatCurrency(Number(bestRevenueDay.revenueEarnedCents || 0)) : formatCurrency(0)}
+                </div>
+                <div style={{ color: '#64748b', fontSize: '0.8rem' }}>
+                  {bestRevenueDay ? formatIsoDateForUi(bestRevenueDay.bucketStartDate) : 'No revenue yet'}
+                </div>
+              </div>
+              <div style={{ border: '1px solid #fde68a', borderRadius: '10px', padding: '0.85rem', background: '#fffbeb' }}>
+                <div style={{ color: '#92400e', fontWeight: 900, fontSize: '0.78rem', textTransform: 'uppercase' }}>Largest Gap</div>
+                <div style={{ color: '#111827', fontWeight: 950, marginTop: '0.25rem' }}>
+                  {largestGapDay ? formatCurrency(Math.max(0, Number(largestGapDay.revenueEarnedCents || 0) - Number(largestGapDay.paymentsCollectedCents || 0))) : formatCurrency(0)}
+                </div>
+                <div style={{ color: '#64748b', fontSize: '0.8rem' }}>
+                  {largestGapDay ? formatIsoDateForUi(largestGapDay.bucketStartDate) : 'No gap yet'}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section style={{ border: '1px solid #e5e7eb', borderRadius: '12px', background: '#ffffff', overflowX: 'auto' }}>
+        <div style={{ padding: '0.95rem 1rem', borderBottom: '1px solid #f3f4f6' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', color: '#111827', fontWeight: 900 }}>Daily Revenue Detail</h3>
+        </div>
+        <table style={{ width: '100%', minWidth: '820px', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
+          <thead>
+            <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+              <th style={{ padding: '0.7rem', textAlign: 'left' }}>Date</th>
+              <th style={{ padding: '0.7rem', textAlign: 'right' }}>Revenue Earned</th>
+              <th style={{ padding: '0.7rem', textAlign: 'right' }}>Clinical Collections</th>
+              <th style={{ padding: '0.7rem', textAlign: 'right' }}>Store Revenue</th>
+              <th style={{ padding: '0.7rem', textAlign: 'right' }}>Cash In</th>
+              <th style={{ padding: '0.7rem', textAlign: 'right' }}>Gap</th>
+              <th style={{ padding: '0.7rem', textAlign: 'left' }}>Category Mix</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dashboardTrendData.length === 0 ? (
+              <tr>
+                <td colSpan={7} style={{ padding: '1rem', textAlign: 'center', color: '#6b7280' }}>No revenue rows in this range.</td>
+              </tr>
+            ) : dashboardTrendData.map((point: any) => {
+              const clinicalCollections = Number(point.patientPaymentsCents || 0) + Number(point.payerPaymentsCents || 0);
+              const storeRevenue = Number(point.storePaymentsCents || 0);
+              const cashIn = clinicalCollections + storeRevenue;
+              const gap = Math.max(0, Number(point.revenueEarnedCents || 0) - cashIn);
+              return (
+                <tr key={point.bucketStartDate} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                  <td style={{ padding: '0.7rem', fontWeight: 800 }}>{formatIsoDateForUi(point.bucketStartDate)}</td>
+                  <td style={{ padding: '0.7rem', textAlign: 'right', fontWeight: 900, color: '#065f46' }}>{formatCurrency(Number(point.revenueEarnedCents || 0))}</td>
+                  <td style={{ padding: '0.7rem', textAlign: 'right' }}>{formatCurrency(clinicalCollections)}</td>
+                  <td style={{ padding: '0.7rem', textAlign: 'right' }}>{formatCurrency(storeRevenue)}</td>
+                  <td style={{ padding: '0.7rem', textAlign: 'right', fontWeight: 800 }}>{formatCurrency(cashIn)}</td>
+                  <td style={{ padding: '0.7rem', textAlign: 'right', color: gap > 0 ? '#92400e' : '#047857', fontWeight: 900 }}>{formatCurrency(gap)}</td>
+                  <td style={{ padding: '0.7rem', color: '#64748b' }}>
+                    {(point.revenueCategories || []).length > 0 ? formatCategoryList(point.revenueCategories).join(' · ') : 'Uncategorized'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </section>
+
+      {dashboardLoading && (
+        <div style={{ color: '#047857', fontSize: '0.85rem', fontWeight: 800 }}>Refreshing revenue data...</div>
+      )}
+    </div>
+  );
 
   return (
     <div style={{ background: '#F3F4F6', minHeight: '100vh', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
@@ -2181,6 +2477,9 @@ export function FinancialsHub() {
                 {renderDashboardDrilldown()}
               </>
             )}
+
+            {/* Revenue Tab */}
+            {activeTab === 'revenue' && renderRevenuePage()}
 
             {/* Snapshots Tab */}
             {activeTab === 'snapshots' && (

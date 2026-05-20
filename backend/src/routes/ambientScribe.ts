@@ -2363,8 +2363,8 @@ router.post('/copilot/apply', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES
     res.status(saved.created ? 201 : 200).json({
       summaryId: saved.summaryId,
       created: saved.created,
-      message: structuredActions.billingReviewItemsCreated > 0
-        ? 'AI assistant response added to the chart and sent to billing review'
+      message: structuredActions.diagnosesCreated > 0 || structuredActions.billingReviewItemsCreated > 0
+        ? 'AI assistant response added to the chart; diagnosis suggestions and billing review are awaiting review'
         : 'AI assistant response added to the chart',
       structuredActions,
       context: {

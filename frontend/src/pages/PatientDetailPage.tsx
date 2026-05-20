@@ -43,6 +43,8 @@ import {
   verifyPatientEligibility,
   deletePatient,
   createPatientRecall,
+  updateDiagnosis,
+  deleteDiagnosis,
   uploadPhotoFile,
   createPhoto,
   fetchRecallCampaigns,
@@ -67,6 +69,7 @@ import type {
   UserRole,
   PatientAccessibilityProfile,
 } from '../types';
+import { cleanAiDiagnosisDescription, isAiSuggestedDiagnosis } from '../utils/diagnosisReview';
 
 type TabId = 'overview' | 'demographics' | 'accessibility' | 'insurance' | 'account' | 'medical-history' | 'clinical-summary' | 'clinical-trends' | 'encounters' | 'appointments' | 'orders' | 'referrals' | 'documents' | 'photos' | 'timeline' | 'rx-history' | 'tasks' | 'scribe';
 const VALID_PATIENT_DETAIL_TABS = new Set<TabId>([
@@ -445,8 +448,10 @@ export function PatientDetailPage() {
   });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [diagnosisReviewActionId, setDiagnosisReviewActionId] = useState<string | null>(null);
   const canViewClinicalPatientData =
     !session?.user || hasAnyRole(session.user, CLINICAL_PATIENT_ROLES);
+  const canManageDiagnoses = Boolean(session?.user && hasAnyRole(session.user, ['admin', 'provider']));
 
   // Body markers are now managed by PatientBodyDiagram component
 
@@ -580,6 +585,64 @@ export function PatientDetailPage() {
       setLoading(false);
     }
   }, [session, patientId, showError, navigate, canViewClinicalPatientData]);
+
+  const handleConfirmAiDiagnosis = useCallback(async (diagnosis: PatientDiagnosisSummary) => {
+    if (!session || !canManageDiagnoses) {
+      showError('Only a provider or admin can confirm diagnoses.');
+      return;
+    }
+
+    const description = cleanAiDiagnosisDescription(diagnosis.description) || diagnosis.description || 'Diagnosis';
+    setDiagnosisReviewActionId(diagnosis.id);
+    try {
+      await updateDiagnosis(session.tenantId, session.accessToken, diagnosis.id, {
+        description,
+        isPrimary: Boolean(diagnosis.isPrimary),
+      });
+      showSuccess('Diagnosis confirmed for the encounter.');
+      await loadPatientData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to confirm diagnosis');
+    } finally {
+      setDiagnosisReviewActionId(null);
+    }
+  }, [canManageDiagnoses, loadPatientData, session, showError, showSuccess]);
+
+  const handleRejectAiDiagnosis = useCallback(async (diagnosis: PatientDiagnosisSummary) => {
+    if (!session || !canManageDiagnoses) {
+      showError('Only a provider or admin can reject diagnoses.');
+      return;
+    }
+
+    setDiagnosisReviewActionId(diagnosis.id);
+    try {
+      await deleteDiagnosis(session.tenantId, session.accessToken, diagnosis.id);
+      showSuccess('AI diagnosis suggestion rejected.');
+      await loadPatientData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to reject diagnosis');
+    } finally {
+      setDiagnosisReviewActionId(null);
+    }
+  }, [canManageDiagnoses, loadPatientData, session, showError, showSuccess]);
+
+  const handleMakeDiagnosisPrimary = useCallback(async (diagnosis: PatientDiagnosisSummary) => {
+    if (!session || !canManageDiagnoses) {
+      showError('Only a provider or admin can set the primary diagnosis.');
+      return;
+    }
+
+    setDiagnosisReviewActionId(diagnosis.id);
+    try {
+      await updateDiagnosis(session.tenantId, session.accessToken, diagnosis.id, { isPrimary: true });
+      showSuccess('Primary diagnosis updated.');
+      await loadPatientData();
+    } catch (err: any) {
+      showError(err.message || 'Failed to update primary diagnosis');
+    } finally {
+      setDiagnosisReviewActionId(null);
+    }
+  }, [canManageDiagnoses, loadPatientData, session, showError, showSuccess]);
 
   const resetPhotoUploadForm = () => {
     setPhotoUploadForm((prev) => {
@@ -727,7 +790,9 @@ export function PatientDetailPage() {
   const nextAppointment = getNextRelevantAppointment(appointments);
   const latestVital = vitalsHistory[0];
   const activeRecalls = clinicalSummary.recalls.filter((recall) => isActiveRecallStatus(recall.status));
-  const clinicalSummaryCount = clinicalSummary.diagnoses.length + activeRecalls.length;
+  const aiSuggestedDiagnoses = clinicalSummary.diagnoses.filter(isAiSuggestedDiagnosis);
+  const confirmedDiagnoses = clinicalSummary.diagnoses.filter((diagnosis) => !isAiSuggestedDiagnosis(diagnosis));
+  const clinicalSummaryCount = confirmedDiagnoses.length + aiSuggestedDiagnoses.length + activeRecalls.length;
 
   useEffect(() => {
     loadPatientData();
@@ -1356,7 +1421,7 @@ export function PatientDetailPage() {
 
               {canViewClinicalPatientData && (
                 <ClinicalSummaryPreview
-                  diagnoses={clinicalSummary.diagnoses}
+                  diagnoses={confirmedDiagnoses}
                   recalls={activeRecalls}
                   onOpenSummary={() => setActiveTab('clinical-summary')}
                   onOpenEncounter={handleViewEncounter}
@@ -1699,6 +1764,11 @@ export function PatientDetailPage() {
           <MedicalHistoryTab
             patient={patient}
             diagnoses={clinicalSummary.diagnoses}
+            canManageDiagnoses={canManageDiagnoses}
+            diagnosisReviewActionId={diagnosisReviewActionId}
+            onConfirmDiagnosis={handleConfirmAiDiagnosis}
+            onRejectDiagnosis={handleRejectAiDiagnosis}
+            onMakeDiagnosisPrimary={handleMakeDiagnosisPrimary}
             onEditAllergy={() => setEditAllergyOpen(true)}
             onEditMedication={() => setEditMedicationOpen(true)}
             onEditProblem={() => setEditProblemOpen(true)}
@@ -1709,6 +1779,11 @@ export function PatientDetailPage() {
           <ClinicalSummaryTab
             diagnoses={clinicalSummary.diagnoses}
             recalls={clinicalSummary.recalls}
+            canManageDiagnoses={canManageDiagnoses}
+            diagnosisReviewActionId={diagnosisReviewActionId}
+            onConfirmDiagnosis={handleConfirmAiDiagnosis}
+            onRejectDiagnosis={handleRejectAiDiagnosis}
+            onMakeDiagnosisPrimary={handleMakeDiagnosisPrimary}
             onOpenEncounter={handleViewEncounter}
             onOpenRecalls={() => navigate('/recalls')}
             onAddRecall={openAddRecallModal}
@@ -2527,12 +2602,22 @@ function ReferralsTab({
 function MedicalHistoryTab({
   patient,
   diagnoses,
+  canManageDiagnoses,
+  diagnosisReviewActionId,
+  onConfirmDiagnosis,
+  onRejectDiagnosis,
+  onMakeDiagnosisPrimary,
   onEditAllergy,
   onEditMedication,
   onEditProblem
 }: {
   patient: Patient;
   diagnoses: PatientDiagnosisSummary[];
+  canManageDiagnoses: boolean;
+  diagnosisReviewActionId: string | null;
+  onConfirmDiagnosis: (diagnosis: PatientDiagnosisSummary) => void;
+  onRejectDiagnosis: (diagnosis: PatientDiagnosisSummary) => void;
+  onMakeDiagnosisPrimary: (diagnosis: PatientDiagnosisSummary) => void;
   onEditAllergy: () => void;
   onEditMedication: () => void;
   onEditProblem: () => void;
@@ -2542,7 +2627,9 @@ function MedicalHistoryTab({
   const medications = getMedicalHistoryMedications(patient);
 
   const problems = (patient as any).problemsList || [];
-  const hasProblemData = problems.length > 0 || diagnoses.length > 0;
+  const aiSuggestedDiagnoses = diagnoses.filter(isAiSuggestedDiagnosis);
+  const confirmedDiagnoses = diagnoses.filter((diagnosis) => !isAiSuggestedDiagnosis(diagnosis));
+  const hasProblemData = problems.length > 0 || confirmedDiagnoses.length > 0 || aiSuggestedDiagnoses.length > 0;
 
   return (
     <div style={{ maxWidth: '1200px' }}>
@@ -2655,7 +2742,7 @@ function MedicalHistoryTab({
                   </span>
                 </div>
               ))}
-              {diagnoses.map((diagnosis) => (
+              {confirmedDiagnoses.map((diagnosis) => (
                 <div key={diagnosis.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '4px' }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -2691,6 +2778,72 @@ function MedicalHistoryTab({
                   </span>
                 </div>
               ))}
+              {aiSuggestedDiagnoses.length > 0 && (
+                <div style={{
+                  marginTop: '0.5rem',
+                  border: '1px solid #fde68a',
+                  background: '#fffbeb',
+                  borderRadius: '8px',
+                  padding: '0.9rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.75rem',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontWeight: 800, color: '#92400e' }}>AI Diagnosis Review</div>
+                      <div style={{ fontSize: '0.8rem', color: '#92400e', marginTop: '0.2rem' }}>
+                        Suggested encounter diagnoses must be confirmed before they are treated as final.
+                      </div>
+                    </div>
+                    <span style={{
+                      borderRadius: '999px',
+                      background: '#fef3c7',
+                      color: '#92400e',
+                      padding: '0.25rem 0.55rem',
+                      fontSize: '0.72rem',
+                      fontWeight: 800,
+                      textTransform: 'uppercase',
+                    }}>
+                      {aiSuggestedDiagnoses.length} pending
+                    </span>
+                  </div>
+                  {aiSuggestedDiagnoses.map((diagnosis) => {
+                    const isBusy = diagnosisReviewActionId === diagnosis.id;
+                    return (
+                      <div key={diagnosis.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '0.75rem', alignItems: 'center', padding: '0.75rem', background: '#ffffff', border: '1px solid #fde68a', borderRadius: '8px' }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 700, color: '#111827' }}>{cleanAiDiagnosisDescription(diagnosis.description) || 'Diagnosis'}</span>
+                            <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>({diagnosis.icd10Code})</span>
+                            {diagnosis.isPrimary && (
+                              <span style={{ background: '#dbeafe', color: '#1d4ed8', borderRadius: '999px', padding: '0.125rem 0.5rem', fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase' }}>
+                                Primary
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '0.82rem', color: '#6b7280', marginTop: '0.25rem' }}>
+                            Encounter diagnosis{diagnosis.encounterDate ? ` - ${new Date(diagnosis.encounterDate).toLocaleDateString()}` : ''}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                          {!diagnosis.isPrimary && (
+                            <button type="button" className="ema-action-btn" disabled={!canManageDiagnoses || isBusy} onClick={() => onMakeDiagnosisPrimary(diagnosis)}>
+                              Primary
+                            </button>
+                          )}
+                          <button type="button" className="ema-action-btn" disabled={!canManageDiagnoses || isBusy} onClick={() => onConfirmDiagnosis(diagnosis)}>
+                            Confirm
+                          </button>
+                          <button type="button" className="ema-action-btn" disabled={!canManageDiagnoses || isBusy} onClick={() => onRejectDiagnosis(diagnosis)}>
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -2862,17 +3015,29 @@ function ClinicalSummaryPreview({
 function ClinicalSummaryTab({
   diagnoses,
   recalls,
+  canManageDiagnoses,
+  diagnosisReviewActionId,
+  onConfirmDiagnosis,
+  onRejectDiagnosis,
+  onMakeDiagnosisPrimary,
   onOpenEncounter,
   onOpenRecalls,
   onAddRecall,
 }: {
   diagnoses: PatientDiagnosisSummary[];
   recalls: PatientRecallSummary[];
+  canManageDiagnoses: boolean;
+  diagnosisReviewActionId: string | null;
+  onConfirmDiagnosis: (diagnosis: PatientDiagnosisSummary) => void;
+  onRejectDiagnosis: (diagnosis: PatientDiagnosisSummary) => void;
+  onMakeDiagnosisPrimary: (diagnosis: PatientDiagnosisSummary) => void;
   onOpenEncounter: (encounterId: string) => void;
   onOpenRecalls: () => void;
   onAddRecall: () => void;
 }) {
   const activeRecalls = recalls.filter((recall) => isActiveRecallStatus(recall.status));
+  const aiSuggestedDiagnoses = diagnoses.filter(isAiSuggestedDiagnosis);
+  const confirmedDiagnoses = diagnoses.filter((diagnosis) => !isAiSuggestedDiagnosis(diagnosis));
 
   return (
     <div style={{ maxWidth: '1200px' }}>
@@ -2899,14 +3064,68 @@ function ClinicalSummaryTab({
         <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <h3 style={{ margin: 0, fontSize: '1rem', color: '#111827' }}>Diagnoses</h3>
-            <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>{diagnoses.length} total</span>
+            <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>{confirmedDiagnoses.length} confirmed</span>
           </div>
 
-          {diagnoses.length === 0 ? (
+          {aiSuggestedDiagnoses.length > 0 && (
+            <div style={{ border: '1px solid #fde68a', background: '#fffbeb', borderRadius: '8px', padding: '0.85rem', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.65rem' }}>
+                <div style={{ fontWeight: 800, color: '#92400e' }}>AI Diagnosis Review</div>
+                <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#92400e' }}>{aiSuggestedDiagnoses.length} pending</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                {aiSuggestedDiagnoses.map((diagnosis) => {
+                  const isBusy = diagnosisReviewActionId === diagnosis.id;
+                  return (
+                    <div key={diagnosis.id} style={{ background: '#ffffff', border: '1px solid #fde68a', borderRadius: '8px', padding: '0.75rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'flex-start' }}>
+                        <button
+                          type="button"
+                          onClick={() => onOpenEncounter(diagnosis.encounterId)}
+                          style={{ textAlign: 'left', border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', flex: 1 }}
+                        >
+                          <div style={{ fontWeight: 800, color: '#111827' }}>
+                            {cleanAiDiagnosisDescription(diagnosis.description) || 'Diagnosis'}
+                          </div>
+                          <div style={{ color: '#6b7280', fontSize: '0.875rem', marginTop: '0.25rem' }}>
+                            {diagnosis.icd10Code} {diagnosis.chiefComplaint ? `- ${diagnosis.chiefComplaint}` : ''}
+                          </div>
+                          <div style={{ color: '#6b7280', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                            {formatClinicalDate(diagnosis.encounterDate || diagnosis.createdAt)}
+                            {diagnosis.providerName ? ` - ${diagnosis.providerName}` : ''}
+                          </div>
+                        </button>
+                        {diagnosis.isPrimary && (
+                          <span style={{ background: '#dbeafe', color: '#1d4ed8', borderRadius: '999px', padding: '0.25rem 0.5rem', fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase' }}>
+                            Primary
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+                        {!diagnosis.isPrimary && (
+                          <button type="button" className="ema-action-btn" disabled={!canManageDiagnoses || isBusy} onClick={() => onMakeDiagnosisPrimary(diagnosis)}>
+                            Primary
+                          </button>
+                        )}
+                        <button type="button" className="ema-action-btn" disabled={!canManageDiagnoses || isBusy} onClick={() => onConfirmDiagnosis(diagnosis)}>
+                          Confirm
+                        </button>
+                        <button type="button" className="ema-action-btn" disabled={!canManageDiagnoses || isBusy} onClick={() => onRejectDiagnosis(diagnosis)}>
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {confirmedDiagnoses.length === 0 ? (
             <div style={{ color: '#6b7280', fontStyle: 'italic' }}>No encounter diagnoses recorded.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {diagnoses.map((diagnosis) => (
+              {confirmedDiagnoses.map((diagnosis) => (
                 <button
                   key={diagnosis.id}
                   type="button"

@@ -15,6 +15,13 @@ const diagnosisSchema = z.object({
   isPrimary: z.boolean().optional(),
 });
 
+const diagnosisUpdateSchema = z.object({
+  description: z.string().trim().min(1).optional(),
+  isPrimary: z.boolean().optional(),
+}).refine((data) => data.description !== undefined || data.isPrimary !== undefined, {
+  message: "At least one diagnosis field must be provided",
+});
+
 export const diagnosesRouter = Router();
 
 function normalizeIcd10Code(code: string): string {
@@ -140,9 +147,12 @@ diagnosesRouter.post("/", requireAuth, requireRoles(["provider", "admin"]), asyn
 
 // Update diagnosis (primarily for changing primary status)
 diagnosesRouter.put("/:id", requireAuth, requireRoles(["provider", "admin"]), async (req: AuthedRequest, res) => {
+  const parsed = diagnosisUpdateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.format() });
+
   const tenantId = req.user!.tenantId;
   const { id } = req.params;
-  const { isPrimary } = req.body;
+  const { description, isPrimary } = parsed.data;
 
   // Get the encounter ID for this diagnosis
   const diagnosisResult = await pool.query(
@@ -169,9 +179,22 @@ diagnosesRouter.put("/:id", requireAuth, requireRoles(["provider", "admin"]), as
     );
   }
 
+  const updates: string[] = [];
+  const params: unknown[] = [];
+
+  if (isPrimary !== undefined) {
+    params.push(isPrimary);
+    updates.push(`is_primary = $${params.length}`);
+  }
+  if (description !== undefined) {
+    params.push(description);
+    updates.push(`description = $${params.length}`);
+  }
+
+  params.push(id, tenantId);
   await pool.query(
-    `update encounter_diagnoses set is_primary = $1 where id = $2 and tenant_id = $3`,
-    [isPrimary, id, tenantId],
+    `update encounter_diagnoses set ${updates.join(", ")} where id = $${params.length - 1} and tenant_id = $${params.length}`,
+    params,
   );
 
   res.json({ success: true });

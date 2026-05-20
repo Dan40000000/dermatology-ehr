@@ -864,6 +864,45 @@ describe('Ambient Scribe Routes - Transcription Endpoints', () => {
 });
 
 describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
+  describe('POST /api/ambient/copilot/respond', () => {
+    it('should answer a standalone assistant prompt and trim long chat history', async () => {
+      const history = Array.from({ length: 12 }, (_, index) => ({
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: `Prior assistant turn ${index + 1}`,
+      }));
+
+      const res = await request(app)
+        .post('/api/ambient/copilot/respond')
+        .send({ prompt: 'What documentation gaps should I fix?', history });
+
+      expect(res.status).toBe(200);
+      expect(res.body.answer).toBe('Visit summarized from chart context.');
+      expect(askClinicalCopilotMock).toHaveBeenCalledWith(expect.objectContaining({
+        question: 'What documentation gaps should I fix?',
+        history: history.slice(-8),
+        context: expect.objectContaining({}),
+      }));
+    });
+
+    it('should not fail the assistant response when audit logging is unavailable', async () => {
+      auditMock.mockRejectedValueOnce(new Error('audit unavailable'));
+
+      const res = await request(app)
+        .post('/api/ambient/copilot/respond')
+        .send({ prompt: 'Summarize what we know.' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.answer).toBe('Visit summarized from chart context.');
+      expect(auditMock).toHaveBeenCalledWith(
+        'tenant-1',
+        'user-1',
+        'ambient_copilot_query',
+        'ambient_copilot',
+        'copilot'
+      );
+    });
+  });
+
   describe('POST /api/ambient/copilot/visit-summary', () => {
     it('should summarize an encounter and save it to patient visit history', async () => {
       queryMock

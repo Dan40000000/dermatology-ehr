@@ -102,18 +102,23 @@ const applyNoteSchema = z.object({
   includeBillingReview: z.boolean().optional().default(true),
 });
 
+const clinicalCopilotHistoryItemSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().min(1).max(4000),
+});
+
+const clinicalCopilotHistorySchema = z.preprocess(
+  (value) => Array.isArray(value) ? value.slice(-8) : value,
+  z.array(clinicalCopilotHistoryItemSchema).optional()
+);
+
 const clinicalCopilotRequestSchema = z.object({
   prompt: z.string().min(1).max(4000),
   patientId: z.string().optional(),
   encounterId: z.string().optional(),
   noteId: z.string().optional(),
   recordingId: z.string().optional(),
-  history: z.array(
-    z.object({
-      role: z.enum(['user', 'assistant']),
-      content: z.string().min(1).max(4000),
-    })
-  ).max(8).optional(),
+  history: clinicalCopilotHistorySchema,
 });
 
 const clinicalCopilotVisitSummarySchema = z.object({
@@ -122,12 +127,7 @@ const clinicalCopilotVisitSummarySchema = z.object({
   noteId: z.string().optional(),
   recordingId: z.string().optional(),
   prompt: z.string().min(1).max(4000).optional(),
-  history: z.array(
-    z.object({
-      role: z.enum(['user', 'assistant']),
-      content: z.string().min(1).max(4000),
-    })
-  ).max(8).optional(),
+  history: clinicalCopilotHistorySchema,
 });
 
 const AMBIENT_CLINICAL_ROLES = ['provider', 'ma', 'admin'] as const;
@@ -154,6 +154,12 @@ function toSafeErrorMessage(error: unknown): string {
 
 function logAmbientError(message: string, error: unknown): void {
   logger.error(message, {
+    error: toSafeErrorMessage(error),
+  });
+}
+
+function logAmbientWarning(message: string, error: unknown): void {
+  logger.warn(message, {
     error: toSafeErrorMessage(error),
   });
 }
@@ -1822,7 +1828,7 @@ router.post('/copilot/respond', requireAuth, requireRoles([...AMBIENT_CLINICAL_R
   try {
     const parsed = clinicalCopilotRequestSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.format() });
+      return res.status(400).json({ error: 'Invalid clinical copilot request', details: parsed.error.format() });
     }
 
     const tenantId = req.user!.tenantId;
@@ -1842,13 +1848,15 @@ router.post('/copilot/respond', requireAuth, requireRoles([...AMBIENT_CLINICAL_R
       context,
     });
 
-    await auditLog(
-      tenantId,
-      userId || null,
-      'ambient_copilot_query',
-      'ambient_copilot',
-      noteId || encounterId || patientId || recordingId || 'copilot'
-    );
+    void Promise.resolve(
+      auditLog(
+        tenantId,
+        userId || null,
+        'ambient_copilot_query',
+        'ambient_copilot',
+        noteId || encounterId || patientId || recordingId || 'copilot'
+      )
+    ).catch((error) => logAmbientWarning('Clinical copilot audit log failed', error));
 
     res.json({
       ...result,
@@ -1875,7 +1883,7 @@ router.post('/copilot/visit-summary', requireAuth, requireRoles([...AMBIENT_CLIN
   try {
     const parsed = clinicalCopilotVisitSummarySchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.format() });
+      return res.status(400).json({ error: 'Invalid clinical copilot visit summary request', details: parsed.error.format() });
     }
 
     const tenantId = req.user!.tenantId;

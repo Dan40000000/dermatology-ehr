@@ -6783,6 +6783,29 @@ export interface ClinicalCopilotVisitSummarySaveResponse {
   context?: ClinicalCopilotResponse['context'];
 }
 
+function extractClinicalCopilotError(payload: any, fallback: string): string {
+  if (typeof payload?.error === 'string' && payload.error.trim()) {
+    return payload.error.trim();
+  }
+  if (typeof payload?.message === 'string' && payload.message.trim()) {
+    return payload.message.trim();
+  }
+
+  const collectZodErrors = (value: any): string[] => {
+    if (!value || typeof value !== 'object') return [];
+    const direct = Array.isArray(value._errors)
+      ? value._errors.filter((item: unknown) => typeof item === 'string' && item.trim())
+      : [];
+    const nested = Object.entries(value)
+      .filter(([key]) => key !== '_errors')
+      .flatMap(([, child]) => collectZodErrors(child));
+    return [...direct, ...nested];
+  };
+
+  const validationMessages = collectZodErrors(payload?.details || payload?.error);
+  return validationMessages[0] || fallback;
+}
+
 /**
  * Start a new recording session
  */
@@ -7260,7 +7283,7 @@ export async function askClinicalCopilot(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to get clinical copilot response');
+    throw new Error(extractClinicalCopilotError(err, 'Failed to get clinical copilot response'));
   }
 
   return res.json();
@@ -7294,7 +7317,7 @@ export async function saveClinicalCopilotVisitSummary(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to save clinical copilot visit summary');
+    throw new Error(extractClinicalCopilotError(err, 'Failed to save clinical copilot visit summary'));
   }
 
   return res.json();

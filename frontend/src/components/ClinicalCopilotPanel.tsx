@@ -120,7 +120,7 @@ export function ClinicalCopilotPanel({
       return;
     }
 
-    const history = messages.map((item) => ({ role: item.role, content: item.content }));
+    const history = messages.slice(-8).map((item) => ({ role: item.role, content: item.content }));
     const userTurn: CopilotConversationTurn = { role: 'user', content: text };
     setMessages((prev) => [...prev, userTurn]);
     setPrompt('');
@@ -158,7 +158,7 @@ export function ClinicalCopilotPanel({
     }
 
     const summaryPrompt = 'Summarize this visit and save it to the patient history.';
-    const history = messages.map((item) => ({ role: item.role, content: item.content }));
+    const history = messages.slice(-8).map((item) => ({ role: item.role, content: item.content }));
     setSavingSummary(true);
 
     try {

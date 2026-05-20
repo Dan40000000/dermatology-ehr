@@ -239,6 +239,17 @@ function buildTodaySlot(hour: number, minute: number, durationMinutes: number): 
   };
 }
 
+function buildRelativeSlot(dayOffset: number, hour: number, minute: number, durationMinutes: number): { start: string; end: string } {
+  const start = new Date();
+  start.setDate(start.getDate() + dayOffset);
+  start.setHours(hour, minute, 0, 0);
+  const end = new Date(start.getTime() + durationMinutes * 60000);
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  };
+}
+
 const buildFixtures = () => {
   const first = buildTodaySlot(9, 0, 60);
   const second = buildTodaySlot(9, 30, 60);
@@ -731,6 +742,48 @@ describe('SchedulePage', () => {
     );
   });
 
+  it('warns before checking in an appointment that is not on today', async () => {
+    const yesterday = buildRelativeSlot(-1, 9, 0, 30);
+    const fixtures = buildFixtures();
+    fixtures.appointments = [
+      {
+        ...fixtures.appointments[0],
+        scheduledStart: yesterday.start,
+        scheduledEnd: yesterday.end,
+      },
+    ];
+    apiMocks.fetchAppointments.mockResolvedValue({ appointments: fixtures.appointments });
+
+    render(<SchedulePage />);
+    await screen.findByTestId('calendar');
+
+    fireEvent.click(screen.getByRole('button', { name: /Prev/ }));
+    await waitFor(() => expect(screen.getByTestId('calendar-appointments')).toHaveTextContent('1'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Appointment' }));
+    const actionBar = document.querySelector('.ema-action-bar');
+    if (!actionBar) {
+      throw new Error('Action bar not found');
+    }
+    const actionScope = within(actionBar);
+
+    fireEvent.click(actionScope.getByRole('button', { name: /Check In/ }));
+
+    const warningModal = await screen.findByTestId('modal-non-today-check-in-warning');
+    expect(within(warningModal).getByRole('alert')).toHaveTextContent(/not scheduled for today/i);
+    expect(apiMocks.checkInFrontDeskAppointment).not.toHaveBeenCalled();
+
+    fireEvent.click(within(warningModal).getByRole('button', { name: 'Continue Check-In' }));
+
+    const checkInModal = await screen.findByTestId('modal-check-in-review');
+    expect(within(checkInModal).getByRole('alert')).toHaveTextContent(/Not today's appointment/i);
+
+    fireEvent.click(within(checkInModal).getByRole('button', { name: 'Check In Now' }));
+    await waitFor(() =>
+      expect(apiMocks.checkInFrontDeskAppointment).toHaveBeenCalledWith('tenant-1', 'token-1', 'appt-1', undefined),
+    );
+  });
+
   it('shows past balance due in check-in review', async () => {
     apiMocks.fetchFrontDeskSchedule.mockResolvedValueOnce({
       appointments: [{ id: 'appt-1', copayAmount: 20, outstandingBalance: 150 }],
@@ -1024,7 +1077,7 @@ it('confirms no-show for overdue appointments and posts a no-show fee', async ()
     expect(navigateMock).toHaveBeenCalledWith('/face-sheets');
   });
 
-  it('requests a past date window when navigating to previous days', async () => {
+  it('defaults to today instead of restoring a stale stored schedule date', async () => {
     localStorage.setItem('sched:dayOffset', '-2');
 
     render(<SchedulePage />);
@@ -1040,7 +1093,6 @@ it('confirms no-show for overdue appointments and posts a no-show fee', async ()
     expect(options?.endDate).toBeTruthy();
 
     const selectedDate = new Date();
-    selectedDate.setDate(selectedDate.getDate() - 2);
     selectedDate.setHours(0, 0, 0, 0);
 
     const expectedStartDate = new Date(selectedDate);
@@ -1053,6 +1105,35 @@ it('confirms no-show for overdue appointments and posts a no-show fee', async ()
     expect(options).toMatchObject({
       startDate: toIsoDate(expectedStartDate),
       endDate: toIsoDate(expectedEndDate),
+    });
+    expect(localStorage.getItem('sched:dayOffset')).toBeNull();
+  });
+
+  it('requests a past date window when navigating to previous days', async () => {
+    render(<SchedulePage />);
+
+    await screen.findByTestId('calendar');
+    fireEvent.click(screen.getByRole('button', { name: /Prev/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Prev/ }));
+
+    const selectedDate = new Date();
+    selectedDate.setDate(selectedDate.getDate() - 2);
+    selectedDate.setHours(0, 0, 0, 0);
+
+    const expectedStartDate = new Date(selectedDate);
+    expectedStartDate.setDate(expectedStartDate.getDate() - 60);
+
+    const expectedEndDate = new Date(selectedDate);
+    expectedEndDate.setDate(expectedEndDate.getDate() + 60);
+
+    const toIsoDate = (date: Date) => date.toISOString().split('T')[0];
+    await waitFor(() => {
+      const lastCall = apiMocks.fetchAppointments.mock.calls.at(-1);
+      const options = lastCall?.[2] as { startDate?: string; endDate?: string } | undefined;
+      expect(options).toMatchObject({
+        startDate: toIsoDate(expectedStartDate),
+        endDate: toIsoDate(expectedEndDate),
+      });
     });
   });
 

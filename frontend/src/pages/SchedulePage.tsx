@@ -7,10 +7,9 @@ import { Search, Sparkles } from 'lucide-react';
 import type { ExportColumn } from '../utils/export';
 import { formatDate as formatExportDate, formatPhone } from '../utils/export';
 import {
-  getConfiguredClinicBusinessDate,
+  getDateKeyInPracticeTimeZone,
   getDayOffsetFromClinicToday,
   ISO_DATE_PATTERN,
-  setClinicBusinessDate,
 } from '../utils/practiceDateTime';
 import {
   deliverCombinedDowntimePackets,
@@ -408,15 +407,8 @@ export function SchedulePage() {
     return map;
   }, [patients]);
 
-  // Schedule state - Initialize from URL parameter or localStorage
-  const [dayOffset, setDayOffset] = useState(() => {
-    const configuredDate = getConfiguredClinicBusinessDate();
-    if (configuredDate && ISO_DATE_PATTERN.test(configuredDate)) {
-      return getDayOffsetFromClinicToday(configuredDate);
-    }
-    const stored = Number(localStorage.getItem('sched:dayOffset') || 0);
-    return Number.isNaN(stored) ? 0 : stored;
-  });
+  // Schedule defaults to today's clinic date on every fresh visit. Explicit date links still opt into a specific day.
+  const [dayOffset, setDayOffset] = useState(0);
 
   // Initialize view mode from URL query parameter, fallback to localStorage, then 'day'
   const [viewMode, setViewMode] = useState<ScheduleViewMode>(() => {
@@ -447,6 +439,7 @@ export function SchedulePage() {
   const [creating, setCreating] = useState(false);
   const [rowAction, setRowAction] = useState<{ id: string; action: 'encounter' } | null>(null);
   const [checkInActionId, setCheckInActionId] = useState<string | null>(null);
+  const [nonTodayCheckInAppointment, setNonTodayCheckInAppointment] = useState<Appointment | null>(null);
   const [showCopayCheckInModal, setShowCopayCheckInModal] = useState(false);
   const [copayCheckInAppointment, setCopayCheckInAppointment] = useState<Appointment | null>(null);
   const [copayDecisionPaymentMethod, setCopayDecisionPaymentMethod] = useState<'cash' | 'credit' | 'debit' | 'check'>('cash');
@@ -508,11 +501,13 @@ export function SchedulePage() {
   useEffect(() => {
     if (!dateParam || !ISO_DATE_PATTERN.test(dateParam)) return;
     const nextOffset = getDayOffsetFromClinicToday(dateParam);
-    setClinicBusinessDate(dateParam);
-    localStorage.setItem('sched:dayOffset', String(nextOffset));
-    localStorage.setItem('sched:viewMode', 'day');
     setDayOffset(nextOffset);
     setViewMode('day');
+  }, [dateParam]);
+
+  useEffect(() => {
+    if (dateParam) return;
+    localStorage.removeItem('sched:dayOffset');
   }, [dateParam]);
 
   useEffect(() => {
@@ -562,10 +557,9 @@ export function SchedulePage() {
     localStorage.setItem('sched:provider', providerFilter);
     localStorage.setItem('sched:type', typeFilter);
     localStorage.setItem('sched:location', locationFilter);
-    localStorage.setItem('sched:dayOffset', String(dayOffset));
     localStorage.setItem('sched:viewMode', viewMode);
     localStorage.setItem('sched:showWeekends', String(showWeekends));
-  }, [providerFilter, typeFilter, locationFilter, dayOffset, viewMode, showWeekends]);
+  }, [providerFilter, typeFilter, locationFilter, viewMode, showWeekends]);
 
   const updateViewMode = useCallback((nextView: ScheduleViewMode) => {
     setViewMode(nextView);
@@ -587,12 +581,22 @@ export function SchedulePage() {
     return date;
   }, [dayOffset]);
 
+  const clearScheduleDateParam = useCallback(() => {
+    setSearchParams((prev) => {
+      if (!prev.has('date')) return prev;
+      const nextParams = new URLSearchParams(prev);
+      nextParams.delete('date');
+      return nextParams;
+    }, { replace: true });
+  }, [setSearchParams]);
+
   const setScheduleDate = useCallback((date: Date) => {
     const today = startOfDay(new Date());
     const target = startOfDay(date);
     const diffDays = Math.round((target.getTime() - today.getTime()) / DAY_MS);
     setDayOffset(diffDays);
-  }, []);
+    clearScheduleDateParam();
+  }, [clearScheduleDateParam]);
 
   const handleScheduleDateInput = useCallback((value: string) => {
     if (!value) return;
@@ -1312,13 +1316,46 @@ export function SchedulePage() {
     return Date.now() > deadlineMs;
   }, []);
 
-  const isAppointmentPastDay = useCallback((appt: Appointment): boolean => {
+  const getAppointmentDateKey = useCallback((appt: Appointment | null): string | null => {
+    if (!appt?.scheduledStart) return null;
     const scheduledStart = new Date(appt.scheduledStart);
-    if (Number.isNaN(scheduledStart.getTime())) return false;
-    scheduledStart.setHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return scheduledStart.getTime() < today.getTime();
+    if (Number.isNaN(scheduledStart.getTime())) return null;
+    return getDateKeyInPracticeTimeZone(scheduledStart);
+  }, []);
+
+  const isAppointmentPastDay = useCallback((appt: Appointment): boolean => {
+    const scheduledDateKey = getAppointmentDateKey(appt);
+    if (!scheduledDateKey) return false;
+    return scheduledDateKey < getDateKeyInPracticeTimeZone();
+  }, [getAppointmentDateKey]);
+
+  const isAppointmentToday = useCallback((appt: Appointment | null): boolean => {
+    const scheduledDateKey = getAppointmentDateKey(appt);
+    if (!scheduledDateKey) return false;
+    return scheduledDateKey === getDateKeyInPracticeTimeZone();
+  }, [getAppointmentDateKey]);
+
+  const formatAppointmentDateLabel = useCallback((appt: Appointment | null): string => {
+    const scheduledStart = appt?.scheduledStart ? new Date(appt.scheduledStart) : null;
+    if (!scheduledStart || Number.isNaN(scheduledStart.getTime())) return 'Unknown date';
+    return scheduledStart.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  }, []);
+
+  const formatDateKeyLabel = useCallback((dateKey: string): string => {
+    const [year, month, day] = dateKey.split('-').map(Number);
+    const date = new Date(year, (month || 1) - 1, day || 1);
+    if (Number.isNaN(date.getTime())) return dateKey;
+    return date.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
   }, []);
 
   const overdueCheckInAppointments = useMemo(
@@ -1537,9 +1574,16 @@ export function SchedulePage() {
     }
   }, [getAppointmentPriorAuthSnapshot, loadData, session, showSuccess]);
 
-  const beginCheckInFlow = useCallback(async (appt: Appointment) => {
+  const beginCheckInFlow = useCallback(async (
+    appt: Appointment,
+    options: { acknowledgedNonToday?: boolean } = {},
+  ) => {
     if (appt.status !== 'scheduled') {
       showError(`Cannot check in appointment with status "${appt.status}".`);
+      return;
+    }
+    if (!options.acknowledgedNonToday && !isAppointmentToday(appt)) {
+      setNonTodayCheckInAppointment(appt);
       return;
     }
     const copayAmount = getAppointmentCopayAmount(appt);
@@ -1549,7 +1593,24 @@ export function SchedulePage() {
     setCopayDecisionNotes('');
     setCopayBypassReason('pay_at_checkout');
     setShowCopayCheckInModal(true);
-  }, [executeCheckIn, getAppointmentCopayAmount]);
+  }, [getAppointmentCopayAmount, isAppointmentToday, showError]);
+
+  const closeNonTodayCheckInWarning = useCallback(() => {
+    setNonTodayCheckInAppointment(null);
+  }, []);
+
+  const continueNonTodayCheckIn = useCallback(() => {
+    if (!nonTodayCheckInAppointment) return;
+    const appointment = nonTodayCheckInAppointment;
+    setNonTodayCheckInAppointment(null);
+    void beginCheckInFlow(appointment, { acknowledgedNonToday: true });
+  }, [beginCheckInFlow, nonTodayCheckInAppointment]);
+
+  const goToTodayFromNonTodayWarning = useCallback(() => {
+    setNonTodayCheckInAppointment(null);
+    clearScheduleDateParam();
+    setDayOffset(0);
+  }, [clearScheduleDateParam]);
 
   const handleStatusChange = async (id: string, status: string) => {
     if (!session) return;
@@ -2072,6 +2133,10 @@ const handleUndoNoShow = async (appt: Appointment) => {
   const modalPriorAuth = getAppointmentPriorAuthSnapshot(copayCheckInAppointment);
   const modalPriorAuthColors = priorAuthStatusColors(modalPriorAuth.status);
   const modalPriorAuthNeedsAction = modalPriorAuth.required && modalPriorAuth.actionNeeded;
+  const modalIsNonTodayAppointment = Boolean(copayCheckInAppointment && !isAppointmentToday(copayCheckInAppointment));
+  const modalAppointmentDateLabel = formatAppointmentDateLabel(copayCheckInAppointment);
+  const nonTodayWarningDateLabel = formatAppointmentDateLabel(nonTodayCheckInAppointment);
+  const todayDateLabel = formatDateKeyLabel(getDateKeyInPracticeTimeZone());
   const selectedIsLaserVisit = isLaserAppointmentType(selectedAppt?.appointmentTypeName);
   const selectedIsNoShow = selectedAppt?.status === 'no_show';
   const selectedCanMarkNoShow = Boolean(selectedAppt && isAppointmentOverdueCheckIn(selectedAppt));
@@ -2449,6 +2514,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
                 type="button"
                 className="ema-filter-btn secondary"
                 onClick={() => {
+                  clearScheduleDateParam();
                   if (viewMode === 'month') {
                     const current = new Date();
                     current.setDate(current.getDate() + dayOffset);
@@ -2466,7 +2532,10 @@ const handleUndoNoShow = async (appt: Appointment) => {
               <button
                 type="button"
                 className="ema-filter-btn"
-                onClick={() => setDayOffset(0)}
+                onClick={() => {
+                  clearScheduleDateParam();
+                  setDayOffset(0);
+                }}
               >
                 Today
               </button>
@@ -2474,6 +2543,7 @@ const handleUndoNoShow = async (appt: Appointment) => {
                 type="button"
                 className="ema-filter-btn secondary"
                 onClick={() => {
+                  clearScheduleDateParam();
                   if (viewMode === 'month') {
                     const current = new Date();
                     current.setDate(current.getDate() + dayOffset);
@@ -2996,11 +3066,116 @@ const handleUndoNoShow = async (appt: Appointment) => {
       </table>
 
       <Modal
+        isOpen={Boolean(nonTodayCheckInAppointment)}
+        title="Non-Today Check-In Warning"
+        onClose={closeNonTodayCheckInWarning}
+      >
+        <div style={{ padding: '1rem', minWidth: '440px', maxWidth: '620px' }}>
+          <div
+            role="alert"
+            style={{
+              display: 'flex',
+              gap: '0.75rem',
+              alignItems: 'flex-start',
+              border: '2px solid #f59e0b',
+              background: '#fffbeb',
+              color: '#92400e',
+              borderRadius: '8px',
+              padding: '0.9rem 1rem',
+              marginBottom: '1rem',
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '1.35rem', lineHeight: 1 }}>⚠</span>
+            <div>
+              <strong style={{ display: 'block', marginBottom: '0.3rem' }}>This appointment is not scheduled for today.</strong>
+              <div style={{ fontSize: '0.9rem', lineHeight: 1.45 }}>
+                {nonTodayCheckInAppointment?.patientName || 'This patient'} is scheduled for{' '}
+                <strong>{nonTodayWarningDateLabel}</strong>. Today is <strong>{todayDateLabel}</strong>.
+              </div>
+            </div>
+          </div>
+
+          <p style={{ margin: '0 0 1rem', color: '#374151', lineHeight: 1.5 }}>
+            Check-ins should normally happen from today&apos;s schedule. Continue only if the front desk intentionally needs to check in this visit outside the current day.
+          </p>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={closeNonTodayCheckInWarning}
+              style={{
+                padding: '0.5rem 0.875rem',
+                borderRadius: '6px',
+                border: '1px solid #d1d5db',
+                background: '#ffffff',
+                color: '#374151',
+                fontWeight: 500,
+              }}
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={goToTodayFromNonTodayWarning}
+              style={{
+                padding: '0.5rem 0.875rem',
+                borderRadius: '6px',
+                border: '1px solid #93c5fd',
+                background: '#eff6ff',
+                color: '#1d4ed8',
+                fontWeight: 700,
+              }}
+            >
+              Go to Today
+            </button>
+            <button
+              type="button"
+              onClick={continueNonTodayCheckIn}
+              style={{
+                padding: '0.5rem 0.875rem',
+                borderRadius: '6px',
+                border: 'none',
+                background: 'linear-gradient(to bottom, #f59e0b 0%, #d97706 100%)',
+                color: '#ffffff',
+                fontWeight: 700,
+                boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
+              }}
+            >
+              Continue Check-In
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
         isOpen={showCopayCheckInModal}
         title="Check-In Review"
         onClose={closeCopayDecisionModal}
       >
         <div style={{ padding: '1rem', minWidth: '420px' }}>
+          {modalIsNonTodayAppointment ? (
+            <div
+              role="alert"
+              style={{
+                display: 'flex',
+                gap: '0.6rem',
+                alignItems: 'flex-start',
+                marginBottom: '1rem',
+                border: '1px solid #f59e0b',
+                background: '#fffbeb',
+                color: '#92400e',
+                borderRadius: '6px',
+                padding: '0.75rem',
+                fontSize: '0.875rem',
+                fontWeight: 700,
+              }}
+            >
+              <span aria-hidden="true">⚠</span>
+              <span>
+                Not today&apos;s appointment. Scheduled for {modalAppointmentDateLabel}; today is {todayDateLabel}.
+              </span>
+            </div>
+          ) : null}
           <div style={{ marginBottom: '0.75rem', color: '#1f2937' }}>
             <strong>Patient:</strong> {copayCheckInAppointment?.patientName || 'Selected patient'}
           </div>

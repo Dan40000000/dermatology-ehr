@@ -328,12 +328,9 @@ const loadStoredScheduleContext = (): StoredScheduleContext => {
   const viewMode: StoredScheduleViewMode =
     rawViewMode === 'week' || rawViewMode === 'month' ? rawViewMode : 'day';
 
-  const rawDayOffset = Number(localStorage.getItem('sched:dayOffset') || 0);
-  const dayOffset = Number.isFinite(rawDayOffset) ? rawDayOffset : 0;
-
   return {
     viewMode,
-    dayOffset,
+    dayOffset: 0,
     providerFilter: localStorage.getItem('sched:provider') || 'all',
     typeFilter: localStorage.getItem('sched:type') || 'all',
     locationFilter: localStorage.getItem('sched:location') || 'all',
@@ -1443,17 +1440,13 @@ export function HomePage() {
       }
 
       const appointmentDay = startOfDay(appointmentStart);
-      const today = startOfDay(new Date());
-      const dayOffset = Math.round((appointmentDay.getTime() - today.getTime()) / 86400000);
-
-      localStorage.setItem('sched:dayOffset', String(dayOffset));
       localStorage.setItem('sched:viewMode', 'day');
       localStorage.setItem('sched:provider', appointment.providerId || 'all');
       localStorage.setItem('sched:type', appointment.appointmentTypeId || 'all');
       localStorage.setItem('sched:location', appointment.locationId || 'all');
 
       setShowAppointmentFinder(false);
-      navigate(`/schedule?view=day&appointmentId=${encodeURIComponent(appointment.id)}`);
+      navigate(`/schedule?view=day&date=${toLocalIsoDate(appointmentDay)}&appointmentId=${encodeURIComponent(appointment.id)}`);
     },
     [navigate, showError]
   );

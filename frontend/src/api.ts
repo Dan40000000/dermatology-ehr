@@ -6783,14 +6783,34 @@ export interface ClinicalCopilotVisitSummarySaveResponse {
   context?: ClinicalCopilotResponse['context'];
 }
 
-function extractClinicalCopilotError(payload: any, fallback: string): string {
-  if (typeof payload?.error === 'string' && payload.error.trim()) {
-    return payload.error.trim();
-  }
-  if (typeof payload?.message === 'string' && payload.message.trim()) {
-    return payload.message.trim();
-  }
+type ClinicalCopilotRequestPayload = {
+  prompt?: string;
+  patientId?: string | null;
+  encounterId?: string | null;
+  noteId?: string | null;
+  recordingId?: string | null;
+  history?: ClinicalCopilotMessage[] | null;
+};
 
+function normalizeClinicalCopilotPayload<T extends ClinicalCopilotRequestPayload>(data: T): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value == null) continue;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) payload[key] = trimmed;
+      continue;
+    }
+    if (Array.isArray(value)) {
+      if (value.length > 0) payload[key] = value;
+      continue;
+    }
+    payload[key] = value;
+  }
+  return payload;
+}
+
+function extractClinicalCopilotError(payload: any, fallback: string): string {
   const collectZodErrors = (value: any): string[] => {
     if (!value || typeof value !== 'object') return [];
     const direct = Array.isArray(value._errors)
@@ -6803,6 +6823,15 @@ function extractClinicalCopilotError(payload: any, fallback: string): string {
   };
 
   const validationMessages = collectZodErrors(payload?.details || payload?.error);
+  if (validationMessages[0]) {
+    return validationMessages[0];
+  }
+  if (typeof payload?.error === 'string' && payload.error.trim()) {
+    return payload.error.trim();
+  }
+  if (typeof payload?.message === 'string' && payload.message.trim()) {
+    return payload.message.trim();
+  }
   return validationMessages[0] || fallback;
 }
 
@@ -7263,11 +7292,11 @@ export async function askClinicalCopilot(
   accessToken: string,
   data: {
     prompt: string;
-    patientId?: string;
-    encounterId?: string;
-    noteId?: string;
-    recordingId?: string;
-    history?: ClinicalCopilotMessage[];
+    patientId?: string | null;
+    encounterId?: string | null;
+    noteId?: string | null;
+    recordingId?: string | null;
+    history?: ClinicalCopilotMessage[] | null;
   }
 ): Promise<ClinicalCopilotResponse> {
   const res = await fetch(`${API_BASE}/api/ambient/copilot/respond`, {
@@ -7278,7 +7307,7 @@ export async function askClinicalCopilot(
       [TENANT_HEADER]: tenantId,
     },
     credentials: 'include',
-    body: JSON.stringify(data),
+    body: JSON.stringify(normalizeClinicalCopilotPayload(data)),
   });
 
   if (!res.ok) {
@@ -7296,12 +7325,12 @@ export async function saveClinicalCopilotVisitSummary(
   tenantId: string,
   accessToken: string,
   data: {
-    patientId?: string;
-    encounterId?: string;
-    noteId?: string;
-    recordingId?: string;
+    patientId?: string | null;
+    encounterId?: string | null;
+    noteId?: string | null;
+    recordingId?: string | null;
     prompt?: string;
-    history?: ClinicalCopilotMessage[];
+    history?: ClinicalCopilotMessage[] | null;
   }
 ): Promise<ClinicalCopilotVisitSummarySaveResponse> {
   const res = await fetch(`${API_BASE}/api/ambient/copilot/visit-summary`, {
@@ -7312,7 +7341,7 @@ export async function saveClinicalCopilotVisitSummary(
       [TENANT_HEADER]: tenantId,
     },
     credentials: 'include',
-    body: JSON.stringify(data),
+    body: JSON.stringify(normalizeClinicalCopilotPayload(data)),
   });
 
   if (!res.ok) {

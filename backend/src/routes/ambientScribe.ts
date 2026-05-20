@@ -108,24 +108,36 @@ const clinicalCopilotHistoryItemSchema = z.object({
 });
 
 const clinicalCopilotHistorySchema = z.preprocess(
-  (value) => Array.isArray(value) ? value.slice(-8) : value,
+  (value) => {
+    if (value == null) return undefined;
+    return Array.isArray(value) ? value.slice(-8) : value;
+  },
   z.array(clinicalCopilotHistoryItemSchema).optional()
+);
+
+const optionalCopilotIdentifierSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  },
+  z.string().optional()
 );
 
 const clinicalCopilotRequestSchema = z.object({
   prompt: z.string().min(1).max(4000),
-  patientId: z.string().optional(),
-  encounterId: z.string().optional(),
-  noteId: z.string().optional(),
-  recordingId: z.string().optional(),
+  patientId: optionalCopilotIdentifierSchema,
+  encounterId: optionalCopilotIdentifierSchema,
+  noteId: optionalCopilotIdentifierSchema,
+  recordingId: optionalCopilotIdentifierSchema,
   history: clinicalCopilotHistorySchema,
 });
 
 const clinicalCopilotVisitSummarySchema = z.object({
-  patientId: z.string().optional(),
-  encounterId: z.string().optional(),
-  noteId: z.string().optional(),
-  recordingId: z.string().optional(),
+  patientId: optionalCopilotIdentifierSchema,
+  encounterId: optionalCopilotIdentifierSchema,
+  noteId: optionalCopilotIdentifierSchema,
+  recordingId: optionalCopilotIdentifierSchema,
   prompt: z.string().min(1).max(4000).optional(),
   history: clinicalCopilotHistorySchema,
 });

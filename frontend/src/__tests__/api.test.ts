@@ -54,6 +54,7 @@ import {
   sendErx,
   fetchReportAppointmentsCsv,
   fetchFhirExamples,
+  askClinicalCopilot,
   presignS3,
   completePresign,
   getPresignedAccess,
@@ -134,6 +135,25 @@ describe('api.ts', () => {
       json: vi.fn().mockResolvedValue({ error: 'bad' }),
     } as Response);
     await expect(fetchMe(tenantId, token)).rejects.toThrow('bad');
+  });
+
+  it('omits empty clinical copilot context identifiers from requests', async () => {
+    fetchMock.mockResolvedValueOnce(okResponse({ answer: 'ok' }));
+
+    await askClinicalCopilot(tenantId, token, {
+      prompt: 'What should I document?',
+      patientId: ' patient-1 ',
+      encounterId: null,
+      noteId: '',
+      recordingId: undefined,
+      history: [],
+    });
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(options?.body).toBe(JSON.stringify({
+      prompt: 'What should I document?',
+      patientId: 'patient-1',
+    }));
   });
 
   it('handles patient fetch errors', async () => {

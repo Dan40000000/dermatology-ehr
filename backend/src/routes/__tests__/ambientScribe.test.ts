@@ -901,6 +901,32 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
         'copilot'
       );
     });
+
+    it('should tolerate null optional appointment context identifiers', async () => {
+      const res = await request(app)
+        .post('/api/ambient/copilot/respond')
+        .send({
+          prompt: 'What documentation gaps should I fix?',
+          patientId: 'patient-1',
+          encounterId: null,
+          noteId: null,
+          recordingId: null,
+          history: null,
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.answer).toBe('Visit summarized from chart context.');
+      expect(askClinicalCopilotMock).toHaveBeenCalledWith(expect.objectContaining({
+        question: 'What documentation gaps should I fix?',
+        history: undefined,
+        context: expect.objectContaining({
+          patientId: 'patient-1',
+          encounterId: undefined,
+          noteId: undefined,
+          recordingId: undefined,
+        }),
+      }));
+    });
   });
 
   describe('POST /api/ambient/copilot/visit-summary', () => {

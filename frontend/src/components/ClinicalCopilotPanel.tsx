@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  applyClinicalCopilotResponse,
   askClinicalCopilot,
   saveClinicalCopilotVisitSummary,
   type ClinicalCopilotMessage,
@@ -67,6 +68,11 @@ const assistantBubbleStyle: React.CSSProperties = {
   boxShadow: '0 8px 24px rgba(15, 23, 42, 0.04)',
 };
 
+type AppliedResponseStatus = {
+  summaryId: string;
+  message: string;
+};
+
 function formatConfidence(confidence: number): string {
   return `${Math.round(confidence * 100)}%`;
 }
@@ -87,6 +93,8 @@ export function ClinicalCopilotPanel({
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
   const [savingSummary, setSavingSummary] = useState(false);
+  const [applyingResponseIndex, setApplyingResponseIndex] = useState<number | null>(null);
+  const [appliedResponses, setAppliedResponses] = useState<Record<number, AppliedResponseStatus>>({});
   const [savedSummaryId, setSavedSummaryId] = useState<string | null>(null);
   const [savedSummaryMessage, setSavedSummaryMessage] = useState<string | null>(null);
   const [messages, setMessages] = useState<CopilotConversationTurn[]>([]);
@@ -112,6 +120,12 @@ export function ClinicalCopilotPanel({
   }, [patientId, encounterId, noteId, recordingId]);
 
   const canSaveVisitSummary = Boolean(patientId && (encounterId || noteId || recordingId));
+  const canApplyCopilotResponse = useMemo(() => {
+    const roles = [session?.user.role, ...(session?.user.roles || [])]
+      .filter((role): role is string => typeof role === 'string')
+      .map((role) => role.toLowerCase());
+    return roles.includes('provider') || roles.includes('admin');
+  }, [session]);
   const patientHistoryPath = patientId ? `/patients/${patientId}?tab=scribe` : '';
 
   const submitPrompt = async (nextPrompt?: string) => {
@@ -193,6 +207,52 @@ export function ClinicalCopilotPanel({
       showError(error.message || 'Failed to save visit summary to patient history');
     } finally {
       setSavingSummary(false);
+    }
+  };
+
+  const handleApplyResponse = async (response: ClinicalCopilotResponse, messageIndex: number) => {
+    if (!session || appliedResponses[messageIndex]) {
+      return;
+    }
+
+    const resolvedPatientId = patientId || response.context?.patientId;
+    const resolvedEncounterId = encounterId || response.context?.encounterId;
+    const resolvedNoteId = noteId || response.context?.noteId;
+    const resolvedRecordingId = recordingId || response.context?.recordingId;
+    if (!resolvedPatientId) {
+      showError('This AI response is not linked to a patient chart.');
+      return;
+    }
+
+    setApplyingResponseIndex(messageIndex);
+    try {
+      const result = await applyClinicalCopilotResponse(session.tenantId, session.accessToken, {
+        patientId: resolvedPatientId,
+        encounterId: resolvedEncounterId,
+        noteId: resolvedNoteId,
+        recordingId: resolvedRecordingId,
+        response,
+      });
+
+      const message = result.message || 'AI assistant response added to the chart';
+      setAppliedResponses((prev) => ({
+        ...prev,
+        [messageIndex]: { summaryId: result.summaryId, message },
+      }));
+      setSavedSummaryId(result.summaryId);
+      setSavedSummaryMessage(message);
+      onVisitSummarySaved?.(result.summaryId);
+      showSuccess(message, patientHistoryPath ? {
+        duration: 8000,
+        action: {
+          label: 'View History',
+          onClick: () => navigate(patientHistoryPath),
+        },
+      } : undefined);
+    } catch (error: any) {
+      showError(error.message || 'Failed to apply AI assistant response');
+    } finally {
+      setApplyingResponseIndex(null);
     }
   };
 
@@ -310,6 +370,8 @@ export function ClinicalCopilotPanel({
             const response = message.response;
             const hasMissingData = Boolean(response?.missingData?.length);
             const hasChartEvidence = Boolean(response?.chartEvidence?.length);
+            const applyStatus = appliedResponses[index];
+            const canApplyResponse = Boolean(response && canApplyCopilotResponse && (patientId || response.context?.patientId));
             return (
               <div key={`${message.role}-${index}`} style={assistantBubbleStyle}>
                 <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: 6 }}>Answer</div>
@@ -405,6 +467,40 @@ export function ClinicalCopilotPanel({
                 <div style={{ marginTop: 12, fontSize: '0.78rem', color: '#64748b' }}>
                   Provider: <strong>{response?.provider || 'unknown'}</strong> • Model: <strong>{response?.model || 'unknown'}</strong> • Clinician review required
                 </div>
+
+                {response && canApplyResponse && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      paddingTop: 12,
+                      borderTop: '1px solid #e5eefb',
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ fontSize: '0.82rem', color: applyStatus ? '#166534' : '#64748b', fontWeight: 700 }}>
+                      {applyStatus ? applyStatus.message : 'Add this summary and these suggested codes to the chart workflow.'}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleApplyResponse(response, index)}
+                      disabled={applyingResponseIndex !== null || Boolean(applyStatus)}
+                      style={{
+                        ...promptButtonStyle,
+                        background: applyStatus ? '#dcfce7' : applyingResponseIndex === index ? '#cbd5e1' : '#0f766e',
+                        borderColor: applyStatus ? '#86efac' : applyingResponseIndex === index ? '#cbd5e1' : '#0f766e',
+                        color: applyStatus ? '#166534' : 'white',
+                        cursor: applyingResponseIndex !== null || applyStatus ? 'not-allowed' : 'pointer',
+                      }}
+                      title="Save this AI response to patient history, append it to the encounter, and send code suggestions to billing review"
+                    >
+                      {applyStatus ? 'Submitted to Chart' : applyingResponseIndex === index ? 'Submitting...' : 'Submit to Chart & Billing'}
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })

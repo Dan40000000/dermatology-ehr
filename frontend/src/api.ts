@@ -6783,6 +6783,19 @@ export interface ClinicalCopilotVisitSummarySaveResponse {
   context?: ClinicalCopilotResponse['context'];
 }
 
+export interface ClinicalCopilotApplyResponse {
+  summaryId: string;
+  created: boolean;
+  message: string;
+  structuredActions: {
+    encounterUpdated: boolean;
+    diagnosesCreated: number;
+    chargesCreated: number;
+    billingReviewItemsCreated: number;
+  };
+  context?: ClinicalCopilotResponse['context'];
+}
+
 type ClinicalCopilotRequestPayload = {
   prompt?: string;
   patientId?: string | null;
@@ -7347,6 +7360,39 @@ export async function saveClinicalCopilotVisitSummary(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(extractClinicalCopilotError(err, 'Failed to save clinical copilot visit summary'));
+  }
+
+  return res.json();
+}
+
+/**
+ * Apply an existing clinical copilot answer to the patient chart and billing review workflow
+ */
+export async function applyClinicalCopilotResponse(
+  tenantId: string,
+  accessToken: string,
+  data: {
+    patientId?: string | null;
+    encounterId?: string | null;
+    noteId?: string | null;
+    recordingId?: string | null;
+    response: ClinicalCopilotResponse;
+  }
+): Promise<ClinicalCopilotApplyResponse> {
+  const res = await fetch(`${API_BASE}/api/ambient/copilot/apply`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      [TENANT_HEADER]: tenantId,
+    },
+    credentials: 'include',
+    body: JSON.stringify(normalizeClinicalCopilotPayload(data)),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(extractClinicalCopilotError(err, 'Failed to apply clinical copilot response'));
   }
 
   return res.json();

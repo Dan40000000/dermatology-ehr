@@ -1026,6 +1026,164 @@ describe('Ambient Scribe Routes - Generated Notes Endpoints', () => {
     });
   });
 
+  describe('POST /api/ambient/copilot/apply', () => {
+    it('adds an assistant response to patient history, encounter notes, diagnoses, and billing review', async () => {
+      createFinancialWorkQueueItemMock.mockResolvedValueOnce({ id: 'fwq-1' });
+      queryMock
+        .mockResolvedValueOnce({
+          rows: [{
+            noteId: 'note-1',
+            encounterId: 'enc-1',
+            chiefComplaint: 'Psoriasis flare',
+            hpi: 'Patient has worsening plaques on elbows.',
+            ros: 'Skin positive for plaques.',
+            physicalExam: 'Erythematous plaques with scale.',
+            assessment: 'Plaque psoriasis flare.',
+            plan: 'Start topical steroid and follow up.',
+            suggestedIcd10Codes: [],
+            suggestedCptCodes: [],
+            followUpTasks: [],
+            recommendedTests: [],
+            noteContent: {},
+            transcriptText: 'Psoriasis flare discussed.',
+            recordingId: 'rec-1',
+            patientId: 'patient-1',
+            providerId: 'provider-1',
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'enc-1',
+            chiefComplaint: 'Psoriasis flare',
+            hpi: 'Patient has worsening plaques on elbows.',
+            ros: 'Skin positive for plaques.',
+            exam: 'Erythematous plaques with scale.',
+            assessmentPlan: 'Existing plan.',
+            dob: '1990-01-01',
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            encounterId: 'enc-1',
+            patientId: 'patient-1',
+            providerId: 'provider-1',
+            providerName: 'Dr. David Skin, MD, FAAD',
+            visitDate: new Date('2026-05-20T16:00:00.000Z'),
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'enc-1',
+            patient_id: 'patient-1',
+            provider_id: 'provider-1',
+            status: 'draft',
+            assessment_plan: 'Existing plan.',
+          }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+      const res = await request(app)
+        .post('/api/ambient/copilot/apply')
+        .send({
+          patientId: 'patient-1',
+          encounterId: 'enc-1',
+          response: {
+            answer: '99213 is supported after review.',
+            visitSummary: 'Psoriasis flare treated with topical steroid.',
+            suggestedCodes: [
+              {
+                type: 'icd10',
+                code: 'L40.0',
+                description: 'Psoriasis vulgaris',
+                confidence: 0.91,
+                rationale: 'Assessment documents plaque psoriasis.',
+              },
+              {
+                type: 'em',
+                code: '99213',
+                description: 'Established patient office visit',
+                confidence: 0.81,
+                rationale: 'Low complexity management with prescription medication.',
+              },
+            ],
+            followUpTasks: ['Recheck in 6 weeks'],
+            patientInstructions: ['Use topical steroid as directed'],
+            missingData: ['Confirm body surface area'],
+            chartEvidence: ['Plaques on elbows'],
+            provider: 'mock',
+            model: 'test-copilot',
+          },
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.message).toMatch(/billing review/i);
+      expect(res.body.structuredActions).toEqual({
+        encounterUpdated: true,
+        diagnosesCreated: 1,
+        chargesCreated: 1,
+        billingReviewItemsCreated: 1,
+      });
+      expect(askClinicalCopilotMock).not.toHaveBeenCalled();
+
+      const updateEncounterCall = queryMock.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('update encounters') && call[0].includes('assessment_plan = $1')
+      );
+      expect(updateEncounterCall).toBeTruthy();
+      expect(updateEncounterCall?.[1][0]).toContain('Existing plan.');
+      expect(updateEncounterCall?.[1][0]).toContain('AI Assistant Applied Summary [mock-uuid-1234]');
+      expect(updateEncounterCall?.[1][0]).toContain('99213');
+
+      const diagnosisInsertCall = queryMock.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('insert into encounter_diagnoses')
+      );
+      expect(diagnosisInsertCall).toBeTruthy();
+      expect(diagnosisInsertCall?.[1][3]).toBe('L40.0');
+
+      const chargeInsertCall = queryMock.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('insert into charges')
+      );
+      expect(chargeInsertCall).toBeTruthy();
+      expect(chargeInsertCall?.[1][5]).toBe('99213');
+      expect(chargeInsertCall?.[1][9]).toEqual(['L40.0']);
+      expect(chargeInsertCall?.[1][14]).toBe('pending');
+      expect(chargeInsertCall?.[1][15]).toBe('clinical_copilot_assistant');
+
+      expect(createFinancialWorkQueueItemMock).toHaveBeenCalledWith(expect.objectContaining({
+        tenantId: 'tenant-1',
+        encounterId: 'enc-1',
+        patientId: 'patient-1',
+        issueType: 'clinical_copilot_charge_review',
+        severity: 'warning',
+        metadata: expect.objectContaining({
+          clinicalCopilotSummaryId: 'mock-uuid-1234',
+          draftChargeIds: expect.arrayContaining(['mock-uuid-1234']),
+          suggestedBillingCodes: expect.arrayContaining([
+            expect.objectContaining({ code: '99213', type: 'em' }),
+          ]),
+          suggestedIcd10Codes: expect.arrayContaining([
+            expect.objectContaining({ code: 'L40.0' }),
+          ]),
+        }),
+      }));
+      expect(auditMock).toHaveBeenCalledWith(
+        'tenant-1',
+        'user-1',
+        'ambient_copilot_applied_to_chart',
+        'visit_summary',
+        'mock-uuid-1234'
+      );
+    });
+  });
+
   describe('POST /api/ambient/transcripts/:id/generate-note', () => {
     it('should return 404 when transcript not found', async () => {
       queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });

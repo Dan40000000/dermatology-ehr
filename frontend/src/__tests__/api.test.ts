@@ -54,6 +54,7 @@ import {
   sendErx,
   fetchReportAppointmentsCsv,
   fetchFhirExamples,
+  applyClinicalCopilotResponse,
   askClinicalCopilot,
   presignS3,
   completePresign,
@@ -154,6 +155,46 @@ describe('api.ts', () => {
       prompt: 'What should I document?',
       patientId: 'patient-1',
     }));
+  });
+
+  it('applies a clinical copilot response to chart and billing review', async () => {
+    fetchMock.mockResolvedValueOnce(okResponse({ summaryId: 'summary-1' }));
+
+    const response = {
+      answer: '99213 is supported with clinician review.',
+      visitSummary: 'Dermatitis follow-up with topical therapy.',
+      suggestedCodes: [
+        { type: 'em' as const, code: '99213', description: 'Established patient visit', confidence: 0.82, rationale: 'Low complexity visit.' },
+        { type: 'icd10' as const, code: 'L30.9', description: 'Dermatitis', confidence: 0.9, rationale: 'Assessment documents dermatitis.' },
+      ],
+      followUpTasks: ['Return if worse'],
+      patientInstructions: ['Use medication as directed'],
+      missingData: [],
+      chartEvidence: ['Rash documented'],
+      provider: 'mock' as const,
+      model: 'test-copilot',
+    };
+
+    await applyClinicalCopilotResponse(tenantId, token, {
+      patientId: ' patient-1 ',
+      encounterId: 'enc-1',
+      noteId: null,
+      response,
+    });
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${API_BASE_URL}/api/ambient/copilot/apply`);
+    expect(options?.method).toBe('POST');
+    expect(options?.headers).toMatchObject({
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'x-tenant-id': tenantId,
+    });
+    expect(JSON.parse(options?.body as string)).toEqual({
+      patientId: 'patient-1',
+      encounterId: 'enc-1',
+      response,
+    });
   });
 
   it('handles patient fetch errors', async () => {

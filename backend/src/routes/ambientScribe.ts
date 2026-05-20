@@ -23,7 +23,7 @@ import {
   TranscriptionResult
 } from '../services/ambientAI';
 import { AgentConfiguration, agentConfigService } from '../services/agentConfigService';
-import { askClinicalCopilot, type ClinicalCopilotContext } from '../services/clinicalCopilot';
+import { askClinicalCopilot, type ClinicalCopilotContext, type ClinicalCopilotResult } from '../services/clinicalCopilot';
 import { createFinancialWorkQueueItem } from '../services/financialWorkQueueService';
 import { immutableEncounterErrorMessage, isImmutableEncounterStatus } from '../lib/clinicalWorkflow';
 
@@ -140,6 +140,34 @@ const clinicalCopilotVisitSummarySchema = z.object({
   recordingId: optionalCopilotIdentifierSchema,
   prompt: z.string().min(1).max(4000).optional(),
   history: clinicalCopilotHistorySchema,
+});
+
+const clinicalCopilotCodeSuggestionSchema = z.object({
+  type: z.enum(['em', 'cpt', 'icd10']),
+  code: z.string().trim().min(1).max(32),
+  description: z.string().trim().max(500).optional().default(''),
+  confidence: z.coerce.number().min(0).max(1).optional().default(0.7),
+  rationale: z.string().trim().max(1500).optional().default(''),
+});
+
+const clinicalCopilotAppliedResponseSchema = z.object({
+  answer: z.string().trim().max(12000).optional().default(''),
+  visitSummary: z.string().trim().max(12000).optional().default(''),
+  suggestedCodes: z.array(clinicalCopilotCodeSuggestionSchema).max(25).optional().default([]),
+  followUpTasks: z.array(z.string().trim().max(1000)).max(20).optional().default([]),
+  patientInstructions: z.array(z.string().trim().max(1000)).max(20).optional().default([]),
+  missingData: z.array(z.string().trim().max(1000)).max(20).optional().default([]),
+  chartEvidence: z.array(z.string().trim().max(1000)).max(20).optional().default([]),
+  provider: z.enum(['openai', 'anthropic', 'mock']).optional().default('mock'),
+  model: z.string().trim().max(100).optional().default('clinical-copilot'),
+});
+
+const clinicalCopilotApplySchema = z.object({
+  patientId: optionalCopilotIdentifierSchema,
+  encounterId: optionalCopilotIdentifierSchema,
+  noteId: optionalCopilotIdentifierSchema,
+  recordingId: optionalCopilotIdentifierSchema,
+  response: clinicalCopilotAppliedResponseSchema,
 });
 
 const AMBIENT_CLINICAL_ROLES = ['provider', 'ma', 'admin'] as const;
@@ -1067,6 +1095,331 @@ async function upsertCopilotVisitSummary(
   return { summaryId, created: true };
 }
 
+type AppliedCopilotActions = {
+  encounterUpdated: boolean;
+  diagnosesCreated: number;
+  chargesCreated: number;
+  billingReviewItemsCreated: number;
+};
+
+type CopilotCodeSuggestionForWorkflow = {
+  type: 'em' | 'cpt' | 'icd10';
+  code: string;
+  description: string;
+  confidence: number;
+  rationale: string;
+};
+
+type CopilotDraftChargeResult = {
+  chargesCreated: number;
+  chargeIds: string[];
+};
+
+function getClinicalCopilotCodes(
+  result: ClinicalCopilotResult,
+  types: Array<'em' | 'cpt' | 'icd10'>,
+  minConfidence = 0.6,
+): CopilotCodeSuggestionForWorkflow[] {
+  const seen = new Set<string>();
+  return result.suggestedCodes
+    .filter((code) => types.includes(code.type))
+    .map((code) => ({
+      type: code.type,
+      code: code.code.trim().toUpperCase(),
+      description: toTrimmedString(code.description),
+      confidence: normalizeConfidence(code.confidence),
+      rationale: toTrimmedString(code.rationale),
+    }))
+    .filter((code) => code.code && code.confidence >= minConfidence)
+    .filter((code) => {
+      const key = `${code.type}:${code.code}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 12);
+}
+
+function formatCopilotCodeLine(code: ReturnType<typeof getClinicalCopilotCodes>[number]): string {
+  const confidence = Math.round(code.confidence * 100);
+  const description = code.description ? ` - ${code.description}` : '';
+  const rationale = code.rationale ? ` (${code.rationale})` : '';
+  return `${code.code}${description}; confidence ${confidence}%${rationale}`;
+}
+
+function normalizeChargeCents(value: unknown, fallback = 0): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.round(numeric)) : fallback;
+}
+
+function normalizeCopilotServiceDate(value: unknown): string | null {
+  const date = value instanceof Date ? value : new Date(String(value || ''));
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function inferCopilotChargeCodeType(code: string): 'CPT' | 'HCPCS' | 'INTERNAL' {
+  if (/^\d{5}$/.test(code)) return 'CPT';
+  if (/^[A-Z]\d{4}$/.test(code)) return 'HCPCS';
+  return 'INTERNAL';
+}
+
+async function lookupCopilotChargeCode(
+  tenantId: string,
+  rawCode: string,
+): Promise<{ code: string; description: string | null; feeCents: number; codeType: 'CPT' | 'HCPCS' | 'INTERNAL'; billingRoute: 'insurance' | 'self_pay' | 'non_billable'; chargeGroup: string | null }> {
+  const code = rawCode.trim().toUpperCase();
+  const result = await pool.query(
+    `with tenant_fee_items as (
+       select distinct on (upper(fsi.cpt_code))
+         fsi.cpt_code,
+         nullif(fsi.cpt_description, '') as cpt_description,
+         nullif(fsi.category, '') as category,
+         coalesce(fsi.fee_cents, round(fsi.fee_amount * 100)::int, 0) as fee_cents,
+         nullif(to_jsonb(fsi)->>'code_type', '') as code_type,
+         nullif(to_jsonb(fsi)->>'billing_route', '') as billing_route
+       from fee_schedule_items fsi
+       join fee_schedules fs on fs.id = fsi.fee_schedule_id
+       where fs.tenant_id = $1
+         and upper(fsi.cpt_code) = upper($2)
+       order by upper(fsi.cpt_code), fs.is_default desc, fsi.updated_at desc nulls last, fsi.created_at desc
+     )
+     select
+       coalesce(tfi.cpt_code, c.code, $2) as code,
+       coalesce(tfi.cpt_description, c.description) as description,
+       coalesce(tfi.category, c.category) as category,
+       coalesce(tfi.fee_cents, c.default_fee_cents, 0) as "feeCents",
+       coalesce(tfi.code_type, nullif(to_jsonb(c)->>'code_type', '')) as "codeType",
+       coalesce(tfi.billing_route, nullif(to_jsonb(c)->>'billing_route', '')) as "billingRoute"
+     from tenant_fee_items tfi
+     full outer join cpt_codes c on upper(c.code) = upper(tfi.cpt_code)
+     where upper(coalesce(tfi.cpt_code, c.code, $2)) = upper($2)
+     limit 1`,
+    [tenantId, code],
+  );
+
+  const row = result.rows[0] || {};
+  const normalizedCode = String(row.code || code).trim().toUpperCase();
+  const codeType = String(row.codeType || inferCopilotChargeCodeType(normalizedCode)).toUpperCase();
+  const billingRoute = String(row.billingRoute || (codeType === 'INTERNAL' ? 'self_pay' : 'insurance')).toLowerCase();
+
+  return {
+    code: normalizedCode,
+    description: normalizeOptionalString(row.description) || null,
+    feeCents: normalizeChargeCents(row.feeCents),
+    codeType: codeType === 'HCPCS' || codeType === 'INTERNAL' ? codeType : 'CPT',
+    billingRoute: billingRoute === 'self_pay' || billingRoute === 'non_billable' ? billingRoute : 'insurance',
+    chargeGroup: normalizeOptionalString(row.category) || null,
+  };
+}
+
+async function createClinicalCopilotDraftCharges(options: {
+  tenantId: string;
+  target: CopilotVisitSummaryTarget;
+  result: ClinicalCopilotResult;
+  diagnosisCodes: CopilotCodeSuggestionForWorkflow[];
+}): Promise<CopilotDraftChargeResult> {
+  if (!options.target.encounterId) {
+    return { chargesCreated: 0, chargeIds: [] };
+  }
+
+  let chargesCreated = 0;
+  const chargeIds: string[] = [];
+  const icdCodes = options.diagnosisCodes.map((diagnosis) => diagnosis.code).slice(0, 12);
+  const serviceDate = normalizeCopilotServiceDate(options.target.visitDate);
+  const suggestedBillingCodes = getClinicalCopilotCodes(options.result, ['em', 'cpt']);
+
+  for (const suggestion of suggestedBillingCodes.slice(0, 8)) {
+    const existing = await pool.query(
+      `select id
+         from charges
+        where tenant_id = $1
+          and encounter_id = $2
+          and upper(cpt_code) = upper($3)
+          and coalesce(status, 'pending') <> 'voided'
+        limit 1`,
+      [options.tenantId, options.target.encounterId, suggestion.code],
+    );
+    if (existing.rowCount) {
+      continue;
+    }
+
+    const codeInfo = await lookupCopilotChargeCode(options.tenantId, suggestion.code);
+    const amountCents = codeInfo.feeCents;
+    const patientResponsibilityCents = codeInfo.billingRoute === 'self_pay' ? amountCents : 0;
+    const insuranceResponsibilityCents = codeInfo.billingRoute === 'insurance' ? amountCents : 0;
+    const chargeId = crypto.randomUUID();
+    await pool.query(
+      `insert into charges(
+         id, tenant_id, encounter_id, patient_id, service_date,
+         cpt_code, code_type, billing_route, description, icd_codes, linked_diagnosis_ids,
+         quantity, fee_cents, amount_cents, amount, status, source, charge_group, line_note,
+         patient_responsibility_cents, insurance_responsibility_cents
+       )
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::int,round(($14::numeric / 100), 2),$15,$16,$17,$18,$19,$20)`,
+      [
+        chargeId,
+        options.tenantId,
+        options.target.encounterId,
+        options.target.patientId,
+        serviceDate,
+        codeInfo.code,
+        codeInfo.codeType,
+        codeInfo.billingRoute,
+        suggestion.description || codeInfo.description || codeInfo.code,
+        codeInfo.billingRoute === 'insurance' ? icdCodes : [],
+        [],
+        1,
+        codeInfo.feeCents || null,
+        amountCents,
+        codeInfo.billingRoute === 'self_pay' ? 'self_pay' : 'pending',
+        'clinical_copilot_assistant',
+        codeInfo.chargeGroup || (suggestion.type === 'em' ? 'Evaluation & Management' : 'AI Assistant Suggested CPT'),
+        suggestion.rationale || 'Clinical Copilot suggested; clinician submitted for billing review.',
+        patientResponsibilityCents,
+        insuranceResponsibilityCents,
+      ],
+    );
+    chargeIds.push(chargeId);
+    chargesCreated++;
+  }
+
+  return { chargesCreated, chargeIds };
+}
+
+function buildCopilotEncounterAddendum(summaryId: string, result: ClinicalCopilotResult): string {
+  const summary = toTrimmedString(result.visitSummary || result.answer);
+  const diagnosisCodes = getClinicalCopilotCodes(result, ['icd10']);
+  const billingCodes = getClinicalCopilotCodes(result, ['em', 'cpt']);
+  const lines = [
+    `AI Assistant Applied Summary [${summaryId}]`,
+    summary ? `Summary: ${summary}` : null,
+    diagnosisCodes.length ? `Suggested diagnoses: ${diagnosisCodes.map(formatCopilotCodeLine).join('; ')}` : null,
+    billingCodes.length ? `Suggested billing review: ${billingCodes.map(formatCopilotCodeLine).join('; ')}` : null,
+    result.patientInstructions.length ? `Patient instructions: ${result.patientInstructions.map(toTrimmedString).filter(Boolean).join('; ')}` : null,
+    result.followUpTasks.length ? `Follow-up tasks: ${result.followUpTasks.map(toTrimmedString).filter(Boolean).join('; ')}` : null,
+    result.missingData.length ? `Documentation gaps to review: ${result.missingData.map(toTrimmedString).filter(Boolean).join('; ')}` : null,
+    'Clinician review required before signing the encounter or releasing billing.',
+  ].filter(Boolean);
+
+  return lines.join('\n');
+}
+
+async function applyClinicalCopilotResponseToEncounter(
+  tenantId: string,
+  userId: string,
+  target: CopilotVisitSummaryTarget,
+  result: ClinicalCopilotResult,
+  summaryId: string,
+): Promise<AppliedCopilotActions> {
+  if (!target.encounterId) {
+    return { encounterUpdated: false, diagnosesCreated: 0, chargesCreated: 0, billingReviewItemsCreated: 0 };
+  }
+
+  const encounter = await pool.query(
+    `select id, patient_id, provider_id, status, assessment_plan
+       from encounters
+      where id = $1 and tenant_id = $2`,
+    [target.encounterId, tenantId],
+  );
+
+  if (!encounter.rowCount) {
+    throw Object.assign(new Error('Linked encounter not found'), { httpStatus: 404 });
+  }
+
+  const encounterRow = encounter.rows[0];
+  if (isImmutableEncounterStatus(encounterRow.status)) {
+    throw Object.assign(new Error(immutableEncounterErrorMessage(encounterRow.status)), { httpStatus: 409 });
+  }
+
+  let encounterUpdated = false;
+  const marker = `AI Assistant Applied Summary [${summaryId}]`;
+  const existingAssessmentPlan = toTrimmedString(encounterRow.assessment_plan);
+  if (!existingAssessmentPlan.includes(marker)) {
+    const addendum = buildCopilotEncounterAddendum(summaryId, result);
+    const nextAssessmentPlan = [existingAssessmentPlan, addendum].filter(Boolean).join('\n\n');
+    await pool.query(
+      `update encounters
+          set assessment_plan = $1,
+              updated_at = now()
+        where id = $2 and tenant_id = $3`,
+      [nextAssessmentPlan, target.encounterId, tenantId],
+    );
+    encounterUpdated = true;
+  }
+
+  let diagnosesCreated = 0;
+  const diagnosisCodes = getClinicalCopilotCodes(result, ['icd10']);
+  if (diagnosisCodes.length > 0) {
+    const existingDiagnosisResult = await pool.query(
+      `select id, upper(icd10_code) as code, is_primary
+         from encounter_diagnoses
+        where encounter_id = $1 and tenant_id = $2`,
+      [target.encounterId, tenantId],
+    );
+    const existingCodes = new Set(existingDiagnosisResult.rows.map((row: any) => String(row.code || '').toUpperCase()));
+    const hasPrimary = existingDiagnosisResult.rows.some((row: any) => row.is_primary);
+
+    for (const diagnosis of diagnosisCodes.slice(0, 5)) {
+      if (existingCodes.has(diagnosis.code)) {
+        continue;
+      }
+
+      await pool.query(
+        `insert into encounter_diagnoses (
+           id, tenant_id, encounter_id, icd10_code, description, is_primary, created_at
+         ) values ($1, $2, $3, $4, $5, $6, now())`,
+        [
+          crypto.randomUUID(),
+          tenantId,
+          target.encounterId,
+          diagnosis.code,
+          `${diagnosis.description || diagnosis.code} (AI assistant suggested, clinician review required)`,
+          !hasPrimary && diagnosesCreated === 0,
+        ],
+      );
+      existingCodes.add(diagnosis.code);
+      diagnosesCreated++;
+    }
+  }
+
+  let billingReviewItemsCreated = 0;
+  const draftCharges = await createClinicalCopilotDraftCharges({
+    tenantId,
+    target,
+    result,
+    diagnosisCodes,
+  });
+  const suggestedBillingCodes = getClinicalCopilotCodes(result, ['em', 'cpt']);
+  if (suggestedBillingCodes.length > 0) {
+    const reviewItem = await createFinancialWorkQueueItem({
+      tenantId,
+      encounterId: target.encounterId,
+      patientId: encounterRow.patient_id || target.patientId,
+      issueType: 'clinical_copilot_charge_review',
+      severity: 'warning',
+      message: `Clinical Copilot added ${suggestedBillingCodes.length} pending billing code(s). Review before claim submission.`,
+      errorDetail: 'Clinical Copilot created pending charge lines for review, but nothing is submitted to claims automatically. A clinician or biller must confirm supported CPT/E/M codes, diagnoses, units, and modifiers.',
+      metadata: {
+        clinicalCopilotSummaryId: summaryId,
+        draftChargeIds: draftCharges.chargeIds,
+        suggestedBillingCodes,
+        suggestedIcd10Codes: diagnosisCodes,
+        missingData: result.missingData,
+        chartEvidence: result.chartEvidence,
+        nextStep: 'Review the pending encounter charge lines and update codes, units, modifiers, or diagnoses before claim submission.',
+      },
+      createdBy: userId,
+    });
+
+    billingReviewItemsCreated = reviewItem ? 1 : 0;
+  }
+
+  return { encounterUpdated, diagnosesCreated, chargesCreated: draftCharges.chargesCreated, billingReviewItemsCreated };
+}
+
 // ============================================================================
 // RECORDING ENDPOINTS
 // ============================================================================
@@ -1955,6 +2308,77 @@ router.post('/copilot/visit-summary', requireAuth, requireRoles([...AMBIENT_CLIN
   } catch (error: any) {
     logAmbientError('Clinical copilot visit summary save error', error);
     res.status(500).json({ error: 'Failed to save clinical copilot visit summary' });
+  }
+});
+
+/**
+ * POST /api/ambient/copilot/apply
+ * Apply an existing clinical copilot response to the chart and billing review workflow
+ */
+router.post('/copilot/apply', requireAuth, requireRoles([...AMBIENT_REVIEW_ROLES]), async (req: AuthedRequest, res) => {
+  try {
+    const parsed = clinicalCopilotApplySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid clinical copilot apply request', details: parsed.error.format() });
+    }
+
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.id;
+    const { patientId, encounterId, noteId, recordingId, response } = parsed.data;
+
+    if (!response.visitSummary && !response.answer && response.suggestedCodes.length === 0) {
+      return res.status(400).json({ error: 'Clinical copilot response does not contain anything to apply' });
+    }
+
+    const context = await resolveClinicalCopilotContext(tenantId, {
+      patientId,
+      encounterId,
+      noteId,
+      recordingId,
+    });
+
+    const target = await resolveCopilotVisitSummaryTarget(
+      tenantId,
+      { patientId, encounterId, noteId, recordingId },
+      context,
+    );
+    if (!target) {
+      return res.status(404).json({ error: 'Could not find a patient or encounter to apply this assistant response to' });
+    }
+    if (patientId && target.patientId !== patientId) {
+      return res.status(400).json({ error: 'Assistant response target does not match the selected patient' });
+    }
+
+    const saved = await upsertCopilotVisitSummary(tenantId, userId, target, response, context);
+    const structuredActions = await applyClinicalCopilotResponseToEncounter(tenantId, userId, target, response, saved.summaryId);
+
+    await auditLog(
+      tenantId,
+      userId || null,
+      'ambient_copilot_applied_to_chart',
+      'visit_summary',
+      saved.summaryId,
+    );
+
+    res.status(saved.created ? 201 : 200).json({
+      summaryId: saved.summaryId,
+      created: saved.created,
+      message: structuredActions.billingReviewItemsCreated > 0
+        ? 'AI assistant response added to the chart and sent to billing review'
+        : 'AI assistant response added to the chart',
+      structuredActions,
+      context: {
+        patientId: target.patientId,
+        encounterId: target.encounterId,
+        noteId: context.noteId,
+        recordingId: context.recordingId,
+        hasTranscript: Boolean(context.transcriptExcerpt),
+        hasAmbientNote: Boolean(context.note),
+      },
+    });
+  } catch (error: any) {
+    logAmbientError('Clinical copilot apply error', error);
+    res.status(error?.httpStatus || 500).json({ error: error?.httpStatus ? error.message : 'Failed to apply clinical copilot response' });
   }
 });
 

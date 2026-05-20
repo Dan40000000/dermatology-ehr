@@ -192,6 +192,9 @@ describe("Patients routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.patient.id).toBe("patient-1");
+    expect(queryMock.mock.calls[0][0]).toContain("to_jsonb(p)->>'ssn_last4'");
+    expect(queryMock.mock.calls[0][0]).toContain("to_jsonb(p)->>'pharmacy_address'");
+    expect(queryMock.mock.calls[0][0]).toContain("to_jsonb(p)->'accessibility_profile'");
   });
 
   it("GET /patients/:id returns 500 on error", async () => {
